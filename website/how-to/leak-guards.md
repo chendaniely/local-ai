@@ -59,9 +59,10 @@ Expected: the commit is refused (`private IPv4 address`), `exit=1`, nothing comm
 
 ## When a line is safe but flagged
 
-Add `leakcheck: allow` to that line, as a trailing comment — the scanner skips any line
-containing it. Use it sparingly: it is visible in review, so it should only ever mark something a
-reviewer can see for themselves is safe.
+Add `leakcheck: allow` to that line, as a trailing comment — the scanner then skips its built-in
+patterns (addresses, MACs, names) on that line. It never excuses a denylisted term: the denylist
+checks every line. Use it sparingly: it is visible in review, so it should only ever mark
+something a reviewer can see for themselves is safe.
 
 ## Never bypass this
 

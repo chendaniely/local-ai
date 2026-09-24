@@ -2,7 +2,7 @@
 
 Flags private addresses, per-unit identifiers and privately denylisted terms. Runs from the git
 hooks on every commit (`--staged`, `--message FILE`) and in CI over every tracked file
-(`--tracked --ci`). It fails closed: a missing denylist is an error, never a pass.
+(`--tracked --ci`). It fails closed: a missing or malformed denylist is an error, never a pass.
 """
 
 from __future__ import annotations
@@ -18,22 +18,29 @@ from pathlib import Path
 ALLOW_MARKER = "leakcheck: allow"
 DEFAULT_DENYLIST = "~/.config/local-ai/denylist"
 
+# The IPv4 lookaheads reject a longer dotted string (a version number) but not a sentence-final
+# period, so "at <address>." is still caught.
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "private IPv4 address",
         re.compile(
-            r"(?<![\d.])(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}(?![\d.])"
+            r"(?<![\d.])(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}(?!\.?\d)"
         ),
     ),
     (
         "tailnet IPv4 address",
-        re.compile(r"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d.])"),
+        re.compile(r"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?!\.?\d)"),
+    ),
+    ("tailnet IPv6 address", re.compile(r"\bfd7a:115c:a1e0:[0-9a-f:]*[0-9a-f]", re.IGNORECASE)),
+    (
+        "private or link-local IPv6 address",
+        re.compile(r"\b(?:f[cd][0-9a-f]{2}|fe80):[0-9a-f:]*:[0-9a-f]{1,4}\b", re.IGNORECASE),
     ),
     (
         "MAC address",
         re.compile(r"(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])"),
     ),
-    ("tailnet hostname", re.compile(r"\b[a-z0-9-]+\.[a-z0-9-]+\.ts\.net\b", re.IGNORECASE)),
+    ("tailnet hostname", re.compile(r"\b[a-z0-9-]+\.ts\.net\b", re.IGNORECASE)),
     (
         "Synology DDNS or QuickConnect name",
         re.compile(r"\b[a-z0-9-]+\.(?:synology\.me|quickconnect\.to)\b", re.IGNORECASE),
@@ -55,6 +62,10 @@ class DenylistMissing(RuntimeError):
     pass
 
 
+class DenylistInvalid(ValueError):
+    pass
+
+
 def load_denylist(path: Path) -> list[re.Pattern[str]]:
     path = Path(path).expanduser()
     if not path.is_file():
@@ -62,10 +73,19 @@ def load_denylist(path: Path) -> list[re.Pattern[str]]:
             f"denylist not found at {path} — create it (website/how-to/leak-guards.md)"
         )
     patterns = []
-    for raw in path.read_text().splitlines():
+    for number, raw in enumerate(path.read_text().splitlines(), start=1):
         line = raw.strip()
         if line and not line.startswith("#"):
-            patterns.append(re.compile(line, re.IGNORECASE))
+            try:
+                patterns.append(re.compile(line, re.IGNORECASE))
+            except re.error:
+                # The line number only: the terms are private, and hook output can land in a
+                # Claude session's context. `from None` keeps re's message, which can quote
+                # part of the line, out of any traceback too.
+                raise DenylistInvalid(
+                    f"denylist line {number} is not a valid regular expression — fix it in "
+                    f"{path} (the line itself is not shown)"
+                ) from None
     return patterns
 
 
@@ -76,10 +96,13 @@ def _redact(text: str) -> str:
 def scan_text(source: str, text: str, denylist: list[re.Pattern[str]]) -> list[Finding]:
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):
-        if ALLOW_MARKER in line:
-            continue
-        for kind, pattern in PATTERNS:
-            findings += [Finding(source, number, kind, _redact(m.group(0))) for m in pattern.finditer(line)]
+        # The allow marker excuses a line from the generic patterns only. A denylisted term is
+        # never safe, so the denylist checks every line, marked or not.
+        if ALLOW_MARKER not in line:
+            for kind, pattern in PATTERNS:
+                findings += [
+                    Finding(source, number, kind, _redact(m.group(0))) for m in pattern.finditer(line)
+                ]
         for pattern in denylist:
             findings += [
                 Finding(source, number, "denylisted term", _redact(m.group(0)))
@@ -138,7 +161,7 @@ def run(args: argparse.Namespace) -> int:
         return 2
     try:
         denylist = [] if args.ci else load_denylist(args.denylist)
-    except DenylistMissing as err:
+    except (DenylistMissing, DenylistInvalid) as err:
         print(f"leakcheck: {err}", file=sys.stderr)
         return 2
     if args.staged:
@@ -153,7 +176,7 @@ def run(args: argparse.Namespace) -> int:
     if findings:
         print(
             f"leakcheck: {len(findings)} finding(s) — refused. Fix the text, or mark a deliberate, "
-            f"safe line with '{ALLOW_MARKER}'.",
+            f"safe line with '{ALLOW_MARKER}' (it never excuses a denylisted term).",
             file=sys.stderr,
         )
         return 1

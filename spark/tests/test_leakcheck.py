@@ -17,6 +17,11 @@ def mac(*parts: str) -> str:
     return ":".join(parts)
 
 
+def ipv6(*groups: str) -> str:
+    """IPv6 addresses are built at run time too."""
+    return ":".join(groups)
+
+
 def kinds(text: str, denylist=()) -> list[str]:
     return [f.kind for f in scan_text("t.md", text, list(denylist))]
 
@@ -31,6 +36,37 @@ def test_tailnet_address_is_flagged():
 
 
 @pytest.mark.parametrize(
+    "address",
+    [ip(10, 1, 2, 3), ip(172, 20, 0, 5), ip(192, 168, 77, 5)],
+    ids=["10/8", "172.16/12", "192.168/16"],
+)
+def test_sentence_final_private_ipv4_is_flagged(address):
+    assert kinds(f"The box is at {address}.") == ["private IPv4 address"]
+
+
+def test_sentence_final_tailnet_address_is_flagged():
+    assert kinds(f"The node is {ip(100, 101, 102, 103)}.") == ["tailnet IPv4 address"]
+
+
+def test_tailnet_ipv6_address_is_flagged():
+    # Tailscale's IPv6 range lies inside the unique-local range, so the broader pattern fires too.
+    address = ipv6("fd7a", "115c", "a1e0", "", "5")
+    assert kinds(f"node {address} today") == [
+        "tailnet IPv6 address",
+        "private or link-local IPv6 address",
+    ]
+
+
+@pytest.mark.parametrize(
+    "address",
+    [ipv6("fd12", "3456", "789a", "", "1"), ipv6("fe80", "", "1a2b", "3c4d", "5e6f", "7a8b")],
+    ids=["unique-local", "link-local"],
+)
+def test_private_ipv6_is_flagged(address):
+    assert kinds(f"host {address} today") == ["private or link-local IPv6 address"]
+
+
+@pytest.mark.parametrize(
     "harmless",
     [
         "reserved as .201 on the wired NIC",
@@ -39,6 +75,8 @@ def test_tailnet_address_is_flagged():
         "uv 0.12.18 and CUDA 13.0.2",
         "at 12:34:56 it froze",
         "patterns for MACs and `ts.net` names",
+        f"build {ip(10, 1, 2, 3, 4)} is longer than an address",
+        "link-local fe80::/10 and unique-local fc00::/7 are ranges, not hosts",
     ],
 )
 def test_harmless_text_is_not_flagged(harmless):
@@ -54,6 +92,11 @@ def test_tailnet_hostname_is_flagged():
     assert kinds(f"https://{name}/") == ["tailnet hostname"]
 
 
+def test_bare_tailnet_name_is_flagged():
+    name = "tail" + "1a2b" + ".ts.net"
+    assert kinds(f"the tailnet is {name} today") == ["tailnet hostname"]
+
+
 def test_denylisted_term_is_flagged_case_insensitively():
     deny = [re.compile("secret-project", re.IGNORECASE)]
     assert kinds("about the Secret-Project plan", deny) == ["denylisted term"]
@@ -62,6 +105,13 @@ def test_denylisted_term_is_flagged_case_insensitively():
 def test_allow_marker_skips_a_line():
     text = f"example {ip(192, 168, 0, 1)}  <!-- leakcheck: allow -->"
     assert kinds(text) == []
+
+
+def test_allow_marker_never_excuses_a_denylisted_term():
+    # The marker lets a reviewed line past the generic patterns only; the address stays excused.
+    deny = [re.compile("secret-project", re.IGNORECASE)]
+    text = f"secret-project box at {ip(192, 168, 0, 1)}  <!-- leakcheck: allow -->"
+    assert kinds(text, deny) == ["denylisted term"]
 
 
 def test_excerpt_is_redacted():
@@ -104,3 +154,16 @@ def test_cli_missing_denylist_exits_2(tmp_path, capsys):
     message.write_text("hello\n")
     assert cli.main(["leakcheck", "--message", str(message), "--denylist", str(tmp_path / "none")]) == 2
     assert "denylist not found" in capsys.readouterr().err
+
+
+def test_cli_invalid_denylist_line_exits_2_and_never_shows_the_line(tmp_path, capsys):
+    from spark import cli
+
+    denylist = tmp_path / "denylist"
+    denylist.write_text("first-term\nprivate-name(\n")
+    message = tmp_path / "msg"
+    message.write_text("hello\n")
+    assert cli.main(["leakcheck", "--message", str(message), "--denylist", str(denylist)]) == 2
+    err = capsys.readouterr().err
+    assert "line 2" in err
+    assert "private-name" not in err
