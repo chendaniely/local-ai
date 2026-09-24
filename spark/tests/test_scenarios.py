@@ -34,3 +34,15 @@ def test_verified_needs_a_date(tmp_path):
 def test_broken_front_matter_is_reported_by_name(tmp_path):
     (tmp_path / "s03-doesnt-fit.md").write_text("no front matter here\n")
     assert any("s03-doesnt-fit.md" in p for p in check_scenarios(tmp_path))
+
+
+def test_invalid_yaml_front_matter_is_reported_by_name(tmp_path):
+    (tmp_path / "s01-morning-start.md").write_text(GOOD.replace('Morning start"', "Morning start"))
+    problems = check_scenarios(tmp_path)
+    assert any("s01-morning-start.md" in p and "not valid YAML" in p for p in problems)
+
+
+def test_front_matter_that_is_not_a_mapping_is_reported_by_name(tmp_path):
+    (tmp_path / "s01-morning-start.md").write_text("---\n- S01\n- planned\n---\n\n**Situation.** x\n")
+    problems = check_scenarios(tmp_path)
+    assert any("s01-morning-start.md" in p and "needs YAML front matter" in p for p in problems)

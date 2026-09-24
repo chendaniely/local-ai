@@ -20,12 +20,19 @@ _NAME = _re.compile(r"^s(\d{2})-[a-z0-9-]+\.md$")
 
 
 def _front_matter(text: str) -> dict | None:
+    """The page's front matter, or None when it has none or it isn't a mapping.
+
+    Raises yaml.YAMLError when the front matter isn't valid YAML.
+    """
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---", 4)
     if end == -1:
         return None
-    return _yaml.safe_load(text[4:end]) or {}
+    meta = _yaml.safe_load(text[4:end])
+    if meta is None:
+        return {}
+    return meta if isinstance(meta, dict) else None
 
 
 def check_scenarios(directory: Path) -> list[str]:
@@ -33,7 +40,12 @@ def check_scenarios(directory: Path) -> list[str]:
     for path in sorted(Path(directory).glob("s[0-9][0-9]-*.md")):
         name = path.name
         match = _NAME.match(name)
-        meta = _front_matter(path.read_text())
+        try:
+            meta = _front_matter(path.read_text())
+        except _yaml.YAMLError as err:
+            problem = getattr(err, "problem", None) or "the parser gave no detail"
+            problems.append(f"{name}: front matter is not valid YAML ({problem})")
+            continue
         if match is None or meta is None:
             problems.append(f"{name}: needs YAML front matter and an sNN-slug.md name")
             continue
