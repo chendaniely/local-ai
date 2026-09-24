@@ -1576,8 +1576,10 @@ git commit -m "ci(repo): 🤖 add tests, leak scan, shellcheck and site build; m
 **Interfaces:**
 - Produces on the Spark: groups `spark`, `spark-users`, `spark-admin`; system user `spark`
   (video, render, spark-users — **not** docker, which is root-equivalent); user `agent` (video,
-  render, spark-users — never docker, sudo or spark-admin); Dan in `spark-admin`, `spark-users`;
-  directories `/opt/local-ai/{app,bin,etc}` (spark:spark-admin 2775), `/etc/local-ai`
+  render, spark-users — never docker, sudo or spark-admin); Dan in `spark-admin`, `spark-users`, `adm`;
+  directories `/opt/local-ai/{app,bin,etc,python}` (root:spark-admin 2775 — Dan deploys there; the
+  `spark` user can only read, so a compromised engine can't rewrite the units or the Compose file that
+  root runs), `/etc/local-ai`
   (root:spark-admin 0750), `/etc/local-ai/secrets` (root:spark 0750), `/var/lib/local-ai` (spark,
   0751) with `hf/`, `open-webui/`, `searxng/` (0750) and `brake/` (spark:spark-admin 2770 — Dan can
   release a brake hold, `agent` can't); `/home/agent/work`; polkit rule for `local-ai-*` units.
@@ -1639,6 +1641,11 @@ def test_the_engine_user_never_joins_docker():
     for line in dry_run():
         if "usermod" in line and line.rstrip().endswith(" spark"):
             assert "docker" not in line
+
+
+def test_the_engine_user_cannot_change_what_root_runs():
+    line = next(line for line in dry_run() if "install -d" in line and "/opt/local-ai/etc" in line)
+    assert "-o root -g spark-admin" in line
 
 
 @pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")
@@ -1732,13 +1739,16 @@ users_and_groups() {
   # as spark. Containers are started by root-owned units instead (Phase 1).
   run usermod -aG video,render,spark-users spark
   run usermod -aG video,render,spark-users agent
-  run usermod -aG spark-admin,spark-users "$ADMIN_USER"
+  # adm: read every service's journal, so `make logs` works without sudo.
+  run usermod -aG spark-admin,spark-users,adm "$ADMIN_USER"
   run chmod 0700 "/home/$ADMIN_USER" /home/agent
 }
 
 directories() {
   say "directories"
-  run install -d -o spark -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc
+  # Code and config are root-owned and group-writable by spark-admin. spark only reads them: it runs
+  # the engines, and root runs the units and the Compose file that live in etc/.
+  run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
   run install -d -o root -g spark-admin -m 0750 /etc/local-ai
   run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
   run install -d -o spark -g spark -m 0751 /var/lib/local-ai
@@ -1991,8 +2001,9 @@ Expected: "leak-check hooks on for this clone".
 
 - [ ] **Step 2: Toolchain facts**
 
-Run: `uv --version && /usr/local/cuda/bin/nvcc --version | tail -1 && docker --version && (cmake --version | head -1 || echo "cmake: bootstrap installs it")`
-Expected: uv 0.12.18; CUDA 13.x; Docker present. If `nvcc` isn't under `/usr/local/cuda/bin`, find it
+Run: `uv --version && /usr/local/cuda/bin/nvcc --version | tail -1 && docker --version && gh --version | head -1 && (cmake --version | head -1 || echo "cmake: bootstrap installs it")`
+Expected: uv 0.12.18; CUDA 13.x; Docker present; gh 2.45.0 (Ubuntu's archive — enough for
+`gh auth login` and pushing). If `nvcc` isn't under `/usr/local/cuda/bin`, find it
 with `ls -d /usr/local/cuda*` and note the path — Phase 1's engine builds need it.
 
 - [ ] **Step 3: Inventory what holds memory**
@@ -2069,7 +2080,8 @@ ls /etc/local-ai/secrets                     # "Permission denied" — Dan's ses
 tailscale status --self --json | jq -r '.Self.Online'   # true
 ```
 
-Expected: every line as commented; `/home/dan` and `/home/agent` are `700`.
+Expected: every line as commented; `/home/dan` and `/home/agent` are `700`; `/opt/local-ai` is
+`2775 root:spark-admin`.
 earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
 score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the
 first victims regardless.
