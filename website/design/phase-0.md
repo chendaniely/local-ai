@@ -666,6 +666,10 @@ if ! command -v gitleaks >/dev/null 2>&1; then
   echo "leak guard: gitleaks is not installed, so this commit is refused (website/how-to/leak-guards.md)." >&2
   exit 1
 fi
+if ! gitleaks git --help >/dev/null 2>&1; then
+  echo "leak guard: this gitleaks has no 'git' command — it needs 8.19 or later (Ubuntu's archive ships 8.16); see website/how-to/leak-guards.md." >&2
+  exit 1
+fi
 gitleaks git --pre-commit --staged --redact --no-banner --config "$root/.githooks/gitleaks.toml" "$root"
 exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --staged
 ```
@@ -679,6 +683,10 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "leak guard: gitleaks is not installed, so this commit is refused (website/how-to/leak-guards.md)." >&2
+  exit 1
+fi
+if ! gitleaks git --help >/dev/null 2>&1; then
+  echo "leak guard: this gitleaks has no 'git' command — it needs 8.19 or later (Ubuntu's archive ships 8.16); see website/how-to/leak-guards.md." >&2
   exit 1
 fi
 gitleaks stdin --redact --no-banner --config "$root/.githooks/gitleaks.toml" < "$1"
@@ -1859,8 +1867,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   (`listing: contents: "*.md"`, `type: table`, fields `title`, `description`).
 
 - [ ] **Step 2: `how-to/leak-guards.md`** — install gitleaks and shellcheck
-  (`brew install gitleaks shellcheck` on the Mac; on the Spark, the gitleaks Linux arm64 release
-  tarball into `~/.local/bin`, checked against the release's `checksums.txt`); create
+  (`brew install gitleaks shellcheck` on the Mac; on the Spark, `gitleaks_8.30.1_linux_arm64.tar.gz` from the v8.30.1 release, checked against
+  `gitleaks_8.30.1_checksums.txt`, installed with `sudo install -m 0755 gitleaks /usr/local/bin/` — Ubuntu's
+  archive copy is 8.16, too old for the hooks, and `/usr/local/bin` wins in every shell); create
   `~/.config/local-ai/denylist` by hand on **each** machine — one case-insensitive regex per line for
   every term that must never appear in this public repo (the tailnet's name, the NAS's names, the LAN
   subnet prefix, anything else private); `make hooks`; the leak drill from Task 3 Step 7; what to do
@@ -1975,8 +1984,9 @@ git clone https://github.com/chendaniely/local-ai ~/git/hub/local-ai
 cd ~/git/hub/local-ai && git switch phase-0
 ```
 
-Install gitleaks per `website/how-to/leak-guards.md` (Linux arm64 tarball, checksum-verified, into
-`~/.local/bin`). Dan creates the Spark's `~/.config/local-ai/denylist`. Then `make hooks`.
+gitleaks: Ubuntu's archive copy (8.16.0) is too old for the hooks, so **Dan** installs the 8.30.1
+release binary to `/usr/local/bin` per `website/how-to/leak-guards.md` (it needs sudo); check with
+`command -v gitleaks` → `/usr/local/bin/gitleaks` and `gitleaks version` → `8.30.1`. Dan creates the Spark's `~/.config/local-ai/denylist`. Then `make hooks`.
 Expected: "leak-check hooks on for this clone".
 
 - [ ] **Step 2: Toolchain facts**
