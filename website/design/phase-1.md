@@ -1284,7 +1284,7 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
   `stack/templates/local-ai-pull.service`, `stack/templates/compose.yaml`,
   `stack/templates/searxng-settings.yml`, `spark/src/spark/render.py`, `spark/tests/test_render.py`,
   `spark/tests/fixtures/versions.yaml`
-- Modify: `spark/src/spark/versions.py` (optional `image` field, commit pins),
+- Modify: `spark/src/spark/versions.py` (optional `image` field, commit pins, a required version),
   `spark/tests/test_versions.py`, `stack/versions.yaml`, `spark/src/spark/cli.py`
 
 **Interfaces:**
@@ -1297,7 +1297,7 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
   `SPARK_BIN="/opt/local-ai/app/.venv/bin/spark"`,
   `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`.
 
-- [ ] **Step 1: `versions.py` gains an optional image name and commit pins** — add
+- [ ] **Step 1: `versions.py` gains an optional image name, commit pins and a required version** — add
   `image: str | None = None` as the last field of `Component` and `image=raw.get("image")` in
   `load_versions`. A source build (whisper.cpp) is pinned by the commit it was built from, so widen
   the pin pattern to `PIN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")`, with the error
@@ -1309,6 +1309,23 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
 def test_a_source_build_is_pinned_by_its_commit(tmp_path):
     pinned = GOOD.replace("pin: null\n    deployed: true", "pin: git:" + "a" * 40 + "\n    deployed: true", 1)
     assert load_versions(write(tmp_path, pinned))["llama-swap"].pin == "git:" + "a" * 40
+```
+
+  Every entry must also have a version. Phase 0's review found that an entry without `version:`
+  makes `load_versions` fail with a bare `KeyError` from `raw["version"]`, not a `VersionsError`
+  naming the component. Put this at the top of the loop in `load_versions`:
+
+```python
+        if raw.get("version") in (None, ""):
+            raise VersionsError(f"{name}: version is required")
+```
+
+  and add to `spark/tests/test_versions.py` a test that removes llama-swap's `version:` line:
+
+```python
+def test_rejects_a_component_without_a_version(tmp_path):
+    with pytest.raises(VersionsError, match="version"):
+        load_versions(write(tmp_path, GOOD.replace("    version: v257\n", "", 1)))
 ```
 
   Update `stack/versions.yaml`:
