@@ -4,7 +4,7 @@
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint
+.PHONY: help test hooks lint docs
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -20,3 +20,7 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your de
 
 lint: ## Shellcheck the hooks and host scripts
 	shellcheck .githooks/pre-commit .githooks/commit-msg
+
+docs: ## Regenerate the Stack page, check scenario pages, render the site
+	$(SPARK) docs stack --write
+	quarto render website

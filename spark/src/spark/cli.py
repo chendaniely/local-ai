@@ -15,6 +15,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import leakcheck
 
     leakcheck.register(subparsers)
+    from spark import docs
+
+    docs.register(subparsers)
     return parser
 
 
