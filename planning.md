@@ -214,6 +214,8 @@ wrong arch. Budget 15–25 min per build. Prefer NGC containers where one exists
 - Reach over Tailscale, WireGuard, or the home LAN — whichever is up, never relied on for auth;
   per-app virtual keys for attribution.
 - The repo is **public**; it carries no addresses, identifiers or credentials (§7 #7).
+- Build the **harness path first** — pi on `heartsbane` against a model served from the Spark —
+  not the capability path (§9).
 
 **Open — see §7.**
 
@@ -225,8 +227,9 @@ wrong arch. Budget 15–25 min per build. Prefer NGC containers where one exists
    it is a **16 GB M1 Pro** (§8), so the fallback sizing assumption holds: "keeps working on a
    plane," not a real substitute. Still open is whether a phone, tablet or second machine counts
    as a real client, since none of them can host a fallback at all.
-2. **Which gets built first** — the harness path (OpenCode/pi against the Spark) or the
-   capability path (ComfyUI / transcription via MCP)? They share almost no code.
+2. ~~**Which gets built first?**~~ — **decided: the harness path.** pi on `heartsbane` talking to
+   a model served from the Spark. The capability path (ComfyUI, transcription via MCP) waits.
+   See §9.
 3. **One LiteLLM or two?** (§5.4)
 4. **Model swapping strategy?** (§5.1) This is the decision that shapes everything else.
 5. **Where do model weights live** — local NVMe on the Spark, or the Synology NAS? Sharpened by
@@ -270,6 +273,8 @@ How things actually stand, as opposed to how they are designed. Update as it cha
   was bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong.
   Bounce with `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`, run
   from the *other* interface so it doesn't sever the session.
+- **Pending:** the wired NIC has not yet picked up `.201` — it is still holding an older pool
+  address. Bounce the interface from the Wi-Fi side, or reboot.
 - **Not on the tailnet.** Reachable only over the home LAN today — so of the three paths in §2,
   exactly one is live, and it is the one with no ACL in front of it. Sharpens §5.5.
 
@@ -285,3 +290,41 @@ How things actually stand, as opposed to how they are designed. Update as it cha
   `brightroar` as a remote location, which installs its own daemon and runtime on the Spark.
 - **Unknown:** whether NVIDIA Sync establishes its own connection path to the Spark. If it does,
   that is a fourth reach path carrying its own auth story (§5.5).
+
+---
+
+## 9. Next up — first model serving
+
+**Goal:** a local model running on `brightroar`, reachable from **pi** on `heartsbane` over the
+home LAN. This is the first thing actually built in this repo.
+
+Treat it as **architectural**, not a quick install. Whatever is stood up first implicitly settles
+the engine, the model, whether anything swaps, and where LiteLLM lives — installing Ollama and
+pointing pi at it would quietly answer §7 #4 and give up goal #3.
+
+### The choice to settle first
+
+| Option | What it is | What it defers |
+|---|---|---|
+| **One resident daily driver** | One model sized to leave headroom, served, with pi pointed at it. §5.1's own "realistic middle". | Swapping (§7 #4), without painting into a corner. |
+| **Prove the wire** | Fastest path to pi getting tokens back; explicitly throwaway. | Most things — but answers §7 #6 with measured tok/s instead of estimates. |
+| **Durable setup now** | Decide swapping, engine order and LiteLLM topology up front; build once. | Nothing, but nothing is usable until it is all done. |
+
+### Constraints that bear directly on this
+
+- **One engine at a time** (§5.1). Whatever is stood up has to be able to get out of the way.
+- **~105–110 GiB usable**, and RAM *is* VRAM — a browser or desktop session on the box eats into
+  the same pool.
+- **1 TB of disk**, shared by weights, the HF cache and container images (§7 #5).
+- **Tens of tok/s is the realistic band** (§5.3). pi is agentic and token-hungry, so a number that
+  looks fine in a chat demo may not survive a tool loop.
+- **Auth from the start** (§5.5). The LAN is currently the only reach path and has no ACL.
+- **`sm_121`** for anything built from source (§5.6).
+
+### Do before building
+
+- Bounce the wired interface so it picks up `.201` (§8).
+- Check what DGX OS already ships or has running — an idle engine holding memory is exactly the
+  §5.1 failure mode, and it is easier to find now than to debug later.
+- Confirm how `pi` expects to be pointed at an OpenAI-compatible endpoint (§4: it is CLI-shaped,
+  not MCP-shaped).

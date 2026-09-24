@@ -10,9 +10,11 @@ box. GB10 silicon is identical, so all the GB10 material applies; anything vendo
 (recovery media, firmware, support) comes from GIGABYTE, not NVIDIA. Full spec:
 [`README.md`](README.md#hardware).
 
-**Read [`planning.md`](planning.md) before proposing any architecture.** It holds the goals,
-constraints, what's already decided, and seven open questions (§7).
-[`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) holds the GB10 hardware facts.
+**Read [`planning.md`](planning.md) before proposing any architecture.** It holds the goals, the
+constraints, what is already decided (§6), the remaining open questions (§7), the current state of
+the box (§8), and the work in flight (§9 — first model serving, which is where to start).
+[`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) holds the GB10 hardware facts, and
+[`changelog.md`](changelog.md) logs what changed on the machine and when.
 
 ## Non-negotiable constraints
 
