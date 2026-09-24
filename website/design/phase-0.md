@@ -2050,6 +2050,9 @@ systemctl get-default                        # multi-user.target
 free -g                                      # the headless baseline
 systemctl is-active earlyoom                 # active
 grep '^EARLYOOM_ARGS' /etc/default/earlyoom  # matches stack/host/earlyoom.default
+journalctl -u earlyoom -b --no-pager | grep -i prefer   # regex received with no quotes: ^(llama-server|whisper-server|VLLM::EngineCor)$
+swapon --show                                # note whether there is swap (-s 100,100 ignores it either way)
+systemctl is-active systemd-oomd             # if active: two OOM killers — decide in Task 12's review
 id agent                                     # no docker, sudo or spark-admin
 stat -c '%a %U:%G %n' /home/dan /home/agent /etc/local-ai/secrets /opt/local-ai
 ls /etc/local-ai/secrets                     # "Permission denied" — Dan's sessions can't list secrets
@@ -2057,6 +2060,9 @@ tailscale status --self --json | jq -r '.Self.Online'   # true
 ```
 
 Expected: every line as commented; `/home/dan` and `/home/agent` are `700`.
+earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
+score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the
+first victims regardless.
 
 - [ ] **Step 2: earlyoom's victim choice, without killing anything** — a **[Dan]** check (it needs
   sudo). Dan runs, for about five seconds, then Ctrl-C:
