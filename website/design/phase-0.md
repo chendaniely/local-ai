@@ -311,7 +311,7 @@ def kinds(text: str, denylist=()) -> list[str]:
     return [f.kind for f in scan_text("t.md", text, list(denylist))]
 
 
-@pytest.mark.parametrize("address", [ip(10, 1, 2, 3), ip(172, 20, 0, 5), ip(192, 168, 1, 201)])
+@pytest.mark.parametrize("address", [ip(10, 1, 2, 3), ip(172, 20, 0, 5), ip(192, 168, 77, 5)])
 def test_private_ipv4_is_flagged(address):
     assert kinds(f"server at {address} today") == ["private IPv4 address"]
 
