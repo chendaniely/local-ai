@@ -109,13 +109,13 @@ In order of how much they constrain the design:
 | **`stack/models.yaml`** (+ gitignored `models.local.yaml` for trials) | repo | real name, roles, capability, resident, engine + pin reference, source@revision, context, `parallel`, `cache_ram`, footprint {peak, steady, config hash}, cold start, idle policy, key access groups. |
 | **`stack/versions.yaml`** | repo | every pin (image digest; tag + sha256) plus docs URL, context7 ID, changelog and advisory feed → generates the site's Stack page and the doc pointers in `CLAUDE.md`. |
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
-| **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap); the gate absorbs it in Phase 2. |
+| **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
 | **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
-| **Open WebUI** | Compose, `:main-slim`, minor version pinned, 127.0.0.1 → `tailscale serve` | SQLite; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
+| **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
@@ -149,8 +149,11 @@ In order of how much they constrain the design:
 ### Users, access and security
 
 - **Three identities.** `dan` — admin, Positron, the control socket. `spark` — the service user that
-  runs the gate, llama-swap and the containers, and owns the models, the Hugging Face cache and
-  state. `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
+  runs the gate and llama-swap (so every model engine), and owns the models, the Hugging Face cache
+  and state. It is deliberately **not** in the `docker` group, because Docker access is
+  root-equivalent; containers start from root-owned units instead. Dan's own account is effectively
+  root-capable (sudo, and `spark-admin` can change what the `local-ai-*` units run), so the
+  isolation boundary on this box is between Dan and `agent`. `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
   writes its repos and the NAS work folders; its own key; no GitHub credentials.
 - **Secrets.** Never `EnvironmentFile=~/.secrets` — systemd ignores `export` lines and has been
   reported logging them with their values. Dan writes one 0600 `KEY=value` file per service, outside
@@ -431,8 +434,8 @@ Each item gets its own design pass when its turn comes.
   llama.cpp first.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
-  whisper.cpp; NeMo boosting and pyannote on aarch64; Open WebUI slim on arm64 (and whether web search
-  needs a vector store — fallback: bypass embedding); pi's crash range; the tailnet's route home; the
+  whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
+  base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; the tailnet's route home; the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
@@ -441,6 +444,11 @@ Each item gets its own design pass when its turn comes.
 ## Revisions
 
 - **2026-09-23** — Written from the requirements interview; replaces `planning.md`.
+- **2026-09-23** — While planning Phases 0–1: the `spark` user stays out of the `docker` group
+  (containers start from root-owned units; the Dan ↔ `agent` boundary is the one that matters);
+  Open WebUI uses the standard image, since the slim build now requires Postgres + pgvector; Phase 1
+  adds a minimal launch check beside the minimal brake; the brake's hold folder is writable by
+  `spark-admin` only, so Dan can release a hold and `agent` can't.
 
 ## Sources
 
