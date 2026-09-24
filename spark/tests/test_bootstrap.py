@@ -37,17 +37,24 @@ def test_ssh_is_allowed_before_the_firewall_turns_on():
     assert allow < enable
 
 
+def usermod_lines(user: str) -> list[str]:
+    return [line for line in dry_run() if "usermod" in line and line.rstrip().endswith(f" {user}")]
+
+
 def test_agent_never_gets_docker_sudo_or_admin():
-    for line in dry_run():
-        if "usermod" in line and line.rstrip().endswith(" agent"):
-            for forbidden in ("docker", "sudo", "spark-admin"):
-                assert forbidden not in line
+    lines = usermod_lines("agent")
+    # No matching line would make this test check nothing, so a format change must fail it.
+    assert lines, "no usermod line for agent in the dry run"
+    for line in lines:
+        for forbidden in ("docker", "sudo", "spark-admin"):
+            assert forbidden not in line
 
 
 def test_the_engine_user_never_joins_docker():
-    for line in dry_run():
-        if "usermod" in line and line.rstrip().endswith(" spark"):
-            assert "docker" not in line
+    lines = usermod_lines("spark")
+    assert lines, "no usermod line for spark in the dry run"
+    for line in lines:
+        assert "docker" not in line
 
 
 def test_the_engine_user_cannot_change_what_root_runs():
