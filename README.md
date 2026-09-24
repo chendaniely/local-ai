@@ -146,5 +146,25 @@ node, untested).
   `git add`. Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **No secrets in this repo.** API keys are referenced by environment variable, expanded at call
   time. Real values live in `~/.secrets` and are never committed or printed.
+- **Docs must be true, and get fixed in the same change that makes them wrong.** This repo is
+  mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
+  Correct rather than delete, and keep unverified things marked unverified. Full rule in
+  [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
+
+## My environment (personal)
+
+Nothing in this section is part of the stack or reproducible by anyone else. It records where *my*
+own material lives, so that future me — and future agent sessions — can find it.
+
+**Obsidian vault.** I keep a personal Zettelkasten in Obsidian: no git remote, synced across my
+machines with Synology Drive. The local-AI material this repo deliberately cannot hold lives there,
+in `zettelkasten/local-ai/`, entry note `brightroar Local AI Stack.md` — the full factory hostname,
+both NIC MACs, the full LAN and tailnet addresses, the serial/service tag, the purchase record, and
+the accounts created during first-time setup.
+
+⚠️ **The vault is not a secrets store either.** Credentials are recorded there by reference only:
+which secret exists, where its value lives, and the variable it is referenced as — never a value,
+never a masked prefix. It syncs to a NAS and across several machines, so a leaked vault must not be
+a leaked credential. Full rule in [`CLAUDE.md`](CLAUDE.md).

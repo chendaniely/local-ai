@@ -52,9 +52,53 @@ Never write into this repo:
 Internal hostnames (`brightroar`, `heartsbane`) and the GB10 hardware facts are deliberate
 exceptions — they are documented because the repo is useless without them.
 
+**Where that material goes instead.** Banning it here does not make it unnecessary — the MACs, the
+full addresses, the serial and the purchase record still have to be written down somewhere. They
+live in the Obsidian vault, in `zettelkasten/local-ai/`. The entry note is
+`brightroar Local AI Stack.md`, which records the split explicitly — what belongs in this repo
+versus what belongs there — and holds the slots for the full factory hostname, both NIC MACs, the
+full LAN and tailnet addresses, the serial/service tag, the purchase record, and the accounts
+created during first-time setup. That vault has no git remote.
+
+⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
+vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value
+lives, and the variable it is referenced as; never the value, never a masked prefix. The vault
+syncs to a NAS and across several machines, so a leaked vault must not be a leaked credential.
+
 **If something sensitive does get pushed:** rotate the credential *first* — that is the only step
 that actually closes the exposure — then rewrite history with `git filter-repo` and force-push.
 Treat the rewrite as cleanup, not remediation; assume the value is already compromised.
+
+## ⛔ Docs must be true
+
+This repo is **almost entirely documentation** — right now the docs *are* the product, not a
+description of one. That makes a wrong doc worse than a missing one: it gets believed, acted on,
+and copied into the next decision before anyone checks it. The damage is never local, because
+every file here feeds the next.
+
+**Fix the doc in the same change that makes it wrong** — not "later", not in a follow-up commit.
+If a change makes a sentence untrue, correcting that sentence is part of the change, and the
+change is not done until it is.
+
+These files are not independent. Known sync obligations:
+
+| When this changes | This must change with it |
+|---|---|
+| Anything about the box — hostname, network, installs, OS | `changelog.md` gains the dated entry **and** `planning.md` §8 gains the new *current* state |
+| An open question gets answered | `planning.md` §7 marks it resolved **and** §6 gains the decision |
+| A hardware fact is corrected | `README.md` §Hardware, plus any `planning.md` §5 number derived from it |
+| A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
+| A rule changes | This file, **and** the `README.md` §Conventions summary of it |
+| Where private material lives | This file, `README.md` §My environment, and the vault's own entry note |
+
+**Correct, don't delete.** Superseded material gets annotated with what replaced it and when. A
+dated correction is information — it records what was believed and why it was wrong. A silent
+deletion destroys that and invites the same mistake again.
+
+**Keep unverified things marked unverified.** `README.md`'s factory-reset procedure is transcribed
+from NVIDIA's docs and flagged *not yet performed on this box*; the GIGABYTE route is flagged
+*reported but not verified*. Those markers are load-bearing. Never quietly upgrade one — promote it
+only when something was actually done or measured, same as `[adapted]` → `[verified]`.
 
 ## GB10 gotchas that cause wrong work
 
