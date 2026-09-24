@@ -1,8 +1,8 @@
 # local-ai
 
 Personal local-AI stack for a **single DGX Spark (GB10)**, reached from a MacBook or other devices
-over Tailscale, WireGuard, or the home LAN.
-Planning stage as of 2026-09-23 — almost no code yet; the substance is in the two docs below.
+over Tailscale (the primary path), the home LAN, or WireGuard (for a device on another tailnet).
+Design settled on 2026-09-23; the build starts with Phase 0 of the plan. Almost no code yet.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -10,9 +10,11 @@ box. GB10 silicon is identical, so all the GB10 material applies; anything vendo
 (recovery media, firmware, support) comes from GIGABYTE, not NVIDIA. Full spec:
 [`README.md`](README.md#hardware).
 
-**Read [`planning.md`](planning.md) before proposing any architecture.** It holds the goals, the
-constraints, what is already decided (§6), the remaining open questions (§7), the current state of
-the box (§8), and the work in flight (§9 — first model serving, which is where to start).
+**Read [the plan](website/design/plan.md) before proposing any architecture.** It holds the goals,
+the constraints, the decisions with Dan's reasoning, the design, the phases, and the open items and
+risks; its Revisions list records every change to it. It replaced `planning.md`, the initial plan,
+on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`).
+[`README.md`](README.md#current-state) §Current state records how the machines actually stand,
 [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) holds the GB10 hardware facts, and
 [`changelog.md`](changelog.md) logs what changed on the machine and when.
 
@@ -20,7 +22,8 @@ the box (§8), and the work in flight (§9 — first model serving, which is whe
 
 - **Claude Code and Claude Desktop stay untouched.** No gateway, proxy, `ANTHROPIC_BASE_URL`, or
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
-  OpenCode / pi / Hermes and for my own apps. Violating this defeats the repo's primary goal.
+  coding harnesses (pi, OpenCode), my own pipelines and apps, and a web UI. Violating this defeats
+  the repo's primary goal.
 - **One Spark, not two.** The reference repo is a 2-node cluster. Do **not** apply its RoCE, NCCL,
   Ray, or `TP=2` material here — none of it can affect a single node. `cosmicbboy-local-ai.md` §H
   lists exactly what's excluded and why.
@@ -60,6 +63,11 @@ versus what belongs there — and holds the slots for the full factory hostname,
 full LAN and tailnet addresses, the serial/service tag, the purchase record, and the accounts
 created during first-time setup. That vault has no git remote.
 
+The design adds a few more private files from Phase 0 on, all outside the repo: one secret file per
+service on the Spark, a private values file holding the NAS and LAN addresses the configs need, the
+denylist the leak-check hooks read, and the Tailscale ACL policy. The vault's entry note records
+each one when it is created.
+
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value
 lives, and the variable it is referenced as; never the value, never a masked prefix. The vault
@@ -84,9 +92,11 @@ These files are not independent. Known sync obligations:
 
 | When this changes | This must change with it |
 |---|---|
-| Anything about the box — hostname, network, installs, OS | `changelog.md` gains the dated entry **and** `planning.md` §8 gains the new *current* state |
-| An open question gets answered | `planning.md` §7 marks it resolved **and** §6 gains the decision |
-| A hardware fact is corrected | `README.md` §Hardware, plus any `planning.md` §5 number derived from it |
+| Anything about the box — hostname, network, installs, OS | `changelog.md` gains the dated entry **and** `README.md` §Current state gains the new *current* state |
+| An open item gets settled | the plan's Requirements or Design gain the decision, its "Open items and risks" entry is marked resolved with the date, **and** a Revisions line records it |
+| A hardware fact is corrected | `README.md` §Hardware, plus any number in the plan derived from it |
+| The stack's behaviour changes | its page under `website/scenarios/` **and** its `spark doctor` check, in the same commit |
+| Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |
 | Where private material lives | This file, `README.md` §My environment, and the vault's own entry note |
@@ -106,15 +116,25 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   reports `[N/A]` for memory.
 - **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over
   ~110 GB do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path.
+  The plan budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be
+  measured) and keeps ≥24 GiB free on admission.
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
-  single-digit large models on disk. Don't plan a model zoo; see `planning.md` §7 #5.
-- **One memory pool means one engine at a time.** Don't design for vLLM + Ollama + ComfyUI
-  resident simultaneously. See `planning.md` §5.1 — the swapping strategy is still undecided and
-  it cascades into everything else.
+  single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
+  cold storage on the Synology in its backlog.
+- **One memory pool — nothing loads unless it fits.** Decided 2026-09-23: llama-swap supervises the
+  engines and `spark-gate` admits a load only if it fits in free memory; it never evicts, never
+  substitutes, and every refusal explains itself (the plan, *Admission and memory rules*). Don't
+  design anything that loads models around the gate.
+- **Overcommitting memory can hard-freeze the box** — no OOM kill, just a power cycle (reported;
+  open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
+  them casually.
+- **Never reload llama-swap while models are loaded** — in v257 a config reload stops every engine.
+  Changes go through `spark apply`, which waits for idle or asks.
 - **Tens of tok/s is the realistic band** on a large MoE. Don't promise more: the reference repo's
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
-  `TORCH_CUDA_ARCH_LIST=12.1a`, or they silently target the wrong arch.
+  `TORCH_CUDA_ARCH_LIST=12.1a`, or they silently target the wrong arch. NVIDIA's own llama.cpp
+  playbook uses `121a-real`; which is right gets verified in Phase 1.
 
 ## Conventions
 
@@ -123,15 +143,38 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   promote `[adapted]` → `[verified]` without an actual measurement on this box.
 - Reference repo: <https://github.com/cosmicbboy/local-ai> — Niels Bantilan's 2× Spark stack, read
   at commit `d32fab0`.
-- Work here is self-contained (no external stakeholder, no deadline), so it tracks locally in
-  `planning.md` — not YouTrack.
+- Work here is self-contained (no external stakeholder, no deadline), so it tracks locally in the
+  plan (`website/design/plan.md`) — not YouTrack.
+
+## Building it
+
+- **Work runs where it belongs.** On `heartsbane` (the Mac): code with unit tests, config templates
+  and render tests, the Makefile, leak hooks, CI, the docs site, Mac clients. On `brightroar` (a
+  Claude Code session as Dan, in tmux): anything touching the GPU, memory, systemd or Docker,
+  including `spark doctor`. Dan: sudo, interactive logins, secret values, the Synology's settings.
+  Every task in an implementation plan is labelled **[Mac]**, **[Spark]** or **[Dan]**; from the Mac,
+  touch the Spark only with read-only SSH checks Dan has OK'd.
+- **One session at a time.** The active session owns the phase branch; at a switch it commits, the
+  branch is pushed with Dan's OK, and the other machine pulls.
+- **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase
+  merges to `main` after its council review and Dan's OK. **Push only with Dan's explicit OK.**
+- **Check work often, then look forward.** Each task ends with its tests plus a check against the
+  plan and its scenarios; each phase ends with a council review. If anything learned affects a later
+  step, update the plan (and its Revisions) before continuing.
+- **Python through uv, the `Makefile` as the front door.** No system Python, no pip; the Makefile
+  calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata.
+- **The `agent` user never gets credentials** — no sudo, no docker group, no GitHub token, no access
+  to Dan's home or `~/.secrets`.
+- **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
+  (Phase 0).
 
 ## Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): description`.
 
 Types in use here: `docs`, `chore`, `feat`, `fix`, `refactor`, `build`, `ci`. Scope is the area
-touched — `planning`, `readme`, `changelog`, `machine`, `repo`.
+touched — `plan`, `readme`, `changelog`, `machine`, `repo`, and, as code arrives, `stack`, `spark`,
+`clients`, `website`. (`planning` was the scope for the retired `planning.md`.)
 
 **A commit written by an AI/LLM carries a 🤖 immediately after the `type(scope):` prefix:**
 

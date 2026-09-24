@@ -1,7 +1,7 @@
 # Machine changelog — `brightroar`
 
-What changed on the box, newest first. [`planning.md`](planning.md) §8 records the *current*
-state; this records how it got there.
+What changed on the box, newest first. [`README.md`](README.md#current-state) §Current state
+records the *current* state; this records how it got there.
 
 > This file is public. Per [`CLAUDE.md`](CLAUDE.md): no addresses beyond a last octet, no MACs,
 > no serials, no credentials. Paste command lines, not their output.
@@ -58,14 +58,15 @@ This does **not** conflict with the repo's first constraint. That rule protects 
 on `heartsbane`, which stays pointed straight at Anthropic with nothing in the path; a second
 client on another machine, on the same subscription, changes nothing about it. The distinction
 that matters: **Claude Code on the Spark talking to Anthropic is just a client.** Claude Code
-pointed at a *local* model is the separate, deliberate mode in [`planning.md`](planning.md) §3,
-and gets its own command so the default is never altered.
+pointed at a *local* model is the separate, deliberate mode that [the plan](website/design/plan.md)
+parks as `claude-dgx`, and would get its own command so the default is never altered.
 
 **Google Chrome** installed on the Spark through the DGX Dashboard web interface.
 
 Worth flagging for this box specifically: **RAM is VRAM here.** A browser with a few tabs open
-holds 1–3 GiB of the same unified pool that model weights and KV cache come out of (§5.1 in
-[`planning.md`](planning.md)). On an ordinary server nobody would think about it; on GB10 it is
+holds 1–3 GiB of the same unified pool that model weights and KV cache come out of (see the
+plan's [admission and memory rules](website/design/plan.md#admission-and-memory-rules)). On an
+ordinary server nobody would think about it; on GB10 it is
 worth closing before a large model load, and worth checking with `free -g` if a model that should
 fit suddenly does not. The same goes for any desktop session left running.
 
@@ -94,11 +95,17 @@ package.
 
 **On `heartsbane`, not the Spark** — recorded because it was the same day's work: NVIDIA Sync and
 NVIDIA AI Workbench installed. Workbench's prompt to set up a container runtime concerned its
-local macOS context, which has no NVIDIA GPU behind it. Details in `planning.md` §8.
+local macOS context, which has no NVIDIA GPU behind it. Details in
+[`README.md`](README.md#current-state) §Current state.
 
 ### Open threads from this day
 
 - Join the tailnet; today the LAN is the only reach path, and it has no ACL in front of it.
-- Confirm whether NVIDIA Sync establishes its own connection path (`planning.md` §8).
-- Decide the model-swapping strategy *before* installing any inference engine
-  (`planning.md` §5.1) — it is the decision everything else hangs off.
+  Scheduled for Phase 0 of the plan.
+- Confirm whether NVIDIA Sync establishes its own connection path. *Answered from NVIDIA's
+  documentation, 2026-09-23:* it runs over SSH, with key auth set up once and port forwards that
+  exist only while it is connected — not a separate path. Not yet checked against this setup.
+- Decide the model-swapping strategy *before* installing any inference engine (originally
+  `planning.md` §5.1) — it is the decision everything else hangs off. *Decided 2026-09-23:*
+  llama-swap plus `spark-gate`, loading a model only when it fits and never evicting or substituting
+  ([the plan](website/design/plan.md)).

@@ -4,19 +4,22 @@ My local AI stack: a single GB10 DGX Spark — specifically a **GIGABYTE AI TOP 
 `brightroar` — serving open models to non-Claude agent harnesses and to my own applications,
 reached from a MacBook or other devices over Tailscale, WireGuard, or the home LAN.
 
-Started 2026-09-23, on arrival of the Spark. Mostly planning at this stage.
+Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
+[the plan](website/design/plan.md); the build starts with its Phase 0.
 
 ## Design in one line
 
 **Claude stays untouched** — Claude Code and Claude Desktop talk directly to Anthropic on my
-subscription, with nothing in the path. The Spark is a *second* mode that powers OpenCode, pi and
-Hermes, and gives my own apps a free OpenAI-compatible endpoint.
+subscription, with nothing in the path. The Spark is a *second* mode: a model server for my own
+pipelines, for coding harnesses (pi, OpenCode) on the Mac and on the Spark itself, and for a web UI —
+it loads a model only when it fits, and says why when it doesn't. (Hermes, in the original version of
+this line, was parked on 2026-09-23.)
 
 ## Contents
 
 | File | What it is |
 |---|---|
-| [`planning.md`](planning.md) | Goals, constraints, target architecture, open questions. Start here. |
+| [`website/design/plan.md`](website/design/plan.md) | The plan: goals, constraints, decisions, design, phases, open items. Start here. It replaced `planning.md`, the initial plan, on 2026-09-23. |
 | [`changelog.md`](changelog.md) | Dated log of what changed on the machine, newest first. |
 | [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) | Notes on Niels Bantilan's stack (below) — GB10 hardware facts, gotchas, and what does and doesn't transfer to a single Spark. |
 
@@ -63,8 +66,10 @@ Two of these shape the plan more than the rest:
 
 - **1 TB is the tight one.** Model weights, the shared Hugging Face cache and NGC container
   images (10–20 GB each) all come out of it. At 60–110 GB per large model that is single-digit
-  models on disk before it fills — see [`planning.md`](planning.md) §7 #5. The M.2 is a short
-  **2242**, which narrows the replacement options if it ever gets upgraded.
+  models on disk before it fills. [The plan](website/design/plan.md) keeps weights on the local NVMe
+  for now; cold storage on the Synology is in its backlog, pending a measurement of NAS read
+  throughput. The M.2 is a short **2242**, which narrows the replacement options if it ever gets
+  upgraded.
 - **Memory is soldered and shared.** 128 GB is the permanent ceiling and the GPU draws from the
   same pool. This is the constraint the whole design turns on.
 
@@ -73,6 +78,53 @@ The ConnectX-7 QSFP ports exist to join a second Spark, which is out of scope he
 
 *Spec provenance: the retail box and product listings, cross-checked against independent reviews.
 Where they disagree the physical box wins — it reads Bluetooth 5.3, against 5.4 in one review.*
+
+## Current state
+
+How things actually stand, as opposed to how they are designed. Kept current with every change to a
+machine; [`changelog.md`](changelog.md) records how it got here. Moved here from `planning.md` §8
+when that file was retired on 2026-09-23.
+
+### The Spark — `brightroar`
+
+- **GIGABYTE AI TOP ATOM** — full spec under [Hardware](#hardware).
+- Renamed from its factory hostname — the product name plus the last two octets of the **wired**
+  NIC's MAC. The old name no longer resolves. That makes the factory hostname a partial hardware
+  identifier, which is why it is written here in abbreviated form.
+- **Wired**, after initially running on the Wi-Fi module. The gap is large enough to matter:
+  **1.5 ms** average with 0.3 ms jitter on Ethernet, against **78 ms** with 9 ms of jitter on
+  Wi-Fi. Agentic loops pay that on every round trip.
+- **Dual-homed, one reserved address per NIC** — Wi-Fi on `.200`, Ethernet on `.201`. The wired
+  address is canonical; Wi-Fi is kept deliberately as an out-of-band path for when the box is moved
+  or the switch fails. Two NICs must never share a single reservation: they collide if both come up.
+- ⚠️ **A DHCP reservation only takes effect on a fresh request.** This bit twice — both times the
+  box held an older pool lease and ignored a perfectly correct reservation until the interface was
+  bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong. Bounce
+  with `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`, run from the
+  *other* interface so it doesn't sever the session.
+- **Pending:** the wired NIC has not yet picked up `.201` — it is still holding an older pool
+  address. Bounce the interface from the Wi-Fi side, or reboot (Phase 0).
+- **Not on the tailnet.** Reachable only over the home LAN today — the one path with no ACL in
+  front of it. Joining is Phase 0.
+- **Installed:** Claude Code 2.1.281 and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
+  install); Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. Details in
+  the changelog. Claude Code here talks straight to Anthropic — it is a client like any other, not a
+  change to the Claude path.
+- **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
+  memory pool — not yet checked on this box. Going headless is Phase 0.
+
+### The MacBook — `heartsbane`
+
+- **16 GB M1 Pro**, wired.
+- Docker Desktop running with a **7.75 GiB** VM — nearly half the machine.
+- Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
+- **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
+  to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
+  behind it and so is CPU-only. Pointing Workbench at `brightroar` as a remote location would
+  install its own daemon and runtime on the Spark.
+- **NVIDIA Sync connects over SSH**, per NVIDIA's documentation: key-based auth set up once, then
+  port forwards that exist only while Sync is connected — so it is not a separate way into the
+  Spark. From the docs (2026-09-23); not yet checked against this setup.
 
 ## Factory reset
 
@@ -118,8 +170,8 @@ the Founders Edition `tar.gz` + `CreateUSBKey` flow below, which is the reason t
 NVIDIA's page does not state how long recovery takes. A PXE/network recovery path also exists,
 but has version-specific failures reported on the forums; USB is the documented route.
 
-Afterwards, expect to redo everything in [`planning.md`](planning.md) §8 — hostname, Tailscale
-enrolment, container runtime. The DHCP reservation survives, since the MAC is hardware and
+Afterwards, expect to redo everything in [Current state](#current-state) — hostname, Tailscale
+enrolment, container runtime — and follow the plan's recovery runbook. The DHCP reservation survives, since the MAC is hardware and
 doesn't change.
 
 Source: [DGX Spark User Guide — System Recovery](https://docs.nvidia.com/dgx/dgx-spark/system-recovery.html).
@@ -152,6 +204,14 @@ node, untested).
   [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
+- **Scenarios are living docs.** A change in the stack's behaviour updates its page under
+  `website/scenarios/` and its `spark doctor` check in the same commit.
+- **Work runs where it belongs.** Code, tests, docs and Mac clients are written on `heartsbane`;
+  anything touching the Spark's GPU, memory, systemd or Docker is built and tested on `brightroar`;
+  sudo, logins and secrets are mine. One session at a time, a checkpoint commit per task, and pushes
+  only with my explicit OK.
+- **Python through uv, and the `Makefile` as the front door** — no system Python, no pip.
+  Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)
 
@@ -168,3 +228,9 @@ the accounts created during first-time setup.
 which secret exists, where its value lives, and the variable it is referenced as — never a value,
 never a masked prefix. It syncs to a NAS and across several machines, so a leaked vault must not be
 a leaked credential. Full rule in [`CLAUDE.md`](CLAUDE.md).
+
+**Planned private files (from Phase 0).** The design adds a few more private things, all outside
+the repo: one secret file per service on the Spark, a private values file holding the NAS and LAN
+addresses the configs need, the denylist the leak-check hooks read, and the Tailscale ACL policy.
+The vault's entry note records each one — by location, and by reference for anything secret — when
+it is created.
