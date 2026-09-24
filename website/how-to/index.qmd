@@ -1,0 +1,11 @@
+---
+title: "How-to"
+listing:
+  contents: "*.md"
+  type: table
+  fields: [title, description]
+---
+
+Runbooks for the steps only you can do — sudo, interactive logins, and secret values. Each one is
+short and exact. No command here prints a secret; where a value must never be displayed, the
+runbook says so.

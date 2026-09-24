@@ -1868,7 +1868,7 @@ git commit -m "build(stack): 🤖 add the host bootstrap script, earlyoom config
 
 **Files:**
 - Create: `website/how-to/index.qmd`, `website/how-to/leak-guards.md`,
-  `website/how-to/bootstrap.md`, `website/how-to/tailscale.md`, `website/how-to/secrets.md`,
+  `website/how-to/bootstrap.md`, `website/how-to/tailscale.md`, `website/how-to/secret-files.md`,
   `website/how-to/spark-session.md`
 
 Each runbook is short, exact, and never shows how to print a secret. Content:
@@ -1928,7 +1928,7 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   - Rebuilds: delete the old device in the admin console **before** re-joining, or the box comes back
     as `brightroar-1` and every client breaks.
 
-- [ ] **Step 5: `how-to/secrets.md`** — every command below runs in **Dan's** terminal; none of
+- [ ] **Step 5: `how-to/secret-files.md`** — every command below runs in **Dan's** terminal; none of
   them displays a value. (Ubuntu's `sh` is dash, which lacks `read -s`, so these use `bash -c`.)
   - Files live in `/etc/local-ai/secrets/` (root:spark, 0640), one per service, `KEY=value` lines,
     no `export`. Dan's own account can't list that folder — by design, so no session running as Dan
@@ -2052,7 +2052,7 @@ Follow the runbooks, in order:
   Code for `agent`, the live checks, one re-run.
 - [ ] `website/how-to/tailscale.md` — install, join, MagicDNS + HTTPS, ACL grants, the route home
   (into the vault).
-- [ ] `website/how-to/secrets.md` — every Phase 1 secret file, the HF token, the Mac key.
+- [ ] `website/how-to/secret-files.md` — every Phase 1 secret file, the HF token, the Mac key.
 - [ ] `website/how-to/spark-session.md` — plugins, `gh auth login`, the private memory files.
 
 ## ⇄ Switch point — Dan → Spark
