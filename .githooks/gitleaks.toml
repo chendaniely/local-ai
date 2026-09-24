@@ -1,0 +1,3 @@
+# gitleaks config for local-ai: the default rules, nothing removed.
+[extend]
+useDefault = true
