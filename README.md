@@ -107,7 +107,9 @@ when that file was retired on 2026-09-23.
 - **Not on the tailnet.** Reachable only over the home LAN today — the one path with no ACL in
   front of it. Joining is Phase 0.
 - **Installed:** Claude Code 2.1.281 and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
-  install); Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. Details in
+  install); Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **gitleaks 8.16.0** and **shellcheck 0.9.0**, also from
+  Ubuntu's archive — that gitleaks is too old for the repo's hooks (they need 8.19 or later), so the
+  8.30.1 release binary goes to `/usr/local/bin` in Phase 0. Details in
   the changelog. Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared

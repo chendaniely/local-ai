@@ -93,6 +93,18 @@ source. On arm64 that is the normal path anyway, because CRAN publishes no Linux
 newer R is ever needed, the route is CRAN's own Ubuntu apt repository (or `rig`), not this
 package.
 
+**gitleaks** and **shellcheck** installed from Ubuntu's archive, for the repo's leak-check hooks:
+
+```bash
+sudo apt install gitleaks shellcheck
+```
+
+That gives **gitleaks 8.16.0** (`8.16.0-1ubuntu0.24.04.3`) and **shellcheck 0.9.0**. Ubuntu's gitleaks
+build doesn't report its version — `gitleaks version` prints "Version is set by build process" — and 8.16
+predates the `gitleaks git` and `gitleaks stdin` commands (added in 8.19) that the hooks use. So the hooks
+also need the upstream release binary, 8.30.1, installed to `/usr/local/bin` so it wins in every shell,
+interactive or not (Phase 0, Task 9).
+
 **On `heartsbane`, not the Spark** — recorded because it was the same day's work: NVIDIA Sync and
 NVIDIA AI Workbench installed. Workbench's prompt to set up a container runtime concerned its
 local macOS context, which has no NVIDIA GPU behind it. Details in
