@@ -72,7 +72,7 @@ Tailscale serve · pi 0.85.1.
 5. **`spark apply` while models are loaded** — expected: it shows the diff and refuses to restart
    llama-swap unless `--now`. *(Task 7.)*
 
----
+***
 
 ## File structure
 
@@ -95,7 +95,7 @@ Tailscale serve · pi 0.85.1.
 | `spark/src/spark/clients.py` | `spark clients pi` |
 | `website/how-to/pi.md`, `website/how-to/deploy.md` | Runbooks |
 
----
+***
 
 ### Task 1 [Mac]: the model registry
 
@@ -384,7 +384,7 @@ git commit -m "feat(spark): 🤖 add the model registry" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 2 [Mac]: memory, the brake's hold file, and the launch check
 
@@ -736,7 +736,7 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 3 [Mac]: the llama-swap client
 
@@ -906,7 +906,7 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 ### Task 4 [Mac]: the minimal brake
 
 **Files:**
@@ -1111,7 +1111,7 @@ Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
 - [ ] **Step 5: Commit** — `git add spark/src/spark/brake.py spark/src/spark/cli.py spark/tests/test_brake.py && git commit -m "feat(spark): 🤖 add the minimal memory brake" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
----
+***
 
 ### Task 5 [Mac]: `spark status`
 
@@ -1275,7 +1275,7 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
 
 - [ ] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
----
+***
 ### Task 6 [Mac]: `spark render` — the real registry, templates, and the rendered config
 
 **Files:**
@@ -1806,7 +1806,7 @@ Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --proje
 
 - [ ] **Step 8: Commit** — `git add stack spark .github website/reference/stack.md && git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config from the registry" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
----
+***
 
 ### Task 7 [Mac]: `spark apply` — show what changes, never stop loaded models silently
 
@@ -2111,7 +2111,7 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 
 - [ ] **Step 5: Commit** — `git add spark/src/spark/apply.py spark/src/spark/cli.py spark/tests/test_apply.py && git commit -m "feat(spark): 🤖 add spark apply" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
----
+***
 
 ### Task 8 [Mac]: `spark models pull`
 
@@ -2221,7 +2221,7 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 
 - [ ] **Step 5: Commit** — `git add spark/pyproject.toml spark/uv.lock spark/src/spark/models.py spark/src/spark/cli.py spark/tests/test_models.py && git commit -m "feat(spark): 🤖 add spark models pull" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
----
+***
 
 ### Task 9 [Mac]: pi's provider, the deploy targets, two runbooks
 
@@ -2443,7 +2443,7 @@ git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets and ru
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ## ⇄ Switch point — Mac → Spark
 
@@ -2451,7 +2451,7 @@ git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets and ru
   40-hex revision.
 - [ ] **Dan OKs the push:** `git push -u origin phase-1`. `gh run watch` — CI is green.
 
----
+***
 
 ### Task 10 [Spark]: the engines, at their pins
 
@@ -2548,7 +2548,7 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 11 [Spark + Dan]: deploy the config, pull the models
 
@@ -2570,7 +2570,7 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
   a wrong file name or revision: fix `stack/models.yaml`, commit, `make apply`, `make pull` again.
   Then `df -h /`, and note the space left for the changelog.
 
----
+***
 
 ### Task 12 [Spark + Dan]: start the stack, smoke-test it, first footprint readings
 
@@ -2660,7 +2660,7 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 13 [Dan]: the web UI on the phone (S09, S20)
 
@@ -2678,7 +2678,7 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 - [ ] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on
   the scenario pages at the close.
 
----
+***
 
 ### Task 14 [Dan + Spark]: pi on the Mac, and as `agent` in tmux
 
@@ -2742,7 +2742,7 @@ git commit -m "docs(machine): 🤖 record pi for agent and the web UI on the tai
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 15 [Spark + Dan]: drills — the brake, a load that doesn't fit, a fresh clone
 
@@ -2829,7 +2829,7 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
 - [ ] **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
   `git switch phase-1 && git pull`.
 
----
+***
 
 ### Task 16 [Mac]: close Phase 1
 
@@ -2857,7 +2857,7 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   `git switch main && git merge --no-ff phase-1 -m "chore(repo): 🤖 merge phase 1"`. **Dan OKs**
   `git push origin main`.
 
----
+***
 
 ## Phase 1 is done when
 

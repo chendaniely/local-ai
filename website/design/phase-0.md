@@ -61,7 +61,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 5. **A scenario page with broken front matter** — expected: `make docs` and CI fail and name the
    file. *(Test in Task 5.)*
 
----
+***
 
 ## File structure
 
@@ -89,7 +89,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 | `website/reference/stack.md` | Generated from `stack/versions.yaml` — never edited by hand |
 | `website/how-to/*.md` | Runbooks for Dan's steps |
 
----
+***
 
 ### Task 1 [Mac]: `spark` package skeleton, Makefile front door, .gitignore
 
@@ -263,7 +263,7 @@ git commit -m "feat(spark): 🤖 add the spark package skeleton and Makefile fro
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 2 [Mac]: leak check — patterns and a private denylist
 
@@ -590,7 +590,7 @@ git commit -m "feat(spark): 🤖 add the leak check for private addresses and de
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 3 [Mac]: hook wrappers, gitleaks config, `make hooks`
 
@@ -751,7 +751,7 @@ git commit -m "build(repo): 🤖 add pre-commit and commit-msg leak guards" \
 
 Expected: this commit itself passes through the new hooks.
 
----
+***
 
 ### Task 4 [Mac]: `stack/versions.yaml` and the generated Stack page
 
@@ -1076,7 +1076,7 @@ git commit -m "feat(stack): 🤖 add pinned versions and the generated Stack pag
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 5 [Mac]: the docs site and all 22 scenario pages
 
@@ -1434,7 +1434,7 @@ git commit -m "docs(website): 🤖 add the docs site and the 22 scenario pages" 
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 6 [Mac]: CI and the manual publish workflow
 
@@ -1564,7 +1564,7 @@ git commit -m "ci(repo): 🤖 add tests, leak scan, shellcheck and site build; m
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 7 [Mac]: the host bootstrap script
 
@@ -1862,7 +1862,7 @@ git commit -m "build(stack): 🤖 add the host bootstrap script, earlyoom config
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 8 [Mac]: runbooks for the steps a person does
 
@@ -1971,7 +1971,7 @@ git commit -m "docs(website): 🤖 add runbooks for leak guards, bootstrap, Tail
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ## ⇄ Switch point — Mac → Spark
 
@@ -1979,7 +1979,7 @@ git commit -m "docs(website): 🤖 add runbooks for leak guards, bootstrap, Tail
 - [ ] **Dan OKs the push:** `git push -u origin phase-0`. Watch CI: `gh run watch` — all four jobs
   green. If a job fails, fix it on the Mac before switching.
 
----
+***
 
 ### Task 9 [Spark]: clone, hooks, inventory, dry-run
 
@@ -2042,7 +2042,7 @@ git commit -m "docs(readme): 🤖 record the Spark's pre-bootstrap memory baseli
 - [ ] **Dan OKs the push** of the Spark's commits (`git push`), so the runbooks and any script fix are
   on GitHub.
 
----
+***
 
 ### Task 10 [Dan]: the privileged and interactive steps
 
@@ -2057,7 +2057,7 @@ Follow the runbooks, in order:
 
 ## ⇄ Switch point — Dan → Spark
 
----
+***
 
 ### Task 11 [Spark]: verify the host and record it
 
@@ -2117,7 +2117,7 @@ git commit -m "docs(machine): 🤖 record the Phase 0 bootstrap of brightroar" \
 
 - [ ] **Dan OKs the push** from the Spark; on the Mac, `git pull`.
 
----
+***
 
 ### Task 12 [Mac]: vault entry note, council review, forward look, merge
 
