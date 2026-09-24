@@ -216,3 +216,45 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# local-ai: public-repo hardening. See CLAUDE.md - git history is permanent,
+# so these must never reach a commit in the first place.
+# ---------------------------------------------------------------------------
+
+# Credentials, keys, certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*.kdbx
+secrets.*
+*secret*.yml
+*secret*.yaml
+*credentials*.json
+
+# Local agent / editor state that can carry paths and tokens
+.claude/settings.local.json
+.mcp.local.json
+.vscode/settings.json
+
+# Model weights and caches - huge, and never belong in git
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+models/
+checkpoints/
+hf-cache/
+huggingface/
+
+# Captured machine output that commonly carries identifiers
+*-inventory.txt
+ip-addr.txt
+tailscale-status.txt
