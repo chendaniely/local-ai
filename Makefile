@@ -4,7 +4,7 @@
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -19,9 +19,15 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your de
 	@echo "leak-check hooks on for this clone"
 
 lint: ## Shellcheck the hooks and host scripts
-	shellcheck .githooks/pre-commit .githooks/commit-msg
+	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh
 
 docs: ## Regenerate the Stack page, check scenario pages, render the site
 	$(SPARK) docs stack --write
 	$(SPARK) docs check-scenarios
 	quarto render website
+
+bootstrap-dry-run: ## Print what bootstrap would do; changes nothing
+	bash stack/host/bootstrap.sh --dry-run
+
+bootstrap: ## Host setup on the Spark (Dan; asks for sudo once)
+	sudo bash stack/host/bootstrap.sh
