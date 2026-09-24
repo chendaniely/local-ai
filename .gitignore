@@ -258,3 +258,9 @@ huggingface/
 *-inventory.txt
 ip-addr.txt
 tailscale-status.txt
+
+# local-ai build outputs and local-only files
+spark/.venv/
+website/_site/
+website/.quarto/
+stack/models.local.yaml
