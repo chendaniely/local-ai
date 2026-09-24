@@ -23,4 +23,5 @@ lint: ## Shellcheck the hooks and host scripts
 
 docs: ## Regenerate the Stack page, check scenario pages, render the site
 	$(SPARK) docs stack --write
+	$(SPARK) docs check-scenarios
 	quarto render website
