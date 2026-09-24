@@ -105,6 +105,19 @@ predates the `gitleaks git` and `gitleaks stdin` commands (added in 8.19) that t
 also need the upstream release binary, 8.30.1, installed to `/usr/local/bin` so it wins in every shell,
 interactive or not (Phase 0, Task 9).
 
+**GitHub CLI** installed from Ubuntu's archive, so Dan can push from the Spark:
+
+```bash
+sudo apt install gh
+```
+
+Ubuntu 24.04 carries **gh 2.45.0** (`2.45.0-1ubuntu0.3` in noble-updates on 2026-09-23), far behind
+GitHub's own releases — the MacBook has 2.101.0. That is enough for its one job here: `gh auth login`
+in Dan's account, which also sets git up to push over HTTPS (Phase 0, `how-to/spark-session.md`). If
+a newer subcommand is ever needed, GitHub's own apt repository carries current releases. With no
+keyring on a headless box, gh keeps its token in a plain file under `~/.config/gh/`, guarded only by
+Dan's 0700 home — one more reason the `agent` user never shares that account.
+
 **On `heartsbane`, not the Spark** — recorded because it was the same day's work: NVIDIA Sync and
 NVIDIA AI Workbench installed. Workbench's prompt to set up a container runtime concerned its
 local macOS context, which has no NVIDIA GPU behind it. Details in
