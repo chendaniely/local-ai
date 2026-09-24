@@ -45,6 +45,10 @@ make hooks
 This checks that gitleaks is on `PATH` and that your denylist exists, then points this clone's
 git hooks at `.githooks`.
 
+The hooks also run `uv` (on the Spark it lives in `~/.local/bin`), so both gitleaks and `uv` must
+be on the `PATH` of whatever runs `git commit`. A GUI client, or an editor over Remote-SSH, may
+not load your shell profile; a hook refuses its commits with a message naming what's missing.
+
 ## Prove they bite
 
 ```bash
