@@ -70,7 +70,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 | `Makefile` | Front door: `help`, `test`, `lint`, `hooks`, `docs`, `bootstrap`, `bootstrap-dry-run` |
 | `.gitignore` | Adds build outputs and the local model overlay |
 | `.githooks/pre-commit`, `.githooks/commit-msg` | Thin wrappers: gitleaks, then `spark leakcheck` |
-| `.githooks/gitleaks.toml` | gitleaks config: default rules + repo-specific allowlist |
+| `.githooks/gitleaks.toml` | gitleaks config: the default rules |
 | `.github/workflows/ci.yml` | Tests, leak scan, shellcheck, site build |
 | `.github/workflows/publish-website.yml` | Manual-only publish of the site to GitHub Pages |
 | `spark/pyproject.toml`, `spark/uv.lock` | The uv project |
@@ -1999,7 +1999,7 @@ git commit -m "docs(website): 🤖 add runbooks for leak guards, bootstrap, Tail
 
 **Files:**
 - Modify: `stack/versions.yaml` (gitleaks pin for the Spark is recorded only as a version — the
-  Spark install is per-user), `README.md` §Current state
+  Spark install is system-wide, in `/usr/local/bin`), `README.md` §Current state
 
 - [ ] **Step 1: Clone and enable the guards**
 
@@ -2040,8 +2040,23 @@ Private detail goes to `~/local-ai-private/phase-0-inventory.md` (outside the re
 - [ ] **Step 4: Bootstrap dry-run**
 
 Run: `make bootstrap-dry-run`
-Expected: the full plan prints; nothing changes. Note anything that looks wrong for this box (a
-missing group, a package name) and fix `stack/host/bootstrap.sh` + its test before Dan runs it.
+Expected: the full plan prints; nothing changes.
+
+The dry run skips preflight and prints a placeholder for the packages it would hold, so check what
+it can't show. Each check is read-only; read the output privately:
+
+```bash
+getent group docker                                     # exists — bootstrap stops without it
+ls /etc/ufw/applications.d                              # openssh-server: the file behind ufw's OpenSSH profile
+dpkg -l | grep -Ei 'nvidia|cuda|linux-modules-nvidia'   # what the hold would cover
+```
+
+`ufw app list` names the profile itself (`OpenSSH`), but ufw needs root even to list, so that one
+is Dan's: `sudo ufw app list`. In the `dpkg` list, note any precompiled `linux-modules-nvidia-*`
+packages — the hold's patterns (`nvidia-*`, `libnvidia-*`, `cuda-*`) miss them.
+
+Note anything that looks wrong for this box (a missing group, a package name) and fix
+`stack/host/bootstrap.sh` + its test before Dan runs it.
 
 - [ ] **Step 5: Commit**
 
@@ -2092,6 +2107,7 @@ id agent                                     # no docker, sudo or spark-admin
 stat -c '%a %U:%G %n' /home/dan /home/agent /etc/local-ai/secrets /opt/local-ai
 ls /etc/local-ai/secrets                     # "Permission denied" — Dan's sessions can't list secrets
 tailscale status --self --json | jq -r '.Self.Online'   # true
+systemd-run --unit=local-ai-probe --wait true   # as Dan, no sudo: a password prompt or a denial
 ```
 
 Expected: every line as commented; `/home/dan` and `/home/agent` are `700`; `/opt/local-ai` is
@@ -2099,6 +2115,10 @@ Expected: every line as commented; `/home/dan` and `/home/agent` are `700`; `/op
 earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
 score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the
 first victims regardless.
+
+The `systemd-run` probe checks that the polkit rule doesn't grant *transient* units: a password
+prompt (cancel it) or a denial is right. If it runs without a password, anything running as Dan
+can start a root unit named `local-ai-*` — tighten the rule at Task 12.
 
 - [ ] **Step 2: earlyoom's victim choice, without killing anything** — a **[Dan]** check (it needs
   sudo). Dan runs, for about five seconds, then Ctrl-C:
