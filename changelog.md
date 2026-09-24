@@ -69,6 +69,29 @@ holds 1–3 GiB of the same unified pool that model weights and KV cache come ou
 worth closing before a large model load, and worth checking with `free -g` if a model that should
 fit suddenly does not. The same goes for any desktop session left running.
 
+**uv** installed with Astral's standalone installer:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Version **0.12.18** (`aarch64-unknown-linux-gnu`), installing `uv` and `uvx` to `~/.local/bin`.
+That is the same directory as `claude`, so the `PATH` export above already covers it, along with
+the same caveat about non-interactive `ssh brightroar '...'` commands. Like Claude Code, it
+self-updates, through `uv self update`.
+
+**R** installed from Ubuntu's own archive:
+
+```bash
+sudo apt install r-base r-base-dev
+```
+
+That gives **R 4.3.3** (`4.3.3-2build2`), the version frozen into Ubuntu 24.04, not the current
+CRAN release. `r-base-dev` brings the compiler toolchain and headers, so packages build from
+source. On arm64 that is the normal path anyway, because CRAN publishes no Linux binaries. If a
+newer R is ever needed, the route is CRAN's own Ubuntu apt repository (or `rig`), not this
+package.
+
 **On `heartsbane`, not the Spark** — recorded because it was the same day's work: NVIDIA Sync and
 NVIDIA AI Workbench installed. Workbench's prompt to set up a container runtime concerned its
 local macOS context, which has no NVIDIA GPU behind it. Details in `planning.md` §8.
