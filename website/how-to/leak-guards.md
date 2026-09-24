@@ -13,15 +13,22 @@ brew install gitleaks shellcheck
 
 On the Spark, Ubuntu's archive copy of gitleaks is 8.16 — too old for the hooks, which need 8.19
 or later. Download the pinned release instead, verify it, and install it to `/usr/local/bin`,
-which comes first on `PATH` in every shell, so it wins over the archive copy:
+which comes first on `PATH` in every shell, so it wins over the archive copy. The block works in
+a temporary directory, so nothing lands in your clone, and each step runs only if the one before
+it succeeded, so a failed checksum stops the install:
 
 ```bash
-curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz
-curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
-sha256sum --ignore-missing -c gitleaks_8.30.1_checksums.txt
-tar xzf gitleaks_8.30.1_linux_arm64.tar.gz gitleaks
-sudo install -m 0755 gitleaks /usr/local/bin/
+cd "$(mktemp -d)"
+curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz &&
+  curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt &&
+  sha256sum --ignore-missing -c gitleaks_8.30.1_checksums.txt &&
+  tar xzf gitleaks_8.30.1_linux_arm64.tar.gz gitleaks &&
+  sudo install -m 0755 gitleaks /usr/local/bin/
+cd -
 ```
+
+Expected: `gitleaks_8.30.1_linux_arm64.tar.gz: OK`, and only then the install. `cd -` takes you
+back to where you started.
 
 ## Create your denylist
 

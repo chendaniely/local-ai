@@ -12,6 +12,9 @@ curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
 
+Then, in the admin console: **Machines** → the Spark → **Disable key expiry**. A headless server
+whose key expires silently drops off the tailnet.
+
 ## Turn on MagicDNS and HTTPS
 
 In the admin console, turn on **MagicDNS** and **HTTPS certificates**. Once issued, the

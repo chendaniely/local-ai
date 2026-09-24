@@ -1877,8 +1877,10 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   (`listing: contents: "*.md"`, `type: table`, fields `title`, `description`).
 
 - [ ] **Step 2: `how-to/leak-guards.md`** — install gitleaks and shellcheck
-  (`brew install gitleaks shellcheck` on the Mac; on the Spark, `gitleaks_8.30.1_linux_arm64.tar.gz` from the v8.30.1 release, checked against
-  `gitleaks_8.30.1_checksums.txt`, installed with `sudo install -m 0755 gitleaks /usr/local/bin/` — Ubuntu's
+  (`brew install gitleaks shellcheck` on the Mac; on the Spark, `gitleaks_8.30.1_linux_arm64.tar.gz` from the v8.30.1 release, downloaded into
+  a temporary directory (`cd "$(mktemp -d)"`), checked against `gitleaks_8.30.1_checksums.txt` (expected:
+  `gitleaks_8.30.1_linux_arm64.tar.gz: OK`), and installed with `sudo install -m 0755 gitleaks /usr/local/bin/`,
+  each step chained with `&&` so a failed checksum stops the install — Ubuntu's
   archive copy is 8.16, too old for the hooks, and `/usr/local/bin` wins in every shell); create
   `~/.config/local-ai/denylist` by hand on **each** machine — one case-insensitive regex per line for
   every term that must never appear in this public repo (the tailnet's name, the NAS's names, the LAN
@@ -1892,22 +1894,32 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     (find the name with `nmcli device status`); confirm the wired address ends in `.201`.
   - *Run:* `make bootstrap-dry-run`, read it, then `make bootstrap`. It stops any running desktop
     session — run it over SSH.
-  - *After:* log out and back in (new groups); `systemctl get-default` → `multi-user.target`;
+  - *After bootstrap* (the heading bootstrap.sh's last message names): log out and back in (new
+    groups); `systemctl get-default` → `multi-user.target`;
     `systemctl is-active earlyoom` → `active`; `sudo ufw status` → OpenSSH allowed;
     `id agent` shows no `docker`, `sudo` or `spark-admin`; `free -g` for the new baseline.
-  - *Agent login:* add your Mac's **public** key to `agent` —
-    `cat ~/.ssh/<your-key>.pub | ssh brightroar 'sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys'`;
+  - *Agent login:* add your Mac's **public** key to `agent`, in two steps — `sudo` inside a command
+    piped into `ssh` has no terminal to ask for the password. On the Mac,
+    `scp ~/.ssh/<your-key>.pub brightroar:agent-key.pub`; then, in an interactive `ssh brightroar`
+    session,
+    `sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub`;
     then `ssh agent@brightroar` and, **as agent** (the installer refuses to run under sudo), install
     Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`. Log in: run `claude`; with no
     browser on the box, press `c` to copy the login URL, open it on the Mac, and paste the code back.
   - *Live checks as `agent`* (you run these — they need sudo):
-    `sudo -iu agent cat /home/dan/.secrets` → permission denied;
-    `sudo -iu agent docker ps` → permission denied; `sudo -iu agent nvidia-smi -L` → lists the GPU.
-  - *Re-run once* (`make bootstrap` again) → finishes with no errors and no changes.
+    `sudo -iu agent test -r /home/dan/.secrets && echo "READABLE: stop and fix permissions" || echo "not readable: good"`
+    → `not readable: good` (it tests access without ever printing the file);
+    `sudo -iu agent docker ps` → permission denied;
+    `sudo -iu agent nvidia-smi --query-gpu=name --format=csv,noheader` → the GPU's name, without the
+    per-unit UUID that `nvidia-smi -L` prints.
+  - *Re-run once* (`make bootstrap` again) → finishes with no errors, and no new users, groups or
+    config lines.
 
 - [ ] **Step 4: `how-to/tailscale.md`**
   - Install on the Spark: `curl -fsSL https://tailscale.com/install.sh | sh`, then
     `sudo tailscale up`.
+  - After joining: admin console → **Machines** → the Spark → **Disable key expiry** — a headless
+    server whose key expires silently drops off the tailnet.
   - In the admin console: enable **MagicDNS** and **HTTPS certificates** (the certificate's name
     appears in public certificate-transparency logs — the name only).
   - **ACL grants are the firewall** for tailnet traffic (ufw can't see `tailscale0`). Draft the
@@ -1931,23 +1943,25 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
 - [ ] **Step 5: `how-to/secret-files.md`** — every command below runs in **Dan's** terminal; none of
   them displays a value. (Ubuntu's `sh` is dash, which lacks `read -s`, so these use `bash -c`.)
   - Files live in `/etc/local-ai/secrets/` (root:spark, 0640), one per service, `KEY=value` lines,
-    no `export`. Dan's own account can't list that folder — by design, so no session running as Dan
-    can read a secret. A new random key:
+    no `export`. Dan's own account can't list that folder, so nothing running as Dan reads a secret
+    by accident. A new random key:
     `sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_AGENT=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env'`
   - Phase 1 needs: `llama-swap.env` — `LLAMASWAP_KEY_DAN_MAC`, `LLAMASWAP_KEY_AGENT`,
-    `LLAMASWAP_KEY_OPENWEBUI`, `LLAMASWAP_KEY_SPARK`; `open-webui.env` — `WEBUI_SECRET_KEY` (its own
+    `LLAMASWAP_KEY_OPENWEBUI`, `LLAMASWAP_KEY_SPARK` (`LLAMASWAP_KEY_OPENWEBUI` and
+    `LLAMASWAP_KEY_SPARK` made with the same pattern as the example; `LLAMASWAP_KEY_OPENWEBUI` must
+    exist before the `open-webui.env` step, which copies it); `open-webui.env` — `WEBUI_SECRET_KEY` (its own
     random value — without it, recreating the container logs everyone out), plus `OPENAI_API_KEYS`,
     `RAG_OPENAI_API_KEY` and `AUDIO_STT_OPENAI_API_KEY`, all three holding the value of
-    `LLAMASWAP_KEY_OPENWEBUI`:
-    `sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; umask 027; for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do printf "%s=%s\n" "$k" "$LLAMASWAP_KEY_OPENWEBUI"; done >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'`;
+    `LLAMASWAP_KEY_OPENWEBUI`; if that key doesn't exist yet, the command refuses and writes nothing:
+    `sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; [ -n "$LLAMASWAP_KEY_OPENWEBUI" ] || { echo "create LLAMASWAP_KEY_OPENWEBUI first" >&2; exit 1; }; umask 027; for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do printf "%s=%s\n" "$k" "$LLAMASWAP_KEY_OPENWEBUI"; done >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'`;
     `searxng.env` — `SEARXNG_SECRET`; `hf.env` — `HF_TOKEN`, pasted without echo:
     `sudo bash -c 'read -rsp "HF token: " t; echo; umask 027; printf "HF_TOKEN=%s\n" "$t" >> /etc/local-ai/secrets/hf.env; chgrp spark /etc/local-ai/secrets/hf.env'`.
   - The Mac's key: generate it on the Mac —
     `printf 'export SPARK_API_KEY=%s\n' "$(openssl rand -hex 32)" >> ~/.secrets` — then send the
     same value to the Spark without displaying it:
     `( . ~/.secrets; printf 'LLAMASWAP_KEY_DAN_MAC=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat > ~/.spark-key-in'`
-    and on the Spark:
-    `sudo bash -c 'cat /home/dan/.spark-key-in >> /etc/local-ai/secrets/llama-swap.env' && rm ~/.spark-key-in`.
+    and on the Spark, with the same `umask` and `chgrp` as the other commands:
+    `sudo bash -c 'umask 027; cat /home/dan/.spark-key-in >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env' && rm ~/.spark-key-in`.
   - Record each secret in the vault **by reference** (file, variable name) — never the value.
 
 - [ ] **Step 6: `how-to/spark-session.md`**
