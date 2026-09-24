@@ -11,7 +11,10 @@ from spark import __version__
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark", description=__doc__)
     parser.add_argument("--version", action="version", version=f"spark {__version__}")
-    parser.add_subparsers(dest="command", metavar="<command>")
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>")
+    from spark import leakcheck
+
+    leakcheck.register(subparsers)
     return parser
 
 
