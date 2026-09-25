@@ -22,20 +22,51 @@ certificate's name appears in public certificate-transparency logs — the name 
 
 ## ACL grants are the firewall
 
-`ufw` can't see `tailscale0`, so the ACL policy is the only firewall tailnet traffic gets. Before
-changing anything, check what your current policy already allows, so nothing that works today
-breaks. Draft the change privately; keep the real policy in the vault, not this repo. Pattern to
-adapt:
+`ufw` can't see `tailscale0`, so the ACL policy is the only firewall tailnet traffic gets. The
+policy lives in the admin console (<https://login.tailscale.com/admin/acls>). Keep the real policy
+in the vault, never in this repo: it names your home subnet.
 
-```json
-{
-  "grants": [
-    {"src": ["autogroup:member"], "dst": ["<the-spark>"], "ip": ["22", "443"]}
-  ]
-}
-```
+**Start from what's there.** A new tailnet has one allow-all grant (`"src": ["*"], "dst": ["*"],
+"ip": ["*"]`). While it exists, every device reaches every port on the Spark, and nothing below
+restricts anything. Replace it with the grants below, which keep today's access working.
 
-Port 22 is for SSH, 443 for `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
+1. **Create the tag.** In the JSON editor, add a top-level `tagOwners` block beside `grants` (or,
+   in the visual editor: **Tags** → **Create tag** → `spark`, owner `autogroup:admin`):
+
+   ```json
+   "tagOwners": {
+     "tag:spark": ["autogroup:admin"]
+   },
+   ```
+
+2. **Set three grants**, turning the allow-all grant into the first one and adding the other two:
+
+   ```json
+   "grants": [
+     // Your own devices reach each other, as before.
+     {"src": ["autogroup:member"], "dst": ["autogroup:member"], "ip": ["*"]},
+     // The home LAN through the subnet router, as before.
+     {"src": ["autogroup:member"], "dst": ["<home-subnet>/24"], "ip": ["*"]},
+     // The Spark: SSH, and 443 for `tailscale serve` (Phase 1).
+     {"src": ["autogroup:member"], "dst": ["tag:spark"], "ip": ["22", "443"]}
+   ]
+   ```
+
+   If you use an exit node, add `{"src": ["autogroup:member"], "dst": ["autogroup:internet"], "ip":
+   ["*"]}`. `autogroup:member` doesn't include people you've shared devices with; give them their
+   own grant if they need one. LiteLLM's port joins the Spark's grant in Phase 3.
+3. **Save.** The editor refuses a policy with a syntax error.
+4. **Tag the Spark**, on the Spark:
+
+   ```bash
+   sudo tailscale up --advertise-tags=tag:spark
+   ```
+
+   Repeat any other flags you gave `tailscale up` when joining, because `up` resets the ones you
+   leave out. A tagged device is owned by the tag, not by you, and its key doesn't expire, which
+   also covers the key-expiry step above.
+5. **Test** from the Mac and the phone: SSH to the Spark still works, and so do your usual home-LAN
+   services, such as the NAS, from away. If something breaks, add a grant for it.
 
 ## Confirm the route home
 

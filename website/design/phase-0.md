@@ -1924,19 +1924,14 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     server whose key expires silently drops off the tailnet.
   - In the admin console: enable **MagicDNS** and **HTTPS certificates** (the certificate's name
     appears in public certificate-transparency logs — the name only).
-  - **ACL grants are the firewall** for tailnet traffic (ufw can't see `tailscale0`). Draft the
-    policy change privately and keep the real policy in the vault. Pattern to adapt — first check
-    what your current policy allows so nothing that works today breaks:
-
-    ```json
-    {
-      "grants": [
-        {"src": ["autogroup:member"], "dst": ["<the-spark>"], "ip": ["22", "443"]}
-      ]
-    }
-    ```
-
-    Port 22 for SSH; 443 for `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
+  - **ACL grants are the firewall** for tailnet traffic (ufw can't see `tailscale0`); the policy is
+    in the admin console, and the real one is kept in the vault. A new tailnet's allow-all grant is
+    replaced, keeping today's access: create `tag:spark` (`tagOwners`, owner `autogroup:admin`);
+    set three grants from `autogroup:member` — to `autogroup:member` (`*`), to `<home-subnet>/24`
+    (`*`), and to `tag:spark` (`22`, `443`) — plus `autogroup:internet` if an exit node is used;
+    save; tag the Spark with `sudo tailscale up --advertise-tags=tag:spark` (a tagged key doesn't
+    expire); test SSH and home-LAN services from the Mac and phone. Port 22 for SSH; 443 for
+    `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
   - Confirm how the tailnet reaches the home LAN (the subnet router and its advertised route) in the
     admin console, and record it in the vault — never paste `tailscale status` output anywhere public.
   - Rebuilds: delete the old device in the admin console **before** re-joining, or the box comes back
