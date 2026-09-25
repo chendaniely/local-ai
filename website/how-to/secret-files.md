@@ -100,10 +100,11 @@ fails, the file stays and nothing is lost.
 
 ## Check
 
-**10. On the Spark, list the key names and permissions.** This shows names only, never values:
+**10. On the Spark, list the key names and permissions.** This shows names only, never values. A
+line with no `=` in it is counted, never shown, since it could be a bare value:
 
 ```bash
-sudo sh -c 'for f in /etc/local-ai/secrets/*.env; do echo "$f"; cut -d= -f1 "$f" | sed "s/^/  /"; done; stat -c "%a %U:%G %n" /etc/local-ai/secrets/*.env'
+sudo sh -c 'for f in /etc/local-ai/secrets/*.env; do echo "$f"; sed -n "s/=.*//p" "$f" | sed "s/^/  /"; n=$(grep -vc = "$f"); [ "$n" -eq 0 ] || echo "  and $n line(s) without =, not shown"; done; stat -c "%a %U:%G %n" /etc/local-ai/secrets/*.env'
 ```
 
 You should see:
@@ -122,6 +123,24 @@ anything. Set `f` to the file that has the duplicate:
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/llama-swap.env && tac "$f" | awk -F= "!seen[\$1]++" | tac > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
 ```
+
+If a file has lines without `=`, keep only its `KEY=value` lines, again without displaying
+anything. Set `f` to that file:
+
+```bash
+sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/llama-swap.env && grep = "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
+```
+
+Names alone can't show one failure: a copy in `open-webui.env` that no longer matches
+`LLAMASWAP_KEY_OPENWEBUI`, after that key changed. This compares each copy with it by hash and
+prints only `match` or `MISMATCH`:
+
+```bash
+sudo bash -c 'd=/etc/local-ai/secrets; a=$(sed -n "s/^LLAMASWAP_KEY_OPENWEBUI=//p" $d/llama-swap.env); [ -n "$a" ] || { echo "no LLAMASWAP_KEY_OPENWEBUI" >&2; exit 1; }; h=$(printf %s "$a" | sha256sum); for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do v=$(sed -n "s/^$k=//p" $d/open-webui.env); [ "$(printf %s "$v" | sha256sum)" = "$h" ] && echo "$k: match" || echo "$k: MISMATCH"; done'
+```
+
+Expected: three `match` lines. For a `MISMATCH`, run step 5 again, then the command above that
+keeps each key's last copy, with `f` set to `open-webui.env`.
 
 Don't open the files in an editor: that puts the values on screen.
 

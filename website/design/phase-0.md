@@ -1984,6 +1984,10 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   - (Added 2026-09-24: the runbook is now numbered steps, one command each, with the same commands,
     plus a check that lists key names and permissions without values, and a dedupe that keeps a
     key's last copy without displaying it.)
+  - (Corrected 2026-09-25: the names check used `cut -d= -f1`, which prints in full any line with no
+    `=`. It now prints names with `sed -n 's/=.*//p'` and only counts the other lines, with a command
+    that drops them. A second check compares Open WebUI's three copies with
+    `LLAMASWAP_KEY_OPENWEBUI` by hash and prints only `match` or `MISMATCH`.)
 
 - [ ] **Step 6: `how-to/spark-session.md`**
   - (Added 2026-09-25: this runbook comes first, before any **[Spark]** task. Task 9 already
