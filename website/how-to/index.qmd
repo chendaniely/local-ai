@@ -9,3 +9,19 @@ listing:
 Runbooks for the steps only you can do — sudo, interactive logins, and secret values. Each one is
 short and exact. No command here prints a secret; where a value must never be displayed, the
 runbook says so.
+
+## In order
+
+Once, for a new box or a rebuilt one. Until Tailscale is joined (step 5), reach the Spark over the
+LAN.
+
+1. [The Spark session](spark-session.md) — first, before any **[Spark]** task.
+2. [Leak guards](leak-guards.md)
+3. [Bootstrap the Spark](bootstrap.md)
+4. [SSH from the Mac](ssh.md)
+5. [Join Tailscale](tailscale.md)
+6. [Secret files](secret-files.md)
+
+Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
+
+## Every runbook

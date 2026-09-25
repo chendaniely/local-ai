@@ -2117,14 +2117,25 @@ git commit -m "docs(readme): 🤖 record the Spark's pre-bootstrap memory baseli
 
 ### Task 10 [Dan]: the privileged and interactive steps
 
-Follow the runbooks, in order:
+Follow the runbooks, in the order `website/how-to/index.qmd` lists them:
 
+- [ ] `website/how-to/spark-session.md` — first, before any **[Spark]** task: the Mac's rules and
+  secrets guard on the Spark, plugins, a GitHub token for this repository only, the private memory
+  files.
+- [ ] `website/how-to/leak-guards.md` — gitleaks on the Spark, the denylist, `make hooks`, the
+  drill.
 - [ ] `website/how-to/bootstrap.md` — NIC bounce, `make bootstrap`, re-login, agent SSH key, Claude
   Code for `agent`, the live checks, one re-run.
+- [ ] `website/how-to/ssh.md` — a key per account, the Mac's `~/.ssh/config`, NVIDIA Sync,
+  keys-only SSH, the public IPv6 check.
 - [ ] `website/how-to/tailscale.md` — install, join, MagicDNS + HTTPS, ACL grants, the route home
   (into the vault).
 - [ ] `website/how-to/secret-files.md` — every Phase 1 secret file, the HF token, the Mac key.
-- [ ] `website/how-to/spark-session.md` — plugins, `gh auth login`, the private memory files.
+
+Then ongoing, not once: `website/how-to/updates.md` — apt any time, upgrade day on Saturdays.
+
+(Corrected 2026-09-25, in Dan's order: this list first put `spark-session.md` last, after the
+session had already run Task 9, and left out `leak-guards.md`, `ssh.md` and `updates.md`.)
 
 ## ⇄ Switch point — Dan → Spark
 
