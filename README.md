@@ -104,10 +104,21 @@ when that file was retired on 2026-09-23.
   bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong. Bounce
   with `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`, run from the
   *other* interface so it doesn't sever the session.
-- **Pending:** the wired NIC has not yet picked up `.201` — it is still holding an older pool
-  address. Bounce the interface from the Wi-Fi side, or reboot (Phase 0).
-- **Not on the tailnet.** Reachable only over the home LAN today — the one path with no ACL in
-  front of it. Joining is Phase 0.
+- **The wired NIC is on `.201`** (2026-09-24, after a bounce from the Wi-Fi side). It had been
+  holding an older pool address until then.
+- **On the tailnet** (2026-09-24), tagged `tag:spark`, so its key never expires, with MagicDNS and
+  HTTPS certificates on. The ACL policy replaced the allow-all default: Dan's devices reach each
+  other, and reach the Spark on 22 and 443 only. There is no route home, by choice. Until then it
+  was reachable only over the home LAN.
+- **Bootstrapped** (2026-09-24, and re-run cleanly). It boots to a console, and a desktop starts
+  on demand. ufw is on with SSH only. earlyoom is the only out-of-memory killer (systemd-oomd is
+  inactive). The GPU set (kernel, NVIDIA modules, driver, CUDA) is held, 151 packages. Three
+  identities: Dan (`chendaniely`, in `spark-admin`), `spark` (runs the stack, no login, not in
+  `docker`) and `agent` (tmux agents, with its own SSH key and Claude Code; no sudo, docker or
+  `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` manage
+  `local-ai-*` units but not start transient ones. No containers exist yet.
+- **Secret files** for Phase 1 are in `/etc/local-ai/secrets/` (`llama-swap.env`,
+  `open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), recorded by name in the vault.
 - **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
   install; Claude Code was 2.1.281 when installed and updates itself — 2.1.282 on 2026-09-24);
   Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **shellcheck 0.9.0**,
@@ -119,7 +130,10 @@ when that file was retired on 2026-09-23.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
-  a logged-in desktop, so it is still unmeasured here. Going headless is Phase 0.
+  a logged-in desktop, so it is still unmeasured here. Headless since the 2026-09-24 bootstrap.
+- **Memory, headless** (2026-09-24, `free -g`): **121 GiB total, 2 used, 118 available**. That is
+  the same in whole GiB, because the login screen held only about 0.4 GiB. In MiB, 121,715 were
+  available, with one Claude Code session in tmux.
 - **Memory before bootstrap** (2026-09-24, `free -g`): **121 GiB total, 2 used, 118 available**,
   plus a 16 GiB swap file. Taken with the login screen up, Docker running with no containers, and
   one Claude Code session in tmux (about 1 GiB of the 2). Nothing else holds much: the largest

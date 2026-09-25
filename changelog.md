@@ -8,6 +8,69 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-24 — Phase 0 bootstrap: headless, users, firewall, tailnet, secrets
+
+**Wired NIC on `.201`**, bounced from a session on the Wi-Fi address:
+
+```bash
+sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>
+```
+
+**Bootstrap applied, then re-run once** (no errors, nothing duplicated), following
+[`website/how-to/bootstrap.md`](website/how-to/bootstrap.md):
+
+```bash
+make bootstrap
+```
+
+- Packages installed or confirmed: the stack's, plus the repo's tools and Dan's own (the list is in
+  `stack/host/bootstrap.sh`).
+- The GPU set held: kernel, NVIDIA modules, driver and CUDA, 151 packages.
+- Users `spark` and `agent`, and groups `spark`, `spark-users` and `spark-admin`. Dan joined
+  `spark-admin`, `spark-users` and `adm`. Both homes are 0700.
+- `/opt/local-ai`, `/etc/local-ai`, `/etc/local-ai/secrets`, `/var/lib/local-ai` and its subfolders,
+  and `/home/agent/work`.
+- Boots to a console (`multi-user.target`); the display manager is stopped.
+- earlyoom installed, configured from `stack/host/earlyoom.default`, and running. systemd-oomd is
+  inactive, so there's one out-of-memory killer.
+- ufw on: deny incoming, allow OpenSSH (IPv4 and IPv6).
+- The polkit rule for `local-ai-*` units.
+
+**agent**: its own SSH key from the Mac, and Claude Code installed as agent:
+
+```bash
+sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub
+curl -fsSL https://claude.ai/install.sh | bash    # as agent
+```
+
+The live checks passed. agent can't enter Dan's home, is refused by Docker, and `nvidia-smi` as
+agent names the GPU (`NVIDIA GB10`). `sudo docker ps -a` lists no containers.
+
+**Tailscale** installed and joined, following
+[`website/how-to/tailscale.md`](website/how-to/tailscale.md). In the admin console, MagicDNS and
+HTTPS certificates are on. The allow-all policy was replaced: Dan's devices reach each other, and
+reach `tag:spark` on 22 and 443. There is no route home, by choice. The Spark is tagged, so its
+key doesn't expire:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+sudo tailscale up --advertise-tags=tag:spark
+```
+
+**Secret files** for Phase 1 created in `/etc/local-ai/secrets/` (`llama-swap.env`,
+`open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), following
+[`website/how-to/secret-files.md`](website/how-to/secret-files.md). The Hugging Face token is a
+fine-grained, read-only one. Values are never displayed; the vault records the names.
+
+**Verified afterwards (Phase 0, Task 11)**:
+- Memory, headless (`free -g`): 121 total, 2 used, 118 available.
+- earlyoom received its regexes without quotes.
+- A dry run of earlyoom picks a desktop helper to kill, never anything on the avoid list.
+- Starting a transient `local-ai-probe` unit without a password is refused, so the polkit rule
+  doesn't reach transient units.
+- Dan's sessions can't list `/etc/local-ai/secrets`.
+
 ## 2026-09-24 — gitleaks 8.30.1 replaces the archive build
 
 **gitleaks 8.30.1**, the upstream release binary, installed to `/usr/local/bin` for the repo's
