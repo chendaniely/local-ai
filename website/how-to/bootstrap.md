@@ -49,8 +49,15 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
    to ask for your password, and a command piped into `ssh` doesn't have one:
 
    ```bash
-   sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub
+   sudo -u agent sh -c 'umask 077 && mkdir -p /home/agent/.ssh && cat >> /home/agent/.ssh/authorized_keys' < ~/agent-key.pub && rm ~/agent-key.pub
    ```
+
+   Your shell opens the key file and hands it over on standard input, and `agent` writes it into
+   its own home: `umask 077` makes `.ssh` 0700 and `authorized_keys` 0600 if they are new. Root
+   never writes, `chown`s or `chmod`s anything under `/home/agent`. `agent` controls that folder, so
+   a link it planted there could turn a root write into a write to any file on the box. The copy
+   is deleted only once the key is in. Run again, it stops at the missing copy and changes
+   nothing; with a fresh copy, it adds the key a second time, which is harmless.
 3. `ssh brightroar-agent` (the alias from [SSH from the Mac](ssh.md))
 4. As `agent` — the installer refuses to run under sudo:
 
@@ -59,6 +66,9 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
    ```
 5. Log in: run `claude`. With no browser on the box, press `c` to copy the login URL, open it on
    the Mac, and paste the code back.
+
+`agent` makes its own `~/work` too, the same way: its first `git clone` into it creates it.
+Bootstrap doesn't, since it runs as root.
 
 ## Live checks (you run these — they need sudo)
 

@@ -1583,6 +1583,9 @@ git commit -m "ci(repo): 🤖 add tests, leak scan, shellcheck and site build; m
   (root:spark-admin 0750), `/etc/local-ai/secrets` (root:spark 0750), `/var/lib/local-ai` (spark,
   0751) with `hf/`, `open-webui/`, `searxng/` (0750) and `brake/` (spark:spark-admin 2770 — Dan can
   release a brake hold, `agent` can't); `/home/agent/work`; polkit rule for `local-ai-*` units.
+  (Superseded 2026-09-25 by commit 3735420: `/var/lib/local-ai` is root:root 0755, so `spark` can't
+  swap a child for a link that the next run hands to it; and bootstrap no longer makes
+  `/home/agent/work`, since root never writes inside `agent`'s home. `agent` makes its own `~/work`.)
 - Note: Dan's account is effectively root-capable (sudo, and spark-admin can edit what the
   `local-ai-*` units run). The isolation boundary on this box is between Dan and `agent`.
 
@@ -1905,10 +1908,14 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     piped into `ssh` has no terminal to ask for the password. On the Mac,
     `scp ~/.ssh/<your-key>.pub brightroar:agent-key.pub`; then, in an interactive `ssh brightroar`
     session,
-    `sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub`;
+    `sudo -u agent sh -c 'umask 077 && mkdir -p /home/agent/.ssh && cat >> /home/agent/.ssh/authorized_keys' < ~/agent-key.pub && rm ~/agent-key.pub`;
     then `ssh agent@brightroar` and, **as agent** (the installer refuses to run under sudo), install
     Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`. Log in: run `claude`; with no
     browser on the box, press `c` to copy the login URL, open it on the Mac, and paste the code back.
+    (Corrected 2026-09-25: the key step was `sudo install -d … && sudo tee -a … && sudo chown … &&
+    sudo chmod …` on `/home/agent/.ssh`, which writes as root through a path `agent` controls, so a
+    planted link could aim it anywhere. Now Dan's shell reads the key and `agent` writes it into its
+    own home; nothing writes as root. `changelog.md` keeps the command the 2026-09-24 run used.)
   - (Added 2026-09-24: `how-to/ssh.md` covers the Mac side: a key per account, the Mac's
     `~/.ssh/config` with the tailnet name first and the LAN as fallback, and keeping NVIDIA Sync's
     own config apart.)
