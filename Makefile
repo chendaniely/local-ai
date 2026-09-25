@@ -14,7 +14,7 @@ test: ## Run the unit and render tests
 
 hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your denylist)
 	@command -v gitleaks >/dev/null || { echo "install gitleaks first (website/how-to/leak-guards.md)"; exit 1; }
-	@test -f "$${LOCAL_AI_DENYLIST:-$$HOME/.config/local-ai/denylist}" || { echo "create your denylist first (website/how-to/leak-guards.md)"; exit 1; }
+	@$(SPARK) leakcheck --message /dev/null # the hooks' own denylist check: it exists, has terms, parses
 	git config core.hooksPath .githooks
 	@echo "leak-check hooks on for this clone"
 

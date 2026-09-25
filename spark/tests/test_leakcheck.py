@@ -1,11 +1,12 @@
+import codecs
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from spark import leakcheck
-from spark.leakcheck import DenylistMissing, load_denylist, scan_text
+from spark import cli, leakcheck
+from spark.leakcheck import DenylistInvalid, DenylistMissing, load_denylist, scan_text
 
 
 def ip(*parts: int) -> str:
@@ -167,3 +168,128 @@ def test_cli_invalid_denylist_line_exits_2_and_never_shows_the_line(tmp_path, ca
     err = capsys.readouterr().err
     assert "line 2" in err
     assert "private-name" not in err
+
+
+@pytest.mark.parametrize("text", ["", "# a comment\n\n   \n"], ids=["empty", "comments-only"])
+def test_a_denylist_with_no_terms_fails_closed(tmp_path, capsys, text):
+    # An empty file is what `touch` makes; it would pass every commit as if nothing were private.
+    path = tmp_path / "denylist"
+    path.write_text(text)
+    with pytest.raises(DenylistInvalid, match="denylist has no terms"):
+        load_denylist(path)
+    message = tmp_path / "msg"
+    message.write_text("hello\n")
+    assert cli.main(["leakcheck", "--message", str(message), "--denylist", str(path)]) == 2
+    assert "denylist has no terms" in capsys.readouterr().err
+
+
+def test_a_message_that_is_not_utf8_is_still_scanned(tmp_path, capsys):
+    # CI feeds every commit's patches through --message; one stray Latin-1 byte must not crash it.
+    message = tmp_path / "msg"
+    message.write_bytes(b"caf\xe9 at " + ip(192, 168, 50, 7).encode() + b"\n")
+    assert cli.main(["leakcheck", "--message", str(message), "--denylist", str(denylist(tmp_path))]) == 1
+    assert "private IPv4 address" in capsys.readouterr().err
+
+
+def denylist(tmp_path: Path, *terms: str) -> Path:
+    path = tmp_path / "denylist"
+    path.write_text("".join(f"{term}\n" for term in terms or ("secret-project",)))
+    return path
+
+
+def git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    return repo
+
+
+def git(repo: Path, *args: str) -> None:
+    # No hooks and no signing, whatever the machine's global git config says.
+    (repo.parent / "no-hooks").mkdir(exist_ok=True)
+    subprocess.run(
+        ["git", "-c", f"core.hooksPath={repo.parent / 'no-hooks'}", "-c", "commit.gpgsign=false",
+         "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        cwd=repo, check=True, capture_output=True,
+    )
+
+
+def test_a_symlink_turned_into_a_file_is_scanned(tmp_path):
+    # A type change (git status T) replaces the link's target path with the file's whole content.
+    repo = git_repo(tmp_path)
+    (repo / "notes.md").symlink_to("elsewhere.md")
+    git(repo, "add", "notes.md")
+    git(repo, "commit", "-q", "-m", "link")
+    (repo / "notes.md").unlink()
+    (repo / "notes.md").write_text(f"box at {ip(192, 168, 50, 7)}\n")
+    git(repo, "add", "notes.md")
+    assert leakcheck.staged_texts(cwd=repo) == [("notes.md", f"box at {ip(192, 168, 50, 7)}\n")]
+
+
+def test_a_file_turned_into_a_symlink_has_its_target_scanned(tmp_path):
+    # git stores a link as its target path, so a private path there is committed text too.
+    repo = git_repo(tmp_path)
+    (repo / "data").write_text("placeholder\n")
+    git(repo, "add", "data")
+    git(repo, "commit", "-q", "-m", "file")
+    (repo / "data").unlink()
+    target = f"/mnt/{ip(192, 168, 50, 7)}/share"
+    (repo / "data").symlink_to(target)
+    git(repo, "add", "data")
+    assert leakcheck.staged_texts(cwd=repo) == [("data", target)]
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-be", "utf-32", "utf-32-be"])
+def test_utf16_and_utf32_text_with_a_byte_order_mark_is_scanned(tmp_path, encoding):
+    # Their NUL bytes would otherwise mark them as binary. `utf-16` and `utf-32` write a BOM
+    # themselves (little-endian here); the big-endian codecs don't, so it is added.
+    text = f"box at {ip(192, 168, 50, 7)}\n"
+    bom = {"utf-16-be": codecs.BOM_UTF16_BE, "utf-32-be": codecs.BOM_UTF32_BE}.get(encoding, b"")
+    repo = git_repo(tmp_path)
+    (repo / "notes.txt").write_bytes(bom + text.encode(encoding))
+    git(repo, "add", "notes.txt")
+    assert leakcheck.staged_texts(cwd=repo) == [("notes.txt", text)]
+
+
+def test_a_binary_file_is_named_for_a_person_to_check(tmp_path, monkeypatch, capsys):
+    # Nothing reads inside a screenshot, so it is named rather than skipped without a word.
+    repo = git_repo(tmp_path)
+    (repo / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR" + ip(192, 168, 50, 7).encode())
+    git(repo, "add", "shot.png")
+    monkeypatch.chdir(repo)
+    assert cli.main(["leakcheck", "--staged", "--denylist", str(denylist(tmp_path))]) == 0
+    assert "leakcheck: not scanned (binary): shot.png — check it by eye" in capsys.readouterr().err
+
+
+def test_a_file_name_is_scanned(tmp_path, monkeypatch, capsys):
+    repo = git_repo(tmp_path)
+    (repo / f"notes-{ip(192, 168, 50, 7)}.md").write_text("nothing private here\n")
+    git(repo, "add", ".")
+    monkeypatch.chdir(repo)
+    assert cli.main(["leakcheck", "--staged", "--denylist", str(denylist(tmp_path))]) == 1
+    err = capsys.readouterr().err
+    # The name is printed like an excerpt: each match cut to 3 characters.
+    assert "leakcheck: notes-192….md (file name):1: private IPv4 address (192…)" in err
+    assert ip(192, 168, 50, 7) not in err
+
+
+def test_a_denylisted_term_in_a_file_name_is_never_printed_whole(tmp_path, monkeypatch, capsys):
+    # Hook output can land in a Claude session's context; a path is no exception.
+    repo = git_repo(tmp_path)
+    (repo / "secret-project-plan.md").write_text(f"box at {ip(192, 168, 50, 7)}\n")
+    git(repo, "add", ".")
+    monkeypatch.chdir(repo)
+    assert cli.main(["leakcheck", "--staged", "--denylist", str(denylist(tmp_path, "secret-project"))]) == 1
+    err = capsys.readouterr().err
+    assert "leakcheck: sec…-plan.md (file name):1: denylisted term (sec…)" in err
+    assert "leakcheck: sec…-plan.md:1: private IPv4 address (192…)" in err
+    assert "secret-project" not in err
+
+
+def test_ci_scans_every_tracked_file_name(tmp_path, monkeypatch, capsys):
+    repo = git_repo(tmp_path)
+    (repo / f"notes-{ip(192, 168, 50, 7)}.md").write_text("nothing private here\n")
+    git(repo, "add", ".")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("CI", "true")
+    assert cli.main(["leakcheck", "--tracked", "--ci"]) == 1
+    assert "(file name):1: private IPv4 address" in capsys.readouterr().err

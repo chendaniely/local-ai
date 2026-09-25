@@ -1,13 +1,15 @@
 """Leak check for this public repo.
 
-Flags private addresses, per-unit identifiers and privately denylisted terms. Runs from the git
-hooks on every commit (`--staged`, `--message FILE`) and in CI over every tracked file
-(`--tracked --ci`). It fails closed: a missing or malformed denylist is an error, never a pass.
+Flags private addresses, per-unit identifiers and privately denylisted terms, in file names as
+well as contents. Runs from the git hooks on every commit (`--staged`, `--message FILE`) and in CI
+over every tracked file (`--tracked --ci`). It fails closed: a missing, empty or malformed denylist
+is an error, never a pass. A binary file can't be read, so it is named for a person to check.
 """
 
 from __future__ import annotations
 
 import argparse
+import codecs
 import os
 import re
 import subprocess
@@ -86,11 +88,39 @@ def load_denylist(path: Path) -> list[re.Pattern[str]]:
                     f"denylist line {number} is not a valid regular expression — fix it in "
                     f"{path} (the line itself is not shown)"
                 ) from None
+    if not patterns:
+        # An empty file (what `touch` makes) or comments only would pass every commit.
+        raise DenylistInvalid(
+            f"denylist has no terms — add your private terms to {path}, one regular expression "
+            f"per line (website/how-to/leak-guards.md)"
+        )
     return patterns
 
 
 def _redact(text: str) -> str:
     return text[:3] + "…"
+
+
+def shown_path(path: str, denylist: list[re.Pattern[str]]) -> str:
+    """`path` as output may print it: every match of a pattern or a denylisted term cut to 3
+    characters, like an excerpt. A private term in a file name must not reach the output whole."""
+    spans = sorted(
+        m.span()
+        for pattern in (*(p for _, p in PATTERNS), *denylist)
+        for m in pattern.finditer(path)
+        if m.end() > m.start()
+    )
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    out, pos = [], 0
+    for start, end in merged:
+        out += [path[pos:start], _redact(path[start:end])]
+        pos = end
+    return "".join(out) + path[pos:]
 
 
 def scan_text(source: str, text: str, denylist: list[re.Pattern[str]]) -> list[Finding]:
@@ -115,28 +145,61 @@ def _git(args: list[str], cwd: Path | None) -> bytes:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True).stdout
 
 
-def _texts(names: list[bytes], read, cwd: Path | None) -> list[tuple[str, str]]:
-    out = []
-    for raw in names:
-        if not raw:
-            continue
-        name = raw.decode()
-        blob = read(name)
-        if b"\0" in blob:  # binary file
-            continue
-        out.append((name, blob.decode("utf-8", errors="replace")))
-    return out
+# UTF-16 and UTF-32 text is full of NUL bytes, which would mark it as binary, so text that starts
+# with a byte-order mark is decoded by it. The UTF-32 marks go first: UTF-32-LE's begins with
+# UTF-16-LE's.
+_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
 
 
-def staged_texts(cwd: Path | None = None) -> list[tuple[str, str]]:
-    names = _git(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], cwd).split(b"\0")
-    return _texts(names, lambda name: _git(["show", f":{name}"], cwd), cwd)
+def _text(blob: bytes) -> str:
+    for bom, codec in _BOMS:
+        if blob.startswith(bom):
+            return blob.decode(codec, errors="replace")
+    return blob.decode("utf-8", errors="replace")
 
 
-def tracked_texts(cwd: Path | None = None) -> list[tuple[str, str]]:
+def _decode(blob: bytes) -> str | None:
+    """A file's text, or None for a binary file: a NUL byte and no byte-order mark."""
+    if b"\0" in blob and not blob.startswith(tuple(bom for bom, _ in _BOMS)):
+        return None
+    return _text(blob)
+
+
+def _texts(names: list[bytes], read) -> list[tuple[str, str | None]]:
+    """(name, text) for each file; the text is None for a binary file."""
+    return [(raw.decode(), _decode(read(raw.decode()))) for raw in names if raw]
+
+
+def staged_texts(cwd: Path | None = None) -> list[tuple[str, str | None]]:
+    # Every staged change but a deletion: added, copied, modified, renamed, and a type change (a
+    # symlink turned into a file, or a file into a symlink, whose blob is its target path).
+    names = _git(["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"], cwd).split(b"\0")
+    return _texts(names, lambda name: _git(["show", f":{name}"], cwd))
+
+
+def tracked_texts(cwd: Path | None = None) -> list[tuple[str, str | None]]:
     names = _git(["ls-files", "-z"], cwd).split(b"\0")
     root = Path(cwd or ".")
-    return _texts(names, lambda name: (root / name).read_bytes(), cwd)
+    return _texts(names, lambda name: (root / name).read_bytes())
+
+
+def scan_files(files: list[tuple[str, str | None]], denylist: list[re.Pattern[str]]) -> list[Finding]:
+    """Scan each file's name, then its text. A binary file's content can't be scanned, so it is
+    named on stderr for a person to check; that alone never changes the exit code."""
+    findings: list[Finding] = []
+    for name, text in files:
+        shown = shown_path(name, denylist)
+        findings += scan_text(f"{shown} (file name)", name, denylist)
+        if text is None:
+            print(f"leakcheck: not scanned (binary): {shown} — check it by eye", file=sys.stderr)
+        else:
+            findings += scan_text(shown, text, denylist)
+    return findings
 
 
 def register(subparsers) -> None:
@@ -164,13 +227,12 @@ def run(args: argparse.Namespace) -> int:
     except (DenylistMissing, DenylistInvalid) as err:
         print(f"leakcheck: {err}", file=sys.stderr)
         return 2
-    if args.staged:
-        texts = staged_texts()
-    elif args.message:
-        texts = [("commit message", args.message.read_text())]
+    if args.message:
+        # Decoded leniently: CI feeds whole patches through here, and one stray byte in a patch
+        # must not crash the scan.
+        findings = scan_text("commit message", _text(args.message.read_bytes()), denylist)
     else:
-        texts = tracked_texts()
-    findings = [f for source, text in texts for f in scan_text(source, text, denylist)]
+        findings = scan_files(staged_texts() if args.staged else tracked_texts(), denylist)
     for f in findings:
         print(f"leakcheck: {f.source}:{f.line}: {f.kind} ({f.excerpt})", file=sys.stderr)
     if findings:
