@@ -1906,6 +1906,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     then `ssh agent@brightroar` and, **as agent** (the installer refuses to run under sudo), install
     Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`. Log in: run `claude`; with no
     browser on the box, press `c` to copy the login URL, open it on the Mac, and paste the code back.
+  - (Added 2026-09-24: `how-to/ssh.md` covers the Mac side: a key per account, the Mac's
+    `~/.ssh/config` with the tailnet name first and the LAN as fallback, and keeping NVIDIA Sync's
+    own config apart.)
   - *Live checks as `agent`* (you run these — they need sudo):
     `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
     → `closed: good` (`$HOME` expands in your shell; `test -x` asks whether `agent` can enter your

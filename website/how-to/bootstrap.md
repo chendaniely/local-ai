@@ -34,10 +34,12 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 
 ## Agent's SSH and Claude Code login
 
-1. Copy your Mac's **public** key to the Spark. On the Mac:
+1. On the Mac, make agent its own key and copy the **public** half to the Spark. Keys and the
+   Mac's `~/.ssh/config` are in [SSH from the Mac](ssh.md):
 
    ```bash
-   scp ~/.ssh/<your-key>.pub brightroar:agent-key.pub
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar_agent -C "agent@brightroar"
+   scp ~/.ssh/id_ed25519-brightroar_agent.pub brightroar:agent-key.pub
    ```
 2. Install it for `agent`, from an interactive `ssh brightroar` session. `sudo` needs a terminal
    to ask for your password, and a command piped into `ssh` doesn't have one:
@@ -45,7 +47,7 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
    ```bash
    sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub
    ```
-3. `ssh agent@brightroar`
+3. `ssh brightroar-agent` (the alias from [SSH from the Mac](ssh.md))
 4. As `agent` — the installer refuses to run under sudo:
 
    ```bash
