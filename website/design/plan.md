@@ -362,8 +362,9 @@ plus a `Makefile` — the front door.
 
   1. Release the set.
   2. `dpkg --configure -a` and `apt full-upgrade`, answering no if apt would remove the NVIDIA
-     modules metapackage or install a kernel without modules. It is also no if apt would change the
-     driver branch, which is a move planned and made by hand.
+     modules metapackage with no other in its place, or install a kernel without modules. It is
+     also no if apt would swap the metapackage for another driver branch's, a move planned and made
+     by hand.
   3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
   4. Check that the kernel GRUB boots has an NVIDIA module. The check reads the newest kernel,
      which assumes `GRUB_DEFAULT=0`; that is not yet checked on this box.

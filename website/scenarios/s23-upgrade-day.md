@@ -23,13 +23,14 @@ squashed.
 
 **What I see.** Each step's result as it runs, and the new kernel, driver and CUDA versions to
 record in `changelog.md` and `README.md` §Current state. If it refuses, I see which package would
-have gone, and nothing has moved. If it stops after apt moved part of the set, it sends me to the
-recovery, not to a reboot.
+have gone, and nothing has moved. If it stops after apt moved part of the set, or left the newest
+kernel without its NVIDIA module, it sends me to the recovery, not to a reboot.
 
 **How to override.** Skip a week: the set stays held, and the next upgrade day catches up. Move the
 set early only for a kernel or NVIDIA driver security fix. A new driver branch is a move I plan and
-make by hand. Every way out of `make upgrade-gpu` runs the hold again. The set stays released only
-if that hold stops (dpkg left a package unfinished) or is cut off twice, and then it says to run
-`make hold-gpu` once dpkg is done. After the steps by hand, `make hold-gpu` is the hold. A box that
-comes back without a GPU has its own steps in [Updates](../how-to/updates.md#if-it-goes-wrong),
-including booting the previous kernel.
+make by hand. Every way out of `make upgrade-gpu` runs the hold, and only the hold after apt's move
+is tried again. The set can still stay released: when the hold stops (a package dpkg didn't finish,
+a hold that didn't take, no kernel or nothing matching), or when a signal cuts off a hold the way
+out runs, the retry included. Each time, it says to run `make hold-gpu`. After the steps by hand,
+`make hold-gpu` is the hold. A box that comes back without a GPU has its own steps in
+[Updates](../how-to/updates.md#if-it-goes-wrong), including booting the previous kernel.

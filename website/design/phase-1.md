@@ -99,11 +99,12 @@ Tailscale serve · pi 0.85.1.
    stack comes back by itself after the reboot, and `make doctor` passes. *(Tasks 10 and 16.)*
 7. **Upgrade day's apt plan would leave a kernel without its NVIDIA module or change the driver
    branch, Dan answers no, or apt fails partway** — expected: `make upgrade-gpu` refuses before
-   anything moves, or stops. Every way out runs the hold again, a hold cut off once included. The
-   set stays released only when that hold stops (dpkg left a package unfinished) or is cut off
-   twice; it then says to run `make hold-gpu`, and after apt ran, not to reboot before the module
-   check. Whether anything moved is judged without the hold letter, so answering no counts as
-   nothing moved. It suggests starting the stack only then, and never a reboot after a partial
+   anything moves, or stops. Every way out runs the hold, and the hold after apt's move is tried
+   again if a signal cuts it off. When a hold stops, or a signal cuts off a hold the way out runs,
+   the retry included, the set stays released: it says to run `make hold-gpu`, and after apt ran,
+   not to reboot before the module check. Whether anything moved is judged without the hold
+   letter, so answering no counts as nothing moved. It suggests starting the stack only when
+   nothing moved and the newest kernel still has its module, and never a reboot after a partial
    move. *(Task 10.)*
 
 ***
@@ -2571,10 +2572,12 @@ clients: ## Add the Spark provider to pi on this machine
 
     - The password isn't shown.
     - Both values go in single-quoted, so Compose reads a `$` or a ` #` in them literally.
-    - The command refuses a value with a single quote, writes nothing, and prints neither value.
+    - The command refuses a value with a single quote or a backslash, writes nothing, and prints
+      neither value. Compose reads `\'` as an escaped quote, so a password ending in `\` would leave
+      the quote open, and Compose's error would print the password into the journal.
 
     ```bash
-    sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*) echo "no single quote in either, please: the env file quotes each value with them" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+    sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
     systemctl restart local-ai-compose
     ```
 
@@ -2628,12 +2631,14 @@ true, and Tasks 12, 13 and 16 run them on the box:
   update, a reboot or upgrade day. `spark doctor` proper, one check per scenario, stays in Phase 2.
 
 **Files:**
+
 - Create: `stack/host/needrestart.conf`, `spark/src/spark/doctor.py`, `spark/tests/test_doctor.py`
 - Modify: `stack/host/bootstrap.sh` (the needrestart step and the `--upgrade-gpu` mode),
   `spark/tests/test_bootstrap.py`, `spark/src/spark/cli.py` (register `doctor`), `Makefile`,
   `website/how-to/updates.md`, `website/how-to/deploy.md`, `README.md` §Contents
 
 **Interfaces:**
+
 - Consumes: Phase 0's `stack/host/bootstrap.sh` (`gpu_hold_patterns`, `hold_gpu_stack`, `run`,
   `say`, the `--hold-gpu` mode) and `spark/tests/test_bootstrap.py` (`INSTALLED`, `GPU_SET`,
   `gpu_env`, `script`, `held`, `dry_run`, `install_d_line`, `NO_PACKAGES`); `load_registry`,
@@ -2654,10 +2659,20 @@ true, and Tasks 12, 13 and 16 run them on the box:
     | 130 | a second signal cut off the hold on the way out |
     | 2 | a usage error |
 
-    Every way out after the release runs the hold again, and a hold cut off once is tried a second
-    time. The set stays released only when that hold stops (dpkg left a package unfinished) or is
-    cut off twice. It then says to run `make hold-gpu` once dpkg is done, and not to reboot before
-    step 5's module check passes if apt had started.
+    Every way out after the release runs the hold. The hold that follows apt's move is the only
+    one tried twice: cut off by a signal, the way out runs it again. The set stays released in
+    three cases, and each time it says to run `make hold-gpu`, and, if apt had started, not to
+    reboot before step 5's module check passes:
+
+    - the hold stops, because a package dpkg didn't finish, a hold that didn't take, no kernel in
+      the set, or nothing matching the patterns stops it;
+    - a signal cuts off the way out's own hold, the first hold after a refused plan, a "no" or a
+      failed apt step;
+    - the retried hold is cut off too.
+
+    On a way out after apt started, it offers to start the stack again only if the set is as it
+    was and the newest kernel still has its NVIDIA module. apt can install a new kernel, which
+    isn't in the set, and then fail. Otherwise it sends Dan to *If it goes wrong*.
 
     The newest kernel is the one the next boot starts only while GRUB boots the newest
     (`GRUB_DEFAULT=0`). That is not yet checked on this box; Task 12 Step 1 checks it.
@@ -2678,8 +2693,8 @@ What `make upgrade-gpu` does, in order:
 | finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
 | read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
-| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. Nothing changed (Dan answered no, or apt failed first): it says how to start the stack. Something changed, even one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
-| hold | the hold and nothing else (`hold_gpu_stack`); a hold cut off by Ctrl-C or TERM is tried once more on the way out | it says what the hold said, and the set stays released until `make hold-gpu`; cut off twice, it says so, and after apt ran, not to reboot before step 5's module check |
+| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
+| hold | the hold and nothing else (`hold_gpu_stack`); this hold, after apt's move, is tried once more on the way out if a signal cuts it off | it says what the hold said, and the set stays released until `make hold-gpu`. A signal during the way out's own hold, or during the retry, also leaves it released: it says so, and after apt ran, not to reboot before step 5's module check |
 | check | `modinfo -k` on the newest kernel (the one GRUB boots while `GRUB_DEFAULT=0`) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
 | end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
 
@@ -3012,6 +3027,16 @@ def test_a_move_that_only_changes_versions_counts_as_moved(tmp_path):
     assert "systemctl start" not in result.stderr and RECOVERY in result.stderr
 
 
+def test_a_new_kernel_without_its_module_gets_no_start_hint(tmp_path):
+    # apt installs a new kernel, which isn't in the set, and fails before its NVIDIA modules come:
+    # the set looks as it was, but the next boot would start a kernel without a module.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="partial", after=RELEASED, module_kernels=OLD))
+    assert result.returncode == 100
+    assert held(tmp_path) == GPU_SET
+    assert "the newest kernel has no NVIDIA module" in result.stderr and RECOVERY in result.stderr
+    assert "systemctl start" not in result.stderr
+
+
 def test_a_cut_off_hold_is_tried_again_on_the_way_out(tmp_path):
     # Ctrl-C or TERM while the set is being held again must not leave it released.
     result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, cut_holds=1))
@@ -3027,6 +3052,15 @@ def test_a_hold_cut_off_twice_says_what_is_left_to_do(tmp_path):
     assert result.returncode == 130
     assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
     assert "don't reboot until step 5's module check passes" in result.stderr  # apt had run
+    assert held(tmp_path) == set()
+
+
+def test_a_signal_during_the_way_outs_own_hold_leaves_the_set_released(tmp_path):
+    # After a "no", the way out's hold is the first one, and it isn't tried again: one signal there
+    # leaves the set released, and says what to do.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="no", cut_holds=1))
+    assert result.returncode == 130
+    assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
     assert held(tmp_path) == set()
 
 
@@ -3175,11 +3209,13 @@ After `hold_gpu_stack`, the upgrade mode.
 - `gpu_set_contents` drops the hold letter, the first of dpkg's status letters. The release turns it
   from `h` to `i` and the hold turns it back, without moving anything. So a before-and-after pair of
   contents says whether apt moved anything: a package's state or its version.
-- `rehold` runs the hold in a subshell, so a hold that stops (a package dpkg didn't finish) can't
-  end the script before it says so. A hold cut off by a signal is tried once more on the way out; a
-  second cut says what is left to do.
-- The way out suggests starting the stack only when nothing in the set moved; otherwise it sends Dan
-  to the recovery, never to a reboot.
+- `rehold` runs the hold in a subshell, so a hold that stops (a package dpkg didn't finish, a hold
+  that didn't take, no kernel, nothing matching) can't end the script before it says so. The hold
+  after apt's move, if a signal cuts it off, is tried once more on the way out. A signal during a
+  hold the way out runs, the retry included, says what is left to do.
+- The way out suggests starting the stack only when nothing in the set moved and the newest kernel
+  still has its NVIDIA module (`newest_kernel`, `module_version`, the same check the gate makes);
+  otherwise it sends Dan to the recovery, never to a reboot.
 
 ```bash
 # Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
@@ -3210,6 +3246,15 @@ held_gpu_set() {
 # set, a package's state or its version.
 gpu_set_contents() {
   gpu_set_state | cut -c2- | LC_ALL=C sort
+}
+
+# The newest kernel, which the next boot starts while GRUB boots the newest (GRUB_DEFAULT=0), and
+# the version of the NVIDIA module built for a kernel: nothing when it has none.
+newest_kernel() {
+  linux-version list | linux-version sort --reverse | head -1
+}
+module_version() {
+  modinfo -k "$1" -F version nvidia 2>/dev/null || true
 }
 
 # Reads `apt-get -s dist-upgrade` on stdin and prints why the plan must not run. It would remove the
@@ -3268,9 +3313,18 @@ on_upgrade_exit() {
     rehold || code=1
   fi
   if (( code != 0 )); then
-    if (( MOVING )) && [[ "$(gpu_set_contents)" != "$MOVE_FROM" ]]; then
-      # The newest kernel may have no NVIDIA module now, so neither a reboot nor the stack is safe yet.
-      echo "bootstrap: the GPU set moved before this stopped. Don't reboot or start the stack yet: follow 'If it goes wrong' in website/how-to/updates.md" >&2
+    # After apt started, the stack may start again only if the set is as it was and the newest
+    # kernel still has its module: apt can install a new kernel, outside the set, and then fail.
+    local unsafe=""
+    if (( MOVING )); then
+      if [[ "$(gpu_set_contents)" != "$MOVE_FROM" ]]; then
+        unsafe="the GPU set moved before this stopped"
+      elif [[ -z "$(module_version "$(newest_kernel)")" ]]; then
+        unsafe="the newest kernel has no NVIDIA module"
+      fi
+    fi
+    if [[ -n "$unsafe" ]]; then
+      echo "bootstrap: $unsafe. Don't reboot or start the stack yet: follow 'If it goes wrong' in website/how-to/updates.md" >&2
     elif [[ -n "$STOPPED" ]]; then
       echo "bootstrap: nothing in the GPU set moved, so start what was stopped again: systemctl start$STOPPED" >&2
     fi
@@ -3333,8 +3387,9 @@ upgrade_gpu() {
     printf '+ modinfo -k <the newest kernel> -F version nvidia\n'
     return 0
   fi
-  kernel="$(linux-version list | linux-version sort --reverse | head -1)"
-  if ! version="$(modinfo -k "$kernel" -F version nvidia 2>/dev/null)" || [[ -z "$version" ]]; then
+  kernel="$(newest_kernel)"
+  version="$(module_version "$kernel")"
+  if [[ -z "$version" ]]; then
     echo "bootstrap: DON'T REBOOT — $kernel, the newest kernel, has no NVIDIA module. See 'If it goes wrong' in website/how-to/updates.md" >&2
     exit 1
   fi
@@ -3951,26 +4006,26 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       apt's plan and refuses it before anything moves if it breaks step 3's rule, stops llama-swap
       and the brake, and moves the set (you read apt's plan and answer). Then it holds the set again
       with `make hold-gpu`'s hold, runs step 5's check, and says whether to reboot. Every way out
-      after the release runs the hold again. The set stays released only if that hold stops
-      (dpkg left a package unfinished) or is cut off twice, and it then says what to do. It judges
-      whether apt moved anything by each package's state and version, not the hold letter. If apt
-      moved even part of the set, it sends you to *If it goes wrong* rather than to a reboot or a
-      restart of the stack. Only when nothing in the set moved does it say how to start the stack
-      again. `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps
-      are what it runs, to read along with, and to do by hand if it can't.
+      after the release runs the hold, and only the hold after apt's move is tried again. The set
+      can still stay released: when the hold stops (a package dpkg didn't finish, a hold that didn't
+      take, no kernel or nothing matching), or when a signal cuts off a hold the way out runs, the
+      retry included. In each case it says to run `make hold-gpu`. It judges whether apt moved
+      anything by each package's state and version, not the hold letter, and it checks that the
+      newest kernel still has its module. If apt moved even part of the set, or left the newest
+      kernel without a module, it sends you to *If it goes wrong* rather than to a reboot or a
+      restart of the stack. Only when neither happened does it say how to start the stack again.
+      `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what
+      it runs, to read along with, and to do by hand if it can't.
     - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
       (the reboot starts them again), and your own GPU jobs and `agent`'s."
-    - **Step 3's answer-no rule** gets three cases. It becomes "answer **no** if any of these is
-      true:", then the two existing bullets and a third: "it would swap the modules metapackage for
-      another driver branch's (`linux-modules-nvidia-580-open-…` removed,
-      `linux-modules-nvidia-590-open-…` installed, say)". The sentence after the bullets becomes:
-      "In the first two cases the new kernel would boot without a GPU: answering no installs and
-      removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
-      new driver branch. Answer no and re-hold, then plan that move and make it by hand with these
-      steps, on a day you choose. `make upgrade-gpu` refuses it too."
+    - **Step 3's answer-no rule** already has its three cases. They went in on 2026-09-25, before
+      the first upgrade day, and the first names a removed metapackage with no other in its place.
+      Add one sentence after the paragraph that follows them: "`make upgrade-gpu` refuses all three
+      too."
     - **Step 5's GRUB check** already reads both files that can set `GRUB_DEFAULT`
-      (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line winning). It was fixed on
-      2026-09-25, before the first upgrade day, so leave it as it is.
+      (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line winning). It also counts a
+      quoted `"0"` as 0 and says not to reboot yet when the last line is anything else. Both went in
+      on 2026-09-25, before the first upgrade day, so leave it as it is.
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
@@ -4156,9 +4211,9 @@ bootstrap no longer touches it.
 The last three lines check two things `make upgrade-gpu` assumes (Task 10) and nothing has checked
 yet:
 
-- `GRUB_DEFAULT=0` (no line at all means the same default): GRUB boots the newest kernel, the one
-  its pre-reboot check reads. `grub-mkconfig` reads `/etc/default/grub` and then each
-  `/etc/default/grub.d/*.cfg`, so the last line printed is the setting that counts.
+- `GRUB_DEFAULT=0` (a quoted `"0"` is the same, and so is no line at all, the default): GRUB boots
+  the newest kernel, the one its pre-reboot check reads. `grub-mkconfig` reads `/etc/default/grub`
+  and then each `/etc/default/grub.d/*.cfg`, so the last line printed is the setting that counts.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
@@ -4233,14 +4288,16 @@ first request and stays (ttl 0). Open WebUI takes a minute on its first start (`
   prompts, the password isn't shown, and no value goes into the repo:
 
 ```bash
-sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*) echo "no single quote in either, please: the env file quotes each value with them" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
 systemctl restart local-ai-compose
 ```
 
   Both values go in single-quoted, so Compose reads them literally. Unquoted, it expands a `$` and
-  cuts a value at ` #`: Compose v5.5.1 reads `ab$cd #x` as `ab`. A single quote can't go inside
-  that quoting, so the command refuses a value with one, writes nothing, and prints neither value:
-  choose a password without one.
+  cuts a value at ` #`: Compose v5.5.1 reads `ab$cd #x` as `ab`. A single quote can't go inside that
+  quoting, and nor can a backslash at the end: Compose reads `\'` as an escaped quote, so the quote
+  stays open, and Compose's error prints the value into the journal. So the command refuses a value
+  with a single quote or any backslash, writes nothing and prints neither value; choose a password
+  without them.
 
   Log in through the tunnel with that email and password. Then remove both lines, and restart once
   more so the container no longer holds them:
@@ -4307,8 +4364,10 @@ tool's cache at `/var/lib/local-ai/cache` in the unit template (Task 6's). `make
 the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) for the Mac session, which then changes
 that check. Step 3's browser already loaded Open WebUI's page. What is not yet seen on this box is
 doctor's own expectation: `200` from `/` on both Open WebUI and SearXNG. This first `make doctor`
-is that check. If its web line fails while both pages work in a browser through the tunnel, record
-what each answered for the Mac session.
+is that check. If its web line fails, look at the pages in a browser. Step 3's tunnel forwards only
+Open WebUI's port 3000; to see SearXNG, open a second one,
+`ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
+record what doctor says each answered for the Mac session.
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
