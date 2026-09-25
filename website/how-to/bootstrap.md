@@ -17,7 +17,11 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 
 ## Run it
 
-1. `make bootstrap-dry-run` — read the output before doing anything else.
+1. `make bootstrap-dry-run` — read the output before doing anything else. Its hold step prints
+   `GPU set: N packages, M already held`: on a bootstrapped Spark, all of them held (151 at the
+   2026-09-24 bootstrap). Off the Spark (the Mac, CI), with no DGX kernel installed, it says
+   `a real run stops here` instead. A package that isn't cleanly installed stops the dry run too,
+   with a hint for finishing it.
 2. `make bootstrap` — run it over SSH; it stops any running desktop session.
 
 ## After bootstrap

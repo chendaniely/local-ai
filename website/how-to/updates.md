@@ -4,15 +4,18 @@ description: "What you can run any time, what updates by itself, what waits for 
 ---
 
 `sudo apt update && sudo apt upgrade` is safe to run any time, as often as habit says: it can't
-move the GPU stack. Everything that needs care waits for **upgrade day, on Saturdays**. Skipping one is fine; the next
-one catches up.
+move the GPU stack while the set is held, and the set is always held except midway through upgrade
+day. Everything that needs care waits for **upgrade day, on Saturdays**. Skipping one is fine; the
+next one catches up.
 
 | What | Comes from | When and how it updates |
 |---|---|---|
 | Everything else from apt | apt | Any time: `sudo apt update && sudo apt upgrade` |
 | The GPU set: kernel, NVIDIA modules, driver, CUDA | apt, held | Upgrade day — [the GPU set](#upgrade-day-the-gpu-set) |
+| GitHub Actions and `spark/uv.lock` | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
 | gitleaks | a direct install in `/usr/local/bin` | Upgrade day — [gitleaks](#upgrade-day-gitleaks); no package manager sees it |
 | uv | your `~/.local/bin` | Upgrade day: `uv self update <version>`, the version `stack/versions.yaml` pins |
+| Python for `spark/` | `spark/.python-version` pins 3.12 | Only deliberately, on upgrade day: change the pin, and each machine rebuilds `spark/.venv` on its next `uv run` |
 | The desktop's snaps (browser, mail, Snap Store, firmware updater) and their runtimes | snap | By themselves, about four times a day |
 | Claude Code | your `~/.local/bin` | By itself |
 | Firmware | fwupd | Not automatically. Whether GIGABYTE publishes this box's firmware there is not yet checked |
@@ -27,6 +30,13 @@ sudo apt update && sudo apt upgrade
 `apt-mark showhold` lists what is held. unattended-upgrades isn't installed, so apt changes things
 only when you run it. Use a terminal rather than NVIDIA's web updater: the 2026-09-23 DGX OS update
 came from it, and how it treats held packages is not yet checked.
+
+**Installing something new.** A package that belongs to the set, such as an `nvidia-*` or `cuda-*`
+package or a CUDA library, arrives unheld. Hold it with the rest: `make hold-gpu`, from
+`~/git/hub/local-ai` (`make hold-gpu-dry-run` previews it). If `apt install` stops with
+`you have held broken packages`, the package needs a newer version of something in the held set.
+The hold is doing its job: wait for upgrade day, or install the version that fits the held set.
+`apt policy <package>` lists the versions, and `sudo apt install <package>=<version>` picks one.
 
 What a routine upgrade can restart by itself:
 
@@ -81,51 +91,147 @@ from 13.0.0 to 13.0.3 in one transaction. So they are held together and moved to
 only part of the set would let a routine `apt upgrade` install a kernel with no NVIDIA module, and
 the box would come back from its next reboot without a GPU.
 
-Move the set sooner than upgrade day when a serious kernel security fix lands. Those fixes waiting
-for you is the cost of holding it.
+**Moving it early.** Only a security fix in the set justifies it: a kernel fix in
+[Ubuntu's security notices](https://ubuntu.com/security/notices), or a GPU display driver fix in
+[NVIDIA's security bulletins](https://www.nvidia.com/en-us/security/). `agent` and `spark` both use
+the GPU, so a driver privilege-escalation fix is a boundary fix too. Everything else waits for
+Saturday; that wait is the cost of holding the set.
 
-1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will do steps 1–4.
-2. Release the set and move it as one:
+Work in tmux, from the clone. A dropped SSH session in the middle of `full-upgrade` is the likeliest
+way to leave the set half-moved; in tmux the upgrade carries on, and `tmux attach -t upgrade` brings
+you back:
+
+```bash
+tmux new -As upgrade
+cd ~/git/hub/local-ai
+```
+
+1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
+   steps as one command.
+2. Release the set:
 
    ```bash
-   sudo apt-mark unhold $(apt-mark showhold) && sudo apt update && sudo apt full-upgrade
+   apt-mark showhold | xargs -r sudo apt-mark unhold
    ```
 
-   `full-upgrade`, not `upgrade`: moving the set can mean removing the modules built for the old
-   kernel, and `upgrade` never removes anything. Only bootstrap holds packages on this box, so
-   releasing everything held releases just the set.
-3. Hold the new set, from `~/git/hub/local-ai`: `make bootstrap`. It is safe to re-run, and it holds
-   the set as it is installed now.
-4. Reboot: `sudo reboot`.
-5. Check, once you are back in:
+   Only bootstrap holds packages on this box, so this releases just the set. With nothing held it
+   does nothing, so it is safe to run again. **From here until step 4, the set is free to move. If
+   anything below fails, or you answer no, run `make hold-gpu` before anything else.**
+3. Move the set as one:
+
+   ```bash
+   sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
+   ```
+
+   `dpkg --configure -a` finishes anything an earlier run left half-done; otherwise it does nothing.
+   `full-upgrade`, not `upgrade`: moving the set can remove the modules built for the old kernel,
+   and `upgrade` never removes anything. Removing the old kernel's own modules package
+   (`linux-modules-nvidia-…-<old kernel>`) is expected. Read apt's plan before you answer, and
+   answer **no** if either is true:
+
+   - it would remove a `linux-modules-nvidia-*-nvidia-hwe-*` package: that is the metapackage that
+     brings in the modules for each new kernel;
+   - it would install a new kernel, `linux-image-<version>`, with no `linux-modules-nvidia-*` package
+     ending in that same `<version>`.
+
+   Either way the new kernel would boot without a GPU. Answering no installs and removes nothing:
+   re-hold with `make hold-gpu`, and try again next upgrade day.
+4. Hold the new set: `make hold-gpu`. It prints `GPU set: N packages, M already held`, then
+   `GPU set held: N packages`. It stops instead, naming the packages, if one isn't cleanly
+   installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
+   again.
+5. Before you reboot, check that the kernel GRUB boots has an NVIDIA module. "GPU set held" proves
+   the holds took, not that the set is complete:
+
+   ```bash
+   k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel, which GRUB boots by default
+   modinfo -k "$k" -F version nvidia                                  # the new driver's version
+   ```
+
+   If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
+   [If it goes wrong](#if-it-goes-wrong).
+6. Reboot: `sudo reboot`.
+7. Check, once you are back in:
 
    ```bash
    uname -r                                                            # the new kernel
    nvidia-smi --query-gpu=name,driver_version --format=csv,noheader   # the GPU, on the new driver
-   apt-mark showhold | grep -c .                                       # held again: not zero
+   modinfo -F version nvidia                                           # the same version as nvidia-smi's driver
+   apt-mark showhold | grep -- "-$(uname -r)$"                         # the running kernel's NVIDIA modules package: held
    ```
 
-   From Phase 1, run `make doctor` too; it loads a model end to end.
-6. Record the new kernel, driver and CUDA versions in `changelog.md`.
+   If the last line prints nothing, the running kernel's modules aren't held: run `make hold-gpu`
+   and check again. From Phase 1, run `make doctor` too; it loads a model end to end.
+8. Record the new kernel, driver and CUDA versions in `changelog.md`, and bring the GPU set's line
+   in `README.md` §Current state up to date.
 
-**If `nvidia-smi` fails after the reboot**, the driver didn't load. The box still boots and SSH still
-works — nothing on the network path needs the GPU. The likeliest cause is a set that didn't finish
-moving. Release it, finish it, hold it and reboot:
+### If it goes wrong
+
+**You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
+stops on a package that isn't cleanly installed, do what it says, then run it again. Nothing moves
+until you start again at step 2.
+
+**Step 5's check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is a kernel
+with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH still
+works: nothing on the network path needs the GPU. Every command here is safe to run again:
+
+1. Release the set and finish the move, answering as step 3 says:
+
+   ```bash
+   cd ~/git/hub/local-ai
+   apt-mark showhold | xargs -r sudo apt-mark unhold
+   sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
+   ```
+
+2. If the modules metapackage was removed, put it back. apt's log names it; take the name from
+   there, never from memory. If it prints more than one, take the one that matches your driver
+   (`dpkg -l 'nvidia-driver-*'`):
+
+   ```bash
+   grep -ho 'linux-modules-nvidia-[^ :,]*-nvidia-hwe-[^ :,]*' /var/log/apt/history.log | sort -u
+   sudo apt install <the name it printed>
+   ```
+
+3. Run step 5's check again. Once it prints the driver's version: `make hold-gpu`, `sudo reboot`,
+   then step 7's checks.
+
+**The quick way back, when the driver didn't move.** If only the kernel moved, the previous kernel
+still has its module:
 
 ```bash
-sudo apt-mark unhold $(apt-mark showhold) && sudo apt update && sudo apt full-upgrade && make bootstrap && sudo reboot
+p=$(linux-version list | linux-version sort --reverse | sed -n 2p)   # the previous kernel
+modinfo -k "$p" -F version nvidia                                    # prints the installed driver's version?
 ```
 
-Booting the previous kernel may not help: the 2026-09-23 update removed the old kernel's NVIDIA
-modules. *Not yet performed on this box* — the first upgrade day is the test of this section.
+If it prints the version of the driver installed now (`dpkg -l 'nvidia-driver-*'` shows it), boot
+that kernel. It needs a keyboard and display at the box: as it starts, press Esc to show GRUB's
+hidden menu, then choose *Advanced options* and the previous kernel. If the firmware's setup opens
+instead, leave it without saving and press Esc a moment later. When the driver moved too, as it
+did on 2026-09-23 (which also removed the old kernel's modules), the previous kernel won't help.
+
+*Not yet performed on this box* — the first upgrade day is the test of this section.
+
+## Upgrade day: the automated PRs
+
+Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
+and for `spark/uv.lock`. On upgrade day, for each one:
+
+1. Read what it bumps and its release notes, and let CI finish green.
+2. Read the PR's commit message, then merge it with a merge commit or a rebase. Never squash it: a
+   squash can paste the release notes into the message, CI scans every commit message with the
+   repo's patterns, and once merged, a finding in history can't be taken back or marked allowed.
+
+They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
+or the gitleaks pin; those still move by hand.
 
 ## Upgrade day: gitleaks
 
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its
 [releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version:
 
-1. On the Mac, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; the download
-   URL and the `linux_x64` checksum in `.github/workflows/ci.yml` (the checksum is in the release's
+1. On the Mac, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
+   `.github/workflows/ci.yml`, the URL in the "download gitleaks" step and the `linux_x64` checksum
+   in the "check gitleaks against its pinned checksum" step (the checksum is in the release's
    `checksums.txt`); and the version in [Leak guards](leak-guards.md)' install block. Then
    `brew upgrade gitleaks` for the Mac's own copy.
 2. On the Spark, install it over the old one. Set `v` to the new version; the checksum is checked

@@ -1893,7 +1893,10 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     `sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>`
     (find the name with `nmcli device status`); confirm the wired address ends in `.201`.
   - *Run:* `make bootstrap-dry-run`, read it, then `make bootstrap`. It stops any running desktop
-    session — run it over SSH.
+    session — run it over SSH. (Added 2026-09-25: the dry run's hold step prints
+    `GPU set: N packages, M already held`, all held on a bootstrapped Spark; off the Spark, with no
+    DGX kernel installed, it says `a real run stops here`; a package that isn't cleanly installed
+    stops it with a hint.)
   - *After bootstrap* (the heading bootstrap.sh's last message names): log out and back in (new
     groups); `systemctl get-default` → `multi-user.target`;
     `systemctl is-active earlyoom` → `active`; `sudo ufw status` → OpenSSH allowed;
