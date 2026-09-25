@@ -1,8 +1,20 @@
+import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from spark.versions import VersionsError, load_versions, render_stack_page, unpinned
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_uv_runs_the_pinned_python_minor_version():
+    # spark/.python-version pins one minor version, so uv picks the same interpreter on the Mac, the
+    # Spark and CI rather than whichever is newest on each. uv reads it from the project directory
+    # only: a copy at the repo root is ignored under `uv run --project spark`.
+    pinned = (ROOT / "spark/.python-version").read_text().strip()
+    assert f"{sys.version_info.major}.{sys.version_info.minor}" == pinned
 
 GOOD = textwrap.dedent(
     """
