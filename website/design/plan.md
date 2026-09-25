@@ -544,9 +544,10 @@ Each item gets its own design pass when its turn comes.
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
   Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
-  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); whether
-  GIGABYTE ships this box's firmware through fwupd; whether a model's GPU memory counts toward its
-  engine's RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
+  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); that GRUB
+  boots the newest kernel, which the move's check before the reboot relies on; whether GIGABYTE
+  ships this box's firmware through fwupd; whether a model's GPU memory counts toward its engine's
+  RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
   brake's order (Phase 1 measures it); whether memory swaps out before `MemAvailable` reaches the
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
@@ -633,6 +634,9 @@ Each item gets its own design pass when its turn comes.
   records what it built, where it departed from this plan and why, what the reviews found, and what
   Phase 1 inherits. `CLAUDE.md` gains the rules that prevent the loops it took (*Lessons from
   Phase 0*).
+- **2026-09-25** — *To verify on the box* gains that GRUB boots the newest kernel. The move's step 4
+  already marked it unchecked, but the list, which the retrospective points to for what is still
+  unverified, left it out.
 
 ## Sources
 
