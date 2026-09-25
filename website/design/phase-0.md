@@ -396,6 +396,10 @@ def test_cli_missing_denylist_exits_2(tmp_path, capsys):
     assert "denylist not found" in capsys.readouterr().err
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 8e0a5e7 (sentence-final and IPv6
+addresses, bare tailnet names, the denylist on allowed lines, a bad denylist line) and cbd7ca3 (type
+changes, file names, UTF-16 and UTF-32 text, binaries named, an empty denylist refused).*
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_leakcheck.py`
@@ -568,6 +572,11 @@ def run(args: argparse.Namespace) -> int:
     return 0
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 8e0a5e7 (sentence-final and IPv6
+addresses, bare tailnet names, the denylist on allowed lines, a bad denylist line exits 2), cbd7ca3
+(type changes, file names, UTF-16 and UTF-32 text, binaries named, an empty denylist refused) and
+bad1b55 (the docstring and the `--message` help name CI's history scan).*
+
 In `spark/src/spark/cli.py`, replace the `parser.add_subparsers(...)` line with:
 
 ```python
@@ -648,6 +657,10 @@ def test_pre_commit_refuses_without_gitleaks(tmp_path):
     assert "gitleaks is not installed" in result.stderr
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 783a619 (a clear refusal when uv is
+missing), cbd7ca3 (`make hooks` refuses an empty denylist) and f581016 (both hooks, and
+`make hooks`, need gitleaks' `git` command).*
+
 - [ ] **Step 3: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_hooks.py`
@@ -674,6 +687,9 @@ gitleaks git --pre-commit --staged --redact --no-banner --config "$root/.githook
 exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --staged
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 783a619 (a clear refusal when uv is
+missing from the hook's `PATH`).*
+
 `.githooks/commit-msg`:
 
 ```bash
@@ -692,6 +708,9 @@ fi
 gitleaks stdin --redact --no-banner --config "$root/.githooks/gitleaks.toml" < "$1"
 exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --message "$1"
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 783a619 (a clear refusal when uv is
+missing from the hook's `PATH`).*
 
 `.githooks/gitleaks.toml`:
 
@@ -717,6 +736,9 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your de
 lint: ## Shellcheck the hooks and host scripts
 	shellcheck .githooks/pre-commit .githooks/commit-msg
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commits cbd7ca3 (`make hooks` runs the hooks'
+own denylist check) and f581016 (it checks gitleaks' `git` command).*
 
 - [ ] **Step 6: Run the tests — they pass; lint is clean**
 
@@ -837,6 +859,9 @@ def test_stack_page_is_a_table_marked_generated(tmp_path):
     assert "generated from `stack/versions.yaml`" in page
     assert "| llama-swap | v257 | spark | not yet |" in page
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit fe3d8b7 (a test that uv runs the Python
+minor version `spark/.python-version` pins).*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1053,6 +1078,9 @@ components:
     advisories: https://github.com/open-webui/open-webui/security/advisories
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 7d819bb (Docker and earlyoom, with the
+versions the Spark recorded).*
+
 If `gitleaks version` (Task 3) reports something other than 8.30.1, use what it reports.
 
 - [ ] **Step 5: Makefile, generate, run the tests**
@@ -1134,6 +1162,9 @@ def test_broken_front_matter_is_reported_by_name(tmp_path):
     assert any("s03-doesnt-fit.md" in p for p in check_scenarios(tmp_path))
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 5036aca (tests for front matter that isn't
+valid YAML, or isn't a mapping).*
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_scenarios.py`
@@ -1189,6 +1220,9 @@ def check_scenarios(directory: Path) -> list[str]:
             problems.append(f"{name}: a verified scenario needs verified: YYYY-MM-DD")
     return problems
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 5036aca (a YAML error names its page, and
+front matter that isn't a mapping reads as missing).*
 
 and in `register`, after the `stack` parser:
 
@@ -1522,6 +1556,10 @@ jobs:
       - run: quarto render website
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits bad1b55 (no job token in the checkouts;
+gitleaks downloaded, checked and run in three steps; the repo's patterns over every commit's patches
+and messages) and ed0e06a (a time limit on every job; the download retries).*
+
 - [ ] **Step 3: Write `publish-website.yml` (manual only)**
 
 ```yaml
@@ -1655,6 +1693,12 @@ def test_the_engine_user_cannot_change_what_root_runs():
 def test_shellcheck_is_clean():
     subprocess.run(["shellcheck", str(SCRIPT)], check=True)
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commits d7a78d3 (tests that fail when their line
+is missing), 3cf93e4 (the admin is whoever runs it), cb0ec0b and f77a144 (the whole GPU set held,
+and loudly), d0c4d3c (every apt package the box relies on), 3735420 (root stays out of paths
+`spark` and `agent` control) and ed0e06a (a pending removal's hint, `make hold-gpu`, a dry run that
+ignores the host's packages).*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1803,6 +1847,12 @@ main() {
 main "$@"
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 3cf93e4 (the admin is whoever runs it),
+cb0ec0b (the whole GPU set held, and the real hold line in the dry run), d0c4d3c (every apt package
+the box relies on), 3735420 (a root-owned `/var/lib/local-ai`, nothing inside `agent`'s home),
+f77a144 (a loud hold, `--hold-gpu`, unknown options refused) and ed0e06a (a pending removal's
+hint).*
+
 `stack/host/earlyoom.default`:
 
 ```sh
@@ -1815,6 +1865,9 @@ main "$@"
 # neither.
 EARLYOOM_ARGS="-r 3600 -M 12582912,9437184 -s 100,100 --prefer ^(llama-server|whisper-server|VLLM::EngineCor)$ --avoid ^(sshd|systemd|systemd-.*|tmux.*|tailscaled|dockerd|containerd|llama-swap|spark)$"
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 3735420 (`sshd.*` in `--avoid`, which
+also covers OpenSSH's `sshd-session`).*
 
 `stack/host/50-local-ai.rules`:
 
@@ -2097,6 +2150,11 @@ dpkg -l | grep -Ei 'nvidia|cuda|linux-modules-nvidia'   # what the hold would co
 is Dan's: `sudo ufw app list`. In the `dpkg` list, note any precompiled `linux-modules-nvidia-*`
 packages — the hold's patterns (`nvidia-*`, `libnvidia-*`, `cuda-*`) miss them.
 
+*Superseded 2026-09-25 — the code now differs: since commit cb0ec0b the dry run prints the real
+`apt-mark hold` line, computed read-only, and the patterns also cover the NVIDIA modules, the kernel
+metapackages and CUDA's version-named libraries; since f77a144 it says
+`GPU set: N packages, M already held`.*
+
 Note anything that looks wrong for this box (a missing group, a package name) and fix
 `stack/host/bootstrap.sh` + its test before Dan runs it.
 
@@ -2185,6 +2243,9 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 The `-M` values sit above the box's free memory on purpose, so earlyoom believes it must act.
 Expected: it reports the process it *would* kill, and that process is none of the avoided ones.
+(Superseded 2026-09-25: `stack/host/earlyoom.default` now avoids `sshd.*`, which also covers
+OpenSSH's `sshd-session` — commit 3735420. A re-run of this check uses the file's current
+regexes.)
 
 - [ ] **Step 3: Record the machine changes — both files, one commit**
 

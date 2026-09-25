@@ -71,7 +71,7 @@ In order of how much they constrain the design:
 | Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
-| Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs; vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
+| Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
 | Build | **Split by machine, one session at a time:** the Mac session writes code, tests, docs and Mac clients; a Claude Code session on the Spark (as Dan, in tmux) builds and tests everything touching the GPU, memory, systemd or Docker; Dan runs sudo, logins, secrets and the Synology's settings. |
 | Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · `claude-dgx` · other users · the web UI banner. |
 
@@ -119,7 +119,7 @@ In order of how much they constrain the design:
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
-| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd/sshd/tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; ufw SSH only (+ LiteLLM from Phase 3); one 0600 secret file per service. |
+| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
 | **Mac and agent clients** | `clients/` | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
@@ -158,16 +158,23 @@ In order of how much they constrain the design:
   isolation boundary on this box is between Dan and `agent`. `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
   writes its repos and the NAS work folders; its own key; no GitHub credentials.
 - **Secrets.** Never `EnvironmentFile=~/.secrets` — systemd ignores `export` lines and has been
-  reported logging them with their values. Dan writes one 0600 `KEY=value` file per service, outside
-  any agent session; the gate token goes in through `LoadCredential=`, Postgres through
+  reported logging them with their values. Dan writes one `KEY=value` file per service, 0640
+  root:spark, in `/etc/local-ai/secrets/`, a folder his own account can't list, outside any agent
+  session (corrected 2026-09-25: this said 0600; `website/how-to/secret-files.md` makes them 0640
+  root:spark); the gate token goes in through `LoadCredential=`, Postgres through
   `POSTGRES_PASSWORD_FILE`; client keys live in `~/.secrets` on each client. Agents only test that a
   variable is present. A Claude Code hook on the Spark blocks commands that print values
   (`docker inspect`, `docker compose config`, `/proc/*/environ`, `systemctl show-environment`).
 - **Network.** Tailscale ACL grants are the tailnet's firewall, because ufw does not filter
   `tailscale0` (Tailscale issue #11717). Everything binds 127.0.0.1 except SSH (and LiteLLM from
   Phase 3); Open WebUI is reachable only through `tailscale serve`. The ACL policy lives in the vault.
-  Client base URLs and the SSH alias use the Spark's LAN address from a private values file, which
-  works at home, through the tailnet's route home and over WireGuard — Phase 0 confirms that route.
+  Clients reach the Spark by its tailnet name, at home and away: the SSH alias (and so pi's tunnel)
+  and Open WebUI. The LAN address, from a private values file, serves the home LAN — homelab apps
+  from Phase 3, devices on WireGuard, and SSH when Tailscale is down (`website/how-to/ssh.md`).
+  There is no tailnet route home, by choice: the Spark joins the tailnet itself and sits on the LAN,
+  so it needs none (`website/how-to/tailscale.md`). (Corrected 2026-09-25: this said client base
+  URLs and the SSH alias use the LAN address "through the tailnet's route home", which Phase 0
+  would confirm; on 2026-09-24 that route was settled as none.)
 - **NAS.** The Synology's NFS exports offer only the data and recordings shares (read-only) and named
   work folders (read-write), to the wired address only, with root squashed. Immutable snapshots
   (DSM 7.2+, Btrfs) protect the work and backup shares. systemd automounts with timeouts.
@@ -175,12 +182,18 @@ In order of how much they constrain the design:
   (its PyPI releases 1.82.7 and 1.82.8 were backdoored on 2026-03-24; the images were not affected
   and have been signed since 1.83.0). GitHub Actions are pinned by commit SHA with minimal
   `permissions:`. The GPU set — kernel, NVIDIA modules, driver and CUDA — is held and upgraded
-  deliberately, as one.
+  deliberately, as one. Its advisory feeds are Ubuntu's security notices for the kernel and NVIDIA's
+  GPU display driver security bulletins. A security fix in either is the only reason to move it
+  before upgrade day; a driver fix counts because `agent` and `spark` both use the GPU.
 - **Leak guards.** `.githooks` pre-commit and commit-msg hooks run gitleaks plus patterns for private
   LAN and tailnet addresses, MACs and `ts.net`, plus a private denylist kept outside the repo (the
-  hook fails if it's missing). Configs render outside the repo; fixtures use RFC 5737 addresses and
-  `example.invalid`; no pasted terminal output; Quarto `_freeze`, screenshots and Actions logs get
-  checked too.
+  hook fails if it's missing, has no terms or doesn't parse). They read file names as well as
+  contents, and type changes; a binary, such as a screenshot, can't be read, so the hook names it
+  for a person to check. CI runs gitleaks and the patterns, without the denylist, over every
+  tracked file and every commit's patches and messages. Configs render outside the repo; fixtures
+  use RFC 5737 addresses and `example.invalid`; no pasted terminal output; Quarto `_freeze` and
+  Actions logs get checked too. (Corrected 2026-09-25: this said screenshots get checked; binaries
+  are named, not read.)
 
 ### Visibility and notifications
 
@@ -245,8 +258,11 @@ plus a `Makefile` — the front door.
 ### Deploy workflow (Mac ⇄ GitHub ⇄ Spark)
 
 - **Edit on either machine** (as Dan, never as `agent`). Pushes happen only with Dan's explicit OK.
-  GitHub credentials exist only in Dan's accounts (a 0700 home on the Spark). Bootstrap installs the
-  leak-guard hooks in each clone; the private denylist exists on both machines.
+  GitHub credentials exist only in Dan's accounts (a 0700 home on the Spark), and the Spark gets a
+  fine-grained token that can push to this repository only (`website/how-to/spark-session.md`).
+  `make hooks` turns the leak-guard hooks on in each clone; the private denylist, with at least one
+  term, exists on both machines. (Corrected 2026-09-25: this said bootstrap installs the hooks;
+  `make hooks` does, in each clone.)
 - **First time on the Spark:** `git clone` (a public repo — no credentials needed) → Dan creates the
   private files (per-service secrets; private values such as the NAS and LAN addresses) →
   `make bootstrap` (sudo once: users, firewall, earlyoom, systemd units, Compose).
@@ -265,9 +281,12 @@ plus a `Makefile` — the front door.
 - **Python via uv everywhere** (uv is installed on both machines — on the Spark as a per-user install
   in `~/.local/bin`). `spark/` is a uv project (`pyproject.toml` + `uv.lock`; uv's `required-version`
   pinned in `versions.yaml`); the Makefile calls `uv run --frozen spark …`; standalone helper scripts
-  carry PEP 723 inline metadata and run with `uv run`. No system Python, no pip. `spark apply` builds
-  the gate's environment with `uv sync --frozen` somewhere the `spark` user can read; bootstrap checks
-  where uv and its managed Pythons live.
+  carry PEP 723 inline metadata and run with `uv run`. No system Python, no pip. One Python minor
+  version everywhere, pinned in `spark/.python-version` (3.12); it lives in `spark/` because uv
+  looks for it only in the project directory. `spark apply` builds the gate's environment with
+  `uv sync --frozen` somewhere the `spark` user can read, and sets `UV_PYTHON_INSTALL_DIR` so a
+  Python uv downloads lands there too (Phase 1). (Corrected 2026-09-25: this said bootstrap checks
+  where uv and its managed Pythons live; that is `spark apply`'s job.)
 
 ### Where work runs
 
@@ -309,12 +328,21 @@ plus a `Makefile` — the front door.
   14 copies are kept; a failure sends a high-priority ntfy.
 - **Recovery runbook:** factory reset → the Phase 0 runbooks → delete the old Tailscale node before
   rejoining (otherwise the box comes back as `brightroar-1` and every client breaks) → restore →
-  `spark doctor`.
+  `spark doctor`. Move the GPU set to current at, or right after, the first bootstrap, so a rebuilt
+  box doesn't sit on the factory set until the next upgrade day; leave NVIDIA's web updater alone
+  until it is known how it treats apt holds (an open item).
 - **Weekly upgrade day, on Saturdays** (monthly until 2026-09-24). Skipping one is fine; the next
-  one catches up. Automated PRs collect version bumps; they are applied one component at a
-  time → render → validate → back up databases → deploy → `spark doctor` → changelog entry.
+  one catches up. Automated PRs collect version bumps: Dependabot proposes GitHub Actions and
+  `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI
+  scans every commit message). `stack/versions.yaml`'s pins, the workflows' `version:` inputs,
+  uv's `required-version` and the gitleaks pin still move by hand (Backlog). Bumps are applied one
+  component at a time → render → validate → back up databases → deploy → `spark doctor` →
+  changelog entry.
 - **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
-  themselves; neither can move the GPU stack. apt logs every run in `/var/log/apt/history.log`.
+  themselves; neither can move the GPU stack while every member of the set is held.
+  `website/how-to/updates.md` says when that stops being true: midway through upgrade day, and for a
+  newly installed member of the set until `make hold-gpu`. apt logs every run in
+  `/var/log/apt/history.log`.
   After each run needrestart restarts services still on replaced libraries; DGX OS keeps it off its
   dashboard, and Phase 1 keeps it off the stack. Dan runs apt out of habit. Holds are fine as long
   as there's a written plan for when and how the held set moves, and for getting the services back
@@ -322,9 +350,13 @@ plus a `Makefile` — the front door.
 - **The GPU set moves only on upgrade day, as one:** the kernel, the NVIDIA modules built for it,
   the driver and CUDA. `make bootstrap` holds them together, because the modules need one exact
   driver version and DGX OS ships all four in one transaction. Holding only part of the set would
-  let `apt upgrade` install a kernel with no NVIDIA module. The move: unhold → `apt full-upgrade` →
-  re-hold → reboot → check the GPU → `spark doctor`. Kernel security fixes wait for upgrade day,
-  or bring it forward. Runbook: `website/how-to/updates.md`.
+  let `apt upgrade` install a kernel with no NVIDIA module. The move, in tmux: release →
+  `dpkg --configure -a` and `apt full-upgrade`, answering no if it would remove the NVIDIA modules
+  metapackage or install a kernel without modules → re-hold with `make hold-gpu` (bootstrap's
+  `--hold-gpu` mode, the hold and nothing else) → check that the kernel GRUB boots has an NVIDIA
+  module → reboot → check the GPU and that the running kernel's modules are held → `spark doctor`.
+  Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it forward. Runbook:
+  `website/how-to/updates.md`.
 
 ## Phases
 
@@ -439,7 +471,10 @@ Each item gets its own design pass when its turn comes.
   first) · HTTPS on the LAN (which would also bring the web UI to WireGuard) · the web UI banner (if
   Open WebUI gains a status API) · automatic restarts from the watchdog · Home Assistant with remote
   power (check the UEFI "restore on AC power loss" setting) · a GPU clock cap (only if needed) · a pi
-  footer extension · suggest a pre-start admission hook upstream (llama-swap #1127).
+  footer extension · suggest a pre-start admission hook upstream (llama-swap #1127) · automated
+  update proposals for what Dependabot can't read — `stack/versions.yaml`'s pins, the workflows'
+  `version:` inputs, uv's `required-version`, the gitleaks pin (Renovate's regex manager, or a
+  `spark` check against each changelog).
 - **Parked:** Hermes · `claude-dgx` · a MacBook MLX fallback · other users.
 
 ## Open items and risks
@@ -498,6 +533,18 @@ Each item gets its own design pass when its turn comes.
   is devices that can't run Tailscale, such as the router's admin page, which is reachable only from
   home for now. When one is needed from away, one always-on home machine (not the Spark) advertises
   that device's address alone, never the whole LAN. The steps are in `website/how-to/tailscale.md`.
+- **2026-09-25** — Phase 0's council review, where Phase 0 made the plan untrue. *Network*: clients
+  reach the Spark by its tailnet name, and the LAN address serves the home LAN; there is no route
+  home. Secret files are 0640 root:spark, not 0600. `make hooks`, not bootstrap, turns the hooks on
+  in each clone. `spark apply`, not bootstrap, sets where uv's Pythons live, and
+  `spark/.python-version` pins one Python minor version. earlyoom avoids `sshd.*`. *Leak guards*:
+  a denylist with no terms fails, file names are read, binaries are named for a person rather than
+  read, and CI reads every commit's patches and messages. Everyday apt can't move the GPU set, but
+  only while every member is held. The GPU set's move gains tmux, an answer-no rule,
+  `make hold-gpu` and a check before the reboot; its advisory feeds are Ubuntu's notices and
+  NVIDIA's driver bulletins. A rebuild moves the set to current at the first bootstrap. Dependabot
+  now proposes Actions and `spark/uv.lock` updates; the pins it can't read join the Backlog. The
+  Spark gets a GitHub token for this repository only.
 
 ## Sources
 
