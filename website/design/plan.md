@@ -119,7 +119,7 @@ In order of how much they constrain the design:
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
-| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
+| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
 | **Mac and agent clients** | `clients/` | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
@@ -396,8 +396,10 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   · `make upgrade-gpu` (upgrade day's GPU-set steps as one command) · updates never take the stack
   down for good: a needrestart override keeps a routine `apt upgrade` from restarting `local-ai-*`
   units (DGX OS does the same for its dashboard); after a Docker upgrade, a reboot or upgrade day the
-  stack comes back by itself, and `make doctor` confirms it; `website/how-to/updates.md` gains the
-  recovery steps.
+  stack comes back by itself, and `make doctor` v0 confirms it. v0 checks Phase 0's guardrails (the
+  leak hooks, the GPU set held, earlyoom, ufw, the secrets folder closed) and the stack's smoke
+  checks: weekly upgrade day needs that before Phase 2, where `spark doctor` proper, one check per
+  scenario, arrives. `website/how-to/updates.md` gains the recovery steps.
 - [Mac] pi config + SSH tunnel.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
@@ -482,7 +484,9 @@ Each item gets its own design pass when its turn comes.
   footer extension · suggest a pre-start admission hook upstream (llama-swap #1127) · automated
   update proposals for what Dependabot can't read — `stack/versions.yaml`'s pins, the workflows'
   `version:` inputs, uv's `required-version`, the gitleaks pin (Renovate's regex manager, or a
-  `spark` check against each changelog).
+  `spark` check against each changelog) · tag the tailnet's always-on devices that aren't Dan's
+  own (the NAS, if it runs Tailscale as Dan), so `autogroup:member`, which the ACL's grants to the
+  Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway.
 - **Parked:** Hermes · `claude-dgx` · a MacBook MLX fallback · other users.
 
 ## Open items and risks
@@ -498,13 +502,39 @@ Each item gets its own design pass when its turn comes.
 - **vLLM** start can abort when free memory rises during profiling (#56830), and NGC lags upstream →
   llama.cpp first.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
+- **The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**
+  `make apply` renders the `local-ai-*` units and the Compose file as Dan, so Dan owns them;
+  `make install-units` links them, and the polkit rule lets Dan reload systemd and restart the units.
+  So from Phase 1, anything running as Dan — the Spark session, Positron's packages, a build — can
+  change what root runs, and become root without a password. Phase 0's security review offered two
+  options:
+
+  1. **Keep the accepted model.** Then *Users, access and security* says plainly that Dan's
+     account can become root without a password, not only through sudo.
+  2. **Root-owned copies.** `make install-units` installs root-owned copies of the four units and
+     the Compose file, re-run with sudo only when they change. The polkit rule then becomes a real
+     boundary: restarts need no password but give no say over what root runs, and exact unit names
+     and verbs in the rule become worth adding. This changes Phase 1's Task 6 (the Compose unit's
+     folder), Task 7 (a changed unit needs `sudo make install-units`, not a restart) and Task 9
+     (`make install-units`).
+
+  `website/design/phase-1.md` builds option 1 and stops at Task 6 for this decision.
+- **127.0.0.1 is not a boundary against `agent`** → llama-swap checks keys, but the engines it
+  starts listen on 5800 and up with none, so any local user, `agent` included, can call a loaded
+  model directly, around llama-swap's keys. In Phases 1–2 that costs nothing: `agent` has a key of
+  its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
+  not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
+  a direct call, so that phase decides how to close it.
 - **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
   whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
   Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
   web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); whether
-  GIGABYTE ships this box's firmware through fwupd.
+  GIGABYTE ships this box's firmware through fwupd; whether a model's GPU memory counts toward its
+  engine's RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
+  brake's order (Phase 1 measures it); whether memory swaps out before `MemAvailable` reaches the
+  brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -560,6 +590,17 @@ Each item gets its own design pass when its turn comes.
   runbooks' order: bootstrap, which creates the secrets folder, comes before the private files, and
   Phase 1's `make install-units`, not bootstrap, links the units. The leak guards no longer claim
   that Actions logs are checked; nothing scans them.
+- **2026-09-25** — Phase 0's lessons carried into Phase 1 (`website/design/phase-1.md`, its forward
+  look). A new Task 10 builds the needrestart override, `make upgrade-gpu` on bootstrap's hold, and
+  `make doctor` v0: Phase 0's guardrails and the stack's smoke checks, because weekly upgrade day
+  needs a check before Phase 2's `spark doctor`. The tasks after it are renumbered. The Spark
+  session starts before any [Spark] task. Bootstrap runs again before anything runs as `spark`, so
+  `/var/lib/local-ai` is root's; the units that run engines or pull models cache in folders `spark`
+  owns. Engines no longer inherit llama-swap's keys, root never writes in `agent`'s home, and Open
+  WebUI's admin is created through a tunnel before the tailnet can reach the page. Open items gain
+  the unit-file model, which is Dan's decision, and 127.0.0.1 as no boundary against `agent`. The
+  to-verify list gains whether GPU memory counts toward an engine's RSS, and swap before the brake.
+  The Backlog gains tagging the tailnet's non-personal devices.
 
 ## Sources
 
