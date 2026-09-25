@@ -37,13 +37,14 @@ run at the next push, and `main` gets its run at the merge.
 | When | Where | What happened |
 |---|---|---|
 | 2026-09-23 | — | The plan and this phase's implementation plan were written the day the Spark arrived, and `phase-0` was cut from `main` at `89cad0c`. |
-| 2026-09-23 to 24 | Mac | Tasks 1–8 (`17edad1..80b27d1`), subagent-driven: an implementer per task, then a spec and quality review. One task needed a fix round. The hooks stayed off, because the denylist didn't exist yet, so each task's diff was scanned by hand. |
-| 2026-09-24 | Mac | A whole-branch review: 1 Critical (scan the branch's history and messages with the denylist before anything is public), 5 Important, 16 Minor. One fix wave (`8e0a5e7..1adb1e0`) was re-reviewed clean. Then the push gate: Dan's denylist, `make hooks`, the leak drill, the scans of the tree, the history and the messages, and Dan's OK to push. |
-| 2026-09-24 | Spark | Tasks 9–11 (`3cf93e4..6893c1d`), in a Claude Code session on the box and by Dan. The dry run and the inventory found the login and the hold wrong, and Dan made two decisions about updates. Dan bootstrapped the box, joined Tailscale and wrote the secret files; the session checked and recorded it all. SSH from the Mac got its own runbook (`ed348f5`, `96d0217`). |
-| 2026-09-24 to 25 | Mac | Task 12: the vault's entry note, then a council of four reviewers (goal-fit and scenarios, reliability, security and simplicity, toolstack). Each said "with fixes"; none found anything Critical. Three fix waves followed, each reviewed. G1, the code (`3735420..fe3d8b7`), passed its first review. G2, the as-built docs (`ed0e06a..f1c30f2`), needed one fix round. G3, the forward look into Phase 1's plan (`e503da1..0eb3760`), needed three. |
-| 2026-09-25 | Mac | A polish pass for the first upgrade day, 2026-09-26, mostly the check of which kernel GRUB boots (`8476142..60e0d30`, with two more rounds of review). Then this page, before the merge. |
+| 2026-09-23 to 24 | Mac | Tasks 1–8 (`89cad0c..80b27d1`), subagent-driven: an implementer per task, then a spec and quality review. One task needed a fix round. The hooks stayed off, because the denylist didn't exist yet, so each task's diff was scanned by hand. |
+| 2026-09-24 | Mac | A whole-branch review: 1 Critical (scan the branch's history and messages with the denylist before anything is public), 5 Important, 16 Minor. One fix wave (`80b27d1..1adb1e0`) was re-reviewed, and only minors were left. Then the push gate: Dan's denylist, `make hooks`, the leak drill, the scans of the tree, the history and the messages, and Dan's OK to push. |
+| 2026-09-24 | Spark | Tasks 9–11 (`1adb1e0..6893c1d`), in a Claude Code session on the box and by Dan. The dry run and the inventory found the login and the hold wrong, and Dan made two decisions about updates. Dan bootstrapped the box, joined Tailscale and wrote the secret files; the session checked and recorded it all. SSH from the Mac got its own runbook (`ed348f5`, `96d0217`). |
+| 2026-09-24 to 25 | Mac | Task 12: the vault's entry note, then a council of four reviewers (goal-fit and scenarios, reliability, security and simplicity, toolstack). Each said "with fixes"; none found anything Critical. Three fix waves followed, each reviewed. G1, the code (`96d0217..fe3d8b7`), passed its first review. G2, the as-built docs (`fe3d8b7..f1c30f2`), needed one fix round. G3, the forward look into Phase 1's plan (`f1c30f2..0eb3760`), needed three. |
+| 2026-09-25 | Mac | A polish pass for the first upgrade day, 2026-09-26, mostly the check of which kernel GRUB boots (`0eb3760..60e0d30`, reviewed three times). Then this page, before the merge. |
 
-Of the 68 commits, 45 answered reviews: 7 after the whole-branch review, and 38 in Task 12.
+Of the 68 commits, 45 answered reviews: 7 after the whole-branch review, and 38 in Task 12. The
+ranges are git's `A..B`: the commits after `A`, up to and including `B`.
 
 ## Where the build departed from the plan, and why
 
@@ -55,14 +56,14 @@ Of the 68 commits, 45 answered reviews: 7 after the whole-branch review, and 38 
 | There is no tailnet route home. | Every device Dan uses runs Tailscale, and the Spark sits on the LAN. Dan's decision. | `f4390df`, `13633aa` |
 | The secrets runbook is `secret-files.md`. | `.gitignore`'s `secrets.*` rule, kept as strict as it was, ignores a file named `secrets.md`. Dan's decision. | `80b27d1` |
 | `/var/lib/local-ai` is root's (`root:root 0755`), and bootstrap never acts inside `agent`'s home. | A re-run as root followed any symlink `spark` or `agent` could plant there, which is a path to root. | `3735420` |
-| The hooks came on only once Dan's denylist existed. | Without it they refuse every commit. Tasks 1–8 and their fix wave were committed with the hooks off and scanned by hand, then scanned again with the denylist, tree, history and messages, before the first push. | the push gate, 2026-09-24 |
+| The hooks came on only once Dan's denylist existed. | Without it they refuse every commit. Tasks 1–8 and their fix wave were committed with the hooks off and scanned by hand, then scanned again with the denylist, tree, history and messages, before Dan's OK to push. | the push gate, 2026-09-24 |
 | `make hold-gpu` re-holds the GPU set and nothing else. | Upgrade day re-ran all of bootstrap just to re-hold, which stops a running desktop, restarts earlyoom and resets owners and modes. | `f77a144`, `ed0e06a` |
 | Bootstrap installs every apt package the box relies on. | A rebuild must not depend on what DGX OS happens to ship. | `d0c4d3c` |
 | gitleaks on the Spark is the 8.30.1 release binary in `/usr/local/bin`. | Ubuntu's archive has 8.16, which lacks `gitleaks git`, and there is no snap. | `0c86fae` |
 | A mid-document rule under `website/` is `***`. | Pandoc read `---` as the start of a YAML block, and the render failed. | `cbb28b2` |
 | Dependabot proposes GitHub Actions and `spark/uv.lock` updates. | The plan's "automated PRs" had been dropped without a word. What Dependabot can't read went to the Backlog. | `c0653ca` |
-| One Python minor version, 3.12, pinned in `spark/.python-version`. | The machines ran different Pythons, and uv looks for the pin only in the project directory. | `fe3d8b7` |
-| The Spark session is set up first, with the Mac's rules and secrets guard, and its GitHub token can push to this repository only. | Its setup was scheduled after the task that ran in it, and a plain `gh auth login` can push to every repository Dan owns. | `8bc5a3b`, `0c976e6`, `a4da76f` |
+| One Python minor version, 3.12, pinned in `spark/.python-version`. | Nothing pinned it, and the Mac's had floated to 3.14; uv looks for the pin only in the project directory. | `fe3d8b7` |
+| The Spark session is set up first, with the Mac's rules and secrets guard, and its GitHub token can push to this repository only. | Its setup was scheduled after the task that ran in it, and a plain `gh auth login` can push to every repository Dan can. | `8bc5a3b`, `0c976e6`, `a4da76f` |
 | `make doctor` v0 moves into Phase 1. | Weekly upgrade day starts on 2026-09-26 and needs a check after it. `spark doctor` proper stays in Phase 2. | `e503da1` |
 | The plan's code listings stay as written, marked *Superseded* where the code moved on. | Correct, don't delete. The code in the repo is the as-built version. | `13633aa` |
 
@@ -73,10 +74,10 @@ Of the 68 commits, 45 answered reviews: 7 after the whole-branch review, and 38 
 | Leak-check gaps | A private address at the end of a sentence passed, and so did every IPv6 private or tailnet address. The allow marker excused denylisted terms too, and a bad denylist line gave a traceback. Type changes, UTF-16 text, file names and an empty denylist passed, and binaries were skipped without a word. `make hooks` accepted a gitleaks too old for the hooks, and a missing `uv` gave a bare error. In CI the repo's patterns read only the tree, never earlier patches or commit messages. `*.env` files weren't ignored. | `8e0a5e7`, `cbd7ca3`, `f581016`, `783a619`, `bad1b55`, `05921a1` |
 | Root writing where `spark` or `agent` can plant a symlink | Bootstrap re-applied owners inside `spark`'s `/var/lib/local-ai` and in `agent`'s home. The runbook wrote `agent`'s `authorized_keys` as root. Phase 1's plan wrote `agent`'s key file as root, and ran Node's installer from a fixed `/tmp` name. | `3735420`, `16094cc`, `e503da1` |
 | The GPU hold failing silently | The hold missed the kernel and the NVIDIA modules. Held packages read as `hi` and dropped out of the set, half-configured packages were skipped, and nothing checked that the hold took. | `cb0ec0b`, `f77a144`, `ed0e06a` |
-| Upgrade day booting a kernel with no NVIDIA module | A stopped upgrade left the set released. Nothing checked the new kernel's module before the reboot, and the recovery line could neither recover nor be run twice. apt could swap the driver branch. The check of which kernel GRUB boots read only GRUB's settings, which miss `GRUB_TOP_LEVEL`, `GRUB_FLAVOUR_ORDER` and indented or exported lines; it now reads `grub.cfg` and `grub-editenv`. Phase 1's `make upgrade-gpu`, as first planned, compared the set including its hold letter, and could suggest a restart after a new kernel arrived without its module. | `1e1abbc`, `833666a`, `9e36459`, `ad6c896`, `8476142`, `0d35bfb`, `3345b19`, `3979f5a`, `0eb3760` |
+| Upgrade day booting a kernel with no NVIDIA module | A stopped upgrade left the set released. Nothing checked the new kernel's module before the reboot, and the recovery line could neither recover nor be run twice. apt could swap the driver branch. The check of which kernel GRUB boots read only GRUB's settings, which miss `GRUB_TOP_LEVEL`, `GRUB_FLAVOUR_ORDER` and indented or exported lines; it now reads `grub.cfg` and `grub-editenv`. In Phase 1's plan, early versions of `make upgrade-gpu` compared the set including its hold letter, and could suggest a restart after a new kernel arrived without its module. | `1e1abbc`, `833666a`, `9e36459`, `ad6c896`, `8476142`, `0d35bfb`, `3345b19`, `3979f5a`, `0eb3760` |
 | CI fragility | One step downloaded, checked and ran gitleaks, so a network blip read as a leak. The job token stayed in the checkouts, and no job had a time limit or retried a download. Nothing proposed updates, so two Actions pins fell behind unnoticed. | `bad1b55`, `ed0e06a`, `c0653ca` |
 | Runbook commands that could print a secret, or couldn't work | A check `cat`ed Dan's secrets file in exactly the case it exists to catch. A key that a later step copies was never created, so three keys would have been written empty. `sudo` inside a piped `ssh` had no terminal to ask for the password. A failed checksum didn't stop an install. A check meant to list names could print a value. | `41da7fb`, `2381c21` |
-| Access wider than needed | The Spark's `gh` login could push to every repository Dan owns, and the Spark's Claude session had none of the Mac's secrets guard. The SSH runbook had no keys-only step and no public IPv6 check. | `8bc5a3b`, `0dc7a3a` |
+| Access wider than needed | The Spark's `gh` login could push to every repository Dan can, and the Spark session's runbook didn't carry over the Mac's secrets rule and guard. The SSH runbook had no keys-only step and no public IPv6 check. | `8bc5a3b`, `0dc7a3a` |
 | Docs that had become untrue | The plan's route home, the secret files' mode, who turns the hooks on and where uv's Pythons live; `CLAUDE.md`'s "almost no code yet"; the README's contents. Phase 1's plan lacked three things this plan promised for Phase 1. `CLAUDE.md` said `agent` never gets credentials. The plan said screenshots and Actions logs get checked, and neither is read. The leak-guards runbook lagged the hooks' new checks, and read every red leaks step in CI as a finding. | `13633aa`, `15e81fc`, `e503da1`, `f1c30f2`, `2d030e5`, `5debe62`, `d750eab` |
 
 ## Why there were so many loops
@@ -98,19 +99,19 @@ with the rule it now has in `CLAUDE.md` (*Lessons from Phase 0*):
    `ubuntu:24.04` container reproduced each one. *Rule:* test shell, Makefile, `ps` and apt/dpkg
    behaviour on both, and make fakes change state the way the real tool does.
 3. **Box facts assumed from the Mac.** The login name, a `~/.secrets` on the Spark, DGX OS's
-   package names and what it ships, the archive's gitleaks version, and which kernel GRUB boots
-   were all assumptions. Most proved wrong once the box was checked, the first two silently; which
-   kernel GRUB boots still isn't checked there. *Rule:* a box fact stays marked unverified until
-   the Spark session checks it.
+   package names and what it ships, and which kernel GRUB boots were all assumptions. All but the
+   last proved wrong once the box was checked, the first two silently; which kernel GRUB boots
+   still isn't checked there. *Rule:* a box fact stays marked unverified until the Spark session
+   checks it.
 4. **Checks that couldn't fail.** The check that `agent` can't read `/home/dan/.secrets` printed
    "good" because the file didn't exist. Bootstrap's tests passed when the line they checked was
    missing, and the hold's test data never held a package in state `hi`, `iU` or `iF`. *Rule:* see
    every test and check fail once, against the bad case.
 5. **Security came last.** The per-task reviews checked the spec and code quality. Security had a
    lens of its own only at the phase-end council, after bootstrap had run on the box. So its fixes
-   landed in the code and the runbooks, while the box still waits for a bootstrap re-run and two of
-   Dan's steps. *Rule:* review permissions, secrets and network exposure in the task that changes
-   them, before it reaches the box.
+   landed in the code and the runbooks, while the box still waits for a bootstrap re-run and three
+   of Dan's steps. *Rule:* review permissions, secrets and network exposure in the task that
+   changes them, before it reaches the box.
 6. **Fixes that made new errors.** Most reviews of a fix found something the fix itself had
    introduced. G2's new upgrade-day recovery let a moved set skip its own check, and each of G3's
    rounds left wording the next round corrected. The GRUB check changed in six commits. The first
@@ -177,8 +178,8 @@ newest kernel; and `agent` running a real CUDA program, which waits for Phase 1'
   pins the x64 one.
 - shellcheck isn't pinned (0.11.0 on the Mac, 0.9.0 on the Spark, the runner's own in CI), and its
   file list is kept in both `ci.yml` and the `Makefile`.
-- uv's `required-version` is a floor, not a pin, and `updates.md`'s uv row doesn't list every place
-  uv's version appears.
+- uv's `required-version` is a floor, not a pin, so a `uv self update` between upgrade days goes
+  unnoticed.
 - Run from a root shell, bootstrap takes root as the admin and stops partway; preflight should
   refuse it.
 - Bootstrap overwrites earlyoom's dpkg conffile, which an earlyoom update can revert; a systemd
