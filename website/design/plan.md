@@ -380,7 +380,7 @@ plus a `Makefile` — the front door.
 Every phase ends by updating scenario statuses, the docs site, `changelog.md` and `README.md`
 §Current state. Tasks are labelled by where they run.
 
-**Phase 0 — Guardrails, prep, docs scaffold**
+**Phase 0 — Guardrails, prep, docs scaffold** — done, 2026-09-25
 
 - [Mac] `Makefile` + `make bootstrap` skeleton · leak guards (`.githooks`, gitleaks in CI) ·
   `versions.yaml` scaffold · `website/` scaffold with scenario pages marked *planned*; a CI build
@@ -394,6 +394,9 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   the Spark as on the Mac · give the first Spark session its private context (kept outside the repo).
 - *Done when:* a `free -g` baseline is recorded; a planted fake secret is blocked; `agent` can't read
   Dan's files or use docker; the site builds.
+- *Status:* done, 2026-09-25. Its tasks ran from 2026-09-23 to 2026-09-25, and every done-when
+  criterion above holds; the last step, merging `phase-0` into `main`, follows this note. What it
+  left open is carried to Phase 1 in the retrospective.
 - *Retrospective:* [Phase 0 — retrospective](phase-0-retro.md): what was built, where it departed
   from this plan and why, what Phase 1 inherits, and the rules that now prevent rework.
 
@@ -625,6 +628,11 @@ Each item gets its own design pass when its turn comes.
   while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, and that the runbook reads those two
   settings. That missed `GRUB_FLAVOUR_ORDER`, which Ubuntu's kernel sort reads, and settings
   written indented or with `export`.)
+- **2026-09-25** — Phase 0 is done: its tasks ran from 2026-09-23 to 2026-09-25, and the last
+  step, merging `phase-0` into `main`, follows this line. `website/design/phase-0-retro.md`
+  records what it built, where it departed from this plan and why, what the reviews found, and what
+  Phase 1 inherits. `CLAUDE.md` gains the rules that prevent the loops it took (*Lessons from
+  Phase 0*).
 
 ## Sources
 

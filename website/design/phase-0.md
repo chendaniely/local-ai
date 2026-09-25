@@ -6,6 +6,13 @@ date: 2026-09-23
 
 # Phase 0 — Guardrails, prep, docs scaffold — Implementation Plan
 
+> **Status: executed, 2026-09-23 to 2026-09-25.** Tasks 1–11 are done, and so are Task 12's first
+> three steps: the vault note, the council review with its fixes, and the forward look. Its Step 4
+> merges `phase-0` into `main`. The checkboxes below were never ticked; this note is the record. The
+> code in the repo is the as-built version. Where a later fix changed it, the listing below stays as
+> written and is marked *Superseded*, with the commits that replaced it: read the code, not the
+> listing.
+>
 > **Retrospective:** [Phase 0 — retrospective](phase-0-retro.md) records what this plan built, where
 > the build departed from it and why, what the reviews found, and how to start over.
 
