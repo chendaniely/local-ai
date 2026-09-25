@@ -366,8 +366,9 @@ plus a `Makefile` — the front door.
      also no if apt would swap the metapackage for another driver branch's, a move planned and made
      by hand.
   3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
-  4. Check that the kernel GRUB boots has an NVIDIA module. The check reads the newest kernel,
-     which assumes `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL`; that is not yet checked on this box.
+  4. Check that the kernel GRUB boots has an NVIDIA module: the newest kernel's, and that GRUB
+     will boot it, read from `grub.cfg`'s entry 0 and default and from `grub-editenv`. That GRUB
+     boots the newest kernel is not yet checked on this box.
   5. Reboot.
   6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
 
@@ -613,10 +614,14 @@ Each item gets its own design pass when its turn comes.
   driver branch, which is a move planned and made by hand. The check before the reboot reads the
   newest kernel, and that GRUB boots it (`GRUB_DEFAULT=0`) is not yet checked on this box.
 - **2026-09-25** — Before the first upgrade day. Answering no covers a removed modules metapackage
-  only when no other takes its place; a swap to another branch's is the driver-branch case. GRUB
-  boots the newest kernel only while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, since
-  Ubuntu's `10_linux` puts the kernel `GRUB_TOP_LEVEL` names first. The runbook checks both, and
-  `grub-editenv` for a waiting `next_entry`, before anything moves and again before the reboot.
+  only when no other takes its place; a swap to another branch's is the driver-branch case. The
+  runbook checks that GRUB will boot the newest kernel, before anything moves and again before the
+  reboot, by reading what GRUB will do: entry 0's first `linux` line in `grub.cfg` against the
+  newest kernel, the `set default=` lines, and `grub-editenv` for a `saved_entry` or `next_entry`
+  with a value. (Corrected 2026-09-25: this said GRUB boots the newest kernel only while
+  `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, and that the runbook reads those two settings.
+  That missed `GRUB_FLAVOUR_ORDER`, which Ubuntu's kernel sort reads, and settings written indented
+  or with `export`.)
 
 ## Sources
 

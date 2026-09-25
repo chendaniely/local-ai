@@ -2697,11 +2697,13 @@ true, and Tasks 12, 13 and 16 run them on the box:
     was and the newest kernel still has its NVIDIA module. apt can install a new kernel, which
     isn't in the set, and then fail. Otherwise it sends Dan to *If it goes wrong*.
 
-    The newest kernel is the one the next boot starts only while GRUB boots the newest:
-    `GRUB_DEFAULT=0`, no `GRUB_TOP_LEVEL` (which puts the kernel it names first), and no
-    `next_entry` waiting from `grub-reboot`. The script reads none of them. Task 12 Step 1 checks
-    the two settings on this box, and updates.md's GRUB check, which Dan runs before
-    `make upgrade-gpu`, checks all three.
+    The newest kernel is the one the next boot starts only while GRUB boots it: entry 0 in
+    `grub.cfg` is that kernel, GRUB starts entry 0, and no `next_entry` with a value picks another.
+    `/etc/default/grub` alone can't show that: `GRUB_FLAVOUR_ORDER`, `GRUB_TOP_LEVEL` and indented
+    or exported settings all change it. So updates.md's GRUB check reads what GRUB will do: entry
+    0's first `linux` line in `grub.cfg`, its `set default=` lines, and `grub-editenv list`. The
+    script reads none of them. Dan runs that check before `make upgrade-gpu` and again before
+    `sudo reboot`, and Task 12 Step 1 runs it on this box. See the open item below.
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
     `upgrade-gpu-dry-run`.
@@ -2721,13 +2723,23 @@ What `make upgrade-gpu` does, in order:
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
 | move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first, even if the hold then stopped): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
 | hold | the hold and nothing else (`hold_gpu_stack`); this hold, after apt's move, is tried once more on the way out if a signal cuts it off | it says what the hold said, and the set stays released until `make hold-gpu`. A signal during the way out's own hold, or during the retry, also leaves it released: it says so, and after apt ran, not to reboot before step 5's module check |
-| check | `modinfo -k` on the newest kernel, the one GRUB boots while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set. It reads neither: updates.md's GRUB check, run before `make upgrade-gpu`, does | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
+| check | `modinfo -k` on the newest kernel, which the next boot starts only if GRUB boots it. It doesn't check that: updates.md's GRUB check, run before `make upgrade-gpu` and again before the reboot, does (the open item below) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
 | end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
 
 Two things it relies on are not yet checked on this box, and Task 12 Step 1 lists both. One is
 the name `linux-image-<version>`, with a digit first, for a new kernel. If DGX OS names its kernels
 otherwise, the plan check misses a new kernel, and only the newest-kernel check before the reboot
-catches it. The other is GRUB booting the newest kernel: `GRUB_DEFAULT=0`, and no `GRUB_TOP_LEVEL`.
+catches it. The other is GRUB booting the newest kernel: entry 0 in `grub.cfg` is that kernel, and
+GRUB starts entry 0.
+
+**Open item, 2026-09-25: decide before Task 10 is built.** For Phase 1's pre-flight, recommended
+by the Task 12 polish review: `make upgrade-gpu` should run the GRUB check itself, after the move
+and before it prints `now: sudo reboot`. It would read grubenv's `next_entry` and `saved_entry`,
+their non-empty values only; `grub.cfg`'s `set default=`; and entry 0's first `linux` line, against
+`newest_kernel`. On a mismatch it prints `DON'T REBOOT — GRUB boots X, not Y` and exits 1.
+Stand-in paths that an environment variable overrides make it testable. This plan doesn't build it
+yet. Until the decision lands, Dan re-runs updates.md's GRUB check after `make upgrade-gpu` and
+before `sudo reboot`.
 
 - [ ] **Step 1: Write the failing tests for bootstrap**
 
@@ -3036,8 +3048,8 @@ def test_a_no_whose_hold_stops_still_says_how_to_start_the_stack(tmp_path):
 
 
 def test_a_kernel_without_a_module_stops_the_reboot(tmp_path):
-    # apt reported success, but the newest kernel has no NVIDIA module. GRUB boots it next while
-    # GRUB_DEFAULT=0 and no GRUB_TOP_LEVEL is set.
+    # apt reported success, but the newest kernel, which GRUB boots next by default, has no NVIDIA
+    # module.
     result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, module_kernels=OLD))
     assert result.returncode == 1
     assert f"DON'T REBOOT — {NEW}" in result.stderr
@@ -3260,10 +3272,10 @@ After `hold_gpu_stack`, the upgrade mode.
 # Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
 # and refuses one that would leave a kernel without its NVIDIA module or change the driver branch,
 # moves the set, holds it again with the hold and nothing else, and checks the newest kernel for its
-# NVIDIA module before it asks for the reboot. That assumes GRUB boots the newest kernel
-# (GRUB_DEFAULT=0 and no GRUB_TOP_LEVEL), which this doesn't read: Phase 1 checks it on the box,
-# and updates.md's GRUB check runs before this. Every way out after the release holds the set
-# again. website/how-to/updates.md has the same steps by hand, and the recovery.
+# NVIDIA module before it asks for the reboot. That assumes GRUB boots the newest kernel, which
+# this doesn't check: updates.md's GRUB check, which Dan runs before this and again before the
+# reboot, reads grub.cfg's entry 0 and default, and grubenv. Every way out after the release holds
+# the set again. website/how-to/updates.md has the same steps by hand, and the recovery.
 
 # The GPU set as dpkg has it now: each package's status letters, name and version, found with the
 # hold's own patterns.
@@ -3288,9 +3300,9 @@ gpu_set_contents() {
   gpu_set_state | cut -c2- | LC_ALL=C sort
 }
 
-# The newest kernel, which the next boot starts while GRUB boots the newest (GRUB_DEFAULT=0 and no
-# GRUB_TOP_LEVEL), and the version of the NVIDIA module built for a kernel: nothing when it has
-# none.
+# The newest kernel, which the next boot starts only while GRUB's entry 0 is that kernel and GRUB
+# starts entry 0 (updates.md's GRUB check), and the version of the NVIDIA module built for a
+# kernel: nothing when it has none.
 newest_kernel() {
   linux-version list | linux-version sort --reverse | head -1
 }
@@ -4044,8 +4056,9 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
   - `updates.md`, *Upgrade day: the GPU set*. The edits:
     - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
       command, in tmux, from the clone; it refuses to start outside tmux. It runs all of them but
-      step 5's GRUB check, since it doesn't read GRUB's settings: run that check first, as step 2
-      says, and start `make upgrade-gpu` only once it passes. It releases the set, reads apt's plan
+      step 5's GRUB check, since it doesn't read GRUB: run that check first, as step 2 says, and
+      start `make upgrade-gpu` only once it passes. Run it again once `make upgrade-gpu` says to
+      reboot, and reboot only if it passes then too. It releases the set, reads apt's plan
       and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the
       brake, and moves the set (you read apt's plan and answer). Then it holds the set again with
       `make hold-gpu`'s hold, runs step 5's module check, and says whether to reboot. Every way out
@@ -4058,7 +4071,8 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       kernel without a module, it sends you to *If it goes wrong* rather than to a reboot or a
       restart of the stack. Only when neither happened does it say how to start the stack again.
       `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what
-      it runs, to read along with, and to do by hand if it can't.
+      it runs, to read along with, and to do by hand if it can't. The second GRUB check stays in
+      this paragraph until this task's open item on the GRUB check is decided.
     - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
       (the reboot starts them again), and your own GPU jobs and `agent`'s."
     - **Step 2's opening**, which runs step 5's GRUB check before anything moves, went in on
@@ -4067,11 +4081,11 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       the first upgrade day, and the first names a removed metapackage with no other in its place.
       Add one sentence after the paragraph that follows them: "`make upgrade-gpu` refuses all three
       too."
-    - **Step 5's GRUB check** already reads `GRUB_DEFAULT` and `GRUB_TOP_LEVEL` from both files that
-      can set them (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line of each
-      winning), and `grub-editenv list` for a waiting `next_entry`. It counts a quoted `"0"` as 0,
-      says not to reboot yet for anything else, and says how to find the kernel GRUB boots, reading
-      only. It all went in on 2026-09-25, before the first upgrade day, so leave it as it is.
+    - **Step 5's GRUB check** already reads what GRUB will boot: entry 0's first `linux` line in
+      `grub.cfg` against the newest kernel, the `set default=` lines, and `grub-editenv list` for
+      a `saved_entry` or `next_entry` with a value. Anything else, or any command failing, is
+      "don't reboot yet", and it says how to read the menu to find the kernel GRUB would start.
+      It went in on 2026-09-25, before the first upgrade day, so leave it as it is.
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
@@ -4246,7 +4260,6 @@ cmp stack/host/needrestart.conf /etc/needrestart/conf.d/local-ai.conf && echo "n
 cmp stack/host/earlyoom.default /etc/default/earlyoom && echo "earlyoom: same"
 diff <(make -s hold-gpu-dry-run | sed -n 's/^+ apt-mark hold //p' | tr ' ' '\n') \
      <(make -s upgrade-gpu-dry-run | sed -n 's/^+ apt-mark unhold //p' | tr ' ' '\n') && echo "release = hold"
-grep -h -e '^GRUB_DEFAULT=' -e '^GRUB_TOP_LEVEL=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null   # the last of each counts
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'linux-image-[0-9]*'   # the kernels' package names
 uname -r
 ```
@@ -4256,15 +4269,17 @@ files the same as the repo's; and `release = hold`: upgrade day releases exactly
 hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is, `agent`'s own;
 bootstrap no longer touches it.
 
-The last three lines check two things `make upgrade-gpu` assumes (Task 10) and nothing has checked
-yet:
+Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `grep`s of `grub.cfg`
+run with sudo, and tells the Spark session what it printed, leaving out the `root=UUID=…`. With
+the last two lines above, it checks two things `make upgrade-gpu` assumes (Task 10) and nothing
+has checked yet:
 
-- GRUB boots the newest kernel, the one its pre-reboot check reads: the last `GRUB_DEFAULT` line is
-  `GRUB_DEFAULT=0` (a quoted `"0"` is the same, and so is no line at all, the default), and no
-  `GRUB_TOP_LEVEL` line prints. If one is set, the newest kernel isn't what GRUB boots: Ubuntu
-  24.04's `/etc/grub.d/10_linux` moves the kernel it names to the top of the menu, entry 0.
-  `grub-mkconfig` reads `/etc/default/grub` and then each `/etc/default/grub.d/*.cfg`, so for each
-  setting the last line printed is the one that counts.
+- GRUB boots the newest kernel, the one its pre-reboot check reads: the GRUB check passes. Entry
+  0's first `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and no
+  `next_entry` has a value. If it doesn't pass, the newest kernel may not be what GRUB boots.
+  `/etc/default/grub` and `/etc/default/grub.d/*.cfg` alone can't show this: `GRUB_FLAVOUR_ORDER`,
+  `GRUB_TOP_LEVEL` and indented or exported settings all change what GRUB boots, and `grub.cfg`
+  shows the result.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
@@ -4446,9 +4461,11 @@ Expected: the process it would kill is an engine; note which one.
 
 - [ ] **Step 7: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
-  override), with its GRUB settings and the kernels' package names; units installed and running,
-  the model files pulled and the disk space left, the four readings and load times, the engines'
-  `oomadj`, `oom` and `rss` beside `nvidia-smi`'s figures, and earlyoom's dry-run victim.
+  override), with the GRUB check's result and the kernels' package names; units installed and
+  running, the model files pulled and the disk space left, the four readings and load times, the
+  engines' `oomadj`, `oom` and `rss` beside `nvidia-smi`'s figures, and earlyoom's dry-run victim.
+  For GRUB, record whether it passed and the default it uses: `0`, `saved` or a number, never an id
+  or a `root=` line, which carry the root filesystem's UUID.
   `README.md` §Current state: the new host layout, what runs, on which ports (127.0.0.1 only), which
   models.
 
