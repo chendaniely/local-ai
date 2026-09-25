@@ -1,6 +1,6 @@
 ---
 title: "Leak guards"
-description: "Install gitleaks and shellcheck, create your denylist, turn the hooks on, and prove they bite."
+description: "Install gitleaks and shellcheck, create your denylist, turn the hooks on, prove they bite, see what they check, and read a red CI leaks job."
 ---
 
 ## Install gitleaks and shellcheck
@@ -51,7 +51,10 @@ mkdir -p ~/.config/local-ai && touch ~/.config/local-ai/denylist
 
 Edit it with your own editor: one case-insensitive regex per line, for every term that must never
 appear in this public repo — the tailnet's name, the NAS's names, the LAN subnet prefix, anything
-else private. Blank lines and lines starting with `#` are ignored.
+else private. Blank lines and lines starting with `#` are ignored. Add at least one term before the
+next step: a denylist with no terms would pass every commit, so the hooks and `make hooks` refuse
+it (`denylist has no terms`). They refuse a line that isn't a valid regular expression too, naming
+its line number but never showing it.
 
 ## Turn the hooks on
 
@@ -59,8 +62,8 @@ else private. Blank lines and lines starting with `#` are ignored.
 make hooks
 ```
 
-This checks that gitleaks is on `PATH` and that your denylist exists, then points this clone's
-git hooks at `.githooks`.
+This makes the hooks' own checks first: gitleaks has the `git` command (8.19 or later), and your
+denylist exists, has terms and parses. Then it points this clone's git hooks at `.githooks`.
 
 The hooks also run `uv` (on the Spark it lives in `~/.local/bin`), so both gitleaks and `uv` must
 be on the `PATH` of whatever runs `git commit`. A GUI client, or an editor over Remote-SSH, may
@@ -77,6 +80,51 @@ git restore --staged leak-drill.md && rm leak-drill.md
 ```
 
 Expected: the commit is refused (`private IPv4 address`), `exit=1`, nothing committed.
+
+## What they check
+
+Every commit's message, and every staged file except a deletion, runs through gitleaks and then
+the repo's own patterns plus your denylist:
+
+- **A file's name as well as its contents.** A name counts as one more line of text.
+- **Type changes.** A symlink turned into a file is read as the file; a file turned into a symlink
+  is read as its target path, which is what git stores.
+- **UTF-16 and UTF-32 text** that starts with a byte-order mark is read as text.
+- **Binaries can't be read.** A file with a NUL byte and no byte-order mark, such as a screenshot,
+  is named on the way through — `leakcheck: not scanned (binary): <path> — check it by eye` — and
+  the commit goes ahead. Look at it yourself before you push.
+
+A finding prints its location and a 3-character excerpt. A path in that output has each match cut
+to 3 characters too, so a private term in a file name never prints whole.
+
+## When CI's leaks job is red
+
+CI runs gitleaks and the repo's patterns, without a denylist (it has none), on every push and pull
+request. Each step of its `leaks` job fails for one reason:
+
+- **download gitleaks** — the network. Re-run the job.
+- **check gitleaks against its pinned checksum, then unpack it** — the download doesn't match the
+  pin: tampered or corrupt. Don't use it. Re-run once; if it fails again, find out why before
+  touching the pin.
+- **gitleaks over the whole history**, **repo patterns over every tracked file**, or **repo patterns
+  over every commit's patches and messages** — a real finding, and it is already public. Follow
+  `CLAUDE.md`'s procedure for something sensitive that got pushed: rotate the credential first,
+  then rewrite history.
+
+The history step reports a finding as `commit message:<line>`: a line of
+`git log -p --cc --format='%H%n%B'`'s output. To find the commit without printing the line itself,
+regenerate that output on the Mac, on the branch CI checked, and print the hash of the commit the
+line falls in:
+
+```bash
+git log -p --cc --format='%H%n%B' > "$TMPDIR/history.txt"
+awk -v n=<line> 'NR <= n && length($0) == 40 && /^[0-9a-f]+$/ {c = $0} NR == n {print c; exit}' "$TMPDIR/history.txt"
+```
+
+**Merging Dependabot's PRs.** The allow marker can't excuse a finding in history: it would only
+change a new commit, never the old one. So read a Dependabot PR's commit message before you merge
+it, and merge with a merge commit or a rebase, not a squash that pastes its release notes into the
+message ([Updates](updates.md#upgrade-day-the-automated-prs)).
 
 ## When a line is safe but flagged
 

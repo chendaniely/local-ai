@@ -1889,7 +1889,11 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   every term that must never appear in this public repo (the tailnet's name, the NAS's names, the LAN
   subnet prefix, anything else private); `make hooks`; the leak drill from Task 3 Step 7; what to do
   when a line is safe but flagged (`leakcheck: allow`, sparingly, visible in review); never
-  `--no-verify`.
+  `--no-verify`. (Added 2026-09-25, after cbd7ca3, f581016 and bad1b55: the denylist needs at least
+  one term, since the hooks and `make hooks` refuse an empty one; `make hooks` runs the hooks' own
+  checks, gitleaks' `git` command and a denylist with terms that parses; what the hooks check —
+  file names, type changes, UTF-16/32 text, and binaries named for a person to check; what each red
+  step of CI's leaks job means; and why a Dependabot PR is merged or rebased, never squashed.)
 
 - [ ] **Step 3: `how-to/bootstrap.md`**
   - *Before:* bounce the wired NIC so it takes its reservation — from an SSH session over **Wi-Fi**:
