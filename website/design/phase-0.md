@@ -1934,6 +1934,8 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
   - Confirm how the tailnet reaches the home LAN (the subnet router and its advertised route) in the
     admin console, and record it in the vault — never paste `tailscale status` output anywhere public.
+    (Added 2026-09-24: there is none today, by choice; the runbook gives the steps for a one-address
+    subnet route from an always-on home machine, not the Spark, for when one is needed.)
   - Rebuilds: delete the old device in the admin console **before** re-joining, or the box comes back
     as `brightroar-1` and every client breaks.
 

@@ -74,6 +74,31 @@ In the admin console, confirm how the tailnet reaches the home LAN — the subne
 advertised route — and record it in the vault. Never paste `tailscale status` output anywhere
 public.
 
+**Today there is none** (2026-09-24), by choice. Every device Dan uses runs Tailscale, so they reach
+each other without one. The only gap is devices that can't run Tailscale, such as the home router's
+admin page, which is reachable only from home. The Spark doesn't need a route either way: it sits on
+the LAN.
+
+**When a device like that is needed from away**, add a subnet route for that device's address only,
+not the whole LAN, so nothing else on the home network becomes reachable through the tailnet:
+
+1. On one always-on home Linux machine that runs Tailscale (not the Spark, which stays
+   single-purpose), allow forwarding and advertise the one address:
+
+   ```bash
+   echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale.conf
+   sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
+   sudo tailscale set --advertise-routes=<device-address>/32
+   ```
+
+2. In the admin console: **Machines** → that machine → **Edit route settings** → approve the route.
+3. In the policy, point the home-LAN grant at the same address, and at its ports if you want to be
+   tighter:
+   `{"src": ["autogroup:member"], "dst": ["<device-address>/32"], "ip": ["*"]}`.
+4. Test from the phone, off Wi-Fi. On the Mac, the Tailscale app's **Use Tailscale subnets** must be
+   on.
+5. Record the machine and the route in the vault.
+
 ## Rebuilding the box
 
 Delete the old device in the admin console **before** rejoining. Otherwise the box comes back as

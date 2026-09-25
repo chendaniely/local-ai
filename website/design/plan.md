@@ -457,7 +457,8 @@ Each item gets its own design pass when its turn comes.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
   whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
-  base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; the tailnet's route home; the
+  base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
+  Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
   web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); whether
   GIGABYTE ships this box's firmware through fwupd.
@@ -492,6 +493,11 @@ Each item gets its own design pass when its turn comes.
   direct install, since it has no snap; the runbook has its upgrade steps.
 - **2026-09-24** — Dan: upgrade day is weekly, on Saturdays, instead of monthly. Skipping one is
   fine; the next one catches up. The GPU set, gitleaks and uv move then.
+- **2026-09-24** — The tailnet's route home, settled: there is none, by choice. Every device Dan
+  uses runs Tailscale and reaches the others directly, and the Spark sits on the LAN. The only gap
+  is devices that can't run Tailscale, such as the router's admin page, which is reachable only from
+  home for now. When one is needed from away, one always-on home machine (not the Spark) advertises
+  that device's address alone, never the whole LAN. The steps are in `website/how-to/tailscale.md`.
 
 ## Sources
 
