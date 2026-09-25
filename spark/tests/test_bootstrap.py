@@ -3,6 +3,7 @@ import pwd
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,14 @@ SCRIPT = ROOT / "stack/host/bootstrap.sh"
 
 
 def dry_run(env: dict[str, str] | None = None) -> list[str]:
+    """The dry run's lines. Without an `env`, it runs on a host with no packages installed
+    (NO_PACKAGES), so what the tests see never depends on the machine running them."""
     out = subprocess.run(
-        ["bash", str(SCRIPT), "--dry-run"], check=True, capture_output=True, text=True, env=env
+        ["bash", str(SCRIPT), "--dry-run"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=NO_PACKAGES if env is None else env,
     ).stdout
     return out.splitlines()
 
@@ -133,6 +140,13 @@ def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
     }
 
 
+# A host where dpkg-query finds no packages at all, as on the Mac. The default dry run uses it, so the
+# hold step reads the same everywhere: not the Spark's held GPU set, not whatever CI's runner
+# carries, and never a package state on the host that happens to stop the hold.
+_NO_PACKAGES_DIR = tempfile.TemporaryDirectory(prefix="test-bootstrap-")
+NO_PACKAGES = gpu_env(Path(_NO_PACKAGES_DIR.name), {})
+
+
 def held(tmp_path: Path) -> set[str]:
     path = tmp_path / "held"
     return set(path.read_text().split()) if path.exists() else set()
@@ -196,6 +210,19 @@ def test_every_other_unfinished_state_stops_the_hold_too(tmp_path, state):
     assert f"libcublas-13-0 ({state})" in result.stderr
 
 
+@pytest.mark.parametrize("state", ["ri", "pi", "rH", "pF"])
+def test_a_removal_that_did_not_finish_is_left_to_apt_to_finish(tmp_path, state):
+    # Selected for removal but still installed (ri, pi), or a removal that stopped partway (rH, pF),
+    # as when upgrade day's full-upgrade is cut off while it removes the old kernel's modules.
+    # `dpkg --configure -a` alone leaves these as they are, so the hint runs apt again after it.
+    modules = "linux-modules-nvidia-580-open-7.0.0-1019-nvidia"
+    result = script("--dry-run", env=gpu_env(tmp_path, {**INSTALLED, modules: state}))
+    assert result.returncode == 1
+    assert f"{modules} ({state})" in result.stderr
+    assert "sudo dpkg --configure -a && sudo apt full-upgrade" in result.stderr
+    assert "apt-mark hold" not in result.stdout
+
+
 def test_the_real_hold_checks_every_package_is_held(tmp_path):
     result = real_hold(gpu_env(tmp_path, INSTALLED))
     assert result.returncode == 0, result.stderr
@@ -249,6 +276,38 @@ def test_hold_gpu_mode_runs_only_the_hold(tmp_path, args):
     assert not any(line.startswith("==> done") for line in lines)
 
 
+def test_make_hold_gpu_re_holds_the_set_and_nothing_else(tmp_path):
+    # Upgrade day's re-hold, from the front door: `make hold-gpu-dry-run` previews exactly the hold,
+    # and `make hold-gpu` runs the same mode under sudo. -n prints the recipe without running it.
+    preview = subprocess.run(
+        ["make", "-s", "-C", str(ROOT), "hold-gpu-dry-run"],
+        capture_output=True,
+        text=True,
+        env=gpu_env(tmp_path, INSTALLED),
+    )
+    assert preview.returncode == 0, preview.stderr
+    lines = preview.stdout.splitlines()
+    commands = [line for line in lines if line.startswith("+ ")]
+    assert len(commands) == 1, commands
+    assert hold_line(lines) == GPU_SET
+    recipe = subprocess.run(
+        ["make", "-n", "-C", str(ROOT), "hold-gpu"], capture_output=True, text=True, check=True
+    )
+    assert "sudo bash stack/host/bootstrap.sh --hold-gpu" in recipe.stdout.splitlines()
+    makefile = (ROOT / "Makefile").read_text().splitlines()
+    phony = next(line for line in makefile if line.startswith(".PHONY:"))
+    assert {"hold-gpu", "hold-gpu-dry-run"} <= set(phony.split()[1:])
+
+
+def test_a_default_dry_run_never_reads_the_hosts_own_packages(tmp_path, monkeypatch):
+    # On the Spark the GPU set is installed and held, and CI's runner carries packages of its own. A
+    # host whose package states would stop the hold must not fail tests that aren't about the hold.
+    host = gpu_env(tmp_path, {**INSTALLED, "nvidia-driver-580-open": "iU"})
+    for name in ("PATH", "DPKG_FIXTURE"):
+        monkeypatch.setenv(name, host[name])
+    assert any("a real run stops here: nothing installed matches" in line for line in dry_run())
+
+
 def test_an_unknown_option_is_refused_before_anything_runs():
     # A mistyped --dry-run under sudo must not turn into a real run.
     result = script("--dry-run", "--dryrun", env=dict(os.environ))
@@ -296,14 +355,14 @@ def test_a_dry_run_names_whoever_runs_it_as_the_admin():
     # A dry run has no sudo, so no SUDO_USER. It must still show the admin the real run would get —
     # the person running it — never an assumed login name (the Spark's login is not `dan`).
     me = pwd.getpwuid(os.getuid()).pw_name
-    lines = dry_run({k: v for k, v in os.environ.items() if k != "SUDO_USER"})
+    lines = dry_run({k: v for k, v in NO_PACKAGES.items() if k != "SUDO_USER"})
     assert f"+ usermod -aG spark-admin,spark-users,adm {me}" in lines
     assert f"+ chmod 0700 /home/{me} /home/agent" in lines
 
 
 def test_under_sudo_the_admin_is_the_sudo_user():
     # `make bootstrap` runs under sudo, where the invoking user is root; SUDO_USER is the admin.
-    lines = dry_run({**os.environ, "SUDO_USER": "alice"})
+    lines = dry_run({**NO_PACKAGES, "SUDO_USER": "alice"})
     assert "+ usermod -aG spark-admin,spark-users,adm alice" in lines
     assert "+ chmod 0700 /home/alice /home/agent" in lines
 

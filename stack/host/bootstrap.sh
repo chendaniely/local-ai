@@ -105,7 +105,14 @@ hold_gpu_stack() {
     {
       echo "bootstrap: these GPU-set packages are not cleanly installed, so they can't be held:"
       echo "$unfinished"
-      echo "finish dpkg first: sudo dpkg --configure -a — then run this again"
+      # A removal that is pending (ri, pi) or stopped partway (rH, pF) is apt's to finish:
+      # dpkg --configure -a alone leaves it as it is.
+      if awk 'NF >= 2 && $1 ~ /^[rp][^nc]/ {found = 1} END {exit !found}' <<<"$rows"; then
+        echo "a removal didn't finish, and dpkg --configure -a alone can't finish it."
+        echo "finish it first: sudo dpkg --configure -a && sudo apt full-upgrade — read what apt plans against website/how-to/updates.md before you answer — then run this again"
+      else
+        echo "finish dpkg first: sudo dpkg --configure -a — then run this again"
+      fi
     } >&2
     exit 1
   fi

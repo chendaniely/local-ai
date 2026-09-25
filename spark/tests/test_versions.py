@@ -16,6 +16,7 @@ def test_uv_runs_the_pinned_python_minor_version():
     pinned = (ROOT / "spark/.python-version").read_text().strip()
     assert f"{sys.version_info.major}.{sys.version_info.minor}" == pinned
 
+
 GOOD = textwrap.dedent(
     """
     components:

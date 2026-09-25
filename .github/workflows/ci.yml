@@ -5,9 +5,12 @@ on:
 permissions:
   contents: read
 
+# Every job gets a time limit well above its usual run (under a minute), so a hung step fails
+# instead of holding a runner for GitHub's default of six hours.
 jobs:
   tests:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -21,6 +24,7 @@ jobs:
 
   leaks:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -32,7 +36,7 @@ jobs:
       # Three gitleaks steps, so a red one names its cause: a failed download is a network problem,
       # a failed checksum is a tampered or corrupt download, and only the scan reports leaks.
       - name: download gitleaks
-        run: curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+        run: curl -fsSL --retry 3 --max-time 120 -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
       - name: check gitleaks against its pinned checksum, then unpack it
         run: |
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
@@ -54,6 +58,7 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -62,6 +67,7 @@ jobs:
 
   site:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:

@@ -4,7 +4,7 @@
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -32,3 +32,9 @@ bootstrap-dry-run: ## Print what bootstrap would do; changes nothing
 
 bootstrap: ## Host setup on the Spark (Dan; asks for sudo once)
 	sudo bash stack/host/bootstrap.sh
+
+hold-gpu-dry-run: ## Print what re-holding the GPU set would do; changes nothing
+	bash stack/host/bootstrap.sh --hold-gpu --dry-run
+
+hold-gpu: ## Re-hold the GPU set and nothing else — upgrade day (Dan; asks for sudo once)
+	sudo bash stack/host/bootstrap.sh --hold-gpu
