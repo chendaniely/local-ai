@@ -43,6 +43,17 @@ it: `git`, `curl`, `openssl`, `shellcheck` and `gh` for the repo and runbooks, a
 `r-base` and `r-base-dev` for Dan's own work, beside the stack's own packages. All were already
 installed here, so adding them to the list changes nothing on this box.
 
+**Wi-Fi always reconnects.** Wi-Fi is the out-of-band path, so it must come back by itself: retry
+without limit, and no power saving, which can drop a headless box's link. The connection's name is
+private (it is the network's name), so it is a placeholder here:
+
+```bash
+sudo nmcli connection modify <wifi-connection> connection.autoconnect-retries 0 802-11-wireless.powersave 2
+sudo nmcli connection up <wifi-connection>
+```
+
+`autoconnect-retries 0` means retry forever; `powersave 2` turns power saving off.
+
 ## 2026-09-23 — arrival and first setup
 
 **Hardware.** GIGABYTE AI TOP ATOM (`ATAGB10-9002` rev 1.0) unboxed and powered on. Full

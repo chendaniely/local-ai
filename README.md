@@ -97,6 +97,8 @@ when that file was retired on 2026-09-23.
 - **Dual-homed, one reserved address per NIC** — Wi-Fi on `.200`, Ethernet on `.201`. The wired
   address is canonical; Wi-Fi is kept deliberately as an out-of-band path for when the box is moved
   or the switch fails. Two NICs must never share a single reservation: they collide if both come up.
+  Wi-Fi retries without limit and has power saving off (2026-09-24), so the out-of-band path comes
+  back by itself.
 - ⚠️ **A DHCP reservation only takes effect on a fresh request.** This bit twice — both times the
   box held an older pool lease and ignored a perfectly correct reservation until the interface was
   bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong. Bounce
