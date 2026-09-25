@@ -106,14 +106,24 @@ when that file was retired on 2026-09-23.
   address. Bounce the interface from the Wi-Fi side, or reboot (Phase 0).
 - **Not on the tailnet.** Reachable only over the home LAN today — the one path with no ACL in
   front of it. Joining is Phase 0.
-- **Installed:** Claude Code 2.1.281 and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
-  install); Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **gitleaks 8.16.0** and **shellcheck 0.9.0**, also from
-  Ubuntu's archive — that gitleaks is too old for the repo's hooks (they need 8.19 or later), so the
-  8.30.1 release binary goes to `/usr/local/bin` in Phase 0. **gh 2.45.0**, from Ubuntu's archive
+- **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
+  install; Claude Code was 2.1.281 when installed and updates itself — 2.1.282 on 2026-09-24);
+  Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **shellcheck 0.9.0**,
+  also from Ubuntu's archive, and **gitleaks 8.30.1**, the release binary in `/usr/local/bin`
+  (2026-09-24). Ubuntu's gitleaks 8.16.0 was too old for the repo's hooks (they need 8.19 or later)
+  and has been removed. **gh 2.45.0**, from Ubuntu's archive
   too, for pushing from Dan's account (never `agent`'s). Details in the changelog. Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
-  memory pool — not yet checked on this box. Going headless is Phase 0.
+  memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
+  nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
+  a logged-in desktop, so it is still unmeasured here. Going headless is Phase 0.
+- **Memory before bootstrap** (2026-09-24, `free -g`): **121 GiB total, 2 used, 118 available**,
+  plus a 16 GiB swap file. Taken with the login screen up, Docker running with no containers, and
+  one Claude Code session in tmux (about 1 GiB of the 2). Nothing else holds much: the largest
+  services are the DGX Dashboard (~0.4 GiB) and Docker with containerd (~0.15 GiB). No model
+  server is installed (no Ollama, as a snap or a service), and the snaps are the desktop's own
+  (browser, mail, store, firmware updater), none running as a service.
 
 ### The MacBook — `heartsbane`
 

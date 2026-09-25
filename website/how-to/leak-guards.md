@@ -30,6 +30,16 @@ cd -
 Expected: `gitleaks_8.30.1_linux_arm64.tar.gz: OK`, and only then the install. `cd -` takes you
 back to where you started.
 
+If Ubuntu's copy is installed too (`dpkg -s gitleaks` finds it), remove it, so there is only one
+gitleaks on the box and nothing depends on `PATH` order:
+
+```bash
+sudo apt remove gitleaks
+```
+
+No package manager sees a direct install, so gitleaks never updates by itself. The upgrade steps
+are in [Updates](updates.md#upgrade-day-gitleaks).
+
 ## Create your denylist
 
 `~/.config/local-ai/denylist` is private. You create it by hand, on **each** machine — it is

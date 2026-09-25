@@ -8,6 +8,36 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-24 — gitleaks 8.30.1 replaces the archive build
+
+**gitleaks 8.30.1**, the upstream release binary, installed to `/usr/local/bin` for the repo's
+leak-check hooks, following [`website/how-to/leak-guards.md`](website/how-to/leak-guards.md). The
+release's checksum is verified before anything is installed:
+
+```bash
+cd "$(mktemp -d)"
+curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz &&
+  curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt &&
+  sha256sum --ignore-missing -c gitleaks_8.30.1_checksums.txt &&
+  tar xzf gitleaks_8.30.1_linux_arm64.tar.gz gitleaks &&
+  sudo install -m 0755 gitleaks /usr/local/bin/
+cd -
+```
+
+gitleaks isn't in the Snap Store (checked the same day), so the release binary is the only way to
+get a current version on this box.
+
+**Ubuntu's gitleaks 8.16.0 removed**, so only one gitleaks is on the box. It was too old for the
+hooks, and with both installed, which one ran depended on `PATH`:
+
+```bash
+sudo apt remove gitleaks
+```
+
+`gitleaks version` now prints `8.30.1`; shellcheck 0.9.0 stays, from Ubuntu's archive. The Spark's
+clone has the leak-check hooks on (`make hooks`), and they refuse the planted private address in
+`leak-guards.md`'s drill.
+
 ## 2026-09-23 — arrival and first setup
 
 **Hardware.** GIGABYTE AI TOP ATOM (`ATAGB10-9002` rev 1.0) unboxed and powered on. Full
