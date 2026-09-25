@@ -133,10 +133,11 @@ sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/llama-swap.env && grep = "$f"
 
 Names alone can't show one failure: a copy in `open-webui.env` that no longer matches
 `LLAMASWAP_KEY_OPENWEBUI`, after that key changed. This compares each copy with it by hash and
-prints only `match` or `MISMATCH`:
+prints only `match` or `MISMATCH`. It reads each key's last copy, the one the services use, so a
+leftover duplicate doesn't turn every line into a mismatch:
 
 ```bash
-sudo bash -c 'd=/etc/local-ai/secrets; a=$(sed -n "s/^LLAMASWAP_KEY_OPENWEBUI=//p" $d/llama-swap.env); [ -n "$a" ] || { echo "no LLAMASWAP_KEY_OPENWEBUI" >&2; exit 1; }; h=$(printf %s "$a" | sha256sum); for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do v=$(sed -n "s/^$k=//p" $d/open-webui.env); [ "$(printf %s "$v" | sha256sum)" = "$h" ] && echo "$k: match" || echo "$k: MISMATCH"; done'
+sudo bash -c 'd=/etc/local-ai/secrets; a=$(sed -n "s/^LLAMASWAP_KEY_OPENWEBUI=//p" $d/llama-swap.env | tail -n 1); [ -n "$a" ] || { echo "no LLAMASWAP_KEY_OPENWEBUI" >&2; exit 1; }; h=$(printf %s "$a" | sha256sum); for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do v=$(sed -n "s/^$k=//p" $d/open-webui.env | tail -n 1); [ "$(printf %s "$v" | sha256sum)" = "$h" ] && echo "$k: match" || echo "$k: MISMATCH"; done'
 ```
 
 Expected: three `match` lines. For a `MISMATCH`, run step 5 again, then the command above that

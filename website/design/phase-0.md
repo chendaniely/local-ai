@@ -2059,8 +2059,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   - GitHub for pushes from the Spark: `gh auth login` in *your* account (never as `agent`).
     (Corrected 2026-09-25: a plain `gh auth login` gives the box a token that can push to every
     repository Dan can. The runbook now uses a fine-grained token for this repository only —
-    Contents read and write, Actions read-only — pasted into `gh auth login --with-token` from a
-    prompt that doesn't echo, then revokes the broad token on github.com.)
+    Contents read and write, Actions read-only, Workflows off, so merges that change workflows are
+    made on the Mac — pasted into `gh auth login --with-token` from a prompt that doesn't echo, then
+    revokes the broad token on github.com.)
   - Private context: copy this project's private memory folder from the Mac to the Spark —
     `ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'` then
     `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/`

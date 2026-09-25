@@ -74,7 +74,9 @@ a token that can push to this one repository and nothing else:
    Generate new token**. Pick an expiry date. Under **Only select repositories**, choose
    `chendaniely/local-ai`. Repository permissions: **Contents** read and write, **Actions**
    read-only (for `gh run watch`), and **Metadata** read-only, which GitHub requires. Leave the rest,
-   Workflows included, at no access: CI changes are written on the Mac. Copy the token.
+   Workflows included, at no access. That has a cost: GitHub refuses a push from the Spark whose
+   new commits change `.github/workflows/`, and a merge of `main` after a Dependabot Actions bump
+   can be one. Make those merges, like every CI change, on the Mac. Copy the token.
 2. On the Spark, paste it at the prompt. Nothing shows as you paste, and `printf` is a shell
    builtin, so the token never appears in a process list:
 
