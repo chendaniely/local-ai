@@ -4,9 +4,10 @@ description: "What you can run any time, what updates by itself, what waits for 
 ---
 
 `sudo apt update && sudo apt upgrade` is safe to run any time, as often as habit says: it can't
-move the GPU stack while the set is held, and the set is always held except midway through upgrade
-day. Everything that needs care waits for **upgrade day, on Saturdays**. Skipping one is fine; the
-next one catches up.
+move the GPU stack while the set is held. The set is held except in two cases: midway through
+upgrade day, and a package of the set you have just installed, until `make hold-gpu` holds it too
+([Installing something new](#any-time-apt)). Everything that needs care waits for **upgrade day, on
+Saturdays**. Skipping one is fine; the next one catches up.
 
 | What | Comes from | When and how it updates |
 |---|---|---|
@@ -97,6 +98,9 @@ the box would come back from its next reboot without a GPU.
 the GPU, so a driver privilege-escalation fix is a boundary fix too. Everything else waits for
 Saturday; that wait is the cost of holding the set.
 
+*Not yet performed on this box.* Every step below, the recovery included, is untried until the
+first upgrade day.
+
 Work in tmux, from the clone. A dropped SSH session in the middle of `full-upgrade` is the likeliest
 way to leave the set half-moved; in tmux the upgrade carries on, and `tmux attach -t upgrade` brings
 you back:
@@ -144,12 +148,14 @@ cd ~/git/hub/local-ai
    the holds took, not that the set is complete:
 
    ```bash
-   k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel, which GRUB boots by default
+   k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel
    modinfo -k "$k" -F version nvidia                                  # the new driver's version
    ```
 
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
-   [If it goes wrong](#if-it-goes-wrong).
+   [If it goes wrong](#if-it-goes-wrong). The check assumes GRUB boots the newest kernel, as
+   Ubuntu's default does; that is not yet checked on this box.
+   `grep '^GRUB_DEFAULT=' /etc/default/grub` printing `GRUB_DEFAULT=0` means it does.
 6. Reboot: `sudo reboot`.
 7. Check, once you are back in:
 
@@ -168,8 +174,9 @@ cd ~/git/hub/local-ai
 ### If it goes wrong
 
 **You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
-stops on a package that isn't cleanly installed, do what it says, then run it again. Nothing moves
-until you start again at step 2.
+stops on a package that isn't cleanly installed, do what it says, then run it again. If step 3
+changed anything before it stopped, run step 5's check before any reboot; if it prints the
+driver's version, carry on at step 6, and if not, go to the next paragraph.
 
 **Step 5's check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is a kernel
 with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH still
@@ -206,10 +213,11 @@ modinfo -k "$p" -F version nvidia                                    # prints th
 If it prints the version of the driver installed now (`dpkg -l 'nvidia-driver-*'` shows it), boot
 that kernel. It needs a keyboard and display at the box: as it starts, press Esc to show GRUB's
 hidden menu, then choose *Advanced options* and the previous kernel. If the firmware's setup opens
-instead, leave it without saving and press Esc a moment later. When the driver moved too, as it
-did on 2026-09-23 (which also removed the old kernel's modules), the previous kernel won't help.
+instead, leave it without saving and press Esc a moment later. Neither keypress is tried on this
+box yet. When the driver moved too, as it did on 2026-09-23 (which also removed the old kernel's
+modules), the previous kernel won't help.
 
-*Not yet performed on this box* — the first upgrade day is the test of this section.
+*Not yet performed on this box*, like every step above.
 
 ## Upgrade day: the automated PRs
 
