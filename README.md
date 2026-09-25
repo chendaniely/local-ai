@@ -5,7 +5,8 @@ My local AI stack: a single GB10 DGX Spark — specifically a **GIGABYTE AI TOP 
 reached from a MacBook or other devices over Tailscale, WireGuard, or the home LAN.
 
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
-[the plan](website/design/plan.md); the build starts with its Phase 0.
+[the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
+first tools, the host bootstrap and the docs site. Nothing serves a model until Phase 1.
 
 ## Design in one line
 
@@ -22,6 +23,12 @@ this line, was parked on 2026-09-23.)
 | [`website/design/plan.md`](website/design/plan.md) | The plan: goals, constraints, decisions, design, phases, open items. Start here. It replaced `planning.md`, the initial plan, on 2026-09-23. |
 | [`changelog.md`](changelog.md) | Dated log of what changed on the machine, newest first. |
 | [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) | Notes on Niels Bantilan's stack (below) — GB10 hardware facts, gotchas, and what does and doesn't transfer to a single Spark. |
+| [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the GPU-set hold. |
+| [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
+| [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
+| [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check and the docs tools so far. |
+| [`stack/`](stack) | Pinned versions (`versions.yaml`) and the host setup (`host/`: bootstrap, earlyoom's config, the polkit rule). |
+| [`website/`](website) | The Quarto docs site: the plan and the phase plans (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
 ## Hosts
 
@@ -240,13 +247,19 @@ node, untested).
   [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
+- **The GPU set moves as one, only on upgrade day.** Kernel, NVIDIA modules, driver and CUDA are
+  held together; unholding or upgrading part of them can leave a kernel with no NVIDIA module.
+  Runbook: [Updates](website/how-to/updates.md).
+- **`***`, never `---`, for a horizontal rule in markdown under `website/`** — Pandoc can read a
+  mid-document `---` as a YAML block, and the render fails.
 - **Scenarios are living docs.** A change in the stack's behaviour updates its page under
   `website/scenarios/` and its `spark doctor` check in the same commit.
 - **Work runs where it belongs.** Code, tests, docs and Mac clients are written on `heartsbane`;
   anything touching the Spark's GPU, memory, systemd or Docker is built and tested on `brightroar`;
   sudo, logins and secrets are mine. One session at a time, a checkpoint commit per task, and pushes
   only with my explicit OK.
-- **Python through uv, and the `Makefile` as the front door** — no system Python, no pip.
+- **Python through uv, and the `Makefile` as the front door** — no system Python, no pip, and one
+  Python minor version, pinned in `spark/.python-version`.
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)
@@ -265,8 +278,8 @@ which secret exists, where its value lives, and the variable it is referenced as
 never a masked prefix. It syncs to a NAS and across several machines, so a leaked vault must not be
 a leaked credential. Full rule in [`CLAUDE.md`](CLAUDE.md).
 
-**Planned private files (from Phase 0).** The design adds a few more private things, all outside
-the repo: one secret file per service on the Spark, a private values file holding the NAS and LAN
-addresses the configs need, the denylist the leak-check hooks read, and the Tailscale ACL policy.
-The vault's entry note records each one — by location, and by reference for anything secret — when
-it is created.
+**Private files (from Phase 0).** Phase 0 added a few more private things, all outside the repo:
+one secret file per service on the Spark (2026-09-24), the denylist the leak-check hooks read (one
+on each machine), and the Tailscale ACL policy. A private values file holding the NAS and LAN
+addresses the configs need is still to come. The vault's entry note records each one — by
+location, and by reference for anything secret — when it is created.

@@ -2,7 +2,9 @@
 
 Personal local-AI stack for a **single DGX Spark (GB10)**, reached from a MacBook or other devices
 over Tailscale (the primary path), the home LAN, or WireGuard (for a device on another tailnet).
-Design settled on 2026-09-23; the build starts with Phase 0 of the plan. Almost no code yet.
+Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the `spark` CLI's leak
+check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
+its runbooks and scenario pages. Nothing serves a model yet; that starts with Phase 1.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -63,10 +65,10 @@ versus what belongs there — and holds the slots for the full factory hostname,
 full LAN and tailnet addresses, the serial/service tag, the purchase record, and the accounts
 created during first-time setup. That vault has no git remote.
 
-The design adds a few more private files from Phase 0 on, all outside the repo: one secret file per
-service on the Spark, a private values file holding the NAS and LAN addresses the configs need, the
-denylist the leak-check hooks read, and the Tailscale ACL policy. The vault's entry note records
-each one when it is created.
+Phase 0 added a few more private files, all outside the repo: one secret file per service on the
+Spark, the denylist the leak-check hooks read (one on each machine), and the Tailscale ACL policy.
+A private values file holding the NAS and LAN addresses the configs need is still to come. The
+vault's entry note records each one when it is created.
 
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value
@@ -135,6 +137,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
   `TORCH_CUDA_ARCH_LIST=12.1a`, or they silently target the wrong arch. NVIDIA's own llama.cpp
   playbook uses `121a-real`; which is right gets verified in Phase 1.
+- **The GPU set moves as one, and only on upgrade day.** The kernel, the NVIDIA modules built for
+  it, the driver and CUDA are held together (`apt-mark showhold` lists them). Never unhold or
+  upgrade part of the set, while debugging or otherwise: a kernel with no matching NVIDIA module
+  boots without a GPU. It moves on upgrade day, as one, following `website/how-to/updates.md`, and
+  `make hold-gpu` holds it again.
 
 ## Conventions
 
@@ -145,6 +152,9 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   at commit `d32fab0`.
 - Work here is self-contained (no external stakeholder, no deadline), so it tracks locally in the
   plan (`website/design/plan.md`) — not YouTrack.
+- **Markdown under `website/`: a mid-document horizontal rule is `***`, never `---`.** Pandoc can
+  read a `---` line anywhere in a document, not only at the top, as the start of a YAML metadata
+  block, and then the Quarto render fails. The front matter's own `---` lines are fine.
 
 ## Building it
 
@@ -162,7 +172,9 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   plan and its scenarios; each phase ends with a council review. If anything learned affects a later
   step, update the plan (and its Revisions) before continuing.
 - **Python through uv, the `Makefile` as the front door.** No system Python, no pip; the Makefile
-  calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata.
+  calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata. One Python
+  minor version everywhere, pinned in `spark/.python-version`: it has to live in `spark/`, because
+  uv looks for it only in the project directory.
 - **The `agent` user never gets credentials** — no sudo, no docker group, no GitHub token, no access
   to Dan's home or `~/.secrets`.
 - **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
