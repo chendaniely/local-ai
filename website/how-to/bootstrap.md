@@ -27,6 +27,9 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 - `systemctl is-active earlyoom` → `active`
 - `sudo ufw status` → OpenSSH allowed
 - `id agent` → no `docker`, `sudo` or `spark-admin` in the list
+- `apt-mark showhold | grep -E '^(linux-image-nvidia-hwe|nvidia-driver|cuda-toolkit)-'` → the
+  kernel, the driver and CUDA among the held GPU set. From here on, updates follow
+  [Updates](updates.md).
 - `free -g` → record this as the new baseline
 
 ## Agent's SSH and Claude Code login

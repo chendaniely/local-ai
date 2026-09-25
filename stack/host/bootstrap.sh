@@ -49,18 +49,29 @@ packages() {
   run apt-get install -y earlyoom ufw tmux cmake build-essential ffmpeg jq
 }
 
+# The GPU stack only works as a matched set: the kernel, the NVIDIA modules built for it (they need one
+# exact driver version), the driver and CUDA. DGX OS ships it as one, so it is held as one — holding
+# the driver alone would let `apt upgrade` install a kernel with no NVIDIA module. Upgrade day moves
+# the whole set: website/how-to/updates.md.
+gpu_hold_patterns() {
+  printf '%s\n' 'nvidia-*' 'libnvidia-*' 'cuda-*' 'linux-modules-nvidia-*' 'linux-*nvidia-hwe-*'
+  # CUDA's libraries carry the toolkit's version (libcublas-13-0), not a cuda- prefix.
+  { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' 'cuda-toolkit-*' 2>/dev/null || true; } |
+    awk '$1 == "ii" && $2 ~ /^cuda-toolkit-[0-9]+-[0-9]+$/ {sub(/^cuda-toolkit-/, "", $2); print "*-" $2}'
+}
+
 hold_gpu_stack() {
-  say "hold the NVIDIA driver and CUDA packages — they are upgraded deliberately, on upgrade day"
-  if (( DRY_RUN )); then
-    printf '+ apt-mark hold <installed packages matching nvidia-*, libnvidia-*, cuda-*>\n'
-    return
-  fi
-  local pkgs
+  say "hold the GPU stack — kernel, NVIDIA modules, driver, CUDA — it moves only on upgrade day"
+  local pattern pkgs
+  local -a patterns=()
+  while IFS= read -r pattern; do patterns+=("$pattern"); done < <(gpu_hold_patterns)
   # dpkg-query exits non-zero when a pattern matches nothing; that must not abort the script.
-  pkgs="$( { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' 'nvidia-*' 'libnvidia-*' 'cuda-*' 2>/dev/null || true; } | awk '$1 == "ii" {print $2}' | sort -u)"
+  pkgs="$( { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' "${patterns[@]}" 2>/dev/null || true; } | awk '$1 == "ii" {print $2}' | sort -u)"
   if [[ -n "$pkgs" ]]; then
     # shellcheck disable=SC2086  # one package per word is intended
-    apt-mark hold $pkgs
+    run apt-mark hold $pkgs
+  elif (( DRY_RUN )); then
+    printf '+ apt-mark hold   (nothing installed matches %s)\n' "${patterns[*]}"
   fi
 }
 

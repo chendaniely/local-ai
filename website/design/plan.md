@@ -119,7 +119,7 @@ In order of how much they constrain the design:
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
-| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd/sshd/tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the driver and CUDA; ufw SSH only (+ LiteLLM from Phase 3); one 0600 secret file per service. |
+| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd/sshd/tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; ufw SSH only (+ LiteLLM from Phase 3); one 0600 secret file per service. |
 | **Mac and agent clients** | `clients/` | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
@@ -174,7 +174,8 @@ In order of how much they constrain the design:
 - **Supply chain.** Digests live in `versions.yaml`. LiteLLM comes only from its signed Docker image
   (its PyPI releases 1.82.7 and 1.82.8 were backdoored on 2026-03-24; the images were not affected
   and have been signed since 1.83.0). GitHub Actions are pinned by commit SHA with minimal
-  `permissions:`. Driver and CUDA packages are held and upgraded deliberately.
+  `permissions:`. The GPU set — kernel, NVIDIA modules, driver and CUDA — is held and upgraded
+  deliberately, as one.
 - **Leak guards.** `.githooks` pre-commit and commit-msg hooks run gitleaks plus patterns for private
   LAN and tailnet addresses, MACs and `ts.net`, plus a private denylist kept outside the repo (the
   hook fails if it's missing). Configs render outside the repo; fixtures use RFC 5737 addresses and
@@ -311,6 +312,18 @@ plus a `Makefile` — the front door.
   `spark doctor`.
 - **Monthly upgrade day:** automated PRs collect version bumps; they are applied one component at a
   time → render → validate → back up databases → deploy → `spark doctor` → changelog entry.
+- **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
+  themselves; neither can move the GPU stack. apt logs every run in `/var/log/apt/history.log`.
+  After each run needrestart restarts services still on replaced libraries; DGX OS keeps it off its
+  dashboard, and Phase 1 keeps it off the stack. Dan runs apt out of habit. Holds are fine as long
+  as there's a written plan for when and how the held set moves, and for getting the services back
+  after any update (2026-09-24).
+- **The GPU set moves only on upgrade day, as one:** the kernel, the NVIDIA modules built for it,
+  the driver and CUDA. `make bootstrap` holds them together, because the modules need one exact
+  driver version and DGX OS ships all four in one transaction. Holding only part of the set would
+  let `apt upgrade` install a kernel with no NVIDIA module. The move: unhold → `apt full-upgrade` →
+  re-hold → reboot → check the GPU → `spark doctor`. Kernel security fixes wait for upgrade day,
+  or bring it forward. Runbook: `website/how-to/updates.md`.
 
 ## Phases
 
@@ -338,11 +351,17 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   `captureBuffer: 0`) with a static, safe model set — Gemma 4 26B-A4B (resident vision chat),
   Qwen3-Embedding-0.6B, whisper.cpp large-v3-turbo (interactive), and the starter coder
   Qwen3.6-35B-A3B — whose combined footprint `spark render` checks · the **minimal brake** · Open WebUI
-  + SearXNG via `tailscale serve` · pi and Claude Code in tmux as `agent` · a basic `spark status`.
+  + SearXNG via `tailscale serve` · pi and Claude Code in tmux as `agent` · a basic `spark status`
+  · `make upgrade-gpu` (upgrade day's GPU-set steps as one command) · updates never take the stack
+  down for good: a needrestart override keeps a routine `apt upgrade` from restarting `local-ai-*`
+  units (DGX OS does the same for its dashboard); after a Docker upgrade, a reboot or upgrade day the
+  stack comes back by itself, and `make doctor` confirms it; `website/how-to/updates.md` gains the
+  recovery steps.
 - [Mac] pi config + SSH tunnel.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
-  `make apply` reproduces it.
+  `make apply` reproduces it; after a routine `apt upgrade` and after a reboot, the stack is serving
+  again without a hand on it.
 
 **Phase 2 — Fit check, brake, visibility**
 
@@ -438,7 +457,9 @@ Each item gets its own design pass when its turn comes.
 - **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
   whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; the tailnet's route home; the
-  UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling.
+  UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
+  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); whether
+  GIGABYTE ships this box's firmware through fwupd.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -458,6 +479,16 @@ Each item gets its own design pass when its turn comes.
   that `agent` can't read Dan's files always passed, and the Mac-key step deleted the key it had
   failed to copy. The check now tests whether `agent` can enter Dan's home, since `~/.secrets`
   doesn't exist on the Spark.
+- **2026-09-24** — Dan's decision on updates. Everyday `apt upgrade` and snap refreshes run any
+  time; the GPU stack is held as one set and moves only on upgrade day (`website/how-to/updates.md`).
+  The set is the kernel, the NVIDIA modules built for it, the driver, and CUDA with its
+  version-named libraries. Bootstrap had held `nvidia-*`, `libnvidia-*` and `cuda-*` only, which
+  left the kernel and the modules free to move. The box's apt log shows DGX OS shipping all four in
+  one transaction, and the modules need one exact driver version. Kernel security fixes now wait for
+  upgrade day. Dan runs `apt upgrade` out of habit, so updates must never take the stack down for
+  good. Phase 1 gains `make upgrade-gpu`, a needrestart override for `local-ai-*` units, and a
+  done-when: the stack serves again after a routine upgrade and after a reboot. gitleaks stays a
+  direct install, since it has no snap; the runbook has its upgrade steps.
 
 ## Sources
 

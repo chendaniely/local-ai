@@ -2110,6 +2110,7 @@ journalctl -u earlyoom -b --no-pager | grep -i prefer   # regex received with no
 swapon --show                                # note whether there is swap (-s 100,100 ignores it either way)
 systemctl is-active systemd-oomd             # if active: two OOM killers — decide in Task 12's review
 id agent                                     # no docker, sudo or spark-admin
+apt-mark showhold | grep -E '^(linux-image-nvidia-hwe|nvidia-driver|cuda-toolkit)-'   # the GPU set is held: kernel, driver, CUDA
 stat -c '%a %U:%G %n' "$HOME" /home/agent /etc/local-ai/secrets /opt/local-ai
 ls /etc/local-ai/secrets                     # "Permission denied" — Dan's sessions can't list secrets
 tailscale status --self --json | jq -r '.Self.Online'   # true
@@ -2141,7 +2142,8 @@ Expected: it reports the process it *would* kill, and that process is none of th
 - [ ] **Step 3: Record the machine changes — both files, one commit**
 
 `changelog.md` — a new dated entry at the top: bootstrap applied (headless by default, earlyoom,
-ufw SSH-only, users `spark` and `agent`, polkit rule, driver and CUDA packages held), the wired NIC
+ufw SSH-only, users `spark` and `agent`, polkit rule, the GPU set held: kernel, NVIDIA modules,
+driver, CUDA), the wired NIC
 on `.201`, joined to the tailnet, Claude Code for `agent`. Command lines only, never output.
 
 `README.md` §Current state — the same facts as current state: headless (and the new `free -g`
