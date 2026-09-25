@@ -111,12 +111,11 @@ cd ~/git/hub/local-ai
 ```
 
 1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
-   steps as one command, all but step 5's GRUB check.
-2. First run step 5's GRUB check, its `grep` and `sudo grub-editenv list`, so the GRUB question is
-   settled before anything moves. If it says **don't reboot yet**, stop here, with the set still
-   held and nothing moved, and find the entry GRUB starts, as step 5 says. Go on only if it is
-   entry 0 and no `GRUB_TOP_LEVEL` is set: entry 0 is then always the newest kernel, so after the
-   move it is the new one. Then release the set:
+   steps as one command, all but step 5's GRUB check, which you run before it and again before the
+   reboot.
+2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
+   doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
+   the Mac session to work out why. Then release the set:
 
    ```bash
    apt-mark showhold | xargs -r sudo apt-mark unhold
@@ -165,42 +164,45 @@ cd ~/git/hub/local-ai
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
    [If it goes wrong](#if-it-goes-wrong).
 
-   Then the GRUB check. The module check assumes GRUB boots the newest kernel, as Ubuntu's default
-   does; that is not yet checked on this box. `GRUB_DEFAULT` and `GRUB_TOP_LEVEL` decide it, and
-   each can be set in `/etc/default/grub` and in any `/etc/default/grub.d/*.cfg`. `grub-mkconfig`
-   reads the main file first, then the `grub.d` files in name order, so for each setting the last
-   line printed wins. `grub-editenv` shows what GRUB keeps between boots. Both commands only read:
+   Then the GRUB check: that GRUB will boot that same kernel. It does by default, as Ubuntu sets it
+   up, but that is not yet checked on this box, and more settings can change it than
+   `/etc/default/grub` shows: some put another kernel first on the menu, others pick another entry.
+   So read what GRUB will actually do, from the menu it boots from, which installing a kernel
+   rebuilds, and from what it keeps between boots. `grub-editenv` runs without `sudo`, so nothing
+   here can change anything:
 
    ```bash
-   grep -h -e '^GRUB_DEFAULT=' -e '^GRUB_TOP_LEVEL=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null
-   sudo grub-editenv list
+   k=$(linux-version list | linux-version sort --reverse | head -1); echo "$k"   # the newest kernel
+   sudo grep -m1 -E '^[[:space:]]*linux[[:space:]]' /boot/grub/grub.cfg          # entry 0's kernel
+   sudo grep -E '^[[:space:]]*set default=' /boot/grub/grub.cfg                   # the entry GRUB starts
+   grub-editenv list                                                              # what GRUB kept
    ```
 
-   GRUB boots the newest kernel when all three of these are true:
+   The check passes when all three of these are true:
 
-   - the last `GRUB_DEFAULT` line is `GRUB_DEFAULT=0` (a quoted `"0"` means the same), or there is
-     none (0 is the default);
-   - no `GRUB_TOP_LEVEL` line prints: it puts the kernel it names first, however old;
-   - `grub-editenv` prints no `next_entry=` line, which `grub-reboot` leaves to choose the next
-     boot.
+   - entry 0's `linux` line names `vmlinuz-` followed by the version `echo` printed;
+   - of the two `set default=` lines, the one that isn't `"${next_entry}"` is `"0"`; or it is
+     `"${saved_entry}"`, and `grub-editenv` prints no `saved_entry=` with a value, or
+     `saved_entry=0`;
+   - `grub-editenv` prints no `next_entry=` with a value. An empty `next_entry=` is what a used
+     `grub-reboot` leaves behind, and GRUB ignores it.
 
-   Anything else, such as `GRUB_DEFAULT=saved`: **don't reboot yet**. The module check read the
-   newest kernel, which may not be the one GRUB boots. Find the kernel GRUB boots, reading only,
-   then check its module the same way, `modinfo -k <version> -F version nvidia`, before you
-   reboot. First the entry GRUB starts: the `next_entry=` if there is one; for `saved`, the
-   `saved_entry=` (with no such line, entry 0); otherwise the value of `GRUB_DEFAULT`. Then that
-   entry's kernel, the `<version>` in the `linux /boot/vmlinuz-<version>` line under it:
+   Anything else, or any of these commands failing: **don't reboot yet**, and bring what they
+   printed to the Mac session. The `linux` line also shows `root=UUID=…`, the root filesystem's
+   id: that never goes into the repo. To see which kernel GRUB would start instead, list the menu,
+   each entry followed by its `linux` line:
 
    ```bash
    sudo grep -E '^[[:space:]]*(menuentry|submenu|linux)[[:space:]]' /boot/grub/grub.cfg
    ```
 
-   A number counts the `menuentry` and `submenu` lines that start at the left edge, from 0, and
-   `1>2` is the third entry indented under the second. A title (`Ubuntu, with Linux <version>`) or
-   an id (`gnulinux-<version>-advanced-…`) names its entry, and `>` joins a submenu to an entry
-   in it. If nothing matches, GRUB starts entry 0. With `GRUB_TOP_LEVEL` set, entry 0's `linux`
-   line shows the kernel it names. Reboot only once `modinfo` prints the driver's version for the
-   kernel GRUB boots.
+   GRUB starts `next_entry` if it has a value, otherwise the default, where `"${saved_entry}"` means
+   `saved_entry`'s value. A number counts the menu's top-level entries from 0, the submenu being one
+   of them, and `1>2` is the third entry inside the second. A title or an id is looked up at the top
+   level only, so an entry inside the submenu needs the submenu's in front, joined by `>`
+   (`gnulinux-advanced-…>gnulinux-<version>-advanced-…`). `10_linux` adds the submenu to a bare
+   title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0.
+   Reboot only when both checks pass.
 6. Reboot: `sudo reboot`.
 7. Check, once you are back in:
 
@@ -220,9 +222,9 @@ cd ~/git/hub/local-ai
 
 **You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
 stops on a package that isn't cleanly installed, do what it says, then run it again. If step 3
-changed anything before it stopped, run step 5 before any reboot, both its checks. Once `modinfo`
-prints the driver's version for the kernel GRUB boots, carry on at step 6. If the module is
-missing, go to the next paragraph.
+changed anything before it stopped, run step 5 before any reboot, both its checks. Once both pass,
+carry on at step 6. If the module is missing, go to the next paragraph; if only the GRUB check
+fails, don't reboot yet, as step 5 says.
 
 **Step 5's module check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is
 a kernel with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH
@@ -245,8 +247,8 @@ still works: nothing on the network path needs the GPU. Every command here is sa
    sudo apt install <the name it printed>
    ```
 
-3. Run step 5 again, both its checks. Once `modinfo` prints the driver's version for the kernel
-   GRUB boots: `make hold-gpu`, `sudo reboot`, then step 7's checks.
+3. Run step 5 again, both its checks. Once both pass: `make hold-gpu`, `sudo reboot`, then step 7's
+   checks.
 
 **The quick way back, when the driver didn't move.** If only the kernel moved, the previous kernel
 still has its module:

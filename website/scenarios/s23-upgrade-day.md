@@ -11,15 +11,17 @@ may be loaded. On any other day I run `sudo apt upgrade` out of habit.
 
 **What happens.** A routine `apt upgrade`, any day, moves nothing in the held set and restarts no
 model: needrestart leaves the `local-ai-*` units alone. On upgrade day, `make upgrade-gpu` runs
-[Updates](../how-to/updates.md#upgrade-day-the-gpu-set)' steps as one command, in tmux. It releases
-the set and reads apt's plan first. It refuses a plan that would remove the NVIDIA modules
-metapackage, install a kernel with no modules for it, or change the driver branch. Only then does it
-stop what uses the GPU and move the set with `full-upgrade`. It re-holds the set, the hold and
-nothing else. Before it asks for the reboot, it checks that the newest kernel has an NVIDIA module.
-GRUB boots that kernel by default, but that is not yet checked on this box. After the reboot the
-stack comes back by itself, and `make doctor` confirms it: the GPU on the new driver, the running
-kernel's modules held, a model loaded end to end. Dependabot's PRs are merged or rebased, never
-squashed.
+[Updates](../how-to/updates.md#upgrade-day-the-gpu-set)' steps as one command, in tmux, all but
+step 5's GRUB check: it doesn't read GRUB, so I run that check myself, before it starts and again
+before the reboot. It releases the set and reads apt's plan first. It refuses a plan that would
+remove the NVIDIA modules metapackage, install a kernel with no modules for it, or change the driver
+branch. Only then does it stop what uses the GPU and move the set with `full-upgrade`. It re-holds
+the set, the hold and nothing else. Before it asks for the reboot, it checks that the newest kernel
+has an NVIDIA module. My GRUB check confirms that GRUB will boot that kernel: its menu's first
+entry is that kernel, and nothing picks another. GRUB does by default, but that is not yet checked
+on this box. After the reboot the stack comes back by itself, and `make doctor` confirms it: the GPU
+on the new driver, the running kernel's modules held, a model loaded end to end. Dependabot's PRs
+are merged or rebased, never squashed.
 
 **What I see.** Each step's result as it runs, and the new kernel, driver and CUDA versions to
 record in `changelog.md` and `README.md` §Current state. If it refuses, I see which package would
