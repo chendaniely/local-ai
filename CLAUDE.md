@@ -208,9 +208,9 @@ Each of these cost Phase 0 at least one review loop; the story is in
 - **A held dpkg package reads `hi`, not `ii`** — count both as installed, and compare package
   states without the hold letter, or a held set looks empty and every comparison differs.
 - **A GRUB check reads what `grub.cfg` will boot** — entry 0's `linux` line, the `default=` lines
-  and `grub-editenv list` — not only `/etc/default/grub`, whose settings miss `GRUB_TOP_LEVEL`,
-  `GRUB_FLAVOUR_ORDER` and indented or exported lines. No GRUB id goes in the repo: it carries the
-  root filesystem's UUID.
+  and `grub-editenv list` — not only `/etc/default/grub`: reading the settings missed
+  `GRUB_TOP_LEVEL`, `GRUB_FLAVOUR_ORDER` and indented or exported lines. No GRUB id goes in the
+  repo: it carries the root filesystem's UUID.
 - **Review permissions, secrets and network exposure in the task that changes them** — Phase 0's
   security lens came at the phase-end council, after bootstrap had run, and left box steps pending.
 - **A step comes after everything it uses** — tools, aliases, the tailnet, the session that runs
