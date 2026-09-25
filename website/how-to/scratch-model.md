@@ -110,9 +110,45 @@ model at a time.
 
 ## Clean up
 
-When Phase 1's stack serves models, stop the server (Ctrl-C), close the tunnel, and delete the
-scratch folder, models included:
+Do this when Phase 1's stack serves models, or any time you're done with scratch. Each step says
+where it runs.
+
+**1. Stop the server (Spark).** Press Ctrl-C in its tmux window. If you've lost track of it:
 
 ```bash
+pkill -u "$USER" -x llama-server
+pgrep -a llama-server || echo "no server running"
+tmux kill-session -t scratch 2>/dev/null
+```
+
+**2. Check that the memory came back (Spark):**
+
+```bash
+free -g                                                               # available back near 118
+nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader   # prints nothing
+```
+
+**3. Close the tunnel and forget the endpoint (Mac).** Press Ctrl-C where `ssh -N -L 8080…` runs,
+or `pkill -f 'ssh -N -L 8080'`. Remove the custom `http://localhost:8080/v1` provider from any app
+you added it to.
+
+**4. Delete the build and the models (Spark):**
+
+```bash
+du -sh ~/scratch    # how much this frees
 rm -rf ~/scratch
 ```
+
+**5. Delete what the downloads cached (Spark).** Both are download caches, so deleting them is safe:
+
+```bash
+rm -rf ~/.cache/huggingface/xet      # Hugging Face's chunk cache from the downloads
+uv cache clean huggingface-hub       # uv's cached copy of the Hugging Face CLI
+```
+
+Leave the rest of `~/.cache/huggingface/hub` unless you know what's in it. Other tools share it:
+`du -sh ~/.cache/huggingface/hub/models--*` lists each model in it and its size, and you can delete
+the ones you no longer want. If you gave a token with `HF_TOKEN` (see gated models), it was never
+saved, so there's nothing to remove.
+
+**6. Check the disk (Spark):** `df -h /`.
