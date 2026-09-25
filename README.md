@@ -28,7 +28,7 @@ this line, was parked on 2026-09-23.)
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
 | [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check and the docs tools so far. |
 | [`stack/`](stack) | Pinned versions (`versions.yaml`) and the host setup (`host/`: bootstrap, earlyoom's config, the polkit rule). |
-| [`website/`](website) | The Quarto docs site: the plan and the phase plans (`design/`), scenarios, how-to runbooks and the generated Stack page. |
+| [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
 ## Hosts
 

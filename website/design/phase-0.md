@@ -6,6 +6,9 @@ date: 2026-09-23
 
 # Phase 0 — Guardrails, prep, docs scaffold — Implementation Plan
 
+> **Retrospective:** [Phase 0 — retrospective](phase-0-retro.md) records what this plan built, where
+> the build departed from it and why, what the reviews found, and how to start over.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Every task is labelled **[Mac]**, **[Spark]** or

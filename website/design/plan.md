@@ -394,6 +394,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   the Spark as on the Mac · give the first Spark session its private context (kept outside the repo).
 - *Done when:* a `free -g` baseline is recorded; a planted fake secret is blocked; `agent` can't read
   Dan's files or use docker; the site builds.
+- *Retrospective:* [Phase 0 — retrospective](phase-0-retro.md): what was built, where it departed
+  from this plan and why, what Phase 1 inherits, and the rules that now prevent rework.
 
 **Phase 1 — First milestone: web UI + pi**
 
