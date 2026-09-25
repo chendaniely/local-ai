@@ -182,6 +182,47 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
   (Phase 0).
 
+### Lessons from Phase 0 — rules that prevent rework
+
+Each of these cost Phase 0 at least one review loop; the story is in
+[`website/design/phase-0-retro.md`](website/design/phase-0-retro.md).
+
+- **Run every code block before it goes into a plan**, and keep the listing byte-identical to the
+  tested code — implementers copy plans faithfully, bugs included.
+- **Test shell, Makefile, `ps` and apt/dpkg behaviour on the Mac (bash 3.2, GNU make 3.81) and on
+  Ubuntu 24.04 (bash 5.2, GNU make 4.3, procps-ng 4)** — a throwaway `ubuntu:24.04` container
+  works; `make -n -C`, `ps -o oom_score_adj` and dpkg's hold letter each behaved differently there.
+- **See every test and check fail once, and make fakes change state as the real tool does** — a
+  check against a file that didn't exist, tests that matched no line, and a fake `apt-mark` that
+  never set the hold letter all passed while broken.
+- **Never assert a box fact from the Mac** — mark it unverified and let the Spark session check it;
+  the login name, `~/.secrets` and DGX OS's package names were all wrong guesses.
+- **Root never writes, `chown`s or `chmod`s through a path `spark` or `agent` controls** — `agent`'s
+  files are written by `agent` (`sudo -u`, `runuser -u`), and temporary files go in `mktemp -d`,
+  never a fixed `/tmp` name; a planted symlink turns root's write into theirs.
+- **No secret on a command line, and no check that can print one** — values travel through `printf`
+  (a builtin) or a file, and a check prints only a verdict, even in the case it exists to catch;
+  argv shows in the process list.
+- **No `sudo` inside a piped `ssh`** — it has no terminal to ask for the password; `scp` the file,
+  then run `sudo` in an interactive session.
+- **A held dpkg package reads `hi`, not `ii`** — count both as installed, and compare package
+  states without the hold letter, or a held set looks empty and every comparison differs.
+- **A GRUB check reads what `grub.cfg` will boot** — entry 0's `linux` line, the `default=` lines
+  and `grub-editenv list` — not only `/etc/default/grub`, whose settings miss `GRUB_TOP_LEVEL`,
+  `GRUB_FLAVOUR_ORDER` and indented or exported lines. No GRUB id goes in the repo: it carries the
+  root filesystem's UUID.
+- **Review permissions, secrets and network exposure in the task that changes them** — Phase 0's
+  security lens came at the phase-end council, after bootstrap had run, and left box steps pending.
+- **A step comes after everything it uses** — tools, aliases, the tailnet, the session that runs
+  it; the Spark session was first scheduled after the task that ran in it.
+- **Re-read every sentence a fix touches against the code before committing** — a fix's review
+  usually found wording the fix itself had made untrue.
+- **Write plans, runbooks and commit messages with file tools, and commit with
+  `git commit -F <file>`** — the secrets hook refuses shell commands that name a secret path, and
+  shell expansion garbled one commit message.
+- **A subagent's commit carries the exact trailer and is never amended without Dan's OK** — one went
+  in with another model's trailer.
+
 ## Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): description`.
