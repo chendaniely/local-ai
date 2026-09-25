@@ -71,7 +71,7 @@ In order of how much they constrain the design:
 | Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
-| Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Monthly upgrade day** from automated PRs; vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
+| Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs; vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
 | Build | **Split by machine, one session at a time:** the Mac session writes code, tests, docs and Mac clients; a Claude Code session on the Spark (as Dan, in tmux) builds and tests everything touching the GPU, memory, systemd or Docker; Dan runs sudo, logins, secrets and the Synology's settings. |
 | Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · `claude-dgx` · other users · the web UI banner. |
 
@@ -310,7 +310,8 @@ plus a `Makefile` — the front door.
 - **Recovery runbook:** factory reset → the Phase 0 runbooks → delete the old Tailscale node before
   rejoining (otherwise the box comes back as `brightroar-1` and every client breaks) → restore →
   `spark doctor`.
-- **Monthly upgrade day:** automated PRs collect version bumps; they are applied one component at a
+- **Weekly upgrade day, on Saturdays** (monthly until 2026-09-24). Skipping one is fine; the next
+  one catches up. Automated PRs collect version bumps; they are applied one component at a
   time → render → validate → back up databases → deploy → `spark doctor` → changelog entry.
 - **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
   themselves; neither can move the GPU stack. apt logs every run in `/var/log/apt/history.log`.
@@ -489,6 +490,8 @@ Each item gets its own design pass when its turn comes.
   good. Phase 1 gains `make upgrade-gpu`, a needrestart override for `local-ai-*` units, and a
   done-when: the stack serves again after a routine upgrade and after a reboot. gitleaks stays a
   direct install, since it has no snap; the runbook has its upgrade steps.
+- **2026-09-24** — Dan: upgrade day is weekly, on Saturdays, instead of monthly. Skipping one is
+  fine; the next one catches up. The GPU set, gitleaks and uv move then.
 
 ## Sources
 

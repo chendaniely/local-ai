@@ -4,7 +4,8 @@ description: "What you can run any time, what updates by itself, what waits for 
 ---
 
 `sudo apt update && sudo apt upgrade` is safe to run any time, as often as habit says: it can't
-move the GPU stack. Everything that needs care waits for **upgrade day, once a month**.
+move the GPU stack. Everything that needs care waits for **upgrade day, on Saturdays**. Skipping one is fine; the next
+one catches up.
 
 | What | Comes from | When and how it updates |
 |---|---|---|
