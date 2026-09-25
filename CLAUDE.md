@@ -175,8 +175,10 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata. One Python
   minor version everywhere, pinned in `spark/.python-version`: it has to live in `spark/`, because
   uv looks for it only in the project directory.
-- **The `agent` user never gets credentials** — no sudo, no docker group, no GitHub token, no access
-  to Dan's home or `~/.secrets`.
+- **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
+  access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
+  and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets
+  credentials at all, which stopped being true when it got its own Claude Code login.)
 - **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
   (Phase 0).
 

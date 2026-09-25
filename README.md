@@ -241,6 +241,9 @@ node, untested).
   `git add`. Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **No secrets in this repo.** API keys are referenced by environment variable, expanded at call
   time. Real values live in `~/.secrets` and are never committed or printed.
+- **`agent` never gets my credentials** — no sudo, no docker, no GitHub token, no access to my home
+  or `~/.secrets`. It holds only its own: its Claude Code login and, from Phase 1, its own
+  llama-swap key.
 - **Docs must be true, and get fixed in the same change that makes them wrong.** This repo is
   mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
   Correct rather than delete, and keep unverified things marked unverified. Full rule in
