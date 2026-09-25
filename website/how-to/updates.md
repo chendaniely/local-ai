@@ -111,8 +111,12 @@ cd ~/git/hub/local-ai
 ```
 
 1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
-   steps as one command.
-2. Release the set:
+   steps as one command, all but step 5's GRUB check.
+2. First run step 5's GRUB check, its `grep` and `sudo grub-editenv list`, so the GRUB question is
+   settled before anything moves. If it says **don't reboot yet**, stop here, with the set still
+   held and nothing moved, and find the entry GRUB starts, as step 5 says. Go on only if it is
+   entry 0 and no `GRUB_TOP_LEVEL` is set: entry 0 is then always the newest kernel, so after the
+   move it is the new one. Then release the set:
 
    ```bash
    apt-mark showhold | xargs -r sudo apt-mark unhold
@@ -150,7 +154,8 @@ cd ~/git/hub/local-ai
    installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
    again.
 5. Before you reboot, check that the kernel GRUB boots has an NVIDIA module. "GPU set held" proves
-   the holds took, not that the set is complete:
+   the holds took, not that the set is complete. It takes two checks. First the module check, on
+   the newest kernel:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel
@@ -158,19 +163,44 @@ cd ~/git/hub/local-ai
    ```
 
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
-   [If it goes wrong](#if-it-goes-wrong). The check assumes GRUB boots the newest kernel, as
-   Ubuntu's default does; that is not yet checked on this box. `GRUB_DEFAULT` can be set in
-   `/etc/default/grub` and in any `/etc/default/grub.d/*.cfg`. `grub-mkconfig` reads the main file
-   first, then the `grub.d` files in name order, so the last line this prints wins:
+   [If it goes wrong](#if-it-goes-wrong).
+
+   Then the GRUB check. The module check assumes GRUB boots the newest kernel, as Ubuntu's default
+   does; that is not yet checked on this box. `GRUB_DEFAULT` and `GRUB_TOP_LEVEL` decide it, and
+   each can be set in `/etc/default/grub` and in any `/etc/default/grub.d/*.cfg`. `grub-mkconfig`
+   reads the main file first, then the `grub.d` files in name order, so for each setting the last
+   line printed wins. `grub-editenv` shows what GRUB keeps between boots. Both commands only read:
 
    ```bash
-   grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null
+   grep -h -e '^GRUB_DEFAULT=' -e '^GRUB_TOP_LEVEL=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null
+   sudo grub-editenv list
    ```
 
-   If that last line is `GRUB_DEFAULT=0` (a quoted `"0"` means the same), or nothing prints (0 is
-   the default), GRUB boots the newest kernel. Anything else, such as `saved`: **don't reboot yet**.
-   The check above read the newest kernel, which may not be the one GRUB boots. Find out which
-   kernel that is, and check its module the same way before you reboot.
+   GRUB boots the newest kernel when all three of these are true:
+
+   - the last `GRUB_DEFAULT` line is `GRUB_DEFAULT=0` (a quoted `"0"` means the same), or there is
+     none (0 is the default);
+   - no `GRUB_TOP_LEVEL` line prints: it puts the kernel it names first, however old;
+   - `grub-editenv` prints no `next_entry=` line, which `grub-reboot` leaves to choose the next
+     boot.
+
+   Anything else, such as `GRUB_DEFAULT=saved`: **don't reboot yet**. The module check read the
+   newest kernel, which may not be the one GRUB boots. Find the kernel GRUB boots, reading only,
+   then check its module the same way, `modinfo -k <version> -F version nvidia`, before you
+   reboot. First the entry GRUB starts: the `next_entry=` if there is one; for `saved`, the
+   `saved_entry=` (with no such line, entry 0); otherwise the value of `GRUB_DEFAULT`. Then that
+   entry's kernel, the `<version>` in the `linux /boot/vmlinuz-<version>` line under it:
+
+   ```bash
+   sudo grep -E '^[[:space:]]*(menuentry|submenu|linux)[[:space:]]' /boot/grub/grub.cfg
+   ```
+
+   A number counts the `menuentry` and `submenu` lines that start at the left edge, from 0, and
+   `1>2` is the third entry indented under the second. A title (`Ubuntu, with Linux <version>`) or
+   an id (`gnulinux-<version>-advanced-…`) names its entry, and `>` joins a submenu to an entry
+   in it. If nothing matches, GRUB starts entry 0. With `GRUB_TOP_LEVEL` set, entry 0's `linux`
+   line shows the kernel it names. Reboot only once `modinfo` prints the driver's version for the
+   kernel GRUB boots.
 6. Reboot: `sudo reboot`.
 7. Check, once you are back in:
 
@@ -190,12 +220,13 @@ cd ~/git/hub/local-ai
 
 **You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
 stops on a package that isn't cleanly installed, do what it says, then run it again. If step 3
-changed anything before it stopped, run step 5's check before any reboot; if it prints the
-driver's version, carry on at step 6, and if not, go to the next paragraph.
+changed anything before it stopped, run step 5 before any reboot, both its checks. Once `modinfo`
+prints the driver's version for the kernel GRUB boots, carry on at step 6. If the module is
+missing, go to the next paragraph.
 
-**Step 5's check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is a kernel
-with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH still
-works: nothing on the network path needs the GPU. Every command here is safe to run again:
+**Step 5's module check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is
+a kernel with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH
+still works: nothing on the network path needs the GPU. Every command here is safe to run again:
 
 1. Release the set and finish the move, answering as step 3 says:
 
@@ -214,8 +245,8 @@ works: nothing on the network path needs the GPU. Every command here is safe to 
    sudo apt install <the name it printed>
    ```
 
-3. Run step 5's check again. Once it prints the driver's version: `make hold-gpu`, `sudo reboot`,
-   then step 7's checks.
+3. Run step 5 again, both its checks. Once `modinfo` prints the driver's version for the kernel
+   GRUB boots: `make hold-gpu`, `sudo reboot`, then step 7's checks.
 
 **The quick way back, when the driver didn't move.** If only the kernel moved, the previous kernel
 still has its module:
