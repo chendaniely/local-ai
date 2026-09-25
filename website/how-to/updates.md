@@ -49,7 +49,9 @@ What a routine upgrade can restart by itself:
   upgrade stops every running container, and only those with a restart policy come back by
   themselves.
 - **Nothing that needs a reboot, until you reboot.** If `/var/run/reboot-required` exists afterwards,
-  `cat /var/run/reboot-required.pkgs` names the package that asked; reboot when nothing is running.
+  `cat /var/run/reboot-required.pkgs` names the package that asked. Reboot when nothing is running,
+  and only once [upgrade day's step 5](#upgrade-day-the-gpu-set) checks pass: a routine upgrade can
+  rebuild GRUB's menu too.
 
 apt keeps its own record of every run, so routine updates need no notes. To see when updates ran
 and what changed:
@@ -174,32 +176,39 @@ cd ~/git/hub/local-ai
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1); echo "$k"   # the newest kernel
    sudo grep -m1 -E '^[[:space:]]*linux[[:space:]]' /boot/grub/grub.cfg          # entry 0's kernel
-   sudo grep -E '^[[:space:]]*set default=' /boot/grub/grub.cfg                   # the entry GRUB starts
+   sudo grep 'default=' /boot/grub/grub.cfg                                       # the entry GRUB starts
    grub-editenv list                                                              # what GRUB kept
    ```
 
    The check passes when all three of these are true:
 
    - entry 0's `linux` line names `vmlinuz-` followed by the version `echo` printed;
-   - of the two `set default=` lines, the one that isn't `"${next_entry}"` is `"0"`; or it is
-     `"${saved_entry}"`, and `grub-editenv` prints no `saved_entry=` with a value, or
-     `saved_entry=0`;
-   - `grub-editenv` prints no `next_entry=` with a value. An empty `next_entry=` is what a used
-     `grub-reboot` leaves behind, and GRUB ignores it.
+   - the `default=` lines are exactly the stock two, both `set default=`: one is
+     `"${next_entry}"`, and the other is `"0"`, or `"${saved_entry}"` with `grub-editenv`
+     printing no `saved_entry=` with a value, or `saved_entry=0`. A third line, or a bare
+     `default=` without `set`, fails;
+   - `grub-editenv` prints no `next_entry=` and no `prev_entry=` with a value. An empty
+     `next_entry=` is what a used `grub-reboot` leaves behind, and GRUB ignores it. A
+     `prev_entry` becomes the next entry when `initrdfail=1`: unlikely on a box that booted, but
+     cheap to rule out.
 
    Anything else, or any of these commands failing: **don't reboot yet**, and bring what they
-   printed to the Mac session. The `linux` line also shows `root=UUID=…`, the root filesystem's
-   id: that never goes into the repo. To see which kernel GRUB would start instead, list the menu,
-   each entry followed by its `linux` line:
+   printed to the Mac session. Much of it carries the root filesystem's UUID: `root=UUID=…`, or
+   `root=PARTUUID=…`, in the `linux` lines, and every entry id (`gnulinux-simple-…`,
+   `gnulinux-advanced-…`, `gnulinux-<version>-advanced-…`), a default, `saved_entry` or
+   `next_entry` that is an id included. Write "an id" in place of each UUID and PARTUUID when you
+   bring it over, and never paste one into the repo. To see which kernel GRUB would start instead,
+   list the menu, each entry followed by its `linux` line:
 
    ```bash
    sudo grep -E '^[[:space:]]*(menuentry|submenu|linux)[[:space:]]' /boot/grub/grub.cfg
    ```
 
-   GRUB starts `next_entry` if it has a value, otherwise the default, where `"${saved_entry}"` means
-   `saved_entry`'s value. A number counts the menu's top-level entries from 0, the submenu being one
-   of them, and `1>2` is the third entry inside the second. A title or an id is looked up at the top
-   level only, so an entry inside the submenu needs the submenu's in front, joined by `>`
+   GRUB starts `next_entry` if it has a value (or `prev_entry`, when `initrdfail=1`), otherwise the
+   default, where `"${saved_entry}"` means `saved_entry`'s value. A number counts the menu's
+   top-level entries from 0, the submenu being one of them, and `1>2` is the third entry inside the
+   second. A title or an id is looked up at the top level only, so an entry inside the submenu
+   needs the submenu's in front, joined by `>`
    (`gnulinux-advanced-…>gnulinux-<version>-advanced-…`). `10_linux` adds the submenu to a bare
    title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0.
    Reboot only when both checks pass.
