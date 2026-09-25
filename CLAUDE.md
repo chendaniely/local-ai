@@ -48,6 +48,8 @@ Never write into this repo:
   values.
 - **Tailnet IPs (`100.x`) or full LAN addresses.** A bare last octet (`.200`) is fine where the
   subnet is not also stated.
+- **The home connection's public addresses** — its public IPv4 address and its IPv6 prefix. Either
+  one identifies the household.
 - **MAC addresses, serial numbers, or other per-unit identifiers.**
 - **Personal hostnames or DDNS names that resolve from outside**, including the Synology and
   YouTrack ones.
@@ -181,12 +183,23 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   credentials at all, which stopped being true when it got its own Claude Code login.)
 - **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
   (Phase 0).
+- **Stage files by explicit path** (`git add <paths>`), never `git add -A` or `git add .` — a broad
+  add stages whatever else is lying in the tree, such as a leak drill's file or a test's stand-in.
+- **Never read the denylist.** `~/.config/local-ai/denylist` is Dan's: a session checks only that it
+  exists (`test -f`) and uses it only through the leak check, which prints 3-character excerpts.
+  Whatever a session reads enters its context.
 
 ### Lessons from Phase 0 — rules that prevent rework
 
 Each of these cost Phase 0 at least one review loop; the story is in
 [`website/design/phase-0-retro.md`](website/design/phase-0-retro.md).
 
+- **Before every push, scan everything going out with the denylist** — the outgoing patches and
+  messages, the tracked files and gitleaks, as *Before every push* in
+  [`website/how-to/leak-guards.md`](website/how-to/leak-guards.md) gives them. The hooks can't see
+  commits made before `make hooks`, a merge git completes by itself, rebased or cleanly
+  cherry-picked content, or terms added to the denylist later, and CI has no denylist; this was
+  Phase 0's only Critical finding.
 - **Run every code block before it goes into a plan**, and keep the listing byte-identical to the
   tested code — implementers copy plans faithfully, bugs included.
 - **Test shell, Makefile, `ps` and apt/dpkg behaviour on the Mac (bash 3.2, GNU make 3.81) and on
@@ -217,11 +230,14 @@ Each of these cost Phase 0 at least one review loop; the story is in
   it; the Spark session was first scheduled after the task that ran in it.
 - **Re-read every sentence a fix touches against the code before committing** — a fix's review
   usually found wording the fix itself had made untrue.
-- **Write plans, runbooks and commit messages with file tools, and commit with
-  `git commit -F <file>`** — the secrets hook refuses shell commands that name a secret path, and
-  shell expansion garbled one commit message.
-- **A subagent's commit carries the exact trailer and is never amended without Dan's OK** — one went
-  in with another model's trailer.
+- **Write plans and runbooks with file tools, not shell heredocs** — the secrets hook refuses shell
+  commands that name a secret path. **A commit message with a body, or with backticks, `$` or `*`
+  in it, goes in a file first** (a file tool, or a quoted `<<'EOF'` heredoc), **then
+  `git commit -F <file>`**: shell expansion garbled one message. A subject and the trailer as two
+  `-m`s, as the phase plans' commit steps give them, are fine.
+- **A subagent's commit carries the exact trailer its phase plan's commit steps give**
+  (`Co-Authored-By: …`), **and is never amended without Dan's OK** — one went in with another
+  model's trailer.
 
 ## Commits
 

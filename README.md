@@ -266,7 +266,8 @@ node, untested).
 
 - **This repo is public, and git history is permanent.** Removing something in a later commit
   does not unpublish it — it stays in the history, in clones and forks. The check happens before
-  `git add`. Full rule in [`CLAUDE.md`](CLAUDE.md).
+  `git add`, and nothing identifying goes in: no full LAN or tailnet address, no public address or
+  IPv6 prefix of my home connection, no MAC or serial. Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **No secrets in this repo.** API keys are referenced by environment variable, expanded at call
   time. Real values live in `~/.secrets` and are never committed or printed.
 - **`agent` never gets my credentials** — no sudo, no docker, no GitHub token, no access to my home
@@ -288,10 +289,12 @@ node, untested).
 - **Work runs where it belongs.** Code, tests, docs and Mac clients are written on `heartsbane`;
   anything touching the Spark's GPU, memory, systemd or Docker is built and tested on `brightroar`;
   sudo, logins and secrets are mine. One session at a time, a checkpoint commit per task, and pushes
-  only with my explicit OK.
-- **Phase 0's lessons are rules**: run a plan's code before it goes in the plan, test shell and apt
-  behaviour on Ubuntu 24.04 as well as the Mac, check box facts on the box, keep root out of paths
-  `spark` and `agent` control, and review security in the task that changes it. The story is in the
+  only with my explicit OK. Sessions stage files by explicit path, and use my denylist only through
+  the leak check, never reading it.
+- **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
+  run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well
+  as the Mac, check box facts on the box, keep root out of paths `spark` and `agent` control, and
+  review security in the task that changes it. The story is in the
   [Phase 0 retrospective](website/design/phase-0-retro.md).
 - **Python through uv, and the `Makefile` as the front door** — no system Python, no pip, and one
   Python minor version, pinned in `spark/.python-version`.
