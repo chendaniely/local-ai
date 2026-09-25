@@ -1975,7 +1975,8 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     own home; nothing writes as root. `changelog.md` keeps the command the 2026-09-24 run used.)
   - (Added 2026-09-24: `how-to/ssh.md` covers the Mac side: a key per account, the Mac's
     `~/.ssh/config` with the tailnet name first and the LAN as fallback, and keeping NVIDIA Sync's
-    own config apart. Added 2026-09-25: keys-only SSH once Dan's own key works — an sshd drop-in,
+    own config apart. Added 2026-09-25: a LAN alias for `agent` too, for before Tailscale is
+    joined; and keys-only SSH once Tailscale is joined and Dan's own key works — an sshd drop-in,
     `10-local-ai.conf`, that sorts before `50-cloud-init.conf`, with `PasswordAuthentication no`,
     `KbdInteractiveAuthentication no` and, for `agent`, `AllowAgentForwarding no`; `sshd -t` and
     `sshd -T` before the reload; a key login from a second terminal before the first session
@@ -2177,6 +2178,9 @@ git commit -m "docs(readme): 🤖 record the Spark's pre-bootstrap memory baseli
 
 Follow the runbooks, in the order `website/how-to/index.qmd` lists them:
 
+- [ ] Before the first: use the LAN aliases (`brightroar-lan`, `brightroar-agent-lan`) until
+  Tailscale is joined; install Claude Code and uv as Dan with their official installers, and
+  `sudo apt install tmux gh`.
 - [ ] `website/how-to/spark-session.md` — first, before any **[Spark]** task: the Mac's rules and
   secrets guard on the Spark, plugins, a GitHub token for this repository only, the private memory
   files.
@@ -2189,11 +2193,15 @@ Follow the runbooks, in the order `website/how-to/index.qmd` lists them:
 - [ ] `website/how-to/tailscale.md` — install, join, MagicDNS + HTTPS, ACL grants, the route home
   (into the vault).
 - [ ] `website/how-to/secret-files.md` — every Phase 1 secret file, the HF token, the Mac key.
+- [ ] After `tailscale.md`: back to `website/how-to/ssh.md` for Keys only and the public IPv6
+  check, which need the tailnet name.
 
 Then ongoing, not once: `website/how-to/updates.md` — apt any time, upgrade day on Saturdays.
 
 (Corrected 2026-09-25, in Dan's order: this list first put `spark-session.md` last, after the
-session had already run Task 9, and left out `leak-guards.md`, `ssh.md` and `updates.md`.)
+session had already run Task 9, and left out `leak-guards.md`, `ssh.md` and `updates.md`. The
+first and last items make the order followable on a new box: step 1 needs tmux, gh, Claude Code
+and uv, and nothing reaches the tailnet names before Tailscale is joined.)
 
 ## ⇄ Switch point — Dan → Spark
 

@@ -3,7 +3,9 @@ title: "The Spark session"
 description: "Before any [Spark] task: the Mac's rules and secrets guard on the Spark, then Claude Code in tmux with the Mac's plugins, a GitHub token for this repository only, and this project's private context."
 ---
 
-This runbook comes first: before any **[Spark]** task, and before the other runbooks.
+This runbook comes first: before any **[Spark]** task, and before the other runbooks. On a new or
+rebuilt box, do the [How-to](index.qmd) page's *Before step 1* first. It installs what this runbook
+uses, and says which SSH aliases work before Tailscale is joined.
 
 ## Before the first session
 

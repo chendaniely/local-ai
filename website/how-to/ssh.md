@@ -38,7 +38,7 @@ Code login", step 2).
 ## `~/.ssh/config`
 
 One block per way in. The tailnet name is the primary one, because it works at home and away. The
-LAN address is the fallback for when Tailscale is down. macOS doesn't always resolve the short
+LAN address is the fallback for when Tailscale is down, or not joined yet on a new box. macOS doesn't always resolve the short
 MagicDNS name, so use the full one (**Machines** in the Tailscale admin console shows it):
 
 ```
@@ -59,11 +59,17 @@ Host brightroar-agent
   AddKeysToAgent yes
   UseKeychain yes
 
-# Over the home LAN directly, if Tailscale is down
+# Over the home LAN directly, if Tailscale is down or not joined yet
 Host brightroar-lan
   HostName <wired-address>
   User chendaniely
   IdentityFile ~/.ssh/id_ed25519-brightroar
+  IdentitiesOnly yes
+
+Host brightroar-agent-lan
+  HostName <wired-address>
+  User agent
+  IdentityFile ~/.ssh/id_ed25519-brightroar_agent
   IdentitiesOnly yes
 ```
 
@@ -90,14 +96,18 @@ including `brightroar`. Keep the two apart:
 ## Test
 
 ```bash
-ssh brightroar whoami         # chendaniely — no password (the key's passphrase once per Keychain session)
-ssh brightroar-agent whoami   # agent
-ssh brightroar-lan whoami     # chendaniely, over the LAN
+ssh brightroar whoami             # chendaniely — no password (the key's passphrase once per Keychain session)
+ssh brightroar-agent whoami       # agent
+ssh brightroar-lan whoami         # chendaniely, over the LAN
+ssh brightroar-agent-lan whoami   # agent, over the LAN
 ```
+
+Before Tailscale is joined, only the two `-lan` aliases work.
 
 ## Keys only
 
-Do this once your own key works: `ssh brightroar whoami` answers without asking for your password.
+Do this after Tailscale is joined ([Join Tailscale](tailscale.md)), once your own key works:
+`ssh brightroar whoami` answers without asking for your password.
 Afterwards sshd accepts keys only, and `agent`'s sessions never get a forwarded SSH agent, whatever
 a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
 
