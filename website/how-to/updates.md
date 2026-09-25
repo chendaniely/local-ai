@@ -131,15 +131,20 @@ cd ~/git/hub/local-ai
    `full-upgrade`, not `upgrade`: moving the set can remove the modules built for the old kernel,
    and `upgrade` never removes anything. Removing the old kernel's own modules package
    (`linux-modules-nvidia-…-<old kernel>`) is expected. Read apt's plan before you answer, and
-   answer **no** if either is true:
+   answer **no** if any of these is true:
 
-   - it would remove a `linux-modules-nvidia-*-nvidia-hwe-*` package: that is the metapackage that
+   - it would remove a `linux-modules-nvidia-*-nvidia-hwe-*` package with no other
+     `linux-modules-nvidia-*-nvidia-hwe-*` installed in its place: that is the metapackage that
      brings in the modules for each new kernel;
    - it would install a new kernel, `linux-image-<version>`, with no `linux-modules-nvidia-*` package
-     ending in that same `<version>`.
+     ending in that same `<version>`;
+   - it would swap that metapackage for another driver branch's (`linux-modules-nvidia-580-open-…`
+     removed, `linux-modules-nvidia-590-open-…` installed, say).
 
-   Either way the new kernel would boot without a GPU. Answering no installs and removes nothing:
-   re-hold with `make hold-gpu`, and try again next upgrade day.
+   In the first two cases the new kernel would boot without a GPU. Answering no installs and
+   removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
+   new driver branch: answer no and re-hold. Moving to a new branch is not a routine upgrade day.
+   You plan that move for a day you choose, and make it by hand.
 4. Hold the new set: `make hold-gpu`. It prints `GPU set: N packages, M already held`, then
    `GPU set held: N packages`. It stops instead, naming the packages, if one isn't cleanly
    installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
@@ -162,8 +167,10 @@ cd ~/git/hub/local-ai
    grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null
    ```
 
-   If that last line is `GRUB_DEFAULT=0`, or nothing prints (0 is the default), GRUB boots the
-   newest kernel.
+   If that last line is `GRUB_DEFAULT=0` (a quoted `"0"` means the same), or nothing prints (0 is
+   the default), GRUB boots the newest kernel. Anything else, such as `saved`: **don't reboot yet**.
+   The check above read the newest kernel, which may not be the one GRUB boots. Find out which
+   kernel that is, and check its module the same way before you reboot.
 6. Reboot: `sudo reboot`.
 7. Check, once you are back in:
 
