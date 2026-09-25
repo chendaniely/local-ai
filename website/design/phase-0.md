@@ -1964,6 +1964,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     (the file arrives on standard input, so no home directory is named, and `&&` throughout keeps
     it until its line is in `llama-swap.env`).
   - Record each secret in the vault **by reference** (file, variable name) — never the value.
+  - (Added 2026-09-24: the runbook is now numbered steps, one command each, with the same commands,
+    plus a check that lists key names and permissions without values, and a dedupe that keeps a
+    key's last copy without displaying it.)
 
 - [ ] **Step 6: `how-to/spark-session.md`**
   - `ssh brightroar`, `tmux new -As spark-build`, `cd ~/git/hub/local-ai`, `claude`.
