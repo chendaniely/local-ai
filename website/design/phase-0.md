@@ -1982,9 +1982,18 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     key's last copy without displaying it.)
 
 - [ ] **Step 6: `how-to/spark-session.md`**
+  - (Added 2026-09-25: this runbook comes first, before any **[Spark]** task. Task 9 already
+    needed the session, but this plan reached the runbook only in Task 10. Before the first session:
+    the clone; the Mac's global rules, `~/.claude/CLAUDE.md`; and its secrets guard, the deny rules
+    and `PreToolUse` hook from the Mac's user-level settings, copied to the Spark and checked in the
+    session with `/hooks`, `/permissions` and a `test -e ~/.secrets` the hook must refuse.)
   - `ssh brightroar`, `tmux new -As spark-build`, `cd ~/git/hub/local-ai`, `claude`.
   - Install the same Claude Code plugins as on the Mac (at least superpowers).
   - GitHub for pushes from the Spark: `gh auth login` in *your* account (never as `agent`).
+    (Corrected 2026-09-25: a plain `gh auth login` gives the box a token that can push to every
+    repository Dan can. The runbook now uses a fine-grained token for this repository only —
+    Contents read and write, Actions read-only — pasted into `gh auth login --with-token` from a
+    prompt that doesn't echo, then revokes the broad token on github.com.)
   - Private context: copy this project's private memory folder from the Mac to the Spark —
     `ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'` then
     `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/`
@@ -2011,6 +2020,8 @@ git commit -m "docs(website): 🤖 add runbooks for leak guards, bootstrap, Tail
 - [ ] Run `make test lint docs` one last time on the Mac; all clean.
 - [ ] **Dan OKs the push:** `git push -u origin phase-0`. Watch CI: `gh run watch` — all four jobs
   green. If a job fails, fix it on the Mac before switching.
+- [ ] (Added 2026-09-25) **Dan starts the Spark session** with `website/how-to/spark-session.md`
+  before Task 9, which runs in it.
 
 ***
 
