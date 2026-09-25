@@ -11,19 +11,22 @@ may be loaded. On any other day I run `sudo apt upgrade` out of habit.
 
 **What happens.** A routine `apt upgrade`, any day, moves nothing in the held set and restarts no
 model: needrestart leaves the `local-ai-*` units alone. On upgrade day, `make upgrade-gpu` runs
-[Updates](../how-to/updates.md#upgrade-day-the-gpu-set)' steps as one command, in tmux. It stops
-what uses the GPU and releases the set. It moves the set with `full-upgrade`, refusing a plan that
-would remove the NVIDIA modules metapackage or install a kernel with no modules for it. It re-holds
-the set, the hold and nothing else, and checks that the kernel GRUB boots has an NVIDIA module
-before it asks for the reboot. After the reboot the stack comes back by itself, and `make doctor`
+[Updates](../how-to/updates.md#upgrade-day-the-gpu-set)' steps as one command, in tmux. It releases
+the set and reads apt's plan first. It refuses a plan that would remove the NVIDIA modules
+metapackage, install a kernel with no modules for it, or change the driver branch. Only then does it
+stop what uses the GPU and move the set with `full-upgrade`. It re-holds the set, the hold and
+nothing else. Before it asks for the reboot, it checks that the newest kernel, the one GRUB boots by
+default, has an NVIDIA module. After the reboot the stack comes back by itself, and `make doctor`
 confirms it: the GPU on the new driver, the running kernel's modules held, a model loaded end to
 end. Dependabot's PRs are merged or rebased, never squashed.
 
 **What I see.** Each step's result as it runs, and the new kernel, driver and CUDA versions to
 record in `changelog.md` and `README.md` §Current state. If it refuses, I see which package would
-have gone, and nothing has moved.
+have gone, and nothing has moved. If it stops after apt moved part of the set, it sends me to the
+recovery, not to a reboot.
 
 **How to override.** Skip a week: the set stays held, and the next upgrade day catches up. Move the
-set early only for a kernel or NVIDIA driver security fix. If a step fails or I answer no,
-`make hold-gpu` holds the set as it is. A box that comes back without a GPU has its own steps in
+set early only for a kernel or NVIDIA driver security fix. A new driver branch is a move I plan and
+make by hand. Every way out of `make upgrade-gpu` holds the set again; after the steps by hand,
+`make hold-gpu` does. A box that comes back without a GPU has its own steps in
 [Updates](../how-to/updates.md#if-it-goes-wrong), including booting the previous kernel.
