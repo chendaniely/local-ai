@@ -1918,7 +1918,11 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     own home; nothing writes as root. `changelog.md` keeps the command the 2026-09-24 run used.)
   - (Added 2026-09-24: `how-to/ssh.md` covers the Mac side: a key per account, the Mac's
     `~/.ssh/config` with the tailnet name first and the LAN as fallback, and keeping NVIDIA Sync's
-    own config apart.)
+    own config apart. Added 2026-09-25: keys-only SSH once Dan's own key works — an sshd drop-in,
+    `10-local-ai.conf`, that sorts before `50-cloud-init.conf`, with `PasswordAuthentication no`,
+    `KbdInteractiveAuthentication no` and, for `agent`, `AllowAgentForwarding no`; `sshd -t` and
+    `sshd -T` before the reload; a key login from a second terminal before the first session
+    closes; and a one-time check whether the Spark is reachable over public IPv6.)
   - *Live checks as `agent`* (you run these — they need sudo):
     `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
     → `closed: good` (`$HOME` expands in your shell; `test -x` asks whether `agent` can enter your
