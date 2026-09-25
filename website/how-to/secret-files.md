@@ -60,8 +60,12 @@ Then on the Spark — with the same `umask` and `chgrp` as the other commands, s
 comes out right whichever step creates it:
 
 ```bash
-sudo bash -c 'umask 027; cat /home/dan/.spark-key-in >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env' && rm ~/.spark-key-in
+sudo bash -c 'umask 027 && cat >> /etc/local-ai/secrets/llama-swap.env && chgrp spark /etc/local-ai/secrets/llama-swap.env' < ~/.spark-key-in && rm ~/.spark-key-in
 ```
+
+Your shell opens `~/.spark-key-in` and hands it over on standard input, so no home directory is
+named, and every step is joined with `&&`: the file is deleted only after its line is in
+`llama-swap.env`. If anything fails, the file stays and nothing is lost.
 
 ## Record it
 

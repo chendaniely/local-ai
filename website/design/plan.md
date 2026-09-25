@@ -148,7 +148,9 @@ In order of how much they constrain the design:
 
 ### Users, access and security
 
-- **Three identities.** `dan` — admin, Positron, the control socket. `spark` — the service user that
+- **Three identities.** Dan's own account, login `chendaniely` on the Spark — admin, Positron, the
+  control socket. (Corrected 2026-09-24: this first said `dan`, the Mac's login, which the runbooks
+  then hardcoded as `/home/dan`.) `spark` — the service user that
   runs the gate and llama-swap (so every model engine), and owns the models, the Hugging Face cache
   and state. It is deliberately **not** in the `docker` group, because Docker access is
   root-equivalent; containers start from root-owned units instead. Dan's own account is effectively
@@ -449,6 +451,13 @@ Each item gets its own design pass when its turn comes.
   Open WebUI uses the standard image, since the slim build now requires Postgres + pgvector; Phase 1
   adds a minimal launch check beside the minimal brake; the brake's hold folder is writable by
   `spark-admin` only, so Dan can release a hold and `agent` can't.
+- **2026-09-24** — Phase 0, Task 9 on `brightroar`: Dan's login on the Spark is `chendaniely`, not
+  `dan`. *Users, access and security* is corrected. `make bootstrap` already took the admin from
+  `sudo`, but its dry run showed `dan`; it now shows whoever runs it. The runbooks and Task 11 no
+  longer hardcode `/home/dan`. Under the wrong name, two runbook steps failed silently: the check
+  that `agent` can't read Dan's files always passed, and the Mac-key step deleted the key it had
+  failed to copy. The check now tests whether `agent` can enter Dan's home, since `~/.secrets`
+  doesn't exist on the Spark.
 
 ## Sources
 

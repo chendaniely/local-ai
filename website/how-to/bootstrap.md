@@ -53,8 +53,12 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 
 ## Live checks (you run these — they need sudo)
 
-- `sudo -iu agent test -r /home/dan/.secrets && echo "READABLE: stop and fix permissions" || echo "not readable: good"`
-  → `not readable: good`. It tests access without ever printing the file.
+- `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
+  → `closed: good`. `$HOME` expands in your shell, so it names your home whatever your login is;
+  `test -x` asks whether `agent` can enter it at all, without reading anything in it. The verdict
+  comes from `agent`'s own shell, so a failed `sudo` shows its error, never a false "good". Plain
+  `-u`, not `-iu`: `-i` re-reads the command in `agent`'s login shell, which would expand `$1`
+  there, to nothing.
 - `sudo -iu agent docker ps` → permission denied
 - `sudo -iu agent nvidia-smi --query-gpu=name --format=csv,noheader` → the GPU's name, without the
   per-unit UUID that `nvidia-smi -L` prints

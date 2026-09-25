@@ -25,9 +25,13 @@ For pushes made from the Spark: `gh auth login`, in **your own** account — nev
 Copy this project's private memory folder from the Mac to the Spark:
 
 ```bash
-ssh brightroar 'mkdir -p ~/.claude/projects/-home-dan-git-hub-local-ai'
-scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-dan-git-hub-local-ai/
+ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'
+scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/
 ```
+
+Claude Code names a project's folder after the clone's full path, with each `/` turned into `-`, so
+the name carries each machine's login: `dan` on the Mac, `chendaniely` on the Spark. A folder named
+for the wrong login is never read.
 
 ## Scope
 

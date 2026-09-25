@@ -9,7 +9,8 @@ DRY_RUN=0
 if [[ "${1:-}" == "--dry-run" ]]; then DRY_RUN=1; fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ADMIN_USER="${SUDO_USER:-dan}"
+# Under sudo (make bootstrap) the admin is SUDO_USER; a dry run has no sudo, so it is whoever runs it.
+ADMIN_USER="${SUDO_USER:-$(id -un)}"
 
 say() { printf '==> %s\n' "$*"; }
 run() {

@@ -1907,8 +1907,10 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`. Log in: run `claude`; with no
     browser on the box, press `c` to copy the login URL, open it on the Mac, and paste the code back.
   - *Live checks as `agent`* (you run these — they need sudo):
-    `sudo -iu agent test -r /home/dan/.secrets && echo "READABLE: stop and fix permissions" || echo "not readable: good"`
-    → `not readable: good` (it tests access without ever printing the file);
+    `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
+    → `closed: good` (`$HOME` expands in your shell; `test -x` asks whether `agent` can enter your
+    home, without reading anything; the verdict comes from `agent`'s shell, so a failed `sudo` never
+    reads as "good"; plain `-u`, because `-i` would expand `$1` in `agent`'s login shell);
     `sudo -iu agent docker ps` → permission denied;
     `sudo -iu agent nvidia-smi --query-gpu=name --format=csv,noheader` → the GPU's name, without the
     per-unit UUID that `nvidia-smi -L` prints.
@@ -1961,7 +1963,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
     same value to the Spark without displaying it:
     `( . ~/.secrets; printf 'LLAMASWAP_KEY_DAN_MAC=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat > ~/.spark-key-in'`
     and on the Spark, with the same `umask` and `chgrp` as the other commands:
-    `sudo bash -c 'umask 027; cat /home/dan/.spark-key-in >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env' && rm ~/.spark-key-in`.
+    `sudo bash -c 'umask 027 && cat >> /etc/local-ai/secrets/llama-swap.env && chgrp spark /etc/local-ai/secrets/llama-swap.env' < ~/.spark-key-in && rm ~/.spark-key-in`
+    (the file arrives on standard input, so no home directory is named, and `&&` throughout keeps
+    it until its line is in `llama-swap.env`).
   - Record each secret in the vault **by reference** (file, variable name) — never the value.
 
 - [ ] **Step 6: `how-to/spark-session.md`**
@@ -1969,8 +1973,10 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   - Install the same Claude Code plugins as on the Mac (at least superpowers).
   - GitHub for pushes from the Spark: `gh auth login` in *your* account (never as `agent`).
   - Private context: copy this project's private memory folder from the Mac to the Spark —
-    `ssh brightroar 'mkdir -p ~/.claude/projects/-home-dan-git-hub-local-ai'` then
-    `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-dan-git-hub-local-ai/`.
+    `ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'` then
+    `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/`
+    (the folder is named after the clone's path, so it carries each machine's login: `dan` on the
+    Mac, `chendaniely` on the Spark).
   - The session follows the phase plan's **[Spark]** tasks only; at a switch point it commits and
     you push.
 
@@ -2104,13 +2110,13 @@ journalctl -u earlyoom -b --no-pager | grep -i prefer   # regex received with no
 swapon --show                                # note whether there is swap (-s 100,100 ignores it either way)
 systemctl is-active systemd-oomd             # if active: two OOM killers — decide in Task 12's review
 id agent                                     # no docker, sudo or spark-admin
-stat -c '%a %U:%G %n' /home/dan /home/agent /etc/local-ai/secrets /opt/local-ai
+stat -c '%a %U:%G %n' "$HOME" /home/agent /etc/local-ai/secrets /opt/local-ai
 ls /etc/local-ai/secrets                     # "Permission denied" — Dan's sessions can't list secrets
 tailscale status --self --json | jq -r '.Self.Online'   # true
 systemd-run --unit=local-ai-probe --wait true   # as Dan, no sudo: a password prompt or a denial
 ```
 
-Expected: every line as commented; `/home/dan` and `/home/agent` are `700`; `/opt/local-ai` is
+Expected: every line as commented; Dan's home (`/home/chendaniely`) and `/home/agent` are `700`; `/opt/local-ai` is
 `2775 root:spark-admin`.
 earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
 score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the

@@ -1,3 +1,5 @@
+import os
+import pwd
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "stack/host/bootstrap.sh"
 
 
-def dry_run() -> list[str]:
+def dry_run(env: dict[str, str] | None = None) -> list[str]:
     out = subprocess.run(
-        ["bash", str(SCRIPT), "--dry-run"], check=True, capture_output=True, text=True
+        ["bash", str(SCRIPT), "--dry-run"], check=True, capture_output=True, text=True, env=env
     ).stdout
     return out.splitlines()
 
@@ -55,6 +57,22 @@ def test_the_engine_user_never_joins_docker():
     assert lines, "no usermod line for spark in the dry run"
     for line in lines:
         assert "docker" not in line
+
+
+def test_a_dry_run_names_whoever_runs_it_as_the_admin():
+    # A dry run has no sudo, so no SUDO_USER. It must still show the admin the real run would get —
+    # the person running it — never an assumed login name (the Spark's login is not `dan`).
+    me = pwd.getpwuid(os.getuid()).pw_name
+    lines = dry_run({k: v for k, v in os.environ.items() if k != "SUDO_USER"})
+    assert f"+ usermod -aG spark-admin,spark-users,adm {me}" in lines
+    assert f"+ chmod 0700 /home/{me} /home/agent" in lines
+
+
+def test_under_sudo_the_admin_is_the_sudo_user():
+    # `make bootstrap` runs under sudo, where the invoking user is root; SUDO_USER is the admin.
+    lines = dry_run({**os.environ, "SUDO_USER": "alice"})
+    assert "+ usermod -aG spark-admin,spark-users,adm alice" in lines
+    assert "+ chmod 0700 /home/alice /home/agent" in lines
 
 
 def test_the_engine_user_cannot_change_what_root_runs():
