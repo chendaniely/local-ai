@@ -101,11 +101,12 @@ Tailscale serve · pi 0.85.1.
    branch, Dan answers no, or apt fails partway** — expected: `make upgrade-gpu` refuses before
    anything moves, or stops. Every way out runs the hold, and the hold after apt's move is tried
    again if a signal cuts it off. When a hold stops, or a signal cuts off a hold the way out runs,
-   the retry included, the set stays released: it says to run `make hold-gpu`, and after apt ran,
-   not to reboot before the module check. Whether anything moved is judged without the hold
+   the retry included, the set stays released, and it says to run `make hold-gpu`. A signal there
+   after apt ran also brings a warning not to reboot before the module check; a hold that stopped
+   gets the way out's usual verdict instead. Whether anything moved is judged without the hold
    letter, so answering no counts as nothing moved. It suggests starting the stack only when
-   nothing moved and the newest kernel still has its module, and never a reboot after a partial
-   move. *(Task 10.)*
+   nothing moved and the newest kernel still has its module, even when a hold then stopped, and
+   never a reboot after a partial move. *(Task 10.)*
 
 ***
 
@@ -138,10 +139,12 @@ Tailscale serve · pi 0.85.1.
 ### Task 1 [Mac]: the model registry
 
 **Files:**
+
 - Create: `spark/src/spark/registry.py`, `spark/tests/test_registry.py`,
   `spark/tests/fixtures/models.yaml`
 
 **Interfaces:**
+
 - Produces:
   - `RegistryError(ValueError)`
   - `Source(repo: str, revision: str, file: str, mmproj: str | None)`
@@ -427,11 +430,13 @@ git commit -m "feat(spark): 🤖 add the model registry" \
 ### Task 2 [Mac]: memory, the brake's hold file, and the launch check
 
 **Files:**
+
 - Create: `spark/src/spark/paths.py`, `spark/src/spark/memory.py`, `spark/src/spark/hold.py`,
   `spark/src/spark/admission.py`, `spark/src/spark/launch.py`, `spark/tests/test_launch.py`
 - Modify: `spark/src/spark/cli.py` (register `launch`)
 
 **Interfaces:**
+
 - Consumes: `load_registry`, `Model`, `Budget` (Task 1).
 - Produces:
   - `paths.REGISTRY`, `paths.STATE`, `paths.LLAMASWAP_URL` (env-overridable: `SPARK_REGISTRY`,
@@ -804,9 +809,11 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
 ### Task 3 [Mac]: the llama-swap client
 
 **Files:**
+
 - Create: `spark/src/spark/llamaswap.py`, `spark/tests/test_llamaswap.py`
 
 **Interfaces:**
+
 - Produces: `Running(model: str, state: str)`; `LlamaSwapError(RuntimeError)`;
   `LlamaSwapUnreachable(LlamaSwapError)` (nothing answered — as opposed to an HTTP error such as a
   wrong key, which says nothing about what is loaded);
@@ -973,10 +980,12 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
 ### Task 4 [Mac]: the minimal brake
 
 **Files:**
+
 - Create: `spark/src/spark/brake.py`, `spark/tests/test_brake.py`
 - Modify: `spark/src/spark/cli.py` (register `brake`)
 
 **Interfaces:**
+
 - Consumes: `MemInfo`, `read_meminfo` (Task 2); `Hold`, `read_hold`, `write_hold`, `release_hold`
   (Task 2); `Registry`, `BrakeThresholds` (Task 1); `LlamaSwap`, `LlamaSwapError`, `key_from_env`
   (Task 3).
@@ -1179,10 +1188,12 @@ Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 ### Task 5 [Mac]: `spark status`
 
 **Files:**
+
 - Create: `spark/src/spark/status.py`, `spark/tests/test_status.py`
 - Modify: `spark/src/spark/cli.py` (register `status`)
 
 **Interfaces:**
+
 - Consumes: Tasks 1–3; `read_refusal` (Task 2).
 - Produces: `gather(mem, registry, running: list[Running] | None, hold: Hold | None,
   refusal: dict | None = None) -> dict`;
@@ -1348,6 +1359,7 @@ Task 7's handling of a changed unit and Task 9's `make install-units`; if Dan pi
 three first.
 
 **Files:**
+
 - Create: `stack/models.yaml`, `stack/templates/local-ai-llama-swap.service`,
   `stack/templates/local-ai-brake.service`, `stack/templates/local-ai-compose.service`,
   `stack/templates/local-ai-pull.service`, `stack/templates/compose.yaml`,
@@ -1358,6 +1370,7 @@ three first.
   `stack/host/bootstrap.sh` (two cache folders for `spark`), `spark/tests/test_bootstrap.py`
 
 **Interfaces:**
+
 - Consumes: Tasks 1 and Phase 0's `load_versions`, `Component`.
 - Produces: `RenderError(ValueError)`; `model_path(source, file) -> str`;
   `engine_cmd(model, registry) -> list[str]`; `llama_swap_config(registry) -> dict`;
@@ -1940,10 +1953,12 @@ Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --proje
 ### Task 7 [Mac]: `spark apply` — show what changes, never stop loaded models silently
 
 **Files:**
+
 - Create: `spark/src/spark/apply.py`, `spark/tests/test_apply.py`
 - Modify: `spark/src/spark/cli.py` (register `apply`)
 
 **Interfaces:**
+
 - Consumes: `render`, `write_tree`, `DEPLOY`, `KEY_ENVS` (Task 6); `LlamaSwap`, `LlamaSwapError`,
   `LlamaSwapUnreachable`, `key_from_env` (Task 3); `load_versions`, `unpinned` (Phase 0).
 - Produces: `diff_tree(files, etc) -> list[str]`; `app_diff(src, app) -> list[str]`;
@@ -2245,11 +2260,13 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 ### Task 8 [Mac]: `spark models pull`
 
 **Files:**
+
 - Create: `spark/src/spark/models.py`, `spark/tests/test_models.py`
 - Modify: `spark/pyproject.toml` (add `huggingface_hub>=0.34` to `dependencies`, then
   `uv lock --project spark`), `spark/uv.lock`, `spark/src/spark/cli.py`
 
 **Interfaces:**
+
 - Consumes: `load_registry`, `Registry` (Task 1); `HF_HOME` (Task 6).
 - Produces: `pull(registry, *, download, hf_home=HF_HOME, log=print) -> int` (0, or 1 if any file
   failed); CLI `spark models pull`, run as the `spark` user by `local-ai-pull.service` (`make pull`).
@@ -2355,12 +2372,14 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 ### Task 9 [Mac]: pi's provider, the deploy targets, two runbooks
 
 **Files:**
+
 - Create: `spark/src/spark/clients.py`, `spark/tests/test_clients.py`, `website/how-to/deploy.md`,
   `website/how-to/pi.md` (the How-to listing picks both up)
 - Modify: `spark/src/spark/cli.py`, `Makefile`, `stack/versions.yaml`, `website/reference/stack.md`
   (regenerated)
 
 **Interfaces:**
+
 - Consumes: `load_registry`, `Registry` (Task 1).
 - Produces: `pi_provider(registry, base_url, key_env) -> dict`; `merge_pi(path, provider) -> Path`
   (returns the backup's path); CLI `spark clients pi [--write] [--base-url URL] [--key-env NAME]
@@ -2571,13 +2590,14 @@ clients: ## Add the Spark provider to pi on this machine
     `open-webui.env` at prompts, in `secret-files.md`'s pattern, and restart the web services.
 
     - The password isn't shown.
-    - Both values go in single-quoted, so Compose reads a `$` or a ` #` in them literally.
+    - Both values go in as typed, since `IFS=` keeps a space at either end, and single-quoted, so
+      Compose reads a `$` or a ` #` in them literally.
     - The command refuses a value with a single quote or a backslash, writes nothing, and prints
       neither value. Compose reads `\'` as an escaped quote, so a password ending in `\` would leave
       the quote open, and Compose's error would print the password into the journal.
 
     ```bash
-    sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+    sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
     systemctl restart local-ai-compose
     ```
 
@@ -2655,14 +2675,13 @@ true, and Tasks 12, 13 and 16 run them on the box:
     | 0 | apt's move is done and the newest kernel has an NVIDIA module |
     | 1 | it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
     | apt's own (100) | an apt step failed, and the hold on the way out then worked |
-    | 129, 130, 143 | HUP, INT or TERM cut it off |
-    | 130 | a second signal cut off the hold on the way out |
+    | 130 | a signal cut off a hold the way out runs (its first, or the retry), whatever the signal |
+    | 129, 130, 143 | HUP, INT or TERM anywhere else, and the hold on the way out then worked |
     | 2 | a usage error |
 
     Every way out after the release runs the hold. The hold that follows apt's move is the only
     one tried twice: cut off by a signal, the way out runs it again. The set stays released in
-    three cases, and each time it says to run `make hold-gpu`, and, if apt had started, not to
-    reboot before step 5's module check passes:
+    three cases, and each time it says to run `make hold-gpu`:
 
     - the hold stops, because a package dpkg didn't finish, a hold that didn't take, no kernel in
       the set, or nothing matching the patterns stops it;
@@ -2670,12 +2689,19 @@ true, and Tasks 12, 13 and 16 run them on the box:
       failed apt step;
     - the retried hold is cut off too.
 
+    What it says about a reboot depends on how the hold ended. A signal, once apt has started,
+    brings a warning not to reboot before step 5's module check passes. A hold that stopped gets
+    the way out's usual verdict, below: after a "no", nothing moved, so that is the start hint.
+
     On a way out after apt started, it offers to start the stack again only if the set is as it
     was and the newest kernel still has its NVIDIA module. apt can install a new kernel, which
     isn't in the set, and then fail. Otherwise it sends Dan to *If it goes wrong*.
 
-    The newest kernel is the one the next boot starts only while GRUB boots the newest
-    (`GRUB_DEFAULT=0`). That is not yet checked on this box; Task 12 Step 1 checks it.
+    The newest kernel is the one the next boot starts only while GRUB boots the newest:
+    `GRUB_DEFAULT=0`, no `GRUB_TOP_LEVEL` (which puts the kernel it names first), and no
+    `next_entry` waiting from `grub-reboot`. The script reads none of them. Task 12 Step 1 checks
+    the two settings on this box, and updates.md's GRUB check, which Dan runs before
+    `make upgrade-gpu`, checks all three.
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
     `upgrade-gpu-dry-run`.
@@ -2693,15 +2719,15 @@ What `make upgrade-gpu` does, in order:
 | finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
 | read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
-| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
+| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first, even if the hold then stopped): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
 | hold | the hold and nothing else (`hold_gpu_stack`); this hold, after apt's move, is tried once more on the way out if a signal cuts it off | it says what the hold said, and the set stays released until `make hold-gpu`. A signal during the way out's own hold, or during the retry, also leaves it released: it says so, and after apt ran, not to reboot before step 5's module check |
-| check | `modinfo -k` on the newest kernel (the one GRUB boots while `GRUB_DEFAULT=0`) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
+| check | `modinfo -k` on the newest kernel, the one GRUB boots while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set. It reads neither: updates.md's GRUB check, run before `make upgrade-gpu`, does | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
 | end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
 
-Two names it relies on are not yet checked on this box, and Task 12 Step 1 lists both. One is
-`linux-image-<version>`, with a digit first, for a new kernel. If DGX OS names its kernels
+Two things it relies on are not yet checked on this box, and Task 12 Step 1 lists both. One is
+the name `linux-image-<version>`, with a digit first, for a new kernel. If DGX OS names its kernels
 otherwise, the plan check misses a new kernel, and only the newest-kernel check before the reboot
-catches it. The other is `GRUB_DEFAULT=0`.
+catches it. The other is GRUB booting the newest kernel: `GRUB_DEFAULT=0`, and no `GRUB_TOP_LEVEL`.
 
 - [ ] **Step 1: Write the failing tests for bootstrap**
 
@@ -2996,9 +3022,22 @@ def test_answering_no_holds_the_set_again_and_says_how_to_start_the_stack(tmp_pa
     assert START_THE_STACK in result.stderr and RECOVERY not in result.stderr
 
 
+def test_a_no_whose_hold_stops_still_says_how_to_start_the_stack(tmp_path):
+    # Dan answers no, and the way out's hold then stops on a hold that didn't take. Nothing moved,
+    # so the verdict is still the start hint, with no warning against a reboot; the hold's own
+    # message says what is left to do.
+    env = {**upgrade_env(tmp_path, GOOD_PLAN, answer="no"), "APT_MARK_IGNORES": "linux-image-nvidia-hwe-24.04"}
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "did not hold" in result.stderr and "then run make hold-gpu" in result.stderr
+    assert held(tmp_path) == GPU_SET - {"linux-image-nvidia-hwe-24.04"}
+    assert START_THE_STACK in result.stderr
+    assert "reboot" not in result.stderr and RECOVERY not in result.stderr
+
+
 def test_a_kernel_without_a_module_stops_the_reboot(tmp_path):
-    # apt reported success, but the newest kernel (GRUB boots it next while GRUB_DEFAULT=0) has no
-    # NVIDIA module.
+    # apt reported success, but the newest kernel has no NVIDIA module. GRUB boots it next while
+    # GRUB_DEFAULT=0 and no GRUB_TOP_LEVEL is set.
     result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, module_kernels=OLD))
     assert result.returncode == 1
     assert f"DON'T REBOOT — {NEW}" in result.stderr
@@ -3222,7 +3261,8 @@ After `hold_gpu_stack`, the upgrade mode.
 # and refuses one that would leave a kernel without its NVIDIA module or change the driver branch,
 # moves the set, holds it again with the hold and nothing else, and checks the newest kernel for its
 # NVIDIA module before it asks for the reboot. That assumes GRUB boots the newest kernel
-# (GRUB_DEFAULT=0), which Phase 1 checks on the box. Every way out after the release holds the set
+# (GRUB_DEFAULT=0 and no GRUB_TOP_LEVEL), which this doesn't read: Phase 1 checks it on the box,
+# and updates.md's GRUB check runs before this. Every way out after the release holds the set
 # again. website/how-to/updates.md has the same steps by hand, and the recovery.
 
 # The GPU set as dpkg has it now: each package's status letters, name and version, found with the
@@ -3248,8 +3288,9 @@ gpu_set_contents() {
   gpu_set_state | cut -c2- | LC_ALL=C sort
 }
 
-# The newest kernel, which the next boot starts while GRUB boots the newest (GRUB_DEFAULT=0), and
-# the version of the NVIDIA module built for a kernel: nothing when it has none.
+# The newest kernel, which the next boot starts while GRUB boots the newest (GRUB_DEFAULT=0 and no
+# GRUB_TOP_LEVEL), and the version of the NVIDIA module built for a kernel: nothing when it has
+# none.
 newest_kernel() {
   linux-version list | linux-version sort --reverse | head -1
 }
@@ -4002,10 +4043,12 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     preloads nothing, so after a reboot each model loads on its first request.
   - `updates.md`, *Upgrade day: the GPU set*. The edits:
     - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
-      command, in tmux, from the clone; it refuses to start outside tmux. It releases the set, reads
-      apt's plan and refuses it before anything moves if it breaks step 3's rule, stops llama-swap
-      and the brake, and moves the set (you read apt's plan and answer). Then it holds the set again
-      with `make hold-gpu`'s hold, runs step 5's check, and says whether to reboot. Every way out
+      command, in tmux, from the clone; it refuses to start outside tmux. It runs all of them but
+      step 5's GRUB check, since it doesn't read GRUB's settings: run that check first, as step 2
+      says, and start `make upgrade-gpu` only once it passes. It releases the set, reads apt's plan
+      and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the
+      brake, and moves the set (you read apt's plan and answer). Then it holds the set again with
+      `make hold-gpu`'s hold, runs step 5's module check, and says whether to reboot. Every way out
       after the release runs the hold, and only the hold after apt's move is tried again. The set
       can still stay released: when the hold stops (a package dpkg didn't finish, a hold that didn't
       take, no kernel or nothing matching), or when a signal cuts off a hold the way out runs, the
@@ -4018,20 +4061,24 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       it runs, to read along with, and to do by hand if it can't.
     - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
       (the reboot starts them again), and your own GPU jobs and `agent`'s."
+    - **Step 2's opening**, which runs step 5's GRUB check before anything moves, went in on
+      2026-09-25, before the first upgrade day. Leave it as it is: it covers `make upgrade-gpu` too.
     - **Step 3's answer-no rule** already has its three cases. They went in on 2026-09-25, before
       the first upgrade day, and the first names a removed metapackage with no other in its place.
       Add one sentence after the paragraph that follows them: "`make upgrade-gpu` refuses all three
       too."
-    - **Step 5's GRUB check** already reads both files that can set `GRUB_DEFAULT`
-      (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line winning). It also counts a
-      quoted `"0"` as 0 and says not to reboot yet when the last line is anything else. Both went in
-      on 2026-09-25, before the first upgrade day, so leave it as it is.
+    - **Step 5's GRUB check** already reads `GRUB_DEFAULT` and `GRUB_TOP_LEVEL` from both files that
+      can set them (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line of each
+      winning), and `grub-editenv list` for a waiting `next_entry`. It counts a quoted `"0"` as 0,
+      says not to reboot yet for anything else, and says how to find the kernel GRUB boots, reading
+      only. It all went in on 2026-09-25, before the first upgrade day, so leave it as it is.
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
     again by itself on its way out, so `make hold-gpu` by hand is for the manual steps, or for when
     its own hold stopped or was cut off. The second paragraph's bold opening adds "or
-    `make upgrade-gpu` said `DON'T REBOOT`, or that apt may have moved the set".
+    `make upgrade-gpu` said `DON'T REBOOT`, or that apt may have moved the set". Both ways back to a
+    reboot already repeat step 5, the GRUB check included (2026-09-25): leave that as it is.
   - `website/how-to/deploy.md`: *Every later change* ends with `make doctor`, and *When something is
     wrong* starts with it: Phase 0's guardrails and the stack in one pass, and each `FAIL` says what
     to do.
@@ -4088,6 +4135,7 @@ git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needr
 ### Task 11 [Spark]: the engines, at their pins
 
 **Files:**
+
 - Modify: `stack/versions.yaml` (the llama.cpp and whisper.cpp pins), `website/reference/stack.md`
   (regenerated), `changelog.md`, `README.md` §Current state
 
@@ -4198,7 +4246,7 @@ cmp stack/host/needrestart.conf /etc/needrestart/conf.d/local-ai.conf && echo "n
 cmp stack/host/earlyoom.default /etc/default/earlyoom && echo "earlyoom: same"
 diff <(make -s hold-gpu-dry-run | sed -n 's/^+ apt-mark hold //p' | tr ' ' '\n') \
      <(make -s upgrade-gpu-dry-run | sed -n 's/^+ apt-mark unhold //p' | tr ' ' '\n') && echo "release = hold"
-grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null   # the last line counts
+grep -h -e '^GRUB_DEFAULT=' -e '^GRUB_TOP_LEVEL=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null   # the last of each counts
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'linux-image-[0-9]*'   # the kernels' package names
 uname -r
 ```
@@ -4211,9 +4259,12 @@ bootstrap no longer touches it.
 The last three lines check two things `make upgrade-gpu` assumes (Task 10) and nothing has checked
 yet:
 
-- `GRUB_DEFAULT=0` (a quoted `"0"` is the same, and so is no line at all, the default): GRUB boots
-  the newest kernel, the one its pre-reboot check reads. `grub-mkconfig` reads `/etc/default/grub`
-  and then each `/etc/default/grub.d/*.cfg`, so the last line printed is the setting that counts.
+- GRUB boots the newest kernel, the one its pre-reboot check reads: the last `GRUB_DEFAULT` line is
+  `GRUB_DEFAULT=0` (a quoted `"0"` is the same, and so is no line at all, the default), and no
+  `GRUB_TOP_LEVEL` line prints. If one is set, the newest kernel isn't what GRUB boots: Ubuntu
+  24.04's `/etc/grub.d/10_linux` moves the kernel it names to the top of the menu, entry 0.
+  `grub-mkconfig` reads `/etc/default/grub` and then each `/etc/default/grub.d/*.cfg`, so for each
+  setting the last line printed is the one that counts.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
@@ -4288,11 +4339,12 @@ first request and stays (ttl 0). Open WebUI takes a minute on its first start (`
   prompts, the password isn't shown, and no value goes into the repo:
 
 ```bash
-sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
 systemctl restart local-ai-compose
 ```
 
-  Both values go in single-quoted, so Compose reads them literally. Unquoted, it expands a `$` and
+  Both values go in as typed, a space at either end included (`IFS=` keeps it; plain `read` would
+  drop it), and single-quoted, so Compose reads them literally. Unquoted, it expands a `$` and
   cuts a value at ` #`: Compose v5.5.1 reads `ab$cd #x` as `ab`. A single quote can't go inside that
   quoting, and nor can a backslash at the end: Compose reads `\'` as an escaped quote, so the quote
   stays open, and Compose's error prints the value into the journal. So the command refuses a value
@@ -4394,7 +4446,7 @@ Expected: the process it would kill is an engine; note which one.
 
 - [ ] **Step 7: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
-  override), with its `GRUB_DEFAULT` and the kernels' package names; units installed and running,
+  override), with its GRUB settings and the kernels' package names; units installed and running,
   the model files pulled and the disk space left, the four readings and load times, the engines'
   `oomadj`, `oom` and `rss` beside `nvidia-smi`'s figures, and earlyoom's dry-run victim.
   `README.md` §Current state: the new host layout, what runs, on which ports (127.0.0.1 only), which
@@ -4654,6 +4706,7 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
 ### Task 17 [Mac]: close Phase 1
 
 **Files:**
+
 - Modify: `website/scenarios/s05-memory-critically-low.md`, `website/scenarios/s09-phone-away.md`,
   `website/scenarios/s20-web-search.md`, `website/scenarios/s23-upgrade-day.md`;
   `website/design/plan.md` and `changelog.md` if the forward look changes anything

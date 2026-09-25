@@ -367,7 +367,7 @@ plus a `Makefile` — the front door.
      by hand.
   3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
   4. Check that the kernel GRUB boots has an NVIDIA module. The check reads the newest kernel,
-     which assumes `GRUB_DEFAULT=0`; that is not yet checked on this box.
+     which assumes `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL`; that is not yet checked on this box.
   5. Reboot.
   6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
 
@@ -612,6 +612,11 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-25** — From the reviews of that forward look: moving the GPU set refuses a change of
   driver branch, which is a move planned and made by hand. The check before the reboot reads the
   newest kernel, and that GRUB boots it (`GRUB_DEFAULT=0`) is not yet checked on this box.
+- **2026-09-25** — Before the first upgrade day. Answering no covers a removed modules metapackage
+  only when no other takes its place; a swap to another branch's is the driver-branch case. GRUB
+  boots the newest kernel only while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, since
+  Ubuntu's `10_linux` puts the kernel `GRUB_TOP_LEVEL` names first. The runbook checks both, and
+  `grub-editenv` for a waiting `next_entry`, before anything moves and again before the reboot.
 
 ## Sources
 
