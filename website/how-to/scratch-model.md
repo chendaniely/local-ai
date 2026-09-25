@@ -17,6 +17,14 @@ Phase 1 serves models ([Clean up](#clean-up)).
 
 Run everything on the Spark, as you, inside tmux (`tmux new -As scratch`), unless a step says Mac.
 
+Two ways to serve, and one at a time, never both:
+
+- **A. llama.cpp** (steps 1–5): builds in two minutes, runs as you with no sudo, and takes only the
+  memory the model needs. Start here.
+- **B. vLLM from NVIDIA's NGC container** ([Option B](#option-b-vllm-from-nvidias-ngc-container)):
+  NVIDIA's build for this hardware. Use it to try vLLM itself, many requests at once, or a model
+  whose FP8/NVFP4 version only vLLM serves well. It needs `sudo docker`.
+
 ## 1. Build llama.cpp
 
 ```bash
@@ -102,6 +110,59 @@ Then, on the Mac:
 - **Claude Code and Claude Desktop: never.** Pointing them at the Spark would mean changing the
   Claude path (`ANTHROPIC_BASE_URL` or a proxy), and the repo's first rule is that the Claude path
   stays untouched.
+
+## Option B: vLLM from NVIDIA's NGC container
+
+*Not yet tested on this box.* The commands follow NVIDIA's DGX Spark playbooks; the image's tag and
+its arm64 build were checked on 2026-09-25.
+
+Stop any llama.cpp server first, so the two never share memory.
+
+**B1. Pull the image** (about 11 GB compressed, public, no NGC login needed):
+
+```bash
+sudo docker pull nvcr.io/nvidia/vllm:26.08-py3
+```
+
+**B2. Serve a model.** vLLM uses a model's original Hugging Face repo (safetensors), not GGUF. It
+downloads into `~/scratch/hf`, as root, because the container runs as root:
+
+```bash
+mkdir -p ~/scratch/hf
+sudo docker run --rm -it --name scratch-vllm --gpus all \
+  --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+  -p 127.0.0.1:8000:8000 \
+  -v ~/scratch/hf:/root/.cache/huggingface \
+  nvcr.io/nvidia/vllm:26.08-py3 \
+  vllm serve Qwen/Qwen3-8B --served-model-name qwen3-8b \
+    --gpu-memory-utilization 0.4 --max-model-len 32768 \
+    --enable-auto-tool-choice --tool-call-parser hermes
+```
+
+- **`--gpu-memory-utilization 0.4` is the important one.** vLLM reserves that fraction of GPU memory
+  at start, whatever the model needs. On GB10 that memory is the whole machine's, and the default of
+  0.9 would take about 110 GB. 0.4 reserves about 50 GB. Raise it only as far as the scratch
+  guardrail allows (0.5 at most).
+- `-p 127.0.0.1:8000:8000` publishes the port on the Spark only; the Mac uses the tunnel.
+- `--served-model-name` is the name clients send, like llama.cpp's `--alias`.
+- The last line enables tool calling for Qwen3, which pi needs. Other model families use a different
+  `--tool-call-parser`; see vLLM's docs.
+- If `--gpus all` is refused, use `--device nvidia.com/gpu=all` instead. The Spark has NVIDIA's
+  device spec at `/var/run/cdi/nvidia.yaml`.
+
+Startup takes a few minutes: download, load, then compile. It is ready when the log says
+`Application startup complete`. Check it from another window:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/models | jq -r '.data[].id'   # qwen3-8b
+free -g
+```
+
+**B3. From the Mac:** the same as step 4, on port 8000:
+`ssh -N -L 8000:127.0.0.1:8000 brightroar`, then base URL `http://localhost:8000/v1`. vLLM has no chat
+page, so use a client.
+
+**B4. Stop it:** Ctrl-C, or `sudo docker stop scratch-vllm`. `--rm` removes the container.
 
 ## What you can run
 
@@ -208,5 +269,16 @@ Leave the rest of `~/.cache/huggingface/hub` unless you know what's in it. Other
 `du -sh ~/.cache/huggingface/hub/models--*` lists each model in it and its size, and you can delete
 the ones you no longer want. If you gave a token with `HF_TOKEN` (see gated models), it was never
 saved, so there's nothing to remove.
+
+**If you used Option B (Spark):** its downloads are owned by root, and the image stays until removed:
+
+```bash
+sudo docker stop scratch-vllm 2>/dev/null          # if still running
+sudo rm -rf ~/scratch/hf                             # the models vLLM downloaded (root-owned)
+sudo docker rmi nvcr.io/nvidia/vllm:26.08-py3        # the image, about 20 GB on disk
+sudo docker ps -a && sudo docker images             # nothing scratch-related left
+```
+
+Do this before step 4, because `rm -rf ~/scratch` can't delete root-owned files.
 
 **6. Check the disk (Spark):** `df -h /`.
