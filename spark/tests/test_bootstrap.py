@@ -1,5 +1,6 @@
 import os
 import pwd
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -165,6 +166,49 @@ def test_under_sudo_the_admin_is_the_sudo_user():
 def test_the_engine_user_cannot_change_what_root_runs():
     line = next(line for line in dry_run() if "install -d" in line and "/opt/local-ai/etc" in line)
     assert "-o root -g spark-admin" in line
+
+
+def install_d_line(path: str) -> str:
+    """The dry run's `install -d` line that creates exactly `path`."""
+    lines = [line for line in dry_run() if "install -d" in line and path in line.split()]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in_it():
+    # Every re-run (upgrade day included) creates spark's directories inside /var/lib/local-ai as
+    # root, and `install -d` follows a symlink. If spark owned the parent, it could swap a child for
+    # a link to /etc/systemd/system and have root hand that directory to it.
+    assert "-o root -g root -m 0755" in install_d_line("/var/lib/local-ai")
+    assert "-o spark -g spark -m 0750" in install_d_line("/var/lib/local-ai/hf")
+    assert "-o spark -g spark-admin -m 2770" in install_d_line("/var/lib/local-ai/brake")
+
+
+def test_bootstrap_never_acts_inside_agents_home():
+    # agent controls everything under its home, so a root `install`, `chown` or `chmod` there can
+    # be pointed anywhere by a planted symlink. The home itself sits in root's /home: that is safe.
+    for line in dry_run():
+        assert not any(word.startswith("/home/agent/") for word in line.split()), line
+
+
+def earlyoom_args() -> list[str]:
+    text = (ROOT / "stack/host/earlyoom.default").read_text()
+    value = next(line for line in text.splitlines() if line.startswith("EARLYOOM_ARGS="))
+    value = value.removeprefix("EARLYOOM_ARGS=")
+    assert value.startswith('"') and value.endswith('"'), value
+    # systemd splits the unit's $EARLYOOM_ARGS on spaces and does not interpret quotes, so a quote
+    # or a space inside a regex would break it.
+    assert '"' not in value[1:-1] and "'" not in value
+    return value[1:-1].split()
+
+
+def test_earlyoom_never_picks_the_ssh_daemon_or_its_session_processes():
+    # OpenSSH 9.8 and later run each login as `sshd-session`, not `sshd`.
+    args = earlyoom_args()
+    avoid = re.compile(args[args.index("--avoid") + 1])
+    for name in ("sshd", "sshd-session"):
+        assert avoid.search(name), name
+    assert not avoid.search("llama-server")
 
 
 @pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")

@@ -2,7 +2,8 @@
 # earlyoom is the last resort, below spark's own brake (the plan: Admission and memory rules).
 #   -M 12582912,9437184  SIGTERM below 12 GiB available, SIGKILL below 9 GiB (values in KiB)
 #   -s 100,100           ignore swap, so a full swap can't keep it from acting
-#   --prefer / --avoid   kill model engines first; never what keeps the box reachable
+#   --prefer / --avoid   kill model engines first; never what keeps the box reachable. sshd.*
+#                        also covers sshd-session, which runs each login from OpenSSH 9.8 on
 # systemd splits this value on spaces and does not interpret quotes, so the regexes contain
 # neither.
-EARLYOOM_ARGS="-r 3600 -M 12582912,9437184 -s 100,100 --prefer ^(llama-server|whisper-server|VLLM::EngineCor)$ --avoid ^(sshd|systemd|systemd-.*|tmux.*|tailscaled|dockerd|containerd|llama-swap|spark)$"
+EARLYOOM_ARGS="-r 3600 -M 12582912,9437184 -s 100,100 --prefer ^(llama-server|whisper-server|VLLM::EngineCor)$ --avoid ^(sshd.*|systemd|systemd-.*|tmux.*|tailscaled|dockerd|containerd|llama-swap|spark)$"

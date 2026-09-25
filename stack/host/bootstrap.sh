@@ -105,10 +105,15 @@ directories() {
   run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
   run install -d -o root -g spark-admin -m 0750 /etc/local-ai
   run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
-  run install -d -o spark -g spark -m 0751 /var/lib/local-ai
+  # State. The parent is root's and spark writes only inside its children: `install -d` follows a
+  # symlink, so a spark-owned parent would let spark swap a child for a link that the next re-run
+  # hands to it. It is also spark's home, so a cache under $HOME needs a spark-owned child here
+  # and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
+  run install -d -o root -g root -m 0755 /var/lib/local-ai
   run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng
   run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
-  run install -d -o agent -g agent -m 0700 /home/agent/work
+  # Nothing inside agent's home: agent controls it, so root never writes there. agent makes its
+  # own ~/work.
 }
 
 headless() {
