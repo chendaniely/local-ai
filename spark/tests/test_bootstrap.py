@@ -111,6 +111,14 @@ def test_the_gpu_stack_is_held_as_one_set(tmp_path):
     }
 
 
+def test_every_tool_the_repo_and_dan_use_is_installed_not_assumed():
+    # DGX OS happens to ship some of these; a rebuild must not depend on that.
+    install = next(line for line in dry_run() if line.startswith("+ apt-get install"))
+    packages = set(install.split()[4:])
+    for pkg in ["git", "curl", "openssl", "shellcheck", "gh", "python3-dev", "r-base", "r-base-dev"]:
+        assert pkg in packages, pkg
+
+
 def test_ssh_is_allowed_before_the_firewall_turns_on():
     lines = dry_run()
     allow = next(i for i, line in enumerate(lines) if "ufw allow OpenSSH" in line)

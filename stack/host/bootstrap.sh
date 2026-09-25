@@ -46,7 +46,14 @@ ensure_agent_user() {
 packages() {
   say "packages"
   run apt-get update
-  run apt-get install -y earlyoom ufw tmux cmake build-essential ffmpeg jq
+  # Everything the stack, the repo and Dan's own work use is listed here, even what DGX OS happens
+  # to ship today (git, curl, openssl), so a rebuild never depends on the image.
+  #   stack: earlyoom ufw tmux cmake build-essential ffmpeg jq
+  #   repo and runbooks: git curl openssl shellcheck gh
+  #   Dan's own work: python3-dev r-base r-base-dev
+  run apt-get install -y earlyoom ufw tmux cmake build-essential ffmpeg jq \
+    git curl openssl shellcheck gh \
+    python3-dev r-base r-base-dev
 }
 
 # The GPU stack only works as a matched set: the kernel, the NVIDIA modules built for it (they need one

@@ -38,6 +38,11 @@ sudo apt remove gitleaks
 clone has the leak-check hooks on (`make hooks`), and they refuse the planted private address in
 `leak-guards.md`'s drill.
 
+**Bootstrap now installs every apt package the box relies on**, rather than assuming DGX OS ships
+it: `git`, `curl`, `openssl`, `shellcheck` and `gh` for the repo and runbooks, and `python3-dev`,
+`r-base` and `r-base-dev` for Dan's own work, beside the stack's own packages. All were already
+installed here, so adding them to the list changes nothing on this box.
+
 ## 2026-09-23 — arrival and first setup
 
 **Hardware.** GIGABYTE AI TOP ATOM (`ATAGB10-9002` rev 1.0) unboxed and powered on. Full
@@ -122,6 +127,13 @@ CRAN release. `r-base-dev` brings the compiler toolchain and headers, so package
 source. On arm64 that is the normal path anyway, because CRAN publishes no Linux binaries. If a
 newer R is ever needed, the route is CRAN's own Ubuntu apt repository (or `rig`), not this
 package.
+
+**Python headers** installed from Ubuntu's archive. *(Added 2026-09-24: this was missing here; apt's
+own log shows the install on 2026-09-23.)*
+
+```bash
+sudo apt install python3-dev
+```
 
 **gitleaks** and **shellcheck** installed from Ubuntu's archive, for the repo's leak-check hooks:
 
