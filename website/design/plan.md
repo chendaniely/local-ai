@@ -613,15 +613,16 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-25** — From the reviews of that forward look: moving the GPU set refuses a change of
   driver branch, which is a move planned and made by hand. The check before the reboot reads the
   newest kernel, and that GRUB boots it (`GRUB_DEFAULT=0`) is not yet checked on this box.
+  (Superseded 2026-09-25 by the entry-0 check: see the next line.)
 - **2026-09-25** — Before the first upgrade day. Answering no covers a removed modules metapackage
   only when no other takes its place; a swap to another branch's is the driver-branch case. The
   runbook checks that GRUB will boot the newest kernel, before anything moves and again before the
   reboot, by reading what GRUB will do: entry 0's first `linux` line in `grub.cfg` against the
-  newest kernel, the `set default=` lines, and `grub-editenv` for a `saved_entry` or `next_entry`
-  with a value. (Corrected 2026-09-25: this said GRUB boots the newest kernel only while
-  `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, and that the runbook reads those two settings.
-  That missed `GRUB_FLAVOUR_ORDER`, which Ubuntu's kernel sort reads, and settings written indented
-  or with `export`.)
+  newest kernel, the `default=` lines, and `grub-editenv` for a `saved_entry`, `next_entry` or
+  `prev_entry` with a value. (Corrected 2026-09-25: this said GRUB boots the newest kernel only
+  while `GRUB_DEFAULT=0` and no `GRUB_TOP_LEVEL` is set, and that the runbook reads those two
+  settings. That missed `GRUB_FLAVOUR_ORDER`, which Ubuntu's kernel sort reads, and settings
+  written indented or with `export`.)
 
 ## Sources
 
