@@ -1,9 +1,10 @@
 """Leak check for this public repo.
 
 Flags private addresses, per-unit identifiers and privately denylisted terms, in file names as
-well as contents. Runs from the git hooks on every commit (`--staged`, `--message FILE`) and in CI
-over every tracked file (`--tracked --ci`). It fails closed: a missing, empty or malformed denylist
-is an error, never a pass. A binary file can't be read, so it is named for a person to check.
+well as contents. Runs from the git hooks on every commit (`--staged`, `--message FILE`), and in CI
+over every tracked file (`--tracked --ci`) and every commit's patches and messages (`--message FILE
+--ci`). It fails closed: a missing, empty or malformed denylist is an error, never a pass. A binary
+file can't be read, so it is named for a person to check.
 """
 
 from __future__ import annotations
@@ -206,7 +207,11 @@ def register(subparsers) -> None:
     p = subparsers.add_parser("leakcheck", help="scan for private addresses, identifiers and denylisted terms")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--staged", action="store_true", help="scan staged files (pre-commit hook)")
-    mode.add_argument("--message", type=Path, help="scan a commit message file (commit-msg hook)")
+    mode.add_argument(
+        "--message",
+        type=Path,
+        help="scan a text file: a commit message (commit-msg hook), or CI's log of every commit",
+    )
     mode.add_argument("--tracked", action="store_true", help="scan every tracked file (CI)")
     p.add_argument(
         "--denylist",
