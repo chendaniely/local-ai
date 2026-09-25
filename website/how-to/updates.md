@@ -113,8 +113,10 @@ cd ~/git/hub/local-ai
 ```
 
 1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
-   steps as one command, all but step 5's GRUB check, which you run before it and again before the
-   reboot.
+   steps as one command, step 5's GRUB check included: before it releases the set, and again
+   before it says to reboot. (Corrected 2026-09-25: this said it would run all but the GRUB check,
+   which you would run before it and again before the reboot. Dan decided that it runs the check
+   itself.)
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
    the Mac session to work out why. Then release the set:

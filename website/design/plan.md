@@ -384,8 +384,11 @@ plus a `Makefile` — the front door.
   5. Reboot.
   6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
 
-  Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it forward. Runbook:
-  `website/how-to/updates.md`.
+  From Phase 1, `make upgrade-gpu` runs steps 1 to 4 as one command, and runs the GRUB check itself
+  (Dan's decision, 2026-09-25): before it releases the set, where a failure refuses with nothing
+  moved, and again after the move, where a failure says not to reboot. It names kernels by version,
+  never a GRUB id or UUID. Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it
+  forward. Runbook: `website/how-to/updates.md`.
 
 ## Phases
 
@@ -419,7 +422,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   Qwen3-Embedding-0.6B, whisper.cpp large-v3-turbo (interactive), and the starter coder
   Qwen3.6-35B-A3B — whose combined footprint `spark render` checks · the **minimal brake** · Open WebUI
   + SearXNG via `tailscale serve` · pi and Claude Code in tmux as `agent` · a basic `spark status`
-  · `make upgrade-gpu` (upgrade day's GPU-set steps as one command) · updates never take the stack
+  · `make upgrade-gpu` (upgrade day's GPU-set steps as one command, its GRUB check included) ·
+  updates never take the stack
   down for good: a needrestart override keeps a routine `apt upgrade` from restarting `local-ai-*`
   units (DGX OS does the same for its dashboard); after a Docker upgrade, a reboot or upgrade day the
   stack comes back by itself, and `make doctor` v0 confirms it. v0 checks Phase 0's guardrails (the
@@ -667,6 +671,16 @@ Each item gets its own design pass when its turn comes.
   gains a check that root's copies are root's own. *Users, access and security* and *Deploy
   workflow* say so; `website/design/phase-1.md` builds it (Tasks 6, 7, 9, 10, 12 and 16), with every
   Task 1–10 listing run first on the Mac and in an `ubuntu:24.04` container.
+- **2026-09-25** — Dan's decision: `make upgrade-gpu` runs the GRUB check itself (Phase 1's Task 10
+  open item, now resolved), the one `updates.md` step 5 describes: entry 0's first `linux` line
+  names the newest kernel, the `default=` lines are the stock two, and grubenv picks no other
+  entry. It runs twice, before the release and after the move, since step 2 runs the same check
+  before anything moves: a failure before the release refuses with the set still held, and one
+  after the move says `DON'T REBOOT` and sends Dan to *If it goes wrong*, never to a reboot or a
+  restart of the stack. It prints kernel versions only, never a GRUB id or UUID, and fails a missing
+  grubenv, which `grub-editenv` run as root would create. The manual GRUB check stays for the steps
+  by hand, and that GRUB boots the newest kernel on this box is still unchecked (Task 12 Step 1).
+  `updates.md` step 1 and S23 no longer say the check is left to Dan.
 
 ## Sources
 

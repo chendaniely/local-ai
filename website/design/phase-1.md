@@ -12,10 +12,10 @@ date: 2026-09-23
 > machine switch (one session at a time). Phase 0 must be done first. This plan is revised after
 > Phase 0's review if anything learned there changes it (see the plan's Revisions). Revised
 > 2026-09-25 with Phase 0's lessons: Task 10 is new, and each task after it is numbered one higher.
-> Revised again 2026-09-25, before Task 1, with Dan's decision on the unit-file model: root runs
-> root-owned copies of the units and the Compose project, which `make install-units` installs
-> (Tasks 6, 7, 9, 10, 12, 16). Every listing in Tasks 1–10 was run first, in a scratch copy, on the
-> Mac and in an `ubuntu:24.04` container.
+> Revised again 2026-09-25, before Task 1, with Dan's two decisions: root runs root-owned copies of
+> the units and the Compose project, which `make install-units` installs (Tasks 6, 7, 9, 10, 12,
+> 16), and `make upgrade-gpu` runs the GRUB check itself (Task 10). Every listing in Tasks 1–10 was
+> run first, in a scratch copy, on the Mac and in an `ubuntu:24.04` container.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -33,8 +33,9 @@ under Compose (host networking, bound to 127.0.0.1) from a root-owned unit. What
 own: `spark apply` only stages the units and the Compose project, and `make install-units` (sudo)
 shows them and installs root's copies, so nothing running as Dan changes what root runs without
 Dan's sudo. Updates don't take it down: bootstrap tells needrestart to leave the `local-ai-*` units
-alone, `make upgrade-gpu` moves the GPU set on upgrade day through bootstrap's hold, and
-`make doctor` checks Phase 0's guardrails and the stack in one pass.
+alone, `make upgrade-gpu` moves the GPU set on upgrade day through bootstrap's hold, checking that
+GRUB boots the newest kernel before it releases the set and again before it asks for the reboot,
+and `make doctor` checks Phase 0's guardrails and the stack in one pass.
 
 **Tech Stack:** Python ≥3.12 via uv · PyYAML · huggingface_hub (downloads only) · stdlib `urllib` ·
 pytest · llama-swap v257 · llama.cpp b11146 (v0.5.0, prebuilt arm64 + CUDA 13.4) · whisper.cpp
@@ -114,8 +115,12 @@ Tailscale serve · pi 0.85.1.
    box reboots** — expected: needrestart restarts no `local-ai-*` unit, the models stay loaded, the
    stack comes back by itself after the reboot, and `make doctor` passes. *(Tasks 10 and 16.)*
 7. **Upgrade day's apt plan would leave a kernel without its NVIDIA module or change the driver
-   branch, Dan answers no, or apt fails partway** — expected: `make upgrade-gpu` refuses before
-   anything moves, or stops. Every way out runs the hold, and the hold after apt's move is tried
+   branch, Dan answers no, apt fails partway, or GRUB won't boot the newest kernel** — expected:
+   `make upgrade-gpu` refuses before anything moves, or stops. It runs the GRUB check itself: when
+   GRUB won't boot the newest kernel before the release, it refuses with the set still held and
+   nothing moved; after the move, it says `DON'T REBOOT — GRUB boots <X>, not <Y>` (or why it can't
+   tell) and sends Dan to *If it goes wrong*, never to a reboot or a restart of the stack. Nothing it
+   prints carries a GRUB id, a UUID or a whole `linux` line. Every way out runs the hold, and the hold after apt's move is tried
    again if a signal cuts it off. When a hold stops, or a signal cuts off a hold the way out runs,
    the retry included, the set stays released, and it says to run `make hold-gpu`. A signal there
    after apt ran also brings a warning not to reboot before step 5's checks; a hold that stopped
@@ -152,7 +157,7 @@ Tailscale serve · pi 0.85.1.
 | `spark/src/spark/models.py` | `spark models pull` |
 | `spark/src/spark/clients.py` | `spark clients pi` |
 | `spark/src/spark/doctor.py` | `spark doctor` (`make doctor`) v0: Phase 0's guardrails and the stack |
-| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the `--install-units` mode (Task 9), the needrestart step and the `--upgrade-gpu` mode (Task 10) |
+| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the `--install-units` mode (Task 9), the needrestart step, and the `--upgrade-gpu` mode with its GRUB check (Task 10) |
 | `stack/host/50-local-ai.rules` (Phase 0's) | The polkit rule: `spark-admin` starts, stops and restarts the four units by exact name, nothing more (Task 9) |
 | `stack/host/needrestart.conf` | needrestart leaves the `local-ai-*` units alone |
 | `website/how-to/pi.md`, `website/how-to/deploy.md` | Runbooks |
@@ -3569,8 +3574,8 @@ true, and Tasks 12, 13 and 16 run them on the box:
   upgrade would stop every loaded model. Bootstrap installs a drop-in that leaves the `local-ai-*`
   units alone, as DGX OS does for its own dashboard.
 - **`make upgrade-gpu`.** Upgrade day's GPU-set steps from `website/how-to/updates.md`, as one
-  command, built on Phase 0's hold (`hold_gpu_stack` and the `--hold-gpu` mode in
-  `stack/host/bootstrap.sh`).
+  command, step 5's GRUB check included, built on Phase 0's hold (`hold_gpu_stack` and the
+  `--hold-gpu` mode in `stack/host/bootstrap.sh`).
 - **`make doctor` v0.** Phase 0's guardrails and the stack's smoke checks in one pass, for after any
   update, a reboot or upgrade day. `spark doctor` proper, one check per scenario, stays in Phase 2.
 
@@ -3597,8 +3602,8 @@ true, and Tasks 12, 13 and 16 run them on the box:
 
     | Status | When |
     |---|---|
-    | 0 | apt's move is done and the newest kernel has an NVIDIA module |
-    | 1 | it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
+    | 0 | apt's move is done, the newest kernel has an NVIDIA module, and GRUB boots it |
+    | 1 | GRUB won't boot the newest kernel (before the release, or after the move), it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
     | apt's own (100) | an apt step failed, and the hold on the way out then worked |
     | 130 | a signal cut off a hold the way out runs (its first, or the retry), whatever the signal |
     | 129, 130, 143 | HUP, INT or TERM anywhere else, and the hold on the way out then worked |
@@ -3625,10 +3630,18 @@ true, and Tasks 12, 13 and 16 run them on the box:
     The newest kernel is the one the next boot starts only while GRUB boots it: entry 0 in
     `grub.cfg` is that kernel, GRUB starts entry 0, and no `next_entry` with a value picks another.
     `/etc/default/grub` alone can't show that: `GRUB_FLAVOUR_ORDER`, `GRUB_TOP_LEVEL` and indented
-    or exported settings all change it. So updates.md's GRUB check reads what GRUB will do: entry
-    0's first `linux` line in `grub.cfg`, its `set default=` lines, and `grub-editenv list`. The
-    script reads none of them. Dan runs that check before `make upgrade-gpu` and again before
-    `sudo reboot`, and Task 12 Step 1 runs it on this box. See the open item below.
+    or exported settings all change it. So the script runs updates.md's GRUB check itself
+    (`grub_boots`), reading what GRUB will do: entry 0's first `linux` line in `grub.cfg`, its
+    `default=` lines, and `grub-editenv list`. It runs it twice. Before the release, on the newest
+    installed kernel: a failure refuses, with the set still held and nothing moved. After the move
+    and the module check, on the new newest kernel: a failure prints
+    `DON'T REBOOT — GRUB boots <X>, not <Y>`, or why it can't tell, exits 1, and sends Dan to
+    *If it goes wrong*, never to a reboot or a restart of the stack. It names kernels by version
+    only: nothing it prints carries a GRUB id, a UUID or PARTUUID, or a whole `linux` line, which
+    carry the root filesystem's UUID. The paths are `BOOTSTRAP_GRUB_CFG` and `BOOTSTRAP_GRUBENV`,
+    for the tests' stand-ins. A missing or unreadable grubenv fails the check: as root,
+    `grub-editenv list` would create a missing one and pass. Task 12 Step 1 runs updates.md's check
+    by hand on this box, before the first upgrade day relies on this one.
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
     `upgrade-gpu-dry-run`.
@@ -3644,30 +3657,35 @@ What `make upgrade-gpu` does, in order:
 
 | Step | What it does | If it refuses or fails |
 |---|---|---|
+| check GRUB | `grub_boots` on the newest installed kernel: entry 0's first `linux` line in `grub.cfg` names it, the `default=` lines are the stock two, and grubenv holds no `next_entry` or `prev_entry` with a value, nor a `saved_entry` other than 0 when the default is `"${saved_entry}"` | nothing released, nothing moved: the set is still held. It says why, and to run updates.md step 5's check and bring what it prints to the Mac session |
 | release | `apt-mark unhold` the GPU set's held members, found with the hold's own patterns, so a package held for another reason stays held | — |
 | finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
 | read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
 | move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first, even if the hold then stopped): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
 | hold | the hold and nothing else (`hold_gpu_stack`); this hold, after apt's move, is tried once more on the way out if a signal cuts it off | it says what the hold said, and the set stays released until `make hold-gpu`. A signal during the way out's own hold, or during the retry, also leaves it released: it says so, and after apt ran, not to reboot before step 5's checks pass |
-| check | `modinfo -k` on the newest kernel, which the next boot starts only if GRUB boots it. It doesn't check that: updates.md's GRUB check, run before `make upgrade-gpu` and again before the reboot, does (the open item below) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
-| end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
+| check | `modinfo -k` on the newest kernel, then `grub_boots` on it: the next boot starts it only if GRUB boots it | `DON'T REBOOT` (`— GRUB boots <X>, not <Y>`, or why it can't tell, when GRUB is the reason), and *If it goes wrong* in `updates.md`; the way out never suggests starting the stack |
+| end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>, and GRUB boots it`, then `now: sudo reboot, then make doctor` | — |
 
 Two things it relies on are not yet checked on this box, and Task 12 Step 1 lists both. One is
 the name `linux-image-<version>`, with a digit first, for a new kernel. If DGX OS names its kernels
 otherwise, the plan check misses a new kernel, and only the newest-kernel check before the reboot
-catches it. The other is GRUB booting the newest kernel: entry 0 in `grub.cfg` is that kernel, and
-GRUB starts entry 0.
+catches it. The other is that GRUB boots the newest kernel on this box: entry 0 in `grub.cfg` is
+that kernel, and GRUB starts entry 0, as Ubuntu sets it up. `make upgrade-gpu` checks it each time
+and refuses when it doesn't hold, but whether brightroar's setup passes is not yet known.
 
-**Open item, 2026-09-25: decide before Task 10 is built.** For Phase 1's pre-flight, recommended
-by the Task 12 polish review: `make upgrade-gpu` should run the GRUB check itself, after the move
-and before it prints `now: sudo reboot`. It would read grubenv's `next_entry`, `prev_entry` and
-`saved_entry`, their non-empty values only; `grub.cfg`'s `default=` lines, expecting the stock two;
-and entry 0's first `linux` line, against `newest_kernel`. On a mismatch it prints
-`DON'T REBOOT — GRUB boots X, not Y` and exits 1.
-Stand-in paths that an environment variable overrides make it testable. This plan doesn't build it
-yet. Until the decision lands, Dan re-runs updates.md's GRUB check after `make upgrade-gpu` and
-before `sudo reboot`.
+~~**Open item, 2026-09-25: decide before Task 10 is built.**~~ **Resolved 2026-09-25: Dan decided
+that `make upgrade-gpu` runs the GRUB check itself, and this task builds it** (`grub_boots`, above).
+It runs twice, not only after the move as the item proposed: updates.md step 2 runs the same check
+before anything moves, and one command replaces both runs by hand. It fails a missing grubenv too.
+The item as it stood: for Phase 1's pre-flight, recommended by the Task 12 polish review:
+`make upgrade-gpu` should run the GRUB check itself, after the move and before it prints
+`now: sudo reboot`. It would read grubenv's `next_entry`, `prev_entry` and `saved_entry`, their
+non-empty values only; `grub.cfg`'s `default=` lines, expecting the stock two; and entry 0's first
+`linux` line, against `newest_kernel`. On a mismatch it prints `DON'T REBOOT — GRUB boots X, not Y`
+and exits 1. Stand-in paths that an environment variable overrides make it testable. This plan
+doesn't build it yet. Until the decision lands, Dan re-runs updates.md's GRUB check after
+`make upgrade-gpu` and before `sudo reboot`.
 
 - [ ] **Step 1: Write the failing tests for bootstrap**
 
@@ -3821,8 +3839,11 @@ Remv nvidia-driver-580-open [580.178-0ubuntu1]
 
 FAKE_APT_GET = """#!/usr/bin/env bash
 # Stands in for apt-get: `-s dist-upgrade` prints $APT_PLAN. The real `dist-upgrade` answers as
-# $APT_ANSWER says: yes, and the installed packages become $DPKG_AFTER; no, and it aborts, changing
-# nothing; partial, and it fails after the packages became $DPKG_AFTER. Every call is logged.
+# $APT_ANSWER says: yes, and it moves the set; no, and it aborts, changing nothing; partial, and it
+# fails after moving it. A move makes the installed packages $DPKG_AFTER and the installed kernels
+# $KERNELS_AFTER, and grub.cfg $GRUB_AFTER, since installing a kernel runs update-grub. Every call
+# is logged.
+moved() { cp "$DPKG_AFTER" "$DPKG_FIXTURE"; cp "$KERNELS_AFTER" "$KERNELS"; cp "$GRUB_AFTER" "$BOOTSTRAP_GRUB_CFG"; }
 echo "apt-get $*" >> "$CALLS"
 case "$*" in
   update) ;;
@@ -3830,8 +3851,8 @@ case "$*" in
   dist-upgrade)
     case "$APT_ANSWER" in
       no) echo "Abort."; exit 1 ;;
-      partial) cp "$DPKG_AFTER" "$DPKG_FIXTURE"; echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" >&2; exit 100 ;;
-      *) cp "$DPKG_AFTER" "$DPKG_FIXTURE" ;;
+      partial) moved; echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" >&2; exit 100 ;;
+      *) moved ;;
     esac
     ;;
   *) echo "fake apt-get: unexpected: $*" >&2; exit 1 ;;
@@ -3852,10 +3873,10 @@ esac
 """
 
 FAKE_LINUX_VERSION = """#!/usr/bin/env bash
-# Stands in for linux-version: `list` prints $KERNELS, and `sort --reverse` puts the newest first
-# (the test kernels sort by name).
+# Stands in for linux-version: `list` prints the kernels in the file $KERNELS, and `sort --reverse`
+# puts the newest first (the test kernels sort by name).
 case "$1" in
-  list) printf '%s\\n' $KERNELS ;;
+  list) cat "$KERNELS" ;;
   sort) sort -r ;;
 esac
 """
@@ -3865,34 +3886,128 @@ FAKE_MODINFO = """#!/usr/bin/env bash
 if [[ " $MODULE_KERNELS " == *" $2 "* ]]; then echo 580.200; else echo "modinfo: ERROR: Module nvidia not found." >&2; exit 1; fi
 """
 
+FAKE_GRUB_EDITENV = """#!/usr/bin/env bash
+# Stands in for `grub-editenv FILE list` as root runs it: prints FILE's name=value lines. Like the
+# real one, it creates a missing FILE as an empty block, and fails on one that isn't a GRUB
+# environment block.
+[[ "$2" == list ]] || { echo "fake grub-editenv: unexpected: $*" >&2; exit 1; }
+[[ -e "$1" ]] || printf '# GRUB Environment Block\\n' > "$1"
+head -1 "$1" | grep -qx '# GRUB Environment Block' || { echo "grub-editenv: error: invalid environment block." >&2; exit 1; }
+grep -v '^#' "$1" || true  # an empty block lists nothing, and that is no error
+"""
+
+# The root filesystem's UUID is in grub.cfg's linux lines and entry ids, and can be in grubenv. This
+# one is made at run time, so no UUID, not even a made-up one, is written in the repo. Nothing the
+# GRUB check prints may carry it.
+ROOT_FS_UUID = "-".join(os.urandom(n).hex() for n in (4, 2, 2, 2, 6))
+PREVIOUS = "7.0.0-1018-nvidia"  # a kernel older than OLD
+
+# grub.cfg as Ubuntu's grub-mkconfig (GRUB 2.12) writes it, cut down to what the check reads and what
+# carries the UUID: 00_header's default= lines, then 10_linux's entry 0 and its submenu.
+GRUB_CFG = """### BEGIN /etc/grub.d/00_header ###
+if [ -s $prefix/grubenv ]; then
+  set have_grubenv=true
+  load_env
+fi
+if [ "${initrdfail}" = 1 ]; then
+   set next_entry="${prev_entry}"
+   set prev_entry=
+   save_env prev_entry
+fi
+if [ "${next_entry}" ] ; then
+   set default="${next_entry}"
+   set next_entry=
+   save_env next_entry
+   set boot_once=true
+else
+   set default=@DEFAULT@
+fi
+@EXTRA@
+### BEGIN /etc/grub.d/10_linux ###
+menuentry 'Ubuntu' --class ubuntu $menuentry_id_option 'gnulinux-simple-@UUID@' {
+	search --no-floppy --fs-uuid --set=root @UUID@
+	linux	/boot/vmlinuz-@ENTRY0@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+	initrd	/boot/initrd.img-@ENTRY0@
+}
+submenu 'Advanced options for Ubuntu' $menuentry_id_option 'gnulinux-advanced-@UUID@' {
+@SUBMENU@}
+"""
+SUBMENU_ENTRY = """	menuentry 'Ubuntu, with Linux @KERNEL@' --class ubuntu $menuentry_id_option 'gnulinux-@KERNEL@-advanced-@UUID@' {
+		search --no-floppy --fs-uuid --set=root @UUID@
+		linux	/boot/vmlinuz-@KERNEL@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+		initrd	/boot/initrd.img-@KERNEL@
+	}
+"""
+# What 00_header adds when the default is a bare title nested in the submenu: a third default= line.
+TITLE_REWRITE = ('if [ "${default}" = "Ubuntu, with Linux @KERNEL@" ]; then '
+                 'default="Advanced options for Ubuntu>Ubuntu, with Linux @KERNEL@"; fi')
+
+
+def grub_cfg(*kernels: str, default: str = '"0"', extra: str = "", bare: bool = False) -> str:
+    """grub.cfg for `kernels` in menu order, entry 0 first, GRUB starting `default`. `extra` is
+    another line after the default= lines; `bare` drops `set` from the else branch's default=."""
+    submenu = "".join(SUBMENU_ENTRY.replace("@KERNEL@", kernel) for kernel in kernels)
+    text = GRUB_CFG.replace("@SUBMENU@", submenu).replace("@ENTRY0@", kernels[0])
+    text = text.replace("@DEFAULT@", default).replace("@EXTRA@", extra.replace("@KERNEL@", kernels[-1]))
+    if bare:
+        text = text.replace("   set default=" + default, "   default=" + default)
+    return text.replace("@UUID@", ROOT_FS_UUID)
+
+
+def grubenv(**entries: str) -> str:
+    """A GRUB environment block as grub-editenv writes it: its header, name=value lines, then # to
+    1024 bytes."""
+    text = "# GRUB Environment Block\n" + "".join(f"{name}={value}\n" for name, value in entries.items())
+    return text + "#" * (1024 - len(text))
+
+
+def entry_id(kernel: str) -> str:
+    """The submenu entry's id for `kernel`, as a default or a grubenv entry names it: it carries the UUID."""
+    return f"gnulinux-advanced-{ROOT_FS_UUID}>gnulinux-{kernel}-advanced-{ROOT_FS_UUID}"
+
 
 def upgrade_env(tmp_path: Path, plan: str, *, answer: str = "yes", after: dict[str, str] = AFTER,
                 after_versions: dict[str, str] | None = None, module_kernels: str = f"{OLD} {NEW}",
-                cut_holds: int = 0) -> dict[str, str]:
+                cut_holds: int = 0, kernels_after: tuple[str, ...] = (OLD, NEW),
+                grub_before: str | None = None, grub_after: str | None = None,
+                env_block: str | None = None) -> dict[str, str]:
     """gpu_env, plus stand-ins for everything upgrade day runs. Nothing touches this machine: the
-    fakes only log to tmp_path/calls."""
+    fakes only log to tmp_path/calls. Before the move OLD is the newest kernel and GRUB boots it;
+    the move installs `kernels_after`, and update-grub leaves `grub_after`, NEW first unless given."""
     env = gpu_env(tmp_path, HELD_BEFORE)
     for name, text in (("apt-get", FAKE_APT_GET), ("dpkg", FAKE_DPKG), ("systemctl", FAKE_SYSTEMCTL),
-                       ("linux-version", FAKE_LINUX_VERSION), ("modinfo", FAKE_MODINFO)):
+                       ("linux-version", FAKE_LINUX_VERSION), ("modinfo", FAKE_MODINFO),
+                       ("grub-editenv", FAKE_GRUB_EDITENV)):
         (tmp_path / "bin" / name).write_text(text)
         (tmp_path / "bin" / name).chmod(0o755)
     (tmp_path / "plan").write_text(plan)
     (tmp_path / "after.tsv").write_text(dpkg_lines(after, after_versions))
     (tmp_path / "cut").write_text(str(cut_holds))
+    (tmp_path / "kernels").write_text(f"{PREVIOUS}\n{OLD}\n")
+    (tmp_path / "kernels.after").write_text("".join(f"{kernel}\n" for kernel in (PREVIOUS, *kernels_after)))
+    (tmp_path / "grub.cfg").write_text(grub_before or grub_cfg(OLD, PREVIOUS))
+    (tmp_path / "grub.cfg.after").write_text(grub_after or grub_cfg(NEW, OLD, PREVIOUS))
+    (tmp_path / "grubenv").write_text(env_block or grubenv(saved_entry="", next_entry=""))
     return {**env, "CALLS": str(tmp_path / "calls"), "APT_PLAN": str(tmp_path / "plan"),
             "DPKG_AFTER": str(tmp_path / "after.tsv"), "APT_ANSWER": answer,
             "ACTIVE_UNITS": "local-ai-llama-swap.service local-ai-brake.service",
-            "KERNELS": f"{OLD} {NEW}", "MODULE_KERNELS": module_kernels, "APT_MARK_CUT": str(tmp_path / "cut")}
+            "KERNELS": str(tmp_path / "kernels"), "KERNELS_AFTER": str(tmp_path / "kernels.after"),
+            "MODULE_KERNELS": module_kernels, "APT_MARK_CUT": str(tmp_path / "cut"),
+            "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "GRUB_AFTER": str(tmp_path / "grub.cfg.after"),
+            "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")}
 
 
 def real_upgrade(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Upgrade day for real, not its dry run, against upgrade_env's fakes (see real_hold)."""
-    return subprocess.run(
+    """Upgrade day for real, not its dry run, against upgrade_env's fakes (see real_hold). Whatever
+    happens, nothing it prints carries the root filesystem's UUID."""
+    result = subprocess.run(
         ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && upgrade_gpu', "bash", str(SCRIPT)],
         capture_output=True,
         text=True,
         env=env,
     )
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
 
 
 def sorted_set(packages: set[str]) -> str:
@@ -3917,7 +4032,8 @@ def test_upgrade_day_moves_the_set_and_holds_it_again(tmp_path):
         f"apt-mark hold {sorted_set(NEW_SET)}",
     ]
     assert held(tmp_path) == NEW_SET
-    assert f"==> ready: {NEW}, the newest kernel, has NVIDIA driver 580.200" in result.stdout
+    assert f"==> GRUB boots {OLD}, the newest kernel" in result.stdout  # before anything moved
+    assert f"==> ready: {NEW}, the newest kernel, has NVIDIA driver 580.200, and GRUB boots it" in result.stdout
     assert "sudo reboot, then make doctor" in result.stdout
 
 
@@ -4038,11 +4154,109 @@ def test_a_signal_during_the_way_outs_own_hold_leaves_the_set_released(tmp_path)
     assert held(tmp_path) == set()
 
 
+def test_a_grub_that_wont_boot_the_newest_kernel_refuses_before_anything_is_released(tmp_path):
+    # Someone ran grub-reboot, so the next boot starts another entry. Found before the release, it
+    # leaves the set held and nothing moved, as updates.md step 2 says.
+    env = upgrade_env(tmp_path, GOOD_PLAN, env_block=grubenv(saved_entry="", next_entry=entry_id(PREVIOUS)))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "not moving the GPU set: grubenv's next_entry picks another entry for the next boot" in result.stderr
+    assert "Nothing was released or moved" in result.stderr
+    assert calls(tmp_path) == []  # no release, no dpkg, no apt
+    assert (tmp_path / "installed.tsv").read_text() == dpkg_lines(HELD_BEFORE)  # still held
+
+
+def test_a_grub_that_wont_boot_the_new_kernel_after_the_move_says_dont_reboot(tmp_path):
+    # update-grub put the old kernel first after the move (GRUB_FLAVOUR_ORDER can): the next boot
+    # would start OLD, whatever the new kernel has.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, grub_after=grub_cfg(OLD, NEW, PREVIOUS)))
+    assert result.returncode == 1
+    assert f"DON'T REBOOT — GRUB boots {OLD}, not {NEW}" in result.stderr and RECOVERY in result.stderr
+    assert held(tmp_path) == NEW_SET  # held before the checks
+    assert "sudo reboot" not in result.stdout and "systemctl start" not in result.stderr
+
+
+def test_a_grub_refusal_after_a_move_that_moved_nothing_still_starts_nothing(tmp_path):
+    # apt moved nothing in the set, but GRUB's default changed meanwhile: no hint to start the stack
+    # or reboot, only the way to the recovery.
+    env = upgrade_env(tmp_path, GOOD_PLAN, after=RELEASED, kernels_after=(OLD,),
+                      grub_after=grub_cfg(OLD, PREVIOUS, default='"1"'))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "DON'T REBOOT — grub.cfg's default isn't entry 0" in result.stderr
+    assert "GRUB may not boot the newest kernel. Don't reboot or start the stack yet" in result.stderr
+    assert "systemctl start" not in result.stderr
+
+
+def grub_check(tmp_path: Path, kernel: str, cfg: str | None, env_block: str | None) -> subprocess.CompletedProcess[str]:
+    """grub_boots KERNEL against a stand-in grub.cfg and grubenv; None leaves that file out. Nothing
+    it prints may carry the root filesystem's UUID."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/grub-editenv").write_text(FAKE_GRUB_EDITENV)
+    (tmp_path / "bin/grub-editenv").chmod(0o755)
+    for name, text in (("grub.cfg", cfg), ("grubenv", env_block)):
+        if text is not None:
+            (tmp_path / name).write_text(text)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && grub_boots "$2"', "bash", str(SCRIPT), kernel],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+             "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")},
+    )
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
+
+
+@pytest.mark.parametrize("default, env_block", [
+    ('"0"', grubenv(saved_entry="", next_entry="")),
+    ('"0"', grubenv(saved_entry=entry_id(OLD))),  # "0" never reads saved_entry
+    ('"${saved_entry}"', grubenv()),
+    ('"${saved_entry}"', grubenv(saved_entry="0")),
+    ('"${saved_entry}"', grubenv(saved_entry="", next_entry="", prev_entry="")),  # as grub-reboot leaves them
+], ids=["0", "0-with-saved-entry", "saved-none", "saved-0", "saved-empty"])
+def test_the_stock_grub_boots_the_newest_kernel(tmp_path, default, env_block):
+    result = grub_check(tmp_path, NEW, grub_cfg(NEW, OLD, default=default), env_block)
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("cfg, env_block, reason", [
+    (grub_cfg(OLD, NEW), grubenv(), f"GRUB boots {OLD}, not {NEW}"),
+    (grub_cfg(NEW, OLD, extra=TITLE_REWRITE), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, bare=True), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, default=f'"{entry_id(OLD)}"'), grubenv(), "grub.cfg's default isn't entry 0"),
+    (grub_cfg(NEW, OLD), grubenv(next_entry=entry_id(OLD)), "grubenv's next_entry picks another entry"),
+    (grub_cfg(NEW, OLD), grubenv(prev_entry=entry_id(OLD)), "grubenv's prev_entry picks another entry"),
+    (grub_cfg(NEW, OLD, default='"${saved_entry}"'), grubenv(saved_entry=entry_id(OLD)),
+     "grubenv's saved_entry picks another entry than 0"),
+    (None, grubenv(), "can't read"),
+    (grub_cfg(NEW, OLD), None, "can't read GRUB's environment block"),
+    (grub_cfg(NEW, OLD), "saved_entry=0\n", "can't read GRUB's environment block"),  # grub-editenv refuses it
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", "vmlinuz"), grubenv(), "entry 0 starts no vmlinuz-<version> kernel"),
+    # Only a name that is a kernel version is ever printed, whatever grub.cfg holds.
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", f"vmlinuz-{ROOT_FS_UUID}"), grubenv(),
+     "entry 0 starts no vmlinuz-<version> kernel"),
+], ids=["entry-0-an-older-kernel", "a-third-default-line", "a-bare-default", "an-id-as-the-default",
+        "next-entry", "prev-entry", "saved-entry-not-0", "no-grub-cfg", "no-grubenv", "grubenv-read-fails",
+        "entry-0-unnamed", "entry-0-not-a-version"])
+def test_anything_else_says_why_and_never_what_it_read(tmp_path, cfg, env_block, reason):
+    result = grub_check(tmp_path, NEW, cfg, env_block)
+    assert result.returncode == 1 and reason in result.stdout, result
+    # A check only reads: root's grub-editenv would create a missing grubenv, and pass on it.
+    assert (tmp_path / "grubenv").exists() == (env_block is not None)
+
+
+def test_no_newest_kernel_is_not_a_kernel_grub_boots(tmp_path):
+    result = grub_check(tmp_path, "", grub_cfg(NEW, OLD), grubenv())
+    assert result.returncode == 1 and "linux-version found no kernel" in result.stdout
+
+
 def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
     result = script("--upgrade-gpu", "--dry-run", env=upgrade_env(tmp_path, GOOD_PLAN))
     assert result.returncode == 0, result.stderr
     commands = [line.split("   (")[0] for line in result.stdout.splitlines() if line.startswith("+ ")]
     assert commands == [
+        "+ grub_boots <the newest kernel>",
         f"+ apt-mark unhold {sorted_set(GPU_SET)}",
         "+ dpkg --configure -a",
         "+ apt-get update",
@@ -4052,6 +4266,7 @@ def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
         "+ apt-get dist-upgrade",
         f"+ apt-mark hold {sorted_set(GPU_SET)}",
         "+ modinfo -k <the newest kernel> -F version nvidia",
+        "+ grub_boots <the newest kernel>",
     ]
     assert calls(tmp_path) == []  # no stand-in was asked to change anything
 
@@ -4122,9 +4337,9 @@ def test_needrestart_never_restarts_a_local_ai_unit():
 ```
 
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
-  → FAIL: `--upgrade-gpu` is an unknown option (exit 2), `upgrade_gpu` isn't defined, the dry run has
-  no needrestart line, `stack/host/needrestart.conf` doesn't exist, and `make` has no `upgrade-gpu`
-  target. Phase 0's and Task 9's bootstrap tests still pass.
+  → FAIL: `--upgrade-gpu` is an unknown option (exit 2), `upgrade_gpu` and `grub_boots` aren't
+  defined, the dry run has no needrestart line, `stack/host/needrestart.conf` doesn't exist, and
+  `make` has no `upgrade-gpu` target. Phase 0's and Task 9's bootstrap tests still pass.
 
 - [ ] **Step 3: Implement the override and the upgrade mode**
 
@@ -4155,6 +4370,7 @@ REHELD=1     # upgrade day: 0 from the moment the GPU set is released until it i
 STOPPED=""   # upgrade day: the stack's units it stopped
 MOVING=0     # upgrade day: 1 from the moment apt starts moving the set
 MOVE_FROM="" # upgrade day: the set's contents just before that (gpu_set_contents)
+GRUB_FAILED=0 # upgrade day: 1 when GRUB may not boot the newest kernel after the move
 ```
 
 `parse_args` takes the new mode, names it in the unknown-option message, and refuses any two of the
@@ -4190,18 +4406,22 @@ After `hold_gpu_stack`, the upgrade mode.
   that didn't take, no kernel, nothing matching) can't end the script before it says so. The hold
   after apt's move, if a signal cuts it off, is tried once more on the way out. A signal during a
   hold the way out runs, the retry included, says what is left to do.
-- The way out suggests starting the stack only when nothing in the set moved and the newest kernel
-  still has its NVIDIA module (`newest_kernel`, `module_version`, the same check the gate makes);
-  otherwise it sends Dan to the recovery, never to a reboot.
+- `grub_boots` is updates.md step 5's GRUB check. It reads `grub.cfg` and `grub-editenv list`,
+  prints only why GRUB won't boot the kernel, and names kernels only by a version it has checked.
+  `upgrade_gpu` runs it before anything is released, and again after the module check, where a
+  failure sets `GRUB_FAILED`.
+- The way out suggests starting the stack only when nothing in the set moved, the newest kernel
+  still has its NVIDIA module (`newest_kernel`, `module_version`, the same check the gate makes),
+  and GRUB didn't fail after the move; otherwise it sends Dan to the recovery, never to a reboot.
 
 ```bash
 # Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
 # and refuses one that would leave a kernel without its NVIDIA module or change the driver branch,
 # moves the set, holds it again with the hold and nothing else, and checks the newest kernel for its
-# NVIDIA module before it asks for the reboot. That assumes GRUB boots the newest kernel, which
-# this doesn't check: updates.md's GRUB check, which Dan runs before this and again before the
-# reboot, reads grub.cfg's entry 0 and default, and grubenv. Every way out after the release holds
-# the set again. website/how-to/updates.md has the same steps by hand, and the recovery.
+# NVIDIA module before it asks for the reboot. It runs updates.md's GRUB check itself (grub_boots),
+# before it releases the set and again before it asks for the reboot: the next boot starts the
+# newest kernel only while GRUB boots it. Every way out after the release holds the set again.
+# website/how-to/updates.md has the same steps by hand, and the recovery.
 
 # The GPU set as dpkg has it now: each package's status letters, name and version, found with the
 # hold's own patterns.
@@ -4226,14 +4446,65 @@ gpu_set_contents() {
   gpu_set_state | cut -c2- | LC_ALL=C sort
 }
 
-# The newest kernel, which the next boot starts only while GRUB's entry 0 is that kernel and GRUB
-# starts entry 0 (updates.md's GRUB check), and the version of the NVIDIA module built for a
-# kernel: nothing when it has none.
+# The newest kernel, which the next boot starts only while GRUB boots it (grub_boots), and the
+# version of the NVIDIA module built for a kernel: nothing when it has none.
 newest_kernel() {
   linux-version list | linux-version sort --reverse | head -1
 }
 module_version() {
   modinfo -k "$1" -F version nvidia 2>/dev/null || true
+}
+
+# Where GRUB keeps its menu and its environment block. Tests point these at stand-ins.
+GRUB_CFG="${BOOTSTRAP_GRUB_CFG:-/boot/grub/grub.cfg}"
+GRUBENV="${BOOTSTRAP_GRUBENV:-/boot/grub/grubenv}"
+
+# Whether the next boot starts KERNEL, read from what GRUB will do, as updates.md step 5's GRUB
+# check reads it: entry 0's first linux line in grub.cfg names vmlinuz-KERNEL; the default= lines
+# are exactly the stock two, set default="${next_entry}" and set default="0", or
+# "${saved_entry}" while grubenv's saved_entry is empty or 0; and grubenv holds no next_entry or
+# prev_entry with a value. Otherwise, or when a read fails, it prints why and fails. It never
+# prints what it read: grub.cfg's linux lines and entry ids, and grubenv's entries, carry the root
+# filesystem's UUID. A kernel is named only by a version it has checked is one.
+grub_boots() {
+  local want="$1" linux entry0 defaults other env saved
+  local version='^[0-9]+\.[0-9]+[0-9A-Za-z.+~-]*$'
+  # shellcheck disable=SC2016  # GRUB's own ${...}, matched as written
+  local next='set default="${next_entry}"' saved_default='set default="${saved_entry}"'
+  if [[ -z "$want" ]]; then echo "linux-version found no kernel"; return 1; fi
+  if [[ ! -r "$GRUB_CFG" ]]; then echo "can't read $GRUB_CFG"; return 1; fi
+  linux="$(grep -m1 -E '^[[:space:]]*linux[[:space:]]' "$GRUB_CFG" || true)"
+  entry0="$(awk '{print $2}' <<<"$linux")"
+  entry0="${entry0##*/}"
+  if [[ "$entry0" != vmlinuz-* || ! "${entry0#vmlinuz-}" =~ $version ]]; then
+    echo "grub.cfg's entry 0 starts no vmlinuz-<version> kernel"
+    return 1
+  fi
+  entry0="${entry0#vmlinuz-}"
+  if [[ "$entry0" != "$want" ]]; then echo "GRUB boots $entry0, not $want"; return 1; fi
+  defaults="$(grep 'default=' "$GRUB_CFG" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+  other="$(grep -vxF "$next" <<<"$defaults" || true)"
+  if [[ "$(grep -cxF "$next" <<<"$defaults" || true)" != 1 || "$(grep -c . <<<"$other" || true)" != 1 ||
+        "$other" != 'set default='* ]]; then
+    echo "grub.cfg's default= lines aren't the stock two"
+    return 1
+  fi
+  if [[ "$other" != 'set default="0"' && "$other" != "$saved_default" ]]; then
+    echo "grub.cfg's default isn't entry 0"
+    return 1
+  fi
+  if [[ ! -r "$GRUBENV" ]] || ! env="$(grub-editenv "$GRUBENV" list 2>/dev/null)"; then
+    echo "can't read GRUB's environment block, $GRUBENV"
+    return 1
+  fi
+  if grep -q '^next_entry=.' <<<"$env"; then echo "grubenv's next_entry picks another entry for the next boot"; return 1; fi
+  if grep -q '^prev_entry=.' <<<"$env"; then echo "grubenv's prev_entry picks another entry after a failed boot"; return 1; fi
+  saved="$(sed -n 's/^saved_entry=//p' <<<"$env")"
+  if [[ "$other" == "$saved_default" && -n "$saved" && "$saved" != 0 ]]; then
+    echo "grubenv's saved_entry picks another entry than 0"
+    return 1
+  fi
+  return 0
 }
 
 # Reads `apt-get -s dist-upgrade` on stdin and prints why the plan must not run. It would remove the
@@ -4300,6 +4571,8 @@ on_upgrade_exit() {
         unsafe="the GPU set moved before this stopped"
       elif [[ -z "$(module_version "$(newest_kernel)")" ]]; then
         unsafe="the newest kernel has no NVIDIA module"
+      elif (( GRUB_FAILED )); then
+        unsafe="GRUB may not boot the newest kernel"
       fi
     fi
     if [[ -n "$unsafe" ]]; then
@@ -4313,8 +4586,23 @@ on_upgrade_exit() {
 
 upgrade_gpu() {
   say "upgrade day: move the GPU set as one — website/how-to/updates.md"
-  local pkgs refusal unit kernel version
+  local pkgs refusal unit kernel version grub
   local -a stack_units=(local-ai-llama-swap.service local-ai-brake.service)
+  # GRUB must boot the newest kernel before anything moves (updates.md step 2), so that after the
+  # move the same check can only find what the move changed.
+  if (( DRY_RUN )); then
+    printf '+ grub_boots <the newest kernel>   (a real run stops here, before anything is released, unless GRUB boots it)\n'
+  else
+    kernel="$(newest_kernel)"
+    if ! grub="$(grub_boots "$kernel")"; then
+      {
+        echo "bootstrap: not moving the GPU set: $grub."
+        echo "Nothing was released or moved. Run step 5's GRUB check in website/how-to/updates.md, and bring what it prints to the Mac session"
+      } >&2
+      exit 1
+    fi
+    say "GRUB boots $kernel, the newest kernel"
+  fi
   pkgs="$(held_gpu_set)"
   REHELD=0
   trap on_upgrade_exit EXIT
@@ -4364,6 +4652,7 @@ upgrade_gpu() {
   rehold || exit 1
   if (( DRY_RUN )); then
     printf '+ modinfo -k <the newest kernel> -F version nvidia\n'
+    printf "+ grub_boots <the newest kernel>   (a real run says DON'T REBOOT unless GRUB boots it)\n"
     return 0
   fi
   kernel="$(newest_kernel)"
@@ -4372,7 +4661,12 @@ upgrade_gpu() {
     echo "bootstrap: DON'T REBOOT — $kernel, the newest kernel, has no NVIDIA module. See 'If it goes wrong' in website/how-to/updates.md" >&2
     exit 1
   fi
-  say "ready: $kernel, the newest kernel, has NVIDIA driver $version — record both, and CUDA's version, in changelog.md"
+  if ! grub="$(grub_boots "$kernel")"; then
+    GRUB_FAILED=1
+    echo "bootstrap: DON'T REBOOT — $grub. See 'If it goes wrong' in website/how-to/updates.md" >&2
+    exit 1
+  fi
+  say "ready: $kernel, the newest kernel, has NVIDIA driver $version, and GRUB boots it — record both, and CUDA's version, in changelog.md"
   say "now: sudo reboot, then make doctor"
 }
 ```
@@ -4436,8 +4730,9 @@ upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sud
 The tmux check sits in the Makefile because `sudo` drops `$TMUX` from the environment.
 
 - [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
-  then `make lint`. `make upgrade-gpu-dry-run` on the Mac prints the steps, and its hold step says
-  `a real run stops here`: no DGX kernel is installed here.
+  then `make lint`. `make upgrade-gpu-dry-run` on the Mac prints the steps, the GRUB check before
+  the release and after the move among them, and its hold step says `a real run stops here`: no DGX
+  kernel is installed here.
 
 - [ ] **Step 5: Write the failing tests for `spark doctor`**
 
@@ -5068,28 +5363,31 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     preloads nothing, so after a reboot each model loads on its first request.
   - `updates.md`, *Upgrade day: the GPU set*. The edits:
     - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
-      command, in tmux, from the clone; it refuses to start outside tmux. It runs all of them but
-      step 5's GRUB check, since it doesn't read GRUB: run that check first, as step 2 says, and
-      start `make upgrade-gpu` only once it passes. Run it again once `make upgrade-gpu` says to
-      reboot, and reboot only if it passes then too. It releases the set, reads apt's plan
-      and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the
-      brake, and moves the set (you read apt's plan and answer). Then it holds the set again with
-      `make hold-gpu`'s hold, runs step 5's module check, and says whether to reboot. Every way out
-      after the release runs the hold, and only the hold after apt's move is tried again. The set
-      can still stay released: when the hold stops (a package dpkg didn't finish, a hold that didn't
-      take, no kernel or nothing matching), or when a signal cuts off a hold the way out runs, the
-      retry included. In each case it says to run `make hold-gpu`. It judges whether apt moved
-      anything by each package's state and version, not the hold letter, and it checks that the
-      newest kernel still has its module. If apt moved even part of the set, or left the newest
-      kernel without a module, it sends you to *If it goes wrong* rather than to a reboot or a
-      restart of the stack. Only when neither happened does it say how to start the stack again.
+      command, in tmux, from the clone; it refuses to start outside tmux. Step 5's GRUB check
+      included, it runs all of them. First the GRUB check, as step 2 says: if GRUB won't boot the
+      newest kernel, it stops there, with the set still held and nothing moved, and says why. Then
+      it releases the set, reads apt's plan and refuses it before anything moves if it breaks step
+      3's rule, stops llama-swap and the brake, and moves the set (you read apt's plan and answer).
+      Then it holds the set again with `make hold-gpu`'s hold, runs step 5's two checks on the new
+      newest kernel, the module and then GRUB, and says whether to reboot: `DON'T REBOOT` names the
+      reason, and never a GRUB id or UUID. Every way out after the release runs the hold, and only
+      the hold after apt's move is tried again. The set can still stay released: when the hold
+      stops (a package dpkg didn't finish, a hold that didn't take, no kernel or nothing matching),
+      or when a signal cuts off a hold the way out runs, the retry included. In each case it says to
+      run `make hold-gpu`. It judges whether apt moved anything by each package's state and version,
+      not the hold letter, and it checks that the newest kernel still has its module. If apt moved
+      even part of the set, left the newest kernel without a module, or GRUB failed after the move,
+      it sends you to *If it goes wrong* rather than to a reboot or a restart of the stack. Only
+      when none of these happened does it say how to start the stack again.
       `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what
-      it runs, to read along with, and to do by hand if it can't. The second GRUB check stays in
-      this paragraph until this task's open item on the GRUB check is decided.
+      it runs, to read along with, and to do by hand if it can't; step 5's GRUB check by hand is for
+      those steps.
     - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
       (the reboot starts them again), and your own GPU jobs and `agent`'s."
     - **Step 2's opening**, which runs step 5's GRUB check before anything moves, went in on
-      2026-09-25, before the first upgrade day. Leave it as it is: it covers `make upgrade-gpu` too.
+      2026-09-25, before the first upgrade day. Keep it for the steps by hand, and add one sentence
+      after it: "`make upgrade-gpu` runs this check itself, before it releases the set." (Until
+      Dan's decision on 2026-09-25, this bullet said the opening covered `make upgrade-gpu` too.)
     - **Step 3's answer-no rule** already has its three cases. They went in on 2026-09-25, before
       the first upgrade day, and the first names a removed metapackage with no other in its place.
       Add one sentence after the paragraph that follows them: "`make upgrade-gpu` refuses all three
@@ -5100,14 +5398,17 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       else, or any command failing, is "don't reboot yet". It says how to read the menu to find
       the kernel GRUB would start, and to write "an id" for every UUID and PARTUUID it printed. The
       routine-upgrade reboot waits for step 5's checks too. It all went in on 2026-09-25, before
-      the first upgrade day, so leave it as it is.
+      the first upgrade day, so leave it as it is, and add one sentence after its pass conditions:
+      "`make upgrade-gpu` runs this same check itself after the move, before it says to reboot."
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
     again by itself on its way out, so `make hold-gpu` by hand is for the manual steps, or for when
-    its own hold stopped or was cut off. The second paragraph's bold opening adds "or
-    `make upgrade-gpu` said `DON'T REBOOT`, or that apt may have moved the set". Both ways back to a
-    reboot already repeat step 5, the GRUB check included (2026-09-25): leave that as it is.
+    its own hold stopped or was cut off. Its last sentence, on a GRUB check that fails alone, adds
+    that `make upgrade-gpu`'s `DON'T REBOOT — GRUB …` is that case. The second paragraph's bold
+    opening adds "or `make upgrade-gpu` said `DON'T REBOOT` because the newest kernel has no NVIDIA
+    module, or that apt may have moved the set". Both ways back to a reboot already repeat step 5,
+    the GRUB check included (2026-09-25): leave that as it is.
   - `website/how-to/deploy.md`: *Every later change* ends with `make doctor`, and *When something is
     wrong* starts with it: Phase 0's guardrails and the stack in one pass, and each `FAIL` says what
     to do. Its `root's copies` line fails when something root runs isn't root's own file, and says
@@ -5295,20 +5596,24 @@ Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `gre
 run with sudo, and tells the Spark session what it printed, with "an id" in place of every UUID and
 PARTUUID: in `root=` and in each entry id (`gnulinux-…-<UUID>`), a default, `saved_entry` or
 `next_entry` that is an id included. None of them goes into the repo. With the last two lines
-above, it checks two things `make upgrade-gpu` assumes (Task 10) and nothing has checked yet:
+above, it checks two things `make upgrade-gpu` relies on (Task 10) and nothing has checked yet on
+this box:
 
-- GRUB boots the newest kernel, the one its pre-reboot check reads: the GRUB check passes. Entry
-  0's first `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and neither
-  `next_entry` nor `prev_entry` has a value. If it doesn't pass, the newest kernel may not be what
-  GRUB boots.
+- GRUB boots the newest kernel, the one its checks read: the GRUB check passes. Entry 0's first
+  `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and neither `next_entry`
+  nor `prev_entry` has a value. If it doesn't pass, the newest kernel may not be what GRUB boots.
+  `make upgrade-gpu` runs this same check itself, before the release and again after the move, and
+  would refuse; running it now finds out before the first upgrade day whether this box's setup
+  passes.
   `/etc/default/grub` and `/etc/default/grub.d/*.cfg` alone can't show this: `GRUB_FLAVOUR_ORDER`,
   `GRUB_TOP_LEVEL` and indented or exported settings all change what GRUB boots, and `grub.cfg`
   shows the result.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
-If either differs, stop and tell the Mac session: that check must change before an upgrade day
-relies on it. Task 13 Step 7 records the re-run and both results in the changelog.
+If either differs, stop and tell the Mac session: that check, or the box's GRUB setup, must change
+before an upgrade day relies on it. Task 13 Step 7 records the re-run and both results in the
+changelog.
 
 - [ ] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
   Expected: every file under `/opt/local-ai/etc` and the app are listed as new;

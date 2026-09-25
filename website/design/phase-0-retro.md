@@ -140,7 +140,9 @@ with the rule it now has in `CLAUDE.md` (*Lessons from Phase 0*):
   `phase-1.md` now builds; the plan's open item is resolved.)
 - **Whether `make upgrade-gpu` runs the GRUB check itself** before it says to reboot. It is
   recommended; decide at Phase 1's pre-flight (`phase-1.md`, Task 10). Until then, `updates.md`'s
-  step 5 GRUB check is run by hand, before the move and again before the reboot.
+  step 5 GRUB check is run by hand, before the move and again before the reboot. (Decided
+  2026-09-25: it runs the check itself, before the release and again after the move; `phase-1.md`'s
+  Task 10 builds it.)
 
 **Pending on the box.** Not yet applied on the box, or applied but not yet recorded in `README.md`
 §Current state. A box change gets a dated `changelog.md` entry and a line there when it's done; the
