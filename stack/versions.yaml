@@ -1,0 +1,86 @@
+# Every pinned component. `spark apply` refuses to deploy a component with deployed: true and no pin.
+# pin: sha256:<64 hex> — a release file's checksum, or a container image's digest.
+components:
+  uv:
+    version: 0.12.18
+    where: [mac, spark]
+    pin: null
+    deployed: false
+    docs: https://docs.astral.sh/uv/
+    context7: /astral-sh/uv
+    changelog: https://github.com/astral-sh/uv/releases
+    advisories: https://github.com/astral-sh/uv/security/advisories
+  quarto:
+    version: 1.10.3
+    where: [mac, ci]
+    pin: null
+    deployed: false
+    docs: https://quarto.org/docs/
+    context7: /quarto-dev/quarto-web
+    changelog: https://github.com/quarto-dev/quarto-cli/releases
+    advisories: null
+  gitleaks:
+    version: 8.30.1
+    where: [mac, spark, ci]
+    pin: null
+    deployed: false
+    docs: https://github.com/gitleaks/gitleaks
+    context7: null
+    changelog: https://github.com/gitleaks/gitleaks/releases
+    advisories: https://github.com/gitleaks/gitleaks/security/advisories
+  # Host packages apt moves, recorded so an upgrade has a "before" to compare against: Docker came
+  # with DGX OS, from NVIDIA's repository; earlyoom is Ubuntu's package (its package version).
+  docker:
+    version: 29.6.2
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://docs.docker.com/engine/
+    context7: null
+    changelog: https://docs.docker.com/engine/release-notes/
+    advisories: https://github.com/moby/moby/security/advisories
+  earlyoom:
+    version: 1.7-2
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://github.com/rfjakob/earlyoom
+    context7: null
+    changelog: https://launchpad.net/ubuntu/+source/earlyoom/+changelog
+    advisories: https://ubuntu.com/security/cves?package=earlyoom
+  llama-swap:
+    version: v257
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://github.com/mostlygeek/llama-swap
+    context7: null
+    changelog: https://github.com/mostlygeek/llama-swap/releases
+    advisories: null
+  llama.cpp:
+    version: v0.5.0
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
+    context7: /ggml-org/llama.cpp
+    changelog: https://github.com/ggml-org/llama.cpp/releases
+    advisories: https://github.com/ggml-org/llama.cpp/security/advisories
+  whisper.cpp:
+    version: v1.9.4
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
+    context7: /ggml-org/whisper.cpp
+    changelog: https://github.com/ggml-org/whisper.cpp/releases
+    advisories: null
+  open-webui:
+    version: v0.11.4
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://docs.openwebui.com/
+    context7: /open-webui/docs
+    changelog: https://github.com/open-webui/open-webui/releases
+    advisories: https://github.com/open-webui/open-webui/security/advisories

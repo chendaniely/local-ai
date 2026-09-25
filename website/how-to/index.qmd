@@ -1,0 +1,45 @@
+---
+title: "How-to"
+listing:
+  contents: "*.md"
+  type: table
+  fields: [title, description]
+---
+
+Runbooks for the steps only you can do — sudo, interactive logins, and secret values. Each one is
+short and exact. No command here prints a secret; where a value must never be displayed, the
+runbook says so.
+
+## In order
+
+Once, for a new box or a rebuilt one.
+
+**Until step 5 joins Tailscale, use the LAN.** The tailnet names don't resolve before then, so use
+the LAN aliases from [SSH from the Mac](ssh.md)'s `~/.ssh/config`: `brightroar-lan` wherever a
+runbook says `brightroar` (for `ssh` or `scp`), and `brightroar-agent-lan` wherever it says
+`brightroar-agent`. If the Mac's config lacks those blocks, add them first; the keys can wait for
+step 4, and until then you log in with your password.
+
+**Before step 1**, on the Spark as yourself: install Claude Code and uv with their official
+installers (the commands `changelog.md` records for the first setup), and tmux and gh, which step 1
+uses before bootstrap installs them. Then log out and back in, so `~/.local/bin` is on your `PATH`:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+sudo apt install tmux gh
+```
+
+1. [The Spark session](spark-session.md) — first, before any **[Spark]** task.
+2. [Leak guards](leak-guards.md)
+3. [Bootstrap the Spark](bootstrap.md)
+4. [SSH from the Mac](ssh.md)
+5. [Join Tailscale](tailscale.md)
+6. [Secret files](secret-files.md)
+
+**After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
+IPv6 check, which need the tailnet name.
+
+Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
+
+## Every runbook

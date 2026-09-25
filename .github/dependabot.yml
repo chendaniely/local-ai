@@ -1,0 +1,22 @@
+# Automated update proposals for upgrade day (Saturdays, website/how-to/updates.md). They open on
+# Friday, a few at a time, so they're ready to review. Actions stay pinned by SHA: Dependabot moves a
+# SHA pin and its version comment together. Commit messages keep the repo's Conventional Commits.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: friday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci(repo)"
+
+  - package-ecosystem: uv
+    directory: /spark
+    schedule:
+      interval: weekly
+      day: friday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build(spark)"

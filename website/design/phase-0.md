@@ -6,6 +6,16 @@ date: 2026-09-23
 
 # Phase 0 — Guardrails, prep, docs scaffold — Implementation Plan
 
+> **Status: executed, 2026-09-23 to 2026-09-25.** Tasks 1–11 are done, and so are Task 12's first
+> three steps: the vault note, the council review with its fixes, and the forward look. Its Step 4
+> merges `phase-0` into `main`. The checkboxes below were never ticked; this note is the record. The
+> code in the repo is the as-built version. Where a later fix changed it, the listing below stays as
+> written and is marked *Superseded*, with the commits that replaced it: read the code, not the
+> listing.
+>
+> **Retrospective:** [Phase 0 — retrospective](phase-0-retro.md) records what this plan built, where
+> the build departed from it and why, what the reviews found, and how to start over.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Every task is labelled **[Mac]**, **[Spark]** or
@@ -61,7 +71,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 5. **A scenario page with broken front matter** — expected: `make docs` and CI fail and name the
    file. *(Test in Task 5.)*
 
----
+***
 
 ## File structure
 
@@ -70,7 +80,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 | `Makefile` | Front door: `help`, `test`, `lint`, `hooks`, `docs`, `bootstrap`, `bootstrap-dry-run` |
 | `.gitignore` | Adds build outputs and the local model overlay |
 | `.githooks/pre-commit`, `.githooks/commit-msg` | Thin wrappers: gitleaks, then `spark leakcheck` |
-| `.githooks/gitleaks.toml` | gitleaks config: default rules + repo-specific allowlist |
+| `.githooks/gitleaks.toml` | gitleaks config: the default rules |
 | `.github/workflows/ci.yml` | Tests, leak scan, shellcheck, site build |
 | `.github/workflows/publish-website.yml` | Manual-only publish of the site to GitHub Pages |
 | `spark/pyproject.toml`, `spark/uv.lock` | The uv project |
@@ -89,7 +99,7 @@ Ubuntu) · gitleaks 8.x · shellcheck · Quarto 1.10 · GitHub Actions · bash �
 | `website/reference/stack.md` | Generated from `stack/versions.yaml` — never edited by hand |
 | `website/how-to/*.md` | Runbooks for Dan's steps |
 
----
+***
 
 ### Task 1 [Mac]: `spark` package skeleton, Makefile front door, .gitignore
 
@@ -263,7 +273,7 @@ git commit -m "feat(spark): 🤖 add the spark package skeleton and Makefile fro
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 2 [Mac]: leak check — patterns and a private denylist
 
@@ -311,7 +321,7 @@ def kinds(text: str, denylist=()) -> list[str]:
     return [f.kind for f in scan_text("t.md", text, list(denylist))]
 
 
-@pytest.mark.parametrize("address", [ip(10, 1, 2, 3), ip(172, 20, 0, 5), ip(192, 168, 1, 201)])
+@pytest.mark.parametrize("address", [ip(10, 1, 2, 3), ip(172, 20, 0, 5), ip(192, 168, 77, 5)])
 def test_private_ipv4_is_flagged(address):
     assert kinds(f"server at {address} today") == ["private IPv4 address"]
 
@@ -395,6 +405,10 @@ def test_cli_missing_denylist_exits_2(tmp_path, capsys):
     assert cli.main(["leakcheck", "--message", str(message), "--denylist", str(tmp_path / "none")]) == 2
     assert "denylist not found" in capsys.readouterr().err
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commits 8e0a5e7 (sentence-final and IPv6
+addresses, bare tailnet names, the denylist on allowed lines, a bad denylist line) and cbd7ca3 (type
+changes, file names, UTF-16 and UTF-32 text, binaries named, an empty denylist refused).*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -568,6 +582,11 @@ def run(args: argparse.Namespace) -> int:
     return 0
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 8e0a5e7 (sentence-final and IPv6
+addresses, bare tailnet names, the denylist on allowed lines, a bad denylist line exits 2), cbd7ca3
+(type changes, file names, UTF-16 and UTF-32 text, binaries named, an empty denylist refused) and
+bad1b55 (the docstring and the `--message` help name CI's history scan).*
+
 In `spark/src/spark/cli.py`, replace the `parser.add_subparsers(...)` line with:
 
 ```python
@@ -590,7 +609,7 @@ git commit -m "feat(spark): 🤖 add the leak check for private addresses and de
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 3 [Mac]: hook wrappers, gitleaks config, `make hooks`
 
@@ -648,6 +667,10 @@ def test_pre_commit_refuses_without_gitleaks(tmp_path):
     assert "gitleaks is not installed" in result.stderr
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 783a619 (a clear refusal when uv is
+missing), cbd7ca3 (`make hooks` refuses an empty denylist) and f581016 (both hooks, and
+`make hooks`, need gitleaks' `git` command).*
+
 - [ ] **Step 3: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_hooks.py`
@@ -674,6 +697,9 @@ gitleaks git --pre-commit --staged --redact --no-banner --config "$root/.githook
 exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --staged
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 783a619 (a clear refusal when uv is
+missing from the hook's `PATH`).*
+
 `.githooks/commit-msg`:
 
 ```bash
@@ -692,6 +718,9 @@ fi
 gitleaks stdin --redact --no-banner --config "$root/.githooks/gitleaks.toml" < "$1"
 exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --message "$1"
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 783a619 (a clear refusal when uv is
+missing from the hook's `PATH`).*
 
 `.githooks/gitleaks.toml`:
 
@@ -717,6 +746,9 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your de
 lint: ## Shellcheck the hooks and host scripts
 	shellcheck .githooks/pre-commit .githooks/commit-msg
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commits cbd7ca3 (`make hooks` runs the hooks'
+own denylist check) and f581016 (it checks gitleaks' `git` command).*
 
 - [ ] **Step 6: Run the tests — they pass; lint is clean**
 
@@ -751,7 +783,7 @@ git commit -m "build(repo): 🤖 add pre-commit and commit-msg leak guards" \
 
 Expected: this commit itself passes through the new hooks.
 
----
+***
 
 ### Task 4 [Mac]: `stack/versions.yaml` and the generated Stack page
 
@@ -837,6 +869,9 @@ def test_stack_page_is_a_table_marked_generated(tmp_path):
     assert "generated from `stack/versions.yaml`" in page
     assert "| llama-swap | v257 | spark | not yet |" in page
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit fe3d8b7 (a test that uv runs the Python
+minor version `spark/.python-version` pins).*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1053,6 +1088,9 @@ components:
     advisories: https://github.com/open-webui/open-webui/security/advisories
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 7d819bb (Docker and earlyoom, with the
+versions the Spark recorded).*
+
 If `gitleaks version` (Task 3) reports something other than 8.30.1, use what it reports.
 
 - [ ] **Step 5: Makefile, generate, run the tests**
@@ -1076,7 +1114,7 @@ git commit -m "feat(stack): 🤖 add pinned versions and the generated Stack pag
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 5 [Mac]: the docs site and all 22 scenario pages
 
@@ -1134,6 +1172,9 @@ def test_broken_front_matter_is_reported_by_name(tmp_path):
     assert any("s03-doesnt-fit.md" in p for p in check_scenarios(tmp_path))
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commit 5036aca (tests for front matter that isn't
+valid YAML, or isn't a mapping).*
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_scenarios.py`
@@ -1189,6 +1230,9 @@ def check_scenarios(directory: Path) -> list[str]:
             problems.append(f"{name}: a verified scenario needs verified: YYYY-MM-DD")
     return problems
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 5036aca (a YAML error names its page, and
+front matter that isn't a mapping reads as missing).*
 
 and in `register`, after the `stack` parser:
 
@@ -1434,7 +1478,7 @@ git commit -m "docs(website): 🤖 add the docs site and the 22 scenario pages" 
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 6 [Mac]: CI and the manual publish workflow
 
@@ -1522,6 +1566,10 @@ jobs:
       - run: quarto render website
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits bad1b55 (no job token in the checkouts;
+gitleaks downloaded, checked and run in three steps; the repo's patterns over every commit's patches
+and messages) and ed0e06a (a time limit on every job; the download retries).*
+
 - [ ] **Step 3: Write `publish-website.yml` (manual only)**
 
 ```yaml
@@ -1564,7 +1612,7 @@ git commit -m "ci(repo): 🤖 add tests, leak scan, shellcheck and site build; m
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 7 [Mac]: the host bootstrap script
 
@@ -1583,6 +1631,9 @@ git commit -m "ci(repo): 🤖 add tests, leak scan, shellcheck and site build; m
   (root:spark-admin 0750), `/etc/local-ai/secrets` (root:spark 0750), `/var/lib/local-ai` (spark,
   0751) with `hf/`, `open-webui/`, `searxng/` (0750) and `brake/` (spark:spark-admin 2770 — Dan can
   release a brake hold, `agent` can't); `/home/agent/work`; polkit rule for `local-ai-*` units.
+  (Superseded 2026-09-25 by commit 3735420: `/var/lib/local-ai` is root:root 0755, so `spark` can't
+  swap a child for a link that the next run hands to it; and bootstrap no longer makes
+  `/home/agent/work`, since root never writes inside `agent`'s home. `agent` makes its own `~/work`.)
 - Note: Dan's account is effectively root-capable (sudo, and spark-admin can edit what the
   `local-ai-*` units run). The isolation boundary on this box is between Dan and `agent`.
 
@@ -1652,6 +1703,12 @@ def test_the_engine_user_cannot_change_what_root_runs():
 def test_shellcheck_is_clean():
     subprocess.run(["shellcheck", str(SCRIPT)], check=True)
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commits d7a78d3 (tests that fail when their line
+is missing), 3cf93e4 (the admin is whoever runs it), cb0ec0b and f77a144 (the whole GPU set held,
+and loudly), d0c4d3c (every apt package the box relies on), 3735420 (root stays out of paths
+`spark` and `agent` control) and ed0e06a (a pending removal's hint, `make hold-gpu`, a dry run that
+ignores the host's packages).*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1800,6 +1857,12 @@ main() {
 main "$@"
 ```
 
+*Superseded 2026-09-25 — the code now differs; see commits 3cf93e4 (the admin is whoever runs it),
+cb0ec0b (the whole GPU set held, and the real hold line in the dry run), d0c4d3c (every apt package
+the box relies on), 3735420 (a root-owned `/var/lib/local-ai`, nothing inside `agent`'s home),
+f77a144 (a loud hold, `--hold-gpu`, unknown options refused) and ed0e06a (a pending removal's
+hint).*
+
 `stack/host/earlyoom.default`:
 
 ```sh
@@ -1812,6 +1875,9 @@ main "$@"
 # neither.
 EARLYOOM_ARGS="-r 3600 -M 12582912,9437184 -s 100,100 --prefer ^(llama-server|whisper-server|VLLM::EngineCor)$ --avoid ^(sshd|systemd|systemd-.*|tmux.*|tailscaled|dockerd|containerd|llama-swap|spark)$"
 ```
+
+*Superseded 2026-09-25 — the code now differs; see commit 3735420 (`sshd.*` in `--avoid`, which
+also covers OpenSSH's `sshd-session`).*
 
 `stack/host/50-local-ai.rules`:
 
@@ -1862,13 +1928,13 @@ git commit -m "build(stack): 🤖 add the host bootstrap script, earlyoom config
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ### Task 8 [Mac]: runbooks for the steps a person does
 
 **Files:**
 - Create: `website/how-to/index.qmd`, `website/how-to/leak-guards.md`,
-  `website/how-to/bootstrap.md`, `website/how-to/tailscale.md`, `website/how-to/secrets.md`,
+  `website/how-to/bootstrap.md`, `website/how-to/tailscale.md`, `website/how-to/secret-files.md`,
   `website/how-to/spark-session.md`
 
 Each runbook is short, exact, and never shows how to print a secret. Content:
@@ -1877,86 +1943,143 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   (`listing: contents: "*.md"`, `type: table`, fields `title`, `description`).
 
 - [ ] **Step 2: `how-to/leak-guards.md`** — install gitleaks and shellcheck
-  (`brew install gitleaks shellcheck` on the Mac; on the Spark, `gitleaks_8.30.1_linux_arm64.tar.gz` from the v8.30.1 release, checked against
-  `gitleaks_8.30.1_checksums.txt`, installed with `sudo install -m 0755 gitleaks /usr/local/bin/` — Ubuntu's
+  (`brew install gitleaks shellcheck` on the Mac; on the Spark, `gitleaks_8.30.1_linux_arm64.tar.gz` from the v8.30.1 release, downloaded into
+  a temporary directory (`cd "$(mktemp -d)"`), checked against `gitleaks_8.30.1_checksums.txt` (expected:
+  `gitleaks_8.30.1_linux_arm64.tar.gz: OK`), and installed with `sudo install -m 0755 gitleaks /usr/local/bin/`,
+  each step chained with `&&` so a failed checksum stops the install — Ubuntu's
   archive copy is 8.16, too old for the hooks, and `/usr/local/bin` wins in every shell); create
   `~/.config/local-ai/denylist` by hand on **each** machine — one case-insensitive regex per line for
   every term that must never appear in this public repo (the tailnet's name, the NAS's names, the LAN
   subnet prefix, anything else private); `make hooks`; the leak drill from Task 3 Step 7; what to do
   when a line is safe but flagged (`leakcheck: allow`, sparingly, visible in review); never
-  `--no-verify`.
+  `--no-verify`. (Added 2026-09-25, after cbd7ca3, f581016 and bad1b55: the denylist needs at least
+  one term, since the hooks and `make hooks` refuse an empty one; `make hooks` runs the hooks' own
+  checks, gitleaks' `git` command and a denylist with terms that parses; what the hooks check —
+  file names, type changes, UTF-16/32 text, and binaries named for a person to check; how to read a
+  red CI leaks job, whose log shows whether it holds findings, and how to find a history finding's
+  commit at the commit CI checked; and why a Dependabot PR is merged or rebased, never squashed.)
+  (Added 2026-09-25, at the phase's close: *Before every push*, a scan of everything going out —
+  patches and messages with the denylist, the tracked files, gitleaks — which the whole-branch
+  review's one Critical finding asked for.)
 
 - [ ] **Step 3: `how-to/bootstrap.md`**
   - *Before:* bounce the wired NIC so it takes its reservation — from an SSH session over **Wi-Fi**:
     `sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>`
     (find the name with `nmcli device status`); confirm the wired address ends in `.201`.
   - *Run:* `make bootstrap-dry-run`, read it, then `make bootstrap`. It stops any running desktop
-    session — run it over SSH.
-  - *After:* log out and back in (new groups); `systemctl get-default` → `multi-user.target`;
+    session — run it over SSH. (Added 2026-09-25: the dry run's hold step prints
+    `GPU set: N packages, M already held`, all held on a bootstrapped Spark; off the Spark, with no
+    DGX kernel installed, it says `a real run stops here`; a package that isn't cleanly installed
+    stops it with a hint.)
+  - *After bootstrap* (the heading bootstrap.sh's last message names): log out and back in (new
+    groups); `systemctl get-default` → `multi-user.target`;
     `systemctl is-active earlyoom` → `active`; `sudo ufw status` → OpenSSH allowed;
     `id agent` shows no `docker`, `sudo` or `spark-admin`; `free -g` for the new baseline.
-  - *Agent login:* add your Mac's **public** key to `agent` —
-    `cat ~/.ssh/<your-key>.pub | ssh brightroar 'sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys'`;
+  - *Agent login:* add your Mac's **public** key to `agent`, in two steps — `sudo` inside a command
+    piped into `ssh` has no terminal to ask for the password. On the Mac,
+    `scp ~/.ssh/<your-key>.pub brightroar:agent-key.pub`; then, in an interactive `ssh brightroar`
+    session,
+    `sudo -u agent sh -c 'umask 077 && mkdir -p /home/agent/.ssh && cat >> /home/agent/.ssh/authorized_keys' < ~/agent-key.pub && rm ~/agent-key.pub`;
     then `ssh agent@brightroar` and, **as agent** (the installer refuses to run under sudo), install
     Claude Code with `curl -fsSL https://claude.ai/install.sh | bash`. Log in: run `claude`; with no
     browser on the box, press `c` to copy the login URL, open it on the Mac, and paste the code back.
+    (Corrected 2026-09-25: the key step was `sudo install -d … && sudo tee -a … && sudo chown … &&
+    sudo chmod …` on `/home/agent/.ssh`, which writes as root through a path `agent` controls, so a
+    planted link could aim it anywhere. Now Dan's shell reads the key and `agent` writes it into its
+    own home; nothing writes as root. `changelog.md` keeps the command the 2026-09-24 run used.)
+  - (Added 2026-09-24: `how-to/ssh.md` covers the Mac side: a key per account, the Mac's
+    `~/.ssh/config` with the tailnet name first and the LAN as fallback, and keeping NVIDIA Sync's
+    own config apart. Added 2026-09-25: a LAN alias for `agent` too, for before Tailscale is
+    joined; and keys-only SSH once Tailscale is joined and Dan's own key works — an sshd drop-in,
+    `10-local-ai.conf`, that sorts before `50-cloud-init.conf`, with `PasswordAuthentication no`,
+    `KbdInteractiveAuthentication no` and, for `agent`, `AllowAgentForwarding no`; `sshd -t` and
+    `sshd -T` before the reload; a key login from a second terminal before the first session
+    closes; and a one-time check whether the Spark is reachable over public IPv6.)
   - *Live checks as `agent`* (you run these — they need sudo):
-    `sudo -iu agent cat /home/dan/.secrets` → permission denied;
-    `sudo -iu agent docker ps` → permission denied; `sudo -iu agent nvidia-smi -L` → lists the GPU.
-  - *Re-run once* (`make bootstrap` again) → finishes with no errors and no changes.
+    `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
+    → `closed: good` (`$HOME` expands in your shell; `test -x` asks whether `agent` can enter your
+    home, without reading anything; the verdict comes from `agent`'s shell, so a failed `sudo` never
+    reads as "good"; plain `-u`, because `-i` would expand `$1` in `agent`'s login shell);
+    `sudo -iu agent docker ps` → permission denied;
+    `sudo -iu agent nvidia-smi --query-gpu=name --format=csv,noheader` → the GPU's name, without the
+    per-unit UUID that `nvidia-smi -L` prints.
+  - *Re-run once* (`make bootstrap` again) → finishes with no errors, and no new users, groups or
+    config lines.
 
 - [ ] **Step 4: `how-to/tailscale.md`**
   - Install on the Spark: `curl -fsSL https://tailscale.com/install.sh | sh`, then
     `sudo tailscale up`.
+  - After joining: admin console → **Machines** → the Spark → **Disable key expiry** — a headless
+    server whose key expires silently drops off the tailnet.
   - In the admin console: enable **MagicDNS** and **HTTPS certificates** (the certificate's name
     appears in public certificate-transparency logs — the name only).
-  - **ACL grants are the firewall** for tailnet traffic (ufw can't see `tailscale0`). Draft the
-    policy change privately and keep the real policy in the vault. Pattern to adapt — first check
-    what your current policy allows so nothing that works today breaks:
-
-    ```json
-    {
-      "grants": [
-        {"src": ["autogroup:member"], "dst": ["<the-spark>"], "ip": ["22", "443"]}
-      ]
-    }
-    ```
-
-    Port 22 for SSH; 443 for `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
+  - **ACL grants are the firewall** for tailnet traffic (ufw can't see `tailscale0`); the policy is
+    in the admin console, and the real one is kept in the vault. A new tailnet's allow-all grant is
+    replaced, keeping today's access: create `tag:spark` (`tagOwners`, owner `autogroup:admin`);
+    set three grants from `autogroup:member` — to `autogroup:member` (`*`), to `<home-subnet>/24`
+    (`*`), and to `tag:spark` (`22`, `443`) — plus `autogroup:internet` if an exit node is used;
+    save; tag the Spark with `sudo tailscale up --advertise-tags=tag:spark` (a tagged key doesn't
+    expire); test SSH and home-LAN services from the Mac and phone. Port 22 for SSH; 443 for
+    `tailscale serve` (Phase 1). LiteLLM's port is added in Phase 3.
   - Confirm how the tailnet reaches the home LAN (the subnet router and its advertised route) in the
     admin console, and record it in the vault — never paste `tailscale status` output anywhere public.
+    (Added 2026-09-24: there is none today, by choice; the runbook gives the steps for a one-address
+    subnet route from an always-on home machine, not the Spark, for when one is needed.)
   - Rebuilds: delete the old device in the admin console **before** re-joining, or the box comes back
     as `brightroar-1` and every client breaks.
 
-- [ ] **Step 5: `how-to/secrets.md`** — every command below runs in **Dan's** terminal; none of
+- [ ] **Step 5: `how-to/secret-files.md`** — every command below runs in **Dan's** terminal; none of
   them displays a value. (Ubuntu's `sh` is dash, which lacks `read -s`, so these use `bash -c`.)
   - Files live in `/etc/local-ai/secrets/` (root:spark, 0640), one per service, `KEY=value` lines,
-    no `export`. Dan's own account can't list that folder — by design, so no session running as Dan
-    can read a secret. A new random key:
+    no `export`. Dan's own account can't list that folder, so nothing running as Dan reads a secret
+    by accident. A new random key:
     `sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_AGENT=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env'`
   - Phase 1 needs: `llama-swap.env` — `LLAMASWAP_KEY_DAN_MAC`, `LLAMASWAP_KEY_AGENT`,
-    `LLAMASWAP_KEY_OPENWEBUI`, `LLAMASWAP_KEY_SPARK`; `open-webui.env` — `WEBUI_SECRET_KEY` (its own
+    `LLAMASWAP_KEY_OPENWEBUI`, `LLAMASWAP_KEY_SPARK` (`LLAMASWAP_KEY_OPENWEBUI` and
+    `LLAMASWAP_KEY_SPARK` made with the same pattern as the example; `LLAMASWAP_KEY_OPENWEBUI` must
+    exist before the `open-webui.env` step, which copies it); `open-webui.env` — `WEBUI_SECRET_KEY` (its own
     random value — without it, recreating the container logs everyone out), plus `OPENAI_API_KEYS`,
     `RAG_OPENAI_API_KEY` and `AUDIO_STT_OPENAI_API_KEY`, all three holding the value of
-    `LLAMASWAP_KEY_OPENWEBUI`:
-    `sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; umask 027; for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do printf "%s=%s\n" "$k" "$LLAMASWAP_KEY_OPENWEBUI"; done >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'`;
+    `LLAMASWAP_KEY_OPENWEBUI`; if that key doesn't exist yet, the command refuses and writes nothing:
+    `sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; [ -n "$LLAMASWAP_KEY_OPENWEBUI" ] || { echo "create LLAMASWAP_KEY_OPENWEBUI first" >&2; exit 1; }; umask 027; for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do printf "%s=%s\n" "$k" "$LLAMASWAP_KEY_OPENWEBUI"; done >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'`;
     `searxng.env` — `SEARXNG_SECRET`; `hf.env` — `HF_TOKEN`, pasted without echo:
     `sudo bash -c 'read -rsp "HF token: " t; echo; umask 027; printf "HF_TOKEN=%s\n" "$t" >> /etc/local-ai/secrets/hf.env; chgrp spark /etc/local-ai/secrets/hf.env'`.
   - The Mac's key: generate it on the Mac —
     `printf 'export SPARK_API_KEY=%s\n' "$(openssl rand -hex 32)" >> ~/.secrets` — then send the
     same value to the Spark without displaying it:
     `( . ~/.secrets; printf 'LLAMASWAP_KEY_DAN_MAC=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat > ~/.spark-key-in'`
-    and on the Spark:
-    `sudo bash -c 'cat /home/dan/.spark-key-in >> /etc/local-ai/secrets/llama-swap.env' && rm ~/.spark-key-in`.
+    and on the Spark, with the same `umask` and `chgrp` as the other commands:
+    `sudo bash -c 'umask 027 && cat >> /etc/local-ai/secrets/llama-swap.env && chgrp spark /etc/local-ai/secrets/llama-swap.env' < ~/.spark-key-in && rm ~/.spark-key-in`
+    (the file arrives on standard input, so no home directory is named, and `&&` throughout keeps
+    it until its line is in `llama-swap.env`).
   - Record each secret in the vault **by reference** (file, variable name) — never the value.
+  - (Added 2026-09-24: the runbook is now numbered steps, one command each, with the same commands,
+    plus a check that lists key names and permissions without values, and a dedupe that keeps a
+    key's last copy without displaying it.)
+  - (Corrected 2026-09-25: the names check used `cut -d= -f1`, which prints in full any line with no
+    `=`. It now prints names with `sed -n 's/=.*//p'` and only counts the other lines, with a command
+    that drops them. A second check compares Open WebUI's three copies with
+    `LLAMASWAP_KEY_OPENWEBUI` by hash and prints only `match` or `MISMATCH`.)
 
 - [ ] **Step 6: `how-to/spark-session.md`**
+  - (Added 2026-09-25: this runbook comes first, before any **[Spark]** task. Task 9 already
+    needed the session, but this plan reached the runbook only in Task 10. Before the first session:
+    the clone; the Mac's global rules, `~/.claude/CLAUDE.md`; and its secrets guard, the deny rules
+    and `PreToolUse` hook from the Mac's user-level settings, copied to the Spark and checked in the
+    session with `/hooks`, `/permissions` and a `test -e ~/.secrets` the hook must refuse.)
   - `ssh brightroar`, `tmux new -As spark-build`, `cd ~/git/hub/local-ai`, `claude`.
   - Install the same Claude Code plugins as on the Mac (at least superpowers).
   - GitHub for pushes from the Spark: `gh auth login` in *your* account (never as `agent`).
+    (Corrected 2026-09-25: a plain `gh auth login` gives the box a token that can push to every
+    repository Dan can. The runbook now uses a fine-grained token for this repository only —
+    Contents read and write, Actions read-only, Workflows off, so merges that change workflows are
+    made on the Mac — pasted into `gh auth login --with-token` from a prompt that doesn't echo, then
+    revokes the broad token on github.com.)
   - Private context: copy this project's private memory folder from the Mac to the Spark —
-    `ssh brightroar 'mkdir -p ~/.claude/projects/-home-dan-git-hub-local-ai'` then
-    `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-dan-git-hub-local-ai/`.
+    `ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'` then
+    `scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/`
+    (the folder is named after the clone's path, so it carries each machine's login: `dan` on the
+    Mac, `chendaniely` on the Spark).
   - The session follows the phase plan's **[Spark]** tasks only; at a switch point it commits and
     you push.
 
@@ -1971,21 +2094,23 @@ git commit -m "docs(website): 🤖 add runbooks for leak guards, bootstrap, Tail
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
----
+***
 
 ## ⇄ Switch point — Mac → Spark
 
 - [ ] Run `make test lint docs` one last time on the Mac; all clean.
 - [ ] **Dan OKs the push:** `git push -u origin phase-0`. Watch CI: `gh run watch` — all four jobs
   green. If a job fails, fix it on the Mac before switching.
+- [ ] (Added 2026-09-25) **Dan starts the Spark session** with `website/how-to/spark-session.md`
+  before Task 9, which runs in it.
 
----
+***
 
 ### Task 9 [Spark]: clone, hooks, inventory, dry-run
 
 **Files:**
 - Modify: `stack/versions.yaml` (gitleaks pin for the Spark is recorded only as a version — the
-  Spark install is per-user), `README.md` §Current state
+  Spark install is system-wide, in `/usr/local/bin`), `README.md` §Current state
 
 - [ ] **Step 1: Clone and enable the guards**
 
@@ -2026,8 +2151,28 @@ Private detail goes to `~/local-ai-private/phase-0-inventory.md` (outside the re
 - [ ] **Step 4: Bootstrap dry-run**
 
 Run: `make bootstrap-dry-run`
-Expected: the full plan prints; nothing changes. Note anything that looks wrong for this box (a
-missing group, a package name) and fix `stack/host/bootstrap.sh` + its test before Dan runs it.
+Expected: the full plan prints; nothing changes.
+
+The dry run skips preflight and prints a placeholder for the packages it would hold, so check what
+it can't show. Each check is read-only; read the output privately:
+
+```bash
+getent group docker                                     # exists — bootstrap stops without it
+ls /etc/ufw/applications.d                              # openssh-server: the file behind ufw's OpenSSH profile
+dpkg -l | grep -Ei 'nvidia|cuda|linux-modules-nvidia'   # what the hold would cover
+```
+
+`ufw app list` names the profile itself (`OpenSSH`), but ufw needs root even to list, so that one
+is Dan's: `sudo ufw app list`. In the `dpkg` list, note any precompiled `linux-modules-nvidia-*`
+packages — the hold's patterns (`nvidia-*`, `libnvidia-*`, `cuda-*`) miss them.
+
+*Superseded 2026-09-25 — the code now differs: since commit cb0ec0b the dry run prints the real
+`apt-mark hold` line, computed read-only, and the patterns also cover the NVIDIA modules, the kernel
+metapackages and CUDA's version-named libraries; since f77a144 it says
+`GPU set: N packages, M already held`.*
+
+Note anything that looks wrong for this box (a missing group, a package name) and fix
+`stack/host/bootstrap.sh` + its test before Dan runs it.
 
 - [ ] **Step 5: Commit**
 
@@ -2042,22 +2187,40 @@ git commit -m "docs(readme): 🤖 record the Spark's pre-bootstrap memory baseli
 - [ ] **Dan OKs the push** of the Spark's commits (`git push`), so the runbooks and any script fix are
   on GitHub.
 
----
+***
 
 ### Task 10 [Dan]: the privileged and interactive steps
 
-Follow the runbooks, in order:
+Follow the runbooks, in the order `website/how-to/index.qmd` lists them:
 
+- [ ] Before the first: use the LAN aliases (`brightroar-lan`, `brightroar-agent-lan`) until
+  Tailscale is joined; install Claude Code and uv as Dan with their official installers, and
+  `sudo apt install tmux gh`.
+- [ ] `website/how-to/spark-session.md` — first, before any **[Spark]** task: the Mac's rules and
+  secrets guard on the Spark, plugins, a GitHub token for this repository only, the private memory
+  files.
+- [ ] `website/how-to/leak-guards.md` — gitleaks on the Spark, the denylist, `make hooks`, the
+  drill.
 - [ ] `website/how-to/bootstrap.md` — NIC bounce, `make bootstrap`, re-login, agent SSH key, Claude
   Code for `agent`, the live checks, one re-run.
+- [ ] `website/how-to/ssh.md` — a key per account, the Mac's `~/.ssh/config`, NVIDIA Sync,
+  keys-only SSH, the public IPv6 check.
 - [ ] `website/how-to/tailscale.md` — install, join, MagicDNS + HTTPS, ACL grants, the route home
   (into the vault).
-- [ ] `website/how-to/secrets.md` — every Phase 1 secret file, the HF token, the Mac key.
-- [ ] `website/how-to/spark-session.md` — plugins, `gh auth login`, the private memory files.
+- [ ] `website/how-to/secret-files.md` — every Phase 1 secret file, the HF token, the Mac key.
+- [ ] After `tailscale.md`: back to `website/how-to/ssh.md` for Keys only and the public IPv6
+  check, which need the tailnet name.
+
+Then ongoing, not once: `website/how-to/updates.md` — apt any time, upgrade day on Saturdays.
+
+(Corrected 2026-09-25, in Dan's order: this list first put `spark-session.md` last, after the
+session had already run Task 9, and left out `leak-guards.md`, `ssh.md` and `updates.md`. The
+first and last items make the order followable on a new box: step 1 needs tmux, gh, Claude Code
+and uv, and nothing reaches the tailnet names before Tailscale is joined.)
 
 ## ⇄ Switch point — Dan → Spark
 
----
+***
 
 ### Task 11 [Spark]: verify the host and record it
 
@@ -2075,16 +2238,22 @@ journalctl -u earlyoom -b --no-pager | grep -i prefer   # regex received with no
 swapon --show                                # note whether there is swap (-s 100,100 ignores it either way)
 systemctl is-active systemd-oomd             # if active: two OOM killers — decide in Task 12's review
 id agent                                     # no docker, sudo or spark-admin
-stat -c '%a %U:%G %n' /home/dan /home/agent /etc/local-ai/secrets /opt/local-ai
+apt-mark showhold | grep -E '^(linux-image-nvidia-hwe|nvidia-driver|cuda-toolkit)-'   # the GPU set is held: kernel, driver, CUDA
+stat -c '%a %U:%G %n' "$HOME" /home/agent /etc/local-ai/secrets /opt/local-ai
 ls /etc/local-ai/secrets                     # "Permission denied" — Dan's sessions can't list secrets
 tailscale status --self --json | jq -r '.Self.Online'   # true
+systemd-run --unit=local-ai-probe --wait true   # as Dan, no sudo: a password prompt or a denial
 ```
 
-Expected: every line as commented; `/home/dan` and `/home/agent` are `700`; `/opt/local-ai` is
+Expected: every line as commented; Dan's home (`/home/chendaniely`) and `/home/agent` are `700`; `/opt/local-ai` is
 `2775 root:spark-admin`.
 earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
 score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the
 first victims regardless.
+
+The `systemd-run` probe checks that the polkit rule doesn't grant *transient* units: a password
+prompt (cancel it) or a denial is right. If it runs without a password, anything running as Dan
+can start a root unit named `local-ai-*` — tighten the rule at Task 12.
 
 - [ ] **Step 2: earlyoom's victim choice, without killing anything** — a **[Dan]** check (it needs
   sudo). Dan runs, for about five seconds, then Ctrl-C:
@@ -2097,11 +2266,15 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 The `-M` values sit above the box's free memory on purpose, so earlyoom believes it must act.
 Expected: it reports the process it *would* kill, and that process is none of the avoided ones.
+(Superseded 2026-09-25: `stack/host/earlyoom.default` now avoids `sshd.*`, which also covers
+OpenSSH's `sshd-session` — commit 3735420. A re-run of this check uses the file's current
+regexes.)
 
 - [ ] **Step 3: Record the machine changes — both files, one commit**
 
 `changelog.md` — a new dated entry at the top: bootstrap applied (headless by default, earlyoom,
-ufw SSH-only, users `spark` and `agent`, polkit rule, driver and CUDA packages held), the wired NIC
+ufw SSH-only, users `spark` and `agent`, polkit rule, the GPU set held: kernel, NVIDIA modules,
+driver, CUDA), the wired NIC
 on `.201`, joined to the tailnet, Claude Code for `agent`. Command lines only, never output.
 
 `README.md` §Current state — the same facts as current state: headless (and the new `free -g`
@@ -2117,7 +2290,7 @@ git commit -m "docs(machine): 🤖 record the Phase 0 bootstrap of brightroar" \
 
 - [ ] **Dan OKs the push** from the Spark; on the Mac, `git pull`.
 
----
+***
 
 ### Task 12 [Mac]: vault entry note, council review, forward look, merge
 

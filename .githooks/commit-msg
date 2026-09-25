@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Leak guard for commit messages. Never bypass it with --no-verify.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "leak guard: gitleaks is not installed, so this commit is refused (website/how-to/leak-guards.md)." >&2
+  exit 1
+fi
+if ! gitleaks git --help >/dev/null 2>&1; then
+  echo "leak guard: this gitleaks has no 'git' command — it needs 8.19 or later (Ubuntu's archive ships 8.16); see website/how-to/leak-guards.md." >&2
+  exit 1
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "leak guard: uv is not on this shell's PATH, so this commit is refused (website/how-to/leak-guards.md)." >&2
+  exit 1
+fi
+gitleaks stdin --redact --no-banner --config "$root/.githooks/gitleaks.toml" < "$1"
+exec uv run --frozen --quiet --project "$root/spark" spark leakcheck --message "$1"

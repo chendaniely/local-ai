@@ -236,6 +236,10 @@ secrets.*
 *secret*.yml
 *secret*.yaml
 *credentials*.json
+# Every service's secret file is <service>.env, so a copied or rendered one must never stage. If a
+# non-secret template is ever tracked, re-include it by name with a `!` line below these.
+*.env
+.env.*
 
 # Local agent / editor state that can carry paths and tokens
 .claude/settings.local.json
@@ -258,3 +262,9 @@ huggingface/
 *-inventory.txt
 ip-addr.txt
 tailscale-status.txt
+
+# local-ai build outputs and local-only files
+spark/.venv/
+website/_site/
+website/.quarto/
+stack/models.local.yaml

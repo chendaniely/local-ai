@@ -8,6 +8,115 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-24 — Phase 0 bootstrap: headless, users, firewall, tailnet, secrets
+
+**Wired NIC on `.201`**, bounced from a session on the Wi-Fi address:
+
+```bash
+sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>
+```
+
+**Bootstrap applied, then re-run once** (no errors, nothing duplicated), following
+[`website/how-to/bootstrap.md`](website/how-to/bootstrap.md):
+
+```bash
+make bootstrap
+```
+
+- Packages installed or confirmed: the stack's, plus the repo's tools and Dan's own (the list is in
+  `stack/host/bootstrap.sh`).
+- The GPU set held: kernel, NVIDIA modules, driver and CUDA, 151 packages.
+- Users `spark` and `agent`, and groups `spark`, `spark-users` and `spark-admin`. Dan joined
+  `spark-admin`, `spark-users` and `adm`. Both homes are 0700.
+- `/opt/local-ai`, `/etc/local-ai`, `/etc/local-ai/secrets`, `/var/lib/local-ai` and its subfolders,
+  and `/home/agent/work`.
+- Boots to a console (`multi-user.target`); the display manager is stopped.
+- earlyoom installed, configured from `stack/host/earlyoom.default`, and running. systemd-oomd is
+  inactive, so there's one out-of-memory killer.
+- ufw on: deny incoming, allow OpenSSH (IPv4 and IPv6).
+- The polkit rule for `local-ai-*` units.
+
+**agent**: its own SSH key from the Mac, and Claude Code installed as agent:
+
+```bash
+sudo install -d -m 700 -o agent -g agent /home/agent/.ssh && sudo tee -a /home/agent/.ssh/authorized_keys < ~/agent-key.pub >/dev/null && sudo chown agent:agent /home/agent/.ssh/authorized_keys && sudo chmod 600 /home/agent/.ssh/authorized_keys && rm ~/agent-key.pub
+curl -fsSL https://claude.ai/install.sh | bash    # as agent
+```
+
+The live checks passed. agent can't enter Dan's home, is refused by Docker, and `nvidia-smi` as
+agent names the GPU (`NVIDIA GB10`). `sudo docker ps -a` lists no containers.
+
+**Tailscale** installed and joined, following
+[`website/how-to/tailscale.md`](website/how-to/tailscale.md). In the admin console, MagicDNS and
+HTTPS certificates are on. The allow-all policy was replaced: Dan's devices reach each other, and
+reach `tag:spark` on 22 and 443. There is no route home, by choice. The Spark is tagged, so its
+key doesn't expire:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+sudo tailscale up --advertise-tags=tag:spark
+```
+
+**Secret files** for Phase 1 created in `/etc/local-ai/secrets/` (`llama-swap.env`,
+`open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), following
+[`website/how-to/secret-files.md`](website/how-to/secret-files.md). The Hugging Face token is a
+fine-grained, read-only one. Values are never displayed; the vault records the names.
+
+**Verified afterwards (Phase 0, Task 11)**:
+- Memory, headless (`free -g`): 121 total, 2 used, 118 available.
+- earlyoom received its regexes without quotes.
+- A dry run of earlyoom picks a desktop helper to kill, never anything on the avoid list.
+- Starting a transient `local-ai-probe` unit without a password is refused, so the polkit rule
+  doesn't reach transient units.
+- Dan's sessions can't list `/etc/local-ai/secrets`.
+
+## 2026-09-24 — gitleaks 8.30.1 replaces the archive build
+
+**gitleaks 8.30.1**, the upstream release binary, installed to `/usr/local/bin` for the repo's
+leak-check hooks, following [`website/how-to/leak-guards.md`](website/how-to/leak-guards.md). The
+release's checksum is verified before anything is installed:
+
+```bash
+cd "$(mktemp -d)"
+curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz &&
+  curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt &&
+  sha256sum --ignore-missing -c gitleaks_8.30.1_checksums.txt &&
+  tar xzf gitleaks_8.30.1_linux_arm64.tar.gz gitleaks &&
+  sudo install -m 0755 gitleaks /usr/local/bin/
+cd -
+```
+
+gitleaks isn't in the Snap Store (checked the same day), so the release binary is the only way to
+get a current version on this box.
+
+**Ubuntu's gitleaks 8.16.0 removed**, so only one gitleaks is on the box. It was too old for the
+hooks, and with both installed, which one ran depended on `PATH`:
+
+```bash
+sudo apt remove gitleaks
+```
+
+`gitleaks version` now prints `8.30.1`; shellcheck 0.9.0 stays, from Ubuntu's archive. The Spark's
+clone has the leak-check hooks on (`make hooks`), and they refuse the planted private address in
+`leak-guards.md`'s drill.
+
+**Bootstrap now installs every apt package the box relies on**, rather than assuming DGX OS ships
+it: `git`, `curl`, `openssl`, `shellcheck` and `gh` for the repo and runbooks, and `python3-dev`,
+`r-base` and `r-base-dev` for Dan's own work, beside the stack's own packages. All were already
+installed here, so adding them to the list changes nothing on this box.
+
+**Wi-Fi always reconnects.** Wi-Fi is the out-of-band path, so it must come back by itself: retry
+without limit, and no power saving, which can drop a headless box's link. The connection's name is
+private (it is the network's name), so it is a placeholder here:
+
+```bash
+sudo nmcli connection modify <wifi-connection> connection.autoconnect-retries 0 802-11-wireless.powersave 2
+sudo nmcli connection up <wifi-connection>
+```
+
+`autoconnect-retries 0` means retry forever; `powersave 2` turns power saving off.
+
 ## 2026-09-23 — arrival and first setup
 
 **Hardware.** GIGABYTE AI TOP ATOM (`ATAGB10-9002` rev 1.0) unboxed and powered on. Full
@@ -92,6 +201,13 @@ CRAN release. `r-base-dev` brings the compiler toolchain and headers, so package
 source. On arm64 that is the normal path anyway, because CRAN publishes no Linux binaries. If a
 newer R is ever needed, the route is CRAN's own Ubuntu apt repository (or `rig`), not this
 package.
+
+**Python headers** installed from Ubuntu's archive. *(Added 2026-09-24: this was missing here; apt's
+own log shows the install on 2026-09-23.)*
+
+```bash
+sudo apt install python3-dev
+```
 
 **gitleaks** and **shellcheck** installed from Ubuntu's archive, for the repo's leak-check hooks:
 

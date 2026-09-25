@@ -1,0 +1,78 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+
+# Every job gets a time limit well above its usual run (under a minute), so a hung step fails
+# instead of holding a runner for GitHub's default of six hours.
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.18"
+      - run: uv run --frozen --project spark pytest spark/tests
+      - run: uv run --frozen --project spark spark docs stack --check
+      - run: uv run --frozen --project spark spark docs check-scenarios
+
+  leaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.18"
+      # Three gitleaks steps, so a red one names its cause: a failed download is a network problem,
+      # a failed checksum is a tampered or corrupt download, and only the scan reports leaks.
+      - name: download gitleaks
+        run: curl -fsSL --retry 3 --max-time 120 -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+      - name: check gitleaks against its pinned checksum, then unpack it
+        run: |
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: gitleaks over the whole history
+        run: ./gitleaks git --redact --no-banner -v --config .githooks/gitleaks.toml .
+      - name: repo patterns over every tracked file
+        env:
+          CI: "true"
+        run: uv run --frozen --project spark spark leakcheck --tracked --ci
+      # gitleaks' rules don't cover addresses, so the repo's own patterns also read every commit's
+      # patches (--cc adds a merge's conflict resolutions) and messages, not only today's tree.
+      - name: repo patterns over every commit's patches and messages
+        env:
+          CI: "true"
+        run: |
+          git log -p --cc --format='%H%n%B' > "$RUNNER_TEMP/history.txt"
+          uv run --frozen --project spark spark leakcheck --message "$RUNNER_TEMP/history.txt" --ci
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - run: shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh
+
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: quarto-dev/quarto-actions/setup@8a96df13519ee81fd526f2dfca5962811136661b # v2.2.0
+        with:
+          version: "1.10.3"
+      - run: quarto render website

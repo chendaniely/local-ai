@@ -1,0 +1,25 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "local-ai"
+  description: "One DGX Spark serving open models — the plan, the scenarios, the runbooks."
+  site-url: https://chendaniely.github.io/local-ai/
+  repo-url: https://github.com/chendaniely/local-ai
+  repo-subdir: website
+  navbar:
+    left:
+      - text: Plan
+        href: design/plan.md
+      - text: Scenarios
+        href: scenarios/index.qmd
+      - text: How-to
+        href: how-to/index.qmd
+      - text: Stack
+        href: reference/stack.md
+
+format:
+  html:
+    theme: cosmo
+    toc: true

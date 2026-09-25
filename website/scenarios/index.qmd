@@ -1,0 +1,17 @@
+---
+title: "Scenarios"
+listing:
+  contents: "s*.md"
+  type: table
+  sort: "title"
+  fields: [scenario-id, title, phase, status]
+  field-display-names:
+    scenario-id: "ID"
+    phase: "Phase"
+    status: "Status"
+---
+
+Each scenario says what the stack does in a situation that matters, what I see, and how to
+override it. **planned** → designed only; **built** → implemented; **verified** → checked by
+`spark doctor` (or a dated drill), with the date. A change in behaviour updates the page and its
+check in the same commit.
