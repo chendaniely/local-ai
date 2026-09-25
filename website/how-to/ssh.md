@@ -80,10 +80,12 @@ including `brightroar`. Keep the two apart:
   `Host brightroar`, and ssh takes each setting from the first block that matches, so the two
   would mix. Sync reads its own file directly and doesn't need the `Include`.
 - **Don't edit Sync's file by hand.** Sync writes it and may overwrite your changes.
-- **Point Sync at the current address in Sync itself.** Its aliases were set up when the wired NIC
-  still had its old pool address, so they point at a stale address. Change the Spark's address in
-  Sync's device settings to the wired reservation or the tailnet name. Which setting does this is
-  *not yet checked*.
+- **Give Sync one device: the wired address.** At setup, Sync had created three entries: the
+  wired NIC's old pool address (stale once the reservation took), the Wi-Fi address, and
+  `brightroar.local`. The last one is mDNS: it works only at home and resolves to whichever address
+  the Spark announces, which was the slow Wi-Fi one. In NVIDIA Sync, remove every device except
+  one at `<wired-address>`. Sync then rewrites its own file with just that entry (done
+  2026-09-24).
 
 ## Test
 
