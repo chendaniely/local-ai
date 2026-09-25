@@ -155,19 +155,27 @@ when that file was retired on 2026-09-23.
   services are the DGX Dashboard (~0.4 GiB) and Docker with containerd (~0.15 GiB). No model
   server is installed (no Ollama, as a snap or a service), and the snaps are the desktop's own
   (browser, mail, store, firmware updater), none running as a service.
-- **Pending from Phase 0's close** (2026-09-25). The repo has each of these, but the box doesn't
-  yet, or nothing records it. Each gets a dated `changelog.md` entry and a line here when it's done:
+- **Pending from Phase 0's close** (2026-09-25). Not yet applied on the box, or applied but not yet
+  recorded here. A box change gets a dated `changelog.md` entry and a line here when it's done; the
+  IPv6 check's result goes in the vault instead:
+  - **Pull before the next upgrade day.** Nothing after `96d0217` has been pushed, so the Spark's
+    clone has the `updates.md` from before Phase 0's council, whose re-hold runs all of
+    `make bootstrap` and whose recovery line can leave the box without a GPU. The current steps
+    need `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Once the merge is
+    pushed, pull it on the Spark before upgrade day, or skip that Saturday; the plan allows skipping
+    one.
   - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
     becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
     the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
-  - **Keys-only SSH**, with the public IPv6 check
-    ([SSH from the Mac](website/how-to/ssh.md#keys-only)).
+  - **Keys-only SSH** ([SSH from the Mac](website/how-to/ssh.md#keys-only)), then its one-time
+    public IPv6 check, whose result goes in the vault.
   - **A GitHub token for this repository only**, with the first `gh` login revoked
     ([The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only)).
   - **The secrets guard and the Mac's global rules** for the Spark's Claude session
     ([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3).
-  - **Two facts to record:** Tailscale's version and the kernel's full release string, both noted
-    above as not yet recorded.
+  - **Three facts to record:** Tailscale's version and the kernel's full release string, both noted
+    above as not yet recorded, and OpenSSH's version (the keys-only drop-in was tested only with
+    the Mac's).
 
 ### The MacBook — `heartsbane`
 
