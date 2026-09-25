@@ -124,31 +124,75 @@ Stop any llama.cpp server first, so the two never share memory.
 sudo docker pull nvcr.io/nvidia/vllm:26.08-py3
 ```
 
-**B2. Serve a model.** vLLM uses a model's original Hugging Face repo (safetensors), not GGUF. It
-downloads into `~/scratch/hf`, as root, because the container runs as root:
+**B2. Save the compose file.** vLLM uses a model's original Hugging Face repo (safetensors), not
+GGUF. Everything you're likely to change is in `x-settings` at the top:
 
 ```bash
-mkdir -p ~/scratch/hf
-sudo docker run --rm -it --name scratch-vllm --gpus all \
-  --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -p 127.0.0.1:8000:8000 \
-  -v ~/scratch/hf:/root/.cache/huggingface \
-  nvcr.io/nvidia/vllm:26.08-py3 \
-  vllm serve Qwen/Qwen3-8B --served-model-name qwen3-8b \
-    --gpu-memory-utilization 0.4 --max-model-len 32768 \
-    --enable-auto-tool-choice --tool-call-parser hermes
+mkdir -p ~/scratch/vllm && nano ~/scratch/vllm/compose.yaml
 ```
 
-- **`--gpu-memory-utilization 0.4` is the important one.** vLLM reserves that fraction of GPU memory
-  at start, whatever the model needs. On GB10 that memory is the whole machine's, and the default of
-  0.9 would take about 110 GB. 0.4 reserves about 50 GB. Raise it only as far as the scratch
-  guardrail allows (0.5 at most).
-- `-p 127.0.0.1:8000:8000` publishes the port on the Spark only; the Mac uses the tunnel.
-- `--served-model-name` is the name clients send, like llama.cpp's `--alias`.
-- The last line enables tool calling for Qwen3, which pi needs. Other model families use a different
-  `--tool-call-parser`; see vLLM's docs.
-- If `--gpus all` is refused, use `--device nvidia.com/gpu=all` instead. The Spark has NVIDIA's
-  device spec at `/var/run/cdi/nvidia.yaml`.
+```yaml
+# Scratch vLLM (not the stack). Edit the values in `x-settings`, then: sudo docker compose up
+x-settings:
+  model: &model Qwen/Qwen3-8B            # Hugging Face repo (safetensors, not GGUF)
+  name: &name qwen3-8b                    # the name clients send
+  memory: &memory "0.4"                   # share of GB10's memory vLLM reserves; 0.5 at most here
+  context: &context "32768"               # max tokens per request
+  tool_parser: &tool_parser hermes        # tool calling for Qwen3; other families differ
+
+services:
+  vllm:
+    image: nvcr.io/nvidia/vllm:26.08-py3
+    container_name: scratch-vllm
+    command:
+      - vllm
+      - serve
+      - *model
+      - --served-model-name
+      - *name
+      - --gpu-memory-utilization
+      - *memory
+      - --max-model-len
+      - *context
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - *tool_parser
+    ports:
+      - "127.0.0.1:8000:8000"             # the Spark only; the Mac uses the SSH tunnel
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes:
+      - ./hf:/root/.cache/huggingface     # downloads land in ~/scratch/vllm/hf (root-owned)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+- **`memory` is the important one.** vLLM reserves that share of GPU memory at start, whatever the
+  model needs. On GB10 that is the whole machine's memory, and vLLM's default of 0.9 would take about
+  110 GB. 0.4 reserves about 50 GB. Raise it only as far as the scratch guardrail allows (0.5 at most).
+- `127.0.0.1:8000` publishes the port on the Spark only; the Mac uses the tunnel.
+- `name` is what clients send, like llama.cpp's `--alias`.
+- `tool_parser` enables tool calling, which pi needs. `hermes` is right for Qwen3; other families
+  use a different parser (see vLLM's docs).
+- If the GPU request is refused, replace the whole `deploy:` block with
+  `devices: ["nvidia.com/gpu=all"]`. The Spark has NVIDIA's device spec at `/var/run/cdi/nvidia.yaml`.
+
+`sudo docker compose config` (in that folder) checks the file without starting anything.
+
+**B3. Serve it:**
+
+```bash
+cd ~/scratch/vllm
+sudo docker compose up            # stays in the foreground; Ctrl-C stops it
+# or: sudo docker compose up -d && sudo docker compose logs -f
+```
 
 Startup takes a few minutes: download, load, then compile. It is ready when the log says
 `Application startup complete`. Check it from another window:
@@ -158,11 +202,13 @@ curl -s http://127.0.0.1:8000/v1/models | jq -r '.data[].id'   # qwen3-8b
 free -g
 ```
 
-**B3. From the Mac:** the same as step 4, on port 8000:
+To switch models, edit `x-settings` and run `sudo docker compose up` again.
+
+**B4. From the Mac:** the same as step 4, on port 8000:
 `ssh -N -L 8000:127.0.0.1:8000 brightroar`, then base URL `http://localhost:8000/v1`. vLLM has no chat
 page, so use a client.
 
-**B4. Stop it:** Ctrl-C, or `sudo docker stop scratch-vllm`. `--rm` removes the container.
+**B5. Stop it:** Ctrl-C, or `sudo docker compose down` in `~/scratch/vllm`.
 
 ## What you can run
 
@@ -273,8 +319,8 @@ saved, so there's nothing to remove.
 **If you used Option B (Spark):** its downloads are owned by root, and the image stays until removed:
 
 ```bash
-sudo docker stop scratch-vllm 2>/dev/null          # if still running
-sudo rm -rf ~/scratch/hf                             # the models vLLM downloaded (root-owned)
+(cd ~/scratch/vllm && sudo docker compose down)     # if still running
+sudo rm -rf ~/scratch/vllm/hf                        # the models vLLM downloaded (root-owned)
 sudo docker rmi nvcr.io/nvidia/vllm:26.08-py3        # the image, about 20 GB on disk
 sudo docker ps -a && sudo docker images             # nothing scratch-related left
 ```
