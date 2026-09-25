@@ -155,11 +155,36 @@ when that file was retired on 2026-09-23.
   services are the DGX Dashboard (~0.4 GiB) and Docker with containerd (~0.15 GiB). No model
   server is installed (no Ollama, as a snap or a service), and the snaps are the desktop's own
   (browser, mail, store, firmware updater), none running as a service.
+- **Pending from Phase 0's close** (2026-09-25). The repo has each of these, but the box doesn't
+  yet, or nothing records it. Each gets a dated `changelog.md` entry and a line here when it's done:
+  - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
+    becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
+    the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
+  - **Keys-only SSH**, with the public IPv6 check
+    ([SSH from the Mac](website/how-to/ssh.md#keys-only)).
+  - **A GitHub token for this repository only**, with the first `gh` login revoked
+    ([The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only)).
+  - **The secrets guard and the Mac's global rules** for the Spark's Claude session
+    ([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3).
+  - **Two facts to record:** Tailscale's version and the kernel's full release string, both noted
+    above as not yet recorded.
 
 ### The MacBook — `heartsbane`
 
 - **16 GB M1 Pro**, wired.
-- Docker Desktop running with a **7.75 GiB** VM — nearly half the machine.
+- Docker Desktop running with a **7.75 GiB** VM — nearly half the machine. Phase 0's Task 12 also
+  used it for throwaway `ubuntu:24.04` containers, to test shell and apt behaviour on the Spark's
+  userland.
+- **The repo's tools:** gitleaks **8.30.1** and shellcheck **0.11.0**, from Homebrew; uv
+  **0.12.18**; Quarto **1.10.3**, for `make docs`; gh **2.101.0** (all as of 2026-09-24).
+- **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
+  with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
+  `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
+  `spark/.python-version` pins (2026-09-24).
+- **SSH to the Spark** goes through the `~/.ssh/config` aliases that
+  [SSH from the Mac](website/how-to/ssh.md) names: `brightroar` and `brightroar-agent`, by the
+  tailnet's full MagicDNS name (2026-09-24). The runbook's LAN fallbacks, `brightroar-lan` and
+  `brightroar-agent-lan`, are not recorded as added here yet.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
@@ -167,7 +192,10 @@ when that file was retired on 2026-09-23.
   install its own daemon and runtime on the Spark.
 - **NVIDIA Sync connects over SSH**, per NVIDIA's documentation: key-based auth set up once, then
   port forwards that exist only while Sync is connected — so it is not a separate way into the
-  Spark. From the docs (2026-09-23); not yet checked against this setup.
+  Spark. From the docs (2026-09-23). It keeps its own key, installed for my account on the Spark,
+  and its own SSH config file, and it was cut down to one device, at the wired address, on
+  2026-09-24 ([SSH from the Mac](website/how-to/ssh.md#nvidia-sync)). That its port forwards exist
+  only while it is connected is not yet checked.
 
 ## Factory reset
 
