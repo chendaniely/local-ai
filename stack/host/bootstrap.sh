@@ -2,11 +2,13 @@
 # Host setup for brightroar (DGX OS, Ubuntu 24.04, aarch64).
 #   Preview (changes nothing):  bash stack/host/bootstrap.sh --dry-run
 #   Apply (Dan, once):          sudo bash stack/host/bootstrap.sh
+#   Re-hold the GPU set only:   sudo bash stack/host/bootstrap.sh --hold-gpu   (upgrade day; add
+#                               --dry-run to preview it)
 # Safe to re-run: every step checks before it changes anything.
 set -euo pipefail
 
 DRY_RUN=0
-if [[ "${1:-}" == "--dry-run" ]]; then DRY_RUN=1; fi
+HOLD_ONLY=0
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Under sudo (make bootstrap) the admin is SUDO_USER; a dry run has no sudo, so it is whoever runs it.
@@ -15,6 +17,18 @@ ADMIN_USER="${SUDO_USER:-$(id -un)}"
 say() { printf '==> %s\n' "$*"; }
 run() {
   if (( DRY_RUN )); then printf '+ %s\n' "$*"; else "$@"; fi
+}
+
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) DRY_RUN=1 ;;
+      --hold-gpu) HOLD_ONLY=1 ;;
+      # A mistyped --dry-run under sudo must not turn into a real run.
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run and --hold-gpu)" >&2; exit 2 ;;
+    esac
+  done
 }
 
 preflight() {
@@ -59,27 +73,67 @@ packages() {
 # The GPU stack only works as a matched set: the kernel, the NVIDIA modules built for it (they need one
 # exact driver version), the driver and CUDA. DGX OS ships it as one, so it is held as one — holding
 # the driver alone would let `apt upgrade` install a kernel with no NVIDIA module. Upgrade day moves
-# the whole set: website/how-to/updates.md.
+# the whole set, then re-holds it with --hold-gpu: website/how-to/updates.md.
 gpu_hold_patterns() {
   printf '%s\n' 'nvidia-*' 'libnvidia-*' 'cuda-*' 'linux-modules-nvidia-*' 'linux-*nvidia-hwe-*'
   # CUDA's libraries carry the toolkit's version (libcublas-13-0), not a cuda- prefix.
   { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' 'cuda-toolkit-*' 2>/dev/null || true; } |
-    awk '$1 == "ii" && $2 ~ /^cuda-toolkit-[0-9]+-[0-9]+$/ {sub(/^cuda-toolkit-/, "", $2); print "*-" $2}'
+    awk '($1 == "ii" || $1 == "hi") && $2 ~ /^cuda-toolkit-[0-9]+-[0-9]+$/ {sub(/^cuda-toolkit-/, "", $2); print "*-" $2}'
+}
+
+# A problem with the GPU set stops the real run. A dry run may be a preview off the Spark (the Mac,
+# CI), so it says where the real run would stop and carries on.
+refuse_hold() {
+  if (( DRY_RUN )); then printf '+ apt-mark hold   (a real run stops here: %s)\n' "$1"; return 0; fi
+  echo "bootstrap: $1" >&2
+  exit 1
 }
 
 hold_gpu_stack() {
   say "hold the GPU stack — kernel, NVIDIA modules, driver, CUDA — it moves only on upgrade day"
-  local pattern pkgs
+  local pattern rows unfinished pkgs total held missing
   local -a patterns=()
   while IFS= read -r pattern; do patterns+=("$pattern"); done < <(gpu_hold_patterns)
-  # dpkg-query exits non-zero when a pattern matches nothing; that must not abort the script.
-  pkgs="$( { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' "${patterns[@]}" 2>/dev/null || true; } | awk '$1 == "ii" {print $2}' | sort -u)"
-  if [[ -n "$pkgs" ]]; then
-    # shellcheck disable=SC2086  # one package per word is intended
-    run apt-mark hold $pkgs
-  elif (( DRY_RUN )); then
-    printf '+ apt-mark hold   (nothing installed matches %s)\n' "${patterns[*]}"
+  # dpkg-query exits non-zero when a pattern matches nothing; that must not abort the script. An
+  # empty result is refused below.
+  rows="$( { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' "${patterns[@]}" 2>/dev/null || true; } | sort -u)"
+  # The status is want, state and error flag. ii is installed and hi installed and held; rc, un
+  # and pn are not installed. Anything else (iU unpacked, iF half-configured, an R flag) is a dpkg
+  # run that didn't finish, and holding around it would leave those packages free to move.
+  unfinished="$(awk 'NF >= 2 && $1 != "ii" && $1 != "hi" && $1 !~ /^[uihrp][nc]$/ {print "  " $2 " (" $1 ")"}' <<<"$rows")"
+  if [[ -n "$unfinished" ]]; then
+    {
+      echo "bootstrap: these GPU-set packages are not cleanly installed, so they can't be held:"
+      echo "$unfinished"
+      echo "finish dpkg first: sudo dpkg --configure -a — then run this again"
+    } >&2
+    exit 1
   fi
+  pkgs="$(awk '$1 == "ii" || $1 == "hi" {print $2}' <<<"$rows" | LC_ALL=C sort -u)"
+  if [[ -z "$pkgs" ]]; then
+    refuse_hold "nothing installed matches ${patterns[*]}, so the hold would protect nothing — check the patterns against dpkg -l"
+    return 0
+  fi
+  total="$(wc -l <<<"$pkgs" | tr -d ' ')"
+  held="$(awk '$1 == "hi"' <<<"$rows" | wc -l | tr -d ' ')"
+  say "GPU set: $total packages, $held already held"
+  if ! grep -q '^linux-image-' <<<"$pkgs"; then
+    refuse_hold "the GPU set has no kernel (no linux-image-* package matches the patterns), so apt upgrade could install a kernel with no NVIDIA module — fix gpu_hold_patterns"
+    return 0
+  fi
+  # shellcheck disable=SC2086  # one package per word is intended
+  run apt-mark hold $pkgs
+  if (( DRY_RUN )); then return 0; fi
+  # apt-mark can exit 0 and still leave a package unheld: check each one against apt's own list.
+  missing="$(LC_ALL=C comm -23 <(printf '%s\n' "$pkgs") <(apt-mark showhold | LC_ALL=C sort -u))"
+  if [[ -n "$missing" ]]; then
+    {
+      echo "bootstrap: apt-mark hold did not hold these, so apt upgrade can still move them:"
+      awk '{print "  " $0}' <<<"$missing"
+    } >&2
+    exit 1
+  fi
+  say "GPU set held: $total packages"
 }
 
 users_and_groups() {
@@ -144,7 +198,14 @@ polkit_rule() {
 }
 
 main() {
+  parse_args "$@"
   preflight
+  if (( HOLD_ONLY )); then
+    # Upgrade day: re-hold the set and nothing else — no desktop stop, no earlyoom restart, no
+    # owner and mode resets.
+    hold_gpu_stack
+    return 0
+  fi
   packages
   hold_gpu_stack
   users_and_groups
@@ -156,4 +217,5 @@ main() {
   say "done — continue with website/how-to/bootstrap.md, 'After bootstrap'"
 }
 
-main "$@"
+# Run only when executed. Sourcing the file (the tests do) just defines the functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
