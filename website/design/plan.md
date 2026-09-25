@@ -191,9 +191,11 @@ In order of how much they constrain the design:
   contents, and type changes; a binary, such as a screenshot, can't be read, so the hook names it
   for a person to check. CI runs gitleaks and the patterns, without the denylist, over every
   tracked file and every commit's patches and messages. Configs render outside the repo; fixtures
-  use RFC 5737 addresses and `example.invalid`; no pasted terminal output; Quarto `_freeze` and
-  Actions logs get checked too. (Corrected 2026-09-25: this said screenshots get checked; binaries
-  are named, not read.)
+  use RFC 5737 addresses and `example.invalid`; no pasted terminal output; Quarto `_freeze` gets
+  checked too, like any tracked file. Nothing scans Actions logs: what limits them is what CI
+  prints, gitleaks with `--redact` and the leak check's 3-character excerpts. (Corrected
+  2026-09-25: this said screenshots and Actions logs get checked; binaries are named, not read, and
+  the logs aren't scanned.)
 
 ### Visibility and notifications
 
@@ -264,9 +266,14 @@ plus a `Makefile` — the front door.
   `make hooks` turns the leak-guard hooks on in each clone; the private denylist, with at least one
   term, exists on both machines. (Corrected 2026-09-25: this said bootstrap installs the hooks;
   `make hooks` does, in each clone.)
-- **First time on the Spark:** `git clone` (a public repo — no credentials needed) → Dan creates the
-  private files (per-service secrets; private values such as the NAS and LAN addresses) →
-  `make bootstrap` (sudo once: users, firewall, earlyoom, systemd units, Compose).
+- **First time on the Spark:** `git clone` (a public repo — no credentials needed) → the runbooks,
+  in the order `website/how-to/index.qmd` lists them, where `make bootstrap` (sudo once: users,
+  directories including the secrets folder, the GPU-set hold, earlyoom, the firewall) comes before
+  Dan creates the private files (per-service secrets, in the folder bootstrap made; private values
+  such as the NAS and LAN addresses) → from Phase 1, `make install-units` (sudo once) links the
+  systemd units, Compose's included. (Corrected 2026-09-25: this put the private files before
+  bootstrap, which creates their folder, and had bootstrap install the units and Compose, which
+  Phase 1's `make install-units` does.)
 - **After any change:** `make apply` on the Spark, or `make deploy` from the Mac (SSH, then
   `git pull && make apply`). `spark apply` renders (registry + pins + private values → concrete
   configs in a deploy directory outside the repo), validates with each tool's own checker, shows the
@@ -549,6 +556,10 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-25** — S23, upgrade day, joins the scenarios (the goal-fit council's forward look). Phase
   1's promise that the stack serves again after a routine upgrade, a reboot and upgrade day now has
   an ID for `make doctor` and the done-when to point at.
+- **2026-09-25** — From the review of those corrections. The first time on the Spark follows the
+  runbooks' order: bootstrap, which creates the secrets folder, comes before the private files, and
+  Phase 1's `make install-units`, not bootstrap, links the units. The leak guards no longer claim
+  that Actions logs are checked; nothing scans them.
 
 ## Sources
 
