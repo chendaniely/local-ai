@@ -103,6 +103,64 @@ Then, on the Mac:
   Claude path (`ANTHROPIC_BASE_URL` or a proxy), and the repo's first rule is that the Claude path
   stays untouched.
 
+## What you can run
+
+**One model per server.** The chat page and the API see only the model `llama-server` was started
+with. To switch, restart it with another file ([Switch models](#switch-models)).
+
+**From Hugging Face:**
+
+- **GGUF files only.** Most popular models have GGUF versions, from their makers or from
+  `ggml-org`, `unsloth` or `bartowski`. A model published only as safetensors needs converting first.
+- **An architecture your build supports.** Mainstream families work: Llama, Qwen, Gemma, Mistral,
+  DeepSeek, GLM, Phi. A brand-new one may need a newer llama.cpp. If loading fails with "unknown
+  architecture", run `git pull` in `~/scratch/llama.cpp` and repeat step 1's two `cmake` lines.
+- **Gated models** (some Llama, Gemma and Mistral repos) need their license accepted on the
+  model's page, and your token for the download. Give the token for that one command only, rather
+  than `hf auth login`, which saves it in a file:
+
+  ```bash
+  read -rsp "HF token: " HF_TOKEN; echo; export HF_TOKEN
+  uvx --from huggingface_hub hf download <repo> <file> --local-dir ~/scratch/models
+  unset HF_TOKEN
+  ```
+
+- **The license** on each model's page says what you may use it for.
+
+**What fits.** A 4-bit file is about 0.6 GB per billion parameters, plus a few GB for context:
+
+| Model size | 4-bit file | In scratch? |
+|---|---|---|
+| 8B | ~5 GB | easily |
+| 32B | ~20 GB | yes |
+| 70B | ~42 GB | yes, slowly |
+| 120B-class mixture-of-experts | ~65 GB | at the limit (keep scratch under about 60–70 GB) |
+| over ~110 GB | — | never: it can't fit, and trying risks freezing the box |
+
+Context costs memory too: a long `-c` (128K tokens, say) can add many GB on top of the file.
+
+**What llama.cpp does and doesn't do:**
+
+| | |
+|---|---|
+| Text chat, coding, tool calling | yes |
+| Embeddings, reranking | yes (`--embedding`, `--reranking`) |
+| Images as input | yes, for vision models that ship an `mmproj` file |
+| Speech-to-text | no: that's whisper.cpp (Phase 1) |
+| Image generation | no: diffusion models need other tools (ComfyUI, in the plan's backlog) |
+| Training or fine-tuning | no (it can load LoRA adapters, not train them) |
+| Many users at once | weaker: it's built for one person; vLLM is the high-concurrency option |
+
+**Speed and quality:**
+
+- **Generation speed tracks active parameters,** because GB10 is bound by memory bandwidth.
+  Mixture-of-experts models (Gemma 4 26B-A4B, with about 4B active) feel fast. A dense 70B runs
+  at single-digit tokens per second. Tens of tokens per second is the realistic band for big models.
+- **Quantization trades quality for size.** 4-bit (`Q4_K_M`, `Q4_0`) is the usual sweet spot,
+  8-bit is near-lossless at twice the size, and quality drops noticeably below 4-bit.
+- **Tool calling depends on the model's chat template.** Some community GGUF files have imperfect
+  templates, and agents like pi then misbehave. Makers' own or `ggml-org` files are the safest.
+
 ## Switch models
 
 Ctrl-C the server, download another file (step 2), and start step 3 again with the new `-m`. One
