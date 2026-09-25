@@ -136,7 +136,8 @@ with the rule it now has in `CLAUDE.md` (*Lessons from Phase 0*):
 - **The unit-file model.** Dan decides before Phase 1's Task 6 writes the unit templates: keep the
   units rendered as Dan, in which case anything running as Dan can become root without a password,
   or install root-owned copies. The plan's *Open items and risks* gives both options, and
-  `phase-1.md` builds the first and stops at Task 6.
+  `phase-1.md` builds the first and stops at Task 6. (Decided 2026-09-25: root-owned copies, which
+  `phase-1.md` now builds; the plan's open item is resolved.)
 - **Whether `make upgrade-gpu` runs the GRUB check itself** before it says to reboot. It is
   recommended; decide at Phase 1's pre-flight (`phase-1.md`, Task 10). Until then, `updates.md`'s
   step 5 GRUB check is run by hand, before the move and again before the reboot.

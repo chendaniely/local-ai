@@ -12,6 +12,10 @@ date: 2026-09-23
 > machine switch (one session at a time). Phase 0 must be done first. This plan is revised after
 > Phase 0's review if anything learned there changes it (see the plan's Revisions). Revised
 > 2026-09-25 with Phase 0's lessons: Task 10 is new, and each task after it is numbered one higher.
+> Revised again 2026-09-25, before Task 1, with Dan's decision on the unit-file model: root runs
+> root-owned copies of the units and the Compose project, which `make install-units` installs
+> (Tasks 6, 7, 9, 10, 12, 16). Every listing in Tasks 1–10 was run first, in a scratch copy, on the
+> Mac and in an `ubuntu:24.04` container.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -25,10 +29,12 @@ a llama-swap config, systemd units and a Compose file, validates them, and deplo
 engine through `spark launch`, which refuses a load when the brake holds or the model doesn't fit,
 and marks the engine as the first thing the kernel or earlyoom should kill. `spark brake` watches
 `MemAvailable` and unloads models before the box reaches the freeze band. Open WebUI and SearXNG run
-under Compose (host networking, bound to 127.0.0.1) from a root-owned unit. Updates don't take it
-down: bootstrap tells needrestart to leave the `local-ai-*` units alone, `make upgrade-gpu` moves the
-GPU set on upgrade day through bootstrap's hold, and `make doctor` checks Phase 0's guardrails and
-the stack in one pass.
+under Compose (host networking, bound to 127.0.0.1) from a root-owned unit. What root runs is root's
+own: `spark apply` only stages the units and the Compose project, and `make install-units` (sudo)
+shows them and installs root's copies, so nothing running as Dan changes what root runs without
+Dan's sudo. Updates don't take it down: bootstrap tells needrestart to leave the `local-ai-*` units
+alone, `make upgrade-gpu` moves the GPU set on upgrade day through bootstrap's hold, and
+`make doctor` checks Phase 0's guardrails and the stack in one pass.
 
 **Tech Stack:** Python ≥3.12 via uv · PyYAML · huggingface_hub (downloads only) · stdlib `urllib` ·
 pytest · llama-swap v257 · llama.cpp b11146 (v0.5.0, prebuilt arm64 + CUDA 13.4) · whisper.cpp
@@ -46,12 +52,21 @@ Tailscale serve · pi 0.85.1.
 - **Ports, all bound to 127.0.0.1:** llama-swap `9100` · Open WebUI `3000` · SearXNG `8888` · engines
   from `5800` (llama-swap's `${PORT}`). Every one is set explicitly — Open WebUI, SearXNG and
   llama-server all default to 8080. `tailscale serve` maps HTTPS 443 → 127.0.0.1:3000.
-- **Paths:** `/opt/local-ai/{app,bin,etc,python}` · `/etc/local-ai/secrets/*.env` ·
+- **Paths:** `/opt/local-ai/{app,bin,etc,python}` (`etc/` only stages what root runs) · root's copies
+  in `/etc/systemd/system/local-ai-*.service` and `/etc/local-ai/compose/` · `/etc/local-ai/secrets/*.env` ·
   `/var/lib/local-ai/{hf,open-webui,searxng,brake,cache,cuda-cache}` · `HF_HOME=/var/lib/local-ai/hf`.
   `/var/lib/local-ai` is `spark`'s home but root's (since Phase 0's review), and `spark` writes only
   inside its children. So nothing may cache under `$HOME`: a unit that runs engines or pulls models
   sets `XDG_CACHE_HOME=/var/lib/local-ai/cache` and `CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache`,
   two folders bootstrap gives `spark` (Task 6).
+- **What root runs is root's own** (Dan's decision, 2026-09-25). The four units are root's copies in
+  `/etc/systemd/system/local-ai-*.service`, and the Compose project is root's copy in
+  `/etc/local-ai/compose/` (`compose.yaml`, `searxng/settings.yml`): regular files owned by root, not
+  writable by group or others, in folders only root can write. `spark apply` only stages them in
+  `/opt/local-ai/etc`, which Dan can write, and never writes root's copies. `make install-units`
+  (Dan, sudo) reads what is staged as Dan, shows what would change and asks, then installs root's
+  copies (Task 9). The polkit rule lets `spark-admin` start, stop and restart the four units by exact
+  name, nothing more.
 - **Budget (from `stack/models.yaml`):** allocatable 102 GiB (reported; measured later) · reserve
   24 GiB · warn 28 GiB · brake 20 GiB · poll 250 ms. The static model set must fit
   `allocatable − reserve`.
@@ -93,7 +108,8 @@ Tailscale serve · pi 0.85.1.
 4. **A registry edit that breaks the budget, reuses an alias or loses a revision pin** — expected:
    `spark render` refuses with the reason. *(Tasks 1 and 6.)*
 5. **`spark apply` while models are loaded** — expected: it shows the diff and refuses to restart
-   llama-swap unless `--now`. *(Task 7.)*
+   llama-swap unless `--now`, whether the restart is for a new config or for a new definition that
+   `make install-units` just installed. *(Task 7.)*
 6. **A routine `apt upgrade` replaces a library the engines use while models are loaded, then the
    box reboots** — expected: needrestart restarts no `local-ai-*` unit, the models stay loaded, the
    stack comes back by itself after the reboot, and `make doctor` passes. *(Tasks 10 and 16.)*
@@ -107,6 +123,12 @@ Tailscale serve · pi 0.85.1.
    letter, so answering no counts as nothing moved. It suggests starting the stack only when
    nothing moved and the newest kernel still has its module, even when a hold then stopped, and
    never a reboot after a partial move. *(Task 10.)*
+8. **Something running as Dan edits a unit or the Compose project, or plants a link where
+   `spark apply` stages them** — expected: root runs none of it. `spark apply` stages the change and
+   stops; `make install-units` shows it as a diff and asks before root installs it, and refuses a
+   staged link, or a file Dan can't read, with nothing installed. Until then no unit restarts to
+   pick it up, and `make doctor` fails if root's copies aren't root's own regular files. *(Tasks 7,
+   9 and 10.)*
 
 ***
 
@@ -115,7 +137,7 @@ Tailscale serve · pi 0.85.1.
 | Path | Responsibility |
 |---|---|
 | `stack/models.yaml` | Budget, brake thresholds, engine paths, the four models |
-| `stack/templates/*.service`, `stack/templates/compose.yaml`, `stack/templates/searxng-settings.yml` | Rendered by `spark render` |
+| `stack/templates/*.service`, `stack/templates/compose.yaml`, `stack/templates/searxng-settings.yml` | Rendered by `spark render`, staged by `spark apply`, installed as root's copies by `make install-units` |
 | `spark/src/spark/paths.py` | Default paths and URLs (env-overridable) |
 | `spark/src/spark/registry.py` | Load and validate `stack/models.yaml` |
 | `spark/src/spark/memory.py` | `/proc/meminfo` → `MemInfo` |
@@ -126,11 +148,12 @@ Tailscale serve · pi 0.85.1.
 | `spark/src/spark/brake.py` | `plan_brake()` and the `spark brake` loop |
 | `spark/src/spark/status.py` | `spark status` |
 | `spark/src/spark/render.py` | `spark render` |
-| `spark/src/spark/apply.py` | `spark apply` |
+| `spark/src/spark/apply.py` | `spark apply`: deploys what isn't root's, and stages what is |
 | `spark/src/spark/models.py` | `spark models pull` |
 | `spark/src/spark/clients.py` | `spark clients pi` |
 | `spark/src/spark/doctor.py` | `spark doctor` (`make doctor`) v0: Phase 0's guardrails and the stack |
-| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the needrestart step and the `--upgrade-gpu` mode (Task 10) |
+| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the `--install-units` mode (Task 9), the needrestart step and the `--upgrade-gpu` mode (Task 10) |
+| `stack/host/50-local-ai.rules` (Phase 0's) | The polkit rule: `spark-admin` starts, stops and restarts the four units by exact name, nothing more (Task 9) |
 | `stack/host/needrestart.conf` | needrestart leaves the `local-ai-*` units alone |
 | `website/how-to/pi.md`, `website/how-to/deploy.md` | Runbooks |
 
@@ -1352,11 +1375,14 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
 ***
 ### Task 6 [Mac]: `spark render` — the real registry, templates, and the rendered config
 
-**Before this task: Dan's decision on the unit-file model** (plan.md, *Open items and risks*). This
-plan builds option 1, the accepted model: `make apply` writes the units and the Compose file as Dan,
-and `make install-units` links them. Option 2, root-owned copies, changes this task's Compose unit,
-Task 7's handling of a changed unit and Task 9's `make install-units`; if Dan picks it, revise those
-three first.
+**Dan's decision on the unit-file model, 2026-09-25: root-owned copies** (plan.md, *Open items and
+risks*, option 2). The units and the Compose project that root runs are root's own copies, which
+`make install-units` installs with sudo, so nothing running as Dan changes what root runs. This task
+renders them and says where root's copies live (`installed_path`), and the Compose unit runs in
+root's copy of the project, `/etc/local-ai/compose`. Task 7 stages them, Task 9 installs them, and
+Task 10's `make doctor` checks that they are root's own. (Until the decision this paragraph said the
+plan built option 1, with `make install-units` linking the units `make apply` writes as Dan, and
+stopped here for the choice.)
 
 **Files:**
 
@@ -1378,7 +1404,11 @@ three first.
   (relative path → content); CLI `spark render --out DIR [--registry P] [--versions P]`.
   Constants: `DEPLOY="/opt/local-ai"`, `HF_HOME="/var/lib/local-ai/hf"`,
   `SPARK_BIN="/opt/local-ai/app/.venv/bin/spark"`,
-  `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`.
+  `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`,
+  `UNITS` (the four unit files), `UNIT_DIR="/etc/systemd/system"`, `COMPOSE_DIR="/etc/local-ai/compose"`;
+  `installed_path(rel) -> str | None`: where root's copy of a rendered file lives
+  (`systemd/<unit>` → `UNIT_DIR/<unit>`, `compose/<file>` → `COMPOSE_DIR/<file>`), None for a file
+  `spark apply` deploys itself.
   Bootstrap gives `spark` two more folders, `/var/lib/local-ai/cache` and
   `/var/lib/local-ai/cuda-cache`, which the llama-swap and pull units name as `XDG_CACHE_HOME` and
   `CUDA_CACHE_PATH`.
@@ -1583,7 +1613,9 @@ OOMScoreAdjust=-900
 WantedBy=multi-user.target
 ```
 
-`stack/templates/local-ai-compose.service` (runs as root — the `spark` user is not in `docker`):
+`stack/templates/local-ai-compose.service` (runs as root — the `spark` user is not in `docker`).
+Compose reads everything in its project folder, a `.env` and a `compose.override.yaml` included, so
+root runs it in root's own copy of the project, never in the staging folder Dan can write:
 
 ```ini
 # Rendered by `spark render` — edit stack/templates/, not this file.
@@ -1595,7 +1627,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/local-ai/etc/compose
+WorkingDirectory=/etc/local-ai/compose
 ExecStart=/usr/bin/docker compose up -d --remove-orphans
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=900
@@ -1705,7 +1737,7 @@ import pytest
 import yaml
 
 from spark.registry import load_registry
-from spark.render import SPARK_BIN, RenderError, render
+from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, installed_path, render
 from spark.versions import load_versions
 
 FIX = Path(__file__).parent / "fixtures"
@@ -1763,6 +1795,30 @@ def test_engines_and_downloads_cache_in_folders_bootstrap_gives_spark():
         assert "Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache" in text, unit
 
 
+def test_what_root_runs_has_a_root_owned_copy_and_the_rest_has_none():
+    # Dan's decision (2026-09-25): the units and the Compose project that root runs are root's own
+    # copies, which `make install-units` installs. `spark apply` deploys the rest itself.
+    copies = {rel: installed_path(rel) for rel in rendered()}
+    assert copies == {
+        "llama-swap.yaml": None,
+        "models.yaml": None,
+        "compose/compose.yaml": "/etc/local-ai/compose/compose.yaml",
+        "compose/searxng/settings.yml": "/etc/local-ai/compose/searxng/settings.yml",
+        "systemd/local-ai-llama-swap.service": "/etc/systemd/system/local-ai-llama-swap.service",
+        "systemd/local-ai-brake.service": "/etc/systemd/system/local-ai-brake.service",
+        "systemd/local-ai-compose.service": "/etc/systemd/system/local-ai-compose.service",
+        "systemd/local-ai-pull.service": "/etc/systemd/system/local-ai-pull.service",
+    }
+    assert (UNIT_DIR, COMPOSE_DIR) == ("/etc/systemd/system", "/etc/local-ai/compose")
+
+
+def test_root_runs_compose_in_its_own_copy_of_the_project():
+    # Compose reads every file in its project folder, a .env and an override file included, so root
+    # runs it in root's copy, never in /opt/local-ai/etc, which Dan can write.
+    unit = rendered()["systemd/local-ai-compose.service"]
+    assert f"\nWorkingDirectory={COMPOSE_DIR}\n" in unit and "/opt/local-ai" not in unit
+
+
 def test_a_set_that_breaks_the_budget_is_refused(tmp_path):
     data = yaml.safe_load((FIX / "models.yaml").read_text())
     data["models"]["coder"]["footprint_gib"] = 70
@@ -1795,12 +1851,31 @@ def test_spark_gets_its_cache_folders_from_root():
 
 - [ ] **Step 6: Implement**
 
-In `stack/host/bootstrap.sh`'s `directories()`, the line that creates `spark`'s folders gains the
-two cache folders, next to `hf`, so root makes them directly under its own `/var/lib/local-ai`:
+In `stack/host/bootstrap.sh`, `directories()` becomes this. The line that creates `spark`'s folders
+gains the two cache folders, next to `hf`, so root makes them directly under its own
+`/var/lib/local-ai`. The first comment stops saying that root runs the units and the Compose file in
+`etc/`: from now on `etc/` only stages them, and root runs its own copies.
 
 ```bash
+directories() {
+  say "directories"
+  # Code and config are root-owned and group-writable by spark-admin. spark only reads them: it runs
+  # the engines. What root runs isn't here: etc/ only stages the units and the Compose project, and
+  # `make install-units` installs root's own copies of them.
+  run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
+  run install -d -o root -g spark-admin -m 0750 /etc/local-ai
+  run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
+  # State. The parent is root's and spark writes only inside its children: `install -d` follows a
+  # symlink, so a spark-owned parent would let spark swap a child for a link that the next re-run
+  # hands to it. It is also spark's home, so a cache under $HOME needs a spark-owned child here
+  # and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
+  run install -d -o root -g root -m 0755 /var/lib/local-ai
   run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng \
     /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
+  run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
+  # Nothing inside agent's home: agent controls it, so root never writes there. agent makes its
+  # own ~/work.
+}
 ```
 
 `spark/src/spark/render.py`:
@@ -1824,10 +1899,23 @@ HF_HOME = "/var/lib/local-ai/hf"
 SPARK_BIN = f"{DEPLOY}/app/.venv/bin/spark"
 KEY_ENVS = ("LLAMASWAP_KEY_DAN_MAC", "LLAMASWAP_KEY_AGENT", "LLAMASWAP_KEY_OPENWEBUI", "LLAMASWAP_KEY_SPARK")
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service")
+# What root runs is root's own copy, in folders only root can write: `make install-units` (sudo)
+# installs the rendered units and Compose project there, and `spark apply` only stages them.
+UNIT_DIR = "/etc/systemd/system"
+COMPOSE_DIR = "/etc/local-ai/compose"
 
 
 class RenderError(ValueError):
     pass
+
+
+def installed_path(rel: str) -> str | None:
+    """Where root's copy of a rendered file lives; None for a file `spark apply` deploys itself."""
+    if rel.startswith("systemd/"):
+        return f"{UNIT_DIR}/{rel.removeprefix('systemd/')}"
+    if rel.startswith("compose/"):
+        return f"{COMPOSE_DIR}/{rel.removeprefix('compose/')}"
+    return None
 
 
 def model_path(source: Source, file: str) -> str:
@@ -1959,36 +2047,61 @@ Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --proje
 
 **Interfaces:**
 
-- Consumes: `render`, `write_tree`, `DEPLOY`, `KEY_ENVS` (Task 6); `LlamaSwap`, `LlamaSwapError`,
-  `LlamaSwapUnreachable`, `key_from_env` (Task 3); `load_versions`, `unpinned` (Phase 0).
+- Consumes: `render`, `write_tree`, `installed_path`, `DEPLOY`, `KEY_ENVS` (Task 6); `LlamaSwap`,
+  `LlamaSwapError`, `LlamaSwapUnreachable`, `key_from_env` (Task 3); `load_versions`, `unpinned`
+  (Phase 0).
 - Produces: `diff_tree(files, etc) -> list[str]`; `app_diff(src, app) -> list[str]`;
-  `units_to_restart(changed, app_changed=False) -> list[str]`;
-  `apply_files(files, etc, *, app_changes, running, now_ok, dry_run, sync_app, installed, run_cmd, log) -> int`
-  — 0 applied (or nothing to do), 1 refused; `running=None` means llama-swap answered but wouldn't
-  say what is loaded. CLI `spark apply [--dry-run] [--now] [--key-env NAME]`, run from the repo root.
+  `not_installed(files, installed) -> list[str]`; `unit_of(rel) -> str | None`;
+  `outdated_units(started, changed_at) -> list[str]`;
+  `units_to_restart(changed, app_changed=False) -> list[str]`; `started_at(show) -> int | None`;
+  `apply_files(files, etc, *, installed, outdated, active, app_changes, running, now_ok, dry_run, sync_app, run_cmd, log) -> int`
+  — 0 applied, nothing to do, or root's files staged for `make install-units`; 1 refused.
+  `installed` maps each of root's files (the units and the Compose project) to the text of root's
+  copy, None when there is none; `outdated` lists the running units that started before their copy
+  was installed; `active(unit)` says whether a unit runs; `running=None` means llama-swap answered
+  but wouldn't say what is loaded. CLI `spark apply [--dry-run] [--now] [--key-env NAME]`, run from
+  the repo root.
 
-What each change restarts:
+What apply does with each change:
 
-| Changed | Restarted |
+| Changed | What apply does |
 |---|---|
-| `llama-swap.yaml` or its unit | llama-swap. That stops every model, so it is refused while any is loaded, or while apply can't tell, unless `--now` |
-| `models.yaml` or the brake's unit | the brake (`spark launch` reads the registry fresh on every start) |
-| the app (`/opt/local-ai/app`, a copy of the repo's `spark/`) | the brake, the one long-running process that imports it |
-| `compose/*` or its unit | the web services |
-| any unit file | `systemctl daemon-reload`, first |
+| a unit, or the Compose project (root's files) | stages it in `/opt/local-ai/etc`, where `make install-units` (Task 9) reads it, says so, and stops: nothing else is deployed or restarted until root's copies match |
+| root's copy, installed by `make install-units` | restarts each running unit that started before its copy was installed, since it still runs the old definition |
+| `llama-swap.yaml` | restarts llama-swap |
+| `models.yaml` | restarts the brake (`spark launch` reads the registry fresh on every start) |
+| the app (`/opt/local-ai/app`, a copy of the repo's `spark/`) | restarts the brake, the one long-running process that imports it |
 
-A unit that isn't installed yet (the first deploy, before `make install-units`) is skipped with a
-hint. A refusal changes nothing at all — not the files, not the app.
+Restarting llama-swap stops every model, so it is refused while any is loaded, or while apply can't
+tell, unless `--now`, whatever the restart is for. apply restarts only units that run; a stopped
+unit starts with the new config, and apply starts nothing. It never writes root's copies and never
+reloads systemd: `make install-units` does both, with sudo. Root's files come first, so no unit
+restarts onto a definition root doesn't have yet, and llama-swap never runs a new config under an
+old unit. A refusal changes nothing at all — not the files, not the app. `--dry-run` shows all of
+it.
+
+A unit is outdated when it started (systemd's `ActiveEnterTimestamp`, read with
+`systemctl show --timestamp=unix`, in whole seconds) before one of root's copies of its files was
+installed (that file's modification time). The same second counts as not outdated, as when apply
+restarts a unit right after an install. The property names and the `@<seconds>` format come from
+systemd v255's source (`src/systemctl/systemctl-show.c`, `src/basic/time-util.c`), and ran under
+systemd 255.4 in a container. They are not yet run on this box: the first `make apply` after
+`make install-units` changes a running unit is their first use there, and `make apply-dry-run`
+shows what it would restart.
 
 - [ ] **Step 1: Write the failing tests**
 
 `spark/tests/test_apply.py`:
 
 ```python
-from spark.apply import app_diff, apply_files, diff_tree, units_to_restart
+from spark.apply import (app_diff, apply_files, diff_tree, not_installed, outdated_units, started_at,
+                         units_to_restart)
 
+LLAMA, BRAKE, COMPOSE = "local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service"
 FILES = {"llama-swap.yaml": "a", "models.yaml": "m", "compose/compose.yaml": "c",
          "systemd/local-ai-llama-swap.service": "u"}
+# Root's copies of the units and the Compose project, as `make install-units` installed them.
+ROOTS = {"compose/compose.yaml": "c", "systemd/local-ai-llama-swap.service": "u"}
 
 
 def seeded(etc):
@@ -1998,12 +2111,13 @@ def seeded(etc):
     return etc
 
 
-def run_apply(etc, files, *, app_changes=(), running=(), now_ok=False, dry_run=False, installed=True):
+def run_apply(etc, files, *, installed=ROOTS, outdated=(), active=(LLAMA, BRAKE, COMPOSE), app_changes=(),
+              running=(), now_ok=False, dry_run=False):
     ran, logs, synced = [], [], []
-    code = apply_files(files, etc, app_changes=list(app_changes),
-                       running=None if running is None else list(running), now_ok=now_ok,
-                       dry_run=dry_run, sync_app=lambda: synced.append(True),
-                       installed=lambda unit: installed, run_cmd=ran.append, log=logs.append)
+    code = apply_files(files, etc, installed=dict(installed), outdated=list(outdated),
+                       active=lambda unit: unit in active, app_changes=list(app_changes),
+                       running=None if running is None else list(running), now_ok=now_ok, dry_run=dry_run,
+                       sync_app=lambda: synced.append(True), run_cmd=ran.append, log=logs.append)
     return code, ran, logs, synced
 
 
@@ -2012,10 +2126,10 @@ def test_nothing_changed_does_nothing(tmp_path):
     assert (code, ran, logs) == (0, [], ["apply: nothing to change"])
 
 
-def test_compose_change_restarts_only_the_web_services(tmp_path):
-    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"})
-    assert code == 0 and ran == [["systemctl", "restart", "local-ai-compose.service"]]
-    assert (tmp_path / "compose/compose.yaml").read_text() == "c2"
+def test_a_llama_swap_config_change_restarts_it_when_no_model_is_loaded(tmp_path):
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"})
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
+    assert (tmp_path / "llama-swap.yaml").read_text() == "b"
 
 
 def test_llama_swap_change_is_refused_while_models_are_loaded(tmp_path):
@@ -2037,36 +2151,104 @@ def test_now_restarts_llama_swap_anyway(tmp_path):
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
 
 
-def test_unit_change_reloads_systemd_first(tmp_path):
-    _, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"systemd/local-ai-llama-swap.service": "u2"})
-    assert ran == [["systemctl", "daemon-reload"], ["systemctl", "restart", "local-ai-llama-swap.service"]]
-
-
 def test_an_app_change_is_synced_and_restarts_the_brake(tmp_path):
     code, ran, _, synced = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/brake.py"])
     assert code == 0 and synced == [True]
     assert ran == [["systemctl", "restart", "local-ai-brake.service"]]
 
 
-def test_the_first_deploy_skips_units_not_yet_installed(tmp_path):
-    code, ran, logs, _ = run_apply(tmp_path, FILES, installed=False)
-    assert code == 0 and ran == [["systemctl", "daemon-reload"]]
+def test_a_changed_unit_is_staged_for_root_and_nothing_else_moves(tmp_path):
+    # Root runs only root's copy. apply stages the new unit where `make install-units` reads it, and
+    # deploys and restarts nothing until root has it: not llama-swap for its new config, which the
+    # new unit may need, not the brake for the app, not the web services for their older copy.
+    new = FILES | {"systemd/local-ai-llama-swap.service": "u2", "llama-swap.yaml": "b"}
+    code, ran, logs, synced = run_apply(seeded(tmp_path), new, app_changes=["src/spark/brake.py"],
+                                        outdated=[COMPOSE])
+    assert code == 0 and ran == [] and synced == []
+    assert (tmp_path / "systemd/local-ai-llama-swap.service").read_text() == "u2"
     assert (tmp_path / "llama-swap.yaml").read_text() == "a"
-    assert any("make install-units" in line for line in logs)
+    assert "systemd/local-ai-llama-swap.service differs from root's copy" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
+
+
+def test_the_first_deploy_stages_roots_files_before_anything_else(tmp_path):
+    code, ran, logs, synced = run_apply(tmp_path, FILES, installed={}, active=(), app_changes=["pyproject.toml"])
+    assert code == 0 and ran == [] and synced == []
+    staged = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file())
+    assert staged == sorted(ROOTS)
+    assert "root has no copy of compose/compose.yaml yet" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
+
+
+def test_a_running_unit_is_restarted_once_its_new_definition_is_installed(tmp_path):
+    # `make install-units` installed a new Compose project; the web services still run the old one.
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[COMPOSE])
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-compose.service"]]
+
+
+def test_llama_swap_waits_for_idle_models_to_run_its_new_definition(tmp_path):
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"])
+    assert code == 1 and ran == [] and "--now" in logs[-1]
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"], now_ok=True)
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
+
+
+def test_a_unit_that_isnt_running_is_never_started(tmp_path):
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, active=())
+    assert code == 0 and ran == [] and (tmp_path / "llama-swap.yaml").read_text() == "b"
+    assert logs[-1] == "apply: local-ai-llama-swap.service isn't running; it starts with the new config"
 
 
 def test_dry_run_changes_nothing(tmp_path):
-    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"},
-                                        app_changes=["pyproject.toml"], dry_run=True)
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"models.yaml": "m2"},
+                                        app_changes=["pyproject.toml"], outdated=[COMPOSE], dry_run=True)
+    assert code == 0 and ran == [] and synced == []
+    assert (tmp_path / "models.yaml").read_text() == "m"
+    assert logs[-1] == "apply: dry run — would restart local-ai-brake.service, local-ai-compose.service"
+
+
+def test_a_dry_run_shows_what_it_would_stage_and_changes_nothing(tmp_path):
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"}, dry_run=True)
     assert code == 0 and ran == [] and synced == []
     assert (tmp_path / "compose/compose.yaml").read_text() == "c"
-    assert "local-ai-compose.service" in logs[-1]
+    assert "compose/compose.yaml differs from root's copy" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
 
 
 def test_restart_mapping():
     assert units_to_restart(["models.yaml"]) == ["local-ai-brake.service"]
-    assert units_to_restart(["compose/searxng/settings.yml"]) == ["local-ai-compose.service"]
+    assert units_to_restart(["llama-swap.yaml"]) == ["local-ai-llama-swap.service"]
     assert units_to_restart([], app_changed=True) == ["local-ai-brake.service"]
+    # Root's files restart nothing by themselves: a unit restarts once root's copy is installed.
+    assert units_to_restart(["compose/searxng/settings.yml", "systemd/local-ai-brake.service"]) == []
+
+
+def test_roots_files_wait_for_make_install_units_until_roots_copies_match():
+    installed = {"compose/compose.yaml": "c", "systemd/local-ai-llama-swap.service": "old"}
+    files = FILES | {"systemd/local-ai-brake.service": "b"}
+    assert not_installed(files, installed) == ["systemd/local-ai-brake.service", "systemd/local-ai-llama-swap.service"]
+
+
+def test_a_running_unit_that_started_before_its_copy_was_installed_is_outdated():
+    started = {LLAMA: 100, BRAKE: 100, COMPOSE: 100}
+    changed_at = {
+        "systemd/local-ai-llama-swap.service": 101,  # installed after llama-swap started
+        "systemd/local-ai-brake.service": 100,       # the same second: as when apply restarts it right after
+        "compose/searxng/settings.yml": 150,         # the Compose project is the web services' definition
+        "systemd/local-ai-pull.service": 200,        # the pull unit runs only when asked
+    }
+    assert outdated_units(started, changed_at) == ["local-ai-compose.service", "local-ai-llama-swap.service"]
+    # A unit that isn't running starts with its new definition.
+    assert outdated_units({LLAMA: None}, {"systemd/local-ai-llama-swap.service": 200}) == []
+
+
+def test_started_at_reads_systemctl_show():
+    assert started_at("ActiveState=active\nActiveEnterTimestamp=@1727271901\n") == 1727271901
+    assert started_at("ActiveEnterTimestamp=@1727271901\nActiveState=active\n") == 1727271901
+    # A stopped unit keeps the time it last started: only its state says it isn't running.
+    assert started_at("ActiveState=inactive\nActiveEnterTimestamp=@1727271901\n") is None
+    assert started_at("ActiveState=active\nActiveEnterTimestamp=\n") is None
+    assert started_at("") is None
 
 
 def test_a_missing_file_counts_as_changed(tmp_path):
@@ -2090,7 +2272,12 @@ def test_app_diff_skips_the_venv_and_caches(tmp_path):
 ```python
 """`spark apply` — render, validate, show what changes, deploy under /opt/local-ai, and restart only
 what changed. It never restarts llama-swap, which stops every model, while models are loaded —
-unless told to with --now."""
+unless told to with --now.
+
+The units and the Compose project that root runs are root's own copies, which only
+`make install-units` (sudo) installs: apply stages them in /opt/local-ai/etc and never writes
+root's copies. While the staged ones differ from root's, apply stages them and stops, and deploys
+and restarts nothing else until root has them."""
 
 from __future__ import annotations
 
@@ -2104,12 +2291,13 @@ from pathlib import Path
 from spark import paths
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.registry import load_registry
-from spark.render import DEPLOY, KEY_ENVS, render, write_tree
+from spark.render import DEPLOY, KEY_ENVS, installed_path, render, write_tree
 from spark.versions import load_versions, unpinned
 
 LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
 BRAKE_UNIT = "local-ai-brake.service"
 COMPOSE_UNIT = "local-ai-compose.service"
+RUNNING_UNITS = (LLAMA_SWAP_UNIT, BRAKE_UNIT, COMPOSE_UNIT)  # the pull unit runs only when asked
 NOT_APP = {".venv", "__pycache__", ".pytest_cache"}
 
 
@@ -2132,29 +2320,73 @@ def app_diff(src: Path, app: Path) -> list[str]:
     return changed
 
 
-def units_to_restart(changed: list[str], app_changed: bool = False) -> list[str]:
-    units = {BRAKE_UNIT} if app_changed else set()  # the one long-running process that imports the app
-    for rel in changed:
-        if rel in ("llama-swap.yaml", f"systemd/{LLAMA_SWAP_UNIT}"):
-            units.add(LLAMA_SWAP_UNIT)
-        if rel in ("models.yaml", f"systemd/{BRAKE_UNIT}"):
-            units.add(BRAKE_UNIT)
-        if rel.startswith("compose/") or rel == f"systemd/{COMPOSE_UNIT}":
-            units.add(COMPOSE_UNIT)
+def not_installed(files: dict[str, str], installed: dict[str, str | None]) -> list[str]:
+    """Root's files, the units and the Compose project, whose installed copy is missing or differs."""
+    return sorted(rel for rel, content in files.items()
+                  if installed_path(rel) is not None and installed.get(rel) != content)
+
+
+def unit_of(rel: str) -> str | None:
+    """The long-running unit a file of root's defines; the Compose project is the compose unit's."""
+    if rel.startswith("compose/"):
+        return COMPOSE_UNIT
+    unit = rel.removeprefix("systemd/")
+    return unit if unit in RUNNING_UNITS else None
+
+
+def outdated_units(started: dict[str, int | None], changed_at: dict[str, int]) -> list[str]:
+    """Running units that started before a file of theirs was installed, so they still run the older
+    definition. `started`: when each unit started, in whole seconds (None when it isn't running);
+    `changed_at`: when each of root's copies was installed (its modification time)."""
+    units = set()
+    for rel, when in changed_at.items():
+        unit = unit_of(rel)
+        if unit is not None and started.get(unit) is not None and when > started[unit]:
+            units.add(unit)
     return sorted(units)
 
 
-def apply_files(files: dict[str, str], etc: Path, *, app_changes: list[str], running: list[str] | None,
-                now_ok: bool, dry_run: bool, sync_app, installed, run_cmd, log) -> int:
+def units_to_restart(changed: list[str], app_changed: bool = False) -> list[str]:
+    """The units that read a file apply deploys itself. Root's files restart nothing here: a unit
+    picks up a new definition once `make install-units` installed it (outdated_units)."""
+    units = {BRAKE_UNIT} if app_changed else set()  # the one long-running process that imports the app
+    for rel in changed:
+        if rel == "llama-swap.yaml":
+            units.add(LLAMA_SWAP_UNIT)
+        if rel == "models.yaml":
+            units.add(BRAKE_UNIT)
+    return sorted(units)
+
+
+def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | None], outdated: list[str],
+                active, app_changes: list[str], running: list[str] | None, now_ok: bool, dry_run: bool,
+                sync_app, run_cmd, log) -> int:
     changed = diff_tree(files, etc)
-    if not changed and not app_changes:
+    pending = not_installed(files, installed)
+    restart = sorted(set(units_to_restart(changed, bool(app_changes))) | set(outdated))
+    if not (changed or app_changes or pending or restart):
         log("apply: nothing to change")
         return 0
     for rel in changed:
         log(f"apply: changes etc/{rel}")
     if app_changes:
         log(f"apply: changes the app ({len(app_changes)} files)")
-    restart = units_to_restart(changed, bool(app_changes))
+    for unit in outdated:
+        log(f"apply: {unit} still runs an older definition than root's copy")
+    if pending:
+        # Root's files first: until root has them, deploy and restart nothing else.
+        for rel in pending:
+            if installed.get(rel) is None:
+                log(f"apply: root has no copy of {rel} yet ({installed_path(rel)})")
+            else:
+                log(f"apply: {rel} differs from root's copy ({installed_path(rel)})")
+        if dry_run:
+            log(f"apply: dry run — would stage them in {etc} and stop until `make install-units` installs them")
+            return 0
+        write_tree({rel: files[rel] for rel in changed if installed_path(rel) is not None}, etc)
+        log(f"apply: staged in {etc}; nothing else is deployed or restarted until `make install-units` (sudo) "
+            "installs root's copies — then run `make apply` again")
+        return 0
     refusal = None
     if LLAMA_SWAP_UNIT in restart and not now_ok and running != []:
         loaded = "can't tell which models are loaded" if running is None else f"models are loaded ({', '.join(running)})"
@@ -2170,14 +2402,45 @@ def apply_files(files: dict[str, str], etc: Path, *, app_changes: list[str], run
     if app_changes:
         sync_app()
     write_tree({rel: files[rel] for rel in changed}, etc)
-    if any(rel.startswith("systemd/") for rel in changed):
-        run_cmd(["systemctl", "daemon-reload"])
     for unit in restart:
-        if installed(unit):
+        if active(unit):
             run_cmd(["systemctl", "restart", unit])
         else:
-            log(f"apply: {unit} isn't installed yet — run `make install-units` once")
+            log(f"apply: {unit} isn't running; it starts with the new config")
     return 0
+
+
+def started_at(show: str) -> int | None:
+    """When a unit last started, in whole seconds, from `systemctl show --timestamp=unix`'s ActiveState
+    and ActiveEnterTimestamp (`@1727271901`); None when it isn't running."""
+    props = dict(line.split("=", 1) for line in show.splitlines() if "=" in line)
+    stamp = props.get("ActiveEnterTimestamp", "")
+    if props.get("ActiveState") != "active" or not stamp[1:].isdigit():
+        return None
+    return int(stamp[1:])
+
+
+def _started(unit: str) -> int | None:
+    show = subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=ActiveEnterTimestamp",
+                           "--timestamp=unix", unit], capture_output=True, text=True).stdout
+    return started_at(show)
+
+
+def _installed(files: dict[str, str]) -> tuple[dict[str, str | None], dict[str, int]]:
+    """Root's copies of the rendered units and Compose project: each one's text (None when there is
+    none) and when it was installed (its modification time, in whole seconds)."""
+    texts: dict[str, str | None] = {}
+    times: dict[str, int] = {}
+    for rel in files:
+        where = installed_path(rel)
+        if where is None:
+            continue
+        try:
+            texts[rel] = Path(where).read_text()
+            times[rel] = int(Path(where).stat().st_mtime)
+        except OSError:
+            texts[rel] = None
+    return texts, times
 
 
 def _validate_llama_swap(config: str, binary: Path) -> bool:
@@ -2202,12 +2465,6 @@ def _sync_app(src: Path, app: Path) -> None:
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
     env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy"}
     subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--project", str(app)], check=True, env=env)
-
-
-def _installed(unit: str) -> bool:
-    state = subprocess.run(["systemctl", "show", "--property=LoadState", "--value", unit],
-                           capture_output=True, text=True).stdout.strip()
-    return state == "loaded"
 
 
 def register(subparsers) -> None:
@@ -2243,10 +2500,13 @@ def run(args: argparse.Namespace) -> int:
     except LlamaSwapError as err:
         print(f"apply: {err}")
         running = None  # it answered but wouldn't say what is loaded, so assume something is
+    installed, changed_at = _installed(files)
+    started = {unit: _started(unit) for unit in RUNNING_UNITS}
     src, app = repo / "spark", Path(f"{DEPLOY}/app")
-    return apply_files(files, Path(f"{DEPLOY}/etc"), app_changes=app_diff(src, app), running=running,
-                       now_ok=args.now, dry_run=args.dry_run, sync_app=lambda: _sync_app(src, app),
-                       installed=_installed, run_cmd=lambda cmd: subprocess.run(cmd, check=True), log=print)
+    return apply_files(files, Path(f"{DEPLOY}/etc"), installed=installed, outdated=outdated_units(started, changed_at),
+                       active=lambda unit: started.get(unit) is not None, app_changes=app_diff(src, app),
+                       running=running, now_ok=args.now, dry_run=args.dry_run, sync_app=lambda: _sync_app(src, app),
+                       run_cmd=lambda cmd: subprocess.run(cmd, check=True), log=print)
 ```
 
 Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
@@ -2369,22 +2629,46 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 
 ***
 
-### Task 9 [Mac]: pi's provider, the deploy targets, two runbooks
+### Task 9 [Mac]: pi's provider, the deploy targets with root's copies of the units, two runbooks
 
 **Files:**
 
-- Create: `spark/src/spark/clients.py`, `spark/tests/test_clients.py`, `website/how-to/deploy.md`,
-  `website/how-to/pi.md` (the How-to listing picks both up)
-- Modify: `spark/src/spark/cli.py`, `Makefile`, `stack/versions.yaml`, `website/reference/stack.md`
-  (regenerated)
+- Create: `spark/src/spark/clients.py`, `spark/tests/test_clients.py`, `spark/tests/test_polkit.py`,
+  `website/how-to/deploy.md`, `website/how-to/pi.md` (the How-to listing picks both up)
+- Modify: `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (the `--install-units` mode),
+  `stack/host/50-local-ai.rules`, `spark/tests/test_bootstrap.py`, `Makefile`, `stack/versions.yaml`,
+  `website/reference/stack.md` (regenerated)
 
 **Interfaces:**
 
-- Consumes: `load_registry`, `Registry` (Task 1).
-- Produces: `pi_provider(registry, base_url, key_env) -> dict`; `merge_pi(path, provider) -> Path`
-  (returns the backup's path); CLI `spark clients pi [--write] [--base-url URL] [--key-env NAME]
-  [--registry P]` (defaults `http://127.0.0.1:9100/v1`, `SPARK_API_KEY`, `stack/models.yaml`; without
-  `--write` it prints the provider).
+- Consumes: `load_registry`, `Registry` (Task 1); `render`, `installed_path` and Task 6's templates
+  and fixtures, through the tests; Phase 0's `spark/tests/test_bootstrap.py` (`ROOT`, `SCRIPT`,
+  `script`, `NO_PACKAGES`).
+- Produces:
+  - `pi_provider(registry, base_url, key_env) -> dict`; `merge_pi(path, provider) -> Path` (returns
+    the backup's path); CLI `spark clients pi [--write] [--base-url URL] [--key-env NAME]
+    [--registry P]` (defaults `http://127.0.0.1:9100/v1`, `SPARK_API_KEY`, `stack/models.yaml`;
+    without `--write` it prints the provider).
+  - `bash stack/host/bootstrap.sh --install-units [--dry-run]` (`make install-units`,
+    `make install-units-dry-run`): root's own copies of what `spark apply` staged for root (Task 7),
+    the four units in `/etc/systemd/system` and the Compose project in `/etc/local-ai/compose`,
+    each `root:root 0644` in folders `root:root 0755`. It reads each staged file as the admin who
+    ran sudo (`runuser -u "$SUDO_USER"`) and refuses one that isn't a regular file, with nothing
+    installed. It shows what would change as a diff, installed against staged, and asks before it
+    installs anything; it counts a copy that is a link, or isn't root's own (owned by root, not
+    writable by group or others), as changed. Then it reloads systemd and enables the three
+    long-running units; the pull unit runs only when asked. Run again with nothing changed, it
+    installs, reloads and enables nothing. Stand-in paths, for the tests: `BOOTSTRAP_STAGED`,
+    `BOOTSTRAP_UNIT_DIR`, `BOOTSTRAP_COMPOSE_DIR`, and `BOOTSTRAP_ROOT_USER`, the owner root's copies
+    must have.
+  - `stack/host/50-local-ai.rules`: `spark-admin` may `start`, `stop` and `restart` the four units,
+    by exact name, and nothing else: no other unit or verb, no `reload-daemon` (nothing without sudo
+    needs it now: `spark apply` restarts but never reloads), no `manage-unit-files`. systemd v255
+    passes polkit the unit's full name as `unit` and the job as `verb`
+    (`src/core/dbus-unit.c`, `bus_unit_method_start_generic`). polkit on Ubuntu 24.04 runs rules in
+    Duktape, an ES5 engine, so the rule uses `var` and `indexOf`. `restart` on the pull unit adds
+    nothing that `stop` and `start` don't already allow.
+  - `spark/tests/test_bootstrap.py`: `calls(tmp_path)`, which Task 10's tests use too.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2505,8 +2789,634 @@ Register in `cli.py`: `from spark import clients` / `clients.register(subparsers
     advisories: null
 ```
 
-- [ ] **Step 5: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
-  install-units pull status logs tunnel clients`); recipe lines start with a tab:
+- [ ] **Step 5: Write the failing tests for root's copies and the polkit rule**
+
+Add at the end of `spark/tests/test_bootstrap.py` (Phase 0's): stand-ins for `runuser`, GNU
+`install` and `systemctl` that log what they are asked and change only files under the test's
+folder, the way the real ones change the box, then the tests. `calls` is new here, and Task 10's
+tests use it too.
+
+```python
+# make install-units: root's own copies of what `spark render` stages for root (Task 6), the four
+# units and the Compose project, read as the admin from the folder `spark apply` writes.
+FAKE_RUNUSER = """#!/usr/bin/env bash
+# Stands in for runuser -u USER -- COMMAND...: logs the call in $CALLS, then runs the command as
+# whoever runs the tests, since only root can switch users.
+echo "runuser $*" >> "$CALLS"
+while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+shift
+exec "$@"
+"""
+
+FAKE_INSTALL = """#!/usr/bin/env bash
+# Stands in for GNU install, and logs each call in $CALLS. `install -d [-o U] [-g G] [-m MODE] DIR...`
+# makes each folder with MODE; `install [-o U] [-g G] [-m MODE] SRC DEST` replaces DEST with a copy
+# of SRC, a link at DEST included and never followed, as GNU install does. Only root can set an
+# owner, so the owner and group are left as they are.
+echo "install $*" >> "$CALLS"
+dirs=0 mode=0755
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d) dirs=1; shift ;;
+    -o|-g) shift 2 ;;
+    -m) mode="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+if (( dirs )); then
+  for dir in "$@"; do mkdir -p "$dir"; chmod "$mode" "$dir"; done
+else
+  rm -f "$2"
+  cp "$1" "$2"
+  chmod "$mode" "$2"
+fi
+"""
+
+FAKE_SYSTEMD = """#!/usr/bin/env bash
+# Stands in for systemctl as make install-units uses it. daemon-reload and enable are logged in $CALLS
+# and change $SYSTEMD_STATE: a reload leaves its time there, and enable records each unit, which
+# is-enabled then reads. `show --property=NeedDaemonReload --value UNIT...` says yes for a unit
+# whose file in $BOOTSTRAP_UNIT_DIR is newer than the last reload, as systemd does for a loaded unit.
+state="$SYSTEMD_STATE"
+case "$1" in
+  daemon-reload) echo "systemctl $*" >> "$CALLS"; touch "$state/reloaded" ;;
+  enable) echo "systemctl $*" >> "$CALLS"; shift; printf '%s\\n' "$@" >> "$state/enabled" ;;
+  is-enabled) for unit; do :; done; [[ -f "$state/enabled" ]] && grep -qxF "$unit" "$state/enabled" ;;
+  show)
+    shift
+    for unit; do
+      case "$unit" in --*) continue ;; esac
+      if [[ -f "$state/reloaded" && "$BOOTSTRAP_UNIT_DIR/$unit" -nt "$state/reloaded" ]]; then echo yes; else echo no; fi
+    done
+    ;;
+  *) echo "fake systemctl: unexpected: $*" >&2; exit 1 ;;
+esac
+"""
+
+ROOT_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+              "local-ai-pull.service"]
+# The order install-units reads and installs them in: the units, then the Compose project.
+ROOT_FILES = [f"systemd/{unit}" for unit in ROOT_UNITS] + ["compose/compose.yaml", "compose/searxng/settings.yml"]
+
+
+def rendered_roots() -> dict[str, str]:
+    """What `spark render` stages for root: the four units and the Compose project (Task 6)."""
+    from spark.registry import load_registry
+    from spark.render import installed_path, render
+    from spark.versions import load_versions
+
+    fixtures = Path(__file__).parent / "fixtures"
+    files = render(load_registry(fixtures / "models.yaml"), load_versions(fixtures / "versions.yaml"),
+                   (fixtures / "models.yaml").read_text(), templates=ROOT / "stack/templates")
+    return {rel: text for rel, text in files.items() if installed_path(rel) is not None}
+
+
+def install_env(tmp_path: Path) -> dict[str, str]:
+    """Stand-ins for make install-units: the staging folder `spark apply` writes, holding what render
+    stages for root; root's two folders; and runuser, install and systemctl, which log to
+    tmp_path/calls and change nothing outside tmp_path."""
+    for folder in ("bin", "units", "systemd"):
+        (tmp_path / folder).mkdir()
+    for rel, text in rendered_roots().items():
+        (tmp_path / "stage" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "stage" / rel).write_text(text)
+    for name, text in (("runuser", FAKE_RUNUSER), ("install", FAKE_INSTALL), ("systemctl", FAKE_SYSTEMD)):
+        (tmp_path / "bin" / name).write_text(text)
+        (tmp_path / "bin" / name).chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "SYSTEMD_STATE": str(tmp_path / "systemd"),
+        "BOOTSTRAP_STAGED": str(tmp_path / "stage"),
+        "BOOTSTRAP_UNIT_DIR": str(tmp_path / "units"),
+        "BOOTSTRAP_COMPOSE_DIR": str(tmp_path / "compose"),
+        # Root's copies must be root's own. Here whoever runs the tests stands in for root.
+        "BOOTSTRAP_ROOT_USER": pwd.getpwuid(os.getuid()).pw_name,
+        "SUDO_USER": "alice",
+    }
+
+
+def install_units(env: dict[str, str], answer: str = "") -> subprocess.CompletedProcess[str]:
+    """make install-units for real, not its dry run, against install_env's stand-ins, with `answer`
+    typed at its question (see real_hold)."""
+    return subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && install_units', "bash", str(SCRIPT)],
+        input=answer,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def copy_path(tmp_path: Path, rel: str) -> Path:
+    """Where the stand-ins keep root's copy of a staged file."""
+    top, _, rest = rel.partition("/")
+    return tmp_path / ("units" if top == "systemd" else "compose") / rest
+
+
+def installed(tmp_path: Path) -> dict[str, str]:
+    """Root's copies, as the stand-ins hold them, keyed as render stages them."""
+    return {rel: copy_path(tmp_path, rel).read_text() for rel in ROOT_FILES if copy_path(tmp_path, rel).exists()}
+
+
+def calls(tmp_path: Path) -> list[str]:
+    path = tmp_path / "calls"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def changes(tmp_path: Path) -> list[str]:
+    """What the stand-ins were asked to change: everything logged but runuser's reads."""
+    return [line for line in calls(tmp_path) if not line.startswith("runuser ")]
+
+
+def test_install_units_shows_what_root_will_run_then_asks_and_installs_it(tmp_path):
+    result = install_units(install_env(tmp_path), "y\n")
+    assert result.returncode == 0, result.stderr
+    # Nothing is installed yet, so it shows the whole of every file before it asks.
+    for rel in ROOT_FILES:
+        assert f"--- installed: {copy_path(tmp_path, rel)}" in result.stdout
+        assert f"+++ staged: {tmp_path}/stage/{rel}" in result.stdout
+    assert installed(tmp_path) == rendered_roots()  # every file render stages for root, nothing else
+    for rel in ROOT_FILES:
+        assert copy_path(tmp_path, rel).stat().st_mode & 0o777 == 0o644
+    for folder in ("compose", "compose/searxng"):
+        assert (tmp_path / folder).stat().st_mode & 0o777 == 0o755
+    assert changes(tmp_path)[0] == f"install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng"
+    copies = [line for line in changes(tmp_path)[1:-2]]
+    assert [line.split()[-1] for line in copies] == [str(copy_path(tmp_path, rel)) for rel in ROOT_FILES]
+    assert all(line.startswith("install -o root -g root -m 0644 ") for line in copies)
+    assert changes(tmp_path)[-2:] == [
+        "systemctl daemon-reload",
+        "systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]  # the pull unit runs only when asked
+    assert "make apply" in result.stdout.splitlines()[-1]
+
+
+def test_install_units_reads_each_staged_file_as_the_admin_never_as_root(tmp_path):
+    install_units(install_env(tmp_path), "y\n")
+    reads = [line for line in calls(tmp_path) if line.startswith("runuser ")]
+    assert reads == [f"runuser -u alice -- cat -- {tmp_path}/stage/{rel}" for rel in ROOT_FILES]
+
+
+@pytest.mark.parametrize("answer", ["n\n", "\n", ""], ids=["no", "enter", "end-of-input"])
+def test_anything_but_yes_installs_nothing(tmp_path, answer):
+    result = install_units(install_env(tmp_path), answer)
+    assert result.returncode == 1 and "nothing was installed" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("planted", ["link", "folder", "missing"])
+def test_a_staged_file_that_isnt_a_regular_file_is_refused(tmp_path, planted):
+    # The staging folder is the admin's, so anything running as the admin can plant a link there. A
+    # link to a file only root can read must never become a copy root installs, or shows.
+    env = install_env(tmp_path)
+    secret = tmp_path / "shadow"
+    secret.write_text("root's own secret\n")
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.unlink()
+    if planted == "link":
+        brake.symlink_to(secret)
+    elif planted == "folder":
+        brake.mkdir()
+    result = install_units(env, "y\n")
+    assert result.returncode == 1
+    assert f"{brake} is missing or isn't a regular file" in result.stderr
+    assert "root's own secret" not in result.stdout + result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_a_staged_file_the_admin_cant_read_is_refused(tmp_path):
+    env = install_env(tmp_path)
+    (tmp_path / "stage/systemd/local-ai-brake.service").chmod(0)
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "alice can't read" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("sudo_user", [None, "root"], ids=["no-sudo-user", "root"])
+def test_install_units_needs_sudo_from_the_admins_own_account(tmp_path, sudo_user):
+    env = install_env(tmp_path)
+    if sudo_user is None:
+        del env["SUDO_USER"]
+    else:
+        env["SUDO_USER"] = sudo_user
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "with sudo from your own account" in result.stderr
+    assert calls(tmp_path) == []  # it read nothing and installed nothing
+
+
+def test_run_again_with_nothing_changed_it_changes_nothing(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units(env)  # no answer: it must not ask
+    assert result.returncode == 0, result.stderr
+    assert "nothing to install" in result.stdout and "--- installed" not in result.stdout
+    assert changes(tmp_path) == []  # no install, no reload, no enable
+
+
+def test_only_what_changed_is_shown_and_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# a new line\n")
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert "+# a new line" in result.stdout and "local-ai-llama-swap.service" not in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        str(tmp_path / "units/local-ai-brake.service")]
+    assert "systemctl daemon-reload" in changes(tmp_path)
+    assert not any(line.startswith("systemctl enable") for line in changes(tmp_path))  # enabled already
+
+
+def test_a_copy_that_isnt_roots_own_regular_file_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    (tmp_path / "units/local-ai-brake.service").chmod(0o664)  # group-writable
+    pull = tmp_path / "units/local-ai-pull.service"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text(pull.read_text())
+    pull.unlink()
+    pull.symlink_to(elsewhere)  # the same text, through a link
+    (tmp_path / "compose").chmod(0o775)
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert f"{tmp_path}/units/local-ai-brake.service: the same text, but not root's own regular file" in result.stdout
+    assert f"{pull}: a link, which root's own regular file replaces" in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        f"{tmp_path}/compose/searxng", str(tmp_path / "units/local-ai-brake.service"), str(pull)]
+    assert not pull.is_symlink() and elsewhere.read_text() == pull.read_text()
+    assert (tmp_path / "units/local-ai-brake.service").stat().st_mode & 0o777 == 0o644
+    assert (tmp_path / "compose").stat().st_mode & 0o777 == 0o755
+
+
+def test_a_copy_that_another_user_owns_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units({**env, "BOOTSTRAP_ROOT_USER": "nobody"}, "y\n")  # not whoever owns them
+    assert result.returncode == 0, result.stderr
+    assert len([line for line in changes(tmp_path) if line.startswith("install -o")]) == len(ROOT_FILES)
+
+
+def test_run_again_after_a_run_cut_off_before_its_reload_it_reloads(tmp_path):
+    # The earlier run installed a new unit and stopped before telling systemd, so systemd still
+    # runs the old definition. The files match now, and systemd says it needs a reload.
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    reloaded = (tmp_path / "systemd/reloaded").stat().st_mtime
+    os.utime(tmp_path / "units/local-ai-brake.service", (reloaded + 5, reloaded + 5))
+    result = install_units(env)
+    assert result.returncode == 0 and "nothing to install" in result.stdout
+    assert changes(tmp_path) == ["systemctl daemon-reload"]
+
+
+def test_install_units_dry_run_shows_the_changes_and_changes_nothing(tmp_path):
+    result = script("--install-units", "--dry-run", env=install_env(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert f"+++ staged: {tmp_path}/stage/systemd/local-ai-brake.service" in result.stdout
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f"+ install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng",
+        *(f"+ install -o root -g root -m 0644 {tmp_path}/stage/{rel} {copy_path(tmp_path, rel)}" for rel in ROOT_FILES),
+        "+ systemctl daemon-reload",
+        "+ systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]
+    assert calls(tmp_path) == [] and installed(tmp_path) == {}  # a dry run reads as whoever runs it
+
+
+def test_make_install_units_runs_the_install_mode_under_sudo():
+    # -s: GNU make 4 prints "Entering directory" lines under -C otherwise.
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units"],
+                            capture_output=True, text=True, check=True)
+    assert recipe.stdout.splitlines() == ["sudo bash stack/host/bootstrap.sh --install-units"]
+    preview = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units-dry-run"],
+                             capture_output=True, text=True, check=True)
+    assert preview.stdout.splitlines() == ["bash stack/host/bootstrap.sh --install-units --dry-run"]
+    phony = next(line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith(".PHONY:"))
+    assert {"install-units", "install-units-dry-run"} <= set(phony.split()[1:])
+
+
+def test_install_units_is_a_mode_of_its_own():
+    # --dry-run first, so a broken guard would only print a plan.
+    result = script("--dry-run", "--hold-gpu", "--install-units", env=NO_PACKAGES)
+    assert result.returncode == 2 and result.stdout == ""
+```
+
+`spark/tests/test_polkit.py` runs the rule in Node with polkit, the action and the subject stubbed,
+and skips without a JavaScript engine on PATH, as the needrestart test skips without perl:
+
+```python
+"""The polkit rule, run in a JavaScript engine with polkit, the action and the subject stubbed."""
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+RULES = ROOT / "stack/host/50-local-ai.rules"
+MANAGE = "org.freedesktop.systemd1.manage-units"
+UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service"]
+
+# Loads the rules file as polkitd does, with polkit's Result values (NOT_HANDLED is null), then asks
+# every rule each case in turn, as polkitd asks them, until one answers. Prints one answer a case.
+HARNESS = r"""
+var fs = require("fs");
+var rules = [];
+var polkit = {
+  Result: {NO: "no", YES: "yes", AUTH_SELF: "auth_self", AUTH_SELF_KEEP: "auth_self_keep",
+           AUTH_ADMIN: "auth_admin", AUTH_ADMIN_KEEP: "auth_admin_keep", NOT_HANDLED: null},
+  addRule: function (rule) { rules.push(rule); },
+  log: function () {}
+};
+new Function("polkit", fs.readFileSync(process.argv[1], "utf8"))(polkit);
+JSON.parse(process.argv[2]).forEach(function (c) {
+  var action = {id: c.id, lookup: function (key) { return c.details[key]; }};
+  var subject = {user: "someone", isInGroup: function (group) { return c.groups.indexOf(group) >= 0; }};
+  var answer = null;
+  for (var i = 0; i < rules.length && answer === null; i++) {
+    var result = rules[i](action, subject);
+    answer = result === undefined ? null : result;
+  }
+  console.log(answer === null ? "not handled" : answer);
+});
+"""
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="no JavaScript engine (node) on PATH")
+
+
+def case(action: str, groups=("spark-admin",), **details) -> dict:
+    return {"id": action, "details": details, "groups": list(groups)}
+
+
+def ask(cases: list[dict]) -> list[str]:
+    out = subprocess.run(["node", "-e", HARNESS, str(RULES), json.dumps(cases)],
+                         capture_output=True, text=True, check=True)
+    return out.stdout.splitlines()
+
+
+@needs_node
+def test_spark_admin_starts_stops_and_restarts_the_four_units():
+    cases = [case(MANAGE, unit=unit, verb=verb) for unit in UNITS for verb in ("start", "stop", "restart")]
+    assert ask(cases) == ["yes"] * len(cases)
+
+
+@needs_node
+def test_every_other_verb_unit_or_action_is_left_to_polkits_default():
+    # Not handled means polkit's default for the action: Dan's password (auth_admin).
+    cases = [case(MANAGE, unit="local-ai-brake.service", verb=verb)
+             for verb in ("reload", "try-restart", "reload-or-restart", "kill", "reset-failed", "set-property",
+                          "freeze", "clean")]
+    # systemd passes a unit's full name, so only the exact four match: no prefix, no transient unit.
+    cases += [case(MANAGE, unit=unit, verb="start")
+              for unit in ("ssh.service", "docker.service", "local-ai-probe.service", "local-ai-brake.service.d",
+                           "xlocal-ai-brake.service", "local-ai-brake")]
+    cases += [
+        case(MANAGE, unit="local-ai-brake.service"),  # no verb
+        case(MANAGE, verb="start"),  # no unit
+        case("org.freedesktop.systemd1.manage-unit-files", unit="local-ai-brake.service", verb="start"),
+        case("org.freedesktop.systemd1.reload-daemon"),
+        case(MANAGE, groups=("spark-users",), unit="local-ai-brake.service", verb="start"),  # agent and spark
+        case(MANAGE, groups=(), unit="local-ai-brake.service", verb="restart"),
+    ]
+    assert ask(cases) == ["not handled"] * len(cases)
+```
+
+- [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
+  → FAIL: `install_units: command not found`, `--install-units` is an unknown option, `make` has no
+  `install-units-dry-run` target, and Phase 0's rule allows every verb on every `local-ai-*` name,
+  and `reload-daemon`. Phase 0's bootstrap tests still pass, and so does
+  `test_spark_admin_starts_stops_and_restarts_the_four_units`: Phase 0's rule allowed that too.
+
+- [ ] **Step 7: Implement root's copies**
+
+In `stack/host/bootstrap.sh`, the header's usage lines gain, after the `--hold-gpu` lines:
+
+```bash
+#   Install root's copies:      make install-units   (of the units and the Compose project that
+#                               make apply staged; it runs this script with --install-units, and
+#                               make install-units-dry-run previews it)
+```
+
+The globals gain, below `HOLD_ONLY=0`:
+
+```bash
+INSTALL_UNITS=0
+```
+
+`parse_args` takes the new mode, names it in the unknown-option message, and refuses it with
+`--hold-gpu`:
+
+```bash
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) DRY_RUN=1 ;;
+      --hold-gpu) HOLD_ONLY=1 ;;
+      --install-units) INSTALL_UNITS=1 ;;
+      # A mistyped --dry-run under sudo must not turn into a real run.
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu and --install-units)" >&2; exit 2 ;;
+    esac
+  done
+  if (( HOLD_ONLY && INSTALL_UNITS )); then
+    echo "bootstrap: --hold-gpu and --install-units are separate modes; pick one" >&2
+    exit 2
+  fi
+}
+```
+
+`polkit_rule` says what the rule now allows:
+
+```bash
+polkit_rule() {
+  say "polkit: spark-admin starts, stops and restarts the four local-ai units without sudo, and nothing more"
+  run install -m 0644 "$HERE/50-local-ai.rules" /etc/polkit-1/rules.d/50-local-ai.rules
+}
+```
+
+After `polkit_rule`, the install mode:
+
+```bash
+# Root's own copies of the units and the Compose project that root runs (make install-units). They
+# are regular files owned by root and not writable by group or others, in folders only root can
+# write, so nothing running as the admin changes what root runs without sudo. `spark apply` stages
+# them in STAGED, which the admin can write: each staged file must be a regular file, and root
+# reads it as the admin who ran sudo, so a link planted there can't make root copy, or show, a
+# file the admin can't read. It shows what would change, and asks, before it installs anything;
+# run again with nothing changed, it changes nothing. Tests point these four at stand-ins.
+STAGED="${BOOTSTRAP_STAGED:-/opt/local-ai/etc}"
+UNIT_DIR="${BOOTSTRAP_UNIT_DIR:-/etc/systemd/system}"
+COMPOSE_DIR="${BOOTSTRAP_COMPOSE_DIR:-/etc/local-ai/compose}"
+ROOT_USER="${BOOTSTRAP_ROOT_USER:-root}"
+ROOT_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service local-ai-pull.service)
+ENABLED_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service)  # pull runs when asked
+COMPOSE_FILES=(compose.yaml searxng/settings.yml)
+STAGED_COPY=""  # install-units: root's private copy of what it read, removed on the way out
+
+# The files root runs, one "staged|installed" pair a line.
+root_files() {
+  local unit file
+  for unit in "${ROOT_UNITS[@]}"; do printf '%s|%s\n' "$STAGED/systemd/$unit" "$UNIT_DIR/$unit"; done
+  for file in "${COMPOSE_FILES[@]}"; do printf '%s|%s\n' "$STAGED/compose/$file" "$COMPOSE_DIR/$file"; done
+}
+
+# Whether a path is root's own: there, not a link, owned by ROOT_USER, not writable by group or others.
+roots_own() {
+  [[ -e "$1" && ! -L "$1" && -z "$(find "$1" -prune \( ! -user "$ROOT_USER" -o -perm -020 -o -perm -002 \) -print)" ]]
+}
+
+install_units() {
+  say "root's own copies of the units and the Compose project that root runs"
+  local reader="" staged installed n=0 folders=0 folder answer from unit entry
+  local -a changed=() enable=()
+  # A real run is root's, and so is a dry run under sudo: either reads as the admin who ran sudo.
+  if (( ! DRY_RUN || EUID == 0 )); then
+    if [[ -z "${SUDO_USER:-}" || "$SUDO_USER" == root ]]; then
+      echo "bootstrap: run it with sudo from your own account (make install-units): root reads what make apply staged as you" >&2
+      exit 1
+    fi
+    reader="$SUDO_USER"
+  fi
+  STAGED_COPY="$(mktemp -d)"
+  trap 'rm -rf "$STAGED_COPY"' EXIT
+  while IFS='|' read -r staged installed; do
+    n=$((n + 1))
+    if [[ -L "$staged" || ! -f "$staged" ]]; then
+      echo "bootstrap: $staged is missing or isn't a regular file, so nothing was installed — run make apply, then this again" >&2
+      exit 1
+    fi
+    if [[ -n "$reader" ]]; then
+      if ! runuser -u "$reader" -- cat -- "$staged" > "$STAGED_COPY/$n"; then
+        echo "bootstrap: $reader can't read $staged, so nothing was installed" >&2
+        exit 1
+      fi
+    else
+      cat -- "$staged" > "$STAGED_COPY/$n"
+    fi
+    if [[ ! -f "$installed" ]] || ! roots_own "$installed" || ! cmp -s "$STAGED_COPY/$n" "$installed"; then
+      changed+=("$n|$staged|$installed")
+    fi
+  done < <(root_files)
+  for folder in "$COMPOSE_DIR" "$COMPOSE_DIR/searxng"; do
+    if [[ ! -d "$folder" ]] || ! roots_own "$folder"; then folders=1; fi
+  done
+  # What root will run, before root runs it: every change, and every copy that isn't root's own,
+  # indented so a diff's + lines can't be taken for the commands below.
+  if (( folders )); then
+    echo "    $COMPOSE_DIR and its searxng folder: missing, or not root's own"
+  fi
+  if (( ${#changed[@]} )); then
+    for entry in "${changed[@]}"; do
+      IFS='|' read -r n staged installed <<<"$entry"
+      from="$installed"
+      if [[ -L "$installed" ]]; then echo "    $installed: a link, which root's own regular file replaces"; fi
+      if [[ -L "$installed" || ! -f "$installed" ]]; then from=/dev/null; fi
+      if [[ "$from" != /dev/null ]] && cmp -s "$from" "$STAGED_COPY/$n"; then
+        echo "    $installed: the same text, but not root's own regular file"
+      else
+        { diff -u --label "installed: $installed" --label "staged: $staged" "$from" "$STAGED_COPY/$n" || true; } |
+          sed 's/^/    /'
+      fi
+    done
+  fi
+  if (( ! folders && ${#changed[@]} == 0 )); then
+    say "root's copies match what make apply staged: nothing to install"
+  else
+    if (( ! DRY_RUN )); then
+      read -r -p "install these as root? [y/N] " answer || answer=""
+      case "$answer" in
+        [yY] | [yY][eE][sS]) ;;
+        *) echo "bootstrap: nothing was installed" >&2; exit 1 ;;
+      esac
+    fi
+    if (( folders )); then run install -d -o root -g root -m 0755 "$COMPOSE_DIR" "$COMPOSE_DIR/searxng"; fi
+    if (( ${#changed[@]} )); then
+      for entry in "${changed[@]}"; do
+        IFS='|' read -r n staged installed <<<"$entry"
+        from="$STAGED_COPY/$n"
+        if (( DRY_RUN )); then from="$staged"; fi
+        run install -o root -g root -m 0644 "$from" "$installed"
+      done
+    fi
+  fi
+  # systemd reads a unit file when told to: after this run installs one, or when a run that
+  # installed one was cut off before it told systemd.
+  if (( ${#changed[@]} )) || [[ "$(systemctl show --property=NeedDaemonReload --value "${ROOT_UNITS[@]}" 2>/dev/null || true)" == *yes* ]]; then
+    run systemctl daemon-reload
+  fi
+  for unit in "${ENABLED_UNITS[@]}"; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || enable+=("$unit")
+  done
+  if (( ${#enable[@]} )); then run systemctl enable "${enable[@]}"; fi
+  if (( ! DRY_RUN && (folders || ${#changed[@]}) )); then
+    say "installed. make apply restarts each unit that runs an older definition, llama-swap only while no model is loaded (or make apply-now)"
+  fi
+}
+```
+
+In `main`, the install mode runs alone, like `--hold-gpu`:
+
+```bash
+main() {
+  parse_args "$@"
+  preflight
+  if (( HOLD_ONLY )); then
+    # Upgrade day: re-hold the set and nothing else — no desktop stop, no earlyoom restart, no
+    # owner and mode resets.
+    hold_gpu_stack
+    return 0
+  fi
+  if (( INSTALL_UNITS )); then
+    # Root's copies of what make apply staged, and nothing else.
+    install_units
+    return 0
+  fi
+  packages
+  hold_gpu_stack
+  users_and_groups
+  directories
+  headless
+  earlyoom_config
+  firewall
+  polkit_rule
+  say "done — continue with website/how-to/bootstrap.md, 'After bootstrap'"
+}
+```
+
+`stack/host/50-local-ai.rules`, whole:
+
+```javascript
+// Installed by stack/host/bootstrap.sh. Lets members of spark-admin start, stop and restart the
+// stack's four units without sudo, and nothing more: no other unit or verb, no daemon-reload, no
+// enabling or linking unit files. What the units run is root's own copy, which only
+// `make install-units` (sudo) installs, so this gives no say over what root runs.
+// systemd (v255, src/core/dbus-unit.c, bus_unit_method_start_generic) passes manage-units the
+// unit's full name as "unit" and the job as "verb". polkit runs this in Duktape: ES5, so var.
+polkit.addRule(function (action, subject) {
+  var units = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+               "local-ai-pull.service"];
+  var verbs = ["start", "stop", "restart"];
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || !subject.isInGroup("spark-admin")) {
+    return polkit.Result.NOT_HANDLED;
+  }
+  if (units.indexOf(action.lookup("unit")) >= 0 && verbs.indexOf(action.lookup("verb")) >= 0) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});
+```
+
+- [ ] **Step 8: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
+  install-units install-units-dry-run pull status logs tunnel clients`); recipe lines start with a
+  tab:
 
 ```make
 apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
@@ -2518,9 +3428,11 @@ apply-dry-run: ## On the Spark: show what apply would change
 apply-now: ## On the Spark: apply even if restarting llama-swap stops loaded models
 	$(SPARK) apply --now
 
-install-units: ## On the Spark, once (sudo): link and enable the local-ai units
-	sudo systemctl link /opt/local-ai/etc/systemd/local-ai-llama-swap.service /opt/local-ai/etc/systemd/local-ai-brake.service /opt/local-ai/etc/systemd/local-ai-compose.service /opt/local-ai/etc/systemd/local-ai-pull.service
-	sudo systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service
+install-units-dry-run: ## On the Spark: show what make install-units would install as root; changes nothing
+	bash stack/host/bootstrap.sh --install-units --dry-run
+
+install-units: ## On the Spark (Dan; sudo): install root's copies of the units and Compose project that make apply staged
+	sudo bash stack/host/bootstrap.sh --install-units
 
 pull: ## On the Spark: download the model files at their pinned revisions (as the spark user)
 	systemctl start local-ai-pull.service
@@ -2539,7 +3451,7 @@ clients: ## Add the Spark provider to pi on this machine
 	$(SPARK) clients pi --write
 ```
 
-- [ ] **Step 6: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
+- [ ] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
   `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`):
   - **The version.** pi is pinned to 0.85.1: 0.86.0 through 0.87.1 are reported to crash
     llama-server, most likely a llama.cpp bug that their longer prompt triggers. Move up only to a
@@ -2560,7 +3472,7 @@ clients: ## Add the Spark provider to pi on this machine
     `uv run --frozen --project spark spark clients pi --write`. Work inside tmux: `tmux new -As work`,
     then `pi`; `Ctrl-b d` detaches, and `tmux attach -t work` picks it up after logging back in.
 
-- [ ] **Step 7: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
+- [ ] **Step 10: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
   `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
   Each bullet below is one section of the runbook. Its bold words are the section's heading, and
   the rest is what the section says. Write it in the runbook's own words, and copy the commands
@@ -2571,11 +3483,19 @@ clients: ## Add the Spark provider to pi on this machine
     from the clone you deploy from since `stack/host/` last changed: re-run it whenever that folder
     changes. It stops a running desktop and restarts earlyoom, so run it over SSH with nothing open
     on the desktop.
-  - **First deploy.** `make apply` renders into `/opt/local-ai/etc`, syncs the app into
-    `/opt/local-ai/app`, and reports that the units aren't installed yet. Once: `make install-units`
-    (sudo). Then `make pull` (the model files, downloaded by the `spark` user; `make logs s=pull` in
-    another pane shows progress), `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose`
-    (no sudo: the polkit rule covers `local-ai-*`), and `make status`.
+  - **First deploy.** Root runs its own copies of the units and the Compose project, never the
+    files `make apply` writes. `make apply` renders into `/opt/local-ai/etc` and stops there on the
+    first deploy: it stages the units and the Compose project, says root has no copy of them yet,
+    and deploys nothing else. Then `make install-units` (sudo): it shows each file it would install
+    as root, in full the first time, asks, installs root's copies in `/etc/systemd/system` and
+    `/etc/local-ai/compose`, and enables llama-swap, the brake and the web services.
+    `make install-units-dry-run` shows the same and changes nothing. Read what it shows before you
+    answer: it is what root will run. Then `make apply` again: it syncs the app into
+    `/opt/local-ai/app` and deploys llama-swap's config and the registry, and since nothing runs yet
+    it restarts nothing. Then `make pull` (the model files, downloaded by the `spark` user;
+    `make logs s=pull` in another pane shows progress),
+    `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose` (no sudo: the polkit rule
+    lets you start, stop and restart the four units, nothing more), and `make status`.
   - **The web UI's first account, straight after the first start.** From the Mac, open a tunnel in a
     spare terminal, `ssh -N -L 3000:127.0.0.1:3000 brightroar`, then open `http://127.0.0.1:3000`
     and create your account: the first one becomes the admin, and signup is otherwise closed.
@@ -2614,21 +3534,25 @@ clients: ## Add the Spark provider to pi on this machine
     names your tailnet, so read it privately. Log in with the account you made. To undo:
     `sudo tailscale serve reset`, then serve again.
   - **Every later change.** `git pull`; if it changed `stack/host/`, `make bootstrap` first. Then
-    `make apply-dry-run`, `make apply`. If the llama-swap config changed while models are loaded,
-    apply changes nothing and says so; run it again when they're idle, or `make apply-now` to restart
-    llama-swap anyway.
+    `make apply-dry-run`, `make apply`. If a unit or the Compose project changed, apply stages it and
+    deploys nothing else: run `make install-units`, read what it shows, since that is what root will
+    run, and answer, then `make apply` again. That second apply restarts each unit still running its
+    older definition. If llama-swap would restart, for its config or for its unit, while models are
+    loaded, apply changes nothing and says so; run it again when they're idle, or `make apply-now` to
+    restart llama-swap anyway.
   - **When something is wrong.** `make status`, then `make logs s=llama-swap` (or `brake`, `pull`,
     `compose`, `open-webui`, `searxng`). A refused load appears in `make status` as a `refused` line
-    with its reason.
+    with its reason. If `make apply` keeps saying a file differs from root's copy,
+    `make install-units-dry-run` shows the difference, and `make install-units` installs it.
 
-- [ ] **Step 8: Tests pass; the site builds; commit**
+- [ ] **Step 11: Tests pass; the site builds; commit**
 
 Run: `uv run --frozen --project spark pytest spark/tests && make lint docs`
 Expected: all pass; the How-to listing shows the two new runbooks.
 
 ```bash
-git add spark Makefile stack/versions.yaml website/reference/stack.md website/how-to
-git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets and runbooks" \
+git add spark stack/host Makefile stack/versions.yaml website/reference/stack.md website/how-to
+git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets with root's copies of the units, and runbooks" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
@@ -2661,10 +3585,11 @@ true, and Tasks 12, 13 and 16 run them on the box:
 
 - Consumes: Phase 0's `stack/host/bootstrap.sh` (`gpu_hold_patterns`, `hold_gpu_stack`, `run`,
   `say`, the `--hold-gpu` mode) and `spark/tests/test_bootstrap.py` (`INSTALLED`, `GPU_SET`,
-  `gpu_env`, `script`, `held`, `dry_run`, `install_d_line`, `NO_PACKAGES`); `load_registry`,
-  `Registry` (Task 1) and Task 1's `spark/tests/fixtures/models.yaml`, whose embeddings model the
-  doctor tests expect to be named `embed`; `paths.LLAMASWAP_URL`, `paths.REGISTRY` (Task 2);
-  `key_from_env` (Task 3).
+  `gpu_env`, `script`, `held`, `dry_run`, `install_d_line`, `NO_PACKAGES`); Task 9's
+  `--install-units` mode and `calls`; `load_registry`, `Registry` (Task 1) and Task 1's
+  `spark/tests/fixtures/models.yaml`, whose embeddings model the doctor tests expect to be named
+  `embed`; `paths.LLAMASWAP_URL`, `paths.REGISTRY` (Task 2); `key_from_env` (Task 3); `render`,
+  `installed_path`, `UNITS`, `UNIT_DIR`, `COMPOSE_DIR` (Task 6).
 - Produces:
   - `/etc/needrestart/conf.d/local-ai.conf`, which bootstrap installs: needrestart never restarts
     a `local-ai-*` unit.
@@ -2707,9 +3632,11 @@ true, and Tasks 12, 13 and 16 run them on the box:
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
     `upgrade-gpu-dry-run`.
-  - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable` and `http`;
-    `judge_gpu_set(code, out, err) -> Check`; `earlyoom_args(text) -> list[str]`;
-    `checks(probe, key, registry) -> list[Check]`; `report(results) -> str`; CLI
+  - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable`, `entry` and
+    `http` (`entry(path)`: owner, group, permission bits and kind, `file`, `folder`, `link` or
+    `other`, read without following a link); `judge_gpu_set(code, out, err) -> Check`;
+    `earlyoom_args(text) -> list[str]`; `ROOT_FOLDERS`, `ROOT_FILES` (root's copies);
+    `checks(probe, key, registry) -> list[Check]`, twelve of them; `report(results) -> str`; CLI
     `spark doctor [--key-env NAME]`: exit 0 when every check passes, 1 when any fails, 2 when it
     isn't run from the repo root. Make target `doctor`.
 
@@ -2968,11 +3895,6 @@ def real_upgrade(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def calls(tmp_path: Path) -> list[str]:
-    path = tmp_path / "calls"
-    return path.read_text().splitlines() if path.exists() else []
-
-
 def sorted_set(packages: set[str]) -> str:
     return " ".join(sorted(packages))
 
@@ -3153,9 +4075,10 @@ def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
     assert {"upgrade-gpu", "upgrade-gpu-dry-run"} <= set(phony.split()[1:])
 
 
-def test_hold_gpu_and_upgrade_gpu_are_separate_modes():
+@pytest.mark.parametrize("mode", ["--hold-gpu", "--install-units"])
+def test_upgrade_gpu_is_a_mode_of_its_own(mode):
     # --dry-run first, so a broken guard would only print a plan.
-    result = script("--dry-run", "--hold-gpu", "--upgrade-gpu", env=NO_PACKAGES)
+    result = script("--dry-run", mode, "--upgrade-gpu", env=NO_PACKAGES)
     assert result.returncode == 2 and result.stdout == ""
 
 
@@ -3201,7 +4124,7 @@ def test_needrestart_never_restarts_a_local_ai_unit():
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
   → FAIL: `--upgrade-gpu` is an unknown option (exit 2), `upgrade_gpu` isn't defined, the dry run has
   no needrestart line, `stack/host/needrestart.conf` doesn't exist, and `make` has no `upgrade-gpu`
-  target. Phase 0's bootstrap tests still pass.
+  target. Phase 0's and Task 9's bootstrap tests still pass.
 
 - [ ] **Step 3: Implement the override and the upgrade mode**
 
@@ -3216,14 +4139,15 @@ def test_needrestart_never_restarts_a_local_ai_unit():
 $nrconf{override_rc}->{qr(^local-ai-)} = 0;
 ```
 
-In `stack/host/bootstrap.sh`, the header's usage lines gain:
+In `stack/host/bootstrap.sh`, the header's usage lines gain, after Task 9's `--install-units`
+lines:
 
 ```bash
 #   Move the GPU set:           make upgrade-gpu   (upgrade day, in tmux; it runs this script with
 #                               --upgrade-gpu, and make upgrade-gpu-dry-run previews it)
 ```
 
-The globals, below `HOLD_ONLY=0`:
+The globals, below `INSTALL_UNITS=0` (Task 9's):
 
 ```bash
 UPGRADE=0
@@ -3233,8 +4157,8 @@ MOVING=0     # upgrade day: 1 from the moment apt starts moving the set
 MOVE_FROM="" # upgrade day: the set's contents just before that (gpu_set_contents)
 ```
 
-`parse_args` takes the new mode, names it in the unknown-option message, and refuses both modes at
-once:
+`parse_args` takes the new mode, names it in the unknown-option message, and refuses any two of the
+three modes at once:
 
 ```bash
 parse_args() {
@@ -3243,13 +4167,14 @@ parse_args() {
     case "$arg" in
       --dry-run) DRY_RUN=1 ;;
       --hold-gpu) HOLD_ONLY=1 ;;
+      --install-units) INSTALL_UNITS=1 ;;
       --upgrade-gpu) UPGRADE=1 ;;
       # A mistyped --dry-run under sudo must not turn into a real run.
-      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu and --upgrade-gpu)" >&2; exit 2 ;;
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu, --install-units and --upgrade-gpu)" >&2; exit 2 ;;
     esac
   done
-  if (( HOLD_ONLY && UPGRADE )); then
-    echo "bootstrap: --hold-gpu and --upgrade-gpu are separate modes; pick one" >&2
+  if (( HOLD_ONLY + INSTALL_UNITS + UPGRADE > 1 )); then
+    echo "bootstrap: --hold-gpu, --install-units and --upgrade-gpu are separate modes; pick one" >&2
     exit 2
   fi
 }
@@ -3474,6 +4399,11 @@ main() {
     hold_gpu_stack
     return 0
   fi
+  if (( INSTALL_UNITS )); then
+    # Root's copies of what make apply staged, and nothing else.
+    install_units
+    return 0
+  fi
   if (( UPGRADE )); then
     upgrade_gpu
     return 0
@@ -3520,8 +4450,10 @@ import subprocess
 from pathlib import Path
 
 from spark import doctor
-from spark.doctor import SECRETS, UFW_CONF, UNITS, checks, earlyoom_args, report
+from spark.doctor import SECRETS, UFW_CONF, UNITS, Probe, checks, earlyoom_args, report
 from spark.registry import load_registry
+from spark.render import COMPOSE_DIR, installed_path, render
+from spark.versions import load_versions
 
 ROOT = Path(__file__).resolve().parents[2]
 REG = load_registry(Path(__file__).parent / "fixtures" / "models.yaml")
@@ -3556,6 +4488,9 @@ class FakeProbe:
             UFW_CONF: "# /etc/ufw/ufw.conf\nENABLED=yes\nLOGLEVEL=low\n",
         }
         self.owners = {SECRETS: ("root", "spark", 0o750)}
+        # Root's own copies of the units and the Compose project, as `make install-units` leaves them.
+        self.entries = {path: ("root", "root", 0o755, "folder") for path in doctor.ROOT_FOLDERS}
+        self.entries |= {path: ("root", "root", 0o644, "file") for path in doctor.ROOT_FILES}
         self.open_folders = set()
         self.pages = {f"{URL}/health": 200, "http://127.0.0.1:3000/": 200, "http://127.0.0.1:8888/": 200}
         self.keys_sent = []
@@ -3571,6 +4506,9 @@ class FakeProbe:
 
     def listable(self, path):
         return Path(path) in self.open_folders
+
+    def entry(self, path):
+        return self.entries.get(Path(path))
 
     def http(self, url, *, key=None, body=None, timeout=10.0):
         self.keys_sent.append(key)
@@ -3590,7 +4528,7 @@ def failures(probe, key=KEY):
 
 def test_a_healthy_spark_passes_every_check():
     results = checks(FakeProbe(), KEY, REG)
-    assert len(results) == 11 and [c.name for c in results if not c.ok] == []
+    assert len(results) == 12 and [c.name for c in results if not c.ok] == []
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -3663,6 +4601,41 @@ def test_the_secrets_folder_must_stay_closed_to_you():
     assert failures(probe)["secrets folder"].endswith("root:spark 755, not root:spark 750")
 
 
+def test_what_root_runs_must_be_roots_own_files():
+    # Dan's decision (2026-09-25): root runs only root's own copies, which `make install-units`
+    # installs, so nothing running as Dan changes what root runs.
+    unit = Path("/etc/systemd/system/local-ai-llama-swap.service")
+    probe = FakeProbe()
+    probe.entries[unit] = ("chendaniely", "spark-admin", 0o644, "file")
+    assert failures(probe) == {"root's copies": f"{unit} is chendaniely:spark-admin 644: run `make install-units`"}
+    probe.entries[unit] = ("root", "root", 0o664, "file")
+    assert failures(probe)["root's copies"].startswith(f"{unit} is root:root 664")
+    probe.entries[unit] = ("root", "root", 0o777, "link")
+    assert failures(probe)["root's copies"].startswith(f"{unit} is a link, not a file")
+    del probe.entries[unit]
+    assert failures(probe)["root's copies"].startswith(f"{unit} is missing")
+    probe = FakeProbe()
+    probe.entries[Path(COMPOSE_DIR)] = ("root", "root", 0o775, "folder")
+    assert failures(probe) == {"root's copies": f"{COMPOSE_DIR} is root:root 775: run `make install-units`"}
+
+
+def test_doctor_checks_every_copy_that_render_stages_for_root():
+    fixtures = Path(__file__).parent / "fixtures"
+    files = render(REG, load_versions(fixtures / "versions.yaml"), (fixtures / "models.yaml").read_text(),
+                   templates=ROOT / "stack/templates")
+    assert set(doctor.ROOT_FILES) == {Path(installed_path(rel)) for rel in files if installed_path(rel)}
+    assert set(doctor.ROOT_FOLDERS) == {Path(COMPOSE_DIR), Path(COMPOSE_DIR, "searxng")}
+
+
+def test_the_probe_reads_a_link_as_a_link(tmp_path):
+    (tmp_path / "file").write_text("x")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "file")
+    probe = Probe(ROOT)
+    assert [probe.entry(tmp_path / name)[3] for name in ("file", "folder", "link")] == ["file", "folder", "link"]
+    assert probe.entry(tmp_path / "missing") is None
+
+
 def test_a_unit_that_is_down_is_named():
     probe = FakeProbe()
     probe.commands[("systemctl", "is-active", *UNITS)] = (3, "active\ninactive\nactive\n", "")
@@ -3695,7 +4668,7 @@ def test_the_report_shows_every_check_and_never_the_key():
     text = report(checks(probe, KEY, REG))
     assert KEY in probe.keys_sent and KEY not in text
     assert text.splitlines()[0] == "ok    leak hooks: on in this clone"
-    assert text.splitlines()[-1] == "doctor: 11 of 11 checks pass"
+    assert text.splitlines()[-1] == "doctor: 12 of 12 checks pass"
 
 
 def test_doctor_runs_only_from_the_repo_root(tmp_path, monkeypatch, capsys):
@@ -3755,18 +4728,24 @@ import json
 import os
 import pwd
 import re
+import stat
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from spark import paths
+from spark import paths, render
 from spark.llamaswap import key_from_env
 from spark.registry import Registry, load_registry
 
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service")
 SECRETS = Path("/etc/local-ai/secrets")
+# Root's own copies of the units and the Compose project: what root runs, installed by
+# `make install-units` from what `spark apply` staged.
+ROOT_FOLDERS = (Path(render.COMPOSE_DIR), Path(render.COMPOSE_DIR, "searxng"))
+ROOT_FILES = (*(Path(render.UNIT_DIR, unit) for unit in render.UNITS),
+              Path(render.COMPOSE_DIR, "compose.yaml"), Path(render.COMPOSE_DIR, "searxng/settings.yml"))
 UFW_CONF = Path("/etc/ufw/ufw.conf")
 EARLYOOM_DEFAULT = Path("stack/host/earlyoom.default")
 # Each should answer 200 on / (urllib follows redirects). Not yet seen on the box: the first
@@ -3817,6 +4796,17 @@ class Probe:
         except OSError:
             return False
         return True
+
+    def entry(self, path: Path) -> tuple[str, str, int, str] | None:
+        """A path's owner, group, permission bits and kind ("file", "folder", "link" or "other"), read
+        without following a link; None when it's missing or out of this account's reach."""
+        try:
+            st = os.lstat(path)
+            owner = pwd.getpwuid(st.st_uid).pw_name, grp.getgrgid(st.st_gid).gr_name, st.st_mode & 0o7777
+        except (OSError, KeyError):
+            return None
+        kinds = ((stat.S_ISLNK, "link"), (stat.S_ISDIR, "folder"), (stat.S_ISREG, "file"))
+        return *owner, next((kind for test, kind in kinds if test(st.st_mode)), "other")
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
              timeout: float = 10.0) -> tuple[int, str]:
@@ -3936,6 +4926,26 @@ def secrets_folder(probe: Probe) -> Check:
 # The stack
 
 
+def root_copies(probe: Probe) -> Check:
+    """What root runs is root's own: each copy a folder or a regular file, never a link, owned by
+    root and not writable by group or others."""
+    wrong = []
+    for path in (*ROOT_FOLDERS, *ROOT_FILES):
+        want = "folder" if path in ROOT_FOLDERS else "file"
+        entry = probe.entry(path)
+        if entry is None:
+            wrong.append(f"{path} is missing, or out of your account's reach")
+            continue
+        user, group, mode, kind = entry
+        if kind != want:
+            wrong.append(f"{path} is a {kind}, not a {want}")
+        elif user != "root" or mode & 0o022:
+            wrong.append(f"{path} is {user}:{group} {mode:o}")
+    if wrong:
+        return Check("root's copies", False, "; ".join(wrong) + ": run `make install-units`")
+    return Check("root's copies", True, "the units and the Compose project that root runs are root's own files")
+
+
 def units(probe: Probe) -> Check:
     _, out, _ = probe.run(["systemctl", "is-active", *UNITS])
     states = out.split()
@@ -3998,7 +5008,7 @@ def checks(probe: Probe, key: str | None, registry: Registry | None) -> list[Che
     return [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe),
         firewall(probe), secrets_folder(probe),
-        units(probe), llama_swap(probe, key), web(probe), model(probe, key, registry),
+        root_copies(probe), units(probe), llama_swap(probe, key), web(probe), model(probe, key, registry),
     ]
 
 
@@ -4046,9 +5056,11 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     steps. Run `make doctor` on the Spark, from the clone. It checks Phase 0's guardrails: the leak
     hooks, the GPU set held (the running kernel's modules package included), the driver's kernel
     module agreeing with `nvidia-smi`, earlyoom running with the repo's arguments, ufw on, and the
-    secrets folder closed to you. It checks the stack too: its three units active, llama-swap
-    answering and refusing a call without a key, Open WebUI and SearXNG answering, and the
-    embeddings model answering through llama-swap, loaded first if it wasn't. Each line is `ok` or
+    secrets folder closed to you. It checks the stack too: root's own copies of the units and the
+    Compose project (each root's regular file or folder, not a link, and not writable by group or
+    others), its three units active, llama-swap answering and refusing a call without a key, Open
+    WebUI and SearXNG answering, and the embeddings model answering through llama-swap, loaded
+    first if it wasn't. Each line is `ok` or
     `FAIL`, and a `FAIL` says what to do. It only reads, needs no sudo, and uses your
     `SPARK_API_KEY`. Then say what brings the stack back by itself: the units are enabled, so a
     reboot starts them; llama-swap and the brake restart if they crash; the containers' restart
@@ -4098,7 +5110,8 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     reboot already repeat step 5, the GRUB check included (2026-09-25): leave that as it is.
   - `website/how-to/deploy.md`: *Every later change* ends with `make doctor`, and *When something is
     wrong* starts with it: Phase 0's guardrails and the stack in one pass, and each `FAIL` says what
-    to do.
+    to do. Its `root's copies` line fails when something root runs isn't root's own file, and says
+    to run `make install-units`.
   - `README.md` §Contents, brought up to date for everything Phase 1 adds before the switch to the
     Spark:
     - the `Makefile` row: the deploy targets (Task 9), `make upgrade-gpu` and `make doctor`;
@@ -4252,8 +5265,9 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 - [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`.
   Phase 0's review changed bootstrap after it last ran on the box: `/var/lib/local-ai` is now root's
   (a `spark`-owned parent let a re-run hand `spark` a directory of its choosing), and earlyoom avoids
-  `sshd.*`. This phase adds `spark`'s two cache folders and the needrestart override. From the clone
-  on `phase-1`, over SSH with nothing open on the desktop (bootstrap stops a running desktop and
+  `sshd.*`. This phase adds `spark`'s two cache folders, the needrestart override, and the polkit
+  rule that lets `spark-admin` start, stop and restart the four units and nothing more. From the
+  clone on `phase-1`, over SSH with nothing open on the desktop (bootstrap stops a running desktop and
   restarts earlyoom), Dan runs `make bootstrap-dry-run`, reads it, then runs `make bootstrap`. Then
   the Spark session checks:
 
@@ -4261,6 +5275,7 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 stat -c '%U:%G %a %n' /var/lib/local-ai /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
 cmp stack/host/needrestart.conf /etc/needrestart/conf.d/local-ai.conf && echo "needrestart: same"
 cmp stack/host/earlyoom.default /etc/default/earlyoom && echo "earlyoom: same"
+pkcheck --action-id org.freedesktop.systemd1.reload-daemon --process $$ >/dev/null 2>&1; echo "reload-daemon without a password: $?"
 diff <(make -s hold-gpu-dry-run | sed -n 's/^+ apt-mark hold //p' | tr ' ' '\n') \
      <(make -s upgrade-gpu-dry-run | sed -n 's/^+ apt-mark unhold //p' | tr ' ' '\n') && echo "release = hold"
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'linux-image-[0-9]*'   # the kernels' package names
@@ -4268,9 +5283,13 @@ uname -r
 ```
 
 Expected: `root:root 755 /var/lib/local-ai`, then `spark:spark 750` for each cache folder; both
-files the same as the repo's; and `release = hold`: upgrade day releases exactly the packages the
-hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is, `agent`'s own;
-bootstrap no longer touches it.
+files the same as the repo's; `reload-daemon without a password: 2`, which says the new polkit rule
+is live: Phase 0's let `spark-admin` reload systemd, and `pkcheck` answered 0. (The session can't
+compare the rule file itself: Ubuntu 24.04's polkit keeps its rules folder `root:polkitd 750`, as a
+container showed; not yet checked on this box. And polkit takes a unit and a verb to check only
+from root.) `release = hold`: upgrade day releases exactly the
+packages the hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is,
+`agent`'s own; bootstrap no longer touches it.
 
 Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `grep`s of `grub.cfg`
 run with sudo, and tells the Spark session what it printed, with "an id" in place of every UUID and
@@ -4291,18 +5310,32 @@ above, it checks two things `make upgrade-gpu` assumes (Task 10) and nothing has
 If either differs, stop and tell the Mac session: that check must change before an upgrade day
 relies on it. Task 13 Step 7 records the re-run and both results in the changelog.
 
-- [ ] **Step 2 [Spark]: render and deploy** — `make apply-dry-run`, then `make apply`.
-  Expected: every file under `/opt/local-ai/etc` and the app are listed as new; `llama-swap -validate`
-  prints `config is valid: 4 model(s)`; `uv sync` builds `/opt/local-ai/app/.venv`; each unit is
-  reported as not installed yet.
+- [ ] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
+  Expected: every file under `/opt/local-ai/etc` and the app are listed as new;
+  `llama-swap -validate` prints `config is valid: 4 model(s)`; root has no copy yet of the four
+  units, `compose/compose.yaml` or `compose/searxng/settings.yml`; and apply stages them and stops,
+  naming `make install-units`. Nothing else is deployed yet: no app, no `llama-swap.yaml`.
 
-- [ ] **Step 3 [Dan]: install the units** — `make install-units` (asks for sudo once). Check:
-  `systemctl list-unit-files 'local-ai-*'` shows llama-swap, brake and compose `enabled`, and pull
-  `linked`.
+- [ ] **Step 3 [Dan]: install root's copies** — `make install-units` (asks for sudo once). It shows
+  each of the six files in full, since root has none yet: read them, because they are what root will
+  run. Answer `y`. Check:
 
-- [ ] **Step 4 [Spark]: pull the model files** — `make pull`. About 40 GB, downloaded by the `spark`
-  user; it prints nothing until it finishes, so follow it with `journalctl -fu local-ai-pull` in
-  another tmux pane.
+```bash
+systemctl list-unit-files 'local-ai-*'
+stat -c '%U:%G %a %F %n' /etc/systemd/system/local-ai-*.service /etc/local-ai/compose \
+  /etc/local-ai/compose/compose.yaml /etc/local-ai/compose/searxng /etc/local-ai/compose/searxng/settings.yml
+make install-units-dry-run
+```
+
+  Expected: llama-swap, brake and compose `enabled`, and pull `static` (it has no `[Install]`: it
+  runs only when asked); `root:root 644 regular file` for each file and `root:root 755 directory` for
+  the two folders; and the dry run says `nothing to install`.
+
+- [ ] **Step 4 [Spark]: deploy the rest, pull the model files** — `make apply`. Expected: it deploys
+  `llama-swap.yaml` and `models.yaml`, syncs the app (`uv sync` builds `/opt/local-ai/app/.venv`),
+  and restarts nothing: no unit runs yet, so each starts with the new config. Then `make pull`.
+  About 40 GB, downloaded by the `spark` user; it prints nothing until it finishes, so follow it with
+  `journalctl -fu local-ai-pull` in another tmux pane.
   Expected: five `pull: … → /var/lib/local-ai/hf/hub/models--…/snapshots/<revision>/<file>` lines
   and exit 0. Each path is the one the rendered config hands its engine — compare with
   `grep -o '/var/lib/local-ai/hf/hub/[^ ]*' /opt/local-ai/etc/llama-swap.yaml`. A `FAILED` line means
@@ -4432,7 +5465,7 @@ set that, so the engines are the first processes the kernel or earlyoom would ki
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
 root's now. If it isn't, the lines name the path: record it for the Mac session, which points that
 tool's cache at `/var/lib/local-ai/cache` in the unit template (Task 6's). `make doctor` ends
-`doctor: 11 of 11 checks pass`. If its firewall line says it can't read `/etc/ufw/ufw.conf`, record
+`doctor: 12 of 12 checks pass`. If its firewall line says it can't read `/etc/ufw/ufw.conf`, record
 the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) for the Mac session, which then changes
 that check. Step 3's browser already loaded Open WebUI's page. What is not yet seen on this box is
 doctor's own expectation: `200` from `/` on both Open WebUI and SearXNG. This first `make doctor`
@@ -4664,13 +5697,15 @@ from it (plan.md, *To verify on the box*).
 ```bash
 fresh=$(mktemp -d) && git clone --branch phase-1 https://github.com/chendaniely/local-ai "$fresh/local-ai"
 cd "$fresh/local-ai"
-make bootstrap           # [Dan], in this directory: sudo; every step is already in place
-make apply               # apply: nothing to change
+make bootstrap              # [Dan], in this directory: sudo; every step is already in place
+make apply                  # apply: nothing to change
+make install-units-dry-run  # nothing to install: root's copies match what this clone renders
 cd ~ && rm -rf "$fresh"
 ```
 
-Expected: bootstrap finishes without error, and apply prints `apply: nothing to change` — the
-running stack is exactly what the repo describes.
+Expected: bootstrap finishes without error, apply prints `apply: nothing to change`, and the install
+dry run says `nothing to install` — the running stack, root's copies included, is exactly what the
+repo describes.
 
 - [ ] **Step 5 [Dan + Spark]: a routine `apt upgrade`, then a reboot (S23)** — after each, the stack
   must serve again with no hand on it. With the residents loaded, the Spark session notes what runs
@@ -4678,7 +5713,7 @@ running stack is exactly what the repo describes.
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
-make doctor                                                                # doctor: 11 of 11 checks pass
+make doctor                                                                # doctor: 12 of 12 checks pass
 api http://127.0.0.1:9100/running | jq -r '.running[].model'               # the models loaded now
 systemctl show -p ActiveEnterTimestamp local-ai-llama-swap local-ai-brake  # when each unit started
 ```
@@ -4701,7 +5736,7 @@ Then:
 
 ```bash
 systemctl is-active local-ai-llama-swap local-ai-brake local-ai-compose   # active, three times: started at boot
-make doctor                                                                # 11 of 11; it loads the embeddings model
+make doctor                                                                # 12 of 12; it loads the embeddings model
 make status
 ```
 
@@ -4771,7 +5806,9 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   held reload was refused, `spark status` said why, and `--release` let it load again.
 - [ ] A load that didn't fit was refused with needed vs available, `spark status` said why, and
   nothing was unloaded.
-- [ ] A fresh clone plus `make bootstrap` and `make apply` changed nothing.
+- [ ] A fresh clone plus `make bootstrap` and `make apply` changed nothing, and
+  `make install-units-dry-run` found nothing to install: root runs only root's own copies of what
+  the repo describes.
 - [ ] After a routine `apt upgrade` and after a reboot, the stack served again without a hand on it,
   and `make doctor` passed (S23).
 - [ ] `make test lint docs` is clean and CI is green; README §Current state and the changelog are

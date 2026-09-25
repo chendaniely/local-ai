@@ -153,9 +153,16 @@ In order of how much they constrain the design:
   then hardcoded as `/home/dan`.) `spark` — the service user that
   runs the gate and llama-swap (so every model engine), and owns the models, the Hugging Face cache
   and state. It is deliberately **not** in the `docker` group, because Docker access is
-  root-equivalent; containers start from root-owned units instead. Dan's own account is effectively
-  root-capable (sudo, and `spark-admin` can change what the `local-ai-*` units run), so the
-  isolation boundary on this box is between Dan and `agent`. `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
+  root-equivalent; containers start from root-owned units instead. Dan's own account is
+  root-capable through sudo, so the isolation boundary on this box is between Dan and `agent`. From
+  Phase 1, what root runs is root's own: the `local-ai-*` units and the Compose project are
+  root-owned copies that `make install-units` installs with sudo, after showing what changed, so
+  nothing running as Dan — the Spark session, Positron's packages, a build — changes what root runs
+  without Dan's password. The polkit rule lets `spark-admin` start, stop and restart the four units
+  by exact name, and nothing more. (Corrected 2026-09-25: this said Dan's account is effectively
+  root-capable through sudo and through `spark-admin`, which could change what the `local-ai-*`
+  units run without a password; Dan's decision on the unit-file model, under *Open items and
+  risks*, closed the second path.) `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
   writes its repos and the NAS work folders; its own key; no GitHub credentials.
 - **Secrets.** Never `EnvironmentFile=~/.secrets` — systemd ignores `export` lines and has been
   reported logging them with their values. Dan writes one `KEY=value` file per service, 0640
@@ -270,15 +277,20 @@ plus a `Makefile` — the front door.
   in the order `website/how-to/index.qmd` lists them, where `make bootstrap` (sudo once: users,
   directories including the secrets folder, the GPU-set hold, earlyoom, the firewall) comes before
   Dan creates the private files (per-service secrets, in the folder bootstrap made; private values
-  such as the NAS and LAN addresses) → from Phase 1, `make install-units` (sudo once) links the
-  systemd units, Compose's included. (Corrected 2026-09-25: this put the private files before
-  bootstrap, which creates their folder, and had bootstrap install the units and Compose, which
-  Phase 1's `make install-units` does.)
+  such as the NAS and LAN addresses) → from Phase 1, `make apply` stages the systemd units and the
+  Compose project, and `make install-units` (sudo) installs root's own copies of them, again
+  whenever they change. (Corrected 2026-09-25: this put the private files before bootstrap, which
+  creates their folder, and had bootstrap install the units and Compose, which Phase 1's
+  `make install-units` does. Corrected again 2026-09-25: it said `make install-units` links the
+  units, with sudo once; Dan chose root-owned copies, reinstalled with sudo when they change.)
 - **After any change:** `make apply` on the Spark, or `make deploy` from the Mac (SSH, then
   `git pull && make apply`). `spark apply` renders (registry + pins + private values → concrete
   configs in a deploy directory outside the repo), validates with each tool's own checker, shows the
   diff, restarts only what changed (llama-swap waits for idle models or asks), then runs a quick
-  `spark doctor`. It warns about uncommitted changes.
+  `spark doctor`. It warns about uncommitted changes. It never writes what root runs: when the units
+  or the Compose project change, it stages them and stops, `make install-units` (sudo) shows what
+  root will run and installs it, and the next `make apply` restarts each unit still running the
+  older definition, llama-swap only when idle.
 - **Hybrid runtime:** Compose for Open WebUI and SearXNG (later LiteLLM and Postgres); systemd for
   llama-swap and the gate; engines are pinned binaries or on-demand containers; host setup happens in
   bootstrap; ntfy and the watchdog run under Compose on the Synology; the Mac pieces install with
@@ -516,7 +528,13 @@ Each item gets its own design pass when its turn comes.
 - **vLLM** start can abort when free memory rises during profiling (#56830), and NGC lags upstream →
   llama.cpp first.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
-- **The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**
+- ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
+  **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
+  it into `website/design/phase-1.md` (Tasks 6, 7, 9 and 10): `make install-units` reads what
+  `make apply` staged as Dan, shows what would change, asks, and installs root's copies; the polkit
+  rule allows `start`, `stop` and `restart` on the four units by exact name, and no longer
+  `reload-daemon`; `make doctor` checks that root's copies are root's own. *Users, access and
+  security* and *Deploy workflow* record it. The item as it stood:
   `make apply` renders the `local-ai-*` units and the Compose file as Dan, so Dan owns them;
   `make install-units` links them, and the polkit rule lets Dan reload systemd and restart the units.
   So from Phase 1, anything running as Dan — the Spark session, Positron's packages, a build — can
@@ -532,7 +550,8 @@ Each item gets its own design pass when its turn comes.
      folder), Task 7 (a changed unit needs `sudo make install-units`, not a restart) and Task 9
      (`make install-units`).
 
-  `website/design/phase-1.md` builds option 1 and stops at Task 6 for this decision.
+  `website/design/phase-1.md` builds option 1 and stops at Task 6 for this decision. (Superseded
+  2026-09-25: it builds option 2.)
 - **127.0.0.1 is not a boundary against `agent`** → llama-swap checks keys, but the engines it
   starts listen on 5800 and up with none, so any local user, `agent` included, can call a loaded
   model directly, around llama-swap's keys. In Phases 1–2 that costs nothing: `agent` has a key of
@@ -637,6 +656,17 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-25** — *To verify on the box* gains that GRUB boots the newest kernel. The move's step 4
   already marked it unchecked, but the list, which the retrospective points to for what is still
   unverified, left it out.
+- **2026-09-25** — Dan's decision on the unit-file model: root-owned copies (the open item's option
+  2, now resolved). The `local-ai-*` units and the Compose project that root runs are root's own
+  files, in `/etc/systemd/system` and `/etc/local-ai/compose`, and nothing running as Dan changes
+  them without his sudo. `spark apply` only stages them; `make install-units` (a bootstrap mode)
+  reads what is staged as Dan, refuses a link or a file he can't read, shows the diff and asks
+  before it installs, and changes nothing when nothing changed. After an install, `spark apply`
+  restarts each unit still running its older definition, llama-swap only when no model is loaded.
+  The polkit rule narrows to `start`, `stop` and `restart` on the four units, and `make doctor`
+  gains a check that root's copies are root's own. *Users, access and security* and *Deploy
+  workflow* say so; `website/design/phase-1.md` builds it (Tasks 6, 7, 9, 10, 12 and 16), with every
+  Task 1–10 listing run first on the Mac and in an `ubuntu:24.04` container.
 
 ## Sources
 
