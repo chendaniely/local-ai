@@ -3968,9 +3968,9 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
       new driver branch. Answer no and re-hold, then plan that move and make it by hand with these
       steps, on a day you choose. `make upgrade-gpu` refuses it too."
-    - **Step 5's GRUB line** reads both files that set it:
-      `grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null`. The last
-      line printed is the one that counts, since `grub-mkconfig` reads `grub.d` after the main file.
+    - **Step 5's GRUB check** already reads both files that can set `GRUB_DEFAULT`
+      (`/etc/default/grub` and `/etc/default/grub.d/*.cfg`, the last line winning). It was fixed on
+      2026-09-25, before the first upgrade day, so leave it as it is.
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold

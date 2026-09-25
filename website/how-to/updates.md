@@ -154,8 +154,16 @@ cd ~/git/hub/local-ai
 
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
    [If it goes wrong](#if-it-goes-wrong). The check assumes GRUB boots the newest kernel, as
-   Ubuntu's default does; that is not yet checked on this box.
-   `grep '^GRUB_DEFAULT=' /etc/default/grub` printing `GRUB_DEFAULT=0` means it does.
+   Ubuntu's default does; that is not yet checked on this box. `GRUB_DEFAULT` can be set in
+   `/etc/default/grub` and in any `/etc/default/grub.d/*.cfg`. `grub-mkconfig` reads the main file
+   first, then the `grub.d` files in name order, so the last line this prints wins:
+
+   ```bash
+   grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null
+   ```
+
+   If that last line is `GRUB_DEFAULT=0`, or nothing prints (0 is the default), GRUB boots the
+   newest kernel.
 6. Reboot: `sudo reboot`.
 7. Check, once you are back in:
 
