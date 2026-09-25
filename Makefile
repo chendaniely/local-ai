@@ -12,8 +12,9 @@ help: ## List the targets
 test: ## Run the unit and render tests
 	uv run --frozen --project spark pytest spark/tests
 
-hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks and your denylist)
+hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks 8.19+ and your denylist)
 	@command -v gitleaks >/dev/null || { echo "install gitleaks first (website/how-to/leak-guards.md)"; exit 1; }
+	@gitleaks git --help >/dev/null 2>&1 || { echo "this gitleaks has no 'git' command: the hooks need 8.19 or later (Ubuntu's archive ships 8.16); see website/how-to/leak-guards.md"; exit 1; }
 	@$(SPARK) leakcheck --message /dev/null # the hooks' own denylist check: it exists, has terms, parses
 	git config core.hooksPath .githooks
 	@echo "leak-check hooks on for this clone"
