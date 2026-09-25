@@ -15,10 +15,11 @@ model: needrestart leaves the `local-ai-*` units alone. On upgrade day, `make up
 the set and reads apt's plan first. It refuses a plan that would remove the NVIDIA modules
 metapackage, install a kernel with no modules for it, or change the driver branch. Only then does it
 stop what uses the GPU and move the set with `full-upgrade`. It re-holds the set, the hold and
-nothing else. Before it asks for the reboot, it checks that the newest kernel, the one GRUB boots by
-default, has an NVIDIA module. After the reboot the stack comes back by itself, and `make doctor`
-confirms it: the GPU on the new driver, the running kernel's modules held, a model loaded end to
-end. Dependabot's PRs are merged or rebased, never squashed.
+nothing else. Before it asks for the reboot, it checks that the newest kernel has an NVIDIA module.
+GRUB boots that kernel by default, but that is not yet checked on this box. After the reboot the
+stack comes back by itself, and `make doctor` confirms it: the GPU on the new driver, the running
+kernel's modules held, a model loaded end to end. Dependabot's PRs are merged or rebased, never
+squashed.
 
 **What I see.** Each step's result as it runs, and the new kernel, driver and CUDA versions to
 record in `changelog.md` and `README.md` §Current state. If it refuses, I see which package would
@@ -27,6 +28,8 @@ recovery, not to a reboot.
 
 **How to override.** Skip a week: the set stays held, and the next upgrade day catches up. Move the
 set early only for a kernel or NVIDIA driver security fix. A new driver branch is a move I plan and
-make by hand. Every way out of `make upgrade-gpu` holds the set again; after the steps by hand,
-`make hold-gpu` does. A box that comes back without a GPU has its own steps in
-[Updates](../how-to/updates.md#if-it-goes-wrong), including booting the previous kernel.
+make by hand. Every way out of `make upgrade-gpu` runs the hold again. The set stays released only
+if that hold stops (dpkg left a package unfinished) or is cut off twice, and then it says to run
+`make hold-gpu` once dpkg is done. After the steps by hand, `make hold-gpu` is the hold. A box that
+comes back without a GPU has its own steps in [Updates](../how-to/updates.md#if-it-goes-wrong),
+including booting the previous kernel.

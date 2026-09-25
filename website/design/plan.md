@@ -358,11 +358,18 @@ plus a `Makefile` — the front door.
 - **The GPU set moves only on upgrade day, as one:** the kernel, the NVIDIA modules built for it,
   the driver and CUDA. `make bootstrap` holds them together, because the modules need one exact
   driver version and DGX OS ships all four in one transaction. Holding only part of the set would
-  let `apt upgrade` install a kernel with no NVIDIA module. The move, in tmux: release →
-  `dpkg --configure -a` and `apt full-upgrade`, answering no if it would remove the NVIDIA modules
-  metapackage or install a kernel without modules → re-hold with `make hold-gpu` (bootstrap's
-  `--hold-gpu` mode, the hold and nothing else) → check that the kernel GRUB boots has an NVIDIA
-  module → reboot → check the GPU and that the running kernel's modules are held → `spark doctor`.
+  let `apt upgrade` install a kernel with no NVIDIA module. The move, in tmux:
+
+  1. Release the set.
+  2. `dpkg --configure -a` and `apt full-upgrade`, answering no if apt would remove the NVIDIA
+     modules metapackage or install a kernel without modules. It is also no if apt would change the
+     driver branch, which is a move planned and made by hand.
+  3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
+  4. Check that the kernel GRUB boots has an NVIDIA module. The check reads the newest kernel,
+     which assumes `GRUB_DEFAULT=0`; that is not yet checked on this box.
+  5. Reboot.
+  6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
+
   Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it forward. Runbook:
   `website/how-to/updates.md`.
 
@@ -601,6 +608,9 @@ Each item gets its own design pass when its turn comes.
   the unit-file model, which is Dan's decision, and 127.0.0.1 as no boundary against `agent`. The
   to-verify list gains whether GPU memory counts toward an engine's RSS, and swap before the brake.
   The Backlog gains tagging the tailnet's non-personal devices.
+- **2026-09-25** — From the reviews of that forward look: moving the GPU set refuses a change of
+  driver branch, which is a move planned and made by hand. The check before the reboot reads the
+  newest kernel, and that GRUB boots it (`GRUB_DEFAULT=0`) is not yet checked on this box.
 
 ## Sources
 

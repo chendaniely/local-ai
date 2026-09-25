@@ -99,9 +99,12 @@ Tailscale serve · pi 0.85.1.
    stack comes back by itself after the reboot, and `make doctor` passes. *(Tasks 10 and 16.)*
 7. **Upgrade day's apt plan would leave a kernel without its NVIDIA module or change the driver
    branch, Dan answers no, or apt fails partway** — expected: `make upgrade-gpu` refuses before
-   anything moves, or stops. The GPU set is held again on every way out, even when the hold itself
-   is cut off. It suggests starting the stack only when nothing in the set moved, and never a reboot
-   after a partial move. *(Task 10.)*
+   anything moves, or stops. Every way out runs the hold again, a hold cut off once included. The
+   set stays released only when that hold stops (dpkg left a package unfinished) or is cut off
+   twice; it then says to run `make hold-gpu`, and after apt ran, not to reboot before the module
+   check. Whether anything moved is judged without the hold letter, so answering no counts as
+   nothing moved. It suggests starting the stack only then, and never a reboot after a partial
+   move. *(Task 10.)*
 
 ***
 
@@ -2538,7 +2541,10 @@ clients: ## Add the Spark provider to pi on this machine
     then `pi`; `Ctrl-b d` detaches, and `tmux attach -t work` picks it up after logging back in.
 
 - [ ] **Step 7: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
-  `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`):
+  `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
+  Each bullet below is one section of the runbook. Its bold words are the section's heading, and
+  the rest is what the section says. Write it in the runbook's own words, and copy the commands
+  exactly as they are here:
   - **Before the first deploy.** Phase 0 is done (bootstrap, secrets), the engines are installed
     (the Phase 1 plan, Task 11), and `id -nG` lists `spark-admin` and `adm`. If it doesn't, the
     session predates bootstrap: log out, `tmux kill-server`, log back in. `make bootstrap` has run
@@ -2558,10 +2564,27 @@ clients: ## Add the Spark provider to pi on this machine
     on the tailnet once the page is served there. An admin reads every chat and can add Functions,
     Python that runs inside the container as root, with host networking. That the first account can
     sign up with `ENABLE_SIGNUP` false comes from Phase 0's research and is not yet tried on this
-    box. If the page refuses it, you set `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` in
-    `open-webui.env`, typing both at prompts in `secret-files.md`'s pattern, and restart
-    `local-ai-compose`. Then log in, remove both lines, and restart again. The runbook gives both
-    commands, as the Phase 1 plan's Task 13 Step 3 does.
+    box.
+
+    If the page refuses even the first signup, put the admin's email and password into
+    `open-webui.env` at prompts, in `secret-files.md`'s pattern, and restart the web services.
+
+    - The password isn't shown.
+    - Both values go in single-quoted, so Compose reads a `$` or a ` #` in them literally.
+    - The command refuses a value with a single quote, writes nothing, and prints neither value.
+
+    ```bash
+    sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*) echo "no single quote in either, please: the env file quotes each value with them" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+    systemctl restart local-ai-compose
+    ```
+
+    Log in through the tunnel with that email and password. Then remove both lines, and restart once
+    more so the container no longer holds them:
+
+    ```bash
+    sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
+    systemctl restart local-ai-compose
+    ```
   - **The web UI.** Only once the admin exists, and keys-only SSH and the Spark's repo-only GitHub
     token (Phase 0's runbooks) are done: `sudo tailscale serve --bg --https=443
     http://127.0.0.1:3000` — it survives reboots. `tailscale serve status` shows the address; it
@@ -2620,11 +2643,26 @@ true, and Tasks 12, 13 and 16 run them on the box:
 - Produces:
   - `/etc/needrestart/conf.d/local-ai.conf`, which bootstrap installs: needrestart never restarts
     a `local-ai-*` unit.
-  - `bash stack/host/bootstrap.sh --upgrade-gpu [--dry-run]`: exit 0 when the set moved and the
-    newest kernel has an NVIDIA module; 1 when it refused or stopped, with the set held again either
-    way; 2 for a usage error. The newest kernel is the one the next boot starts only while GRUB boots
-    the newest (`GRUB_DEFAULT=0`). That is not yet checked on this box; Task 12 Step 1 checks it.
-    Make targets `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
+  - `bash stack/host/bootstrap.sh --upgrade-gpu [--dry-run]`. Its exit statuses:
+
+    | Status | When |
+    |---|---|
+    | 0 | apt's move is done and the newest kernel has an NVIDIA module |
+    | 1 | it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
+    | apt's own (100) | an apt step failed, and the hold on the way out then worked |
+    | 129, 130, 143 | HUP, INT or TERM cut it off |
+    | 130 | a second signal cut off the hold on the way out |
+    | 2 | a usage error |
+
+    Every way out after the release runs the hold again, and a hold cut off once is tried a second
+    time. The set stays released only when that hold stops (dpkg left a package unfinished) or is
+    cut off twice. It then says to run `make hold-gpu` once dpkg is done, and not to reboot before
+    step 5's module check passes if apt had started.
+
+    The newest kernel is the one the next boot starts only while GRUB boots the newest
+    (`GRUB_DEFAULT=0`). That is not yet checked on this box; Task 12 Step 1 checks it.
+
+    Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
     `upgrade-gpu-dry-run`.
   - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable` and `http`;
     `judge_gpu_set(code, out, err) -> Check`; `earlyoom_args(text) -> list[str]`;
@@ -2637,11 +2675,11 @@ What `make upgrade-gpu` does, in order:
 | Step | What it does | If it refuses or fails |
 |---|---|---|
 | release | `apt-mark unhold` the GPU set's held members, found with the hold's own patterns, so a package held for another reason stays held | — |
-| finish, refresh | `dpkg --configure -a`, `apt-get update` | the set is held again |
-| read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; the set is held again |
+| finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
+| read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
-| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | the set is held again. If nothing in the set moved (Dan answered no), it says how to start the stack; if something did, it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
-| hold | the hold and nothing else (`hold_gpu_stack`); a hold cut off by Ctrl-C or TERM is tried once more on the way out | it says what the hold said |
+| move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. Nothing changed (Dan answered no, or apt failed first): it says how to start the stack. Something changed, even one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
+| hold | the hold and nothing else (`hold_gpu_stack`); a hold cut off by Ctrl-C or TERM is tried once more on the way out | it says what the hold said, and the set stays released until `make hold-gpu`; cut off twice, it says so, and after apt ran, not to reboot before step 5's module check |
 | check | `modinfo -k` on the newest kernel (the one GRUB boots while `GRUB_DEFAULT=0`) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
 | end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
 
@@ -2652,16 +2690,60 @@ catches it. The other is `GRUB_DEFAULT=0`.
 
 - [ ] **Step 1: Write the failing tests for bootstrap**
 
-In `spark/tests/test_bootstrap.py`, the apt-mark stand-in also handles `unhold`, logs to `$CALLS`
-when a test sets it, and can cut a hold off as Ctrl-C or TERM would. Replace `FAKE_APT_MARK` with:
+In `spark/tests/test_bootstrap.py`, the stand-ins behave more like the real tools.
+
+- dpkg-query honours `-f`, and the fixture carries versions.
+- apt-mark's hold and unhold flip the fixture's first status letter (`ii` ↔ `hi`), as the real
+  ones do. It also handles `unhold`, logs to `$CALLS` when a test sets it, and can cut a hold off as
+  Ctrl-C or TERM would.
+
+Replace `FAKE_DPKG_QUERY`, `FAKE_APT_MARK` and `gpu_env` with:
 
 ```python
+FAKE_DPKG_QUERY = """#!/usr/bin/env bash
+# Stands in for dpkg-query -W -f=FORMAT PATTERN...: prints each fixture package that matches a
+# pattern, in FORMAT: ${db:Status-Abbrev} is the fixture's two status letters and a space,
+# ${Package} the name and ${Version} the version. It exits 1 if any pattern matched nothing, as
+# dpkg-query does.
+status=0
+format='${db:Status-Abbrev}\\t${Package}\\n'
+abbrev='${db:Status-Abbrev}' package='${Package}' version='${Version}'
+for arg in "$@"; do
+  case "$arg" in -f=*) format="${arg#-f=}" ;; esac
+done
+for pat in "$@"; do
+  case "$pat" in -*) continue ;; esac
+  found=0
+  while IFS=$'\\t' read -r st pkg ver; do
+    if [[ $pkg == $pat ]]; then
+      line=${format//"$abbrev"/"$st "}
+      line=${line//"$package"/$pkg}
+      line=${line//"$version"/$ver}
+      printf '%b' "$line"
+      found=1
+    fi
+  done < "$DPKG_FIXTURE"
+  (( found )) || status=1
+done
+exit "$status"
+"""
+
 FAKE_APT_MARK = """#!/usr/bin/env bash
 # Stands in for apt-mark. `hold PKG...` records each package in $APT_MARK_HELD, except any named in
-# $APT_MARK_IGNORES (a hold that silently didn't take); `showhold` lists what was recorded. `hold`
-# and `unhold` are also logged in $CALLS, when a test sets it. $APT_MARK_CUT names a file holding how
-# many holds to cut off, as Ctrl-C or TERM would: the shell that ran apt-mark and the script above
-# it get TERM, and nothing is held.
+# $APT_MARK_IGNORES (a hold that silently didn't take), and turns its first status letter in
+# $DPKG_FIXTURE to h, as a real hold does; `unhold` turns it back to i. `showhold` lists what was
+# recorded. `hold` and `unhold` are also logged in $CALLS, when a test sets it. $APT_MARK_CUT names a
+# file holding how many holds to cut off, as Ctrl-C or TERM would: the shell that ran apt-mark and
+# the script above it get TERM, and nothing is held.
+mark() {  # mark LETTER PKG...: set each package's first status letter in the fixture
+  local letter="$1" st pkg ver
+  shift
+  while IFS=$'\\t' read -r st pkg ver; do
+    if [[ " $* " == *" $pkg "* ]]; then st="$letter${st:1}"; fi
+    printf '%s\\t%s\\t%s\\n' "$st" "$pkg" "$ver"
+  done < "$DPKG_FIXTURE" > "$DPKG_FIXTURE.new"
+  mv "$DPKG_FIXTURE.new" "$DPKG_FIXTURE"
+}
 case "$1" in
   hold)
     [[ -z "${CALLS:-}" ]] || echo "apt-mark $*" >> "$CALLS"
@@ -2672,15 +2754,46 @@ case "$1" in
       exit 143
     fi
     shift
+    took=()
     for pkg in "$@"; do
-      [[ " ${APT_MARK_IGNORES:-} " == *" $pkg "* ]] || printf '%s\\n' "$pkg" >> "$APT_MARK_HELD"
+      [[ " ${APT_MARK_IGNORES:-} " == *" $pkg "* ]] && continue
+      printf '%s\\n' "$pkg" >> "$APT_MARK_HELD"
+      took+=("$pkg")
     done
+    mark h "${took[@]}"
     ;;
-  unhold) echo "apt-mark $*" >> "$CALLS" ;;
+  unhold)
+    echo "apt-mark $*" >> "$CALLS"
+    shift
+    mark i "$@"
+    ;;
   showhold) if [[ -f "$APT_MARK_HELD" ]]; then sort -u "$APT_MARK_HELD"; fi ;;
   *) echo "fake apt-mark: unexpected: $*" >&2; exit 1 ;;
 esac
 """
+
+
+def dpkg_lines(installed: dict[str, str], versions: dict[str, str] | None = None) -> str:
+    """The fixture as the stand-ins read it: status, package and version (1.0 unless given)."""
+    return "".join(f"{status}\t{pkg}\t{(versions or {}).get(pkg, '1.0')}\n" for pkg, status in installed.items())
+
+
+def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
+    """An environment whose dpkg-query reports `installed` (package → status) and whose apt-mark
+    only writes to files, so even the real (not dry-run) hold changes nothing on this machine."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, text in (("dpkg-query", FAKE_DPKG_QUERY), ("apt-mark", FAKE_APT_MARK)):
+        (bindir / name).write_text(text)
+        (bindir / name).chmod(0o755)
+    fixture = tmp_path / "installed.tsv"
+    fixture.write_text(dpkg_lines(installed))
+    return {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "DPKG_FIXTURE": str(fixture),
+        "APT_MARK_HELD": str(tmp_path / "held"),
+    }
 ```
 
 Then add, after `test_a_default_dry_run_never_reads_the_hosts_own_packages`:
@@ -2690,10 +2803,10 @@ Then add, after `test_a_default_dry_run_never_reads_the_hosts_own_packages`:
 HELD_BEFORE = {**{pkg: "hi" if pkg in GPU_SET else status for pkg, status in INSTALLED.items()},
                "docker-ce": "hi"}
 OLD, NEW = "7.0.0-1019-nvidia", "7.0.0-1020-nvidia"
-# After apt moved the set: released (ii), the new kernel's modules in, the old kernel's removed.
-AFTER = {**{pkg: "ii" if pkg in GPU_SET else status for pkg, status in HELD_BEFORE.items()},
-         f"linux-modules-nvidia-580-open-{NEW}": "ii",
-         f"linux-modules-nvidia-580-open-{OLD}": "rc"}
+# The set released (ii), as apt-mark unhold leaves it.
+RELEASED = {pkg: "ii" if pkg in GPU_SET else status for pkg, status in HELD_BEFORE.items()}
+# After apt moved the set: released, the new kernel's modules in, the old kernel's removed.
+AFTER = {**RELEASED, f"linux-modules-nvidia-580-open-{NEW}": "ii", f"linux-modules-nvidia-580-open-{OLD}": "rc"}
 NEW_SET = GPU_SET - {f"linux-modules-nvidia-580-open-{OLD}"} | {f"linux-modules-nvidia-580-open-{NEW}"}
 
 # `apt-get -s dist-upgrade` for a set that moves cleanly: a new kernel with its modules.
@@ -2773,7 +2886,8 @@ if [[ " $MODULE_KERNELS " == *" $2 "* ]]; then echo 580.200; else echo "modinfo:
 
 
 def upgrade_env(tmp_path: Path, plan: str, *, answer: str = "yes", after: dict[str, str] = AFTER,
-                module_kernels: str = f"{OLD} {NEW}", cut_holds: int = 0) -> dict[str, str]:
+                after_versions: dict[str, str] | None = None, module_kernels: str = f"{OLD} {NEW}",
+                cut_holds: int = 0) -> dict[str, str]:
     """gpu_env, plus stand-ins for everything upgrade day runs. Nothing touches this machine: the
     fakes only log to tmp_path/calls."""
     env = gpu_env(tmp_path, HELD_BEFORE)
@@ -2782,7 +2896,7 @@ def upgrade_env(tmp_path: Path, plan: str, *, answer: str = "yes", after: dict[s
         (tmp_path / "bin" / name).write_text(text)
         (tmp_path / "bin" / name).chmod(0o755)
     (tmp_path / "plan").write_text(plan)
-    (tmp_path / "after.tsv").write_text("".join(f"{status}\t{pkg}\n" for pkg, status in after.items()))
+    (tmp_path / "after.tsv").write_text(dpkg_lines(after, after_versions))
     (tmp_path / "cut").write_text(str(cut_holds))
     return {**env, "CALLS": str(tmp_path / "calls"), "APT_PLAN": str(tmp_path / "plan"),
             "DPKG_AFTER": str(tmp_path / "after.tsv"), "APT_ANSWER": answer,
@@ -2862,7 +2976,8 @@ def test_answering_no_holds_the_set_again_and_says_how_to_start_the_stack(tmp_pa
     assert result.returncode == 1
     assert calls(tmp_path)[-2:] == ["apt-get dist-upgrade", f"apt-mark hold {sorted_set(GPU_SET)}"]
     assert held(tmp_path) == GPU_SET
-    # Nothing moved, so starting the stack again is safe.
+    # The hold letter went from h to i and back, and nothing else changed: nothing moved, so
+    # starting the stack again is safe.
     assert START_THE_STACK in result.stderr and RECOVERY not in result.stderr
 
 
@@ -2887,6 +3002,16 @@ def test_a_move_that_fails_partway_points_at_the_recovery(tmp_path):
     assert "systemctl start" not in result.stderr and RECOVERY in result.stderr
 
 
+def test_a_move_that_only_changes_versions_counts_as_moved(tmp_path):
+    # The same packages in the same states, the driver at a new version, and then apt fails: the set
+    # moved, so there is no hint to start the stack or reboot.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="partial", after=RELEASED,
+                                      after_versions={"nvidia-driver-580-open": "580.200"}))
+    assert result.returncode == 100  # apt's own status: the hold on the way out worked
+    assert held(tmp_path) == GPU_SET
+    assert "systemctl start" not in result.stderr and RECOVERY in result.stderr
+
+
 def test_a_cut_off_hold_is_tried_again_on_the_way_out(tmp_path):
     # Ctrl-C or TERM while the set is being held again must not leave it released.
     result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, cut_holds=1))
@@ -2901,6 +3026,7 @@ def test_a_hold_cut_off_twice_says_what_is_left_to_do(tmp_path):
     result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, cut_holds=2))
     assert result.returncode == 130
     assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
+    assert "don't reboot until step 5's module check passes" in result.stderr  # apt had run
     assert held(tmp_path) == set()
 
 
@@ -3018,7 +3144,7 @@ UPGRADE=0
 REHELD=1     # upgrade day: 0 from the moment the GPU set is released until it is held again
 STOPPED=""   # upgrade day: the stack's units it stopped
 MOVING=0     # upgrade day: 1 from the moment apt starts moving the set
-MOVE_FROM="" # upgrade day: the set's state just before that (gpu_set_state)
+MOVE_FROM="" # upgrade day: the set's contents just before that (gpu_set_contents)
 ```
 
 `parse_args` takes the new mode, names it in the unknown-option message, and refuses both modes at
@@ -3043,12 +3169,17 @@ parse_args() {
 }
 ```
 
-After `hold_gpu_stack`, the upgrade mode. `gpu_set_state` reads the same patterns as the hold, so
-`held_gpu_set` releases exactly the set, and a before-and-after pair says whether apt moved
-anything. `rehold` runs the hold in a subshell, so a hold that stops (a package dpkg didn't finish)
-can't end the script before it says so, and a hold cut off by a signal is tried once more on the way
-out. The way out suggests starting the stack only when nothing in the set moved; otherwise it sends
-Dan to the recovery, never to a reboot:
+After `hold_gpu_stack`, the upgrade mode.
+
+- `gpu_set_state` reads the same patterns as the hold, so `held_gpu_set` releases exactly the set.
+- `gpu_set_contents` drops the hold letter, the first of dpkg's status letters. The release turns it
+  from `h` to `i` and the hold turns it back, without moving anything. So a before-and-after pair of
+  contents says whether apt moved anything: a package's state or its version.
+- `rehold` runs the hold in a subshell, so a hold that stops (a package dpkg didn't finish) can't
+  end the script before it says so. A hold cut off by a signal is tried once more on the way out; a
+  second cut says what is left to do.
+- The way out suggests starting the stack only when nothing in the set moved; otherwise it sends Dan
+  to the recovery, never to a reboot.
 
 ```bash
 # Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
@@ -3058,8 +3189,8 @@ Dan to the recovery, never to a reboot:
 # (GRUB_DEFAULT=0), which Phase 1 checks on the box. Every way out after the release holds the set
 # again. website/how-to/updates.md has the same steps by hand, and the recovery.
 
-# The GPU set as dpkg has it now: each package's state, name and version, found with the hold's own
-# patterns. Two of these, before and after, say whether anything in the set moved.
+# The GPU set as dpkg has it now: each package's status letters, name and version, found with the
+# hold's own patterns.
 gpu_set_state() {
   local pattern
   local -a patterns=()
@@ -3072,6 +3203,13 @@ gpu_set_state() {
 # held.
 held_gpu_set() {
   gpu_set_state | awk '$1 == "hi" {print $2}' | LC_ALL=C sort -u
+}
+
+# The set without its hold letter, the first status letter: apt-mark turns ii into hi and back
+# without moving anything. Two of these, before and after, say whether apt moved anything in the
+# set, a package's state or its version.
+gpu_set_contents() {
+  gpu_set_state | cut -c2- | LC_ALL=C sort
 }
 
 # Reads `apt-get -s dist-upgrade` on stdin and prints why the plan must not run. It would remove the
@@ -3112,17 +3250,25 @@ rehold() {
   return 1
 }
 
+# A signal while the way out holds the set again: say what is left to do.
+cut_off_while_holding() {
+  echo "bootstrap: stopped while holding the GPU set again — run make hold-gpu" >&2
+  if (( MOVING )); then
+    echo "bootstrap: apt may have moved the set, so don't reboot until step 5's module check passes: 'If it goes wrong' in website/how-to/updates.md" >&2
+  fi
+  exit 130
+}
+
 on_upgrade_exit() {
   local code=$?
   trap - EXIT
-  # Cut off from here on, it still says what is left to do.
-  trap 'echo "bootstrap: stopped while holding the GPU set again — run make hold-gpu" >&2; exit 130' HUP INT TERM
+  trap cut_off_while_holding HUP INT TERM
   if (( ! REHELD )); then
     echo "bootstrap: upgrade day stopped before the end — holding the GPU set again" >&2
     rehold || code=1
   fi
   if (( code != 0 )); then
-    if (( MOVING )) && [[ "$(gpu_set_state)" != "$MOVE_FROM" ]]; then
+    if (( MOVING )) && [[ "$(gpu_set_contents)" != "$MOVE_FROM" ]]; then
       # The newest kernel may have no NVIDIA module now, so neither a reboot nor the stack is safe yet.
       echo "bootstrap: the GPU set moved before this stopped. Don't reboot or start the stack yet: follow 'If it goes wrong' in website/how-to/updates.md" >&2
     elif [[ -n "$STOPPED" ]]; then
@@ -3178,7 +3324,7 @@ upgrade_gpu() {
     fi
   done
   if (( ! DRY_RUN )); then
-    MOVE_FROM="$(gpu_set_state)"
+    MOVE_FROM="$(gpu_set_contents)"
     MOVING=1
   fi
   run apt-get dist-upgrade
@@ -3799,27 +3945,38 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     reboot starts them; llama-swap and the brake restart if they crash; the containers' restart
     policy brings them back after a Docker upgrade; needrestart leaves the units alone. llama-swap
     preloads nothing, so after a reboot each model loads on its first request.
-  - `updates.md`, *Upgrade day: the GPU set*: before the tmux block, a paragraph. `make upgrade-gpu`
-    runs steps 1 to 5 as one command, in tmux, from the clone; it refuses to start outside tmux. It
-    releases the set, reads apt's plan and refuses it before anything moves if it breaks step 3's
-    rule, stops llama-swap and the brake, and moves the set (you read apt's plan and answer). Then it
-    holds the set again with `make hold-gpu`'s hold, runs step 5's check, and says whether to reboot.
-    Every way out after the release holds the set again. If it stops after apt moved part of the set,
-    it sends you to *If it goes wrong* rather than to a reboot or a restart of the stack; only when
-    nothing in the set moved does it say how to start the stack again. `make upgrade-gpu-dry-run` prints the steps
-    without running them. The numbered steps are what it runs, to read along with, and to do by hand
-    if it can't. Step 1 becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap
-    local-ai-brake` (the reboot starts them again), and your own GPU jobs and `agent`'s." Step 3's
-    answer-no rule gains a third case: apt would swap the modules metapackage for another driver
-    branch's (`linux-modules-nvidia-580-open-…` removed, `linux-modules-nvidia-590-open-…` installed,
-    say). That is a new driver branch, which `make upgrade-gpu` refuses too. It is a move planned and
-    made by hand, with these steps, not a routine upgrade day. Step 7's last sentence becomes "Then
-    `make doctor`: every line `ok`." The *Not yet performed on this box* markers stay: they cover
-    `make upgrade-gpu` too.
-  - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` holds the set
+  - `updates.md`, *Upgrade day: the GPU set*. The edits:
+    - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
+      command, in tmux, from the clone; it refuses to start outside tmux. It releases the set, reads
+      apt's plan and refuses it before anything moves if it breaks step 3's rule, stops llama-swap
+      and the brake, and moves the set (you read apt's plan and answer). Then it holds the set again
+      with `make hold-gpu`'s hold, runs step 5's check, and says whether to reboot. Every way out
+      after the release runs the hold again. The set stays released only if that hold stops
+      (dpkg left a package unfinished) or is cut off twice, and it then says what to do. It judges
+      whether apt moved anything by each package's state and version, not the hold letter. If apt
+      moved even part of the set, it sends you to *If it goes wrong* rather than to a reboot or a
+      restart of the stack. Only when nothing in the set moved does it say how to start the stack
+      again. `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps
+      are what it runs, to read along with, and to do by hand if it can't.
+    - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
+      (the reboot starts them again), and your own GPU jobs and `agent`'s."
+    - **Step 3's answer-no rule** gets three cases. It becomes "answer **no** if any of these is
+      true:", then the two existing bullets and a third: "it would swap the modules metapackage for
+      another driver branch's (`linux-modules-nvidia-580-open-…` removed,
+      `linux-modules-nvidia-590-open-…` installed, say)". The sentence after the bullets becomes:
+      "In the first two cases the new kernel would boot without a GPU: answering no installs and
+      removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
+      new driver branch. Answer no and re-hold, then plan that move and make it by hand with these
+      steps, on a day you choose. `make upgrade-gpu` refuses it too."
+    - **Step 5's GRUB line** reads both files that set it:
+      `grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null`. The last
+      line printed is the one that counts, since `grub-mkconfig` reads `grub.d` after the main file.
+    - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
+    - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
+  - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
     again by itself on its way out, so `make hold-gpu` by hand is for the manual steps, or for when
-    its own hold stopped. The second paragraph's bold opening adds "or `make upgrade-gpu` said
-    `DON'T REBOOT`".
+    its own hold stopped or was cut off. The second paragraph's bold opening adds "or
+    `make upgrade-gpu` said `DON'T REBOOT`, or that apt may have moved the set".
   - `website/how-to/deploy.md`: *Every later change* ends with `make doctor`, and *When something is
     wrong* starts with it: Phase 0's guardrails and the stack in one pass, and each `FAIL` says what
     to do.
@@ -3986,7 +4143,7 @@ cmp stack/host/needrestart.conf /etc/needrestart/conf.d/local-ai.conf && echo "n
 cmp stack/host/earlyoom.default /etc/default/earlyoom && echo "earlyoom: same"
 diff <(make -s hold-gpu-dry-run | sed -n 's/^+ apt-mark hold //p' | tr ' ' '\n') \
      <(make -s upgrade-gpu-dry-run | sed -n 's/^+ apt-mark unhold //p' | tr ' ' '\n') && echo "release = hold"
-grep '^GRUB_DEFAULT=' /etc/default/grub                          # GRUB_DEFAULT=0: GRUB boots the newest kernel
+grep -h '^GRUB_DEFAULT=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null   # the last line counts
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'linux-image-[0-9]*'   # the kernels' package names
 uname -r
 ```
@@ -3998,8 +4155,10 @@ bootstrap no longer touches it.
 
 The last three lines check two things `make upgrade-gpu` assumes (Task 10) and nothing has checked
 yet:
+
 - `GRUB_DEFAULT=0` (no line at all means the same default): GRUB boots the newest kernel, the one
-  its pre-reboot check reads.
+  its pre-reboot check reads. `grub-mkconfig` reads `/etc/default/grub` and then each
+  `/etc/default/grub.d/*.cfg`, so the last line printed is the setting that counts.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
@@ -4074,9 +4233,14 @@ first request and stays (ttl 0). Open WebUI takes a minute on its first start (`
   prompts, the password isn't shown, and no value goes into the repo:
 
 ```bash
-sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; umask 027; printf "WEBUI_ADMIN_EMAIL=%s\nWEBUI_ADMIN_PASSWORD=%s\n" "$e" "$p" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+sudo bash -c 'read -rp "admin email: " e; read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*) echo "no single quote in either, please: the env file quotes each value with them" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
 systemctl restart local-ai-compose
 ```
+
+  Both values go in single-quoted, so Compose reads them literally. Unquoted, it expands a `$` and
+  cuts a value at ` #`: Compose v5.5.1 reads `ab$cd #x` as `ab`. A single quote can't go inside
+  that quoting, so the command refuses a value with one, writes nothing, and prints neither value:
+  choose a password without one.
 
   Log in through the tunnel with that email and password. Then remove both lines, and restart once
   more so the container no longer holds them:
@@ -4141,9 +4305,10 @@ root's now. If it isn't, the lines name the path: record it for the Mac session,
 tool's cache at `/var/lib/local-ai/cache` in the unit template (Task 6's). `make doctor` ends
 `doctor: 11 of 11 checks pass`. If its firewall line says it can't read `/etc/ufw/ufw.conf`, record
 the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) for the Mac session, which then changes
-that check. This first `make doctor` is also the first time anything asks Open WebUI and SearXNG for
-`/`. Doctor expects `200` from each, which isn't yet seen on this box. If its web line fails while
-both pages work through the tunnel, record what each answered for the Mac session.
+that check. Step 3's browser already loaded Open WebUI's page. What is not yet seen on this box is
+doctor's own expectation: `200` from `/` on both Open WebUI and SearXNG. This first `make doctor`
+is that check. If its web line fails while both pages work in a browser through the tunnel, record
+what each answered for the Mac session.
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
