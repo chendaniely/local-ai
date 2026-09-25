@@ -117,6 +117,11 @@ when that file was retired on 2026-09-23.
   `docker`) and `agent` (tmux agents, with its own SSH key and Claude Code; no sudo, docker or
   `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` manage
   `local-ai-*` units but not start transient ones. No containers exist yet.
+- **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
+  driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
+  records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
+  2026-09-24). The kernel's full release string is not yet recorded. The set moves only on upgrade
+  day, which updates this line.
 - **Secret files** for Phase 1 are in `/etc/local-ai/secrets/` (`llama-swap.env`,
   `open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), recorded by name in the vault.
 - **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
@@ -125,7 +130,10 @@ when that file was retired on 2026-09-23.
   also from Ubuntu's archive, and **gitleaks 8.30.1**, the release binary in `/usr/local/bin`
   (2026-09-24). Ubuntu's gitleaks 8.16.0 was too old for the repo's hooks (they need 8.19 or later)
   and has been removed. **gh 2.45.0**, from Ubuntu's archive
-  too, for pushing from Dan's account (never `agent`'s). Details in the changelog. Claude Code here talks straight to Anthropic — it is a client like any other, not a
+  too, for pushing from Dan's account (never `agent`'s). Details in the changelog. **Docker 29.6.2**
+  came with DGX OS, from NVIDIA's repository; **earlyoom 1.7-2** is Ubuntu's package, installed by
+  bootstrap; Tailscale came from its own install script (2026-09-24), and its version is not yet
+  recorded. Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —

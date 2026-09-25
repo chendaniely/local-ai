@@ -28,6 +28,26 @@ components:
     context7: null
     changelog: https://github.com/gitleaks/gitleaks/releases
     advisories: https://github.com/gitleaks/gitleaks/security/advisories
+  # Host packages apt moves, recorded so an upgrade has a "before" to compare against: Docker came
+  # with DGX OS, from NVIDIA's repository; earlyoom is Ubuntu's package (its package version).
+  docker:
+    version: 29.6.2
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://docs.docker.com/engine/
+    context7: null
+    changelog: https://docs.docker.com/engine/release-notes/
+    advisories: https://github.com/moby/moby/security/advisories
+  earlyoom:
+    version: 1.7-2
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://github.com/rfjakob/earlyoom
+    context7: null
+    changelog: https://launchpad.net/ubuntu/+source/earlyoom/+changelog
+    advisories: https://ubuntu.com/security/cves?package=earlyoom
   llama-swap:
     version: v257
     where: [spark]
