@@ -1,6 +1,6 @@
 ---
 title: "Leak guards"
-description: "Install gitleaks and shellcheck, create your denylist, turn the hooks on, prove they bite, see what they check, and read a red CI leaks job."
+description: "Install gitleaks and shellcheck, create your denylist, turn the hooks on, prove they bite, see what they check, scan before every push, and read a red CI leaks job."
 ---
 
 ## Install gitleaks and shellcheck
@@ -96,6 +96,48 @@ the repo's own patterns plus your denylist:
 
 A finding prints its location and a 3-character excerpt. A path in that output has each match cut
 to 3 characters too, so a private term in a file name never prints whole.
+
+## Before every push
+
+The hooks check each commit as it is made, against the denylist as it was then, and CI has no
+denylist at all. So a push can carry things no denylist has checked:
+
+- commits made in a clone before `make hooks` turned the hooks on;
+- a merge git completes by itself: git runs `pre-merge-commit` for it, which `.githooks` doesn't
+  define, instead of pre-commit;
+- a rebase, even one that stopped for a conflict, and a cherry-pick that applied cleanly: neither
+  runs the commit hooks;
+- a term you added to the denylist after the commit that contains it.
+
+A conflicted merge or cherry-pick is different: finishing it with `git commit` or `--continue` runs
+both hooks (checked with git 2.54 on the Mac and Ubuntu 24.04's 2.43).
+
+Before every push, scan everything about to go out, patches and commit messages, with your
+denylist; then the tracked files; then gitleaks. Put the branch's name in place of `<branch>`, or
+`main` for a branch that isn't on GitHub yet. `git fetch` first, so `origin/<branch>` is what
+GitHub has:
+
+```bash
+git fetch
+f=$(mktemp)
+git log -p --cc --format='%H%n%B' origin/<branch>..HEAD > "$f" &&
+  uv run --frozen --project spark spark leakcheck --message "$f"; echo "outgoing: exit=$?"
+rm -f "$f"
+uv run --frozen --project spark spark leakcheck --tracked; echo "tracked: exit=$?"
+gitleaks git --log-opts=origin/<branch>..HEAD --redact --no-banner --config .githooks/gitleaks.toml .
+```
+
+Expected: `outgoing: exit=0`, `tracked: exit=0`, and gitleaks' `no leaks found`. The block uses
+`mktemp`, which works on macOS and Ubuntu alike; `$TMPDIR` is set on macOS but usually not on
+Ubuntu.
+
+A finding prints its location and a 3-character excerpt, and exits 1. Then don't push: nothing is
+public yet. A finding in the tree needs a new commit that removes it; one in an unpushed commit's
+patch or message needs that commit rewritten, and a Claude session asks you before it rewrites
+anything. Then scan again.
+
+It is the only check that reads everything going public with your denylist. Missing it was the
+only Critical finding in Phase 0's reviews.
 
 ## When CI's leaks job is red
 

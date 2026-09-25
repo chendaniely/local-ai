@@ -1958,6 +1958,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   file names, type changes, UTF-16/32 text, and binaries named for a person to check; how to read a
   red CI leaks job, whose log shows whether it holds findings, and how to find a history finding's
   commit at the commit CI checked; and why a Dependabot PR is merged or rebased, never squashed.)
+  (Added 2026-09-25, at the phase's close: *Before every push*, a scan of everything going out —
+  patches and messages with the denylist, the tracked files, gitleaks — which the whole-branch
+  review's one Critical finding asked for.)
 
 - [ ] **Step 3: `how-to/bootstrap.md`**
   - *Before:* bounce the wired NIC so it takes its reservation — from an SSH session over **Wi-Fi**:
