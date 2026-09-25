@@ -1945,8 +1945,9 @@ Each runbook is short, exact, and never shows how to print a secret. Content:
   `--no-verify`. (Added 2026-09-25, after cbd7ca3, f581016 and bad1b55: the denylist needs at least
   one term, since the hooks and `make hooks` refuse an empty one; `make hooks` runs the hooks' own
   checks, gitleaks' `git` command and a denylist with terms that parses; what the hooks check —
-  file names, type changes, UTF-16/32 text, and binaries named for a person to check; what each red
-  step of CI's leaks job means; and why a Dependabot PR is merged or rebased, never squashed.)
+  file names, type changes, UTF-16/32 text, and binaries named for a person to check; how to read a
+  red CI leaks job, whose log shows whether it holds findings, and how to find a history finding's
+  commit at the commit CI checked; and why a Dependabot PR is merged or rebased, never squashed.)
 
 - [ ] **Step 3: `how-to/bootstrap.md`**
   - *Before:* bounce the wired NIC so it takes its reservation — from an SSH session over **Wi-Fi**:

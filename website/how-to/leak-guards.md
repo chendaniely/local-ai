@@ -100,26 +100,35 @@ to 3 characters too, so a private term in a file name never prints whole.
 ## When CI's leaks job is red
 
 CI runs gitleaks and the repo's patterns, without a denylist (it has none), on every push and pull
-request. Each step of its `leaks` job fails for one reason:
+request. **Read the red step's log first.** Only two kinds of line are findings: gitleaks'
+`Finding:` blocks, which end in `leaks found`, and the leak check's
+`leakcheck: <where>:<line>: <kind> (…)` lines. A red step without them failed for another reason:
 
 - **download gitleaks** — the network. Re-run the job.
 - **check gitleaks against its pinned checksum, then unpack it** — the download doesn't match the
   pin: tampered or corrupt. Don't use it. Re-run once; if it fails again, find out why before
   touching the pin.
-- **gitleaks over the whole history**, **repo patterns over every tracked file**, or **repo patterns
-  over every commit's patches and messages** — a real finding, and it is already public. Follow
-  `CLAUDE.md`'s procedure for something sensitive that got pushed: rotate the credential first,
-  then rewrite history.
+- **a repo patterns step with no finding lines** — `uv run --frozen` couldn't fetch the project's
+  packages, or the leak check stopped on a setup error (exit 2). Its log says which. Re-run the
+  job, or fix what the log names.
+
+Finding lines, in **gitleaks over the whole history** or either **repo patterns** step, are a real
+finding, and it is already public. Follow `CLAUDE.md`'s procedure for something sensitive that got
+pushed: rotate the credential first, then rewrite history.
 
 The history step reports a finding as `commit message:<line>`: a line of
-`git log -p --cc --format='%H%n%B'`'s output. To find the commit without printing the line itself,
-regenerate that output on the Mac, on the branch CI checked, and print the hash of the commit the
-line falls in:
+`git log -p --cc --format='%H%n%B'`'s output at the commit CI checked, `<sha>` (the run's page
+shows it). To find the commit without printing the line itself, regenerate that output on the Mac
+at `<sha>`, and print the hash of the commit the line falls in:
 
 ```bash
-git log -p --cc --format='%H%n%B' > "$TMPDIR/history.txt"
+git log -p --cc --format='%H%n%B' <sha> > "$TMPDIR/history.txt"
 awk -v n=<line> 'NR <= n && length($0) == 40 && /^[0-9a-f]+$/ {c = $0} NR == n {print c; exit}' "$TMPDIR/history.txt"
 ```
+
+A pull request's run, a Dependabot PR's included, checks out GitHub's merge commit, which isn't in
+your clone. `git fetch origin pull/<number>/merge` fetches the PR's current one; use `FETCH_HEAD` as
+`<sha>`. It matches the run's only while neither branch has moved since.
 
 **Merging Dependabot's PRs.** The allow marker can't excuse a finding in history: it would only
 change a new commit, never the old one. So read a Dependabot PR's commit message before you merge
