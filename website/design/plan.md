@@ -241,6 +241,7 @@ In order of how much they constrain the design:
   down · **S17** changing models mid-task · **S18** rebuild after a factory reset · **S19** Claude Code
   building a pipeline elsewhere · **S20** web search from the phone · **S21** Pixeltable over datasets
   (backlog) · **S22** on another tailnet via WireGuard (pi and the API work; the web UI waits).
+  Added since: **S23** upgrade day (2026-09-25).
 
 ### Repo layout
 
@@ -545,6 +546,9 @@ Each item gets its own design pass when its turn comes.
   NVIDIA's driver bulletins. A rebuild moves the set to current at the first bootstrap. Dependabot
   now proposes Actions and `spark/uv.lock` updates; the pins it can't read join the Backlog. The
   Spark gets a GitHub token for this repository only.
+- **2026-09-25** — S23, upgrade day, joins the scenarios (the goal-fit council's forward look). Phase
+  1's promise that the stack serves again after a routine upgrade, a reboot and upgrade day now has
+  an ID for `make doctor` and the done-when to point at.
 
 ## Sources
 
