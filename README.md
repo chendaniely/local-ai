@@ -158,12 +158,11 @@ when that file was retired on 2026-09-23.
 - **Pending from Phase 0's close** (2026-09-25). Not yet applied on the box, or applied but not yet
   recorded here. A box change gets a dated `changelog.md` entry and a line here when it's done; the
   IPv6 check's result goes in the vault instead:
-  - **Pull before the next upgrade day.** Nothing after `96d0217` has been pushed, so the Spark's
-    clone has the `updates.md` from before Phase 0's council, whose re-hold runs all of
-    `make bootstrap` and whose recovery line can leave the box without a GPU. The current steps
-    need `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Once the merge is
-    pushed, pull it on the Spark before upgrade day, or skip that Saturday; the plan allows skipping
-    one.
+  - ~~**Pull before the next upgrade day.**~~ **Done 2026-09-25:** Dan switched the Spark's clone
+    to `main` and pulled Phase 0's merge (`ebb32da`), so it has the reviewed `updates.md`,
+    `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Until then the clone had
+    the `updates.md` from before Phase 0's council, whose re-hold ran all of `make bootstrap` and
+    whose recovery line could leave the box without a GPU.
   - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
     becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
     the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
