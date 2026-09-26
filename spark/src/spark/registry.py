@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Hashable
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -12,10 +14,31 @@ ENGINES = {"llama.cpp": {"chat", "embeddings"}, "whisper.cpp": {"transcription"}
 NAME = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 UNSAFE_ARG = re.compile(r"[\s'\"]")
+SECTIONS = ("budget", "brake", "engines", "models")
 
 
 class RegistryError(ValueError):
     pass
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """yaml.safe_load's loader, except that a key given twice in one mapping is an error: safe_load keeps
+    the last one and drops the first without a word, a whole model when its name is repeated."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode):
+            seen = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":  # `<<: *x`: the mapping's own keys override x's
+                    continue
+                key = self.construct_object(key_node, deep=deep)
+                if not isinstance(key, Hashable):
+                    continue  # SafeLoader refuses an unhashable key itself
+                if key in seen:
+                    line = key_node.start_mark.line + 1
+                    raise RegistryError(f"{key!r} is repeated on line {line}; YAML would keep only the last")
+                seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 @dataclass(frozen=True)
@@ -66,8 +89,19 @@ class Registry:
         return float(sum(m.footprint_gib for m in self.models.values()))
 
 
+MODEL_KEYS = tuple(f.name for f in fields(Model) if f.name != "name")  # a model's name is its key
+SOURCE_KEYS = tuple(f.name for f in fields(Source))
+
+
+def _known(where: str, raw: dict, names: tuple[str, ...] | list[str]) -> None:
+    """Refuse a key outside `names`: were it ignored, a misspelled optional key would take its default."""
+    for given in raw:
+        if given not in names:
+            raise RegistryError(f"{where}: {given!r} is not one of {', '.join(names)}")
+
+
 def _number(where: str, raw: dict, key: str, whole: bool = False, default: int | None = None) -> int | float:
-    """raw[key] if YAML read a number there (a whole one when `whole`), never a string or a bool.
+    """raw[key] if YAML read a finite number there (a whole one when `whole`), never a string or a bool.
     An absent key gives `default`, and is required when there is no default."""
     if key not in raw and default is None:
         raise RegistryError(f"{where}: {key} is required")
@@ -75,6 +109,16 @@ def _number(where: str, raw: dict, key: str, whole: bool = False, default: int |
     if isinstance(value, bool) or not isinstance(value, int if whole else (int, float)):
         kind = "a whole number" if whole else "a number"
         raise RegistryError(f"{where}: {key} must be {kind}, not {value!r}")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise RegistryError(f"{where}: {key} must be a finite number, not {value!r}")
+    return value
+
+
+def _flag(where: str, raw: dict, key: str) -> bool:
+    """raw[key] if YAML read a boolean there, False if absent: bool() would read the string "false" as true."""
+    value = raw.get(key, False)
+    if not isinstance(value, bool):
+        raise RegistryError(f"{where}: {key} must be true or false, not {value!r}")
     return value
 
 
@@ -95,25 +139,28 @@ def _mapping(data: dict, key: str) -> dict:
 
 
 def _section(data: dict, key: str, cls: type):
-    """budget or brake: a mapping of exactly cls's fields, each a number."""
+    """budget or brake: a mapping of exactly cls's fields, each a positive number."""
     names = [f.name for f in fields(cls)]
     raw = data.get(key)
     if raw is None:
         raise RegistryError(f"{key}: the section is required ({', '.join(names)})")
     if not isinstance(raw, dict):
         raise RegistryError(f"{key}: must be a mapping of {', '.join(names)}")
-    for given in raw:
-        if given not in names:
-            raise RegistryError(f"{key}: {given!r} is not one of {', '.join(names)}")
-    # f.type is the annotation as a string ("int" or "float"): see `from __future__ import annotations`.
-    return cls(**{f.name: _number(key, raw, f.name, whole=f.type == "int") for f in fields(cls)})
+    _known(key, raw, names)
+    # f.type is the annotation: the string "int" under `from __future__ import annotations`, else the class.
+    values = {f.name: _number(key, raw, f.name, whole=f.type in ("int", int)) for f in fields(cls)}
+    for field, value in values.items():
+        if value <= 0:
+            raise RegistryError(f"{key}: {field} must be positive, not {value!r}")
+    return cls(**values)
 
 
 def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
-    if not NAME.match(name):
-        raise RegistryError(f"{name}: names are lowercase letters, digits, '.' and '-'")
+    if not isinstance(name, str) or not NAME.match(name):
+        raise RegistryError(f"{name!r}: names are lowercase letters, digits, '.' and '-'")
     if not isinstance(raw, dict):
         raise RegistryError(f"{name}: a model must be a mapping of its fields")
+    _known(name, raw, MODEL_KEYS)
     engine = raw.get("engine")
     if not isinstance(engine, str) or engine not in engines:
         raise RegistryError(f"{name}: engine {engine!r} is not in the engines table")
@@ -123,11 +170,18 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
     src = raw.get("source")
     if not isinstance(src, dict):
         raise RegistryError(f"{name}: source must be a mapping of repo, revision and file")
+    _known(f"{name}: source", src, SOURCE_KEYS)
     if not REVISION.match(str(src.get("revision", ""))):
         raise RegistryError(f"{name}: source.revision must be a 40-hex commit, not a branch or tag")
     for key in ("repo", "file"):
         if src.get(key) in (None, ""):
             raise RegistryError(f"{name}: source.{key} is required")
+        if not isinstance(src[key], str):
+            raise RegistryError(f"{name}: source.{key} must be a string, not {src[key]!r}")
+    if "mmproj" in src and (not isinstance(src["mmproj"], str) or not src["mmproj"]):
+        raise RegistryError(
+            f"{name}: source.mmproj must be a non-empty string when present, not {src['mmproj']!r}"
+        )
     listed_args = _list(name, raw, "args")
     for arg in listed_args:
         if isinstance(arg, (dict, list)):
@@ -136,6 +190,8 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
             raise RegistryError(
                 f"{name}: args may not hold a boolean ({arg!r}); quote on/off, yes/no or true/false"
             )
+        if not isinstance(arg, (str, int, float)):  # null (an empty item), a date, binary
+            raise RegistryError(f"{name}: args may not hold {arg!r}; quote it or remove the empty item")
     args = tuple(str(a) for a in listed_args)
     if any(UNSAFE_ARG.search(a) for a in args):
         raise RegistryError(f"{name}: args may not contain whitespace or quotes")
@@ -148,9 +204,9 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
         capability=capability,
         engine=engine,
         source=Source(src["repo"], src["revision"], src["file"], src.get("mmproj")),
-        resident=bool(raw.get("resident", False)),
+        resident=_flag(name, raw, "resident"),
         footprint_gib=float(_number(name, raw, "footprint_gib")),
-        footprint_measured=bool(raw.get("footprint_measured", False)),
+        footprint_measured=_flag(name, raw, "footprint_measured"),
         ctx=_number(name, raw, "ctx", whole=True),
         parallel=_number(name, raw, "parallel", whole=True, default=1),
         cache_ram_mib=_number(name, raw, "cache_ram_mib", whole=True, default=0),
@@ -163,16 +219,21 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
 
 
 def load_registry(path: Path) -> Registry:
-    data = yaml.safe_load(Path(path).read_text()) or {}
+    data = yaml.load(Path(path).read_text(), Loader=_UniqueKeyLoader) or {}
     if not isinstance(data, dict):
         raise RegistryError("the registry must be a mapping of budget, brake, engines and models")
+    _known("the registry", data, SECTIONS)
     budget = _section(data, "budget", Budget)
     brake = _section(data, "brake", BrakeThresholds)
     if not brake.warn_gib > brake.brake_gib:
         raise RegistryError("brake: warn_gib must be above brake_gib")
     if not budget.reserve_gib > brake.brake_gib:
         raise RegistryError("budget: reserve_gib must exceed brake.brake_gib, or a fresh load trips the brake")
-    engines = {str(k): str(v) for k, v in _mapping(data, "engines").items()}
+    engines: dict[str, str] = {}
+    for engine, binary in _mapping(data, "engines").items():
+        if not isinstance(binary, str) or not binary:
+            raise RegistryError(f"engines: {engine} must be the path to its binary, not {binary!r}")
+        engines[str(engine)] = binary
     models = {name: _model(name, raw, engines) for name, raw in _mapping(data, "models").items()}
     seen: dict[str, str] = {}
     for model in models.values():
