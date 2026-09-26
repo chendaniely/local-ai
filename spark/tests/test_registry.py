@@ -159,3 +159,26 @@ def test_absent_roles_and_args_are_empty(tmp_path):
 
     coder = load_registry(mutated(tmp_path, drop)).models["coder"]
     assert coder.roles == () and coder.args == ()
+
+
+# YAML 1.1, which PyYAML reads, takes an unquoted on/off, yes/no or true/false as a boolean, and in args
+# it would reach the engine as "True" or "False". These write the YAML text, so YAML does the reading.
+def with_coder_args(tmp_path, args: str) -> Path:
+    line = '    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]\n'
+    text = FIXTURE.read_text()
+    assert text.count(line) == 1  # the coder's args line, so the replace can't silently miss
+    path = tmp_path / "models.yaml"
+    path.write_text(text.replace(line, f"    args: {args}\n"))
+    return path
+
+
+@pytest.mark.parametrize("word", ["on", "off", "yes", "no", "true", "false"])
+def test_an_unquoted_boolean_in_args_is_refused(tmp_path, word):
+    path = with_coder_args(tmp_path, f"[--flash-attn, {word}]")
+    with pytest.raises(RegistryError, match=r"^coder: args may not hold a boolean \((True|False)\); quote "):
+        load_registry(path)
+
+
+def test_a_quoted_boolean_or_a_bare_number_in_args_loads_as_text(tmp_path):
+    path = with_coder_args(tmp_path, '[--flash-attn, "on", --threads, 8]')
+    assert load_registry(path).models["coder"].args == ("--flash-attn", "on", "--threads", "8")

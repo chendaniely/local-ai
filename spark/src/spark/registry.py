@@ -132,6 +132,10 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
     for arg in listed_args:
         if isinstance(arg, (dict, list)):
             raise RegistryError(f"{name}: args must be a flat list; {arg!r} is nested")
+        if isinstance(arg, bool):  # YAML 1.1 reads an unquoted on/off, yes/no or true/false as one
+            raise RegistryError(
+                f"{name}: args may not hold a boolean ({arg!r}); quote on/off, yes/no or true/false"
+            )
     args = tuple(str(a) for a in listed_args)
     if any(UNSAFE_ARG.search(a) for a in args):
         raise RegistryError(f"{name}: args may not contain whitespace or quotes")
