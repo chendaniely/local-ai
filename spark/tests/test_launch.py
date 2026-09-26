@@ -302,3 +302,43 @@ def test_a_refusal_record_is_swapped_in_whole(tmp_path, monkeypatch):
     refusal = launch.read_refusal(tmp_path)
     assert refusal["model"] == "coder" and refusal["reason"] == "why"
     assert [p.name for p in tmp_path.iterdir()] == ["last-refusal.json"]  # no temporary file left
+
+
+# Task 5's fix round 1: `spark status` shows the record, so the reader returns only a whole one, and says what's wrong
+# with a record that isn't (I5).
+
+DAMAGED_REFUSALS = {
+    "a list": b"[1]",
+    "a string": b'"s"',
+    "a number": b"5",
+    "none of its fields": b'{"x": 1}',
+    "at not text": b'{"at": 1, "model": "coder", "reason": "r"}',
+    "no reason": b'{"at": "t", "model": "coder"}',
+    "not JSON": b"{not json",
+    "empty": b"",
+    "not text": b"\xff\xfe garbage",
+    "nested too deep": b"[" * 100_000,  # json.loads raises RecursionError
+    "a folder": None,
+}
+
+
+@pytest.mark.parametrize("damage", DAMAGED_REFUSALS.values(), ids=DAMAGED_REFUSALS.keys())
+def test_a_refusal_record_that_isnt_one_reads_as_none_and_says_why(tmp_path, damage):
+    record = tmp_path / "last-refusal.json"
+    if damage is None:
+        record.mkdir()
+    else:
+        record.write_bytes(damage)
+    assert launch.read_refusal(tmp_path) is None
+    refusal, problem = launch.check_refusal(tmp_path)
+    assert refusal is None and problem.startswith(f"the refusal record {record} ")
+
+
+def test_a_whole_refusal_record_is_read_as_its_three_fields(tmp_path):
+    (tmp_path / "last-refusal.json").write_text(json.dumps({"at": "t1", "model": "coder", "reason": "why", "x": 1}))
+    assert launch.check_refusal(tmp_path) == ({"at": "t1", "model": "coder", "reason": "why"}, None)
+    assert launch.read_refusal(tmp_path) == {"at": "t1", "model": "coder", "reason": "why"}
+
+
+def test_no_refusal_record_is_no_refusal_and_no_problem(tmp_path):
+    assert launch.check_refusal(tmp_path) == (None, None)

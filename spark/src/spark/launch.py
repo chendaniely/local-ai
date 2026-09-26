@@ -25,6 +25,7 @@ from spark.memory import read_meminfo
 from spark.registry import load_registry
 
 REFUSAL = "last-refusal.json"
+RECORD = ("at", "model", "reason")  # a refusal's fields, each text
 KEY_PREFIX = "LLAMASWAP_KEY_"
 
 
@@ -53,11 +54,24 @@ def record_refusal(state: Path, model: str, reason: str) -> None:
         pass  # the reason still reaches llama-swap through stderr
 
 
-def read_refusal(state: Path) -> dict | None:
+def check_refusal(state: Path) -> tuple[dict | None, str | None]:
+    """The last refusal, and what's wrong with the record when it isn't one: `spark status` says so rather than show
+    nothing. (None, None) when there is no record."""
+    path = Path(state) / REFUSAL
     try:
-        return json.loads((Path(state) / REFUSAL).read_text())
-    except (OSError, ValueError):
-        return None
+        record = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None, None
+    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+        return None, f"the refusal record {path} can't be read: {err}"
+    if not (isinstance(record, dict) and all(isinstance(record.get(field), str) for field in RECORD)):
+        return None, f"the refusal record {path} isn't one: at, model and reason must all be text"
+    return {field: record[field] for field in RECORD}, None
+
+
+def read_refusal(state: Path) -> dict | None:
+    """The last refusal, or None: when there is none, and when the record can't be read or isn't one."""
+    return check_refusal(state)[0]
 
 
 def clear_refusal(state: Path) -> None:
