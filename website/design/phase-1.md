@@ -136,10 +136,11 @@ Tailscale serve · pi 0.85.1.
 8. **Something running as Dan edits a unit or the Compose project, or plants a link where
    `spark apply` stages them** — expected: root runs none of it. `spark apply` stages the change and
    stops; `make install-units` shows it as a diff and asks before root installs it. It refuses, with
-   nothing installed and nothing shown, a staged link, a file Dan can't read, a file with control
-   characters that could hide a line of the diff, and one too big or too slow to read. Until then no
-   unit restarts to pick it up, and `make doctor` fails if root's copies aren't root's own regular
-   files. *(Tasks 7, 9 and 10.)*
+   nothing installed and nothing shown, a staged link, a file Dan can't read, a file holding a
+   control character that could hide a line of the diff (one of ASCII's other than tab and newline,
+   or a C1 control in UTF-8), and one too big or too slow to read. Until then no unit restarts to
+   pick it up, and `make doctor` fails if root's copies aren't root's own regular files. *(Tasks 7,
+   9 and 10.)*
 
 ***
 
@@ -873,7 +874,8 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
 - Produces: `Running(model: str, state: str)`; `LlamaSwapError(RuntimeError)`;
   `LlamaSwapUnreachable(LlamaSwapError)` (nothing answered in time: llama-swap is stopped, or hung
   with its engines still running, and only its unit's state tells which — as opposed to an HTTP
-  error such as a wrong key, which says nothing about what is loaded);
+  error such as a wrong key, which says nothing about what is loaded, or an answer the client can't
+  read, cut short or not the JSON v257 sends, which are `LlamaSwapError` too);
   `LlamaSwap(base_url: str, api_key: str | None, timeout: float = 10.0)` with
   `running() -> list[Running]` (`GET /running`) and `unload(model: str) -> None`
   (`POST /api/models/unload/{model}`); `key_from_env(name: str) -> str | None`.
@@ -892,6 +894,7 @@ import pytest
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
 
 SEEN: list[tuple[str, str, str | None]] = []
+ANSWER: dict = {}  # a test sets what GET /running answers with the good key: a body, or "short"
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -908,7 +911,13 @@ class Fake(BaseHTTPRequestHandler):
         SEEN.append(("GET", self.path, self.headers.get("Authorization")))
         if self.headers.get("Authorization") != "Bearer good":
             return self._reply(401, {"error": {"message": "unauthorized: invalid or missing API key"}})
-        self._reply(200, {"running": [{"model": "coder", "state": "ready", "cmd": "x", "proxy": "y", "ttl": 0}]})
+        if ANSWER.get("short"):  # promises 100 bytes, sends 13, and the connection closes
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            return self.wfile.write(b'{"running": [')
+        self._reply(200, ANSWER.get("body", {"running": [{"model": "coder", "state": "ready", "cmd": "x",
+                                                          "proxy": "y", "ttl": 0}]}))
 
     def do_POST(self):
         SEEN.append(("POST", self.path, self.headers.get("Authorization")))
@@ -922,6 +931,7 @@ def server():
     httpd = HTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     SEEN.clear()
+    ANSWER.clear()
     yield f"http://127.0.0.1:{httpd.server_port}"
     httpd.shutdown()
 
@@ -955,6 +965,18 @@ def test_a_wrong_key_is_not_mistaken_for_unreachable(server):
     with pytest.raises(LlamaSwapError) as caught:
         LlamaSwap(server, "bad").running()
     assert not isinstance(caught.value, LlamaSwapUnreachable)
+
+
+
+@pytest.mark.parametrize("answer", [{"body": "<html>busy</html>"}, {"body": "[1, 2]"}, {"body": {"running": "coder"}},
+                                    {"body": {"running": [{"name": "coder"}]}}, {"short": True}],
+                         ids=["not-json", "a-list", "a-string", "no-model", "cut-short"])
+def test_an_answer_it_cant_read_is_an_error_not_a_crash(server, answer):
+    # Not what v257 sends: an error that says so, which apply and the brake handle like a wrong key.
+    ANSWER.update(answer)
+    with pytest.raises(LlamaSwapError) as caught:
+        LlamaSwap(server, "good").running()
+    assert not isinstance(caught.value, LlamaSwapUnreachable)
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
@@ -971,6 +993,7 @@ Expected: FAIL — `ModuleNotFoundError`.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -1015,10 +1038,15 @@ class LlamaSwap:
             raise LlamaSwapError(f"llama-swap {method} {path}: HTTP {err.code}") from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
             raise LlamaSwapUnreachable(f"llama-swap unreachable at {self.base_url}: {err}") from None
+        except http.client.HTTPException as err:  # it answered, but the answer broke off or wasn't HTTP
+            raise LlamaSwapError(f"llama-swap {method} {path}: a broken answer ({type(err).__name__})") from None
 
     def running(self) -> list[Running]:
-        data = json.loads(self._call("GET", "/running"))
-        return [Running(r["model"], r["state"]) for r in data.get("running", [])]
+        body = self._call("GET", "/running")
+        try:
+            return [Running(r["model"], r["state"]) for r in json.loads(body).get("running", [])]
+        except (ValueError, KeyError, TypeError, AttributeError) as err:  # not the JSON v257 sends
+            raise LlamaSwapError(f"llama-swap GET /running: an answer it can't read ({type(err).__name__})") from None
 
     def unload(self, model: str) -> None:
         self._call("POST", "/api/models/unload/" + urllib.parse.quote(model, safe=""))
@@ -2154,8 +2182,10 @@ git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config f
 - Produces: `diff_tree(files, etc) -> list[str]`; `app_diff(src, app) -> list[str]`;
   `not_installed(files, installed) -> list[str]`; `unit_of(rel) -> str | None`;
   `outdated_units(started, changed_at) -> list[str]`;
-  `units_to_restart(changed, app_changed=False) -> list[str]`; `started_at(show) -> float | None`;
-  `models_loaded(client, unit_active, log=print) -> list[str] | None`;
+  `units_to_restart(changed, app_changed=False) -> list[str]`; `started_at(show) -> float | None`
+  (None when the unit isn't running; ValueError when it runs and its time doesn't read);
+  `start_times(units, show, log=print) -> dict[str, float | None]`, which gives such a unit
+  `UNKNOWN_START` and says so; `models_loaded(client, unit_active, log=print) -> list[str] | None`;
   `read_copies(files, where=installed_path) -> (texts, times, unreadable)`;
   `validation_env(env) -> dict[str, str]`;
   `apply_files(files, etc, *, installed, unreadable, outdated, active, app_changes, running, now_ok, dry_run, sync_app, run_cmd, log) -> int`
@@ -2200,16 +2230,26 @@ A unit is outdated when its last start began (systemd's `InactiveExitTimestamp`,
 `systemctl show --timestamp=us+utc`, to the microsecond) before one of root's copies of its files
 was installed (that file's modification time). When the start began counts, not when it ended
 (`ActiveEnterTimestamp`): the compose unit's start can take up to 900 s, and a copy installed
-during it may come after the start read the old one. An install in the same microsecond counts as
-not outdated. The property names and the `Fri 2026-09-25 23:19:46.826238 UTC` format come
+during it may come after the start read the old one. The comparison is strict: a copy is newer
+only when its modification time is later than the start's time, which systemd gives to the
+microsecond. The property names and the `Fri 2026-09-25 23:19:46.826238 UTC` format come
 from systemd v255's source (`src/systemctl/systemctl-show.c`, `src/basic/time-util.c`) and ran
 under systemd 255.4 in a container, a slow start included. They are not yet run on this box: the
 first `make apply` after `make install-units` changes a running unit is their first use there, and
-`make apply-dry-run` shows what it would restart. What the rule can still miss: a clock stepped
-backwards between a start and an install; and a start that began after an install but before
-systemd reloaded it — a restart during `make install-units`, or after a run of it that was cut off
-before its reload (the next run reloads) — which runs the old definition while counting as current.
-Either way, `systemctl restart <unit>` fixes it.
+`make apply-dry-run` shows what it would restart. If a running unit's time comes in another form
+there, apply doesn't guess: it names the unit, says it can't tell whether the unit runs root's
+latest copy, and gives the command to restart it by hand, and it counts the unit as running and
+current, so a changed config still restarts it and a new copy of its unit doesn't. What the rule
+can still miss: a clock stepped backwards between a start and an install; and a start that began
+after an install but before systemd reloaded it — a restart during `make install-units`, or after
+a run of it that was cut off before its reload (the next run reloads) — which runs the old
+definition while counting as current. Either way, `systemctl restart <unit>` fixes it.
+
+One more known limit, not designed away in Phase 1: apply reads what llama-swap has loaded before
+it syncs the app and writes the files, and restarts llama-swap after them. A model whose load
+starts in between, because a request arrived, is stopped by that restart: the request fails, and
+sent again it loads the model under the new config. To leave no window, run apply while nothing is
+sending requests, and check `make status` after it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2222,8 +2262,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from spark.apply import (app_diff, apply_files, diff_tree, models_loaded, not_installed, outdated_units,
-                         read_copies, started_at, units_to_restart, validation_env)
+from spark.apply import (UNKNOWN_START, app_diff, apply_files, diff_tree, models_loaded, not_installed,
+                         outdated_units, read_copies, start_times, started_at, units_to_restart, validation_env)
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
 from spark.render import KEY_ENVS
 
@@ -2415,9 +2455,24 @@ def test_started_at_reads_when_the_last_start_began():
     assert started_at(show) == datetime(2026, 9, 25, 23, 19, 46, 826238, tzinfo=timezone.utc).timestamp()
     # A stopped unit keeps the time it last started: only its state says it isn't running.
     assert started_at(show.replace("ActiveState=active", "ActiveState=inactive")) is None
-    assert started_at("ActiveState=active\nInactiveExitTimestamp=\n") is None
-    assert started_at("ActiveState=active\nInactiveExitTimestamp=@1790371186\n") is None  # not the us+utc form
     assert started_at("") is None
+    for stamp in ("", "@1790371186"):  # a running unit's time that isn't the us+utc form: see start_times
+        with pytest.raises(ValueError, match="InactiveExitTimestamp="):
+            started_at(f"ActiveState=active\nInactiveExitTimestamp={stamp}\n")
+
+
+def test_a_running_unit_whose_start_cant_be_read_is_named_not_skipped():
+    shows = {LLAMA: "ActiveState=active\nInactiveExitTimestamp=Fri 2026-09-25 23:19:46.826238 UTC\n",
+             BRAKE: "ActiveState=active\nInactiveExitTimestamp=@1790371186\n",
+             COMPOSE: "ActiveState=inactive\nInactiveExitTimestamp=\n"}
+    logs = []
+    started = start_times([LLAMA, BRAKE, COMPOSE], shows.get, log=logs.append)
+    assert started[COMPOSE] is None and started[BRAKE] == UNKNOWN_START and started[LLAMA] < UNKNOWN_START
+    assert logs == [f"apply: can't read when {BRAKE} started (InactiveExitTimestamp='@1790371186'), so it can't "
+                    f"tell whether {BRAKE} runs root's latest copy: if `make install-units` changed its files, "
+                    f"run `systemctl restart {BRAKE}`"]
+    # Still running, so a changed config restarts it; but no copy, however new, counts as newer.
+    assert outdated_units(started, {"systemd/local-ai-brake.service": 9e9}) == []
 
 
 class Client:
@@ -2506,6 +2561,7 @@ and restarts nothing else until root has them."""
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import shutil
 import subprocess
@@ -2524,6 +2580,7 @@ LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
 BRAKE_UNIT = "local-ai-brake.service"
 COMPOSE_UNIT = "local-ai-compose.service"
 RUNNING_UNITS = (LLAMA_SWAP_UNIT, BRAKE_UNIT, COMPOSE_UNIT)  # the pull unit runs only when asked
+UNKNOWN_START = math.inf  # a running unit whose start time can't be read: later than any copy
 NOT_APP = {".venv", "__pycache__", ".pytest_cache"}
 
 
@@ -2669,21 +2726,37 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
 
 def started_at(show: str) -> float | None:
     """When a unit's last start began, from `systemctl show --timestamp=us+utc`'s ActiveState and
-    InactiveExitTimestamp (`Fri 2026-09-25 23:19:46.826238 UTC`); None when it isn't running."""
+    InactiveExitTimestamp (`Fri 2026-09-25 23:19:46.826238 UTC`); None when it isn't running. A running
+    unit whose time isn't in that form raises ValueError, naming what systemd said."""
     props = dict(line.split("=", 1) for line in show.splitlines() if "=" in line)
-    stamp = props.get("InactiveExitTimestamp", "").partition(" ")[2]  # the weekday goes first
     if props.get("ActiveState") != "active":
         return None
+    stamp = props.get("InactiveExitTimestamp", "")
     try:
-        return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f UTC").replace(tzinfo=timezone.utc).timestamp()
+        when = datetime.strptime(stamp.partition(" ")[2], "%Y-%m-%d %H:%M:%S.%f UTC")  # the weekday goes first
     except ValueError:
-        return None
+        raise ValueError(f"InactiveExitTimestamp={stamp!r}") from None
+    return when.replace(tzinfo=timezone.utc).timestamp()
 
 
-def _started(unit: str) -> float | None:
-    show = subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=InactiveExitTimestamp",
+def start_times(units, show, log=print) -> dict[str, float | None]:
+    """When each unit's start began (None when it isn't running), from `show(unit)`, `systemctl show`'s
+    output. A running unit whose time can't be read counts as started after every copy, so apply
+    never restarts it for one: it says so, and what to run by hand."""
+    started: dict[str, float | None] = {}
+    for unit in units:
+        try:
+            started[unit] = started_at(show(unit))
+        except ValueError as err:
+            started[unit] = UNKNOWN_START
+            log(f"apply: can't read when {unit} started ({err}), so it can't tell whether {unit} runs root's "
+                f"latest copy: if `make install-units` changed its files, run `systemctl restart {unit}`")
+    return started
+
+
+def _show(unit: str) -> str:
+    return subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=InactiveExitTimestamp",
                            "--timestamp=us+utc", unit], capture_output=True, text=True).stdout
-    return started_at(show)
 
 
 def read_copies(files: dict[str, str],
@@ -2765,7 +2838,7 @@ def run(args: argparse.Namespace) -> int:
     if not _validate_llama_swap(files["llama-swap.yaml"], binary):
         print("apply: llama-swap rejected the rendered config; nothing was changed")
         return 1
-    started = {unit: _started(unit) for unit in RUNNING_UNITS}
+    started = start_times(RUNNING_UNITS, _show)
     client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=3)
     running = models_loaded(client, unit_active=started[LLAMA_SWAP_UNIT] is not None)
     installed, changed_at, unreadable = read_copies(files)
@@ -2924,7 +2997,7 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 - Modify: `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (the `--install-units` mode),
   `stack/host/50-local-ai.rules`, `spark/tests/test_bootstrap.py`, `Makefile`, `stack/versions.yaml`,
   `website/reference/stack.md` (regenerated), `website/how-to/index.qmd` (*In order*), `README.md`
-  (§Contents' `Makefile` row, and §My environment's tools)
+  (§Contents' `Makefile` row, and the MacBook's tools under §Current state)
 
 **Interfaces:**
 
@@ -2945,8 +3018,10 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
     installed. The read gets 10 s (`timeout`) and 64 KiB (`head -c`) per file, and a file that hits
     either limit is refused, so a file swapped for a FIFO or a link to `/dev/zero` after the check
     can't hang root or fill its temporary folder. So is a staged copy holding any byte but tab,
-    newline, printable ASCII and 0x80–0xFF: a carriage return or an escape sequence could make the
-    terminal hide a line of the diff, and a NUL makes diff show none. Each refusal comes before
+    newline, printable ASCII and 0x80–0xFF, or, among those, the UTF-8 encoding of a C1 control
+    (C2 80 to C2 9F): a carriage return, an escape sequence or a C1 control such as CSI could make
+    the terminal hide a line of the diff, and a NUL makes diff show none. Other UTF-8 passes, the
+    templates' em dashes included. Each refusal comes before
     anything is shown, installs nothing, and names the file, never its content. It shows what would
     change as a diff, installed against staged, and asks before it installs anything; it counts a
     copy that is a link, or isn't root's own (owned by root, not writable by group or others), as
@@ -3443,10 +3518,13 @@ def test_install_units_lists_the_units_render_writes():
     assert listed["ENABLED_UNITS"] == [unit for unit in UNITS if "\n[Install]\n" in roots[f"systemd/{unit}"]]
 
 
-# A carriage return and an escape sequence can make a terminal hide a line of the diff; a NUL makes
-# diff print only "Binary files … differ". Built at run time, never written in the repo.
+# A carriage return, an escape sequence and a C1 control such as CSI (U+009B, C2 9B in UTF-8) can
+# make a terminal hide a line of the diff; a NUL makes diff print only "Binary files … differ".
+# Built at run time, never written in the repo.
 HIDDEN = "ExecStartPre=+/bin/sh -c 'touch /tmp/planted'"
-CONTROL = {"cr-and-escape": HIDDEN + chr(13) + chr(27) + "[2K# nothing to see\n", "nul": HIDDEN + chr(0) + "\n"}
+CONTROL = {"cr-and-escape": HIDDEN + chr(13) + chr(27) + "[2K# nothing to see\n", "nul": HIDDEN + chr(0) + "\n",
+           "c1-csi": HIDDEN + chr(0x9B) + "2K# nothing to see\n",
+           "c1-first": HIDDEN + chr(0x80) + "\n", "c1-last": HIDDEN + chr(0x9F) + "\n"}
 
 
 @pytest.mark.parametrize("mode", ["real", "dry-run"])
@@ -3460,6 +3538,16 @@ def test_a_staged_file_with_control_characters_is_refused_before_anything_shows(
     assert f"{brake} holds control characters" in result.stderr
     assert "planted" not in result.stdout + result.stderr  # no line of it, no diff
     assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_printable_text_beyond_ascii_is_no_control(tmp_path):
+    # The templates' own em dashes (E2 80 94) pass, and so do C2 A0 to C2 BF, printable: only C2 80
+    # to C2 9F encode C1 controls.
+    env = install_env(tmp_path)
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# " + chr(0xA0) + chr(0xB7) + " caf" + chr(0xE9) + "\n")
+    assert install_units(env, "y\n").returncode == 0
+    assert installed(tmp_path)["systemd/local-ai-brake.service"] == brake.read_text()
 
 
 def test_a_staged_file_swapped_for_a_fifo_after_the_check_times_out(tmp_path):
@@ -3660,10 +3748,11 @@ After `polkit_rule`, the install mode:
 # write, so nothing running as the admin changes what root runs without sudo. `spark apply` stages
 # them in STAGED, which the admin can write: each staged file must be a regular file, and root
 # reads it as the admin who ran sudo, so a link planted there can't make root copy, or show, a
-# file the admin can't read. The read has a time limit and a size cap, and a copy holding control
-# characters is refused, so a file swapped after the check can't hang root or fill /tmp, and no
-# byte can make the diff hide a line. It shows what would change, and asks, before it installs
-# anything; run again with nothing changed, it changes nothing. Tests point these five at stand-ins.
+# file the admin can't read. The read has a time limit and a size cap, so a file swapped after the
+# check can't hang root or fill /tmp. A copy holding a control character, one of ASCII's other than
+# tab and newline or a C1 control in UTF-8, is refused, so none can make the terminal hide a line of
+# the diff. It shows what would change, and asks, before it installs anything; run again with
+# nothing changed, it changes nothing. Tests point these five at stand-ins.
 STAGED="${BOOTSTRAP_STAGED:-/opt/local-ai/etc}"
 UNIT_DIR="${BOOTSTRAP_UNIT_DIR:-/etc/systemd/system}"
 COMPOSE_DIR="${BOOTSTRAP_COMPOSE_DIR:-/etc/local-ai/compose}"
@@ -3717,9 +3806,11 @@ install_units() {
       echo "bootstrap: $staged is over $READ_LIMIT bytes, far more than a unit or a Compose file, so nothing was installed" >&2
       exit 1
     fi
-    # Only tab, newline and printable text, UTF-8 included: a carriage return or an escape sequence
-    # can make a terminal hide a line of the diff, and a NUL makes diff show no lines at all.
-    if (( $(LC_ALL=C tr -d '\011\012\040-\176\200-\377' < "$STAGED_COPY/$n" | wc -c) > 0 )); then
+    # Only tab, newline, printable ASCII and bytes 0x80 to 0xFF, and among those no C1 control in
+    # UTF-8 (C2 80 to C2 9F): a carriage return, an escape sequence or a C1 control such as CSI can
+    # make a terminal hide a line of the diff, and a NUL makes diff show no lines at all.
+    if (( $(LC_ALL=C tr -d '\011\012\040-\176\200-\377' < "$STAGED_COPY/$n" | wc -c) > 0 )) ||
+      LC_ALL=C grep -aq $'\xc2[\x80-\x9f]' "$STAGED_COPY/$n"; then
       echo "bootstrap: $staged holds control characters, which could hide a line of the diff below, so nothing was installed" >&2
       exit 1
     fi
@@ -3916,8 +4007,9 @@ clients: ## Add the Spark provider to pi on this machine
     runs: sudo also runs this clone's own `Makefile` and `stack/host/bootstrap.sh`, which no diff
     shows and anything running as you can change (plan.md's *Users, access and security*).
     `git status --short -- Makefile stack/host` printing nothing says both are as committed. It
-    refuses, installing nothing, a staged file with control characters, which could hide a line of
-    what it shows, and one over 64 KiB or that takes over 10 s to read. However it ends, even with a
+    refuses, installing nothing, a staged file holding a control character (one of ASCII's other
+    than tab and newline, or a C1 control in UTF-8), which could hide a line of what it shows, and
+    one over 64 KiB or that takes over 10 s to read. However it ends, even with a
     Ctrl-C, it runs `sudo -k`, which forgets sudo's cached credential in this terminal, so nothing
     you run next there, `make apply` included, can use it: your next `sudo` asks for your password
     again.
@@ -3986,9 +4078,11 @@ clients: ## Add the Spark provider to pi on this machine
     `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the
     GPU-set hold, and deploying the stack (`apply`, `install-units`, `pull`, `status`, `logs`,
     `tunnel`, `clients`)."
-  - README §My environment's tools bullet gains Homebrew's coreutils, at the version
-    `brew list --versions coreutils` prints: the install-units tests run its `timeout` on the Mac,
-    and without it they fail. Ubuntu has `timeout` already.
+  - README §Current state, *The MacBook — `heartsbane`*: the *The repo's tools* bullet gains
+    Homebrew's coreutils, at the version `brew list --versions coreutils` prints, with the day you
+    checked it: the bullet's "(all as of 2026-09-24)" dates only the tools it already lists. The
+    install-units tests run coreutils' `timeout` on the Mac, and fail without it; Ubuntu has
+    `timeout` already.
 
 - [ ] **Step 12: Tests pass; the site builds; commit**
 
@@ -5365,7 +5459,7 @@ def test_what_root_runs_must_be_roots_own_files():
     assert failures(probe) == {"root's copies": f"{COMPOSE_DIR} is root:root 775: run `make install-units`"}
 
 
-def test_doctor_checks_every_copy_that_render_stages_for_root():
+def test_doctor_checks_every_copy_that_apply_stages_for_root():
     fixtures = Path(__file__).parent / "fixtures"
     files = render(REG, load_versions(fixtures / "versions.yaml"), (fixtures / "models.yaml").read_text(),
                    templates=ROOT / "stack/templates")
@@ -6624,7 +6718,9 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   Dan's account reaching `spark` through `/opt/local-ai`. Fix what they find, one commit per fix.
 - [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
-  v257 surprise. Two decisions wait on this phase's readings. Whether `spark launch` gives resident
+  v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*
+  left it here, 2026-09-25): decide it, and record the decision in plan.md with a Revisions line.
+  Two decisions wait on this phase's readings. Whether `spark launch` gives resident
   models a lower `oom_score_adj` than on-demand ones depends on whether the engines' RSS counts
   their models (the `rss` and `oom` columns in Task 13 Step 5). Swap size and swappiness depend on
   the swap line (Task 16 Step 3).

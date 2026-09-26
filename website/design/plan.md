@@ -712,9 +712,11 @@ Each item gets its own design pass when its turn comes.
   `updates.md` step 1 and S23 no longer say the check is left to Dan.
 - **2026-09-25** — Phase 1's pre-flight review and a scan across its tasks, fixed in
   `website/design/phase-1.md` before Task 1, with every Task 1–10 listing run again on the Mac and
-  in an `ubuntu:24.04` container. `make install-units` refuses a staged file with control
-  characters, which could hide a line of the diff it shows, and gives each read 10 s and 64 KiB; it
-  ends with `sudo -k`. `spark apply` counts a llama-swap whose unit runs but that doesn't answer as
+  in an `ubuntu:24.04` container. `make install-units` refuses a staged file holding one of ASCII's
+  control characters other than tab and newline, which could hide a line of the diff it shows, and
+  gives each read 10 s and 64 KiB; it ends with `sudo -k`. (Corrected 2026-09-25: this said it
+  refuses "control characters"; UTF-8's C1 controls passed until the re-review, next line.)
+  `spark apply` counts a llama-swap whose unit runs but that doesn't answer as
   having models loaded, judges a unit outdated by when its start began, to the microsecond, lists
   as restarts only those it makes, and says how to finish when a restart fails after its files are
   deployed. `admit()` caps `MemAvailable` at the allocatable ceiling, as *Admission and memory
@@ -723,6 +725,13 @@ Each item gets its own design pass when its turn comes.
   Dated notes in *Components*, *Repo layout*, *Deploy workflow* and *Testing* say what Phase 1
   builds where this plan says more. Every push in the phase plan starts with the pre-push scan, and
   README §Contents changes with each task that makes it untrue.
+- **2026-09-25** — The re-review of those fixes, its minors closed in `website/design/phase-1.md`.
+  `make install-units` also refuses the UTF-8 encoding of a C1 control (C2 80 to C2 9F), such as
+  CSI; other UTF-8 passes. `spark apply` names a running unit whose start time it can't read, with
+  the command to restart it by hand, instead of skipping it silently, and Task 7 names a model that
+  starts loading between apply's check and its llama-swap restart as a known limit. llama-swap's
+  client turns an answer it can't read into an error, not a crash. Task 17's forward look decides
+  whether Phase 1 builds `make deploy`.
 
 ## Sources
 
