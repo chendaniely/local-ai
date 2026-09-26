@@ -589,6 +589,15 @@ Each item gets its own design pass when its turn comes.
   `spark apply` send. The client also follows redirects with the key. → Task 17's security review
   decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
   refusing redirects, and a cap on what the client reads.
+- **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
+  llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
+  unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
+  time (read in its source), so a fast fall — about 2 GiB/s with a 6 s stop, 1 GiB/s with a 10 s
+  one, in the reviews' simulations — reaches earlyoom's 12 GiB line before the brake has freed
+  enough. →
+  earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
+  `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
+  `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
   **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
@@ -804,6 +813,15 @@ Each item gets its own design pass when its turn comes.
   and never uses a proxy (commit 828fb3e; Task 3's listing is marked *Superseded*). Task 10's
   `Probe.http` gets the same two fixes (a dated note on its listing). One new open risk, *Anyone on
   the box can take 127.0.0.1:9100*, goes to Task 17's security review.
+- **2026-09-26** — Phase 1, Task 4's reviews (two fix rounds). The brake never crashes on a failing
+  hold write, a release mid-tick, an unreadable `/proc/meminfo` or a registry that won't load (it
+  then brakes on the plan's thresholds), and it still unloads when it can't write the hold. It asks
+  llama-swap only when memory is low. It counts memory on its way back — an engine `stopping`, or an
+  unload with no answer in 2 s — before unloading another, so a slow stop no longer costs every
+  model; its grace (15 s) and noise tolerance (0.5 GiB) are unmeasured (commits c249ce7, ebd3ad1;
+  Task 4's listing is marked *Superseded*). Read in llama-swap v257's source: an unload is answered
+  after the engine exits, and unloads run one at a time. A new open risk, *The minimal brake's
+  reach*, and Task 16's brake drill now measures the brake's numbers.
 
 ## Sources
 

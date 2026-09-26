@@ -1263,6 +1263,12 @@ def test_the_brake_waits_for_llama_swap_2_s_at_most(monkeypatch):
     assert seen["client"].timeout == 2
 ```
 
+*Superseded 2026-09-26 — the tests now go much further; see commits c249ce7 and ebd3ad1:
+multi-tick loops with a counted sleep, a failing unload, a failing hold write, a release mid-tick,
+`--key-env` naming another variable, an on-demand model smaller than a resident, `stopping` and
+unanswered unloads, `MemAvailable` noise, a registry that won't load, and a state folder the brake
+can't search. Each rule is pinned by a mutant that fails a test. Task 4's reviews asked for them.*
+
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_brake.py` → FAIL (`ModuleNotFoundError`).
 
 - [ ] **Step 3: Implement**
@@ -1367,6 +1373,15 @@ def run(args: argparse.Namespace) -> int:
     run_brake(registry, client, paths.STATE, log=lambda m: print(m, flush=True), once=args.once)
     return 0
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits c249ce7 (a failing hold write is logged
+and the unload still goes out; a release mid-tick, an unreadable `/proc/meminfo` and a registry
+that won't load no longer crash it — without a registry it brakes on the plan's thresholds; it asks
+llama-swap only when memory is low; a model whose unload failed is skipped for the episode, and
+each is recorded once) and ebd3ad1 (memory on its way back counts before another unload: an engine
+`stopping`, or an unload with no answer in 2 s, for up to `GRACE_S` = 15 s, ended early by a fall of
+more than `FLOOR_TOLERANCE_GIB` = 0.5 GiB; both are unmeasured on this box). llama-swap v257 answers
+an unload only after the engine exits and runs unloads one at a time (read in its source).*
 
 Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
@@ -6696,6 +6711,15 @@ make status
 Expected: `brake: holding new loads until `spark brake --release`` and
 `brake: unloaded qwen3.6-35b-a3b at … GiB available` — the on-demand model goes first and the
 residents stay; `make status` shows HOLDING with the coder unloaded.
+
+*Added 2026-09-26, from Task 4's reviews:* if the coder takes more than 2 s to stop, the second line
+reads `brake: no answer in 2 s; counting qwen3.6-35b-a3b as on its way (…)` instead: llama-swap v257
+answers an unload only once the engine has exited. Either way the coder goes and the residents stay.
+This drill is also where three of the brake's numbers get measured, and each result goes in
+`cosmicbboy-local-ai.md` and the brake's comments: how long the coder takes to stop after its
+unload is sent (sets `GRACE_S`, 15 s); how much `MemAvailable` moves poll to poll while memory is
+held (sets `FLOOR_TOLERANCE_GIB`, 0.5 GiB); and what v257 does when asked to unload an engine that
+is still `starting`. The commands for them are written and run when this task runs, not before.
 
 - [ ] **Step 2: While the hold stands, the coder can't come back**
 
