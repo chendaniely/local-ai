@@ -570,6 +570,18 @@ Each item gets its own design pass when its turn comes.
 - **Open WebUI churn** → a pinned minor version, env-only config, a database dump before upgrades.
 - **vLLM** start can abort when free memory rises during profiling (#56830), and NGC lags upstream →
   llama.cpp first.
+- **Engines share llama-swap's user** (found 2026-09-26, in Phase 1 Task 2's review). Every engine
+  runs as `spark`, so a compromised one can read every llama-swap key — from `llama-swap.env`, which
+  group `spark` can read although only root needs to (systemd's `EnvironmentFile=` and root's
+  Compose read the secret files), and from llama-swap's `/proc/<pid>/environ`, which any process of
+  the same user can read (checked on the box) — and can delete the brake's hold, since `spark` owns
+  the hold folder. In Phase 1 the keys gate only llama-swap on 127.0.0.1. → Phase 1's Task 17
+  security review decides whether engines get a user of their own (Dan's decision, 2026-09-26).
+- **Phase 1's launch check is a static fit** (2026-09-26). It has no pending term and doesn't
+  serialize loads, so two engines started close together can both pass while memory outside the
+  stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
+  open the gap. → The brake is the backstop until the gate adds both in Phase 2 (*Admission and
+  memory rules*, rule 1).
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
   **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
@@ -769,6 +781,15 @@ Each item gets its own design pass when its turn comes.
   69cc076). Task 1's listing is marked *Superseded*. Since unknown keys are refused, the phase that
   adds the registry fields *Components* lists beyond Phase 1's (a footprint's peak, steady and
   config hash, cold start, idle policy, key access groups) extends the loader in the same change.
+- **2026-09-26** — Phase 1, Task 2's review. The launch check decides the fit on exact decimals,
+  and a refusal's numbers show its shortfall and never read as a fit ("needs 28.0 GiB, 51.6 GiB
+  available, 24 GiB reserve kept: 0.4 GiB short"); the hold is fsynced so a freeze can't empty it;
+  a damaged hold or a registry that won't load is a recorded refusal, not a crash (commits e575700,
+  548ab5c; Task 2's listing is marked *Superseded*). Two open risks are new, *Engines share
+  llama-swap's user* and *Phase 1's launch check is a static fit*: engines can read llama-swap's
+  keys and delete the brake's hold, so the 2026-09-23 line's hold folder "writable by `spark-admin`
+  only" keeps `agent` out, not engines, and Phase 1's plan now says "no engine's environment holds
+  a key". Dan's decision: Task 17's security review decides whether engines get their own user.
 
 ## Sources
 

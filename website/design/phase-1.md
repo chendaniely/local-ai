@@ -82,8 +82,12 @@ Tailscale serve · pi 0.85.1.
 - **Never put a secret in a llama-swap `cmd`** — `GET /running` shows commands unredacted. Keys reach
   llama-swap only as `${env.LLAMASWAP_KEY_*}` from `/etc/local-ai/secrets/llama-swap.env`. Never name a
   key variable `LLAMA_API_KEY` (llama-server reads it). No `--api-key` on engines (llama-swap forwards
-  the client's header), and no engine holds a key at all: every engine would inherit llama-swap's
-  environment, so `spark launch` drops each `LLAMASWAP_KEY_*` variable before it starts one (Task 2).
+  the client's header), and no engine's environment holds a key: every engine would inherit
+  llama-swap's environment, so `spark launch` drops each `LLAMASWAP_KEY_*` variable before it starts
+  one (Task 2). (Corrected 2026-09-26: this said no engine holds a key at all. Engines run as
+  `spark`, as llama-swap does, so a compromised one can still read the keys, from `llama-swap.env`
+  and from llama-swap's own `/proc` environment. Task 17's security review decides whether engines
+  get a user of their own: Dan's decision, 2026-09-26.)
 - llama-swap silently ignores unknown config keys — every config change is followed by a start and
   `GET /running`, not just `-validate`.
 - **On the Spark, a key never goes on a command line.** Every user can read `/proc/*/cmdline`, and
@@ -666,6 +670,11 @@ def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monke
     assert launch.read_refusal(tmp_path) is None
 ```
 
+*Superseded 2026-09-26 — the tests now differ; see commits e575700 (a refusal's numbers show its
+shortfall and never read as a fit; the exact boundary; the hold fsynced before and after its rename)
+and 548ab5c (a damaged hold or a registry that won't load refused and recorded, not a crash; usage
+errors; a hold file on disk; a missing `MemTotal`). Task 2's review asked for them.*
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_launch.py`
@@ -767,6 +776,11 @@ def release_hold(state_dir: Path) -> bool:
     return False
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits e575700 (the hold is written, flushed
+and fsynced, renamed, and its folder fsynced, so a freeze can't leave it empty) and 548ab5c (a hold
+file that exists but can't be read or parsed reads as a hold naming the file, failing closed, and
+`read_hold` and `release_hold` act without checking `exists()` first).*
+
 `spark/src/spark/admission.py`:
 
 ```python
@@ -805,6 +819,10 @@ def admit(model: Model, mem: MemInfo, budget: Budget, hold: Hold | None) -> Deci
         )
     return Decision(True, "fits")
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commit e575700: the fit is decided on exact
+decimals, and a refusal rounds the need up and what's available down, so its numbers never read as
+a fit: "needs 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short".*
 
 `spark/src/spark/launch.py`:
 
@@ -898,6 +916,10 @@ def register(subparsers) -> None:
     p.add_argument("rest", nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: main_launch(args.rest))
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commit 548ab5c: a registry that won't load is
+refused (exit 3) naming its path and the error, and recorded; `record_refusal` writes a temporary
+file and renames it over the record.*
 
 Register in `cli.py` beside the others: `from spark import launch` / `launch.register(subparsers)`.
 
@@ -6686,7 +6708,7 @@ a=$(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo)
 python3 -c "import time; x = b'\x01' * ($((a - 45)) << 30); time.sleep(900)" > /dev/null 2>&1 & hog=$!
 sleep 30; make status          # ~45 GiB available; three residents loaded; brake off
 coder                          # not 200
-make status                    # refused  qwen3.6-35b-a3b at …: needs ~29 GiB, 45 GiB available (24 GiB reserve kept)
+make status                    # refused  qwen3.6-35b-a3b at …: needs 29.0 GiB, 45.0 GiB available, 24 GiB reserve kept: 8.0 GiB short
 for p in $(ps -o pid= -C llama-server,whisper-server) "$hog"; do echo "$(cat "/proc/$p/comm") oom_score $(cat "/proc/$p/oom_score")"; done
 kill "$hog"; sleep 5; coder    # 200 once the memory is back
 kill "$vm"; awk 'NR > 3 {si += $7; so += $8; if ($3 > most) most = $3} END {print "swap used at most", most + 0, "KiB; swapped in", si + 0, "KiB, out", so + 0, "KiB"}' "$log"
