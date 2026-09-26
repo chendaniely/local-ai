@@ -1059,6 +1059,11 @@ def test_an_answer_it_cant_read_is_an_error_not_a_crash(server, answer):
     assert not isinstance(caught.value, LlamaSwapUnreachable)
 ```
 
+*Superseded 2026-09-26 — the tests now go further; see commit 828fb3e: every `/running` shape that
+isn't v257's, a key that isn't printable ASCII (never sent, never shown), a proxy that must not see
+the key, an invalid URL, `api_key=None`, `key_from_env`, the trailing slash and the quoting; the
+fake records each request exactly as sent, and the fixture closes its server.*
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_llamaswap.py`
@@ -1131,6 +1136,13 @@ class LlamaSwap:
     def unload(self, model: str) -> None:
         self._call("POST", "/api/models/unload/" + urllib.parse.quote(model, safe=""))
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commit 828fb3e. `running()` reads v257's shape
+strictly — `{"running": [...]}` of objects with string `model` and `state` (v257's `handleRunning`
+always sends it, `[]` when idle) — and anything else is a `LlamaSwapError`, so a stray answer can't
+read as "nothing loaded". A key that isn't printable ASCII is refused before anything is sent, and
+no error carries it. Requests go through a proxy-free opener, so `http_proxy` never sees the key.
+Task 3's review asked for them.*
 
 - [ ] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
 
@@ -6032,6 +6044,14 @@ def run(args: argparse.Namespace) -> int:
     print(report(results))
     return 0 if all(c.ok for c in results) else 1
 ```
+
+*Added 2026-09-26, from Task 3's review: `Probe.http` above has the two leaks Task 3's client closed
+(commit 828fb3e). `urlopen` honours `http_proxy`, so the key could go to a proxy; and a key holding
+a CR, an LF or anything else that isn't printable ASCII escapes as a `ValueError` whose message is
+the header, key included, which `make doctor` would print. So Task 10 builds `http` on a
+proxy-free opener (`urllib.request.build_opener(urllib.request.ProxyHandler({}))`), and refuses such
+a key without sending anything, with a check line that names the problem and never the key. Its
+tests cover both, first failing against the listing as it stands.*
 
 Register in `cli.py`: `from spark import doctor` / `doctor.register(subparsers)`. In the `Makefile`,
 `.PHONY` gains `doctor`, and:

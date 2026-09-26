@@ -582,6 +582,13 @@ Each item gets its own design pass when its turn comes.
   stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
   open the gap. → The brake is the backstop until the gate adds both in Phase 2 (*Admission and
   memory rules*, rule 1).
+- **Anyone on the box can take 127.0.0.1:9100** (found 2026-09-26, in Phase 1 Task 3's review).
+  Ports from 1024 up are open to every user (checked on the box), so while llama-swap isn't holding
+  9100 — after a crash, or in `spark apply`'s restart window — any local user, `agent` included, can
+  listen there and receive the key the brake sends every 250 ms, and the keys `spark status` and
+  `spark apply` send. The client also follows redirects with the key. → Task 17's security review
+  decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
+  refusing redirects, and a cap on what the client reads.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
   **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
@@ -790,6 +797,13 @@ Each item gets its own design pass when its turn comes.
   keys and delete the brake's hold, so the 2026-09-23 line's hold folder "writable by `spark-admin`
   only" keeps `agent` out, not engines, and Phase 1's plan now says "no engine's environment holds
   a key". Dan's decision: Task 17's security review decides whether engines get their own user.
+- **2026-09-26** — Phase 1, Task 3's review. The llama-swap client reads `/running` strictly in
+  v257's shape (read in v257's source: `handleRunning` always sends `{"running": [...]}`, `[]` when
+  idle), so a stray answer can't read as "nothing loaded" and let `spark apply` restart llama-swap
+  over loaded models. It refuses a key that isn't printable ASCII without sending or showing it,
+  and never uses a proxy (commit 828fb3e; Task 3's listing is marked *Superseded*). Task 10's
+  `Probe.http` gets the same two fixes (a dated note on its listing). One new open risk, *Anyone on
+  the box can take 127.0.0.1:9100*, goes to Task 17's security review.
 
 ## Sources
 
