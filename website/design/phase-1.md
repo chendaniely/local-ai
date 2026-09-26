@@ -3747,14 +3747,15 @@ def test_the_rule_names_exactly_the_units_render_writes():
   → FAIL: `install_units: command not found` (exit 127); `--install-units` is an unknown option
   (exit 2), so the mode test finds no "separate modes"; `make` has no `install-units` or
   `install-units-dry-run` target; bootstrap has no `ROOT_UNITS` or `ENABLED_UNITS`. Phase 0's
-  bootstrap tests still pass. `test_polkit.py` skips here: it runs the rule in Node, and no Node is
-  recorded on the Spark until Task 15 installs it, which this plan doesn't move earlier. Its red run
-  is the pre-flight's, on a Mac with Node: Phase 0's rule has no `units` list and allows every verb
-  on every `local-ai-*` name, and `reload-daemon`, so two tests failed, while
+  bootstrap tests still pass. In `test_polkit.py`, the test of the rule's unit list runs and fails:
+  Phase 0's rule has no `units` list. Its two tests that run the rule in Node skip here: no Node is
+  recorded on the Spark until Task 15 installs it, which this plan doesn't move earlier. Their red
+  run is the pre-flight's, on a Mac with Node: Phase 0's rule allows every verb on every
+  `local-ai-*` name, and `reload-daemon`, so the not-handled test failed, while
   `test_spark_admin_starts_stops_and_restarts_the_four_units` passed, by design: Phase 0's rule
   allowed that too, and the test pins what the new rule must keep. The pre-flight also took
   `restart` out of the new rule's `verbs`, then emptied the list, and that test failed both times.
-  Its green is CI's `tests` job, on the push after Task 10.
+  Their green is CI's `tests` job, on the push after Task 10.
 
 - [ ] **Step 7: Implement root's copies**
 
@@ -4147,11 +4148,11 @@ clients: ## Add the Spark provider to pi on this machine
 - [ ] **Step 12: Tests pass; the site builds; commit**
 
 Run: `uv run --frozen --project spark pytest spark/tests && make lint`
-Expected: all pass, `test_polkit.py` skipped (no Node): CI's `tests` job runs it on the push after
-Task 10, and Task 12 Step 1 installs the new rule only once that run is green. The site isn't
-rendered here, since Quarto isn't on the Spark: CI's `site` job renders it on that push, and Task
-18's `make docs`, on the Mac, shows the two new runbooks in the How-to listing and deploy.md as
-step 7 of *In order*.
+Expected: all pass, with `test_polkit.py`'s two Node tests skipped: CI's `tests` job runs them on
+the push after Task 10, and Task 12 Step 1 installs the new rule only once that run is green. The
+site isn't rendered here, since Quarto isn't on the Spark: CI's `site` job renders it on that push,
+and Task 18's `make docs`, on the Mac, shows the two new runbooks in the How-to listing and
+deploy.md as step 7 of *In order*.
 
 ```bash
 git add spark/src/spark/{clients,cli}.py spark/tests/{test_clients,test_polkit,test_bootstrap}.py \
@@ -6103,16 +6104,16 @@ git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needr
 ## ⇄ Push point — Tasks 1–10 go to GitHub
 
 The Mac needs Tasks 1–10's code before Task 15 (pi's provider and `make tunnel`), and CI has to run
-Task 9's polkit tests, which skip on the Spark without Node. The Spark session keeps the branch:
-only the push happens here.
+the two of Task 9's polkit tests that skip on the Spark without Node. The Spark session keeps the
+branch: only the push happens here.
 
 - [ ] The Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
   then **Dan OKs the push** (`git push`). `gh run watch`: CI is green. The run's page, or
   `gh run view <id> --log`, shows its `tests` job ending `… passed, 2 skipped`: those two are the
-  gitleaks-hook tests that job always skips, having no gitleaks, and `5 skipped` would mean Task 9's
-  three polkit tests didn't run there either. Task 12 Step 1 installs the new rule only after this
-  run.
+  gitleaks-hook tests that job always skips, having no gitleaks, and `4 skipped` would mean the two
+  polkit tests that need Node didn't run there either. Task 12 Step 1 installs the new rule only
+  after this run.
 
 ***
 
@@ -6230,8 +6231,8 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 ### Task 12 [Spark + Dan]: deploy the config, pull the models
 
 - [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`, and
-  only once CI is green on the push after Task 10: its `tests` job runs Task 9's polkit tests,
-  which skip on the Spark, and this step installs that rule.
+  only once CI is green on the push after Task 10: its `tests` job runs the two of Task 9's polkit
+  tests that skip on the Spark, and this step installs that rule.
   Phase 0's review changed bootstrap after it last ran on the box: `/var/lib/local-ai` is now root's
   (a `spark`-owned parent let a re-run hand `spark` a directory of its choosing), and earlyoom avoids
   `sshd.*`. This phase adds `spark`'s two cache folders, the needrestart override, and the polkit
