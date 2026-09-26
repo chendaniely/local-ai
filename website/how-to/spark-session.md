@@ -28,12 +28,35 @@ Mac's Claude Code has before it runs anything.
    scp ~/.claude/CLAUDE.md brightroar:.claude/CLAUDE.md
    ```
 
-3. **The secrets guard.** Your Mac's user-level Claude Code settings (normally
-   `~/.claude/settings.json`) hold deny rules for the secrets files and a `PreToolUse` hook that
-   refuses commands naming them. Copy the script the hook runs to the same place under the Spark's
-   `~/.claude`, then add the same hook and deny rules to the Spark's `~/.claude/settings.json`,
-   changing any `/Users/dan` in a path to `/home/chendaniely`. Copy those entries, not the whole
-   file: the rest of it is the Mac's own. You check the guard in the first session, below.
+3. **The secrets guard.** Your Mac's user-level Claude Code settings, `~/.claude/settings.json`,
+   hold deny rules for the secrets files and a `PreToolUse` hook that runs
+   `~/.claude/hooks/block-secret-access.sh`, which refuses commands naming them. Copy the script,
+   the hook's entry and the deny rules, not the whole file: the rest of it is the Mac's own. From the
+   Mac:
+
+   ```bash
+   ssh brightroar 'mkdir -p ~/.claude/hooks' && scp ~/.claude/hooks/block-secret-access.sh brightroar:.claude/hooks/
+   jq '{permissions: {deny: [.permissions.deny[] | gsub("//Users/dan/"; "//home/chendaniely/")]}, hooks: {PreToolUse: [.hooks.PreToolUse[] | select(any(.hooks[]; (.command // "") | test("block-secret-access")))]}}' ~/.claude/settings.json | ssh brightroar 'cat > ~/.claude/spark-guard.json'
+   ```
+
+   The second command keeps only the guard's hook and the deny rules, with `/Users/dan` in a rule
+   turned into `/home/chendaniely`, the Spark's home; the Mac's other hooks stay behind. Then, on
+   the Spark, merge them into its settings. This keeps every entry the Spark's file already has,
+   its plugins among them, saves the old file as `settings.json.bak`, and is safe to run again:
+
+   ```bash
+   cd ~/.claude && { [ -f settings.json ] || echo '{}' > settings.json; } && cp -p settings.json settings.json.bak
+   jq -s '.[0] as $cur | .[1] as $add | $cur | .permissions.deny = ((($cur.permissions.deny // []) + $add.permissions.deny) | unique) | .hooks.PreToolUse = ([($cur.hooks.PreToolUse // [])[] | select(all(.hooks[]?; (.command // "") | test("block-secret-access") | not))] + $add.hooks.PreToolUse)' settings.json spark-guard.json > settings.json.new && mv settings.json.new settings.json && rm spark-guard.json
+   jq '{deny: (.permissions.deny | length), pretooluse: [.hooks.PreToolUse[].hooks[].command]}' settings.json
+   ```
+
+   The last command shows at least as many deny rules as the Mac's file has, and
+   `bash ~/.claude/hooks/block-secret-access.sh` among the hooks. (These commands were run with the
+   Mac's jq 1.7.1 and Ubuntu 24.04's 1.7 on stand-in files, 2026-09-25.) The script needs `jq`,
+   which bootstrap installs, and lets everything through without it: the check in the first
+   session, below, is what shows it working. If Claude Code is already running on the Spark,
+   restart it so it loads the hook. Some of the script's rules name paths that exist only on the
+   Mac; when Phase 4 mounts the NAS's shares on the Spark, add their paths to the script.
 
 4. **Private context**, from the Mac: this project's private memory folder.
 
