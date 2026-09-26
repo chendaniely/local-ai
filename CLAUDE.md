@@ -157,6 +157,13 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **Markdown under `website/`: a mid-document horizontal rule is `***`, never `---`.** Pandoc can
   read a `---` line anywhere in a document, not only at the top, as the start of a YAML metadata
   block, and then the Quarto render fails. The front matter's own `---` lines are fine.
+- **Every command in the docs says where it runs** (Dan's rule, 2026-09-25). The paragraph right
+  above a command block names the machine in bold — **On the Mac:** or **On the Spark:**, or
+  github.com, the Tailscale console and so on — and a step that moves between machines says so at
+  each move. Never as a `# on the …` comment inside the block: pasted into the Mac's zsh, which
+  doesn't treat a `#` line as a comment, it prints `command not found: #` (seen 2026-09-25). In a
+  phase plan, the task's label (**[Spark]**, **[Mac]**, **[Dan]**) says where its steps run, and a
+  step that runs elsewhere names the machine.
 
 ## Building it
 

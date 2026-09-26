@@ -3,10 +3,10 @@ title: "SSH from the Mac"
 description: "A key for you and a key for agent, a block in the Mac's ~/.ssh/config for each way in, where NVIDIA Sync fits, then keys-only SSH and a one-time public IPv6 check."
 ---
 
-Every command block here starts with a comment saying where it runs. **On the Mac** is a terminal
-on the Mac. **On the Spark** is a shell on the Spark as you: from the Mac, `ssh brightroar` first,
-or `ssh brightroar-lan` before Tailscale is joined. Most of this page runs on the Mac; installing
-agent's key, *Keys only* and the IPv6 check each have steps on the Spark.
+The paragraph right above every command block here says in bold where it runs. **On the Mac** is
+a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the Mac,
+`ssh brightroar` first, or `ssh brightroar-lan` before Tailscale is joined. Most of this page runs
+on the Mac; installing agent's key, *Keys only* and the IPv6 check each have steps on the Spark.
 
 Real addresses and the tailnet's name belong in the Mac's `~/.ssh/config` and in the vault, never
 in this repo; below they are placeholders.
@@ -20,10 +20,9 @@ in this repo; below they are placeholders.
 
 Give each a passphrase; `UseKeychain` below keeps it in the macOS Keychain.
 
-**Your key:**
+**Your key, on the Mac:**
 
 ```bash
-# on the Mac
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar -C "chendaniely@brightroar"
 ssh-copy-id -i ~/.ssh/id_ed25519-brightroar.pub brightroar
 ```
@@ -34,7 +33,6 @@ ssh-copy-id -i ~/.ssh/id_ed25519-brightroar.pub brightroar
 **on the Mac**, make the key and copy its public half to the Spark:
 
 ```bash
-# on the Mac
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar_agent -C "agent@brightroar"
 scp ~/.ssh/id_ed25519-brightroar_agent.pub brightroar:agent-key.pub
 ```
@@ -104,8 +102,9 @@ Everything in this section happens on the Mac. Keep the two apart:
 
 ## Test
 
+**On the Mac:**
+
 ```bash
-# on the Mac
 ssh brightroar whoami             # chendaniely — no password (the key's passphrase once per Keychain session)
 ssh brightroar-agent whoami       # agent
 ssh brightroar-lan whoami         # chendaniely, over the LAN
@@ -125,10 +124,9 @@ You need two terminals on the Mac. The first holds a session on the Spark: steps
 and so does the undo if a test fails. The second runs step 4's tests on the Mac itself.
 
 1. **On the Mac, open a session on the Spark and keep it open** until step 4 passes. If a login
-   fails, this session is how you undo the change. In a terminal of its own:
+   fails, this session is how you undo the change. **On the Mac**, in a terminal of its own:
 
    ```bash
-   # on the Mac
    ssh brightroar
    ```
 
@@ -138,7 +136,6 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
    of the file. It writes the same file every time, so it is safe to run again:
 
    ```bash
-   # on the Spark
    printf '%s\n' \
      '# Keys only (website/how-to/ssh.md). Sorts before 50-cloud-init.conf: sshd keeps the first value.' \
      'PasswordAuthentication no' \
@@ -153,7 +150,6 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
 3. **On the Spark, check it, then reload.**
 
    ```bash
-   # on the Spark
    sudo sshd -t && echo "syntax ok"
    sudo sshd -T -C user=chendaniely,host=localhost,addr=127.0.0.1 | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|allowagentforwarding) '
    sudo sshd -T -C user=agent,host=localhost,addr=127.0.0.1 | grep -Ei '^allowagentforwarding '
@@ -163,10 +159,9 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
    and `allowagentforwarding yes`; for `agent`, `allowagentforwarding no`. If `sshd -t` prints an
    error instead, it names the file and line: fix the file, or remove it
    (`sudo rm /etc/ssh/sshd_config.d/10-local-ai.conf`), and don't reload. Once everything reads as
-   expected:
+   expected, **on the Spark**:
 
    ```bash
-   # on the Spark
    sudo systemctl reload ssh
    ```
 
@@ -176,7 +171,6 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
    work with your key alone (its passphrase at most), and a password must be refused:
 
    ```bash
-   # on the Mac
    ssh brightroar whoami         # chendaniely
    ssh brightroar-lan whoami     # chendaniely, over the LAN
    ssh brightroar-agent whoami   # agent
@@ -187,7 +181,6 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
    **on the Spark**, in the session you kept open, then find out why before you try again:
 
    ```bash
-   # on the Spark
    sudo rm /etc/ssh/sshd_config.d/10-local-ai.conf && sudo systemctl reload ssh
    ```
 
@@ -201,21 +194,24 @@ rule allows IPv6 too. **On the Spark**, count its public IPv6 addresses (it prin
 nothing else):
 
 ```bash
-# on the Spark
 ip -6 -o addr show scope global | grep -c ' inet6 [23]'
 ```
 
-`0` means there are none, and you're done. Otherwise, `ip -6 addr show scope global`, also on the
-Spark, shows the address. Read it privately: it identifies your home connection, so it goes in the
-vault, never here. Then, **on the Mac**, from a network outside your home, such as a phone's
-hotspot, and with Tailscale off:
+`0` means there are none: you're done, and the rest of this section doesn't apply. Otherwise,
+**on the Spark**, `ip -6 addr show scope global` shows the address. Read it privately: it
+identifies your home connection, so it goes in the vault, never here.
+
+Then try to reach it from outside, **on the Mac**, on a network outside your home, such as a
+phone's hotspot, with Tailscale off. Put the address in place of `<public-ipv6-address>`: left in,
+zsh reads it as a file to take input from.
 
 ```bash
-# on the Mac
-ping6 -c 1 2606:4700:4700::1111 >/dev/null && echo "this network has IPv6"   # without it, the next line proves nothing
+ping6 -c 1 2606:4700:4700::1111 >/dev/null && echo "this network has IPv6"
 nc -6 -z -G 5 -w 5 <public-ipv6-address> 22; echo "exit=$?"
 ```
 
-`exit=1` means nothing answered, which is what you want. `exit=0` means the internet reaches sshd:
-turn on the router's IPv6 firewall so it blocks incoming connections, and check again. Record the
-result in the vault.
+The first line must print `this network has IPv6`; without it, the second proves nothing. Then
+`exit=1` means nothing answered, which is what you want, and `exit=0` means the internet reaches
+sshd: turn on the router's IPv6 firewall so it blocks incoming connections, and check again. An
+`exit=1` straight after a shell error, such as `no such file or directory`, isn't a result: `nc`
+never ran. Record the result in the vault.

@@ -12,24 +12,22 @@ uses, and says which SSH aliases work before Tailscale is joined.
 Claude Code on the Spark knows only what is on the Spark. Give it the rules and guardrails your
 Mac's Claude Code has before it runs anything.
 
-Every command block in this runbook starts with a comment saying where it runs. **On the Mac** is
-a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the Mac,
-`ssh brightroar` first.
+The paragraph right above every command block in this runbook says in bold where it runs.
+**On the Mac** is a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the
+Mac, `ssh brightroar` first.
 
-1. **The clone**, on the Spark. The repo is public, so this needs no credentials, and it does
-   nothing if the clone is already there:
+1. **The clone.** The repo is public, so this needs no credentials, and it does nothing if the
+   clone is already there. **On the Spark:**
 
    ```bash
-   # on the Spark
    test -d ~/git/hub/local-ai || git clone https://github.com/chendaniely/local-ai ~/git/hub/local-ai
    ```
 
-2. **Your global rules**, from the Mac. `~/.claude/CLAUDE.md` holds your rules for every project,
-   the secrets rule among them. This replaces any copy on the Spark, so edit the Mac's and copy it
-   again:
+2. **Your global rules.** `~/.claude/CLAUDE.md` holds your rules for every project, the secrets
+   rule among them. This replaces any copy on the Spark, so edit the Mac's and copy it again.
+   **On the Mac:**
 
    ```bash
-   # on the Mac
    ssh brightroar 'mkdir -p ~/.claude'
    scp ~/.claude/CLAUDE.md brightroar:.claude/CLAUDE.md
    ```
@@ -41,7 +39,6 @@ a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the
    **on the Mac**:
 
    ```bash
-   # on the Mac
    ssh brightroar 'mkdir -p ~/.claude/hooks' && scp ~/.claude/hooks/block-secret-access.sh brightroar:.claude/hooks/
    jq '{permissions: {deny: [.permissions.deny[] | gsub("//Users/dan/"; "//home/chendaniely/")]}, hooks: {PreToolUse: [.hooks.PreToolUse[] | select(any(.hooks[]; (.command // "") | test("block-secret-access")))]}}' ~/.claude/settings.json | ssh brightroar 'cat > ~/.claude/spark-guard.json'
    ```
@@ -54,7 +51,6 @@ a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the
    run again:
 
    ```bash
-   # on the Spark
    cd ~/.claude && { [ -f settings.json ] || echo '{}' > settings.json; } && cp -p settings.json settings.json.bak
    jq -s '.[0] as $cur | .[1] as $add | $cur | .permissions.deny = ((($cur.permissions.deny // []) + $add.permissions.deny) | unique) | .hooks.PreToolUse = ([($cur.hooks.PreToolUse // [])[] | select(all(.hooks[]?; (.command // "") | test("block-secret-access") | not))] + $add.hooks.PreToolUse)' settings.json spark-guard.json > settings.json.new && mv settings.json.new settings.json && rm spark-guard.json
    jq '{deny: (.permissions.deny | length), pretooluse: [.hooks.PreToolUse[].hooks[].command]}' settings.json
@@ -68,10 +64,9 @@ a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the
    restart it so it loads the hook. Some of the script's rules name paths that exist only on the
    Mac; when Phase 4 mounts the NAS's shares on the Spark, add their paths to the script.
 
-4. **Private context**, from the Mac: this project's private memory folder.
+4. **Private context**: this project's private memory folder. **On the Mac:**
 
    ```bash
-   # on the Mac
    ssh brightroar 'mkdir -p ~/.claude/projects/-home-chendaniely-git-hub-local-ai'
    scp -r ~/.claude/projects/-Users-dan-git-hub-local-ai/memory brightroar:.claude/projects/-home-chendaniely-git-hub-local-ai/
    ```
@@ -85,14 +80,12 @@ a terminal on the Mac. **On the Spark** is a shell on the Spark as you: from the
 **On the Mac**, log in to the Spark:
 
 ```bash
-# on the Mac
 ssh brightroar
 ```
 
 Then, **on the Spark**, start tmux and Claude Code in the clone:
 
 ```bash
-# on the Spark
 tmux new -As spark-build
 cd ~/git/hub/local-ai
 claude
@@ -124,20 +117,46 @@ a token that can push to this one repository and nothing else:
    builtin, so the token never appears in a process list:
 
    ```bash
-   # on the Spark
    bash -c 'read -rsp "token: " t; echo; printf "%s\n" "$t" | gh auth login --with-token' && gh auth setup-git
    ```
 
    `gh auth setup-git` makes git push through `gh`. Both are safe to run again: the token you paste
    replaces the one stored. Then, **on the Mac**, clear the clipboard: `pbcopy < /dev/null`.
+
+   `gh` hands git the token only over https. The clone from step 1 of *Before the first session*
+   has an https `origin`, but a clone made another way may push over SSH, around the token. This
+   sets it to https whatever it was, and is safe to run again. **On the Spark:**
+
+   ```bash
+   git -C ~/git/hub/local-ai remote set-url origin https://github.com/chendaniely/local-ai.git
+   ```
+
 3. **On the Spark**, `gh auth status` shows the account, with the token masked. Never add
    `--show-token`.
-4. Revoke the old login. A plain `gh auth login` issues a token that can push to every repository
+4. **GitHub must refuse the Spark over SSH**, or a key on the box can push around the token.
+   **On the Spark:**
+
+   ```bash
+   ssh -T git@github.com
+   ```
+
+   It must end in `Permission denied (publickey).` If it greets you by name instead, a key on the
+   Spark is on your GitHub account: `gh auth login` can upload one when you pick SSH for git.
+   Remove it on github.com, **Settings → SSH and GPG keys**, and check again. To tell which entry
+   it is, this prints the key file ssh used and its fingerprint, which GitHub's list shows too.
+   **On the Spark:**
+
+   ```bash
+   ssh -v -T git@github.com 2>&1 | grep 'Server accepts key'
+   ```
+
+   Leave the key file itself on the Spark: other hosts may use it.
+5. Revoke the old login. A plain `gh auth login` issues a token that can push to every repository
    you can, and `gh auth logout` only forgets a token on this machine. Revoke it on github.com:
    **Settings → Applications → Authorized OAuth Apps → GitHub CLI → Revoke**. That may sign out the
    Mac's GitHub CLI too, if it signed in through the browser: if `gh auth status` fails **on the
    Mac**, run `gh auth login` there again.
-5. Record the token in the vault by reference — its name, the repository, its permissions and its
+6. Record the token in the vault by reference — its name, the repository, its permissions and its
    expiry date — never the value. Before it expires, make a new one and repeat step 2.
 
 ## Scope
