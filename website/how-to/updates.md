@@ -23,6 +23,8 @@ Saturdays**. Skipping one is fine; the next one catches up.
 
 ## Any time: apt
 
+**On the Spark:**
+
 ```bash
 sudo apt update && sudo apt upgrade
 ```
@@ -53,8 +55,8 @@ What a routine upgrade can restart by itself:
   and only once [upgrade day's step 5](#upgrade-day-the-gpu-set) checks pass: a routine upgrade can
   rebuild GRUB's menu too.
 
-apt keeps its own record of every run, so routine updates need no notes. To see when updates ran
-and what changed:
+apt keeps its own record of every run, so routine updates need no notes. **On the Spark**, to see
+when updates ran and what changed:
 
 ```bash
 grep -A4 '^Start-Date' /var/log/apt/history.log | tail -40
@@ -69,7 +71,8 @@ The snaps here are the desktop's own; none is part of the stack. snapd refreshes
 times a day (`snap refresh --time` shows when), so there is nothing to run. `sudo snap refresh`
 updates them now.
 
-If something the stack depends on ever comes as a snap, hold it so it moves on upgrade day:
+If something the stack depends on ever comes as a snap, **on the Spark**, hold it so it moves on
+upgrade day:
 
 ```bash
 sudo snap refresh --hold <name>   # stops its automatic refreshes and a plain `snap refresh`
@@ -103,9 +106,9 @@ Saturday; that wait is the cost of holding the set.
 *Not yet performed on this box.* Every step below, the recovery included, is untried until the
 first upgrade day.
 
-Work in tmux, from the clone. A dropped SSH session in the middle of `full-upgrade` is the likeliest
-way to leave the set half-moved; in tmux the upgrade carries on, and `tmux attach -t upgrade` brings
-you back:
+**On the Spark**, work in tmux, from the clone. A dropped SSH session in the middle of
+`full-upgrade` is the likeliest way to leave the set half-moved; in tmux the upgrade carries on,
+and `tmux attach -t upgrade` brings you back:
 
 ```bash
 tmux new -As upgrade
@@ -122,6 +125,8 @@ cd ~/git/hub/local-ai
    the Claude session working on the repo (the Spark's, by default) to work out why. Then release
    the set:
 
+   **On the Spark:**
+
    ```bash
    apt-mark showhold | xargs -r sudo apt-mark unhold
    ```
@@ -129,7 +134,7 @@ cd ~/git/hub/local-ai
    Only bootstrap holds packages on this box, so this releases just the set. With nothing held it
    does nothing, so it is safe to run again. **From here until step 4, the set is free to move. If
    anything below fails, or you answer no, run `make hold-gpu` before anything else.**
-3. Move the set as one:
+3. **On the Spark**, move the set as one:
 
    ```bash
    sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
@@ -157,9 +162,9 @@ cd ~/git/hub/local-ai
    `GPU set held: N packages`. It stops instead, naming the packages, if one isn't cleanly
    installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
    again.
-5. Before you reboot, check that the kernel GRUB boots has an NVIDIA module. "GPU set held" proves
-   the holds took, not that the set is complete. It takes two checks. First the module check, on
-   the newest kernel:
+5. **On the Spark**, before you reboot, check that the kernel GRUB boots has an NVIDIA module.
+   "GPU set held" proves the holds took, not that the set is complete. It takes two checks. First
+   the module check, on the newest kernel:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel
@@ -169,12 +174,12 @@ cd ~/git/hub/local-ai
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
    [If it goes wrong](#if-it-goes-wrong).
 
-   Then the GRUB check: that GRUB will boot that same kernel. It does by default, as Ubuntu sets it
-   up, but that is not yet checked on this box, and more settings can change it than
-   `/etc/default/grub` shows: some put another kernel first on the menu, others pick another entry.
-   So read what GRUB will actually do, from the menu it boots from, which installing a kernel
-   rebuilds, and from what it keeps between boots. `grub-editenv` runs without `sudo`, so nothing
-   here can change anything:
+   **On the Spark**, then the GRUB check: that GRUB will boot that same kernel. It does by default,
+   as Ubuntu sets it up, but that is not yet checked on this box, and more settings can change it
+   than `/etc/default/grub` shows: some put another kernel first on the menu, others pick another
+   entry. So read what GRUB will actually do, from the menu it boots from, which installing a
+   kernel rebuilds, and from what it keeps between boots. `grub-editenv` runs without `sudo`, so
+   nothing here can change anything:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1); echo "$k"   # the newest kernel
@@ -201,8 +206,8 @@ cd ~/git/hub/local-ai
    `root=PARTUUID=…`, in the `linux` lines, and every entry id (`gnulinux-simple-…`,
    `gnulinux-advanced-…`, `gnulinux-<version>-advanced-…`), a default, `saved_entry` or
    `next_entry` that is an id included. Write "an id" in place of each UUID and PARTUUID when you
-   bring it over, and never paste one into the repo. To see which kernel GRUB would start instead,
-   list the menu, each entry followed by its `linux` line:
+   bring it over, and never paste one into the repo. **On the Spark**, to see which kernel GRUB
+   would start instead, list the menu, each entry followed by its `linux` line:
 
    ```bash
    sudo grep -E '^[[:space:]]*(menuentry|submenu|linux)[[:space:]]' /boot/grub/grub.cfg
@@ -217,7 +222,7 @@ cd ~/git/hub/local-ai
    title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0.
    Reboot only when both checks pass.
 6. Reboot: `sudo reboot`.
-7. Check, once you are back in:
+7. **On the Spark**, check, once you are back in:
 
    ```bash
    uname -r                                                            # the new kernel
@@ -243,7 +248,7 @@ fails, don't reboot yet, as step 5 says.
 a kernel with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH
 still works: nothing on the network path needs the GPU. Every command here is safe to run again:
 
-1. Release the set and finish the move, answering as step 3 says:
+1. **On the Spark**, release the set and finish the move, answering as step 3 says:
 
    ```bash
    cd ~/git/hub/local-ai
@@ -251,9 +256,9 @@ still works: nothing on the network path needs the GPU. Every command here is sa
    sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
    ```
 
-2. If the modules metapackage was removed, put it back. apt's log names it; take the name from
-   there, never from memory. If it prints more than one, take the one that matches your driver
-   (`dpkg -l 'nvidia-driver-*'`):
+2. **On the Spark**, if the modules metapackage was removed, put it back. apt's log names it;
+   take the name from there, never from memory. If it prints more than one, take the one that
+   matches your driver (`dpkg -l 'nvidia-driver-*'`):
 
    ```bash
    grep -ho 'linux-modules-nvidia-[^ :,]*-nvidia-hwe-[^ :,]*' /var/log/apt/history.log | sort -u
@@ -263,8 +268,8 @@ still works: nothing on the network path needs the GPU. Every command here is sa
 3. Run step 5 again, both its checks. Once both pass: `make hold-gpu`, `sudo reboot`, then step 7's
    checks.
 
-**The quick way back, when the driver didn't move.** If only the kernel moved, the previous kernel
-still has its module:
+**The quick way back, when the driver didn't move, on the Spark.** If only the kernel moved, the
+previous kernel still has its module:
 
 ```bash
 p=$(linux-version list | linux-version sort --reverse | sed -n 2p)   # the previous kernel
@@ -303,8 +308,8 @@ gitleaks is a direct install, so apt and snap never update it. On upgrade day, l
    in the "check gitleaks against its pinned checksum" step (the checksum is in the release's
    `checksums.txt`); and the version in [Leak guards](leak-guards.md)' install block. Then
    `brew upgrade gitleaks` for the Mac's own copy.
-2. On the Spark, install it over the old one. Set `v` to the new version; the checksum is checked
-   before anything is installed:
+2. **On the Spark**, install it over the old one. Set `v` to the new version; the checksum is
+   checked before anything is installed:
 
    ```bash
    v=8.30.1   # the new version, as stack/versions.yaml pins it

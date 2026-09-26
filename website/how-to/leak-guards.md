@@ -5,14 +5,14 @@ description: "Install gitleaks and shellcheck, create your denylist, turn the ho
 
 ## Install gitleaks and shellcheck
 
-On the Mac:
+**On the Mac:**
 
 ```bash
 brew install gitleaks shellcheck
 ```
 
-On the Spark, Ubuntu's archive copy of gitleaks is 8.16 — too old for the hooks, which need 8.19
-or later. Download the pinned release instead, verify it, and install it to `/usr/local/bin`,
+**On the Spark**, Ubuntu's archive copy of gitleaks is 8.16 — too old for the hooks, which need
+8.19 or later. Download the pinned release instead, verify it, and install it to `/usr/local/bin`,
 which comes first on `PATH` in every shell, so it wins over the archive copy. The block works in
 a temporary directory, so nothing lands in your clone, and each step runs only if the one before
 it succeeded, so a failed checksum stops the install:
@@ -30,8 +30,8 @@ cd -
 Expected: `gitleaks_8.30.1_linux_arm64.tar.gz: OK`, and only then the install. `cd -` takes you
 back to where you started.
 
-If Ubuntu's copy is installed too (`dpkg -s gitleaks` finds it), remove it, so there is only one
-gitleaks on the box and nothing depends on `PATH` order:
+**On the Spark**, if Ubuntu's copy is installed too (`dpkg -s gitleaks` finds it), remove it, so
+there is only one gitleaks on the box and nothing depends on `PATH` order:
 
 ```bash
 sudo apt remove gitleaks
@@ -44,6 +44,8 @@ are in [Updates](updates.md#upgrade-day-gitleaks).
 
 `~/.config/local-ai/denylist` is private. You create it by hand, on **each** machine — it is
 never generated, and never committed.
+
+**On the Mac and the Spark, each:**
 
 ```bash
 mkdir -p ~/.config/local-ai && touch ~/.config/local-ai/denylist
@@ -58,6 +60,8 @@ its line number but never showing it.
 
 ## Turn the hooks on
 
+**On the Mac and the Spark, each:**
+
 ```bash
 make hooks
 ```
@@ -70,6 +74,8 @@ be on the `PATH` of whatever runs `git commit`. A GUI client, or an editor over 
 not load your shell profile; a hook refuses its commits with a message naming what's missing.
 
 ## Prove they bite
+
+**On the Mac and the Spark, each:**
 
 ```bash
 make hooks
@@ -112,10 +118,10 @@ denylist at all. So a push can carry things no denylist has checked:
 A conflicted merge or cherry-pick is different: finishing it with `git commit` or `--continue` runs
 both hooks (checked with git 2.54 on the Mac and Ubuntu 24.04's 2.43).
 
-Before every push, scan everything about to go out, patches and commit messages, with your
-denylist; then the tracked files; then gitleaks. Put the branch's name in place of `<branch>`, or
-`main` for a branch that isn't on GitHub yet. `git fetch` first, so `origin/<branch>` is what
-GitHub has:
+**On the Mac or the Spark, in the clone you push from:** scan everything about to go out, patches
+and commit messages, with your denylist; then the tracked files; then gitleaks. Put the branch's
+name in place of `<branch>`, or `main` for a branch that isn't on GitHub yet. `git fetch` first, so
+`origin/<branch>` is what GitHub has:
 
 ```bash
 git fetch
@@ -160,8 +166,8 @@ pushed: rotate the credential first, then rewrite history.
 
 The history step reports a finding as `commit message:<line>`: a line of
 `git log -p --cc --format='%H%n%B'`'s output at the commit CI checked, `<sha>` (the run's page
-shows it). To find the commit without printing the line itself, regenerate that output on the Mac
-at `<sha>`, and print the hash of the commit the line falls in:
+shows it). To find the commit without printing the line itself, regenerate that output **on the
+Mac** at `<sha>`, and print the hash of the commit the line falls in:
 
 ```bash
 git log -p --cc --format='%H%n%B' <sha> > "$TMPDIR/history.txt"

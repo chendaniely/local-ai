@@ -8,7 +8,7 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 1. SSH into the Spark over **Wi-Fi** — not the wired interface. Bouncing the interface you're
    connected through would drop your own session.
 2. Find the wired interface's name: `nmcli device status`.
-3. Bounce it so it takes its DHCP reservation:
+3. **On the Spark**, bounce it so it takes its DHCP reservation:
 
    ```bash
    sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>
@@ -38,15 +38,15 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
 
 ## Agent's SSH and Claude Code login
 
-1. On the Mac, make agent its own key and copy the **public** half to the Spark. Keys and the
-   Mac's `~/.ssh/config` are in [SSH from the Mac](ssh.md):
+1. **On the Mac**, make agent its own key and copy the **public** half to the Spark. Keys and
+   the Mac's `~/.ssh/config` are in [SSH from the Mac](ssh.md):
 
    ```bash
    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar_agent -C "agent@brightroar"
    scp ~/.ssh/id_ed25519-brightroar_agent.pub brightroar:agent-key.pub
    ```
-2. Install it for `agent`, from an interactive `ssh brightroar` session. `sudo` needs a terminal
-   to ask for your password, and a command piped into `ssh` doesn't have one:
+2. **On the Spark**, install it for `agent`, from an interactive `ssh brightroar` session. `sudo`
+   needs a terminal to ask for your password, and a command piped into `ssh` doesn't have one:
 
    ```bash
    sudo -u agent sh -c 'umask 077 && mkdir -p /home/agent/.ssh && cat >> /home/agent/.ssh/authorized_keys' < ~/agent-key.pub && rm ~/agent-key.pub
@@ -59,7 +59,7 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
    is deleted only once the key is in. Run again, it stops at the missing copy and changes
    nothing; with a fresh copy, it adds the key a second time, which is harmless.
 3. `ssh brightroar-agent` (the alias from [SSH from the Mac](ssh.md))
-4. As `agent` — the installer refuses to run under sudo:
+4. **On the Spark**, as `agent` — the installer refuses to run under sudo:
 
    ```bash
    curl -fsSL https://claude.ai/install.sh | bash

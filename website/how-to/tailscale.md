@@ -5,7 +5,7 @@ description: "Install, MagicDNS and HTTPS, the ACL grants that act as the firewa
 
 ## Install and join
 
-On the Spark:
+**On the Spark:**
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -56,7 +56,7 @@ restricts anything. Replace it with the grants below, which keep today's access 
    ["*"]}`. `autogroup:member` doesn't include people you've shared devices with; give them their
    own grant if they need one. LiteLLM's port joins the Spark's grant in Phase 3.
 3. **Save.** The editor refuses a policy with a syntax error.
-4. **Tag the Spark**, on the Spark:
+4. **Tag the Spark, on the Spark:**
 
    ```bash
    sudo tailscale up --advertise-tags=tag:spark

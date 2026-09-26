@@ -21,6 +21,8 @@ Run steps 1–7 in your own terminal on the Spark. Each one asks for your sudo p
 
 **1. llama-swap's key for agent** (`LLAMASWAP_KEY_AGENT`, into `llama-swap.env`):
 
+**On the Spark:**
+
 ```bash
 sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_AGENT=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env'
 ```
@@ -28,11 +30,15 @@ sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_AGENT=%s\n" "$(openssl rand -hex 
 **2. llama-swap's key for Open WebUI** (`LLAMASWAP_KEY_OPENWEBUI`). Step 5 copies it, so it must
 come first:
 
+**On the Spark:**
+
 ```bash
 sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_OPENWEBUI=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env'
 ```
 
 **3. llama-swap's key for the stack itself** (`LLAMASWAP_KEY_SPARK`):
+
+**On the Spark:**
 
 ```bash
 sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_SPARK=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/llama-swap.env; chgrp spark /etc/local-ai/secrets/llama-swap.env'
@@ -40,6 +46,8 @@ sudo bash -c 'umask 027; printf "LLAMASWAP_KEY_SPARK=%s\n" "$(openssl rand -hex 
 
 **4. Open WebUI's own secret** (`WEBUI_SECRET_KEY`, into `open-webui.env`). Without it, recreating
 the container logs everyone out:
+
+**On the Spark:**
 
 ```bash
 sudo bash -c 'umask 027; printf "WEBUI_SECRET_KEY=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
@@ -49,11 +57,15 @@ sudo bash -c 'umask 027; printf "WEBUI_SECRET_KEY=%s\n" "$(openssl rand -hex 32)
 `AUDIO_STT_OPENAI_API_KEY` all hold `LLAMASWAP_KEY_OPENWEBUI`'s value. If step 2 hasn't run, this
 refuses and writes nothing:
 
+**On the Spark:**
+
 ```bash
 sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; [ -n "$LLAMASWAP_KEY_OPENWEBUI" ] || { echo "create LLAMASWAP_KEY_OPENWEBUI first" >&2; exit 1; }; umask 027; for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do printf "%s=%s\n" "$k" "$LLAMASWAP_KEY_OPENWEBUI"; done >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
 ```
 
 **6. SearXNG's secret** (`SEARXNG_SECRET`, into `searxng.env`):
+
+**On the Spark:**
 
 ```bash
 sudo bash -c 'umask 027; printf "SEARXNG_SECRET=%s\n" "$(openssl rand -hex 32)" >> /etc/local-ai/secrets/searxng.env; chgrp spark /etc/local-ai/secrets/searxng.env'
@@ -62,6 +74,8 @@ sudo bash -c 'umask 027; printf "SEARXNG_SECRET=%s\n" "$(openssl rand -hex 32)" 
 **7. Your Hugging Face token** (`HF_TOKEN`, into `hf.env`). Copy a read token from
 <https://huggingface.co/settings/tokens>, run this, and paste at the `HF token:` prompt. Nothing
 shows as you paste:
+
+**On the Spark:**
 
 ```bash
 sudo bash -c 'read -rsp "HF token: " t; echo; umask 027; printf "HF_TOKEN=%s\n" "$t" >> /etc/local-ai/secrets/hf.env; chgrp spark /etc/local-ai/secrets/hf.env'
@@ -82,13 +96,13 @@ printf 'export SPARK_API_KEY=%s\n' "$(openssl rand -hex 32)" >> ~/.secrets
 
 **9. Send it to the Spark and add it there.**
 
-On the Mac, send it (nothing is displayed):
+**On the Mac**, send it (nothing is displayed):
 
 ```bash
 ( . ~/.secrets; printf 'LLAMASWAP_KEY_DAN_MAC=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat > ~/.spark-key-in'
 ```
 
-Then on the Spark, add it to `llama-swap.env` and delete the copy:
+Then, **on the Spark**, add it to `llama-swap.env` and delete the copy:
 
 ```bash
 sudo bash -c 'umask 027 && cat >> /etc/local-ai/secrets/llama-swap.env && chgrp spark /etc/local-ai/secrets/llama-swap.env' < ~/.spark-key-in && rm ~/.spark-key-in
@@ -118,23 +132,23 @@ You should see:
 
 Each key appears once, and every file is `640 root:spark`. If a key appears twice, its step ran
 twice. This keeps the last copy of each key, the one the services actually use, without displaying
-anything. Set `f` to the file that has the duplicate:
+anything. **On the Spark**, set `f` to the file that has the duplicate:
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/llama-swap.env && tac "$f" | awk -F= "!seen[\$1]++" | tac > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
 ```
 
 If a file has lines without `=`, keep only its `KEY=value` lines, again without displaying
-anything. Set `f` to that file:
+anything. **On the Spark**, set `f` to that file:
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/llama-swap.env && grep = "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
 ```
 
-Names alone can't show one failure: a copy in `open-webui.env` that no longer matches
-`LLAMASWAP_KEY_OPENWEBUI`, after that key changed. This compares each copy with it by hash and
-prints only `match` or `MISMATCH`. It reads each key's last copy, the one the services use, so a
-leftover duplicate doesn't turn every line into a mismatch:
+**On the Spark**, names alone can't show one failure: a copy in `open-webui.env` that no longer
+matches `LLAMASWAP_KEY_OPENWEBUI`, after that key changed. This compares each copy with it by hash
+and prints only `match` or `MISMATCH`. It reads each key's last copy, the one the services use, so
+a leftover duplicate doesn't turn every line into a mismatch:
 
 ```bash
 sudo bash -c 'd=/etc/local-ai/secrets; a=$(sed -n "s/^LLAMASWAP_KEY_OPENWEBUI=//p" $d/llama-swap.env | tail -n 1); [ -n "$a" ] || { echo "no LLAMASWAP_KEY_OPENWEBUI" >&2; exit 1; }; h=$(printf %s "$a" | sha256sum); for k in OPENAI_API_KEYS RAG_OPENAI_API_KEY AUDIO_STT_OPENAI_API_KEY; do v=$(sed -n "s/^$k=//p" $d/open-webui.env | tail -n 1); [ "$(printf %s "$v" | sha256sum)" = "$h" ] && echo "$k: match" || echo "$k: MISMATCH"; done'
