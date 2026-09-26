@@ -8,7 +8,7 @@ date: 2026-09-23
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
-> checkbox (`- [ ]`) syntax. Every task is labelled **[Mac]**, **[Spark]** or **[Dan]**; ⇄ marks a
+> checkbox (`- [ ]`) syntax. Every task is labelled **[Spark]**, **[Mac]** or **[Dan]**; ⇄ marks a
 > machine switch (one session at a time). Phase 0 must be done first. This plan is revised after
 > Phase 0's review if anything learned there changes it (see the plan's Revisions). Revised
 > 2026-09-25 with Phase 0's lessons: Task 10 is new, and each task after it is numbered one higher.
@@ -17,7 +17,10 @@ date: 2026-09-23
 > 16), and `make upgrade-gpu` runs the GRUB check itself (Task 10). Every listing in Tasks 1–10 was
 > run first, in a scratch copy, on the Mac and in an `ubuntu:24.04` container. The same day, the
 > pre-flight's review and a scan across the tasks found more, fixed here and run again the same way
-> (plan.md's Revisions, 2026-09-25).
+> (plan.md's Revisions, 2026-09-25). Revised once more that day for Dan's rule that work runs on the
+> Spark by default (CLAUDE.md): Tasks 1–10 and 17 moved from [Mac] to [Spark], the Mac → Spark
+> switch point is now ahead of Task 1, and a last [Mac] task, Task 18, does what only the Mac can:
+> CI's render step, the site render and the merge.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -171,7 +174,40 @@ Tailscale serve · pi 0.85.1.
 
 ***
 
-### Task 1 [Mac]: the model registry
+## ⇄ Switch point — Mac → Spark
+
+- [ ] **The Mac session hands over** (2026-09-25, before Task 1): `make test lint docs` is clean on
+  the Mac. (The check that every `<paste>` in `stack/models.yaml` is a real 40-hex revision is Task
+  6's now, where `load_registry` refuses anything else.)
+- [ ] **Scan what goes out, then Dan OKs the push.** First leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push), with `main` as `<branch>`,
+  since `phase-1` isn't on GitHub yet: `outgoing: exit=0`, `tracked: exit=0`, and gitleaks'
+  `no leaks found`. Then **Dan OKs** `git push -u origin phase-1`. `gh run watch` — CI is green.
+- [ ] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
+  any **[Spark]** task. That runbook's *Before the first session* steps 2 and 3 (the global rules
+  file and the secrets guard) arrived after the Spark's Phase 0 sessions, and nothing records them
+  on the box. If the Spark's `~/.claude` lacks either, do them now. Then start the session and check
+  the guard first: `/hooks` lists the hook, `/permissions` the deny rules, and the session must be
+  refused `test -e ~/.secrets && echo present || echo absent`. Don't go on until it is: Task 13
+  Step 1 puts a key in every shell of yours, the session's included.
+- [ ] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
+  security review asked: keys-only SSH ([SSH from the Mac](../how-to/ssh.md#keys-only), with its
+  public IPv6 check) and the Spark's GitHub token for this repository only
+  ([The Spark session](../how-to/spark-session.md#github-a-token-for-this-repository-only)). Unless
+  `changelog.md` records them, check both, and do whichever is missing now:
+  - Keys only: from the Mac,
+    `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive brightroar true`
+    ends in `Permission denied (publickey).`, as in ssh.md's own check.
+  - The token: on the Spark, `gh auth status` names your account with the token masked. On
+    github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
+    old *GitHub CLI* authorization is revoked.
+
+  The Spark session records each one newly done in `changelog.md` and README §Current state, in its
+  next commit. Task 14 serves the web UI on the tailnet only after both.
+
+***
+
+### Task 1 [Spark]: the model registry
 
 **Files:**
 
@@ -194,7 +230,8 @@ Tailscale serve · pi 0.85.1.
 
 - [ ] **Step 1: Branch and fixture**
 
-`git switch main && git pull && git switch -c phase-1`
+On the Spark, from the clone: `cd ~/git/hub/local-ai && git fetch && git switch phase-1 && git pull`.
+The Mac session created `phase-1` and pushed it at the switch point above.
 
 `spark/tests/fixtures/models.yaml` (fake repos and revisions — never real ones in fixtures):
 
@@ -462,7 +499,7 @@ git commit -m "feat(spark): 🤖 add the model registry" \
 
 ***
 
-### Task 2 [Mac]: memory, the brake's hold file, and the launch check
+### Task 2 [Spark]: memory, the brake's hold file, and the launch check
 
 **Files:**
 
@@ -863,7 +900,7 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
 
 ***
 
-### Task 3 [Mac]: the llama-swap client
+### Task 3 [Spark]: the llama-swap client
 
 **Files:**
 
@@ -1063,7 +1100,7 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
 ```
 
 ***
-### Task 4 [Mac]: the minimal brake
+### Task 4 [Spark]: the minimal brake
 
 **Files:**
 
@@ -1284,7 +1321,7 @@ Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
 ***
 
-### Task 5 [Mac]: `spark status`
+### Task 5 [Spark]: `spark status`
 
 **Files:**
 
@@ -1449,7 +1486,7 @@ Register in `cli.py`: `from spark import status` / `status.register(subparsers)`
 - [ ] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
-### Task 6 [Mac]: `spark render` — the real registry, templates, and the rendered config
+### Task 6 [Spark]: `spark render` — the real registry, templates, and the rendered config
 
 **Dan's decision on the unit-file model, 2026-09-25: root-owned copies** (plan.md, *Open items and
 risks*, option 2). The units and the Compose project that root runs are root's own copies, which
@@ -1470,8 +1507,8 @@ stopped here for the choice.)
 - Modify: `spark/src/spark/versions.py` (optional `image` field, commit pins, a required version),
   `spark/tests/test_versions.py`, `stack/versions.yaml`, `website/reference/stack.md` (regenerated),
   `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (two cache folders for `spark`),
-  `spark/tests/test_bootstrap.py`, `.github/workflows/ci.yml` (CI renders the real registry),
-  `README.md` (§Contents' `stack/` row)
+  `spark/tests/test_bootstrap.py`, `README.md` (§Contents' `stack/` row). CI's step that renders the
+  real registry is Task 18's, on the Mac: the Spark's token can't push a workflow change.
 
 **Interfaces:**
 
@@ -1553,8 +1590,8 @@ def test_rejects_a_component_without_a_version(tmp_path):
   Run `uv run --frozen --project spark spark docs stack --write` so the Stack page follows.
 
 - [ ] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
-  context memory) until Phase 2 measures them. Resolve each repo's current commit on the Mac (public
-  API, no token needed) and paste the 40-hex values:
+  context memory) until Phase 2 measures them. Resolve each repo's current commit on the Spark
+  (public API, no token needed; bootstrap installed `jq`) and paste the 40-hex values:
 
 ```bash
 for r in google/gemma-4-26B-A4B-it-qat-q4_0-gguf Qwen/Qwen3-Embedding-0.6B-GGUF \
@@ -2143,7 +2180,8 @@ def run(args: argparse.Namespace) -> int:
 ```
 
 Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
-Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --project spark spark render --out /tmp/rendered`.
+CI doesn't render the real registry yet: Task 18 adds that step on the Mac, since the Spark's
+repository-only token can't push a change under `.github/workflows/`.
 
 - [ ] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
   `make lint` (bootstrap changed).
@@ -2160,14 +2198,14 @@ Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --proje
 git add stack/models.yaml stack/versions.yaml stack/templates/local-ai-{llama-swap,brake,compose,pull}.service \
   stack/templates/compose.yaml stack/templates/searxng-settings.yml stack/host/bootstrap.sh \
   spark/src/spark/{render,versions,cli}.py spark/tests/{test_render,test_versions,test_bootstrap}.py \
-  spark/tests/fixtures/versions.yaml .github/workflows/ci.yml website/reference/stack.md README.md
+  spark/tests/fixtures/versions.yaml website/reference/stack.md README.md
 git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config from the registry" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ***
 
-### Task 7 [Mac]: `spark apply` — show what changes, never stop loaded models silently
+### Task 7 [Spark]: `spark apply` — show what changes, never stop loaded models silently
 
 **Files:**
 
@@ -2858,7 +2896,7 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 
 ***
 
-### Task 8 [Mac]: `spark models pull`
+### Task 8 [Spark]: `spark models pull`
 
 **Files:**
 
@@ -2988,7 +3026,7 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 
 ***
 
-### Task 9 [Mac]: pi's provider, the deploy targets with root's copies of the units, two runbooks
+### Task 9 [Spark]: pi's provider, the deploy targets with root's copies of the units, two runbooks
 
 **Files:**
 
@@ -2997,7 +3035,7 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
 - Modify: `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (the `--install-units` mode),
   `stack/host/50-local-ai.rules`, `spark/tests/test_bootstrap.py`, `Makefile`, `stack/versions.yaml`,
   `website/reference/stack.md` (regenerated), `website/how-to/index.qmd` (*In order*), `README.md`
-  (§Contents' `Makefile` row, and the MacBook's tools under §Current state)
+  (§Contents' `Makefile` row)
 
 **Interfaces:**
 
@@ -4078,17 +4116,15 @@ clients: ## Add the Spark provider to pi on this machine
     `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the
     GPU-set hold, and deploying the stack (`apply`, `install-units`, `pull`, `status`, `logs`,
     `tunnel`, `clients`)."
-  - README §Current state, *The MacBook — `heartsbane`*: the *The repo's tools* bullet gains
-    Homebrew's coreutils, at the version `brew list --versions coreutils` prints, with the day you
-    checked it: the bullet's "(all as of 2026-09-24)" dates only the tools it already lists. The
-    install-units tests run coreutils' `timeout` on the Mac, and fail without it; Ubuntu has
-    `timeout` already.
+  - The install-units tests run coreutils' `timeout`, which Ubuntu has, and a Mac only from
+    Homebrew: Task 18, on the Mac, records it among the MacBook's tools.
 
 - [ ] **Step 12: Tests pass; the site builds; commit**
 
-Run: `uv run --frozen --project spark pytest spark/tests && make lint docs`
-Expected: all pass; the How-to listing shows the two new runbooks, and *In order* lists deploy.md
-as step 7.
+Run: `uv run --frozen --project spark pytest spark/tests && make lint`
+Expected: all pass. The site isn't rendered here, since Quarto isn't on the Spark: CI's `site` job
+renders it on the next push, and Task 18's `make docs`, on the Mac, shows the two new runbooks in
+the How-to listing and deploy.md as step 7 of *In order*.
 
 ```bash
 git add spark/src/spark/{clients,cli}.py spark/tests/{test_clients,test_polkit,test_bootstrap}.py \
@@ -4100,7 +4136,7 @@ git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets with r
 
 ***
 
-### Task 10 [Mac]: updates never take the stack down — needrestart, `make upgrade-gpu`, `make doctor`
+### Task 10 [Spark]: updates never take the stack down — needrestart, `make upgrade-gpu`, `make doctor`
 
 plan.md's Phase 1 promises that updates never take the stack down for good. Three pieces make that
 true, and Tasks 12, 13 and 16 run them on the box:
@@ -4200,7 +4236,7 @@ What `make upgrade-gpu` does, in order:
 
 | Step | What it does | If it refuses or fails |
 |---|---|---|
-| check GRUB | `grub_boots` on the newest installed kernel: entry 0's first `linux` line in `grub.cfg` names it, the `default=` lines are the stock two, and grubenv holds no `next_entry` or `prev_entry` with a value, nor a `saved_entry` other than 0 when the default is `"${saved_entry}"` | nothing released, nothing moved: the set is still held. It says why, and to run updates.md step 5's check and bring what it prints to the Mac session |
+| check GRUB | `grub_boots` on the newest installed kernel: entry 0's first `linux` line in `grub.cfg` names it, the `default=` lines are the stock two, and grubenv holds no `next_entry` or `prev_entry` with a value, nor a `saved_entry` other than 0 when the default is `"${saved_entry}"` | nothing released, nothing moved: the set is still held. It says why, and to run updates.md step 5's check and bring what it prints to the Claude session working on the repo |
 | release | `apt-mark unhold` the GPU set's held members, found with the hold's own patterns, so a package held for another reason stays held | — |
 | finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
 | read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
@@ -5142,7 +5178,7 @@ upgrade_gpu() {
     if ! grub="$(grub_boots "$kernel")"; then
       {
         echo "bootstrap: not moving the GPU set: $grub."
-        echo "Nothing was released or moved. Run step 5's GRUB check in website/how-to/updates.md, and bring what it prints to the Mac session"
+        echo "Nothing was released or moved. Run step 5's GRUB check in website/how-to/updates.md, and bring what it prints to the Claude session working on the repo"
       } >&2
       exit 1
     fi
@@ -5275,9 +5311,15 @@ upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sud
 The tmux check sits in the Makefile because `sudo` drops `$TMUX` from the environment.
 
 - [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
-  then `make lint`. `make upgrade-gpu-dry-run` on the Mac prints the steps, the GRUB check before
-  the release and after the move among them, and its hold step says `a real run stops here`: no DGX
-  kernel is installed here.
+  then `make lint`. Then `make upgrade-gpu-dry-run`: it prints the steps, the GRUB check before the
+  release and after the move among them. Its GRUB and plan lines always say where a real run would
+  stop (`unless GRUB boots it`, `if the plan would leave …`). Its hold lines report what this box
+  holds: on a box whose GPU set is cleanly installed and includes a kernel, `GPU set: N packages, M
+  already held` and `+ apt-mark hold` with the set, the packages `make hold-gpu-dry-run` lists (Task
+  12 Step 1 compares the two). A hold line that ends `(a real run stops here: …)` instead means the
+  real run would stop there, for the reason it gives: nothing installed matches the patterns, or the
+  set has no kernel. Read it before an upgrade day relies on this command; this plan doesn't assume
+  which of the two this box prints.
 
 - [ ] **Step 5: Write the failing tests for `spark doctor`**
 
@@ -6016,8 +6058,9 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 
 - [ ] **Step 10: Check and commit**
 
-Run: `make test lint docs`
-Expected: all pass; `make docs` has no warnings.
+Run: `make test lint`
+Expected: all pass. `make docs`, the site render with no warnings, is Task 18's, on the Mac, until
+Quarto is on the Spark; CI's `site` job renders the site on the next push.
 
 ```bash
 git add stack/host/needrestart.conf stack/host/bootstrap.sh spark/src/spark/{doctor,cli}.py \
@@ -6025,38 +6068,6 @@ git add stack/host/needrestart.conf stack/host/bootstrap.sh spark/src/spark/{doc
 git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needrestart override" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
-
-***
-
-## ⇄ Switch point — Mac → Spark
-
-- [ ] `make test lint docs` is clean on the Mac, and every `<paste>` in `stack/models.yaml` is a real
-  40-hex revision.
-- [ ] **Scan what goes out, then Dan OKs the push.** First leak-guards.md's
-  [*Before every push*](../how-to/leak-guards.md#before-every-push), with `main` as `<branch>`,
-  since `phase-1` isn't on GitHub yet: `outgoing: exit=0`, `tracked: exit=0`, and gitleaks'
-  `no leaks found`. Then **Dan OKs** `git push -u origin phase-1`. `gh run watch` — CI is green.
-- [ ] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
-  any **[Spark]** task. That runbook's *Before the first session* steps 2 and 3 (the global rules
-  file and the secrets guard) arrived after the Spark's Phase 0 sessions, and nothing records them
-  on the box. If the Spark's `~/.claude` lacks either, do them now. Then start the session and check
-  the guard first: `/hooks` lists the hook, `/permissions` the deny rules, and the session must be
-  refused `test -e ~/.secrets && echo present || echo absent`. Don't go on until it is: Task 13
-  Step 1 puts a key in every shell of yours, the session's included.
-- [ ] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
-  security review asked: keys-only SSH ([SSH from the Mac](../how-to/ssh.md#keys-only), with its
-  public IPv6 check) and the Spark's GitHub token for this repository only
-  ([The Spark session](../how-to/spark-session.md#github-a-token-for-this-repository-only)). Unless
-  `changelog.md` records them, check both, and do whichever is missing now:
-  - Keys only: from the Mac,
-    `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive brightroar true`
-    ends in `Permission denied (publickey).`, as in ssh.md's own check.
-  - The token: on the Spark, `gh auth status` names your account with the token masked. On
-    github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
-    old *GitHub CLI* authorization is revoked.
-
-  The Spark session records each one newly done in `changelog.md` and README §Current state, in its
-  next commit. Task 14 serves the web UI on the tailnet only after both.
 
 ***
 
@@ -6221,9 +6232,9 @@ this box:
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
-If either differs, stop and tell the Mac session: that check, or the box's GRUB setup, must change
-before an upgrade day relies on it. Task 13 Step 7 records the re-run and both results in the
-changelog.
+If either differs, stop. That check must change, in the repo (this session, with its test, as a plan
+revision), or the box's GRUB setup must (Dan), before an upgrade day relies on it. Task 13 Step 7
+records the re-run and both results in the changelog.
 
 - [ ] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
   Expected: every file under `/opt/local-ai/etc` and the app are listed as new;
@@ -6380,16 +6391,17 @@ Expected: four models loaded (three resident, the coder on demand), the brake of
 before the brake; every engine runs as `spark` with `1000` in the `oomadj` column. `spark launch`
 set that, so the engines are the first processes the kernel or earlyoom would kill. The journal count is `0`:
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
-root's now. If it isn't, the lines name the path: record it for the Mac session, which points that
-tool's cache at `/var/lib/local-ai/cache` in the unit template (Task 6's). `make doctor` ends
-`doctor: 12 of 12 checks pass`. If its firewall line says it can't read `/etc/ufw/ufw.conf`, record
-the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) for the Mac session, which then changes
-that check. Step 3's browser already loaded Open WebUI's page. What is not yet seen on this box is
-doctor's own expectation: `200` from `/` on both Open WebUI and SearXNG. This first `make doctor`
+root's now. If it isn't, the lines name the path: point that tool's cache at
+`/var/lib/local-ai/cache` in the unit template (Task 6's), in the repo, with its test, as a plan
+revision. `make doctor` ends `doctor: 12 of 12 checks pass`. If its firewall line says it can't read
+`/etc/ufw/ufw.conf`, record the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) and change that
+check to match, in the repo, with its test, as a plan revision. Step 3's browser already loaded Open
+WebUI's page. What is not yet seen on this box is doctor's own expectation: `200` from `/` on both
+Open WebUI and SearXNG. This first `make doctor`
 is that check. If its web line fails, look at the pages in a browser. Step 3's tunnel forwards only
 Open WebUI's port 3000; to see SearXNG, open a second one,
 `ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
-record what doctor says each answered for the Mac session.
+change doctor's expectation to what each answered, in the repo, with its test, as a plan revision.
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
@@ -6679,16 +6691,9 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-## ⇄ Switch point — Spark → Mac
-
-- [ ] The Spark session runs leak-guards.md's
-  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
-  then **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
-  `git switch phase-1 && git pull`.
-
 ***
 
-### Task 17 [Mac]: close Phase 1
+### Task 17 [Spark]: close Phase 1
 
 **Files:**
 
@@ -6706,8 +6711,9 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   `uv run --frozen --project spark spark docs check-scenarios` passes.
 - [ ] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
   session recorded; README §Contents still describes the `Makefile`, `spark/` and `stack/` rows as
-  they are (Tasks 2, 6, 9 and 10 kept them up to date); `make docs` is clean (the Stack page is
-  current).
+  they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
+  (`uv run --frozen --project spark spark docs stack --check`). The site render, `make docs`, is
+  Task 18's, on the Mac.
 - [ ] **Step 3: Private findings** — load times, readings in context, anything tailnet-specific go to
   the vault's `zettelkasten/local-ai/` note, never to the repo.
 - [ ] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
@@ -6737,7 +6743,65 @@ git commit -m "docs(plan): 🤖 close Phase 1: scenario statuses and the forward
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 7: Merge and push** — `make test lint docs`, then:
+***
+
+## ⇄ Switch point — Spark → Mac
+
+- [ ] The Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
+  then **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
+  `git switch phase-1 && git pull`.
+
+***
+
+### Task 18 [Mac]: CI renders the registry, the site builds, the merge
+
+The Mac does what only it can (CLAUDE.md, *Work runs on the Spark by default*): a change under
+`.github/workflows/`, which the Spark's repository-only token can't push, the merge that brings it
+into `main` included; the site render, until Quarto is on the Spark; and the Mac check of what the
+Mac also runs, the Makefile's shared targets and the leak hooks, on bash 3.2 and GNU make 3.81.
+
+**Files:**
+
+- Modify: `.github/workflows/ci.yml` (CI renders the real registry); `README.md` (the MacBook's
+  tools, under §Current state)
+
+- [ ] **Step 1: The Mac's tools** — README §Current state, *The MacBook — `heartsbane`*: the *The
+  repo's tools* bullet gains Homebrew's coreutils, at the version `brew list --versions coreutils`
+  prints (`brew install coreutils` first if it prints nothing), with the day you checked it: the
+  bullet's "(all as of 2026-09-24)" dates only the tools it already lists. The install-units tests
+  run coreutils' `timeout`, and fail on a Mac without it.
+
+```bash
+git add README.md
+git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-units tests run" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [ ] **Step 2: CI renders the real registry** — add to `.github/workflows/ci.yml`'s `tests` job,
+  after its `spark docs check-scenarios` step, the step Task 6 was written with:
+
+```yaml
+      - run: uv run --frozen --project spark spark render --out /tmp/rendered
+```
+
+  Run it as CI will, into a fresh folder: `uv run --frozen --project spark spark render --out
+  "$(mktemp -d)"` prints `render: 8 files → …`.
+
+- [ ] **Step 3: The Mac check and the site** — `make test lint docs`. Expected: all pass, on bash
+  3.2 and GNU make 3.81, and `make docs` renders with no warnings: the How-to listing shows
+  deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). A failure here that the
+  Spark didn't see is a Mac difference: fix it here, with its test, and in this plan's listing.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci(repo): 🤖 render the real registry in CI" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [ ] **Step 5: Merge and push** — `make test lint docs` passed in Step 3; then:
 
 ```bash
 git switch main && git pull
@@ -6748,7 +6812,8 @@ git merge --no-ff phase-1 -m "chore(repo): 🤖 merge phase 1" \
 git runs `pre-merge-commit` for a merge it completes by itself, which `.githooks` doesn't define,
 not pre-commit. So leak-guards.md's
 [*Before every push*](../how-to/leak-guards.md#before-every-push) comes next, with `main` as
-`<branch>`. Then **Dan OKs** `git push origin main`.
+`<branch>`. Then **Dan OKs** `git push origin main`. The merge brings Step 2's workflow change into
+`main`, which is why it is the Mac's.
 
 ***
 
@@ -6766,6 +6831,7 @@ not pre-commit. So leak-guards.md's
   the repo describes.
 - [ ] After a routine `apt upgrade` and after a reboot, the stack served again without a hand on it,
   and `make doctor` passed (S23).
-- [ ] `make test lint docs` is clean and CI is green; README §Current state and the changelog are
-  true; the council review is done and the forward look applied; `phase-1` is merged to `main` with
-  Dan's OK.
+- [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac (Task 18), and CI
+  is green, its render step included; README §Current state and the changelog are true; the council
+  review is done and the forward look applied; `phase-1` is merged to `main` with Dan's OK
+  (Task 18).
