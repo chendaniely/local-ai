@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from spark import brake
+from spark import brake, cli
 from spark.brake import Action, plan_brake, run_brake
 from spark.hold import Hold, read_hold, release_hold, write_hold
 from spark.llamaswap import LlamaSwapError, LlamaSwapUnreachable, Running
@@ -505,3 +505,34 @@ def test_a_hold_written_after_a_failure_says_so(tmp_path, monkeypatch):
     logs = brake_loop(Box(18, ALL), tmp_path, once=True)
     assert "brake: the hold is written again" in logs
     assert read_hold(tmp_path) == Hold("T", "18.0 GiB available", ("coder",))
+
+
+# Task 5's fix round 1: a release this account can't make says who can, not a traceback.
+
+@pytest.mark.parametrize("mode", [0o550, 0o000], ids=["read-only", "closed"])
+def test_a_release_this_account_cant_make_says_who_can(tmp_path, monkeypatch, capsys, mode):
+    # agent isn't in spark-admin, and the folder is 2770 spark:spark-admin; nor is a shell of Dan's started before
+    # bootstrap added him to the group.
+    if os.geteuid() == 0:
+        pytest.skip("root writes any folder")
+    state = tmp_path / "brake"
+    state.mkdir()
+    write_hold(state, Hold("t", "r", ()))
+    monkeypatch.setattr(brake.paths, "STATE", state)
+    state.chmod(mode)
+    try:
+        code = cli.main(["brake", "--release"])
+    finally:
+        state.chmod(0o700)
+    assert code == 1
+    assert capsys.readouterr().err == (f"brake: can't release the hold: this account can't write {state}; "
+                                       "spark-admin can\n")
+    assert read_hold(state) == Hold("t", "r", ())  # still holds
+
+
+def test_a_hold_release_cant_remove_says_why(tmp_path, capsys):
+    # A folder named hold.json holds (read_hold's stand-in), and unlink can't remove a folder.
+    (tmp_path / "hold.json").mkdir()
+    assert brake.release(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("brake: can't release the hold: ") and str(tmp_path / "hold.json") in err

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import sys
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -253,7 +254,16 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
 
 
 def release(state_dir: Path) -> int:
-    print("brake: hold released" if release_hold(state_dir) else "brake: no hold to release")
+    try:
+        released = release_hold(state_dir)
+    except OSError as err:  # say what stands in the way, not a traceback
+        if isinstance(err, PermissionError) and not os.access(state_dir, os.W_OK | os.X_OK):
+            why = f"this account can't write {state_dir}; spark-admin can"
+        else:
+            why = str(err)
+        print(f"brake: can't release the hold: {why}", file=sys.stderr)
+        return 1
+    print("brake: hold released" if released else "brake: no hold to release")
     return 0
 
 
