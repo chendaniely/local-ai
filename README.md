@@ -26,7 +26,7 @@ this line, was parked on 2026-09-23.)
 | [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the GPU-set hold. |
 | [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
-| [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check and the docs tools so far. |
+| [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
 | [`stack/`](stack) | Pinned versions (`versions.yaml`) and the host setup (`host/`: bootstrap, earlyoom's config, the polkit rule). |
 | [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
