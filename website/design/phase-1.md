@@ -202,8 +202,16 @@ Tailscale serve · pi 0.85.1.
     github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
     old *GitHub CLI* authorization is revoked.
 
-  The Spark session records each one newly done in `changelog.md` and README §Current state, in its
-  next commit. Task 14 serves the web UI on the tailnet only after both.
+  The Spark session records each one newly done in `changelog.md` and README §Current state, and
+  commits that before Task 1, whose own commit stages only its registry files:
+
+  ```bash
+  git add changelog.md README.md
+  git commit -m "docs(machine): 🤖 record Phase 0's box steps done before Phase 1" \
+    -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+  ```
+
+  Task 14 serves the web UI on the tailnet only after both.
 
 ***
 
@@ -1507,8 +1515,9 @@ stopped here for the choice.)
 - Modify: `spark/src/spark/versions.py` (optional `image` field, commit pins, a required version),
   `spark/tests/test_versions.py`, `stack/versions.yaml`, `website/reference/stack.md` (regenerated),
   `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (two cache folders for `spark`),
-  `spark/tests/test_bootstrap.py`, `README.md` (§Contents' `stack/` row). CI's step that renders the
-  real registry is Task 18's, on the Mac: the Spark's token can't push a workflow change.
+  `spark/tests/test_bootstrap.py`, `README.md` (§Contents' `stack/` row). CI's step that runs
+  `spark render` on the real registry is Task 18's, on the Mac: the Spark's token can't push a
+  workflow change.
 
 **Interfaces:**
 
@@ -2180,7 +2189,8 @@ def run(args: argparse.Namespace) -> int:
 ```
 
 Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
-CI doesn't render the real registry yet: Task 18 adds that step on the Mac, since the Spark's
+From here on CI's tests render the real registry (`test_the_real_registry_renders`). A step that
+runs the CLI itself, `spark render --out`, is Task 18's, on the Mac, since the Spark's
 repository-only token can't push a change under `.github/workflows/`.
 
 - [ ] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
@@ -2276,8 +2286,9 @@ under systemd 255.4 in a container, a slow start included. They are not yet run 
 first `make apply` after `make install-units` changes a running unit is their first use there, and
 `make apply-dry-run` shows what it would restart. If a running unit's time comes in another form
 there, apply doesn't guess: it names the unit, says it can't tell whether the unit runs root's
-latest copy, and gives the command to restart it by hand, and it counts the unit as running and
-current, so a changed config still restarts it and a new copy of its unit doesn't. What the rule
+latest copy, and gives the command to restart it by hand (for llama-swap, once no model is loaded,
+since restarting it stops them all), and it counts the unit as running and current, so a changed
+config still restarts it and a new copy of its unit doesn't. What the rule
 can still miss: a clock stepped backwards between a start and an install; and a start that began
 after an install but before systemd reloaded it — a restart during `make install-units`, or after
 a run of it that was cut off before its reload (the next run reloads) — which runs the old
@@ -2511,6 +2522,12 @@ def test_a_running_unit_whose_start_cant_be_read_is_named_not_skipped():
                     f"run `systemctl restart {BRAKE}`"]
     # Still running, so a changed config restarts it; but no copy, however new, counts as newer.
     assert outdated_units(started, {"systemd/local-ai-brake.service": 9e9}) == []
+    # Restarting llama-swap by hand stops every loaded model, so its line says when to.
+    logs.clear()
+    start_times([LLAMA], {LLAMA: shows[BRAKE]}.get, log=logs.append)
+    assert logs == [f"apply: can't read when {LLAMA} started (InactiveExitTimestamp='@1790371186'), so it can't "
+                    f"tell whether {LLAMA} runs root's latest copy: if `make install-units` changed its files, "
+                    f"run `systemctl restart {LLAMA}` once no model is loaded (restarting it stops them all)"]
 
 
 class Client:
@@ -2787,8 +2804,9 @@ def start_times(units, show, log=print) -> dict[str, float | None]:
             started[unit] = started_at(show(unit))
         except ValueError as err:
             started[unit] = UNKNOWN_START
+            when = " once no model is loaded (restarting it stops them all)" if unit == LLAMA_SWAP_UNIT else ""
             log(f"apply: can't read when {unit} started ({err}), so it can't tell whether {unit} runs root's "
-                f"latest copy: if `make install-units` changed its files, run `systemctl restart {unit}`")
+                f"latest copy: if `make install-units` changed its files, run `systemctl restart {unit}`{when}")
     return started
 
 
@@ -3059,7 +3077,12 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
     newline, printable ASCII and 0x80–0xFF, or, among those, the UTF-8 encoding of a C1 control
     (C2 80 to C2 9F): a carriage return, an escape sequence or a C1 control such as CSI could make
     the terminal hide a line of the diff, and a NUL makes diff show none. Other UTF-8 passes, the
-    templates' em dashes included. Each refusal comes before
+    templates' em dashes included. A known limit (2026-09-25): bytes 0x80–0xFF that aren't valid
+    UTF-8, a lone byte or an overlong form such as C0 9B (which would be ESC), pass too. A terminal
+    that decodes UTF-8 strictly doesn't act on them: tmux 3.4, Ubuntu 24.04's, drops them (checked
+    in a container: neither a lone 9B nor C0 9B before `[2K` erased the line), and other strict
+    terminals are reported to show a replacement character. A UTF-8 validity check would refuse
+    them; Phase 1 doesn't build one, and Task 17's security review has it. Each refusal comes before
     anything is shown, installs nothing, and names the file, never its content. It shows what would
     change as a diff, installed against staged, and asks before it installs anything; it counts a
     copy that is a link, or isn't root's own (owned by root, not writable by group or others), as
@@ -3722,14 +3745,16 @@ def test_the_rule_names_exactly_the_units_render_writes():
 
 - [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
   → FAIL: `install_units: command not found` (exit 127); `--install-units` is an unknown option
-  (exit 2), so the mode test finds no "separate modes";
-  `make` has no `install-units` or `install-units-dry-run` target; bootstrap has no `ROOT_UNITS` or
-  `ENABLED_UNITS`, and Phase 0's rule no `units` list; and Phase 0's rule allows every verb on
-  every `local-ai-*` name, and `reload-daemon`. Phase 0's bootstrap tests still pass, and so does
-  `test_spark_admin_starts_stops_and_restarts_the_four_units`, by design: Phase 0's rule allowed
-  that too, and the test pins what the new rule must keep. A red run stands in for it: take
-  `restart` out of the new rule's `verbs` once, see that test fail, and put it back. The pre-flight
-  ran that check, and one with an empty list: the test failed both times.
+  (exit 2), so the mode test finds no "separate modes"; `make` has no `install-units` or
+  `install-units-dry-run` target; bootstrap has no `ROOT_UNITS` or `ENABLED_UNITS`. Phase 0's
+  bootstrap tests still pass. `test_polkit.py` skips here: it runs the rule in Node, and no Node is
+  recorded on the Spark until Task 15 installs it, which this plan doesn't move earlier. Its red run
+  is the pre-flight's, on a Mac with Node: Phase 0's rule has no `units` list and allows every verb
+  on every `local-ai-*` name, and `reload-daemon`, so two tests failed, while
+  `test_spark_admin_starts_stops_and_restarts_the_four_units` passed, by design: Phase 0's rule
+  allowed that too, and the test pins what the new rule must keep. The pre-flight also took
+  `restart` out of the new rule's `verbs`, then emptied the list, and that test failed both times.
+  Its green is CI's `tests` job, on the push after Task 10.
 
 - [ ] **Step 7: Implement root's copies**
 
@@ -4122,9 +4147,11 @@ clients: ## Add the Spark provider to pi on this machine
 - [ ] **Step 12: Tests pass; the site builds; commit**
 
 Run: `uv run --frozen --project spark pytest spark/tests && make lint`
-Expected: all pass. The site isn't rendered here, since Quarto isn't on the Spark: CI's `site` job
-renders it on the next push, and Task 18's `make docs`, on the Mac, shows the two new runbooks in
-the How-to listing and deploy.md as step 7 of *In order*.
+Expected: all pass, `test_polkit.py` skipped (no Node): CI's `tests` job runs it on the push after
+Task 10, and Task 12 Step 1 installs the new rule only once that run is green. The site isn't
+rendered here, since Quarto isn't on the Spark: CI's `site` job renders it on that push, and Task
+18's `make docs`, on the Mac, shows the two new runbooks in the How-to listing and deploy.md as
+step 7 of *In order*.
 
 ```bash
 git add spark/src/spark/{clients,cli}.py spark/tests/{test_clients,test_polkit,test_bootstrap}.py \
@@ -5315,11 +5342,13 @@ The tmux check sits in the Makefile because `sudo` drops `$TMUX` from the enviro
   release and after the move among them. Its GRUB and plan lines always say where a real run would
   stop (`unless GRUB boots it`, `if the plan would leave …`). Its hold lines report what this box
   holds: on a box whose GPU set is cleanly installed and includes a kernel, `GPU set: N packages, M
-  already held` and `+ apt-mark hold` with the set, the packages `make hold-gpu-dry-run` lists (Task
-  12 Step 1 compares the two). A hold line that ends `(a real run stops here: …)` instead means the
-  real run would stop there, for the reason it gives: nothing installed matches the patterns, or the
-  set has no kernel. Read it before an upgrade day relies on this command; this plan doesn't assume
-  which of the two this box prints.
+  already held` and `+ apt-mark hold` with the set, the packages `make hold-gpu-dry-run` lists
+  (Task 12 Step 1 checks that hold list against this dry run's `+ apt-mark unhold` list). A hold
+  line that ends `(a real run stops here: …)` instead means the real run would stop there, for the
+  reason it gives: nothing installed matches the patterns, or the set has no kernel. And a GPU-set
+  package dpkg didn't finish stops the dry run itself, with exit 1: it names the package and says
+  to finish dpkg first. Read what it prints before an upgrade day relies on this command; this
+  plan doesn't assume which of these this box prints.
 
 - [ ] **Step 5: Write the failing tests for `spark doctor`**
 
@@ -6060,7 +6089,7 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 
 Run: `make test lint`
 Expected: all pass. `make docs`, the site render with no warnings, is Task 18's, on the Mac, until
-Quarto is on the Spark; CI's `site` job renders the site on the next push.
+Quarto is on the Spark; CI's `site` job renders the site on the push that follows this task.
 
 ```bash
 git add stack/host/needrestart.conf stack/host/bootstrap.sh spark/src/spark/{doctor,cli}.py \
@@ -6068,6 +6097,22 @@ git add stack/host/needrestart.conf stack/host/bootstrap.sh spark/src/spark/{doc
 git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needrestart override" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+***
+
+## ⇄ Push point — Tasks 1–10 go to GitHub
+
+The Mac needs Tasks 1–10's code before Task 15 (pi's provider and `make tunnel`), and CI has to run
+Task 9's polkit tests, which skip on the Spark without Node. The Spark session keeps the branch:
+only the push happens here.
+
+- [ ] The Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
+  then **Dan OKs the push** (`git push`). `gh run watch`: CI is green. The run's page, or
+  `gh run view <id> --log`, shows its `tests` job ending `… passed, 2 skipped`: those two are the
+  gitleaks-hook tests that job always skips, having no gitleaks, and `5 skipped` would mean Task 9's
+  three polkit tests didn't run there either. Task 12 Step 1 installs the new rule only after this
+  run.
 
 ***
 
@@ -6184,7 +6229,9 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 
 ### Task 12 [Spark + Dan]: deploy the config, pull the models
 
-- [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`.
+- [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`, and
+  only once CI is green on the push after Task 10: its `tests` job runs Task 9's polkit tests,
+  which skip on the Spark, and this step installs that rule.
   Phase 0's review changed bootstrap after it last ran on the box: `/var/lib/local-ai` is now root's
   (a `spark`-owned parent let a re-run hand `spark` a directory of its choosing), and earlyoom avoids
   `sshd.*`. This phase adds `spark`'s two cache folders, the needrestart override, and the polkit
@@ -6474,9 +6521,11 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 
 ### Task 15 [Dan + Spark]: pi on the Mac, and as `agent` in tmux
 
-- [ ] **Step 1 [Dan, on the Mac]: pi through the tunnel**
+- [ ] **Step 1 [Dan, on the Mac]: pi through the tunnel** — first the branch as the push after Task 10
+  left it (the Mac commits nothing while the Spark session owns the branch):
 
 ```bash
+cd ~/git/hub/local-ai && git switch phase-1 && git pull                    # Tasks 1–10, pushed after Task 10
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1   # down from 0.86.1, inside the crash range
 pi --version                                                               # 0.85.1
 python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"      # True
@@ -6714,14 +6763,17 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
   (`uv run --frozen --project spark spark docs stack --check`). The site render, `make docs`, is
   Task 18's, on the Mac.
-- [ ] **Step 3: Private findings** — load times, readings in context, anything tailnet-specific go to
-  the vault's `zettelkasten/local-ai/` note, never to the repo.
+- [ ] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
+  go to the vault's `zettelkasten/local-ai/` note, never to the repo. The session lists them in the
+  chat, never in a file in the repo, and Dan files them in the vault.
 - [ ] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
   and scenarios; reliability; security and simplicity; toolstack. The security reviewer starts
   from the paths `plan.md`'s *Users, access and security* names as still open (2026-09-25): sudo
   running the clone's own scripts, sudo's cached credential after bootstrap, `make hold-gpu` and
   `make upgrade-gpu`, Open WebUI's Functions as the container's root over `spark`-owned data, and
-  Dan's account reaching `spark` through `/opt/local-ai`. Fix what they find, one commit per fix.
+  Dan's account reaching `spark` through `/opt/local-ai`, and `make install-units`' byte check,
+  which passes bytes that aren't valid UTF-8 (Task 9's known limit). Fix what they find, one commit
+  per fix.
 - [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
   v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*
@@ -6801,7 +6853,12 @@ git commit -m "ci(repo): 🤖 render the real registry in CI" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 5: Merge and push** — `make test lint docs` passed in Step 3; then:
+- [ ] **Step 5: CI sees it on the branch first** — leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`; then
+  **Dan OKs the push** (`git push`). `gh run watch`: CI is green, the new render step included. Only
+  then the merge, so the step's first run isn't on `main`.
+
+- [ ] **Step 6: Merge and push** — `make test lint docs` passed in Step 3; then:
 
 ```bash
 git switch main && git pull
@@ -6813,7 +6870,7 @@ git runs `pre-merge-commit` for a merge it completes by itself, which `.githooks
 not pre-commit. So leak-guards.md's
 [*Before every push*](../how-to/leak-guards.md#before-every-push) comes next, with `main` as
 `<branch>`. Then **Dan OKs** `git push origin main`. The merge brings Step 2's workflow change into
-`main`, which is why it is the Mac's.
+`main`, which is why it is the Mac's; Step 5 saw CI green with it first.
 
 ***
 
