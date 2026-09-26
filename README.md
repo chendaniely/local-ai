@@ -177,8 +177,10 @@ when that file was retired on 2026-09-23.
     the `updates.md` from before Phase 0's council, whose re-hold ran all of `make bootstrap` and
     whose recovery line could leave the box without a GPU.
   - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
-    becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
-    the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
+    becomes root's, and earlyoom avoids `sshd.*` (`3735420`); and `spark` gets two cache folders,
+    `/var/lib/local-ai/cache` and `/var/lib/local-ai/cuda-cache` (`7c6616a`). Until it runs again,
+    the box keeps the first run's owners and earlyoom arguments, and has neither cache folder.
+    Phase 1's Task 12, Step 1 re-runs it.
   - ~~**Keys-only SSH**~~ **Done 2026-09-25**
     ([SSH from the Mac](website/how-to/ssh.md#keys-only)), with its one-time public IPv6 check,
     whose result goes in the vault.
