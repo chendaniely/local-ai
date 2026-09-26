@@ -1,11 +1,15 @@
 ---
 title: "SSH from the Mac"
-description: "A key for you and a key for agent, one ~/.ssh/config block for the Spark, where NVIDIA Sync fits, then keys-only SSH and a one-time public IPv6 check."
+description: "A key for you and a key for agent, a block in the Mac's ~/.ssh/config for each way in, where NVIDIA Sync fits, then keys-only SSH and a one-time public IPv6 check."
 ---
 
-Everything here runs on the Mac unless it says otherwise. Real addresses and the tailnet's name
-belong in the Mac's `~/.ssh/config` and in the vault, never in this repo; below they are
-placeholders.
+Every command block here starts with a comment saying where it runs. **On the Mac** is a terminal
+on the Mac. **On the Spark** is a shell on the Spark as you: from the Mac, `ssh brightroar` first,
+or `ssh brightroar-lan` before Tailscale is joined. Most of this page runs on the Mac; installing
+agent's key, *Keys only* and the IPv6 check each have steps on the Spark.
+
+Real addresses and the tailnet's name belong in the Mac's `~/.ssh/config` and in the vault, never
+in this repo; below they are placeholders.
 
 ## Two keys, one per account
 
@@ -19,27 +23,31 @@ Give each a passphrase; `UseKeychain` below keeps it in the macOS Keychain.
 **Your key:**
 
 ```bash
+# on the Mac
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar -C "chendaniely@brightroar"
 ssh-copy-id -i ~/.ssh/id_ed25519-brightroar.pub brightroar
 ```
 
 `ssh-copy-id` asks for your password once, then installs the key.
 
-**agent's key:** agent has no password, so its key goes in through your account with sudo:
+**agent's key:** agent has no password, so its key goes in through your account with sudo. First,
+**on the Mac**, make the key and copy its public half to the Spark:
 
 ```bash
+# on the Mac
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519-brightroar_agent -C "agent@brightroar"
 scp ~/.ssh/id_ed25519-brightroar_agent.pub brightroar:agent-key.pub
 ```
 
-Then install it on the Spark with the command in [Bootstrap](bootstrap.md) ("Agent's SSH and Claude
-Code login", step 2).
+Then, **on the Spark**, install it with the command in [Bootstrap](bootstrap.md) ("Agent's SSH and
+Claude Code login", step 2), from an interactive session: its `sudo` has to ask for your password.
 
 ## `~/.ssh/config`
 
-One block per way in. The tailnet name is the primary one, because it works at home and away. The
-LAN address is the fallback for when Tailscale is down, or not joined yet on a new box. macOS doesn't always resolve the short
-MagicDNS name, so use the full one (**Machines** in the Tailscale admin console shows it):
+These blocks go in `~/.ssh/config` on the Mac, one per way in. The tailnet name is the primary
+one, because it works at home and away. The LAN address is the fallback for when Tailscale is down,
+or not joined yet on a new box. macOS doesn't always resolve the short MagicDNS name, so use the
+full one (**Machines** in the Tailscale admin console shows it):
 
 ```
 # Over the tailnet: works at home and away
@@ -78,9 +86,10 @@ back to a password prompt that can't work for agent.
 
 ## NVIDIA Sync
 
-NVIDIA Sync keeps its own SSH setup: a key (`nvsync.key`) already installed for your account, and
-its own config file at `~/Library/Application Support/NVIDIA/Sync/config/ssh_config`, with aliases
-including `brightroar`. Keep the two apart:
+NVIDIA Sync, the app on the Mac, keeps its own SSH setup: a key (`nvsync.key`) already installed
+for your account, and its own config file at
+`~/Library/Application Support/NVIDIA/Sync/config/ssh_config`, with aliases including `brightroar`.
+Everything in this section happens on the Mac. Keep the two apart:
 
 - **Leave Sync's `Include` line commented out** at the top of `~/.ssh/config`. Its file also defines
   `Host brightroar`, and ssh takes each setting from the first block that matches, so the two
@@ -96,6 +105,7 @@ including `brightroar`. Keep the two apart:
 ## Test
 
 ```bash
+# on the Mac
 ssh brightroar whoami             # chendaniely — no password (the key's passphrase once per Keychain session)
 ssh brightroar-agent whoami       # agent
 ssh brightroar-lan whoami         # chendaniely, over the LAN
@@ -107,18 +117,28 @@ Before Tailscale is joined, only the two `-lan` aliases work.
 ## Keys only
 
 Do this after Tailscale is joined ([Join Tailscale](tailscale.md)), once your own key works:
-`ssh brightroar whoami` answers without asking for your password.
-Afterwards sshd accepts keys only, and `agent`'s sessions never get a forwarded SSH agent, whatever
-a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
+**on the Mac**, `ssh brightroar whoami` answers without asking for your password. Afterwards sshd
+accepts keys only, and `agent`'s sessions never get a forwarded SSH agent, whatever a client asks
+for. NVIDIA Sync logs in with its own key, so it keeps working.
 
-1. **Open a session on the Spark and keep it open** until step 4 passes. If a login fails, this
-   session is how you undo the change.
-2. **Write the drop-in**, from that session. sshd keeps the first value it reads for each setting,
-   and it reads `/etc/ssh/sshd_config.d/` in name order, so `10-local-ai.conf` wins over a
-   `50-cloud-init.conf` that turns passwords back on. It writes the same file every time, so it is
-   safe to run again:
+You need two terminals on the Mac. The first holds a session on the Spark: steps 2 and 3 run there,
+and so does the undo if a test fails. The second runs step 4's tests on the Mac itself.
+
+1. **On the Mac, open a session on the Spark and keep it open** until step 4 passes. If a login
+   fails, this session is how you undo the change. In a terminal of its own:
 
    ```bash
+   # on the Mac
+   ssh brightroar
+   ```
+
+2. **On the Spark, write the drop-in**, in that session. sshd keeps the first value it reads for
+   each setting, and it reads `/etc/ssh/sshd_config.d/` in name order, so `10-local-ai.conf` wins
+   over a `50-cloud-init.conf` that turns passwords back on. Each quoted string below is one line
+   of the file. It writes the same file every time, so it is safe to run again:
+
+   ```bash
+   # on the Spark
    printf '%s\n' \
      '# Keys only (website/how-to/ssh.md). Sorts before 50-cloud-init.conf: sshd keeps the first value.' \
      'PasswordAuthentication no' \
@@ -130,9 +150,10 @@ a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
      | sudo tee /etc/ssh/sshd_config.d/10-local-ai.conf >/dev/null
    ```
 
-3. **Check it, then reload.**
+3. **On the Spark, check it, then reload.**
 
    ```bash
+   # on the Spark
    sudo sshd -t && echo "syntax ok"
    sudo sshd -T -C user=chendaniely,host=localhost,addr=127.0.0.1 | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|allowagentforwarding) '
    sudo sshd -T -C user=agent,host=localhost,addr=127.0.0.1 | grep -Ei '^allowagentforwarding '
@@ -145,15 +166,17 @@ a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
    expected:
 
    ```bash
+   # on the Spark
    sudo systemctl reload ssh
    ```
 
    If it answers that `ssh.service` isn't active, sshd isn't running between logins (Ubuntu can
    start it on demand from `ssh.socket`), and the next login reads the new file anyway.
-4. **Test from a second terminal on the Mac**, with the first session still open. Each login must
+4. **On the Mac, test from a second terminal**, with the first session still open. Each login must
    work with your key alone (its passphrase at most), and a password must be refused:
 
    ```bash
+   # on the Mac
    ssh brightroar whoami         # chendaniely
    ssh brightroar-lan whoami     # chendaniely, over the LAN
    ssh brightroar-agent whoami   # agent
@@ -161,9 +184,10 @@ a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
    ```
 
    The last line must end in `Permission denied (publickey).` If any login fails, undo the change
-   from the session you kept open, then find out why before you try again:
+   **on the Spark**, in the session you kept open, then find out why before you try again:
 
    ```bash
+   # on the Spark
    sudo rm /etc/ssh/sshd_config.d/10-local-ai.conf && sudo systemctl reload ssh
    ```
 
@@ -173,19 +197,21 @@ a client asks for. NVIDIA Sync logs in with its own key, so it keeps working.
 ## Is the Spark reachable over public IPv6?
 
 Check this once. A public IPv6 address can be reachable from the whole internet, and ufw's OpenSSH
-rule allows IPv6 too. On the Spark, count its public IPv6 addresses (it prints a number, nothing
-else):
+rule allows IPv6 too. **On the Spark**, count its public IPv6 addresses (it prints a number,
+nothing else):
 
 ```bash
+# on the Spark
 ip -6 -o addr show scope global | grep -c ' inet6 [23]'
 ```
 
-`0` means there are none, and you're done. Otherwise, `ip -6 addr show scope global` shows the
-address. Read it privately: it identifies your home connection, so it goes in the vault, never
-here. Then, from the Mac on a network outside your home, such as a phone's hotspot, with Tailscale
-off:
+`0` means there are none, and you're done. Otherwise, `ip -6 addr show scope global`, also on the
+Spark, shows the address. Read it privately: it identifies your home connection, so it goes in the
+vault, never here. Then, **on the Mac**, from a network outside your home, such as a phone's
+hotspot, and with Tailscale off:
 
 ```bash
+# on the Mac
 ping6 -c 1 2606:4700:4700::1111 >/dev/null && echo "this network has IPv6"   # without it, the next line proves nothing
 nc -6 -z -G 5 -w 5 <public-ipv6-address> 22; echo "exit=$?"
 ```
