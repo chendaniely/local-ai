@@ -26,10 +26,20 @@ def read_hold(state_dir: Path) -> Hold | None:
 
 
 def write_hold(state_dir: Path, hold: Hold) -> None:
+    """Atomic, and on disk before it returns: the brake writes the hold as memory runs out, when a GB10
+    can hard-freeze, and the hold must still be there after the power cycle."""
     path = Path(state_dir) / FILE
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(hold) | {"unloaded": list(hold.unloaded)}))
+    with open(tmp, "w") as f:
+        f.write(json.dumps(asdict(hold) | {"unloaded": list(hold.unloaded)}))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
+    folder = os.open(state_dir, os.O_RDONLY)
+    try:
+        os.fsync(folder)  # the rename itself
+    finally:
+        os.close(folder)
 
 
 def release_hold(state_dir: Path) -> bool:
