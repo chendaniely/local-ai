@@ -919,7 +919,9 @@ def register(subparsers) -> None:
 
 *Superseded 2026-09-26 — the code now differs; see commit 548ab5c: a registry that won't load is
 refused (exit 3) naming its path and the error, and recorded; `record_refusal` writes a temporary
-file and renames it over the record.*
+file and renames it over the record. And commit 36ed81d, from Task 5's review: `read_refusal`
+returns only a whole record (a dict whose `at`, `model` and `reason` are strings), through a new
+`check_refusal` that says when the record isn't one.*
 
 Register in `cli.py` beside the others: `from spark import launch` / `launch.register(subparsers)`.
 
@@ -1381,7 +1383,9 @@ llama-swap only when memory is low; a model whose unload failed is skipped for t
 each is recorded once) and ebd3ad1 (memory on its way back counts before another unload: an engine
 `stopping`, or an unload with no answer in 2 s, for up to `GRACE_S` = 15 s, ended early by a fall of
 more than `FLOOR_TOLERANCE_GIB` = 0.5 GiB; both are unmeasured on this box). llama-swap v257 answers
-an unload only after the engine exits and runs unloads one at a time (read in its source).*
+an unload only after the engine exits and runs unloads one at a time (read in its source). And
+commit 88f98aa, from Task 5's review: `spark brake --release` says who can release when this
+account can't write the state folder, and exits 1, instead of a traceback.*
 
 Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
@@ -1452,6 +1456,13 @@ def test_the_last_refused_load_is_explained():
     text = format_text(gather(MemInfo(121.7, 40.0), REG, [], None, refusal))
     assert "refused  coder at t1: needs ~28 GiB, 40 GiB available (24 GiB reserve kept)" in text
 ```
+
+*Superseded 2026-09-26 — the tests now go much further; see commit db4aece: they drive
+`spark status` through the CLI, text and `--json`, against a registry that won't load, unreadable
+memory, llama-swap down or answering 401 or a shape that isn't v257's, a state folder the caller
+can't read, a model the registry doesn't list, a damaged refusal record, rounding at the brake line
+and control characters. The stored reason above keeps an older wording; launch now writes "needs
+28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short".*
 
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_status.py` → FAIL.
 
@@ -1548,6 +1559,15 @@ def run(args: argparse.Namespace) -> int:
     print(json.dumps(status, indent=2) if args.json else format_text(status))
     return 0
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commit db4aece: `spark status` exits 0 whatever
+it meets and says what's wrong; a registry that won't load is reported, with the brake line taken
+from the plan's defaults; "unreachable" means nothing answered, and any other llama-swap error shows
+its own key-free text; an account that can't read the brake's state folder is told the state is
+unknown to it, not HOLDING, and the release is offered only to an account that can write it; a model
+the registry doesn't list is shown as such; numbers round so they never read past or short of the
+brake line wrongly; control characters are escaped; `--json` adds `problems`, `registry_loaded`
+and `brake.state`. The brake reads "no hold", not "off". Task 5's review asked for them.*
 
 Register in `cli.py`: `from spark import status` / `status.register(subparsers)`.
 
@@ -1805,6 +1825,11 @@ OOMScoreAdjust=-900
 [Install]
 WantedBy=multi-user.target
 ```
+
+*Added 2026-09-26, from Task 5's review:* neither this unit nor llama-swap's sets a `UMask`, so
+systemd's default (0022) applies, and the hold the brake writes and the refusal record `spark
+launch` writes stay readable by `spark-admin`, which `spark status` needs. A `UMask` tighter than
+0027 on either unit would hide them.
 
 `stack/templates/local-ai-compose.service` (runs as root — the `spark` user is not in `docker`).
 Compose reads everything in its project folder, a `.env` and a `compose.override.yaml` included, so
@@ -4090,6 +4115,16 @@ clients: ## Add the Spark provider to pi on this machine
 	$(SPARK) clients pi --write
 ```
 
+*Added 2026-09-26, from Task 5's review:* `spark launch`, the brake and `spark status` tell Dan to
+run `spark brake --release`, but `spark` isn't on his PATH: the Makefile reaches it through uv. So
+this step also adds a target, to the block and to `.PHONY` (dry-run with `make -n` on 2026-09-26),
+and the three messages and their tests name `make brake-release`, run in the clone, instead:
+
+```make
+brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory is back
+	$(SPARK) brake --release
+```
+
 - [ ] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
   `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`). Its
   commands go in blocks, each with the machine in bold in the paragraph right above it (CLAUDE.md,
@@ -4197,7 +4232,8 @@ clients: ## Add the Spark provider to pi on this machine
     restart llama-swap anyway.
   - **When something is wrong.** `make status`, then `make logs s=llama-swap` (or `brake`, `pull`,
     `compose`, `open-webui`, `searxng`). A refused load appears in `make status` as a `refused` line
-    with its reason. If `make apply` keeps saying a file differs from root's copy,
+    with its reason, for an account in `spark-admin`; any other account is told the brake's state is
+    unknown to it. If `make apply` keeps saying a file differs from root's copy,
     `make install-units-dry-run` shows the difference, and `make install-units` installs it.
 
 - [ ] **Step 11: The How-to index and README**
@@ -6515,8 +6551,8 @@ make doctor
 `oomadj` and `oom` are procps-ng's names for `oom_score_adj` and `oom_score`. Ubuntu 24.04's `ps`
 (procps-ng 4.0.4) rejects `oom_score_adj=` as a format.
 
-Expected: four models loaded (three resident, the coder on demand), the brake off, and the headroom
-before the brake; every engine runs as `spark` with `1000` in the `oomadj` column. `spark launch`
+Expected: four models loaded (three resident, the coder on demand), `brake    no hold`, and the
+headroom before the brake; every engine runs as `spark` with `1000` in the `oomadj` column. `spark launch`
 set that, so the engines are the first processes the kernel or earlyoom would kill. The journal count is `0`:
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
 root's now. If it isn't, the lines name the path: point that tool's cache at
@@ -6750,7 +6786,7 @@ curl -fsS -X POST -H @- http://127.0.0.1:9100/api/models/unload/qwen3.6-35b-a3b 
 log=$(mktemp); vmstat -n 1 > "$log" & vm=$!   # swap in (si) and out (so), once a second
 a=$(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo)
 python3 -c "import time; x = b'\x01' * ($((a - 45)) << 30); time.sleep(900)" > /dev/null 2>&1 & hog=$!
-sleep 30; make status          # ~45 GiB available; three residents loaded; brake off
+sleep 30; make status          # ~45 GiB available; three residents loaded; no hold
 coder                          # not 200
 make status                    # refused  qwen3.6-35b-a3b at …: needs 29.0 GiB, 45.0 GiB available, 24 GiB reserve kept: 8.0 GiB short
 for p in $(ps -o pid= -C llama-server,whisper-server) "$hog"; do echo "$(cat "/proc/$p/comm") oom_score $(cat "/proc/$p/oom_score")"; done

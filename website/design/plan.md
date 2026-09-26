@@ -95,7 +95,8 @@ In order of how much they constrain the design:
 
 - **Phases 1–2:** Open WebUI and pi reach llama-swap directly with llama-swap keys — pi on the Mac
   through an SSH tunnel, so nothing listens on the LAN yet. A refused load is a plain error in the
-  client; the explanation is in `spark status` (Phase 1) and on the menu bar and ntfy (Phase 2).
+  client; the explanation is in `spark status` (Phase 1), for an account in `spark-admin`, which
+  can read the brake's state, and on the menu bar and ntfy (Phase 2).
 - **Phase 3 onward:** LiteLLM sits in front. Its hook makes refusals inline (`error.code`,
   `retry_after_s`), adds `x-spark-model: <name>@<revision>`, and applies per-key `wait_for_fit_s`.
 - **Why not Ollama:** Dan has hit Hugging Face models that won't load there. Here each model runs on
@@ -822,6 +823,15 @@ Each item gets its own design pass when its turn comes.
   Task 4's listing is marked *Superseded*). Read in llama-swap v257's source: an unload is answered
   after the engine exits, and unloads run one at a time. A new open risk, *The minimal brake's
   reach*, and Task 16's brake drill now measures the brake's numbers.
+- **2026-09-26** — Phase 1, Task 5's review. `spark status` exits 0 whatever it meets and says
+  only true things to whoever runs it: an account outside `spark-admin`, such as `agent`, is told
+  the brake's state is unknown to it rather than HOLDING, and "unreachable" means nothing answered,
+  so a wrong key no longer invites a restart that stops every model. Refusal records are read only
+  whole, and a release says who can run it (commits 36ed81d, 88f98aa, db4aece; the listings of
+  Tasks 2, 4 and 5 note them). *Components*' Phase 1–2 line now says the refusal's explanation is
+  for `spark-admin`. Phase 1's plan: Task 9's Makefile adds `make brake-release`, since the advice
+  `spark brake --release` names a command that isn't on Dan's PATH; the brake's and llama-swap's
+  units keep systemd's default `UMask`, so `spark-admin` can read the hold and refusal records.
 
 ## Sources
 
