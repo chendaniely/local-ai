@@ -82,7 +82,7 @@ the LAN.
 **When a device like that is needed from away**, add a subnet route for that device's address only,
 not the whole LAN, so nothing else on the home network becomes reachable through the tailnet:
 
-1. On one always-on home Linux machine that runs Tailscale (not the Spark, which stays
+1. **On that home Linux machine** (always-on, running Tailscale — not the Spark, which stays
    single-purpose), allow forwarding and advertise the one address:
 
    ```bash
