@@ -4,15 +4,26 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from spark import paths
-from spark.hold import Hold, read_hold, release_hold, write_hold
+from spark.hold import UNREADABLE_SINCE, Hold, read_hold, release_hold, write_hold
 from spark.llamaswap import LlamaSwap, LlamaSwapError, key_from_env
 from spark.memory import MemInfo, read_meminfo
 from spark.registry import BrakeThresholds, Registry, load_registry
+
+# How long memory from an unload counts as on its way back before the brake stops waiting for it and tries the
+# next model. llama-swap v257 gives an engine its unloadTimeout (10 s by default; the stack's config leaves it) to
+# exit on SIGTERM before it SIGKILLs it, so a slow but normal stop takes up to 10 s. The 5 s beyond allow for the
+# kill and for the memory to show in MemAvailable (not yet measured on this box). The wait costs no safety: once
+# memory falls below where it was, it ends.
+GRACE_S = 15.0
+
+# The plan's starting thresholds (Admission and memory rules, 5), for when the registry won't load.
+FALLBACK = BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250)
 
 
 @dataclass(frozen=True)
@@ -21,7 +32,10 @@ class Action:
     model: str | None = None
 
 
-def plan_brake(mem: MemInfo, thresholds: BrakeThresholds, registry: Registry, running: list[str]) -> list[Action]:
+def plan_brake(mem: MemInfo, thresholds: BrakeThresholds, registry: Registry, running: list[str],
+               inflight_gib: float = 0.0) -> list[Action]:
+    """`running` holds the models the brake may unload. `inflight_gib` is memory on its way back from unloads that
+    haven't shown in MemAvailable yet: it counts against the shortfall, so one shortfall doesn't unload two models."""
     if mem.available_gib >= thresholds.warn_gib:
         return []
     if mem.available_gib >= thresholds.brake_gib:
@@ -32,45 +46,179 @@ def plan_brake(mem: MemInfo, thresholds: BrakeThresholds, registry: Registry, ru
         return (model.resident if model else False, -(model.footprint_gib if model else 0.0))
 
     victims = sorted(running, key=order)
-    return [Action("hold")] + ([Action("unload", victims[0])] if victims else [])
+    short = mem.available_gib + inflight_gib < thresholds.brake_gib
+    return [Action("hold")] + ([Action("unload", victims[0])] if victims and short else [])
 
 
 def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+@dataclass(frozen=True)
+class _NoRegistry:
+    """The brake's registry when the real one won't load: the plan's thresholds and no model table, so models go
+    in the order /running lists them."""
+
+    brake: BrakeThresholds = FALLBACK
+    models: dict = field(default_factory=dict)
+
+
+class _Once:
+    """Logs a run of the same failure once, and again when it changes or clears, not four lines a second."""
+
+    def __init__(self, log):
+        self._log, self._last = log, {}
+
+    def failed(self, what: str, line: str) -> None:
+        if self._last.get(what) != line:
+            self._last[what] = line
+            self._log(line)
+
+    def cleared(self, what: str, line: str) -> None:
+        if self._last.pop(what, None) is not None:
+            self._log(line)
+
+    def forget(self, what: str) -> None:
+        self._last.pop(what, None)
+
+
+@dataclass
+class _Returning:
+    """Memory on its way back, from a model whose unload llama-swap accepted or that it shows `stopping`."""
+
+    gib: float  # the model's registry footprint; 0 for a model the registry doesn't know
+    floor_gib: float  # MemAvailable when it began: if memory falls below this, the brake stops waiting for it
+    since_s: float  # when it began, on the brake's clock
+    counted: bool = True  # False once the brake has stopped waiting for it
+
+
+class _Brake:
+    """run_brake's state from poll to poll. An episode lasts until memory is back at the warn line or above.
+    Within one, each engine is asked to unload once at most: a model is a new engine only after it has left
+    /running and loaded again."""
+
+    def __init__(self, registry, client, state_dir: Path, log, now):
+        self.registry, self.client, self.state_dir, self.log, self.now = registry, client, Path(state_dir), log, now
+        self.once = _Once(log)
+        self.clock = 0.0  # seconds slept: a poll's own work is left out, so a grace can run long but never short
+        self.warned = False
+        self.asked: set[str] = set()
+        self.returning: dict[str, _Returning] = {}
+
+    def check_state_dir(self) -> None:
+        if not self.state_dir.is_dir():
+            why = "it doesn't exist or isn't a folder"
+        elif not os.access(self.state_dir, os.W_OK | os.X_OK):
+            why = "this user can't write to it"
+        else:
+            return
+        self.log(f"brake: ALERT — no hold can be written in {self.state_dir}: {why}. Models are still unloaded, "
+                 "but new loads won't be held")
+
+    def poll(self, mem: MemInfo) -> None:
+        thresholds = self.registry.brake
+        listed = self.listed(mem)
+        self.settle(mem, listed)
+        running = [m for m, state in listed or () if state in ("starting", "ready") and m not in self.asked]
+        inflight = sum(r.gib for r in self.returning.values() if r.counted)
+        actions = plan_brake(mem, thresholds, self.registry, running, inflight)
+        if not actions:
+            self.warned = False
+            self.asked.clear()
+        for action in actions:
+            if action.kind == "warn" and not self.warned:
+                self.log(f"brake: warning — {mem.available_gib:.1f} GiB available (warns below {thresholds.warn_gib:g})")
+                self.warned = True
+            elif action.kind == "hold" and read_hold(self.state_dir) is None:
+                if self.write(Hold(self.now(), f"{mem.available_gib:.1f} GiB available", ())):
+                    self.log("brake: holding new loads until `spark brake --release`")
+            elif action.kind == "unload":
+                self.unload(action.model, mem)
+
+    def listed(self, mem: MemInfo) -> list[tuple[str, str]] | None:
+        """What llama-swap runs, asked only below the warn line or while memory is on its way back: every call
+        sends the key."""
+        if mem.available_gib >= self.registry.brake.warn_gib and not any(r.counted for r in self.returning.values()):
+            self.once.forget("llama-swap")  # not asked: a failure next time starts a new run
+            return None
+        try:
+            listed = [(r.model, r.state) for r in self.client.running()]
+        except LlamaSwapError as err:
+            self.once.failed("llama-swap", f"brake: {err}")
+            return None
+        self.once.cleared("llama-swap", "brake: llama-swap answers again")
+        return listed
+
+    def settle(self, mem: MemInfo, listed: list[tuple[str, str]] | None) -> None:
+        """Memory on its way back has arrived once its model has left /running. The brake stops waiting for it
+        when memory falls below where it was, or when the grace is over."""
+        if listed is not None:
+            names = {m for m, _ in listed}
+            for model in [m for m in self.returning if m not in names]:
+                del self.returning[model]
+            self.asked &= names  # a model that went and came back is a new engine
+            for model, state in listed:
+                if state == "stopping" and model not in self.returning:
+                    self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock)
+        for model, r in self.returning.items():
+            if r.counted and mem.available_gib < r.floor_gib:
+                r.counted = False
+                self.log(f"brake: memory still falling ({mem.available_gib:.1f} GiB, {r.floor_gib:.1f} when {model} "
+                         "began to unload): not waiting for it")
+            elif r.counted and self.clock - r.since_s >= GRACE_S:
+                r.counted = False
+                self.log(f"brake: {model} still hasn't given its memory back after {GRACE_S:g} s: not waiting for it")
+
+    def unload(self, model: str, mem: MemInfo) -> None:
+        self.asked.add(model)
+        try:
+            self.client.unload(model)
+        except LlamaSwapError as err:
+            self.log(f"brake: unloading {model} failed: {err}")
+            return
+        self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock)
+        self.log(f"brake: unloaded {model} at {mem.available_gib:.1f} GiB available")
+        reason = f"{mem.available_gib:.1f} GiB available"
+        hold = read_hold(self.state_dir)
+        if hold is None:  # released while the unload was on its way, or never written: memory was below the line
+            hold = Hold(self.now(), reason, ())
+        elif hold.since == UNREADABLE_SINCE:  # read_hold's stand-in for a damaged file: never write it back
+            hold = Hold(self.now(), f"{reason}; the hold file before this one was damaged ({hold.reason})", ())
+        if model not in hold.unloaded:
+            self.write(replace(hold, unloaded=hold.unloaded + (model,)))
+
+    def write(self, hold: Hold) -> bool:
+        try:
+            write_hold(self.state_dir, hold)
+        except OSError as err:  # a missing or read-only folder, a full disk: the unload must still go out
+            self.once.failed("hold", f"brake: ALERT — can't write the hold in {self.state_dir}: {err}. Models are "
+                                     "still unloaded, but new loads aren't held")
+            return False
+        self.once.cleared("hold", "brake: the hold is written again")
+        return True
+
+    def footprint(self, model: str) -> float:
+        known = self.registry.models.get(model)
+        return known.footprint_gib if known else 0.0
+
+
 def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep=time.sleep,
               log=print, now=_now, once: bool = False) -> None:
-    warned = False
+    brake = _Brake(registry, client, state_dir, log, now)
+    brake.check_state_dir()
     while True:
-        mem = read_mem()
         try:
-            running = [r.model for r in client.running() if r.state in ("starting", "ready")]
-        except LlamaSwapError as err:
-            log(f"brake: {err}")
-            running = []
-        actions = plan_brake(mem, registry.brake, registry, running)
-        if not actions:
-            warned = False
-        for action in actions:
-            if action.kind == "warn" and not warned:
-                log(f"brake: warning — {mem.available_gib:.1f} GiB available (warns below {registry.brake.warn_gib:g})")
-                warned = True
-            elif action.kind == "hold" and read_hold(state_dir) is None:
-                write_hold(state_dir, Hold(now(), f"{mem.available_gib:.1f} GiB available", ()))
-                log("brake: holding new loads until `spark brake --release`")
-            elif action.kind == "unload":
-                try:
-                    client.unload(action.model)
-                except LlamaSwapError as err:
-                    log(f"brake: {err}")
-                    continue
-                hold = read_hold(state_dir)
-                write_hold(state_dir, replace(hold, unloaded=hold.unloaded + (action.model,)))
-                log(f"brake: unloaded {action.model} at {mem.available_gib:.1f} GiB available")
+            mem = read_mem()
+        except (OSError, ValueError) as err:  # nothing to act on this poll; the next one tries again
+            brake.once.failed("memory", f"brake: can't read memory: {err}")
+        else:
+            brake.once.cleared("memory", "brake: memory reads again")
+            brake.poll(mem)
         if once:
             return
-        sleep(registry.brake.poll_ms / 1000)
+        pause = registry.brake.poll_ms / 1000
+        sleep(pause)
+        brake.clock += pause
 
 
 def release(state_dir: Path) -> int:
@@ -89,8 +237,18 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace) -> int:
     if args.release:
         return release(paths.STATE)
-    registry = load_registry(paths.REGISTRY)
+
+    def log(line: str) -> None:
+        print(line, flush=True)
+
+    try:
+        registry = load_registry(paths.REGISTRY)
+    except Exception as err:  # whatever stops the registry loading, the brake must still run
+        log(f"brake: ALERT — the registry {paths.REGISTRY} didn't load ({err}). Braking on the plan's thresholds "
+            f"(warn below {FALLBACK.warn_gib:g} GiB, brake below {FALLBACK.brake_gib:g} GiB, every {FALLBACK.poll_ms} "
+            "ms) with no model table: models go in the order /running lists them")
+        registry = _NoRegistry()
     # 2 s, not the default 10: a hung llama-swap must not hold a tick that acts on memory it just read.
     client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=2)
-    run_brake(registry, client, paths.STATE, log=lambda m: print(m, flush=True), once=args.once)
+    run_brake(registry, client, paths.STATE, log=log, once=args.once)
     return 0

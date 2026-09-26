@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 FILE = "hold.json"
+UNREADABLE_SINCE = "an unknown time"  # the `since` of read_hold's stand-in for a hold file it can't read
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ def read_hold(state_dir: Path) -> Hold | None:
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as err:
-        return Hold("an unknown time", f"hold file {path} can't be read: {err}", ())
+        return Hold(UNREADABLE_SINCE, f"hold file {path} can't be read: {err}", ())
 
 
 def write_hold(state_dir: Path, hold: Hold) -> None:
