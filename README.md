@@ -140,6 +140,9 @@ when that file was retired on 2026-09-23.
   refuses the Spark over SSH: the Spark's key came off Dan's account. Whether the first `gh`
   login's *GitHub CLI* authorization was revoked on github.com is not yet recorded.
 - **The Claude session** has the Mac's global rules and secrets guard (checked 2026-09-25).
+- **The clone's `spark/` environment** runs uv's own CPython **3.12.14** (2026-09-26), the minor
+  version `spark/.python-version` pins. Until then uv had built it on Ubuntu's Python 3.12.3.
+  `uv python install` also linked `python3.12` in `~/.local/bin`; `python3` is still Ubuntu's.
 - **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
   install; Claude Code was 2.1.281 when installed and updates itself — 2.1.282 on 2026-09-24);
   Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **shellcheck 0.9.0**,
@@ -321,7 +324,8 @@ node, untested).
   review security in the task that changes it. The story is in the
   [Phase 0 retrospective](website/design/phase-0-retro.md).
 - **Python through uv, and the `Makefile` as the front door** — no system Python, no pip, and one
-  Python minor version, pinned in `spark/.python-version`.
+  Python minor version, pinned in `spark/.python-version`. uv uses only its own interpreters
+  (`python-preference = "only-managed"` in `spark/pyproject.toml`).
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)

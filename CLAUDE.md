@@ -191,7 +191,9 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **Python through uv, the `Makefile` as the front door.** No system Python, no pip; the Makefile
   calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata. One Python
   minor version everywhere, pinned in `spark/.python-version`: it has to live in `spark/`, because
-  uv looks for it only in the project directory.
+  uv looks for it only in the project directory. uv's own interpreters only: `spark/pyproject.toml`
+  sets `python-preference = "only-managed"`, so uv never builds the venv on a system Python (Dan's
+  decision, 2026-09-26, after the Spark's venv turned out to run Ubuntu's 3.12.3).
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
   and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets

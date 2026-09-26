@@ -8,6 +8,20 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-26 — `spark/`'s environment on uv's own Python
+
+The clone's `spark/.venv` had been built on Ubuntu's Python 3.12.3. `spark/pyproject.toml` now
+sets `python-preference = "only-managed"`, so uv uses only its own interpreters. uv installed
+CPython 3.12.14 for Dan, which also linked `python3.12` in `~/.local/bin`, and the environment was
+rebuilt on it. **On the Spark**, in the clone:
+
+```bash
+uv python install 3.12
+rm -rf spark/.venv && uv sync --frozen --project spark
+```
+
+The tests, lint and the leak check then passed on it.
+
 ## 2026-09-25 — Before Phase 1: keys-only SSH, a GitHub token for this repo, the session's guard
 
 Phase 0 left these for the box

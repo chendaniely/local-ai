@@ -20,6 +20,8 @@ packages = ["src/spark"]
 
 [tool.uv]
 required-version = ">=0.12.18"
+# uv's own Pythons only, never the system's, so every machine runs the same interpreter build.
+python-preference = "only-managed"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
