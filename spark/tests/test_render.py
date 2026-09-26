@@ -1,3 +1,5 @@
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -16,11 +18,42 @@ def rendered(registry_path=FIX / "models.yaml"):
                   Path(registry_path).read_text(), templates=ROOT / "stack/templates")
 
 
-def test_every_model_starts_through_the_launch_check():
-    cfg = yaml.safe_load(rendered()["llama-swap.yaml"])
+def real():
+    """What the real registry and versions render: the safety checks run on it too, not only on the fixture."""
+    return render(load_registry(ROOT / "stack/models.yaml"), load_versions(ROOT / "stack/versions.yaml"),
+                  (ROOT / "stack/models.yaml").read_text(), templates=ROOT / "stack/templates")
+
+
+@pytest.fixture(params=["fixture", "real"])
+def files(request):
+    return rendered() if request.param == "fixture" else real()
+
+
+def registry_with(tmp_path, change) -> Path:
+    """The fixture registry after `change` (a function of its data), in a file of its own."""
+    data = yaml.safe_load((FIX / "models.yaml").read_text())
+    change(data)
+    path = tmp_path / "models.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return path
+
+
+def values(words: list[str], flag: str) -> list[str | None]:
+    """Every value `words` give `flag`, as `flag value` or `flag=value`; None for a flag with nothing after it."""
+    found = [words[i + 1] if i + 1 < len(words) else None for i, word in enumerate(words) if word == flag]
+    return found + [word.split("=", 1)[1] for word in words if word.startswith(flag + "=")]
+
+
+def test_every_model_starts_through_the_launch_check(files):
+    cfg = yaml.safe_load(files["llama-swap.yaml"])
     for name, model in cfg["models"].items():
-        assert model["cmd"].startswith(f"{SPARK_BIN} launch {name} -- ")
-        assert "--host 127.0.0.1" in model["cmd"] and "api-key" not in model["cmd"]
+        words = shlex.split(model["cmd"])  # as llama-swap splits it: POSIX rules, quotes and backslashes included
+        assert words[:4] == [SPARK_BIN, "launch", name, "--"]
+        # An engine takes the last value a flag is given, so each of these appears once, with render's value.
+        assert values(words, "--host") == ["127.0.0.1"], name
+        assert values(words, "--port") == ["${PORT}"], name
+        # No key, and nothing for llama-swap to fill in but the port: GET /running shows every command.
+        assert not [w for w in words if "api-key" in w.replace("_", "-") or "${" in w.replace("${PORT}", "")], name
         assert model["proxy"] == "http://127.0.0.1:${PORT}" and model["ttl"] == 0
 
 
@@ -38,14 +71,25 @@ def test_api_keys_are_env_references_only():
     assert keys and all(k.startswith("${env.LLAMASWAP_KEY_") and k.endswith("}") for k in keys)
 
 
-def test_compose_binds_locally_and_pins_images():
-    compose = rendered()["compose/compose.yaml"]
-    for needle in ("HOST: 127.0.0.1", "RAG_OPENAI_API_BASE_URL: http://127.0.0.1:9100/v1",
-                   "AUDIO_STT_OPENAI_API_BASE_URL: http://127.0.0.1:9100/v1", "GRANIAN_HOST: 127.0.0.1",
-                   "TASK_MODEL_EXTERNAL: vision-chat", "RAG_EMBEDDING_MODEL: embed", "AUDIO_STT_MODEL: stt"):
-        assert needle in compose
-    assert compose.count("@sha256:") == 2
-    assert compose.count("driver: journald") == 2  # container logs readable without docker access
+def test_compose_binds_locally_and_pins_images(files):
+    services = yaml.safe_load(files["compose/compose.yaml"])["services"]
+    webui, searxng = services["open-webui"]["environment"], services["searxng"]["environment"]
+    # Exact values, not substrings: "HOST: 127.0.0.1" is also inside "GRANIAN_HOST: 127.0.0.1". Open WebUI
+    # v0.11.4 listens on 0.0.0.0:8080 unless told otherwise, and host networking would put that on every interface.
+    assert (webui.get("HOST"), webui.get("PORT")) == ("127.0.0.1", "3000")
+    assert (searxng.get("GRANIAN_HOST"), searxng.get("GRANIAN_PORT")) == ("127.0.0.1", "8888")
+    for key in ("OPENAI_API_BASE_URLS", "RAG_OPENAI_API_BASE_URL", "AUDIO_STT_OPENAI_API_BASE_URL"):
+        assert webui.get(key) == "http://127.0.0.1:9100/v1", key
+    assert webui.get("SEARXNG_QUERY_URL") == "http://127.0.0.1:8888/search"
+    for service in services.values():
+        assert re.fullmatch(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}", service["image"]), service["image"]
+        assert service["logging"] == {"driver": "journald"}  # container logs readable without docker access
+
+
+def test_open_webui_is_given_the_registrys_task_embedding_and_stt_models():
+    webui = yaml.safe_load(rendered()["compose/compose.yaml"])["services"]["open-webui"]["environment"]
+    assert (webui["TASK_MODEL_EXTERNAL"], webui["RAG_EMBEDDING_MODEL"], webui["AUDIO_STT_MODEL"]) == (
+        "vision-chat", "embed", "stt")
 
 
 def test_llama_swap_listens_on_localhost_only():
@@ -101,3 +145,83 @@ def test_the_real_registry_renders():
                    templates=ROOT / "stack/templates")
     assert set(files) == set(rendered())  # the same eight files as the fixture renders
     assert set(yaml.safe_load(files["llama-swap.yaml"])["models"]) == set(registry.models)
+
+
+# Task 6's fix round 1: a registry edit can't rebind an engine, or put a key where llama-swap shows it.
+
+OWNED = [  # (the model, the args an edit adds to it)
+    pytest.param("coder", ["--host", "0.0.0.0"], id="llama.cpp --host"),
+    pytest.param("coder", ["--host=0.0.0.0"], id="llama.cpp --host=value"),
+    pytest.param("coder", ["--port", "8080"], id="llama.cpp --port"),
+    pytest.param("coder", ["-m", "/tmp/other.gguf"], id="llama.cpp -m"),
+    pytest.param("coder", ["--model", "/tmp/other.gguf"], id="llama.cpp --model"),
+    pytest.param("vision-chat", ["-mm", "/tmp/other.gguf"], id="llama.cpp -mm"),
+    pytest.param("vision-chat", ["--mmproj", "/tmp/other.gguf"], id="llama.cpp --mmproj"),
+    pytest.param("coder", ["--api-key", "not-a-real-key"], id="llama.cpp --api-key"),
+    pytest.param("coder", ["--api_key", "not-a-real-key"], id="llama.cpp --api_key"),  # llama-server reads _ as -
+    pytest.param("coder", ["--api-key=not-a-real-key"], id="llama.cpp --api-key=value"),
+    pytest.param("coder", ["--api-key-file", "/tmp/keys"], id="llama.cpp --api-key-file"),
+    pytest.param("coder", ["--hf-token", "not-a-real-token"], id="llama.cpp --hf-token"),
+    pytest.param("coder", ["-hft", "not-a-real-token"], id="llama.cpp -hft"),
+    pytest.param("stt", ["--host", "0.0.0.0"], id="whisper.cpp --host"),
+    pytest.param("stt", ["--port", "8080"], id="whisper.cpp --port"),
+    pytest.param("stt", ["-m", "/tmp/other.bin"], id="whisper.cpp -m"),
+    pytest.param("stt", ["--model", "/tmp/other.bin"], id="whisper.cpp --model"),
+]
+
+
+@pytest.mark.parametrize("model, args", OWNED)
+def test_args_may_not_set_a_flag_render_owns(tmp_path, model, args):
+    # An engine takes the last value a flag is given, and the registry's args come after render's own. The refusal
+    # names the flag as written, never the value given to it: that could be a key.
+    path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend(args))
+    flag, value = args[0].split("=")[0], args[-1].split("=")[-1]
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set {re.escape(flag)}: ") as err:
+        rendered(path)
+    assert value not in str(err.value)
+
+
+def test_a_flag_that_only_starts_like_an_owned_one_is_left_alone(tmp_path):
+    path = registry_with(tmp_path, lambda d: d["models"]["vision-chat"]["args"].append("--mmproj-offload"))
+    assert "--mmproj-offload" in yaml.safe_load(rendered(path)["llama-swap.yaml"])["models"]["vision-chat"]["cmd"]
+
+
+FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in)
+    pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--alias", "${env.LLAMASWAP_KEY_SPARK}"]),
+                 "coder", "${env.LLAMASWAP_KEY_SPARK}", id="an arg"),
+    pytest.param(lambda d: d["models"]["stt"]["source"].update(file="${env.LLAMASWAP_KEY_AGENT}.bin"),
+                 "stt", "${env.LLAMASWAP_KEY_AGENT}", id="a source file"),
+    pytest.param(lambda d: d["engines"].update({"whisper.cpp": "/opt/${MODEL_ID}/whisper-server"}),
+                 "stt", "${MODEL_ID}", id="an engine's path"),
+]
+
+
+@pytest.mark.parametrize("change, model, word", FILLED_IN)
+def test_nothing_in_a_command_is_filled_in_but_the_port(tmp_path, change, model, word):
+    # llama-swap v257 fills in ${env.…} anywhere in its config, and GET /running shows every command whole: a key
+    # referenced here would show there, and in the engine's argv.
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: .*{re.escape(word)}"):
+        rendered(registry_with(tmp_path, change))
+
+
+def test_a_role_is_never_filled_in(tmp_path):
+    path = registry_with(tmp_path, lambda d: d["models"]["coder"].update(roles=["${env.LLAMASWAP_KEY_SPARK}"]))
+    with pytest.raises(RenderError, match=r"^coder: role '\$\{env\.LLAMASWAP_KEY_SPARK\}'"):
+        rendered(path)
+
+
+SPLIT = [  # (the edit, the model it lands in): each word would reach the engine as other words
+    pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--ho\\st", "0.0.0.0"]), "coder",
+                 id="a backslash"),  # --ho\st is --host once llama-swap unescapes it
+    pytest.param(lambda d: d["models"]["stt"]["source"].update(file="whisper.bin --host 0.0.0.0"), "stt",
+                 id="whitespace"),
+    pytest.param(lambda d: d["models"]["vision-chat"]["source"].update(mmproj='vision-"mmproj".gguf'), "vision-chat",
+                 id="quotes"),
+]
+
+
+@pytest.mark.parametrize("change, model", SPLIT)
+def test_a_word_llama_swap_would_split_or_unescape_is_refused(tmp_path, change, model):
+    # llama-swap splits a command as a POSIX shell does, so the checks above only hold if every word stays one.
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: .* wouldn't reach the engine as one word"):
+        rendered(registry_with(tmp_path, change))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import yaml
@@ -20,6 +21,20 @@ UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-comp
 # installs the rendered units and Compose project there, and `spark apply` only stages them.
 UNIT_DIR = "/etc/systemd/system"
 COMPOSE_DIR = "/etc/local-ai/compose"
+# Flags a registry's args may not set, in each engine's spellings, with the reason: an engine takes the last value
+# a flag is given, and args come after render's own. Keys stay out of commands because llama-swap shows each whole
+# at GET /running, and the process list shows an engine's argv.
+_BIND = "render binds every engine to 127.0.0.1, on the port llama-swap gives it"
+_FILES = "render passes the model files the registry pins in source"
+_KEY = "an engine takes no key: llama-swap checks the keys, and shows every command at GET /running"
+OWNED_FLAGS = {
+    "llama.cpp": {"--host": _BIND, "--port": _BIND, "-m": _FILES, "--model": _FILES, "-mm": _FILES,
+                  "--mmproj": _FILES, "--api-key": _KEY, "--api-key-file": _KEY, "-hft": _KEY, "--hf-token": _KEY},
+    "whisper.cpp": {"--host": _BIND, "--port": _BIND, "-m": _FILES, "--model": _FILES},
+}
+# llama-swap splits a command as a POSIX shell does, so a word with one of these reaches the engine as other words:
+# `--ho\st` as --host, `a.bin --host 0.0.0.0` as three.
+_SPLITS = re.compile(r"[\s'\"\\]")
 
 
 class RenderError(ValueError):
@@ -40,7 +55,19 @@ def model_path(source: Source, file: str) -> str:
     return f"{HF_HOME}/hub/models--{org}--{name}/snapshots/{source.revision}/{file}"
 
 
+def _flag(arg: str) -> str:
+    """The flag an engine reads `arg` as: without an `=value`, and with a long flag's `_` as `-`, as llama-server reads
+    it, so neither `--host=0.0.0.0` nor `--api_key` slips past."""
+    flag = arg.split("=", 1)[0]
+    return flag.replace("_", "-") if flag.startswith("--") else flag
+
+
 def engine_cmd(model: Model, registry: Registry) -> list[str]:
+    owned = OWNED_FLAGS["whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"]
+    for arg in model.args:
+        flag = _flag(arg)
+        if flag in owned:  # named as written, without an =value: that could be a key
+            raise RenderError(f"{model.name}: args may not set {arg.split('=', 1)[0]}: {owned[flag]}")
     binary = registry.engines[model.engine]
     main = model_path(model.source, model.source.file)
     if model.engine == "whisper.cpp":
@@ -65,11 +92,29 @@ def check_budget(registry: Registry) -> None:
                           f"(allocatable {registry.budget.allocatable_gib:g} − reserve {registry.budget.reserve_gib:g})")
 
 
+def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
+    """`words`, once each is sure to reach the engine as itself: one word, with nothing for llama-swap to fill in but
+    render's own ${PORT}. llama-swap v257 fills in ${env.…} anywhere in its config, a key included."""
+    for word in words:
+        if _SPLITS.search(word):
+            raise RenderError(f"{name}: {word!r} wouldn't reach the engine as one word: llama-swap splits a command "
+                              "as a POSIX shell does, so whitespace, quotes and backslashes are refused")
+        if "${" in word.replace("${PORT}", ""):
+            raise RenderError(f"{name}: {word!r} holds a ${{…}} llama-swap would fill in, and GET /running shows every "
+                              "command whole; only render's own ${PORT} may appear")
+    return words
+
+
 def llama_swap_config(registry: Registry) -> dict:
     models = {}
     for m in registry.models.values():
+        cmd = _one_word_and_nothing_filled_in(m.name, [SPARK_BIN, "launch", m.name, "--", *engine_cmd(m, registry)])
+        for role in m.roles:
+            if "${" in role:
+                raise RenderError(f"{m.name}: role {role!r} holds a ${{…}} llama-swap would fill in, anywhere in its "
+                                  "config; a role is a name, and only apiKeys refer to a key")
         models[m.name] = {
-            "cmd": " ".join([SPARK_BIN, "launch", m.name, "--", *engine_cmd(m, registry)]),
+            "cmd": " ".join(cmd),
             "proxy": "http://127.0.0.1:${PORT}",
             "checkEndpoint": "/health",
             "ttl": 0,
