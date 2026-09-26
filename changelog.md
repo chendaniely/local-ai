@@ -8,6 +8,50 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-25 — Before Phase 1: keys-only SSH, a GitHub token for this repo, the session's guard
+
+Phase 0 left these for the box
+([its retrospective](website/design/phase-0-retro.md#carried-to-phase-1)), and Phase 1's switch
+point wants them before anything faces the network.
+
+**Keys-only SSH**, following [SSH from the Mac](website/how-to/ssh.md#keys-only), steps 1 to 5.
+The drop-in `/etc/ssh/sshd_config.d/10-local-ai.conf` matches the runbook's byte for byte. sshd
+accepts keys only, and `agent`'s sessions never get a forwarded SSH agent. Step 4's checks passed
+from the Mac: the three aliases logged in with keys, over the tailnet and the LAN, and a login
+without a key ended in `Permission denied (publickey).` The one-time public IPv6 check is done
+too; its result goes in the vault.
+
+**GitHub: a token for this repository only**, following
+[The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only).
+`gh` holds a fine-grained token for `chendaniely/local-ai` alone. But the clone's `origin` was
+SSH, and the Spark's SSH key (`~/.ssh/id_ed25519`) was on Dan's GitHub account, so `git push`
+went around the token and could reach every repository Dan can. `origin` moved to https, where
+`gh` hands git the token. **On the Spark:**
+
+```bash
+git -C ~/git/hub/local-ai remote set-url origin https://github.com/chendaniely/local-ai.git && gh auth setup-git
+```
+
+Checked on the Spark after the switch: a dry-run push to this repository passes, and one to
+another of Dan's repositories is refused with a 403. Dan then removed the Spark's key from Dan's
+GitHub account, on github.com, and `ssh -T git@github.com` from the Spark now ends in
+`Permission denied (publickey).`
+
+**The Spark's Claude session** has the Mac's global rules and secrets guard
+([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3):
+`~/.claude/CLAUDE.md` and `~/.claude/hooks/block-secret-access.sh` match the Mac's copies by
+SHA-256, `~/.claude/settings.json` carries the hook and 35 deny rules, and the session is refused
+`test -e ~/.secrets && echo present || echo absent`.
+
+**Recorded:** Tailscale **1.102.4**, the kernel's release string `7.0.0-1019-nvidia`, and
+OpenSSH **1:9.6p1-3ubuntu13.19** (Ubuntu's `openssh-server`). **On the Spark:**
+
+```bash
+tailscale version
+uname -r
+dpkg-query -W openssh-server
+```
+
 ## 2026-09-24 — Phase 0 bootstrap: headless, users, firewall, tailnet, secrets
 
 **Wired NIC on `.201`**, bounced from a session on the Wi-Fi address:

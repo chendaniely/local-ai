@@ -127,10 +127,19 @@ when that file was retired on 2026-09-23.
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
-  2026-09-24). The kernel's full release string is not yet recorded. The set moves only on upgrade
-  day, which updates this line.
+  2026-09-24). The kernel's full release string is `7.0.0-1019-nvidia` (recorded 2026-09-25). The
+  set moves only on upgrade day, which updates this line.
 - **Secret files** for Phase 1 are in `/etc/local-ai/secrets/` (`llama-swap.env`,
   `open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), recorded by name in the vault.
+- **SSH takes keys only** (2026-09-25): `/etc/ssh/sshd_config.d/10-local-ai.conf` turns password
+  and keyboard-interactive logins off, and `agent`'s sessions never get a forwarded SSH agent
+  ([SSH from the Mac](website/how-to/ssh.md#keys-only)). The one-time public IPv6 check is done;
+  its result goes in the vault.
+- **GitHub** (2026-09-25): `gh` holds a fine-grained token for this repository only, the clone's
+  `origin` is https, and `gh` is git's credential helper, so pushes go through that token. GitHub
+  refuses the Spark over SSH: the Spark's key came off Dan's account. Whether the first `gh`
+  login's *GitHub CLI* authorization was revoked on github.com is not yet recorded.
+- **The Claude session** has the Mac's global rules and secrets guard (checked 2026-09-25).
 - **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
   install; Claude Code was 2.1.281 when installed and updates itself — 2.1.282 on 2026-09-24);
   Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **shellcheck 0.9.0**,
@@ -139,8 +148,9 @@ when that file was retired on 2026-09-23.
   and has been removed. **gh 2.45.0**, from Ubuntu's archive
   too, for pushing from Dan's account (never `agent`'s). Details in the changelog. **Docker 29.6.2**
   came with DGX OS, from NVIDIA's repository; **earlyoom 1.7-2** is Ubuntu's package, installed by
-  bootstrap; Tailscale came from its own install script (2026-09-24), and its version is not yet
-  recorded. Claude Code here talks straight to Anthropic — it is a client like any other, not a
+  bootstrap; **Tailscale 1.102.4** came from its own install script (2026-09-24; its version
+  recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
+  2026-09-25). Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
@@ -166,15 +176,18 @@ when that file was retired on 2026-09-23.
   - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
     becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
     the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
-  - **Keys-only SSH** ([SSH from the Mac](website/how-to/ssh.md#keys-only)), then its one-time
-    public IPv6 check, whose result goes in the vault.
-  - **A GitHub token for this repository only**, with the first `gh` login revoked
+  - ~~**Keys-only SSH**~~ **Done 2026-09-25**
+    ([SSH from the Mac](website/how-to/ssh.md#keys-only)), with its one-time public IPv6 check,
+    whose result goes in the vault.
+  - ~~**A GitHub token for this repository only**~~ **Done 2026-09-25**, and pushes go through it
     ([The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only)).
-  - **The secrets guard and the Mac's global rules** for the Spark's Claude session
+    That the first `gh` login was revoked is not yet recorded.
+  - ~~**The secrets guard and the Mac's global rules**~~ **Done**, checked 2026-09-25, for the
+    Spark's Claude session
     ([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3).
-  - **Three facts to record:** Tailscale's version and the kernel's full release string, both noted
-    above as not yet recorded, and OpenSSH's version (the keys-only drop-in was tested only with
-    the Mac's).
+  - ~~**Three facts to record**~~ **Recorded 2026-09-25**, above: Tailscale 1.102.4, the kernel's
+    release string `7.0.0-1019-nvidia`, and OpenSSH 1:9.6p1-3ubuntu13.19, the version the
+    keys-only drop-in now runs on.
 
 ### The MacBook — `heartsbane`
 
@@ -190,8 +203,9 @@ when that file was retired on 2026-09-23.
   `spark/.python-version` pins (2026-09-24).
 - **SSH to the Spark** goes through the `~/.ssh/config` aliases that
   [SSH from the Mac](website/how-to/ssh.md) names: `brightroar` and `brightroar-agent`, by the
-  tailnet's full MagicDNS name (2026-09-24). The runbook's LAN fallbacks, `brightroar-lan` and
-  `brightroar-agent-lan`, are not recorded as added here yet.
+  tailnet's full MagicDNS name (2026-09-24). Of the runbook's LAN fallbacks, `brightroar-lan`
+  works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
+  here yet.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
