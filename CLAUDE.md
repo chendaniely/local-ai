@@ -165,14 +165,15 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   and render tests, the Makefile, bootstrap, the leak hooks, the docs, and anything touching the GPU,
   memory, systemd or Docker, including `spark doctor`. Only three kinds of work stay on `heartsbane`
   (the Mac): the Mac-side clients and their config; changes under `.github/workflows/`, which the
-  Spark's repository-only GitHub token can't push (a merge that brings one into `main` included);
-  and rendering the site (`make docs`) until Quarto is installed on the Spark. What the Mac also runs
-  — the Makefile's shared targets and the leak hooks — gets its Mac check (bash 3.2, GNU make 3.81)
-  at the next Mac step, as the lessons below require. Dan: sudo, interactive logins, secret values,
-  the Synology's settings. Every task in an implementation plan is labelled **[Spark]**, **[Mac]** or
-  **[Dan]**; from the Mac, touch the Spark only with read-only SSH checks Dan has OK'd. (Until
-  2026-09-25 the Mac wrote the code, tests, CI and docs, and the Spark ran only what touched its GPU,
-  memory, systemd or Docker.)
+  Spark's repository-only GitHub token can't push (a merge that brings one in included, into `main`
+  or from `main` into a branch after a Dependabot Actions bump); and rendering the site
+  (`make docs`) until Quarto is installed on the Spark. What the Mac also runs — the Makefile's
+  shared targets and the leak hooks — gets its Mac check (bash 3.2, GNU make 3.81) at the next Mac
+  step, as the lessons below require. Dan: sudo, interactive logins, secret values, the Synology's
+  settings. Every task in an implementation plan is labelled **[Spark]**, **[Mac]** or **[Dan]**;
+  from the Mac, touch the Spark only with read-only SSH checks Dan has OK'd. (Until 2026-09-25 the
+  Mac wrote the code, tests, CI and docs, and the Spark ran only what touched its GPU, memory,
+  systemd or Docker.)
 - **One session at a time.** The active session owns the phase branch; at a switch it commits, the
   branch is pushed with Dan's OK, and the other machine pulls.
 - **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase

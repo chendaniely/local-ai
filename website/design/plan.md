@@ -347,8 +347,9 @@ Docker.
   comparisons).
 - **Mac session:** only what needs the Mac — the Mac clients and their config (SwiftBar, pi and
   OpenCode configs, harness hooks on the Mac); changes under `.github/workflows/`, which the Spark's
-  repository-only token can't push (a merge that brings one into `main` included); the site render
-  until Quarto is on the Spark; and the Mac check of what the Mac also runs.
+  repository-only token can't push (a merge that brings one in included, into `main` or from `main`
+  into a branch after a Dependabot Actions bump); the site render until Quarto is on the Spark; and
+  the Mac check of what the Mac also runs.
 - **Dan:** sudo (`make bootstrap`), interactive logins (Tailscale, GitHub on the Spark, Claude Code
   for `agent`, the Hugging Face token), secret values, the Synology's settings, and approving every
   push.
@@ -748,6 +749,12 @@ Each item gets its own design pass when its turn comes.
   README §Conventions changed with it. Phase 1's plan relabels Tasks 1–10 and 17 `[Spark]`, moves
   the Mac → Spark switch point ahead of Task 1, and ends with Task 18, a `[Mac]` task: CI's render
   step, the site render and the merge.
+- **2026-09-25** — Before the push, the final review's fixes. Phase 1's plan pushes after Task 10,
+  so the Mac has the code for Task 15 and CI runs Task 9's polkit tests, which skip on the Spark
+  without Node; Task 12 installs the rule only after that run is green. Task 18 pushes its CI change
+  and sees CI green before the merge. Task 17's private findings go to the vault through Dan. The
+  rule, here and in CLAUDE.md, also names a merge of `main` into a branch after a Dependabot
+  Actions bump, which the Spark's token can't push either.
 
 ## Sources
 
