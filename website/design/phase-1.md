@@ -20,7 +20,8 @@ date: 2026-09-23
 > (plan.md's Revisions, 2026-09-25). Revised once more that day for Dan's rule that work runs on the
 > Spark by default (CLAUDE.md): Tasks 1–10 and 17 moved from [Mac] to [Spark], the Mac → Spark
 > switch point is now ahead of Task 1, and a last [Mac] task, Task 18, does what only the Mac can:
-> CI's render step, the site render and the merge.
+> CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
+> rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -4029,7 +4030,10 @@ clients: ## Add the Spark provider to pi on this machine
 ```
 
 - [ ] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
-  `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`):
+  `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`). Its
+  commands go in blocks, each with the machine in bold in the paragraph right above it (CLAUDE.md,
+  *Conventions*: Dan's rule, 2026-09-25): **On the Mac** for the second section's, and
+  **On the Spark, as `agent`** for the third's. The sections:
   - **The version.** pi is pinned to 0.85.1: 0.86.0 through 0.87.1 are reported to crash
     llama-server, most likely a llama.cpp bug that their longer prompt triggers. Move up only to a
     release outside that range, and change `stack/versions.yaml` in the same commit.
@@ -4053,7 +4057,9 @@ clients: ## Add the Spark provider to pi on this machine
   `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
   Each bullet below is one section of the runbook. Its bold words are the section's heading, and
   the rest is what the section says. Write it in the runbook's own words, and copy the commands
-  exactly as they are here:
+  exactly as they are here. Each command block has the machine in bold in the paragraph right
+  above it (CLAUDE.md, *Conventions*: Dan's rule, 2026-09-25). Everything runs **on the Spark**,
+  except in *The web UI's first account*, where the tunnel and the browser are **on the Mac**:
   - **Before the first deploy.** Phase 0 is done (bootstrap, secrets), the engines are installed
     (the Phase 1 plan, Task 11), and `id -nG` lists `spark-admin` and `adm`. If it doesn't, the
     session predates bootstrap: log out, `tmux kill-server`, log back in. `make bootstrap` has run
@@ -6003,7 +6009,10 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 
 - [ ] **Step 8: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 9: The runbooks say what now exists**
+- [ ] **Step 9: The runbooks say what now exists.** Since 2026-09-25 each command block in the
+  runbooks has the machine in bold in the paragraph right above it (CLAUDE.md, *Conventions*: Dan's
+  rule), and each block these edits add gets one too; here, all of them run **on the Spark**. A new
+  paragraph goes above a block's labelled paragraph, never between that paragraph and its block.
   - `website/how-to/updates.md`, *Any time: apt*: in the needrestart bullet, "From Phase 1 it
     leaves the stack alone too" becomes "Bootstrap installs `/etc/needrestart/conf.d/local-ai.conf`,
     so it leaves the stack's `local-ai-*` units alone too", keeping the rest of the bullet.
@@ -6022,7 +6031,9 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     policy brings them back after a Docker upgrade; needrestart leaves the units alone. llama-swap
     preloads nothing, so after a reboot each model loads on its first request.
   - `updates.md`, *Upgrade day: the GPU set*. The edits:
-    - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
+    - **Before the tmux block, a new paragraph**, above the one that introduces the block
+      ("**On the Spark**, work in tmux, from the clone. …"), which stays right above it.
+      `make upgrade-gpu` runs steps 1 to 5 as one
       command, in tmux, from the clone; it refuses to start outside tmux. Step 5's GRUB check
       included, it runs all of them. First the GRUB check, as step 2 says: if GRUB won't boot the
       newest kernel, it stops there, with the set still held and nothing moved, and says why. Then

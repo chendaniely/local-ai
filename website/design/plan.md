@@ -755,6 +755,12 @@ Each item gets its own design pass when its turn comes.
   change and sees CI green before the merge. Task 17's private findings go to the vault through
   Dan. The rule, here and in CLAUDE.md, also names a merge of `main` into a branch after a
   Dependabot Actions bump, which the Spark's token can't push either.
+- **2026-09-25** — On the Spark, before Task 1: Dan's rule that every command in the docs says
+  where it runs, in bold in the paragraph right above its block, never as a `#` comment inside
+  it, which the Mac's zsh tries to run as a command (CLAUDE.md, *Conventions*; README
+  §Conventions). The runbooks were relabelled the same day. Phase 1's plan: Task 9's two new
+  runbooks and Task 10's runbook edits follow the rule, and Task 10's new paragraph in
+  `updates.md` goes above the tmux block's labelled paragraph, not between it and the block.
 
 ## Sources
 
