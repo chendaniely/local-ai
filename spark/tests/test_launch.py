@@ -30,6 +30,8 @@ def test_parse_meminfo_in_gib():
 def test_parse_meminfo_needs_both_fields():
     with pytest.raises(ValueError, match="MemAvailable"):
         parse_meminfo("MemTotal: 1 kB\n")
+    with pytest.raises(ValueError, match="MemTotal"):
+        parse_meminfo("MemAvailable: 1 kB\n")
 
 
 def test_admit_fits():
@@ -137,6 +139,38 @@ def test_a_hold_is_on_disk_before_it_takes_its_name_and_the_name_after(tmp_path,
     assert [p.name for p in tmp_path.iterdir()] == ["hold.json"]
 
 
+DAMAGED_HOLDS = {
+    "empty": b"",
+    "not text": b"\xff\xfe garbage",
+    "cut off": b'{"since": "2026-09-23T10:00:00", "rea',
+    "not an object": b"[]",
+    "no reason": b'{"since": "t"}',
+    "since not text": b'{"since": 1, "reason": "r"}',
+    "unloaded not a list": b'{"since": "t", "reason": "r", "unloaded": "coder"}',
+    "a folder": None,  # can't be read, even by root
+}
+
+
+@pytest.mark.parametrize("damage", DAMAGED_HOLDS.values(), ids=DAMAGED_HOLDS.keys())
+def test_a_hold_file_that_cant_be_read_still_holds(tmp_path, damage):
+    # Fail closed: a damaged hold must never read as no hold. The reason names the file.
+    hold_file = tmp_path / "hold.json"
+    if damage is None:
+        hold_file.mkdir()
+    else:
+        hold_file.write_bytes(damage)
+    hold = read_hold(tmp_path)
+    assert hold is not None and f"hold file {hold_file} can't be read: " in hold.reason
+
+
+def test_a_hold_that_goes_between_a_check_and_the_act_is_no_hold(tmp_path, monkeypatch):
+    # Two releases can race: a check followed by the unlink would crash the loser. So the file is read
+    # or unlinked directly, and only its absence means no hold.
+    monkeypatch.setattr(Path, "exists", lambda self: True)  # as if hold.json went just after a check
+    assert read_hold(tmp_path) is None
+    assert release_hold(tmp_path) is False
+
+
 def test_launch_execs_the_engine_when_it_fits(tmp_path, monkeypatch):
     calls = {}
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
@@ -176,6 +210,69 @@ def test_launch_unknown_model_is_a_usage_error(tmp_path):
     assert launch.main_launch(["nope", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 2
 
 
+@pytest.mark.parametrize("argv", [
+    [], ["coder"], ["coder", "/bin/engine"], ["coder", "--"], ["--", "/bin/engine"],
+    ["coder", "x", "--", "/bin/engine"],
+], ids=["nothing", "no --", "no -- before the command", "no command", "no model", "-- not second"])
+def test_launch_usage_errors(tmp_path, monkeypatch, capsys, argv):
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(argv, registry=FIXTURE, state=tmp_path) == 2
+    assert capsys.readouterr().err == "usage: spark launch <model> -- <engine command…>\n"
+    assert launch.read_refusal(tmp_path) is None
+
+
+def test_launch_refuses_while_the_brakes_hold_file_stands(tmp_path, monkeypatch, capsys):
+    write_hold(tmp_path, Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",)))
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))  # plenty: only the hold refuses
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
+    assert capsys.readouterr().err == (
+        "spark: not starting embed: the memory brake has held new loads since 2026-09-23T10:00:00 "
+        "(18.0 GiB available); run `spark brake --release` once memory is back\n"
+    )
+    assert launch.read_refusal(tmp_path)["model"] == "embed"
+
+
+@pytest.mark.parametrize("damage", [b"", b"\x00\xff{garbage"], ids=["empty", "garbage"])
+def test_launch_refuses_while_a_damaged_hold_file_stands(tmp_path, monkeypatch, capsys, damage):
+    launch.record_refusal(tmp_path, "vision-chat", "an older, unrelated reason")
+    (tmp_path / "hold.json").write_bytes(damage)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
+    err = capsys.readouterr().err
+    assert err.startswith("spark: not starting embed: ") and "spark brake --release" in err
+    assert str(tmp_path / "hold.json") in err
+    refusal = launch.read_refusal(tmp_path)  # the older record is replaced, so `spark status` shows why
+    assert refusal["model"] == "embed" and str(tmp_path / "hold.json") in refusal["reason"]
+
+
+@pytest.mark.parametrize("setup, error", [
+    (None, "No such file or directory"),
+    ("a folder", "Is a directory"),
+    ("budget: [102, 24\n", "while parsing a flow sequence"),
+    ("budget: {allocatable_gib: 102}\n", "budget: reserve_gib is required"),
+], ids=["missing", "a folder", "not YAML", "invalid"])
+def test_launch_refuses_when_the_registry_wont_load(tmp_path, monkeypatch, capsys, setup, error):
+    registry, state = tmp_path / "models.yaml", tmp_path / "state"
+    state.mkdir()
+    if setup == "a folder":
+        registry.mkdir()
+    elif setup is not None:
+        registry.write_text(setup)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=state) == 3
+    err = capsys.readouterr().err
+    assert err.startswith(f"spark: not starting coder: the registry {registry} won't load: ") and error in err
+    refusal = launch.read_refusal(state)
+    assert refusal["model"] == "coder" and str(registry) in refusal["reason"] and error in refusal["reason"]
+
+
 def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: None)
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: None)
@@ -186,3 +283,21 @@ def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monke
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
     launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
     assert launch.read_refusal(tmp_path) is None
+
+
+def test_a_refusal_record_is_swapped_in_whole(tmp_path, monkeypatch):
+    # `spark status` can read it at any moment: it must find the old record or the new one, never part
+    # of one, which it would report as no refusal at all.
+    renamed = []
+    real_replace = os.replace
+
+    def replace(src, dst):
+        renamed.append(Path(dst).name)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+    launch.record_refusal(tmp_path, "coder", "why")
+    assert renamed == ["last-refusal.json"]
+    refusal = launch.read_refusal(tmp_path)
+    assert refusal["model"] == "coder" and refusal["reason"] == "why"
+    assert [p.name for p in tmp_path.iterdir()] == ["last-refusal.json"]  # no temporary file left

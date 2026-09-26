@@ -16,6 +16,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import yaml
+
 from spark import paths
 from spark.admission import admit
 from spark.hold import read_hold
@@ -39,10 +41,14 @@ def _mark_first_to_kill() -> None:
 
 
 def record_refusal(state: Path, model: str, reason: str) -> None:
-    """Leave the reason where `spark status` shows it; the client only sees a failed start."""
+    """Leave the reason where `spark status` shows it; the client only sees a failed start. The record is
+    swapped in whole, so a reader never sees part of one."""
     at = datetime.datetime.now().isoformat(timespec="seconds")
+    path = Path(state) / REFUSAL
+    tmp = path.with_name(f".{REFUSAL}.{os.getpid()}")  # one per process: refusals can come together
     try:
-        (Path(state) / REFUSAL).write_text(json.dumps({"at": at, "model": model, "reason": reason}))
+        tmp.write_text(json.dumps({"at": at, "model": model, "reason": reason}))
+        os.replace(tmp, path)
     except OSError:
         pass  # the reason still reaches llama-swap through stderr
 
@@ -61,21 +67,28 @@ def clear_refusal(state: Path) -> None:
         pass  # a stale reason only misleads `spark status`; it must never stop the engine's start
 
 
+def _refuse(state: Path, name: str, reason: str) -> int:
+    print(f"spark: not starting {name}: {reason}", file=sys.stderr)
+    record_refusal(state, name, reason)
+    return 3
+
+
 def main_launch(argv: list[str], *, registry: Path = paths.REGISTRY, state: Path = paths.STATE) -> int:
     if "--" not in argv or argv.index("--") != 1 or len(argv) < 3:
         print("usage: spark launch <model> -- <engine command…>", file=sys.stderr)
         return 2
     name, cmd = argv[0], argv[2:]
-    reg = load_registry(registry)
+    try:
+        reg = load_registry(registry)
+    except (OSError, ValueError, yaml.YAMLError) as err:  # missing or unreadable, not YAML, or invalid
+        return _refuse(state, name, f"the registry {registry} won't load: {err}")
     model = reg.models.get(name)
     if model is None:
         print(f"spark: unknown model {name!r}", file=sys.stderr)
         return 2
-    decision = admit(model, read_meminfo(), reg.budget, read_hold(state))
+    decision = admit(model, read_meminfo(), reg.budget, read_hold(state))  # a damaged hold still holds
     if not decision.ok:
-        print(f"spark: not starting {name}: {decision.reason}", file=sys.stderr)
-        record_refusal(state, name, decision.reason)
-        return 3
+        return _refuse(state, name, decision.reason)
     clear_refusal(state)
     _mark_first_to_kill()
     os.execvpe(cmd[0], cmd, engine_env(os.environ))

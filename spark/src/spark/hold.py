@@ -17,12 +17,27 @@ class Hold:
     unloaded: tuple[str, ...]
 
 
+def _parse(text: str) -> Hold:
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("not a hold: expected a JSON object")
+    since, reason, unloaded = data.get("since"), data.get("reason"), data.get("unloaded", [])
+    if not (isinstance(since, str) and isinstance(reason, str) and isinstance(unloaded, list)
+            and all(isinstance(name, str) for name in unloaded)):
+        raise ValueError("not a hold: since and reason must be strings, unloaded a list of model names")
+    return Hold(since, reason, tuple(unloaded))
+
+
 def read_hold(state_dir: Path) -> Hold | None:
+    """None only when there is no hold file. One that can't be read or parsed still holds (fail closed),
+    with a reason that names the file."""
     path = Path(state_dir) / FILE
-    if not path.exists():
+    try:
+        return _parse(path.read_text())
+    except FileNotFoundError:
         return None
-    data = json.loads(path.read_text())
-    return Hold(data["since"], data["reason"], tuple(data.get("unloaded", ())))
+    except (OSError, ValueError) as err:
+        return Hold("an unknown time", f"hold file {path} can't be read: {err}", ())
 
 
 def write_hold(state_dir: Path, hold: Hold) -> None:
@@ -43,8 +58,8 @@ def write_hold(state_dir: Path, hold: Hold) -> None:
 
 
 def release_hold(state_dir: Path) -> bool:
-    path = Path(state_dir) / FILE
-    if path.exists():
-        path.unlink()
-        return True
-    return False
+    try:
+        (Path(state_dir) / FILE).unlink()
+    except FileNotFoundError:
+        return False
+    return True
