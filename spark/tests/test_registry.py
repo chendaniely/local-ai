@@ -396,3 +396,18 @@ def test_the_loader_refuses_python_tags_rather_than_running_them(tmp_path):
     path = with_coder_args(tmp_path, "[--x, !!python/object/apply:builtins.len [[1, 2]]]")
     with pytest.raises(yaml.YAMLError, match="python/object/apply"):
         load_registry(path)
+
+
+# Task 6's fix round 1: llama-swap v257 looks a name up among the models before the roles (Config.RealModelName).
+
+def test_a_role_may_not_be_another_models_name(tmp_path):
+    # Requests for it would reach vision-chat, never coder.
+    path = mutated(tmp_path, lambda d: d["models"]["coder"].update(roles=["coder", "vision-chat"]))
+    with pytest.raises(RegistryError, match="^coder: role 'vision-chat' is another model's name"):
+        load_registry(path)
+
+
+def test_a_role_may_repeat_its_own_models_name():
+    # The fixture's embed and stt do: llama-swap finds the same model either way.
+    registry = load_registry(FIXTURE)
+    assert "embed" in registry.models["embed"].roles and "stt" in registry.models["stt"].roles

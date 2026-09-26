@@ -39,7 +39,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ValueError as err:  # RegistryError, RenderError, VersionsError: a refusal, whose message is the reason
+        print(f"spark {args.command}: {err}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

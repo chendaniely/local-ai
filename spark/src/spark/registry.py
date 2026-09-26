@@ -240,5 +240,10 @@ def load_registry(path: Path) -> Registry:
         for role in model.roles:
             if role in seen:
                 raise RegistryError(f"role {role!r} is used by both {seen[role]} and {model.name}")
+            # llama-swap looks a name up among the models before the roles. A role that repeats its own model's
+            # name finds that model either way; another model's name never reaches this one.
+            if role in models and role != model.name:
+                raise RegistryError(f"{model.name}: role {role!r} is another model's name, and llama-swap finds a "
+                                    f"model by its name first, so the role would never reach {model.name}")
             seen[role] = model.name
     return Registry(budget, brake, engines, models)

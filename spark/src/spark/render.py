@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 from pathlib import Path
 
 import yaml
@@ -35,6 +36,7 @@ OWNED_FLAGS = {
 # llama-swap splits a command as a POSIX shell does, so a word with one of these reaches the engine as other words:
 # `--ho\st` as --host, `a.bin --host 0.0.0.0` as three.
 _SPLITS = re.compile(r"[\s'\"\\]")
+TENTH = Decimal("0.1")
 
 
 class RenderError(ValueError):
@@ -84,12 +86,23 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
     return cmd + list(model.args)
 
 
+def _gib(value: float) -> Decimal:
+    """The number as the registry gave it. In binary floats 72.1 − 22.1 is 49.99999999999999, which would refuse a
+    50 GiB set that fits exactly."""
+    return Decimal(repr(value))
+
+
 def check_budget(registry: Registry) -> None:
-    room = registry.budget.allocatable_gib - registry.budget.reserve_gib
-    total = registry.static_total_gib()
-    if total > room:
-        raise RenderError(f"the model set needs ~{total:.0f} GiB but the budget allows {room:.0f} GiB "
-                          f"(allocatable {registry.budget.allocatable_gib:g} − reserve {registry.budget.reserve_gib:g})")
+    budget = registry.budget
+    with localcontext(prec=400):  # every digit of any finite float, so even an absurd number sums and rounds exactly
+        allocatable, reserve = _gib(budget.allocatable_gib), _gib(budget.reserve_gib)
+        room = allocatable - reserve
+        total = sum((_gib(m.footprint_gib) for m in registry.models.values()), Decimal(0))
+        if total > room:
+            # One decimal, each rounded against the set: the need up, the room down. So the two can't read as a fit.
+            raise RenderError(f"the model set needs {total.quantize(TENTH, ROUND_CEILING):f} GiB but the budget "
+                              f"allows {room.quantize(TENTH, ROUND_FLOOR):f} GiB "
+                              f"(allocatable {allocatable:f} − reserve {reserve:f})")
 
 
 def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
@@ -140,9 +153,17 @@ def _only(registry: Registry, what: str, match) -> str:
     return names[0]
 
 
+def _component(versions: dict[str, Component], name: str) -> Component:
+    if name not in versions:
+        raise RenderError(f"{name}: not in the versions file, and render needs it")
+    return versions[name]
+
+
 def _image(c: Component) -> str:
     if not c.image or not c.pin:
         raise RenderError(f"{c.name}: image and pin are required to deploy")
+    if not c.pin.startswith("sha256:"):  # versions.yaml's git:<40 hex> pins a source build; Compose takes a digest
+        raise RenderError(f"{c.name}: an image is pinned by its sha256: digest, not {c.pin}")
     return f"{c.image}:{c.version}@{c.pin}"
 
 
@@ -150,9 +171,9 @@ def render(registry: Registry, versions: dict[str, Component], registry_text: st
            templates: Path = TEMPLATES) -> dict[str, str]:
     check_budget(registry)
     fields = {
-        "llama_swap_version": versions["llama-swap"].version,
-        "open_webui_image": _image(versions["open-webui"]),
-        "searxng_image": _image(versions["searxng"]),
+        "llama_swap_version": _component(versions, "llama-swap").version,
+        "open_webui_image": _image(_component(versions, "open-webui")),
+        "searxng_image": _image(_component(versions, "searxng")),
         "task_model": _only(registry, "model with the 'small' role", lambda m: "small" in m.roles),
         "embedding_model": _only(registry, "embeddings model", lambda m: m.capability == "embeddings"),
         "stt_model": _only(registry, "transcription model", lambda m: m.capability == "transcription"),

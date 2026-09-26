@@ -5,16 +5,17 @@ from pathlib import Path
 import pytest
 import yaml
 
+from spark import cli
 from spark.registry import load_registry
-from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, installed_path, render
+from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render, write_tree
 from spark.versions import load_versions
 
 FIX = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def rendered(registry_path=FIX / "models.yaml"):
-    return render(load_registry(registry_path), load_versions(FIX / "versions.yaml"),
+def rendered(registry_path=FIX / "models.yaml", versions_path=FIX / "versions.yaml"):
+    return render(load_registry(registry_path), load_versions(versions_path),
                   Path(registry_path).read_text(), templates=ROOT / "stack/templates")
 
 
@@ -36,6 +37,20 @@ def registry_with(tmp_path, change) -> Path:
     path = tmp_path / "models.yaml"
     path.write_text(yaml.safe_dump(data))
     return path
+
+
+def versions_with(tmp_path, change) -> Path:
+    """The fixture versions after `change` (a function of its components), in a file of its own."""
+    data = yaml.safe_load((FIX / "versions.yaml").read_text())
+    change(data["components"])
+    path = tmp_path / "versions.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return path
+
+
+def tree(out: Path) -> dict[str, str]:
+    """Every file under `out`, by its path relative to `out`, as render names them."""
+    return {path.relative_to(out).as_posix(): path.read_text() for path in out.rglob("*") if path.is_file()}
 
 
 def values(words: list[str], flag: str) -> list[str | None]:
@@ -225,3 +240,117 @@ def test_a_word_llama_swap_would_split_or_unescape_is_refused(tmp_path, change, 
     # llama-swap splits a command as a POSIX shell does, so the checks above only hold if every word stays one.
     with pytest.raises(RenderError, match=f"^{re.escape(model)}: .* wouldn't reach the engine as one word"):
         rendered(registry_with(tmp_path, change))
+
+
+# Task 6's fix round 1: every refusal names what's wrong, with numbers that can't read as a fit.
+
+def test_an_image_is_pinned_by_its_digest_not_a_commit(tmp_path):
+    # versions.yaml takes git:<40 hex> for a source build; Compose would refuse image@git:… only at `up`.
+    path = versions_with(tmp_path, lambda c: c["open-webui"].update(pin="git:" + "a" * 40))
+    with pytest.raises(RenderError, match="^open-webui: an image is pinned by its sha256: digest"):
+        rendered(versions_path=path)
+
+
+@pytest.mark.parametrize("change", [pytest.param(lambda c: c["open-webui"].pop("image"), id="no image"),
+                                    pytest.param(lambda c: c["searxng"].update(pin=None), id="no pin")])
+def test_an_image_needs_its_name_and_its_pin(tmp_path, change):
+    with pytest.raises(RenderError, match="image and pin are required to deploy"):
+        rendered(versions_path=versions_with(tmp_path, change))
+
+
+@pytest.mark.parametrize("name", ["llama-swap", "open-webui", "searxng"])
+def test_a_component_render_needs_is_named_when_it_is_missing(tmp_path, name):
+    with pytest.raises(RenderError, match=f"^{re.escape(name)}: not in the versions file"):
+        rendered(versions_path=versions_with(tmp_path, lambda c: c.pop(name)))
+
+
+ONE_FOR_EACH_JOB = [  # (the edit, the refusal): Open WebUI is given one task model, one embeddings, one speech-to-text
+    pytest.param(lambda d: d["models"]["vision-chat"].update(roles=["vision"]),
+                 "need exactly one model with the 'small' role, found []", id="no small model"),
+    pytest.param(lambda d: d["models"]["coder"].update(capability="embeddings"),
+                 "need exactly one embeddings model, found ['coder', 'embed']", id="two embeddings models"),
+    pytest.param(lambda d: d["models"].pop("stt"),
+                 "need exactly one transcription model, found []", id="no transcription model"),
+]
+
+
+@pytest.mark.parametrize("change, refusal", ONE_FOR_EACH_JOB)
+def test_open_webui_needs_exactly_one_model_for_each_job(tmp_path, change, refusal):
+    with pytest.raises(RenderError, match=f"^{re.escape(refusal)}$"):
+        rendered(registry_with(tmp_path, change))
+
+
+@pytest.mark.parametrize("allocatable, coder, refusal", [
+    pytest.param(102, 56.4, "needs 78.4 GiB but the budget allows 78.0 GiB (allocatable 102 − reserve 24)",
+                 id="78.4 against 78"),
+    pytest.param(102, 56.01, "needs 78.1 GiB but the budget allows 78.0 GiB (allocatable 102 − reserve 24)",
+                 id="78.01 against 78"),
+    pytest.param(102.05, 56.06, "needs 78.1 GiB but the budget allows 78.0 GiB (allocatable 102.05 − reserve 24)",
+                 id="78.06 against 78.05"),
+])
+def test_a_refused_budget_never_reads_as_a_fit(tmp_path, allocatable, coder, refusal):
+    # The fixture's other models take 22 GiB, and ":.0f" showed 78.4 against 78 GiB of room (102 − 24) as "needs ~78
+    # GiB but the budget allows 78 GiB". Now one decimal, each rounded against the set: the need up, the room down.
+    path = registry_with(tmp_path, lambda d: (d["budget"].update(allocatable_gib=allocatable),
+                                              d["models"]["coder"].update(footprint_gib=coder)))
+    with pytest.raises(RenderError) as err:
+        rendered(path)
+    assert str(err.value) == f"the model set {refusal}"
+
+
+def test_a_set_that_fits_exactly_renders(tmp_path):
+    # In binary floats 72.1 − 22.1 is 49.99999999999999, which refused the fixture's 50 GiB though it fits exactly.
+    path = registry_with(tmp_path, lambda d: d["budget"].update(allocatable_gib=72.1, reserve_gib=22.1))
+    assert "llama-swap.yaml" in rendered(path)
+
+
+def test_an_absurd_footprint_is_still_refused_with_its_numbers(tmp_path):
+    # Decimal's default 28 digits can't hold 1e30 to a tenth, and the refusal would crash instead of saying why.
+    path = registry_with(tmp_path, lambda d: d["models"]["coder"].update(footprint_gib=1e30))
+    with pytest.raises(RenderError, match=r"^the model set needs 1000000000000000000000000000022\.0 GiB "):
+        rendered(path)
+
+
+def test_each_engine_gets_its_own_flags():
+    registry = load_registry(FIX / "models.yaml")
+    vision, embed, stt, coder = (engine_cmd(registry.models[name], registry)
+                                 for name in ("vision-chat", "embed", "stt", "coder"))
+    # Weights and projector come from the pinned snapshot, where `spark models pull` puts them (the Hub's cache layout).
+    snapshot = "/var/lib/local-ai/hf/hub/models--example-org--vision-GGUF/snapshots/" + "1" * 40
+    assert values(vision, "--model") == [f"{snapshot}/vision.gguf"]
+    assert values(vision, "--mmproj") == [f"{snapshot}/vision-mmproj.gguf"]
+    assert "--mmproj" not in embed + stt + coder  # only a model with a projector gets one
+    assert "--embedding" in embed and "--embedding" not in vision + stt + coder
+    # whisper-server answers where llama-swap and Open WebUI send audio, and gets none of llama-server's flags.
+    assert values(stt, "--inference-path") == ["/v1/audio/transcriptions"]
+    assert not {"--ctx-size", "--parallel", "--gpu-layers", "--cache-ram", "--embedding"} & set(stt)
+    # llama-server gets the registry's settings for the model, and every engine gets the model's args, last.
+    assert [values(coder, flag) for flag in ("--ctx-size", "--parallel", "--gpu-layers", "--cache-ram")] == [
+        ["131072"], ["1"], ["all"], ["2048"]]
+    for name, cmd in (("stt", stt), ("coder", coder)):
+        args = list(registry.models[name].args)
+        assert cmd[-len(args):] == args, name
+
+
+def test_write_tree_writes_each_file_under_out_making_its_folders(tmp_path):
+    files = rendered()
+    write_tree(files, tmp_path / "out")  # out, compose/searxng/ and systemd/ don't exist yet
+    assert tree(tmp_path / "out") == files
+
+
+@pytest.mark.parametrize("given", [True, False], ids=["the files given", "stack's own by default"])
+def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, given):
+    monkeypatch.chdir(ROOT)  # as `make` runs it: the templates and stack's own files are found from the repo root
+    out = tmp_path / "out"
+    files = ["--registry", str(FIX / "models.yaml"), "--versions", str(FIX / "versions.yaml")] if given else []
+    assert cli.main(["render", "--out", str(out), *files]) == 0
+    assert capsys.readouterr().out == f"render: 8 files → {out}\n"
+    assert tree(out) == (rendered() if given else real())
+
+
+def test_the_brake_and_llama_swap_keep_systemds_default_umask():
+    # The hold and the refusal record they write stay readable by spark-admin, which `spark status` needs; a UMask
+    # tighter than 0027 on either unit would hide them (Task 5's review).
+    files = rendered()
+    for unit in ("local-ai-brake.service", "local-ai-llama-swap.service"):
+        assert "UMask" not in files[f"systemd/{unit}"], unit
