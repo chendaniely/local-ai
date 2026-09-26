@@ -120,7 +120,7 @@ In order of how much they constrain the design:
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
-| **Mac and agent clients** | `clients/` | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
 
@@ -158,12 +158,27 @@ In order of how much they constrain the design:
   Phase 1, what root runs is root's own: the `local-ai-*` units and the Compose project are
   root-owned copies that `make install-units` installs with sudo, after showing what changed, so
   nothing running as Dan — the Spark session, Positron's packages, a build — changes what root runs
-  without Dan's password. The polkit rule lets `spark-admin` start, stop and restart the four units
+  without Dan's sudo. The polkit rule lets `spark-admin` start, stop and restart the four units
   by exact name, and nothing more. (Corrected 2026-09-25: this said Dan's account is effectively
   root-capable through sudo and through `spark-admin`, which could change what the `local-ai-*`
   units run without a password; Dan's decision on the unit-file model, under *Open items and
-  risks*, closed the second path.) `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
+  risks*, closed the second path. Corrected again 2026-09-25, after Phase 1's pre-flight review:
+  this said "without Dan's password", and named none of the paths the next bullet lists.) `agent` —
+  tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
   writes its repos and the NAS work folders; its own key; no GitHub credentials.
+- **Paths that stay open** (2026-09-25, from Phase 1's pre-flight review; Phase 1's council, in its
+  Task 17, takes them up). Root's own copies close one way from Dan's account to root, not all:
+  - `make install-units`, like `make bootstrap`, `make hold-gpu` and `make upgrade-gpu`, runs as
+    root whatever the clone's own `Makefile` and `stack/host/bootstrap.sh` say. Dan's account can
+    write both, and no diff shows them: `make install-units` shows only the staged files.
+  - sudo caches Dan's credential for about 15 minutes in each terminal, and anything running as
+    Dan in that terminal meanwhile can use sudo without a password. `make install-units` ends with
+    `sudo -k`, so the `make apply` that follows can't use it; `make bootstrap`, `make hold-gpu` and
+    `make upgrade-gpu` keep the cache.
+  - Root's containers read `spark`-owned data: Open WebUI's Functions, kept under
+    `/var/lib/local-ai/open-webui`, run as the container's root with host networking.
+  - Dan's account can make `spark` run anything, through `/opt/local-ai`'s `app`, `bin`, `etc` and
+    `python` folders, which `spark-admin` writes, and `spark` holds all four llama-swap keys.
 - **Secrets.** Never `EnvironmentFile=~/.secrets` — systemd ignores `export` lines and has been
   reported logging them with their values. Dan writes one `KEY=value` file per service, 0640
   root:spark, in `/etc/local-ai/secrets/`, a folder his own account can't list, outside any agent
@@ -265,6 +280,10 @@ website/    Quarto docs site (_quarto.yml, scenarios/, how-to/, reference/, desi
 The root keeps `README.md`, `CLAUDE.md`, `LICENSE`, `changelog.md` and `cosmicbboy-local-ai.md`,
 plus a `Makefile` — the front door.
 
+(2026-09-25: Phase 1 keeps the Compose file and the units as templates in `stack/templates/`, which
+`spark render` fills; there is no `stack/compose.yaml` or `stack/systemd/`. There is no `clients/`
+yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's provider.)
+
 ### Deploy workflow (Mac ⇄ GitHub ⇄ Spark)
 
 - **Edit on either machine** (as Dan, never as `agent`). Pushes happen only with Dan's explicit OK.
@@ -288,16 +307,23 @@ plus a `Makefile` — the front door.
   configs in a deploy directory outside the repo), validates with each tool's own checker, shows the
   diff, restarts only what changed (llama-swap waits for idle models or asks), then runs a quick
   `spark doctor`. It warns about uncommitted changes. It never writes what root runs: when the units
-  or the Compose project change, it stages them and stops, `make install-units` (sudo) shows what
-  root will run and installs it, and the next `make apply` restarts each unit still running the
-  older definition, llama-swap only when idle.
+  or the Compose project change, it stages them and stops, `make install-units` (sudo) shows the
+  staged files root will run and installs them, and the next `make apply` restarts each unit still
+  running the older definition, llama-swap only when idle. (2026-09-25: Phase 1 builds less than
+  this, for now. Its `spark apply` lists the files that change, not their diff:
+  `make install-units` is what shows root's files as diffs. It runs no `spark doctor` itself, so
+  `make doctor` follows it. While models are loaded it refuses a llama-swap restart, unless
+  `--now`, rather than waiting. And there is no `make deploy` from the Mac yet: whether Phase 1
+  builds it is left for its close, Task 17. S17, a Phase 2 scenario, still expects the diff and
+  the wait.)
 - **Hybrid runtime:** Compose for Open WebUI and SearXNG (later LiteLLM and Postgres); systemd for
   llama-swap and the gate; engines are pinned binaries or on-demand containers; host setup happens in
   bootstrap; ntfy and the watchdog run under Compose on the Synology; the Mac pieces install with
   `make clients`.
 - **The Makefile is the front door.** `make help` lists `bootstrap, apply, deploy, status,
   logs s=<name>, doctor, test, docs, clients`; the logic lives in the Python CLI. It stays portable to
-  macOS's older GNU make.
+  macOS's older GNU make. (2026-09-25: after Phase 1, every target here exists but `deploy`; see
+  *After any change*.)
 - **Python via uv everywhere** (uv is installed on both machines — on the Spark as a per-user install
   in `~/.local/bin`). `spark/` is a uv project (`pyproject.toml` + `uv.lock`; uv's `required-version`
   pinned in `versions.yaml`); the Makefile calls `uv run --frozen spark …`; standalone helper scripts
@@ -330,6 +356,9 @@ plus a `Makefile` — the front door.
 - **Unit tests (TDD):** admission decisions, brake ordering, idle policy, refusal text — pure
   functions with fixtures. They run anywhere: the Mac, the Spark, CI.
 - **Render tests:** golden files plus each tool's own validator; CI runs `spark render --check`.
+  (2026-09-25: Phase 1's CI runs `spark render --out`, which fails on anything render refuses; there
+  is no `--check` yet. Its render tests assert what matters in each rendered file rather than
+  comparing golden files, and `spark apply` runs llama-swap's own `-validate`.)
 - **`spark doctor`** runs only on the Spark, after any change: one check per scenario, plus — a second
   load evicts nothing; refusals through real clients on chat, streaming, `/v1/responses`, embeddings
   and transcription; direct llama-swap calls need a key; allow-lists hold; idle unload fires; the
@@ -681,6 +710,19 @@ Each item gets its own design pass when its turn comes.
   grubenv, which `grub-editenv` run as root would create. The manual GRUB check stays for the steps
   by hand, and that GRUB boots the newest kernel on this box is still unchecked (Task 12 Step 1).
   `updates.md` step 1 and S23 no longer say the check is left to Dan.
+- **2026-09-25** — Phase 1's pre-flight review and a scan across its tasks, fixed in
+  `website/design/phase-1.md` before Task 1, with every Task 1–10 listing run again on the Mac and
+  in an `ubuntu:24.04` container. `make install-units` refuses a staged file with control
+  characters, which could hide a line of the diff it shows, and gives each read 10 s and 64 KiB; it
+  ends with `sudo -k`. `spark apply` counts a llama-swap whose unit runs but that doesn't answer as
+  having models loaded, judges a unit outdated by when its start began, to the microsecond, lists
+  as restarts only those it makes, and says how to finish when a restart fails after its files are
+  deployed. `admit()` caps `MemAvailable` at the allocatable ceiling, as *Admission and memory
+  rules* says, and the brake waits 2 s at most for llama-swap. *Users, access and security* names
+  the paths that stay open, for Phase 1's council, and no longer says "without Dan's password".
+  Dated notes in *Components*, *Repo layout*, *Deploy workflow* and *Testing* say what Phase 1
+  builds where this plan says more. Every push in the phase plan starts with the pre-push scan, and
+  README §Contents changes with each task that makes it untrue.
 
 ## Sources
 
