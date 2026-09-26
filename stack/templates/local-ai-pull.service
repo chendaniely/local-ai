@@ -1,0 +1,17 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: download the registry's model files at their pinned revisions
+
+[Service]
+Type=oneshot
+User=spark
+Group=spark
+# Optional: none of Phase 1's repos is gated. A token only matters for a gated model later.
+EnvironmentFile=-/etc/local-ai/secrets/hf.env
+Environment=HF_HOME=/var/lib/local-ai/hf
+# spark's home, /var/lib/local-ai, is root's: caches go to folders bootstrap gives spark.
+Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache
+Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache
+Environment=HF_HUB_DISABLE_PROGRESS_BARS=1
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
+ExecStart=/opt/local-ai/app/.venv/bin/spark models pull

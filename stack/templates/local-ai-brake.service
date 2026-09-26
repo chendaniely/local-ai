@@ -1,0 +1,18 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: the memory brake
+After=local-ai-llama-swap.service
+
+[Service]
+User=spark
+Group=spark
+EnvironmentFile=/etc/local-ai/secrets/llama-swap.env
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
+Environment=SPARK_STATE=/var/lib/local-ai/brake
+ExecStart=/opt/local-ai/app/.venv/bin/spark brake --key-env LLAMASWAP_KEY_SPARK
+Restart=always
+RestartSec=2
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target

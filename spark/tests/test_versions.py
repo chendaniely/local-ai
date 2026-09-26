@@ -72,3 +72,13 @@ def test_stack_page_is_a_table_marked_generated(tmp_path):
     page = render_stack_page(load_versions(write(tmp_path, GOOD)))
     assert "generated from `stack/versions.yaml`" in page
     assert "| llama-swap | v257 | spark | not yet |" in page
+
+
+def test_a_source_build_is_pinned_by_its_commit(tmp_path):
+    pinned = GOOD.replace("pin: null\n    deployed: true", "pin: git:" + "a" * 40 + "\n    deployed: true", 1)
+    assert load_versions(write(tmp_path, pinned))["llama-swap"].pin == "git:" + "a" * 40
+
+
+def test_rejects_a_component_without_a_version(tmp_path):
+    with pytest.raises(VersionsError, match="version"):
+        load_versions(write(tmp_path, GOOD.replace("    version: v257\n", "", 1)))

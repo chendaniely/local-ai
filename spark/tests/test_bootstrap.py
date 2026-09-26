@@ -388,6 +388,14 @@ def test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in
     assert "-o spark -g spark-admin -m 2770" in install_d_line("/var/lib/local-ai/brake")
 
 
+def test_spark_gets_its_cache_folders_from_root():
+    # spark can't write its home, so the units that run engines or pull models set XDG_CACHE_HOME
+    # and CUDA_CACHE_PATH to these. Root creates them directly under its own parent, never inside a
+    # folder spark owns.
+    for path in ("/var/lib/local-ai/cache", "/var/lib/local-ai/cuda-cache"):
+        assert "-o spark -g spark -m 0750" in install_d_line(path)
+
+
 def test_bootstrap_never_acts_inside_agents_home():
     # agent controls everything under its home, so a root `install`, `chown` or `chmod` there can
     # be pointed anywhere by a planted symlink. The home itself sits in root's /home: that is safe.

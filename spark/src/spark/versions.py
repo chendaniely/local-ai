@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 MACHINES = {"mac", "spark", "synology", "ci"}
-PIN = re.compile(r"^sha256:[0-9a-f]{64}$")
+PIN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")
 
 
 class VersionsError(ValueError):
@@ -27,18 +27,21 @@ class Component:
     context7: str | None
     changelog: str
     advisories: str | None
+    image: str | None = None
 
 
 def load_versions(path: Path) -> dict[str, Component]:
     data = yaml.safe_load(Path(path).read_text()) or {}
     components: dict[str, Component] = {}
     for name, raw in (data.get("components") or {}).items():
+        if raw.get("version") in (None, ""):
+            raise VersionsError(f"{name}: version is required")
         where = tuple(raw.get("where") or ())
         if not where or not set(where) <= MACHINES:
             raise VersionsError(f"{name}: 'where' must list some of {sorted(MACHINES)}")
         pin = raw.get("pin")
         if pin is not None and not PIN.match(str(pin)):
-            raise VersionsError(f"{name}: pin must look like sha256:<64 hex> or be null")
+            raise VersionsError(f"{name}: pin must be sha256:<64 hex>, git:<40 hex>, or null")
         for key in ("docs", "changelog"):
             if not str(raw.get(key, "")).startswith("https://"):
                 raise VersionsError(f"{name}: {key} must be an https:// URL")
@@ -52,6 +55,7 @@ def load_versions(path: Path) -> dict[str, Component]:
             context7=raw.get("context7"),
             changelog=raw["changelog"],
             advisories=raw.get("advisories"),
+            image=raw.get("image"),
         )
     return components
 

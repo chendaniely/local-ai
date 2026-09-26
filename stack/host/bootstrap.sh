@@ -162,7 +162,8 @@ users_and_groups() {
 directories() {
   say "directories"
   # Code and config are root-owned and group-writable by spark-admin. spark only reads them: it runs
-  # the engines, and root runs the units and the Compose file that live in etc/.
+  # the engines. What root runs isn't here: etc/ only stages the units and the Compose project, and
+  # `make install-units` installs root's own copies of them.
   run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
   run install -d -o root -g spark-admin -m 0750 /etc/local-ai
   run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
@@ -171,7 +172,8 @@ directories() {
   # hands to it. It is also spark's home, so a cache under $HOME needs a spark-owned child here
   # and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
   run install -d -o root -g root -m 0755 /var/lib/local-ai
-  run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng
+  run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng \
+    /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
   run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
   # Nothing inside agent's home: agent controls it, so root never writes there. agent makes its
   # own ~/work.

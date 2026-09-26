@@ -1,0 +1,44 @@
+# Rendered by `spark render` — edit stack/templates/compose.yaml, not this file.
+name: local-ai
+services:
+  open-webui:
+    image: {open_webui_image}
+    network_mode: host
+    restart: unless-stopped
+    logging: {{driver: journald}}   # `make logs s=open-webui`, no docker access needed
+    env_file: [/etc/local-ai/secrets/open-webui.env]
+    environment:
+      HOST: 127.0.0.1
+      PORT: "3000"
+      ENABLE_PERSISTENT_CONFIG: "false"
+      ENABLE_SIGNUP: "false"   # closed after the first account, the admin; if even that is refused, see deploy.md
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URLS: http://127.0.0.1:9100/v1
+      ENABLE_DIRECT_CONNECTIONS: "false"
+      ENABLE_CODE_EXECUTION: "false"
+      ENABLE_CODE_INTERPRETER: "false"
+      TASK_MODEL_EXTERNAL: {task_model}
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_OPENAI_API_BASE_URL: http://127.0.0.1:9100/v1
+      RAG_EMBEDDING_MODEL: {embedding_model}
+      AUDIO_STT_ENGINE: openai
+      AUDIO_STT_OPENAI_API_BASE_URL: http://127.0.0.1:9100/v1
+      AUDIO_STT_MODEL: {stt_model}
+      ENABLE_WEB_SEARCH: "true"
+      WEB_SEARCH_ENGINE: searxng
+      SEARXNG_QUERY_URL: http://127.0.0.1:8888/search
+    volumes:
+      - /var/lib/local-ai/open-webui:/app/backend/data
+  searxng:
+    image: {searxng_image}
+    network_mode: host
+    restart: unless-stopped
+    logging: {{driver: journald}}
+    env_file: [/etc/local-ai/secrets/searxng.env]
+    environment:
+      GRANIAN_HOST: 127.0.0.1
+      GRANIAN_PORT: "8888"
+      FORCE_OWNERSHIP: "false"
+    volumes:
+      - ./searxng:/etc/searxng:ro
+      - /var/lib/local-ai/searxng:/var/cache/searxng

@@ -1,5 +1,6 @@
 # Every pinned component. `spark apply` refuses to deploy a component with deployed: true and no pin.
 # pin: sha256:<64 hex> — a release file's checksum, or a container image's digest.
+# git:<40 hex> — the commit a source build was built from.
 components:
   uv:
     version: 0.12.18
@@ -51,14 +52,14 @@ components:
   llama-swap:
     version: v257
     where: [spark]
-    pin: null
+    pin: sha256:8fb15ff81108064eaedf95af58212be9d7f43775841e1099387dfa823e5ca2b1
     deployed: true
     docs: https://github.com/mostlygeek/llama-swap
     context7: null
     changelog: https://github.com/mostlygeek/llama-swap/releases
     advisories: null
   llama.cpp:
-    version: v0.5.0
+    version: b11146
     where: [spark]
     pin: null
     deployed: true
@@ -77,10 +78,21 @@ components:
     advisories: null
   open-webui:
     version: v0.11.4
+    image: ghcr.io/open-webui/open-webui
     where: [spark]
-    pin: null
+    pin: sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
     deployed: true
     docs: https://docs.openwebui.com/
     context7: /open-webui/docs
     changelog: https://github.com/open-webui/open-webui/releases
     advisories: https://github.com/open-webui/open-webui/security/advisories
+  searxng:
+    version: 2026.9.23-3cd69d30e
+    image: docker.io/searxng/searxng
+    where: [spark]
+    pin: sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
+    deployed: true
+    docs: https://docs.searxng.org/
+    context7: null
+    changelog: https://github.com/searxng/searxng/commits/master
+    advisories: https://github.com/searxng/searxng/security/advisories
