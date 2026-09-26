@@ -11,7 +11,7 @@ from pathlib import Path
 
 from spark import paths
 from spark.hold import UNREADABLE_SINCE, Hold, read_hold, release_hold, write_hold
-from spark.llamaswap import LlamaSwap, LlamaSwapError, key_from_env
+from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.memory import MemInfo, read_meminfo
 from spark.registry import BrakeThresholds, Registry, load_registry
 
@@ -19,8 +19,17 @@ from spark.registry import BrakeThresholds, Registry, load_registry
 # next model. llama-swap v257 gives an engine its unloadTimeout (10 s by default; the stack's config leaves it) to
 # exit on SIGTERM before it SIGKILLs it, so a slow but normal stop takes up to 10 s. The 5 s beyond allow for the
 # kill and for the memory to show in MemAvailable (not yet measured on this box). The wait costs no safety: once
-# memory falls below where it was, it ends.
+# memory falls more than FLOOR_TOLERANCE_GIB below where it was, it ends.
 GRACE_S = 15.0
+
+# How far MemAvailable may dip below where it was when an unload began before the brake stops waiting for that
+# unload's memory: it moves by megabytes from poll to poll, and noise is not a fall. Not yet measured on this box
+# (the on-box brake test samples MemAvailable under pressure).
+FLOOR_TOLERANCE_GIB = 0.5
+
+# An engine's state only moves on: starting, ready, stopping. A model listed at an earlier state than the brake last
+# saw it in is a new engine.
+STAGES = {"starting": 0, "ready": 1, "stopping": 2}
 
 # The plan's starting thresholds (Admission and memory rules, 5), for when the registry won't load.
 FALLBACK = BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250)
@@ -87,8 +96,9 @@ class _Returning:
     """Memory on its way back, from a model whose unload llama-swap accepted or that it shows `stopping`."""
 
     gib: float  # the model's registry footprint; 0 for a model the registry doesn't know
-    floor_gib: float  # MemAvailable when it began: if memory falls below this, the brake stops waiting for it
+    floor_gib: float  # MemAvailable when it began: more than FLOOR_TOLERANCE_GIB below it, the brake stops waiting
     since_s: float  # when it began, on the brake's clock
+    stage: int  # the furthest state (STAGES) the brake has seen its engine in
     counted: bool = True  # False once the brake has stopped waiting for it
 
 
@@ -106,12 +116,15 @@ class _Brake:
         self.returning: dict[str, _Returning] = {}
 
     def check_state_dir(self) -> None:
-        if not self.state_dir.is_dir():
-            why = "it doesn't exist or isn't a folder"
-        elif not os.access(self.state_dir, os.W_OK | os.X_OK):
-            why = "this user can't write to it"
-        else:
-            return
+        try:
+            if not self.state_dir.is_dir():
+                why = "it doesn't exist or isn't a folder"
+            elif not os.access(self.state_dir, os.W_OK | os.X_OK):
+                why = "this user can't write to it"
+            else:
+                return
+        except OSError as err:  # Python 3.12's is_dir raises on EACCES on the way to the folder, or EIO
+            why = f"it can't be looked at ({err})"
         self.log(f"brake: ALERT — no hold can be written in {self.state_dir}: {why}. Models are still unloaded, "
                  "but new loads won't be held")
 
@@ -120,11 +133,14 @@ class _Brake:
         listed = self.listed(mem)
         self.settle(mem, listed)
         running = [m for m, state in listed or () if state in ("starting", "ready") and m not in self.asked]
+        states = dict(listed or ())
         inflight = sum(r.gib for r in self.returning.values() if r.counted)
         actions = plan_brake(mem, thresholds, self.registry, running, inflight)
         if not actions:
             self.warned = False
             self.asked.clear()
+            # A credit no longer counted would keep a later one for the same model from being counted.
+            self.returning = {m: r for m, r in self.returning.items() if r.counted}
         for action in actions:
             if action.kind == "warn" and not self.warned:
                 self.log(f"brake: warning — {mem.available_gib:.1f} GiB available (warns below {thresholds.warn_gib:g})")
@@ -133,7 +149,7 @@ class _Brake:
                 if self.write(Hold(self.now(), f"{mem.available_gib:.1f} GiB available", ())):
                     self.log("brake: holding new loads until `spark brake --release`")
             elif action.kind == "unload":
-                self.unload(action.model, mem)
+                self.unload(action.model, mem, states.get(action.model))
 
     def listed(self, mem: MemInfo) -> list[tuple[str, str]] | None:
         """What llama-swap runs, asked only below the warn line or while memory is on its way back: every call
@@ -150,18 +166,27 @@ class _Brake:
         return listed
 
     def settle(self, mem: MemInfo, listed: list[tuple[str, str]] | None) -> None:
-        """Memory on its way back has arrived once its model has left /running. The brake stops waiting for it
-        when memory falls below where it was, or when the grace is over."""
+        """Memory on its way back has arrived once its model has left /running, or is back at an earlier state (a
+        new engine). The brake stops waiting for it when memory falls more than FLOOR_TOLERANCE_GIB below where it
+        was, or when the grace is over."""
         if listed is not None:
             names = {m for m, _ in listed}
             for model in [m for m in self.returning if m not in names]:
                 del self.returning[model]
             self.asked &= names  # a model that went and came back is a new engine
             for model, state in listed:
-                if state == "stopping" and model not in self.returning:
-                    self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock)
+                r, stage = self.returning.get(model), STAGES.get(state)
+                if r is not None and stage is not None and stage < r.stage:  # went and came back between polls
+                    del self.returning[model]
+                    self.asked.discard(model)
+                    r = None
+                elif r is not None and stage is not None:
+                    r.stage = stage
+                if r is None and state == "stopping":
+                    self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock,
+                                                       STAGES["stopping"])
         for model, r in self.returning.items():
-            if r.counted and mem.available_gib < r.floor_gib:
+            if r.counted and mem.available_gib < r.floor_gib - FLOOR_TOLERANCE_GIB:
                 r.counted = False
                 self.log(f"brake: memory still falling ({mem.available_gib:.1f} GiB, {r.floor_gib:.1f} when {model} "
                          "began to unload): not waiting for it")
@@ -169,15 +194,21 @@ class _Brake:
                 r.counted = False
                 self.log(f"brake: {model} still hasn't given its memory back after {GRACE_S:g} s: not waiting for it")
 
-    def unload(self, model: str, mem: MemInfo) -> None:
+    def unload(self, model: str, mem: MemInfo, state: str | None) -> None:
         self.asked.add(model)
         try:
             self.client.unload(model)
+        except LlamaSwapUnreachable as err:
+            # v257 answers an unload only once the engine has exited, and carries on with it when the caller gives
+            # up: no answer in 2 s is a slow stop, so its memory counts as on its way.
+            self.log(f"brake: no answer in 2 s; counting {model} as on its way ({err})")
         except LlamaSwapError as err:
             self.log(f"brake: unloading {model} failed: {err}")
             return
-        self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock)
-        self.log(f"brake: unloaded {model} at {mem.available_gib:.1f} GiB available")
+        else:
+            self.log(f"brake: unloaded {model} at {mem.available_gib:.1f} GiB available")
+        self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock,
+                                           STAGES.get(state, STAGES["ready"]))
         reason = f"{mem.available_gib:.1f} GiB available"
         hold = read_hold(self.state_dir)
         if hold is None:  # released while the unload was on its way, or never written: memory was below the line

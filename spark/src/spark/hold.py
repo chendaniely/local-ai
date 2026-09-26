@@ -37,7 +37,7 @@ def read_hold(state_dir: Path) -> Hold | None:
         return _parse(path.read_text())
     except FileNotFoundError:
         return None
-    except (OSError, ValueError) as err:
+    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
         return Hold(UNREADABLE_SINCE, f"hold file {path} can't be read: {err}", ())
 
 

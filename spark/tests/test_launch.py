@@ -147,6 +147,7 @@ DAMAGED_HOLDS = {
     "no reason": b'{"since": "t"}',
     "since not text": b'{"since": 1, "reason": "r"}',
     "unloaded not a list": b'{"since": "t", "reason": "r", "unloaded": "coder"}',
+    "nested too deep": b"[" * 100_000,  # json.loads raises RecursionError
     "a folder": None,  # can't be read, even by root
 }
 
