@@ -119,7 +119,8 @@ cd ~/git/hub/local-ai
    itself.)
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
-   the Mac session to work out why. Then release the set:
+   the Claude session working on the repo (the Spark's, by default) to work out why. Then release
+   the set:
 
    ```bash
    apt-mark showhold | xargs -r sudo apt-mark unhold
@@ -195,7 +196,8 @@ cd ~/git/hub/local-ai
      cheap to rule out.
 
    Anything else, or any of these commands failing: **don't reboot yet**, and bring what they
-   printed to the Mac session. Much of it carries the root filesystem's UUID: `root=UUID=…`, or
+   printed to the Claude session working on the repo (the Spark's, by default). Much of it carries
+   the root filesystem's UUID: `root=UUID=…`, or
    `root=PARTUUID=…`, in the `linux` lines, and every entry id (`gnulinux-simple-…`,
    `gnulinux-advanced-…`, `gnulinux-<version>-advanced-…`), a default, `saved_entry` or
    `next_entry` that is an id included. Write "an id" in place of each UUID and PARTUUID when you

@@ -72,7 +72,7 @@ In order of how much they constrain the design:
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
-| Build | **Split by machine, one session at a time:** the Mac session writes code, tests, docs and Mac clients; a Claude Code session on the Spark (as Dan, in tmux) builds and tests everything touching the GPU, memory, systemd or Docker; Dan runs sudo, logins, secrets and the Synology's settings. |
+| Build | **The Spark by default, one session at a time** (2026-09-25): a Claude Code session on the Spark (as Dan, in tmux) writes and tests the code, config and docs and runs everything touching the GPU, memory, systemd or Docker; the Mac session keeps the Mac clients, CI workflow changes and, until Quarto is on the Spark, the site render; Dan runs sudo, logins, secrets and the Synology's settings. (Until 2026-09-25 the Mac session wrote the code, tests and docs.) |
 | Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · `claude-dgx` · other users · the web UI banner. |
 
 ## Design
@@ -336,19 +336,26 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
 
 ### Where work runs
 
-- **Mac session:** repo code (CLI, gate, launcher) with unit tests, config templates and render tests,
-  the Makefile, leak hooks, CI, the docs site, and the Mac clients (SwiftBar, pi and OpenCode configs,
-  harness hooks).
-- **Spark session** (Claude Code as Dan, in tmux on `brightroar`): anything touching the GPU, memory,
-  systemd or Docker — engine builds, llama-swap, the gate, the brake, `spark doctor`, measurements and
-  comparisons, bootstrap dry-runs.
+Work runs on the Spark by default (Dan, 2026-09-25). Before that, the Mac session wrote the repo's
+code, tests, CI and docs, and the Spark session ran only what touched the GPU, memory, systemd or
+Docker.
+
+- **Spark session** (Claude Code as Dan, in tmux on `brightroar`): everything that doesn't need the
+  Mac — repo code (CLI, gate, launcher) with unit tests, config templates and render tests, the
+  Makefile, bootstrap, the leak hooks, the docs, and anything touching the GPU, memory, systemd or
+  Docker (engine builds, llama-swap, the gate, the brake, `spark doctor`, measurements and
+  comparisons).
+- **Mac session:** only what needs the Mac — the Mac clients and their config (SwiftBar, pi and
+  OpenCode configs, harness hooks on the Mac); changes under `.github/workflows/`, which the Spark's
+  repository-only token can't push (a merge that brings one into `main` included); the site render
+  until Quarto is on the Spark; and the Mac check of what the Mac also runs.
 - **Dan:** sudo (`make bootstrap`), interactive logins (Tailscale, GitHub on the Spark, Claude Code
   for `agent`, the Hugging Face token), secret values, the Synology's settings, and approving every
   push.
 - **Handoff, one session at a time:** the active session owns the phase branch; at a switch it
   commits, the branch is pushed with Dan's OK, and the other machine pulls. Both sessions read this
-  plan and the implementation plans from `website/design/`; every task is labelled **[Mac]**,
-  **[Spark]** or **[Dan]**. From the Mac, read-only checks on the Spark over SSH happen only with
+  plan and the implementation plans from `website/design/`; every task is labelled **[Spark]**,
+  **[Mac]** or **[Dan]**. From the Mac, read-only checks on the Spark over SSH happen only with
   Dan's OK.
 
 ### Testing
@@ -459,7 +466,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   leak hooks, the GPU set held, earlyoom, ufw, the secrets folder closed) and the stack's smoke
   checks: weekly upgrade day needs that before Phase 2, where `spark doctor` proper, one check per
   scenario, arrives. `website/how-to/updates.md` gains the recovery steps.
-- [Mac] pi config + SSH tunnel.
+- [Mac] pi config + SSH tunnel · CI's render step, the site render and the merge that brings it
+  into `main`.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
   `make apply` reproduces it; after a routine `apt upgrade` and after a reboot, the stack is serving
@@ -469,8 +477,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
 
 - [Spark] the gate + `spark-launch` + sockets (absorbing the minimal brake) · residents move under the
   gate (preloaded one at a time) · idle policy, pins, sessions, scheduled preload · make-room ·
-  `spark try` with the lab instance · `spark doctor` v1.
-- [Mac] SwiftBar plugin · harness hooks (on the Mac and for `agent`).
+  `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent`.
+- [Mac] SwiftBar plugin · harness hooks on the Mac.
 - [Dan] ntfy + watchdog in Container Manager on the Synology.
 - *Done when:* S01, S02, S03, S05, S06, S11, S12, S13, S14 and S17 are verified.
 
@@ -481,8 +489,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   (ufw + ACL) · batch whisper.cpp · the diarization endpoint · the **speech comparison** on Dan's
   51.6-minute lecture against the Mac baseline: Whisper large-v3-turbo vs Parakeet TDT v3 GGUF vs
   NeMo Parakeet with boosting, plus non-English, language-switching and two-speaker samples; pyannote
-  community-1.
-- [Mac] the endpoint reference page (chat + speech).
+  community-1 · the endpoint reference page (chat + speech; the site render stays on the Mac until
+  Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
 
@@ -500,9 +508,10 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   26B-A4B (policy-safe) vs Qwen3.6-35B-A3B. Embeddings: Qwen3-Embedding-0.6B vs Granite embedding r2
   (policy-safe); TEI only if llama.cpp falls short. Metrics: footprint (peak, steady), cold start,
   TTFT, prefill at 4K/32K/64K, decode at 1/2/4/8 streams, tool-call reliability, Dan's 3–5 real tasks
-  via pi, memory left free.
-- [Mac] client configs rendered for the picks (pi pinned outside its crash range, OpenCode 1.18.x) ·
-  the `spark-endpoints` skill for chendaniely/skills (Dan pushes).
+  via pi, memory left free · client configs for the picks, rendered by the `spark` CLI (pi pinned
+  outside its crash range, OpenCode 1.18.x).
+- [Mac] those client configs installed on the Mac · the `spark-endpoints` skill for
+  chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
   are in the vault; the docs are updated.
 
@@ -732,6 +741,13 @@ Each item gets its own design pass when its turn comes.
   starts loading between apply's check and its llama-swap restart as a known limit. llama-swap's
   client turns an answer it can't read into an error, not a crash. Task 17's forward look decides
   whether Phase 1 builds `make deploy`.
+- **2026-09-25** — Work runs on the Spark by default (Dan's rule). The Mac keeps its own clients and
+  their config, changes under `.github/workflows/` (the Spark's repository-only token can't push
+  them, a merge bringing one into `main` included) and the site render until Quarto is on the
+  Spark. *Requirements* (Build), *Where work runs* and the phases' labels follow; CLAUDE.md and
+  README §Conventions changed with it. Phase 1's plan relabels Tasks 1–10 and 17 `[Spark]`, moves
+  the Mac → Spark switch point ahead of Task 1, and ends with Task 18, a `[Mac]` task: CI's render
+  step, the site render and the merge.
 
 ## Sources
 

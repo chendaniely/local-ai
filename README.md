@@ -293,11 +293,11 @@ node, untested).
   mid-document `---` as a YAML block, and the render fails.
 - **Scenarios are living docs.** A change in the stack's behaviour updates its page under
   `website/scenarios/` and its `spark doctor` check in the same commit.
-- **Work runs where it belongs.** Code, tests, docs and Mac clients are written on `heartsbane`;
-  anything touching the Spark's GPU, memory, systemd or Docker is built and tested on `brightroar`;
-  sudo, logins and secrets are mine. One session at a time, a checkpoint commit per task, and pushes
-  only with my explicit OK. Sessions stage files by explicit path, and use my denylist only through
-  the leak check, never reading it.
+- **Work runs on the Spark by default** (since 2026-09-25). The Mac keeps only its own clients and
+  their config, changes under `.github/workflows/` (the Spark's repository-only token can't push
+  them) and rendering the site until Quarto is on the Spark; sudo, logins and secrets are mine. One
+  session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Sessions
+  stage files by explicit path, and use my denylist only through the leak check, never reading it.
 - **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
   run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well
   as the Mac, check box facts on the box, keep root out of paths `spark` and `agent` control, and
