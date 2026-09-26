@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import spark.render
 from spark import cli
 from spark.registry import load_registry
 from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render, write_tree
@@ -199,6 +200,61 @@ def test_args_may_not_set_a_flag_render_owns(tmp_path, model, args):
 def test_a_flag_that_only_starts_like_an_owned_one_is_left_alone(tmp_path):
     path = registry_with(tmp_path, lambda d: d["models"]["vision-chat"]["args"].append("--mmproj-offload"))
     assert "--mmproj-offload" in yaml.safe_load(rendered(path)["llama-swap.yaml"])["models"]["vision-chat"]["cmd"]
+
+
+DOWNLOADS = [  # every option llama-server b11146 takes that fetches weights at start (common/arg.cpp), all spellings
+    "-hf", "-hfr", "--hf-repo", "-hff", "--hf-file", "--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft",
+    "-mu", "--model-url", "-mmu", "--mmproj-url", "-dr", "--docker-repo",
+    "--mmproj-auto", "--no-mmproj", "--no-mmproj-auto",  # whether -hf also fetches a projector
+    "--embd-gemma-default", "--fim-qwen-1.5b-default", "--fim-qwen-3b-default", "--fim-qwen-7b-default",
+    "--fim-qwen-7b-spec", "--fim-qwen-14b-spec", "--fim-qwen-30b-default", "--gpt-oss-20b-default",
+    "--gpt-oss-120b-default", "--vision-gemma-4b-default", "--vision-gemma-12b-default",
+]
+
+
+@pytest.mark.parametrize("flag", [*DOWNLOADS, "--hf_repo", "--hf-repo=example-org/other-GGUF"])
+def test_args_may_not_download_a_model(tmp_path, flag):
+    # A download bypasses the registry's pinned revision (Review Focus 4), whatever the source.
+    path = registry_with(tmp_path, lambda d: d["models"]["coder"]["args"].append(flag))
+    refusal = f"^coder: args may not set {re.escape(flag.split('=')[0])}: .*pinned revision"
+    with pytest.raises(RenderError, match=refusal):
+        rendered(path)
+
+
+SETTINGS = [  # (the model, a spelling of a flag render passes it), from each engine's own option table
+    *[("coder", flag) for flag in ("-c", "--ctx-size", "--ctx_size", "-np", "--parallel", "-ngl", "--gpu-layers",
+                                   "--n-gpu-layers", "--n_gpu_layers", "-cram", "--cache-ram", "--cache-ram=0")],
+    ("embed", "--embedding"), ("embed", "--embeddings"),
+    ("stt", "--inference-path"),
+]
+
+
+@pytest.mark.parametrize("model, flag", SETTINGS)
+def test_args_may_not_override_a_setting_render_passes(tmp_path, model, flag):
+    # An engine takes the last value it's given: the model would run with more context, slots or cache than the
+    # footprint it was admitted with assumes.
+    path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend([flag, "1"]))
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set {re.escape(flag.split('=')[0])}: "
+                                          "render sets it"):
+        rendered(path)
+
+
+def test_every_flag_render_passes_is_refused_in_every_spelling(tmp_path):
+    # The refusals follow what engine_cmd passes, so they can't drift: a flag it starts passing is refused with no list
+    # to update, and a test fails until its spellings are known. The fixture's models take every branch: a projector,
+    # embeddings, whisper and plain chat.
+    registry = load_registry(FIX / "models.yaml")
+    for name, model in registry.models.items():
+        cmd = engine_cmd(model, registry)
+        own = cmd[:len(cmd) - len(model.args)]
+        engine = "whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"
+        for flag in (word for word in own[1:] if word.startswith("-")):
+            spellings = next((group for group in spark.render.SPELLINGS[engine] if flag in group), None)
+            assert spellings, f"{engine}: no spellings listed for {flag}, which render passes {name}"
+            for spelling in spellings:
+                path = registry_with(tmp_path, lambda d: d["models"][name]["args"].extend([spelling, "1"]))
+                with pytest.raises(RenderError, match=f"^{re.escape(name)}: args may not set {re.escape(spelling)}: "):
+                    rendered(path)
 
 
 FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in)

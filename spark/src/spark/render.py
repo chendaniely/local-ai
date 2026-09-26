@@ -22,16 +22,43 @@ UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-comp
 # installs the rendered units and Compose project there, and `spark apply` only stages them.
 UNIT_DIR = "/etc/systemd/system"
 COMPOSE_DIR = "/etc/local-ai/compose"
-# Flags a registry's args may not set, in each engine's spellings, with the reason: an engine takes the last value
-# a flag is given, and args come after render's own. Keys stay out of commands because llama-swap shows each whole
+# Flags a registry's args may not set: an engine takes the last value a flag is given, and args come after render's
+# own. That is every flag render passes a model (read from the command engine_cmd builds, so the list can't drift)
+# and every flag in REFUSED, each in all its spellings. Keys stay out of commands because llama-swap shows each whole
 # at GET /running, and the process list shows an engine's argv.
+# Each engine's spellings of a flag, from its own option table: llama.cpp b11146's common/arg.cpp (the options
+# llama-server takes) and whisper.cpp v1.9.4's examples/server/server.cpp. Every flag render passes has an entry,
+# even with one spelling, so a test fails until a flag it starts passing is looked up there; any other flag needs an
+# entry only when it has more than one spelling.
+SPELLINGS = {
+    "llama.cpp": (
+        ("--host",), ("--port",), ("-m", "--model"), ("-mm", "--mmproj"), ("-c", "--ctx-size"), ("-np", "--parallel"),
+        ("-ngl", "--gpu-layers", "--n-gpu-layers"), ("-cram", "--cache-ram"), ("--embedding", "--embeddings"),
+        ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
+        ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
+        ("-dr", "--docker-repo"), ("--mmproj-auto", "--no-mmproj", "--no-mmproj-auto"),
+    ),
+    "whisper.cpp": (("--host",), ("--port",), ("-m", "--model"), ("--inference-path",)),
+}
 _BIND = "render binds every engine to 127.0.0.1, on the port llama-swap gives it"
 _FILES = "render passes the model files the registry pins in source"
 _KEY = "an engine takes no key: llama-swap checks the keys, and shows every command at GET /running"
-OWNED_FLAGS = {
-    "llama.cpp": {"--host": _BIND, "--port": _BIND, "-m": _FILES, "--model": _FILES, "-mm": _FILES,
-                  "--mmproj": _FILES, "--api-key": _KEY, "--api-key-file": _KEY, "-hft": _KEY, "--hf-token": _KEY},
-    "whisper.cpp": {"--host": _BIND, "--port": _BIND, "-m": _FILES, "--model": _FILES},
+_DOWNLOAD = "an engine loads only what the registry pins: a download bypasses the pinned revision"
+_SET = ("render sets it, and an engine takes the last value it's given: the model would run other than as it was "
+        "admitted")
+# What an engine is never given, whether or not render passes it. The downloads are every option llama-server
+# b11146 takes that fetches weights at start (-hf's projector switch included); whisper-server v1.9.4 has none.
+REFUSED = {
+    "llama.cpp": {
+        "--host": _BIND, "--port": _BIND, "--model": _FILES, "--mmproj": _FILES,
+        "--api-key": _KEY, "--api-key-file": _KEY, "--hf-token": _KEY,
+        **dict.fromkeys(("--hf-repo", "--hf-file", "--hf-repo-draft", "--model-url", "--mmproj-url", "--docker-repo",
+                         "--mmproj-auto", "--embd-gemma-default", "--fim-qwen-1.5b-default", "--fim-qwen-3b-default",
+                         "--fim-qwen-7b-default", "--fim-qwen-7b-spec", "--fim-qwen-14b-spec",
+                         "--fim-qwen-30b-default", "--gpt-oss-20b-default", "--gpt-oss-120b-default",
+                         "--vision-gemma-4b-default", "--vision-gemma-12b-default"), _DOWNLOAD),
+    },
+    "whisper.cpp": {"--host": _BIND, "--port": _BIND, "--model": _FILES},
 }
 # llama-swap splits a command as a POSIX shell does, so a word with one of these reaches the engine as other words:
 # `--ho\st` as --host, `a.bin --host 0.0.0.0` as three.
@@ -64,12 +91,17 @@ def _flag(arg: str) -> str:
     return flag.replace("_", "-") if flag.startswith("--") else flag
 
 
+def _refused(model: Model, own: list[str]) -> dict[str, str]:
+    """Every spelling of each flag `model`'s args may not set, with the reason: each flag in `own`, the words render
+    itself passes the engine, and each flag in REFUSED."""
+    engine = "whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"
+    reasons = dict.fromkeys((word for word in own[1:] if word.startswith("-")), _SET)
+    reasons.update(REFUSED[engine])
+    spellings = {flag: group for group in SPELLINGS[engine] for flag in group}
+    return {spelling: why for flag, why in reasons.items() for spelling in spellings.get(flag, (flag,))}
+
+
 def engine_cmd(model: Model, registry: Registry) -> list[str]:
-    owned = OWNED_FLAGS["whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"]
-    for arg in model.args:
-        flag = _flag(arg)
-        if flag in owned:  # named as written, without an =value: that could be a key
-            raise RenderError(f"{model.name}: args may not set {arg.split('=', 1)[0]}: {owned[flag]}")
     binary = registry.engines[model.engine]
     main = model_path(model.source, model.source.file)
     if model.engine == "whisper.cpp":
@@ -83,6 +115,11 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
             cmd += ["--mmproj", model_path(model.source, model.source.mmproj)]
         if model.capability == "embeddings":
             cmd += ["--embedding"]
+    refused = _refused(model, cmd)
+    for arg in model.args:
+        flag = _flag(arg)
+        if flag in refused:  # named as written, without an =value: that could be a key
+            raise RenderError(f"{model.name}: args may not set {arg.split('=', 1)[0]}: {refused[flag]}")
     return cmd + list(model.args)
 
 

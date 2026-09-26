@@ -36,6 +36,30 @@ def test_a_refusal_says_why_in_one_line(tmp_path, capsys):
     assert not out.exists()  # a refused render writes nothing
 
 
+@pytest.mark.parametrize("bad", ["a missing registry", "a folder for a registry", "a registry that isn't YAML",
+                                 "versions that aren't YAML"])
+def test_a_file_that_cant_be_read_says_why_in_one_line(tmp_path, capsys, bad):
+    # OSError (missing, a folder) and yaml.YAMLError (not YAML) are refusals too, not tracebacks.
+    registry, versions = tmp_path / "models.yaml", tmp_path / "versions.yaml"
+    registry.write_text((FIX / "models.yaml").read_text())
+    versions.write_text((FIX / "versions.yaml").read_text())
+    if bad == "a missing registry":
+        registry.unlink()
+    elif bad == "a folder for a registry":
+        registry.unlink()
+        registry.mkdir()
+    elif bad == "a registry that isn't YAML":
+        registry.write_text("budget: {allocatable_gib: 102\n  : [\n")
+    else:
+        versions.write_text("components: {llama-swap: [\n")
+    out = tmp_path / "out"
+    code = cli.main(["render", "--out", str(out), "--registry", str(registry), "--versions", str(versions)])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert err.startswith("spark render: ") and "Traceback" not in err, err
+    assert not out.exists()  # a refused render writes nothing
+
+
 def test_a_command_keeps_the_exit_code_it_chose(tmp_path, monkeypatch, capsys):
     # launch turns a registry that won't load (a RegistryError, so a ValueError) into its own refusal: exit 3, with the
     # reason recorded for `spark status`. The CLI's catch must leave that alone. (status's exit 0 on the same kind of
