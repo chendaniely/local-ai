@@ -6552,8 +6552,9 @@ make doctor
 (procps-ng 4.0.4) rejects `oom_score_adj=` as a format.
 
 Expected: four models loaded (three resident, the coder on demand), `brake    no hold`, and the
-headroom before the brake; every engine runs as `spark` with `1000` in the `oomadj` column. `spark launch`
-set that, so the engines are the first processes the kernel or earlyoom would kill. The journal count is `0`:
+headroom before the brake; every engine runs as `spark` with `1000` in the `oomadj` column.
+`spark launch` set that, so the engines are the first processes the kernel or earlyoom would kill.
+The journal count is `0`:
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
 root's now. If it isn't, the lines name the path: point that tool's cache at
 `/var/lib/local-ai/cache` in the unit template (Task 6's), in the repo, with its test, as a plan
