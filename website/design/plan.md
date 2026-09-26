@@ -761,6 +761,14 @@ Each item gets its own design pass when its turn comes.
   §Conventions). The runbooks were relabelled the same day. Phase 1's plan: Task 9's two new
   runbooks and Task 10's runbook edits follow the rule, and Task 10's new paragraph in
   `updates.md` goes above the tmux block's labelled paragraph, not between it and the block.
+- **2026-09-26** — Phase 1, Task 1's review: the registry loader refuses more than the plan's
+  listing did. A missing, misspelled, repeated or wrongly typed field, a single value where a list
+  goes, a boolean or null in `args`, a number that isn't finite, and a budget or brake value that
+  isn't above 0 are each a `RegistryError` naming the model or section and the field, where the
+  listing crashed with another exception or loaded them silently (commits f0f44c7, 828bee5,
+  69cc076). Task 1's listing is marked *Superseded*. Since unknown keys are refused, the phase that
+  adds the registry fields *Components* lists beyond Phase 1's (a footprint's peak, steady and
+  config hash, cold start, idle policy, key access groups) extends the loader in the same change.
 
 ## Sources
 

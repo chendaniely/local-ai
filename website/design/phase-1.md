@@ -362,6 +362,11 @@ def test_args_may_not_contain_whitespace_or_quotes(tmp_path):
         load_registry(path)
 ```
 
+*Superseded 2026-09-26 — the tests now go further; see commits f0f44c7 (a missing or malformed
+field, a single value for a list), 828bee5 (a boolean in `args`) and 69cc076 (unknown and repeated
+keys, flags that aren't booleans, empty strings, non-finite numbers, budget and brake values not
+above 0). The six tests here are unchanged.*
+
 - [ ] **Step 3: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_registry.py`
@@ -492,6 +497,13 @@ def load_registry(path: Path) -> Registry:
             seen[role] = model.name
     return Registry(budget, brake, engines, models)
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits f0f44c7 (a missing or malformed field,
+or a single value where a list goes, is a `RegistryError` naming the model or section and the
+field), 828bee5 (a boolean in `args` is refused) and 69cc076 (unknown and repeated keys and a
+null in `args` are refused; flags must be booleans, strings non-empty and numbers finite; budget
+and brake values must be above 0). Task 1's review asked for them. The interfaces and the
+messages here are unchanged, except that the name message now quotes the name with `!r`.*
 
 - [ ] **Step 5: Run the tests — they pass**
 
