@@ -406,6 +406,18 @@ def test_a_missing_key_names_the_variable_doctor_read(monkeypatch, capsys):
     assert "the key in MY_OWN_KEY isn't printable ASCII" in shown and "fake-key" not in shown
 
 
+@pytest.mark.parametrize("url", ["", "127.0.0.1:9100", "http://", "http://127.0.0.1:port"],
+                         ids=["set-but-empty", "no-scheme", "no-host", "port-not-a-number"])
+def test_a_llama_swap_url_that_isnt_one_is_named_and_not_blamed_on_llama_swap(monkeypatch, url):
+    # Task 10's review (M6): with SPARK_LLAMASWAP_URL set to what isn't an http(s) URL, the llama-swap and end-to-end
+    # lines say so, not "/health answered nothing", and the key goes nowhere.
+    monkeypatch.setattr(doctor.paths, "LLAMASWAP_URL", url)
+    probe = FakeProbe()
+    bad = "SPARK_LLAMASWAP_URL isn't an http(s) URL: set it to one, such as http://127.0.0.1:9100, or unset it"
+    assert failures(probe) == {"llama-swap": bad, "a model, end to end": bad}
+    assert KEY not in probe.keys_sent
+
+
 def test_a_refused_load_points_at_make_status():
     probe = FakeProbe()
     answer = probe.http

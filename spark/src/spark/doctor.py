@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spark import paths, render
-from spark.llamaswap import key_from_env
+from spark.llamaswap import _url_ok, key_from_env
 from spark.registry import Registry, load_registry
 
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service")
@@ -382,7 +382,17 @@ def units(probe: Probe) -> Check:
     return Check("stack units", True, "llama-swap, the brake and the web services are active")
 
 
+def _bad_url() -> str | None:
+    """Why doctor can't ask llama-swap at all, or None: SPARK_LLAMASWAP_URL set to what isn't an http(s) URL, which
+    would otherwise read as llama-swap not answering. The value isn't shown: a URL can carry a password."""
+    if _url_ok(paths.LLAMASWAP_URL):
+        return None
+    return "SPARK_LLAMASWAP_URL isn't an http(s) URL: set it to one, such as http://127.0.0.1:9100, or unset it"
+
+
 def llama_swap(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
+    if bad_url := _bad_url():
+        return Check("llama-swap", False, bad_url)
     health, _ = probe.http(f"{paths.LLAMASWAP_URL}/health")
     if health != 200:
         return Check("llama-swap", False, f"/health answered {health or 'nothing'}: `make logs s=llama-swap`")
@@ -451,6 +461,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
     if not models:
         return Check(name, False, "the registry has no embeddings model, which this check loads: give "
                                   "stack/models.yaml one, then `make apply`")
+    if bad_url := _bad_url():
+        return Check(name, False, bad_url)
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     code, body = probe.http(f"{paths.LLAMASWAP_URL}/v1/embeddings", key=key,
