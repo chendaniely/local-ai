@@ -1,9 +1,11 @@
 """The polkit rule, run in a JavaScript engine with polkit, the action and the subject stubbed."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,7 +39,10 @@ JSON.parse(process.argv[2]).forEach(function (c) {
 });
 """
 
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="no JavaScript engine (node) on PATH")
+# Outside CI a missing node skips the two tests that run the rule. In CI (GitHub sets CI) it fails them, so a green CI
+# means the rule ran. Read at import, before conftest clears the environment.
+needs_node = pytest.mark.skipif(shutil.which("node") is None and not os.environ.get("CI"),
+                                reason="no JavaScript engine (node) on PATH")
 
 
 def case(action: str, groups=("spark-admin",), **details) -> dict:
@@ -83,3 +88,18 @@ def test_the_rule_names_exactly_the_units_render_writes():
 
     listed = re.search(r"var units = \[(.*?)\];", RULES.read_text(), re.DOTALL).group(1)
     assert re.findall(r'"([^"]+)"', listed) == list(RENDERED) == UNITS
+
+
+def test_in_ci_a_missing_node_fails_the_rule_tests_instead_of_skipping_them(tmp_path):
+    # A green CI must mean the rule ran. The two tests that run it go to a pytest of their own, with no node on PATH:
+    # in CI (GitHub sets CI) they must fail, and elsewhere skip. Each is named, so this test never runs itself.
+    names = ("test_spark_admin_starts_stops_and_restarts_the_four_units",
+             "test_every_other_verb_unit_or_action_is_left_to_polkits_default")
+    tests = [f"tests/test_polkit.py::{name}" for name in names]
+    last = {}
+    for ci in ("1", None):
+        env = {"PATH": str(tmp_path), "HOME": str(tmp_path), **({"CI": ci} if ci else {})}
+        run = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *tests], cwd=ROOT / "spark",
+                             env=env, capture_output=True, text=True)
+        last[ci] = run.stdout.splitlines()[-1] if run.stdout.strip() else run.stderr
+    assert last["1"].startswith("2 failed") and last[None].startswith("2 skipped"), last
