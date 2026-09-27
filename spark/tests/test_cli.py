@@ -95,5 +95,8 @@ def test_the_commands_the_units_and_the_makefile_run_are_registered():
     assert args.rest == ["m", "--", "/bin/x", "--port", "1"]
     for argv in (["brake", "--key-env", "LLAMASWAP_KEY_SPARK"], ["models", "pull"], ["status"], ["apply"],
                  ["apply", "--dry-run"], ["apply", "--now"], ["render", "--out", "rendered"],
-                 ["clients", "pi", "--write"], ["doctor"]):
+                 ["clients", "pi", "--write"], ["doctor"],
+                 # make brake-release, and the Makefile's Phase 0 commands: make hooks, and make docs (Task 10's R5).
+                 ["brake", "--release"], ["leakcheck", "--message", "/dev/null"], ["docs", "stack", "--write"],
+                 ["docs", "check-scenarios"]):
         assert callable(parser.parse_args(argv).func), argv
