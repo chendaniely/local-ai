@@ -848,6 +848,18 @@ Each item gets its own design pass when its turn comes.
   Phase 1's plan:
   Task 11 checks each engine's path against its pinned version, and Task 13 checks that SearXNG can
   write its folder.
+- **2026-09-26** — Phase 1, Task 7's reviews (two fix rounds). `spark apply` now finishes what a
+  partial run left: a failed `uv sync` is retried, since the app counts as changed until a sync
+  finishes, and a unit that started before apply wrote its files counts as outdated. It restarts
+  llama-swap first, after a second look at `/running`, and puts that restart off if a model loaded
+  meanwhile; after it, it waits up to 30 s for llama-swap to answer. The llama-swap and brake units
+  run as `Type=exec`, so a restart whose binary can't start fails. Deployed files are written whole,
+  and the dry run says what the real run would do, a refusal included (commits 4e639d0, 5641842,
+  2801644, 81b8124; Tasks 3, 6 and 7's listings note them). Every test now runs in an environment
+  it builds, so a failing test can't print a value from Dan's shell (be4c3c3). S17, a Phase 2
+  scenario, notes what Phase 1's apply does until then. Phase 1's plan: Task 9's deploy.md gains
+  the put-off restart and the wait, Task 12's staging stop lists only root's files, and Task 18's
+  Mac check names what in the suite has never run on a Mac.
 
 ## Sources
 

@@ -964,6 +964,10 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
   `LlamaSwap(base_url: str, api_key: str | None, timeout: float = 10.0)` with
   `running() -> list[Running]` (`GET /running`) and `unload(model: str) -> None`
   (`POST /api/models/unload/{model}`); `key_from_env(name: str) -> str | None`.
+  *Added 2026-09-26, from Task 7's reviews (commit 81b8124):* `LlamaSwapAnswered(LlamaSwapError)`,
+  for an answer that is an error or can't be read, so a caller can tell "llama-swap answered" from
+  "nothing answered" (`LlamaSwapUnreachable`) and from a request never sent (a plain
+  `LlamaSwapError`).
 
 - [ ] **Step 1: Write the failing tests** (a real local HTTP server, no mocks of urllib)
 
@@ -1067,7 +1071,10 @@ def test_an_answer_it_cant_read_is_an_error_not_a_crash(server, answer):
 *Superseded 2026-09-26 — the tests now go further; see commit 828fb3e: every `/running` shape that
 isn't v257's, a key that isn't printable ASCII (never sent, never shown), a proxy that must not see
 the key, an invalid URL, `api_key=None`, `key_from_env`, the trailing slash and the quoting; the
-fake records each request exactly as sent, and the fixture closes its server.*
+fake records each request exactly as sent, and the fixture closes its server. Commit 81b8124, from
+Task 7's reviews, adds `LlamaSwapAnswered`'s cases: a 401, an answer not in v257's shape, one that
+isn't JSON and one cut short raise it; a closed port, a bad URL and a key a header can't carry
+don't.*
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1147,7 +1154,9 @@ strictly — `{"running": [...]}` of objects with string `model` and `state` (v2
 always sends it, `[]` when idle) — and anything else is a `LlamaSwapError`, so a stray answer can't
 read as "nothing loaded". A key that isn't printable ASCII is refused before anything is sent, and
 no error carries it. Requests go through a proxy-free opener, so `http_proxy` never sees the key.
-Task 3's review asked for them.*
+Task 3's review asked for them. Commit 81b8124, from Task 7's reviews, adds `LlamaSwapAnswered`, the
+`LlamaSwapError` for an answer that is an error or can't be read, so apply can tell an answer from
+none.*
 
 - [ ] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
 
@@ -1611,7 +1620,9 @@ stopped here for the choice.)
   `engine_cmd(model, registry) -> list[str]`; `llama_swap_config(registry) -> dict`;
   `render(registry, versions, registry_text: str, templates: Path = TEMPLATES) -> dict[str, str]`
   (relative path → content); `write_tree(files, out) -> None` (writes each file under `out`,
-  making its folders); CLI `spark render --out DIR [--registry P] [--versions P]`.
+  making its folders; since 2026-09-26, through `write_atomic(path, data)`, which writes a
+  temporary file in the same folder and renames it over the target — Task 7's reviews, commit
+  4e639d0); CLI `spark render --out DIR [--registry P] [--versions P]`.
   Constants: `DEPLOY="/opt/local-ai"`, `HF_HOME="/var/lib/local-ai/hf"`,
   `SPARK_BIN="/opt/local-ai/app/.venv/bin/spark"`,
   `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`,
@@ -1811,6 +1822,10 @@ TimeoutStopSec=60
 [Install]
 WantedBy=multi-user.target
 ```
+
+*Superseded 2026-09-26 — this unit and the brake's below now carry `Type=exec` (commit 4e639d0,
+from Task 7's reviews), so `systemctl restart` fails when the binary can't start, instead of
+succeeding as soon as systemd forks.*
 
 `stack/templates/local-ai-brake.service`:
 
@@ -2094,7 +2109,9 @@ a0a8612 and 98f5f56: the Compose test parses the YAML and pins each service's ex
 engine command, the real registry's included, is checked for a 127.0.0.1 bind, no key and no
 `${` but `${PORT}`; and registry edits that rebind an engine, carry a key, download at start,
 override a flag render sets, or step outside the pinned snapshot are refused. Task 6's reviews
-asked for them.*
+asked for them. Commit 4e639d0, from Task 7's reviews, adds `write_atomic`'s tests (a file replaced
+whole, a planted link replaced rather than written through) and pins `Type=exec` on the llama-swap
+and brake units.*
 
 Add to `spark/tests/test_bootstrap.py` (Phase 0's), after
 `test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in_it`:
@@ -2298,7 +2315,9 @@ registry field, in every spelling (read from llama.cpp b11146's option table); a
 `${PORT}`; and a command word the engine wouldn't get as written. llama-server always runs
 `--offline`. An image pin must be a `sha256:` digest; a missing component and a file that won't
 load are named; the budget refusal's numbers can't read as a fit. `spark` commands print
-`spark <command>: <reason>` for a refusal instead of a traceback. Task 6's reviews asked for them.*
+`spark <command>: <reason>` for a refusal instead of a traceback. Task 6's reviews asked for them.
+Commit 4e639d0, from Task 7's reviews, adds `write_atomic`: `write_tree` writes each file to a
+temporary file in its folder and renames it over the target, so nothing reads a half-written file.*
 
 Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
 From here on CI's tests render the real registry (`test_the_real_registry_renders`). A step that
@@ -2356,6 +2375,14 @@ git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config f
   the running units whose start began before their copy was installed; `active(unit)` says whether
   a unit runs; `running=None` means apply can't tell what is loaded. CLI
   `spark apply [--dry-run] [--now] [--key-env NAME]`, run from the repo root.
+- *Added 2026-09-26, from Task 7's reviews (commits 4e639d0, 5641842, be4c3c3, 81b8124):* apply
+  also consumes render's `_load` and `write_atomic`, and `LlamaSwapAnswered` (Task 3).
+  `apply_files` gains `recheck=None` and `came_up=None`, and its exit 1 also covers a failed sync, a
+  llama-swap restart put off, and a llama-swap that doesn't answer after its restart. New:
+  `wait_for_running`, `deployed_times`, `SyncError`, `SYNC_STAMP`, `APP`, `DEPLOYED`,
+  `READY_SECONDS`. `unit_of` also maps the files apply deploys; `app_diff` also lists files removed
+  from `spark/`, and counts every file until a sync finishes; `validation_env` returns `PATH` and
+  the placeholders only.
 
 What apply does with each change:
 
@@ -2386,6 +2413,19 @@ restarts anything, so a restart that fails (a unit that won't start, or a sessio
 unit, points at `make logs s=<name>`, says to run `systemctl restart <unit>` once it's fixed, and
 exits 1.
 
+*Corrected 2026-09-26, from Task 7's reviews:* a dry run that the real run would refuse says
+"would refuse; with --now it would restart …" and exits 1, so `make apply-dry-run` then ends in
+make's error line. The next apply now finishes what a partial run left: a failed `uv sync` is
+retried, since the app counts as changed until a sync finishes, and a running unit that started
+before the files apply deploys were written counts as outdated (below). So "the next apply finds
+nothing to change" now holds only for a unit that couldn't start again: it is stopped, and apply
+starts nothing. A unit whose restart systemd refused, as for a session without `spark-admin`,
+still runs its older files, and the next apply restarts it. The llama-swap and brake units run as
+`Type=exec`, so a binary that can't start fails the restart and apply hears of it. After
+restarting llama-swap, apply waits up to 30 s for `/running` to answer in v257's shape; an answer
+that is an error, such as a 401 for a wrong key, ends the wait at once. Unless it gets that
+answer, apply says what it saw and exits 1.
+
 A unit is outdated when its last start began (systemd's `InactiveExitTimestamp`, read with
 `systemctl show --timestamp=us+utc`, to the microsecond) before one of root's copies of its files
 was installed (that file's modification time). When the start began counts, not when it ended
@@ -2406,11 +2446,23 @@ after an install but before systemd reloaded it — a restart during `make insta
 a run of it that was cut off before its reload (the next run reloads) — which runs the old
 definition while counting as current. Either way, `systemctl restart <unit>` fixes it.
 
+*Added 2026-09-26, from Task 7's reviews:* a unit is also outdated when its start began before a
+file apply deploys itself was written, or before the app's last sync finished (`deployed_times`):
+llama-swap runs on `etc/llama-swap.yaml`, and the brake on `etc/models.yaml` and the app. A unit
+whose time can't be read counts as current for these too, so its message names both reasons it may
+be behind: `make install-units`, or an apply that didn't restart it.
+
 One more known limit, not designed away in Phase 1: apply reads what llama-swap has loaded before
 it syncs the app and writes the files, and restarts llama-swap after them. A model whose load
 starts in between, because a request arrived, is stopped by that restart: the request fails, and
 sent again it loads the model under the new config. To leave no window, run apply while nothing is
 sending requests, and check `make status` after it.
+
+*Corrected 2026-09-26, from Task 7's reviews:* apply now restarts llama-swap first, and asks
+`/running` again just before. A model loaded by then, or no answer that says what is loaded, puts
+the restart off: the files stay deployed, apply says so and exits 1, and the next `make apply`
+makes the restart once the models are idle. So the window is only between that second look and
+`systemctl restart`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2708,6 +2760,14 @@ def test_app_diff_skips_the_venv_and_caches(tmp_path):
         (src / rel).write_text("x")
     assert app_diff(src, tmp_path / "app") == ["pyproject.toml", "src/spark/cli.py"]
 ```
+
+*Superseded 2026-09-26 — the tests now go much further; see commits 4e639d0, 5641842, 2801644,
+be4c3c3 and 81b8124: a harness drives `spark apply` through the CLI with every side effect faked —
+`--now`, a hung llama-swap, stopped units, the staging stop, a failed sync, a failed copy, a run
+cut off before its restarts, the second look before llama-swap's restart, the wait after it, the
+dry run and a failing unit. Every test now runs in an environment it built itself
+(`spark/tests/conftest.py`, pinned by `test_environment.py`), so no failing test can print a value
+from the shell's. Task 7's reviews asked for them.*
 
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_apply.py` → FAIL (`ModuleNotFoundError`).
 
@@ -3017,6 +3077,13 @@ def run(args: argparse.Namespace) -> int:
                        sync_app=lambda: _sync_app(src, app), run_cmd=lambda cmd: subprocess.run(cmd, check=True),
                        log=print)
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits 4e639d0, 5641842, 2801644 and 81b8124,
+from Task 7's reviews. The prose above, with its dated corrections, says what it does now: a sync
+stamp written only after `uv sync` succeeds; running units outdated against the files apply
+deploys too; llama-swap restarted first, after a second look, and waited for after; a truthful dry
+run; files written whole through `write_atomic`; loads through render's `_load`; `-validate` given
+a minimal environment.*
 
 Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 
@@ -4254,7 +4321,12 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
     That second apply restarts each unit still running its
     older definition. If llama-swap would restart, for its config or for its unit, while models are
     loaded, apply changes nothing and says so; run it again when they're idle, or `make apply-now` to
-    restart llama-swap anyway.
+    restart llama-swap anyway. (Added 2026-09-26, from Task 7's reviews: if a model starts loading
+    after apply's first look, apply deploys the files, puts llama-swap's restart off, says so and
+    exits 1, and the next `make apply` makes the restart once the models are idle; and a restarted
+    llama-swap that doesn't answer within 30 s, or answers with an error such as a wrong key, gets a
+    line saying so and exit 1. A run cut off part-way is finished by the next `make apply`, except
+    for a unit whose start time it can't read, which it names with the command to restart it.)
   - **When something is wrong.** `make status`, then `make logs s=llama-swap` (or `brake`, `pull`,
     `compose`, `open-webui`, `searxng`). A refused load appears in `make status` as a `refused` line
     with its reason, for an account in `spark-admin`; any other account is told the brake's state is
@@ -6432,7 +6504,9 @@ revision), or the box's GRUB setup must (Dan), before an upgrade day relies on i
 records the re-run and both results in the changelog.
 
 - [ ] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
-  Expected: every file under `/opt/local-ai/etc` and the app are listed as new;
+  Expected: every file under `/opt/local-ai/etc` and the app are listed as new (corrected
+  2026-09-26, from Task 7's reviews: apply lists only root's six files, each as "root has no copy
+  of … yet", since until root has them it lists nothing else);
   `llama-swap -validate` prints `config is valid: 4 model(s)`; root has no copy yet of the four
   units, `compose/compose.yaml` or `compose/searxng/settings.yml`; and apply stages them and stops,
   naming `make install-units`. Nothing else is deployed yet: no app, no `llama-swap.yaml`.
@@ -7008,6 +7082,16 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
   3.2 and GNU make 3.81, and `make docs` renders with no warnings: the How-to listing shows
   deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). A failure here that the
   Spark didn't see is a Mac difference: fix it here, with its test, and in this plan's listing.
+
+  *Added 2026-09-26, from Tasks 2 and 7's reviews:* this is the first run of Phase 1's whole suite
+  on the Mac; until now it ran only on the Spark and in ubuntu:24.04. Four things there have never
+  run on a Mac. Every test runs in an environment it builds (`spark/tests/conftest.py`): the
+  shell's `PATH`, its `LANG` if it has one, and a new, empty `HOME`, so no `TMPDIR`, and a
+  temporary folder can land under `/tmp`, which macOS links to `/private/tmp`. The tests that run
+  git and uv do so with that empty `HOME`, and the Mac's `/usr/bin/git` is Xcode's shim. The tests
+  that run `make hooks` and bootstrap passed on the Mac in Phase 0, but now run in that
+  environment, on bash 3.2 and GNU make 3.81. And `write_hold` flushes its folder after the rename
+  (`os.fsync` on the folder), which is unverified on APFS.
 
 - [ ] **Step 4: Commit**
 
