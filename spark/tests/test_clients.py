@@ -89,6 +89,8 @@ def test_a_models_file_that_wont_load_is_refused_by_name(tmp_path, bad):
     with pytest.raises(ValueError) as err:
         merge_pi(path, {"baseUrl": "u"})
     assert str(err.value).startswith(f"pi's models file {path} won't load: ")
+    # json's error and the codec's keep the file's text, other providers' keys included: none is chained to it.
+    assert err.value.__cause__ is None and err.value.__context__ is None
     assert path.is_dir() if bad == "a folder" else path.read_bytes() == BAD[bad]
     assert not (tmp_path / "models.json.bak").exists()
 

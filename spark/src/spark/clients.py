@@ -38,12 +38,16 @@ KINDS = {list: "an array", str: "a string", int: "a number", float: "a number", 
 
 def _load_pi(path: Path) -> dict:
     """pi's models file, an object whose providers are an object too; or a ClientsError that names the file, as
-    render's _load names its files: json's own message names none. The error it came from goes no further, since
-    json's and the codec's keep the file's text, and the file can hold other providers' keys."""
+    render's _load names its files: json's own message names none. Only the error's message goes on: json's error
+    and the codec's keep the file's text, and the file can hold other providers' keys."""
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
-        raise ClientsError(f"pi's models file {path} won't load: {err}") from None
+        why = str(err)
+    else:
+        why = None
+    if why is not None:  # raised here, not in the except, so that no error is even chained to it
+        raise ClientsError(f"pi's models file {path} won't load: {why}")
     if not isinstance(data, dict):
         raise ClientsError(f"pi's models file {path} holds {KINDS[type(data)]} at its top level, not the object pi "
                            "reads")
