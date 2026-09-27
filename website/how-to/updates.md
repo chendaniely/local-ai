@@ -266,7 +266,8 @@ cd ~/git/hub/local-ai
    (`gnulinux-advanced-…>gnulinux-<version>-advanced-…`). `10_linux` adds the submenu to a bare
    title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0.
    Reboot only when both checks pass.
-6. Reboot: `sudo reboot`.
+6. Reboot: `sudo reboot`. It asks for your password again: `make upgrade-gpu` and `make hold-gpu`
+   end with `sudo -k`, which forgets sudo's cached credential in that terminal.
 7. **On the Spark**, check, once you are back in:
 
    ```bash

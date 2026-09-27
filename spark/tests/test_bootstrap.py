@@ -860,7 +860,9 @@ def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
     # -s: GNU make 4 prints "Entering directory" lines under -C otherwise.
     recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "upgrade-gpu"],
                             capture_output=True, text=True, check=True)
-    assert "sudo bash stack/host/bootstrap.sh --upgrade-gpu" in recipe.stdout.splitlines()
+    # It forgets sudo's cached credential on the way out (test_make_upgrade_gpu_drops_sudos_cached_credential_too).
+    assert ("trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --upgrade-gpu"
+            in recipe.stdout.splitlines())
     phony = next(line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith(".PHONY:"))
     assert {"upgrade-gpu", "upgrade-gpu-dry-run"} <= set(phony.split()[1:])
 
@@ -1492,22 +1494,18 @@ FAKE_SUDO = ('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\n[[ "$1" == -k ]] 
              'if [[ "$SUDO_DOES" == int ]]; then kill -INT 0; sleep 5; fi\nexit "$SUDO_DOES"\n')
 
 
-@pytest.mark.parametrize(("target", "runs"), [("bootstrap", "sudo bash stack/host/bootstrap.sh"),
-                                             ("hold-gpu", "sudo bash stack/host/bootstrap.sh --hold-gpu")])
-def test_make_bootstrap_and_hold_gpu_drop_sudos_cached_credential_too(tmp_path, target, runs):
-    # Task 9's fix round 1 (M2). The clone's own code runs next in that terminal (`make apply` runs spark from the
-    # clone), so no target leaves sudo's cache warm, however it ends: a Ctrl-C at the password included ("int").
+def forgets_sudos_credential_whatever_happens(tmp_path: Path, target: str, runs: str, **settings: str) -> None:
+    """Runs `make TARGET` against FAKE_SUDO, which exits 0, exits 1 or sends a Ctrl-C to the whole job ("int"), and
+    checks that each time it ran `runs`, then `sudo -k` and nothing else. `settings` go in make's environment."""
     import time
 
-    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), target], capture_output=True, text=True, check=True)
-    assert recipe.stdout.splitlines() == [f"trap 'sudo -k' EXIT INT TERM HUP; {runs}"]
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (bindir / "sudo").write_text(FAKE_SUDO)
     (bindir / "sudo").chmod(0o755)
     for does in ("0", "1", "int"):
         calls_file = tmp_path / f"calls-{does}"
-        env = built_env(tmp_path, bindir, CALLS=str(calls_file), SUDO_DOES=does)
+        env = built_env(tmp_path, bindir, CALLS=str(calls_file), SUDO_DOES=does, **settings)
         result = subprocess.run(["make", "-s", "-C", str(ROOT), target], capture_output=True, text=True, env=env,
                                 start_new_session=True)
         assert (result.returncode == 0) == (does == "0"), (target, does)
@@ -1518,6 +1516,26 @@ def test_make_bootstrap_and_hold_gpu_drop_sudos_cached_credential_too(tmp_path, 
             time.sleep(0.1)
         assert calls[0] == runs, (target, does)
         assert calls[1:] and set(calls[1:]) == {"sudo -k"}, (target, does)
+
+
+@pytest.mark.parametrize(("target", "runs"), [("bootstrap", "sudo bash stack/host/bootstrap.sh"),
+                                             ("hold-gpu", "sudo bash stack/host/bootstrap.sh --hold-gpu")])
+def test_make_bootstrap_and_hold_gpu_drop_sudos_cached_credential_too(tmp_path, target, runs):
+    # Task 9's fix round 1 (M2). The clone's own code runs next in that terminal (`make apply` runs spark from the
+    # clone), so no target leaves sudo's cache warm, however it ends: a Ctrl-C at the password included ("int").
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), target], capture_output=True, text=True, check=True)
+    assert recipe.stdout.splitlines() == [f"trap 'sudo -k' EXIT INT TERM HUP; {runs}"]
+    forgets_sudos_credential_whatever_happens(tmp_path, target, runs)
+
+
+def test_make_upgrade_gpu_drops_sudos_cached_credential_too(tmp_path):
+    # Task 10's scan (R16), as for make bootstrap and make hold-gpu: nothing that runs next in that terminal rides
+    # sudo's cache, and the reboot's sudo asks for the password again. The first line is the tmux check.
+    runs = "sudo bash stack/host/bootstrap.sh --upgrade-gpu"
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "upgrade-gpu"], capture_output=True, text=True,
+                            check=True)
+    assert recipe.stdout.splitlines()[1:] == [f"trap 'sudo -k' EXIT INT TERM HUP; {runs}"]
+    forgets_sudos_credential_whatever_happens(tmp_path, "upgrade-gpu", runs, TMUX="tmux-stand-in")
 
 
 def test_the_install_units_environments_are_built_not_copied(tmp_path, monkeypatch):

@@ -44,7 +44,7 @@ upgrade-gpu-dry-run: ## Print what upgrade day would do to the GPU set; changes 
 
 upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sudo once)
 	@test -n "$$TMUX" || { echo "make upgrade-gpu: run it inside tmux (tmux new -As upgrade), so a dropped SSH session can't stop apt halfway" >&2; exit 1; }
-	sudo bash stack/host/bootstrap.sh --upgrade-gpu
+	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --upgrade-gpu
 
 apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
 	$(SPARK) apply
