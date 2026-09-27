@@ -279,14 +279,16 @@ refused_plan() {
 
 # Holds the set again. A hold that ran to the end and stopped has said what is wrong, and running it
 # again would say the same. A hold cut off by a signal (exit status 128 or more) leaves REHELD at 0,
-# so the way out tries once more.
+# so the way out tries once more. A dry run released nothing, so there the hold's own words are all.
 rehold() {
   local code=0
   ( hold_gpu_stack ) || code=$?
   if (( code == 0 )); then REHELD=1; return 0; fi
   if (( code < 128 )); then
     REHELD=1
-    echo "bootstrap: the GPU set is not held again yet — do what the hold says above, then run make hold-gpu" >&2
+    if (( ! DRY_RUN )); then
+      echo "bootstrap: the GPU set is not held again yet — do what the hold says above, then run make hold-gpu" >&2
+    fi
   fi
   return 1
 }

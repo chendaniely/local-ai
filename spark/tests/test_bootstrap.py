@@ -835,6 +835,17 @@ def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
     assert calls(tmp_path) == []  # no stand-in was asked to change anything
 
 
+def test_a_dry_run_whose_hold_would_stop_says_only_what_the_hold_says(tmp_path):
+    # Task 10's scan (R12): a dry run releases nothing, so it must not say the set is "not held again yet".
+    env = upgrade_env(tmp_path, GOOD_PLAN)
+    (tmp_path / "installed.tsv").write_text(dpkg_lines({**HELD_BEFORE, "nvidia-driver-580-open": "iU"}))
+    result = script("--upgrade-gpu", "--dry-run", env=env)
+    assert result.returncode == 1
+    assert "nvidia-driver-580-open (iU)" in result.stderr and "finish dpkg first" in result.stderr
+    assert "not held again" not in result.stderr
+    assert calls(tmp_path) == []
+
+
 def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
     # A dropped SSH session in the middle of apt is the likeliest way to half-move the set.
     bindir = tmp_path / "bin"
