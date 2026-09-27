@@ -48,28 +48,60 @@ closes it.
 make tunnel
 ```
 
-Nothing on the Spark listens on the LAN in Phase 1, so pi reaches it only through the tunnel.
+None of the stack's ports listens beyond 127.0.0.1 in Phase 1, so pi reaches llama-swap only
+through the tunnel.
 
 In pi, `/model` → a Spark model. The footer names the model that answers.
 
 ## On the Spark, as `agent`
 
-`agent` needs Node 22.19 or later, which you install once. Then, **on the Spark, as `agent`**,
-install pi into `agent`'s own `~/.local`:
+`agent` needs Node 22.19 or later, its own llama-swap key, uv, pi and a clone of this repo. Two
+people set that up: you, with sudo, then `agent` itself.
+
+**On the Spark (you, with sudo):** install Node from NodeSource, and give `agent` its key. Run it a
+line at a time: `less` shows you the setup script, and the next line runs it as root.
 
 ```bash
-npm install -g --prefix ~/.local --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+d=$(mktemp -d) && curl -fsSL https://deb.nodesource.com/setup_22.x -o "$d/nodesource_setup.sh" && less "$d/nodesource_setup.sh"
+sudo bash "$d/nodesource_setup.sh" && sudo apt-get install -y nodejs   # only once you've read it: it runs as root
+node --version                                                          # v22.19 or later
+rm -r "$d"
+sudo bash -c '. /etc/local-ai/secrets/llama-swap.env; [ -n "$LLAMASWAP_KEY_AGENT" ] || { echo "no LLAMASWAP_KEY_AGENT" >&2; exit 1; }; printf "export SPARK_API_KEY=%s\n" "$LLAMASWAP_KEY_AGENT" | runuser -u agent -- sh -c "umask 077; cat > /home/agent/.secrets"'
 ```
 
-`agent`'s own llama-swap key sits in its `~/.secrets`. You put it there with one command: root
-reads the key from the service secrets, and `agent` writes its own file, so the value is never
-displayed and root never writes in `agent`'s home.
+The setup script goes into a fresh private folder from `mktemp -d`. At a fixed `/tmp` name, a file
+`agent` made first would be the one you read and then run as root, and `agent` could change it in
+between. The last line copies `agent`'s own llama-swap key into its `~/.secrets` without displaying
+it. Root only reads the service secrets: `runuser -u agent` runs the `sh` that writes the file as
+`agent`, so a link `agent` planted at `~/.secrets` can't turn it into a write by root. `printf` is a
+builtin, so the value never reaches a command line. If the key is missing, the line refuses and
+writes nothing, as step 5 of [Secret files](secret-files.md) does. Run again, it rewrites the file
+with the same line.
 
-**On the Spark, as `agent`**, from the agent's clone of this repo, add the `spark` provider to its
-pi:
+Then become `agent`, still on the Spark: `sudo -iu agent`. **On the Spark, as `agent`:** load the key
+in every shell, install uv and pi into `agent`'s own `~/.local`, and clone this repo.
 
 ```bash
-uv run --frozen --project spark spark clients pi --write
+grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
+curl -LsSf https://astral.sh/uv/install.sh | sh
+npm install -g --prefix ~/.local --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+git clone https://github.com/chendaniely/local-ai ~/work/local-ai   # makes ~/work too
+exit
+```
+
+`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. The clone
+is only for `spark clients`: `agent` never commits to this repo.
+
+The key and `~/.local/bin` load in a fresh login. **On the Mac**, log in as `agent`:
+
+```bash
+ssh brightroar-agent
+```
+
+**On the Spark, as `agent`**, from its clone, add the `spark` provider to its pi:
+
+```bash
+cd ~/work/local-ai && uv run --frozen --project spark spark clients pi --write
 ```
 
 Work inside tmux. **On the Spark, as `agent`**:
