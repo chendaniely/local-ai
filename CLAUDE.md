@@ -163,7 +163,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   each move. Never as a `# on the …` comment inside the block: pasted into the Mac's zsh, which
   doesn't treat a `#` line as a comment, it prints `command not found: #` (seen 2026-09-25). In a
   phase plan, the task's label (**[Spark]**, **[Mac]**, **[Dan]**) says where its steps run, and a
-  step that runs elsewhere names the machine.
+  step that runs elsewhere names the machine. The same goes for any `#` in a shell block that runs
+  on the Mac, a trailing comment included (added 2026-09-26): that zsh passes the `#` and every word
+  after it to the command, and a quote in them leaves the line open. What a comment would say goes
+  in the prose above the block. Dan's Spark shell is bash, where comments work; a block holding a
+  config file's text, not shell commands, keeps that file's own comments.
 
 ## Building it
 

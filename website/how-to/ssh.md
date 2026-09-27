@@ -102,13 +102,16 @@ Everything in this section happens on the Mac. Keep the two apart:
 
 ## Test
 
-**On the Mac:**
+**On the Mac.** Each line prints the account it logs in to, with no password (your key's
+passphrase at most once per Keychain session): `chendaniely` for `brightroar` and
+`brightroar-lan`, `agent` for `brightroar-agent` and `brightroar-agent-lan`. The `-lan` aliases go
+over the home LAN:
 
 ```bash
-ssh brightroar whoami             # chendaniely — no password (the key's passphrase once per Keychain session)
-ssh brightroar-agent whoami       # agent
-ssh brightroar-lan whoami         # chendaniely, over the LAN
-ssh brightroar-agent-lan whoami   # agent, over the LAN
+ssh brightroar whoami
+ssh brightroar-agent whoami
+ssh brightroar-lan whoami
+ssh brightroar-agent-lan whoami
 ```
 
 Before Tailscale is joined, only the two `-lan` aliases work.
@@ -168,12 +171,13 @@ and so does the undo if a test fails. The second runs step 4's tests on the Mac 
    If it answers that `ssh.service` isn't active, sshd isn't running between logins (Ubuntu can
    start it on demand from `ssh.socket`), and the next login reads the new file anyway.
 4. **On the Mac, test from a second terminal**, with the first session still open. Each login must
-   work with your key alone (its passphrase at most), and a password must be refused:
+   work with your key alone (its passphrase at most), and a password must be refused. The first
+   two lines print `chendaniely` (the second over the LAN), and the third prints `agent`:
 
    ```bash
-   ssh brightroar whoami         # chendaniely
-   ssh brightroar-lan whoami     # chendaniely, over the LAN
-   ssh brightroar-agent whoami   # agent
+   ssh brightroar whoami
+   ssh brightroar-lan whoami
+   ssh brightroar-agent whoami
    ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive brightroar true
    ```
 

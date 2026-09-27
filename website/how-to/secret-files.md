@@ -87,10 +87,15 @@ Your Mac gets its own llama-swap key (`LLAMASWAP_KEY_DAN_MAC`). It is generated 
 the Mac's `~/.secrets` as `SPARK_API_KEY`, and copied to the Spark without being displayed.
 
 **8. On the Mac, generate it.** If `SPARK_API_KEY` is already in your `~/.secrets`, skip this: a
-second line would replace the first one's value.
+second line would replace the first one's value. This counts the lines that set it:
 
 ```bash
-grep -c '^export SPARK_API_KEY=' ~/.secrets    # 0 → run the next line; 1 → skip it
+grep -c '^export SPARK_API_KEY=' ~/.secrets
+```
+
+If it prints `0`, generate the key, still **on the Mac**; if it prints `1`, go on to step 9:
+
+```bash
 printf 'export SPARK_API_KEY=%s\n' "$(openssl rand -hex 32)" >> ~/.secrets
 ```
 

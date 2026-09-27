@@ -305,7 +305,9 @@ node, untested).
   [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
-  zsh tries to run as a command. Full rule in [`CLAUDE.md`](CLAUDE.md).
+  zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,
+  since that zsh passes a trailing one to the command (added 2026-09-26). Full rule in
+  [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
 - **The GPU set moves as one, only on upgrade day.** Kernel, NVIDIA modules, driver and CUDA are
