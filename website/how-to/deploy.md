@@ -55,7 +55,7 @@ make install-units
 ```
 
 It shows each file it would install as root, in full the first time. Read what it shows before you
-answer. Answer `y`, and it installs root's copies in `/etc/systemd/system` and
+answer. Answer `y` (or `yes`), and it installs root's copies in `/etc/systemd/system` and
 `/etc/local-ai/compose`, then enables llama-swap, the brake and the web services; any other answer
 installs nothing. `make install-units-dry-run` shows the same and changes nothing.
 
@@ -80,12 +80,15 @@ registry. Nothing runs yet, so it restarts nothing.
 make pull
 ```
 
-`make logs` is a snapshot, and the pull logs one line per file as each finishes, so to follow it,
-**on the Spark**, in another pane:
+It prints nothing until the pull ends, then the pull's last 40 journal lines, whether or not it
+failed. `make logs` is a snapshot, and the pull logs one line per file as each finishes, so to
+follow it, **on the Spark**, in another pane:
 
 ```bash
 journalctl -fu local-ai-pull
 ```
+
+No sudo: bootstrap put you in `adm`, which reads every journal.
 
 **On the Spark**, start the stack, then look at it. No sudo: the polkit rule lets you start, stop
 and restart the four units, and nothing more.
@@ -97,8 +100,10 @@ make status
 
 ## The web UI's first account, straight after the first start
 
-Do this before anything else. **On the Mac**, open a tunnel to the web UI in a spare terminal, and
-leave it open. Ctrl-C closes it.
+Do this before anything else. First, open a tunnel to the web UI in a spare terminal, and leave it
+open; Ctrl-C closes it.
+
+**On the Mac:**
 
 ```bash
 ssh -N -L 3000:127.0.0.1:3000 brightroar
@@ -131,8 +136,8 @@ sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: "
 systemctl restart local-ai-compose
 ```
 
-Log in through the tunnel with that email and password. Then, **on the Spark**, remove both lines,
-and restart once more so the container no longer holds them:
+Log in through the tunnel, on the Mac, with that email and password. Then, **on the Spark**, remove
+both lines, and restart once more so the container no longer holds them:
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
@@ -168,6 +173,12 @@ see what would change:
 make apply-dry-run
 ```
 
+If the real run would refuse, because llama-swap would restart while models are loaded, or while
+apply can't tell whether they are, the dry run says so:
+`apply: dry run — would refuse: …; with --now it would restart …`. It exits 1 and ends in make's own
+error line, `make: *** … Error 1`. That line is the answer, not a fault: run it again when the
+models are idle, or `make apply-now`.
+
 Then, **on the Spark**, change it:
 
 ```bash
@@ -179,9 +190,9 @@ Spark**, run `make install-units`, read what it shows, and answer. It shows ever
 would install, but not the clone's own scripts, which sudo runs too. Then `make apply` again: that
 second apply restarts each unit still running its older definition.
 
-If llama-swap would restart, for its config or for its unit, while models are loaded, apply changes
-nothing and says so. Run it again when they're idle, or `make apply-now` to restart llama-swap
-anyway.
+If llama-swap would restart, for its config or for its unit, while models are loaded, or while apply
+can't tell whether they are, apply changes nothing and says so. Run it again when they're idle, or
+`make apply-now` to restart llama-swap anyway.
 
 If a model starts loading after apply's first look, apply deploys the files, puts llama-swap's
 restart off, says so and exits 1; the next `make apply` makes the restart once the models are idle.
@@ -202,6 +213,14 @@ make logs s=llama-swap
 `s=` also takes `brake`, `pull`, `compose`, `open-webui` and `searxng`. A refused load appears in
 `make status` as a `refused` line with its reason, for an account in `spark-admin`; any other
 account is told the brake's state is unknown to it.
+
+While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
+`make brake-release` lifts the hold; it needs an account in `spark-admin`.
+
+`make pull` ends with the pull's journal, failed or not, and a `FAILED` line's reason says which
+cause it is. Only a wrong file name or revision is fixed in `stack/models.yaml`: fix it there, then
+`make apply` and `make pull`. For the rest (a missing or gated repo, a bad or refused token, the
+network or a server error, a full or unwritable disk), fix the cause, then `make pull` again.
 
 If `make apply` keeps saying a file differs from root's copy, `make install-units-dry-run` shows the
 difference, and `make install-units` installs it.

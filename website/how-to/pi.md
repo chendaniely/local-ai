@@ -23,9 +23,10 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 pi --version
 ```
 
-pi reads your key from `SPARK_API_KEY`, so your shell must export it: [Secret files](secret-files.md)
-put it in `~/.secrets`. **On the Mac**, check it without showing it. This asks what a program you
-start would see, so it prints `True` only when the variable is exported, not merely set:
+pi reads your key from `SPARK_API_KEY`, so your shell must export it:
+[Secret files](secret-files.md) put it in `~/.secrets`. **On the Mac**, check it without showing it.
+This asks what a program you start would see, so it prints `True` only when the variable is
+exported, not merely set:
 
 ```bash
 python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"
@@ -78,8 +79,8 @@ builtin, so the value never reaches a command line. If the key is missing, the l
 writes nothing, as step 5 of [Secret files](secret-files.md) does. Run again, it rewrites the file
 with the same line.
 
-Then become `agent`, still on the Spark: `sudo -iu agent`. **On the Spark, as `agent`:** load the key
-in every shell, install uv and pi into `agent`'s own `~/.local`, and clone this repo.
+Then become `agent`, still on the Spark: `sudo -iu agent`. **On the Spark, as `agent`:** load the
+key in every shell, install uv and pi into `agent`'s own `~/.local`, and clone this repo.
 
 ```bash
 grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
