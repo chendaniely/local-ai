@@ -293,7 +293,8 @@ rehold() {
   return 1
 }
 
-# A signal while the way out holds the set again: say what is left to do.
+# A signal while the way out holds the set again, whether it reached this script or killed only the
+# hold's subshell: say what is left to do.
 cut_off_while_holding() {
   echo "bootstrap: stopped while holding the GPU set again — run make hold-gpu" >&2
   if (( MOVING )); then
@@ -304,11 +305,17 @@ cut_off_while_holding() {
 
 on_upgrade_exit() {
   local code=$?
-  trap - EXIT
+  # The signal trap goes in before the EXIT trap comes out: a signal between the two would otherwise run
+  # upgrade_gpu's own `exit 1xx` with no way out left, and the script would end without a word, the
+  # set released.
   trap cut_off_while_holding HUP INT TERM
+  trap - EXIT
   if (( ! REHELD )); then
     echo "bootstrap: upgrade day stopped before the end — holding the GPU set again" >&2
     rehold || code=1
+    # A signal that killed only the hold's subshell (the OOM killer, a kill by pid) never reaches this
+    # script's trap, and leaves the set released: say so as the trap does, with no hint to start the stack.
+    if (( ! REHELD )); then cut_off_while_holding; fi
   fi
   if (( code != 0 )); then
     # After apt started, the stack may start again only if the set is as it was and the newest

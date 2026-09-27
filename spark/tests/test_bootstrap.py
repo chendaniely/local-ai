@@ -128,7 +128,9 @@ FAKE_APT_MARK = """#!/usr/bin/env bash
 # the script above it get TERM, and nothing is held. Those are $PPID and its parent, which are
 # rehold's subshell and the script only while the hold runs in rehold's subshell, as upgrade day's
 # holds do. Called any other way, as real_hold calls hold_gpu_stack, the parent's parent is something
-# else, pytest itself there: so only upgrade_env sets $APT_MARK_CUT.
+# else, pytest itself there: so only upgrade_env sets $APT_MARK_CUT. $APT_MARK_KILL, likewise, names a
+# file holding how many holds to kill as the OOM killer or a kill by pid would: SIGKILL to the shell
+# that ran apt-mark alone, rehold's subshell, so the script above it gets no signal at all.
 mark() {  # mark LETTER PKG...: set each package's first status letter in the fixture
   local letter="$1" st pkg ver
   shift
@@ -146,6 +148,11 @@ case "$1" in
       script="$(ps -o ppid= -p "$PPID" | tr -d ' ')"
       kill -TERM "$PPID" "$script"
       exit 143
+    fi
+    if [[ -s "${APT_MARK_KILL:-}" ]] && (( $(cat "$APT_MARK_KILL") > 0 )); then
+      echo $(( $(cat "$APT_MARK_KILL") - 1 )) > "$APT_MARK_KILL"
+      kill -KILL "$PPID"
+      exit 137
     fi
     shift
     took=()
@@ -719,6 +726,48 @@ def test_a_signal_during_the_way_outs_own_hold_leaves_the_set_released(tmp_path)
     assert result.returncode == 130
     assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
     assert held(tmp_path) == set()
+
+
+@pytest.mark.parametrize("plan, answer", [(GOOD_PLAN, "no"), (PLAN_WITHOUT_MODULES, "yes")],
+                         ids=["after-a-no", "after-a-refused-plan"])
+def test_a_hold_killed_on_its_own_on_the_way_out_says_run_make_hold_gpu(tmp_path, plan, answer):
+    # Task 10's review (M1). A signal that kills only the hold's subshell, as the OOM killer or a kill by pid would,
+    # never reaches the script's trap. The set is still released: the way out says to run make hold-gpu, as after a
+    # signal that did reach the script, and never to start the stack.
+    env = {**upgrade_env(tmp_path, plan, answer=answer), "APT_MARK_KILL": str(tmp_path / "kill")}
+    (tmp_path / "kill").write_text("1")
+    result = real_upgrade(env)
+    assert result.returncode == 130
+    assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
+    assert "systemctl start" not in result.stderr
+    assert held(tmp_path) == set()
+
+
+def test_a_hold_after_the_move_killed_twice_says_run_make_hold_gpu_and_not_to_reboot(tmp_path):
+    # The hold after apt's move is tried once more, whatever cut it off; killed again, the set stays released.
+    env = {**upgrade_env(tmp_path, GOOD_PLAN), "APT_MARK_KILL": str(tmp_path / "kill")}
+    (tmp_path / "kill").write_text("2")
+    result = real_upgrade(env)
+    assert result.returncode == 130
+    assert [line for line in calls(tmp_path) if line.startswith("apt-mark hold")] == [
+        f"apt-mark hold {sorted_set(NEW_SET)}"] * 2
+    assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
+    assert "don't reboot until step 5's checks pass" in result.stderr
+    assert "systemctl start" not in result.stderr and "sudo reboot" not in result.stdout
+    assert held(tmp_path) == set()
+
+
+def test_the_way_out_sets_its_signal_trap_before_it_clears_its_exit_trap(tmp_path):
+    # Task 10's review (M1): with the EXIT trap cleared first, a signal between the two runs upgrade_gpu's own
+    # `exit 1xx` with no way out left, and the script ends without a word, the set released.
+    env = upgrade_env(tmp_path, GOOD_PLAN)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 REHELD=1 && '
+                       'trap() { echo "trap $*" >> "$CALLS"; builtin trap "$@"; } && on_upgrade_exit',
+         "bash", str(SCRIPT)],
+        capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    assert calls(tmp_path) == ["trap cut_off_while_holding HUP INT TERM", "trap - EXIT"]
 
 
 def test_a_grub_that_wont_boot_the_newest_kernel_refuses_before_anything_is_released(tmp_path):
