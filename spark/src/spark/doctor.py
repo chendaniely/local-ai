@@ -78,7 +78,8 @@ def _unusable(key: str | None, key_env: str) -> str | None:
     is never sent, and never shown: the likely cause is a CRLF line in the file it was set from, and http.client's
     error would print the whole header."""
     if key is None:
-        return f"no key in this shell: {key_env} isn't set"
+        return (f"no key in this shell: {key_env} isn't set — set it as website/how-to/deploy.md's *Before the "
+                "first deploy* says, then log in afresh")
     if not _sendable(key):
         return (f"the key in {key_env} isn't printable ASCII (a stray CR or LF?), so it wasn't sent: set it again, "
                 "as website/how-to/deploy.md's *Before the first deploy* does")
@@ -348,7 +349,9 @@ def root_copies(probe: Probe) -> Check:
         want = "folder" if path in ROOT_FOLDERS else "file"
         entry = probe.entry(path)
         if entry is None:
-            wrong.append(f"{path} is missing, or out of your account's reach")
+            # The Compose project sits under /etc/local-ai, root:spark-admin 750: a session from before
+            # bootstrap, without spark-admin, can't see into it, so the copy may well be there.
+            wrong.append(f"{path} is missing, or out of your account's reach (log in again)")
             continue
         user, group, mode, kind = entry
         if kind != want:

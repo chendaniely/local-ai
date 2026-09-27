@@ -95,6 +95,9 @@ class FakeProbe:
         return self.pages.get(url, 0), ""
 
 
+NO_KEY_REMEDY = " — set it as website/how-to/deploy.md's *Before the first deploy* says, then log in afresh"
+
+
 def failures(probe, key=KEY):
     return {c.name: c.detail for c in checks(probe, key, REG) if not c.ok}
 
@@ -198,6 +201,12 @@ def test_what_root_runs_must_be_roots_own_files():
     assert failures(probe)["root's copies"].startswith(f"{unit} is a link, not a file")
     del probe.entries[unit]
     assert failures(probe)["root's copies"].startswith(f"{unit} is missing")
+    # /etc/local-ai is root:spark-admin 750, so a session from before bootstrap can't see into it: the copies may
+    # well be there, and a new login is the fix, as for the secrets folder (Task 10's review, M5).
+    probe = FakeProbe()
+    del probe.entries[Path(COMPOSE_DIR, "compose.yaml")]
+    assert failures(probe) == {"root's copies": f"{COMPOSE_DIR}/compose.yaml is missing, or out of your account's "
+                                                "reach (log in again): run `make install-units`"}
     probe = FakeProbe()
     probe.entries[Path(COMPOSE_DIR)] = ("root", "root", 0o775, "folder")
     assert failures(probe) == {"root's copies": f"{COMPOSE_DIR} is root:root 775: run `make install-units`"}
@@ -369,8 +378,9 @@ def test_a_hold_dry_run_that_found_nothing_says_how_to_look():
 
 def test_without_a_key_the_key_checks_fail_and_the_others_still_run():
     assert failures(FakeProbe(), key=None) == {
-        "llama-swap": "no key in this shell: SPARK_API_KEY isn't set",
-        "a model, end to end": "no key in this shell: SPARK_API_KEY isn't set",
+        # Every FAIL says what to do (Task 10's review, M4): the remedy is deploy.md's.
+        "llama-swap": f"no key in this shell: SPARK_API_KEY isn't set{NO_KEY_REMEDY}",
+        "a model, end to end": f"no key in this shell: SPARK_API_KEY isn't set{NO_KEY_REMEDY}",
     }
 
 
@@ -387,8 +397,8 @@ def spark_doctor(monkeypatch, capsys, probe, *args: str) -> tuple[int, str]:
 def test_a_missing_key_names_the_variable_doctor_read(monkeypatch, capsys):
     # --key-env picks the variable: the FAIL line names that one, not the default.
     detail = {c.name: c.detail for c in checks(FakeProbe(), None, REG, key_env="LLAMASWAP_KEY_SPARK") if not c.ok}
-    assert detail == {"llama-swap": "no key in this shell: LLAMASWAP_KEY_SPARK isn't set",
-                      "a model, end to end": "no key in this shell: LLAMASWAP_KEY_SPARK isn't set"}
+    assert detail == {"llama-swap": f"no key in this shell: LLAMASWAP_KEY_SPARK isn't set{NO_KEY_REMEDY}",
+                      "a model, end to end": f"no key in this shell: LLAMASWAP_KEY_SPARK isn't set{NO_KEY_REMEDY}"}
     code, shown = spark_doctor(monkeypatch, capsys, FakeProbe(), "--key-env", "MY_OWN_KEY")
     assert code == 1 and "no key in this shell: MY_OWN_KEY isn't set" in shown and "SPARK_API_KEY" not in shown
     monkeypatch.setenv("MY_OWN_KEY", "fake-key\r")
