@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import grp
+import http.client
 import json
 import os
 import pwd
@@ -33,12 +34,16 @@ ROOT_FILES = (*(Path(render.UNIT_DIR, unit) for unit in render.UNITS),
               Path(render.COMPOSE_DIR, "compose.yaml"), Path(render.COMPOSE_DIR, "searxng/settings.yml"))
 UFW_CONF = Path("/etc/ufw/ufw.conf")
 EARLYOOM_DEFAULT = Path("stack/host/earlyoom.default")
-# Each should answer 200 on / (urllib follows redirects). Not yet seen on the box: the first
-# `make doctor` there is the check.
+# Each should answer 200 on / (Probe.http follows a redirect for a request without a key). Not yet seen
+# on the box: the first `make doctor` there is the check.
 WEB = (("Open WebUI", "http://127.0.0.1:3000/"), ("SearXNG", "http://127.0.0.1:8888/"))
 HOLD_DRY_RUN = ["bash", "stack/host/bootstrap.sh", "--hold-gpu", "--dry-run"]
 HOLD_SUMMARY = re.compile(r"^==> GPU set: (\d+) packages, (\d+) already held$", re.MULTILINE)
 HOLD_STOPS = re.compile(r"\(a real run stops here: (.+)\)$", re.MULTILINE)
+# A key a header can't carry as it is: never sent, and never shown, since the likely cause is a CRLF line in the
+# file it was set from, and http.client's error would print the whole header.
+UNSENDABLE = ("the key in this shell isn't printable ASCII (a stray CR or LF?), so it wasn't sent: set it again, "
+              "as website/how-to/deploy.md's *Before the first deploy* does")
 
 
 @dataclass(frozen=True)
@@ -53,11 +58,29 @@ def _who(st: os.stat_result) -> tuple[str, str, int]:
     return pwd.getpwuid(st.st_uid).pw_name, grp.getgrgid(st.st_gid).gr_name, st.st_mode & 0o7777
 
 
+def _sendable(key: str) -> bool:
+    return key.isascii() and key.isprintable()
+
+
+class _KeyStaysHere(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only for a request without a key. urllib's own handler sends a redirected request on with
+    every header it was given, the key's included, to wherever the redirect points. With a key, the redirect is the
+    answer: urllib raises it as an HTTPError with the redirect's status."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if req.has_header("Authorization"):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class Probe:
     """What the checks read from the box. The tests hand in a fake instead."""
 
     def __init__(self, repo: Path):
         self.repo = Path(repo)
+        # Every request goes through this opener. No proxy from the environment (http_proxy): the key would go to
+        # it, even for 127.0.0.1, and a web check would ask the proxy, not the service.
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _KeyStaysHere)
 
     def run(self, argv: list[str]) -> tuple[int, str, str]:
         try:
@@ -99,18 +122,26 @@ class Probe:
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
              timeout: float = 10.0) -> tuple[int, str]:
-        """The HTTP status and body; 0 when nothing answered. The key goes in a header, never a URL."""
-        request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode())
-        if body is not None:
-            request.add_header("Content-Type", "application/json")
-        if key:
-            request.add_header("Authorization", f"Bearer {key}")
+        """The HTTP status and body; 0 when nothing answered, when no whole HTTP answer came back, or when the
+        request couldn't be made. The key goes in a header, never a URL, and only to `url`: through no proxy, and
+        never on to where a redirect points, a keyed request's redirect coming back as its status. A key that isn't
+        printable ASCII isn't sent at all (the checks refuse it first, and say so)."""
+        if key and not _sendable(key):
+            return 0, ""
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode())
+            if body is not None:
+                request.add_header("Content-Type", "application/json")
+            if key:
+                request.add_header("Authorization", f"Bearer {key}")
+            with self._opener.open(request, timeout=timeout) as response:
                 return response.status, response.read().decode(errors="replace")
-        except urllib.error.HTTPError as err:
+        except urllib.error.HTTPError as err:  # it answered with an error, or with a redirect a key didn't follow
+            err.close()
             return err.code, ""
-        except (urllib.error.URLError, OSError):
+        # Nothing answered, the answer broke off or wasn't HTTP, or the request couldn't be made: a ValueError's
+        # text can name a header's value, the key's included, so none of it goes any further.
+        except (OSError, http.client.HTTPException, ValueError):
             return 0, ""
 
 
@@ -254,10 +285,24 @@ def llama_swap(probe: Probe, key: str | None) -> Check:
                                           "not 401: its keys aren't enforced")
     if key is None:
         return Check("llama-swap", False, "no key in this shell: SPARK_API_KEY isn't set")
+    if not _sendable(key):
+        return Check("llama-swap", False, UNSENDABLE)
     keyed, _ = probe.http(f"{paths.LLAMASWAP_URL}/running", key=key)
+    if _redirect(keyed):
+        return Check("llama-swap", False, f"/running with your key answered {_redirected(keyed)}")
     if keyed != 200:
         return Check("llama-swap", False, f"/running with your key answered {keyed or 'nothing'}")
     return Check("llama-swap", True, "answers, and refuses a call without a key")
+
+
+def _redirect(code: int) -> bool:
+    return 300 <= code < 400
+
+
+def _redirected(code: int) -> str:
+    """What a check says of a redirect that a request with the key got, which Probe.http never follows."""
+    return (f"{code}, a redirect, which doctor never follows with your key: is it llama-swap that answers at "
+            f"{paths.LLAMASWAP_URL}? `make logs s=llama-swap`")
 
 
 def web(probe: Probe) -> Check:
@@ -291,6 +336,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
         return Check(name, False, "the registry has no embeddings model")
     if key is None:
         return Check(name, False, "no key in this shell: SPARK_API_KEY isn't set")
+    if not _sendable(key):
+        return Check(name, False, UNSENDABLE)
     code, body = probe.http(f"{paths.LLAMASWAP_URL}/v1/embeddings", key=key,
                             body={"model": models[0], "input": "doctor"}, timeout=300)
     try:
@@ -299,6 +346,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
         vector = []
     if code == 200 and vector:
         return Check(name, True, f"{models[0]} answered")
+    if _redirect(code):
+        return Check(name, False, f"{models[0]} answered {_redirected(code)}")
     return Check(name, False, f"{models[0]} answered {code or 'nothing'}: `make status` says why a load "
                               "was refused")
 

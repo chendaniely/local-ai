@@ -1,9 +1,17 @@
 import argparse
+import io
 import json
 import subprocess
+import threading
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from spark import doctor
+import pytest
+
+from spark import cli, doctor
 from spark.doctor import SECRETS, UFW_CONF, UNITS, Probe, checks, earlyoom_args, report
 from spark.registry import load_registry
 from spark.render import COMPOSE_DIR, installed_path, render
@@ -247,3 +255,211 @@ def test_make_doctor_runs_spark_doctor():
     # -s: under -C, GNU make 4 also prints "Entering directory" and "Leaving directory" lines.
     recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "doctor"], capture_output=True, text=True, check=True)
     assert recipe.stdout.strip().endswith("spark doctor")
+
+
+# Probe.http, against stand-ins that really listen on 127.0.0.1. Task 10's pre-dispatch scan (R2) found the plan's
+# listing sending the key through a proxy and on to wherever a redirect pointed, and printing it in a traceback's
+# stead: the leaks Task 3's client had closed (828fb3e).
+REACHED: list[tuple[str, str, str | None]] = []  # each request a stand-in got: its name, its target, its key header
+REDIRECT: dict[str, str] = {}  # a path the llama-swap stand-in answers, when a key comes with it, with a redirect
+
+
+class StandIn(BaseHTTPRequestHandler):
+    """Records every request, and answers `/` with a redirect to /login, which answers 200, as a web UI may."""
+
+    name = "stand-in"
+
+    def log_message(self, *args):
+        pass
+
+    def answer(self, code: int, body: bytes = b"", location: str | None = None):
+        self.send_response(code)
+        if location:
+            self.send_header("Location", location)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        REACHED.append((self.name, self.requestline.split()[1], self.headers.get("Authorization")))
+        if self.path == "/":
+            return self.answer(302, location="/login")
+        self.answer(200, b'{"running": []}')
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.do_GET()
+
+
+class LlamaSwapStandIn(StandIn):
+    """llama-swap as doctor asks it: /health, and /running and /v1/embeddings with the key KEY."""
+
+    name = "llama-swap"
+
+    def do_GET(self):
+        auth = self.headers.get("Authorization")
+        REACHED.append((self.name, self.requestline.split()[1], auth))
+        if auth and self.path in REDIRECT:  # a POST is sent on as a GET for a 303, and for a 301 or 302 too
+            return self.answer(303 if self.command == "POST" else 302, location=REDIRECT[self.path])
+        if self.path == "/health":
+            return self.answer(200, b"OK")
+        if auth != f"Bearer {KEY}":
+            return self.answer(401)
+        if self.path == "/running":
+            return self.answer(200, b'{"running": []}')
+        self.answer(200, json.dumps({"data": [{"embedding": [0.25, 0.5]}]}).encode())
+
+
+class Garbled(BaseHTTPRequestHandler):
+    """Answers /short with a body cut short, and anything else with something that isn't HTTP."""
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        self.close_connection = True
+        if self.path == "/short":  # promises 100 bytes, sends 13, and the connection closes
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            self.wfile.write(b'{"running": [')
+        else:
+            self.wfile.write(b"garbage\r\n\r\n")
+
+
+@contextmanager
+def serving(handler):
+    httpd = HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.fixture()
+def llama_swap(monkeypatch):
+    """The llama-swap stand-in, where doctor looks for llama-swap."""
+    REACHED.clear()
+    REDIRECT.clear()
+    with serving(LlamaSwapStandIn) as url:
+        monkeypatch.setattr(doctor.paths, "LLAMASWAP_URL", url)
+        yield url
+
+
+class LiveProbe(FakeProbe):
+    """FakeProbe, except that what doctor asks llama-swap goes out for real, through doctor's own Probe.http, to the
+    llama-swap stand-in."""
+
+    def __init__(self):
+        super().__init__()
+        self.real = Probe(ROOT)
+
+    def http(self, url, *, key=None, body=None, timeout=10.0):
+        if not url.startswith(doctor.paths.LLAMASWAP_URL):
+            return super().http(url, key=key, body=body, timeout=timeout)
+        self.keys_sent.append(key)
+        return self.real.http(url, key=key, body=body, timeout=timeout)
+
+
+def keyed_elsewhere() -> list[tuple[str, str, str | None]]:
+    """What reached a stand-in other than llama-swap with a key."""
+    return [request for request in REACHED if request[0] != "llama-swap" and request[2] is not None]
+
+
+def test_a_proxy_in_the_environment_never_gets_a_request(llama_swap, monkeypatch):
+    with serving(StandIn) as proxy:
+        monkeypatch.setenv("http_proxy", proxy)
+        monkeypatch.setattr(urllib.request, "_opener", None)  # urlopen keeps the proxies it read on first use
+        probe = Probe(ROOT)
+        results = [doctor.llama_swap(probe, KEY), doctor.model(probe, KEY, REG)]
+    assert [request for request in REACHED if request[0] != "llama-swap"] == []  # nothing, so no key, reached it
+    assert [c.ok for c in results] == [True, True]
+
+
+BAD_KEYS = [
+    pytest.param("fake-key\r", id="cr-at-the-end"),  # a CRLF line in a sourced secrets file
+    pytest.param("fake-key\nsecond-line", id="lf-inside"),
+    pytest.param("fake-key-é", id="a-letter-beyond-ascii"),  # http.client sends it, as Latin-1
+]
+
+
+@pytest.mark.parametrize("key", BAD_KEYS)
+def test_a_key_a_header_cant_carry_is_never_sent_or_shown(key):
+    probe = FakeProbe()
+    results = checks(probe, key, REG)
+    failed = {c.name: c.detail for c in results if not c.ok}
+    assert set(failed) == {"llama-swap", "a model, end to end"}
+    assert all("isn't printable ASCII (a stray CR or LF?), so it wasn't sent" in detail for detail in failed.values())
+    assert key not in probe.keys_sent
+    assert "fake-key" not in report(results)
+
+
+@pytest.mark.parametrize("key", BAD_KEYS)
+def test_spark_doctor_reports_on_a_key_a_header_cant_carry_and_never_shows_it(llama_swap, monkeypatch, capsys, key):
+    # The plan's listing sent the key to http.client, whose ValueError names it: `spark doctor` printed that, with
+    # no report. A Latin-1 letter it sent.
+    live = LiveProbe()
+    monkeypatch.setattr(doctor, "Probe", lambda repo: live)
+    monkeypatch.setattr(doctor, "load_deployed_registry", lambda path: (REG, None))
+    monkeypatch.setenv("SPARK_API_KEY", key)
+    monkeypatch.chdir(ROOT)
+    code = cli.main(["doctor"])
+    shown = capsys.readouterr()
+    assert code == 1 and "checks pass" in shown.out, shown
+    assert "fake-key" not in shown.out + shown.err
+    assert key not in live.keys_sent and [auth for _, _, auth in REACHED if auth] == []
+
+
+@pytest.mark.parametrize("path", ["/running", "/v1/embeddings"])
+def test_a_request_with_the_key_never_follows_a_redirect(llama_swap, path):
+    # urllib sends a redirected request on with every header it was given, the key's included, to wherever the
+    # redirect points, and a POST as a GET. With the key, the redirect is the answer, and the check names its status.
+    probe = Probe(ROOT)
+    with serving(StandIn) as elsewhere:
+        REDIRECT[path] = f"{elsewhere}/stolen"
+        check = doctor.llama_swap(probe, KEY) if path == "/running" else doctor.model(probe, KEY, REG)
+    assert keyed_elsewhere() == []
+    assert not check.ok and ("302" if path == "/running" else "303") in check.detail, check
+
+
+def test_a_request_without_the_key_still_follows_a_redirect():
+    # Open WebUI or SearXNG may answer / with a redirect, to a login page, say: the web check follows it.
+    REACHED.clear()
+    with serving(StandIn) as web:
+        assert Probe(ROOT).http(f"{web}/") == (200, '{"running": []}')
+    assert [target for _, target, _ in REACHED] == ["/", "/login"]
+
+
+@pytest.mark.parametrize("path", ["/not-http", "/short"])
+def test_an_answer_that_isnt_http_or_breaks_off_is_no_answer_not_a_crash(path):
+    with serving(Garbled) as url:
+        assert Probe(ROOT).http(f"{url}{path}") == (0, "")
+
+
+def test_a_request_urllib_cant_make_is_no_answer_not_a_crash():
+    # A URL with no scheme, from a SPARK_LLAMASWAP_URL that is set but empty, raises ValueError in urllib; a key
+    # http.client won't put in a header raises one that names the header's value, and a Latin-1 key it sends.
+    probe = Probe(ROOT)
+    assert probe.http("/health") == (0, "")
+    for key in ("fake-key\r", "fake-key-é"):
+        with serving(StandIn) as url:
+            REACHED.clear()
+            assert probe.http(f"{url}/running", key=key) == (0, "")
+        assert REACHED == []
+
+
+def test_an_error_answer_is_closed(monkeypatch):
+    # The answer to a refused request is an HTTPError that holds the connection: closed then, not left to the
+    # garbage collector, which never closes it while something else holds the error, as a traceback or a log can.
+    answer = io.BytesIO(b"unauthorized")
+    held = []
+
+    def refuse(self, fullurl, data=None, timeout=None):
+        held.append(urllib.error.HTTPError("http://127.0.0.1:9100/running", 401, "Unauthorized", {}, answer))
+        raise held[-1]
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", refuse)
+    assert Probe(ROOT).http("http://127.0.0.1:9100/running") == (401, "")
+    assert answer.closed
