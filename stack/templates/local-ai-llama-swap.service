@@ -5,6 +5,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# exec: `systemctl restart` waits until the binary runs, so a llama-swap that can't start fails the restart.
+Type=exec
 User=spark
 Group=spark
 EnvironmentFile=/etc/local-ai/secrets/llama-swap.env

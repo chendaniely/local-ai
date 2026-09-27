@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import secrets
+import stat
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 from pathlib import Path
 
@@ -229,11 +232,34 @@ def render(registry: Registry, versions: dict[str, Component], registry_text: st
     return files
 
 
+def write_atomic(path: Path, data: str | bytes) -> None:
+    """Write `path` whole: into a new file in its folder, then renamed over it. A reader sees the old file or the new
+    one, never part of one (`spark launch` reads the deployed registry on every load), and a link where the file
+    goes is replaced, not written through. A file replaced keeps its mode; a new one gets what an ordinary write
+    would give it, 0666 less the umask. Text is encoded as Path.write_text would encode it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        was = os.lstat(path)
+    except FileNotFoundError:
+        was = None
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with open(fd, "wb" if isinstance(data, bytes) else "w") as f:
+            f.write(data)
+        if was is not None and stat.S_ISREG(was.st_mode):
+            os.chmod(tmp, stat.S_IMODE(was.st_mode) & 0o777)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def write_tree(files: dict[str, str], out: Path) -> None:
+    """Each file under `out`, making its folders, each written whole (write_atomic)."""
     for rel, content in files.items():
-        path = Path(out) / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        write_atomic(Path(out) / rel, content)
 
 
 def register(subparsers) -> None:

@@ -1,3 +1,4 @@
+import os
 import re
 import shlex
 from pathlib import Path
@@ -399,6 +400,28 @@ def test_write_tree_writes_each_file_under_out_making_its_folders(tmp_path):
     assert tree(tmp_path / "out") == files
 
 
+def test_write_tree_replaces_each_file_whole_and_never_writes_through_a_link(tmp_path):
+    # Task 7's fix round 1: `spark launch` reads the deployed registry on every load, so a load during `spark apply`
+    # must see the old file or the new one, never half of one. Each file is written beside the old one and renamed
+    # over it: a new file (a new inode), whole, and a link planted where a file goes is replaced, not written through.
+    out, roots = tmp_path / "out", tmp_path / "roots"
+    write_tree({"models.yaml": "old", "systemd/local-ai-brake.service": "old"}, out)
+    (out / "models.yaml").chmod(0o640)
+    before = (out / "models.yaml").stat().st_ino
+    roots.write_text("root's copy")
+    (out / "systemd/local-ai-brake.service").unlink()
+    (out / "systemd/local-ai-brake.service").symlink_to(roots)
+    write_tree({"models.yaml": "new", "systemd/local-ai-brake.service": "staged", "llama-swap.yaml": "added"}, out)
+    assert tree(out) == {"models.yaml": "new", "systemd/local-ai-brake.service": "staged", "llama-swap.yaml": "added"}
+    assert (out / "models.yaml").stat().st_ino != before
+    assert not (out / "systemd/local-ai-brake.service").is_symlink() and roots.read_text() == "root's copy"
+    # A file replaced keeps its mode; a new one gets what an ordinary write gives it, 0666 less the umask.
+    umask = os.umask(0)
+    os.umask(umask)
+    assert (out / "models.yaml").stat().st_mode & 0o777 == 0o640
+    assert (out / "llama-swap.yaml").stat().st_mode & 0o777 == 0o666 & ~umask
+
+
 @pytest.mark.parametrize("given", [True, False], ids=["the files given", "stack's own by default"])
 def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, given):
     monkeypatch.chdir(ROOT)  # as `make` runs it: the templates and stack's own files are found from the repo root
@@ -425,3 +448,14 @@ def test_the_brake_and_llama_swap_keep_systemds_default_umask():
     files = rendered()
     for unit in ("local-ai-brake.service", "local-ai-llama-swap.service"):
         assert "UMask" not in files[f"systemd/{unit}"], unit
+
+
+def test_a_restart_of_the_brake_or_llama_swap_fails_when_its_binary_cant_start():
+    # Task 7's fix round 1: with systemd's default Type=simple, `systemctl restart` succeeds as soon as systemd forks,
+    # even when the binary is missing. Type=exec waits until it runs, so `spark apply` hears of a start that failed.
+    files = rendered()
+    for unit, kept in (("local-ai-llama-swap.service", ["Restart=on-failure", "RestartSec=5", "KillMode=control-group"]),
+                       ("local-ai-brake.service", ["Restart=always", "RestartSec=2", "OOMScoreAdjust=-900"])):
+        service = files[f"systemd/{unit}"].split("\n[Service]\n", 1)[1].split("\n[", 1)[0].splitlines()
+        assert [line for line in service if line.startswith("Type=")] == ["Type=exec"], unit
+        assert set(kept) <= set(service), unit  # and the rest as it was
