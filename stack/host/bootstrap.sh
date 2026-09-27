@@ -359,11 +359,15 @@ upgrade_gpu() {
     say "GRUB boots $kernel, the newest kernel"
   fi
   pkgs="$(held_gpu_set)"
-  REHELD=0
-  trap on_upgrade_exit EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
+  # From here on, every way out holds the set again. A dry run releases nothing, so it sets no way out:
+  # cut off by a signal, it just ends, and says nothing of a hold.
+  if (( ! DRY_RUN )); then
+    REHELD=0
+    trap on_upgrade_exit EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+  fi
   if [[ -z "$pkgs" ]]; then
     say "nothing in the GPU set is held; the end of this run holds it"
   else

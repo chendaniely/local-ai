@@ -2,6 +2,7 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
@@ -901,6 +902,20 @@ def test_a_dry_run_whose_hold_would_stop_says_only_what_the_hold_says(tmp_path):
     assert result.returncode == 1
     assert "nvidia-driver-580-open (iU)" in result.stderr and "finish dpkg first" in result.stderr
     assert "not held again" not in result.stderr
+    assert calls(tmp_path) == []
+
+
+def test_a_dry_run_cut_off_by_a_signal_says_nothing_of_a_hold(tmp_path):
+    # Task 10's review (M3): a dry run releases nothing, so it has no way out to hold the set again. A TERM or a
+    # Ctrl-C during it ends it, and it says nothing of a hold. `run` stands in for the first step it prints, and
+    # sends the signal. (Sourcing the script parses no options, so the dry run is DRY_RUN=1, set here.)
+    env = upgrade_env(tmp_path, GOOD_PLAN)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=1 && run() { kill -TERM $$; sleep 5; } && upgrade_gpu',
+         "bash", str(SCRIPT)],
+        capture_output=True, text=True, env=env)
+    assert result.returncode == -signal.SIGTERM, result.stderr
+    assert "hold" not in result.stderr
     assert calls(tmp_path) == []
 
 
