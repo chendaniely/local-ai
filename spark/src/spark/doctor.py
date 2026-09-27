@@ -171,7 +171,8 @@ def judge_gpu_set(code: int, out: str, err: str) -> Check:
     stops = HOLD_STOPS.search(out)
     summary = HOLD_SUMMARY.search(out)
     if code != 0 or stops or not summary:
-        why = stops.group(1) if stops else " ".join(err.split()) or "the hold's dry run found no GPU set"
+        why = stops.group(1) if stops else " ".join(err.split()) or (
+            "the hold's dry run found no GPU set: `make hold-gpu-dry-run` shows what it found")
         return Check("GPU set", False, why)
     total, held = int(summary.group(1)), int(summary.group(2))
     if held < total:
@@ -244,12 +245,17 @@ def firewall(probe: Probe) -> Check:
 def secrets_folder(probe: Probe) -> Check:
     owner = probe.owner(SECRETS)
     if owner is None:
-        return Check("secrets folder", False, f"{SECRETS} is missing: `make bootstrap` creates it")
+        # /etc/local-ai is root:spark-admin 750: a session from before bootstrap, without spark-admin, can't see
+        # into it, so the folder may well be there.
+        return Check("secrets folder", False, f"{SECRETS} is missing, or out of your account's reach (log in "
+                                              "again): `make bootstrap` creates it")
     user, group, mode = owner
     if (user, group, mode) != ("root", "spark", 0o750):
-        return Check("secrets folder", False, f"{SECRETS} is {user}:{group} {mode:o}, not root:spark 750")
-    if probe.listable(SECRETS):
-        return Check("secrets folder", False, f"your account can list {SECRETS}; it must not")
+        return Check("secrets folder", False, f"{SECRETS} is {user}:{group} {mode:o}, not root:spark 750: "
+                                              "`make bootstrap` sets it")
+    if probe.listable(SECRETS):  # root:spark 750, so this account is root, or in spark
+        return Check("secrets folder", False, f"your account can list {SECRETS}; it must not: run doctor as "
+                                              "yourself, not with sudo, and check that `id -nG` doesn't list spark")
     return Check("secrets folder", True, "root:spark 750, and closed to you")
 
 
@@ -276,12 +282,22 @@ def root_copies(probe: Probe) -> Check:
     return Check("root's copies", True, "the units and the Compose project that root runs are root's own files")
 
 
+def _logs_then_start(units: list[str]) -> str:
+    """What to do about stack units that aren't active: read each one's logs, then start them, which the polkit
+    rule lets spark-admin do without sudo."""
+    logs = " and ".join(f"`make logs s={unit.removeprefix('local-ai-').removesuffix('.service')}`" for unit in units)
+    return f"{logs}, then `systemctl start {' '.join(units)}`"
+
+
 def units(probe: Probe) -> Check:
     _, out, _ = probe.run(["systemctl", "is-active", *UNITS])
     states = out.split()
-    down = [f"{unit} ({state})" for unit, state in zip(UNITS, states) if state != "active"]
-    if len(states) != len(UNITS) or down:
-        return Check("stack units", False, ", ".join(down) or "systemctl didn't answer")
+    down = [(unit, state) for unit, state in zip(UNITS, states) if state != "active"]
+    if down:
+        named = ", ".join(f"{unit} ({state})" for unit, state in down)
+        return Check("stack units", False, f"{named}: {_logs_then_start([unit for unit, _ in down])}")
+    if len(states) != len(UNITS):
+        return Check("stack units", False, f"systemctl didn't answer: {_logs_then_start(list(UNITS))}")
     return Check("stack units", True, "llama-swap, the brake and the web services are active")
 
 
@@ -292,15 +308,25 @@ def llama_swap(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
     anonymous, _ = probe.http(f"{paths.LLAMASWAP_URL}/running")
     if anonymous != 401:
         return Check("llama-swap", False, f"/running without a key answered {anonymous or 'nothing'}, "
-                                          "not 401: its keys aren't enforced")
+                                          "not 401: its keys aren't enforced. `make apply-dry-run` shows "
+                                          "whether the deployed config, which sets them, differs from the repo's; "
+                                          "`make logs s=llama-swap` shows what llama-swap said")
     if unusable := _unusable(key, key_env):
         return Check("llama-swap", False, unusable)
     keyed, _ = probe.http(f"{paths.LLAMASWAP_URL}/running", key=key)
     if _redirect(keyed):
         return Check("llama-swap", False, f"/running with your key answered {_redirected(keyed)}")
+    if keyed == 401:
+        return Check("llama-swap", False, f"/running with your key answered 401: {_unknown_key(key_env)}")
     if keyed != 200:
-        return Check("llama-swap", False, f"/running with your key answered {keyed or 'nothing'}")
+        return Check("llama-swap", False, f"/running with your key answered {keyed or 'nothing'}: "
+                                          "`make logs s=llama-swap`")
     return Check("llama-swap", True, "answers, and refuses a call without a key")
+
+
+def _unknown_key(key_env: str) -> str:
+    return (f"llama-swap doesn't know the key in {key_env} — see 'When something is wrong' in "
+            "website/how-to/deploy.md")
 
 
 def _redirect(code: int) -> bool:
@@ -342,7 +368,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     models = [m.name for m in registry.models.values() if m.capability == "embeddings"]
     if not models:
-        return Check(name, False, "the registry has no embeddings model")
+        return Check(name, False, "the registry has no embeddings model, which this check loads: give "
+                                  "stack/models.yaml one, then `make apply`")
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     code, body = probe.http(f"{paths.LLAMASWAP_URL}/v1/embeddings", key=key,
@@ -355,8 +382,13 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
         return Check(name, True, f"{models[0]} answered")
     if _redirect(code):
         return Check(name, False, f"{models[0]} answered {_redirected(code)}")
-    return Check(name, False, f"{models[0]} answered {code or 'nothing'}: `make status` says why a load "
-                              "was refused")
+    if code == 0:  # not a refused load: nothing answered
+        return Check(name, False, "llama-swap didn't answer: `make logs s=llama-swap`")
+    if code == 401:
+        return Check(name, False, f"{models[0]} answered 401: {_unknown_key(key_env)}")
+    if code == 200:
+        return Check(name, False, f"{models[0]} answered 200, but with no embedding: `make logs s=llama-swap`")
+    return Check(name, False, f"{models[0]} answered {code}: `make status` says why a load was refused")
 
 
 def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,

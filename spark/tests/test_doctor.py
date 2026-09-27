@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 import io
 import json
 import subprocess
@@ -158,9 +159,20 @@ def test_the_firewall_must_be_on_and_an_unreadable_conf_says_how_to_check():
 def test_the_secrets_folder_must_stay_closed_to_you():
     probe = FakeProbe()
     probe.open_folders.add(SECRETS)
-    assert "can list" in failures(probe)["secrets folder"]
+    assert failures(probe)["secrets folder"] == (
+        f"your account can list {SECRETS}; it must not: run doctor as yourself, not with sudo, and check that "
+        "`id -nG` doesn't list spark")
     probe.owners[SECRETS] = ("root", "spark", 0o755)
-    assert failures(probe)["secrets folder"].endswith("root:spark 755, not root:spark 750")
+    assert failures(probe)["secrets folder"].endswith("root:spark 755, not root:spark 750: `make bootstrap` sets it")
+
+
+def test_a_secrets_folder_out_of_reach_may_be_there(tmp_path):
+    # /etc/local-ai is root:spark-admin 750, so a session from before bootstrap, without spark-admin, can't see into
+    # it: the folder can be there, and a new login is the fix (Task 10's scan, R11).
+    probe = FakeProbe()
+    del probe.owners[SECRETS]
+    assert failures(probe)["secrets folder"] == (
+        f"{SECRETS} is missing, or out of your account's reach (log in again): `make bootstrap` creates it")
 
 
 def test_what_root_runs_must_be_roots_own_files():
@@ -220,15 +232,73 @@ def test_a_deployed_registry_that_wont_load_is_a_fail_line_not_a_traceback(tmp_p
 
 
 def test_a_unit_that_is_down_is_named():
+    # Each FAIL says what to do (Task 10's scan, R8): the unit's logs, then the start, which polkit lets you run.
     probe = FakeProbe()
     probe.commands[("systemctl", "is-active", *UNITS)] = (3, "active\ninactive\nactive\n", "")
-    assert failures(probe) == {"stack units": "local-ai-brake.service (inactive)"}
+    assert failures(probe) == {"stack units": "local-ai-brake.service (inactive): `make logs s=brake`, then "
+                                              "`systemctl start local-ai-brake.service`"}
+    probe.commands[("systemctl", "is-active", *UNITS)] = (3, "failed\nactive\ninactive\n", "")
+    assert failures(probe)["stack units"] == (
+        "local-ai-llama-swap.service (failed), local-ai-compose.service (inactive): `make logs s=llama-swap` and "
+        "`make logs s=compose`, then `systemctl start local-ai-llama-swap.service local-ai-compose.service`")
+    probe.commands[("systemctl", "is-active", *UNITS)] = (1, "", "Failed to connect to bus")
+    assert failures(probe)["stack units"] == (
+        "systemctl didn't answer: `make logs s=llama-swap` and `make logs s=brake` and `make logs s=compose`, then "
+        "`systemctl start local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service`")
 
 
 def test_llama_swap_must_refuse_a_call_without_a_key():
     probe = FakeProbe()
     probe.http = lambda url, key=None, body=None, timeout=10.0: (200, "")
-    assert "keys aren't enforced" in failures(probe)["llama-swap"]
+    detail = failures(probe)["llama-swap"]
+    assert "keys aren't enforced" in detail
+    assert detail.endswith("`make apply-dry-run` shows whether the deployed config, which sets them, differs from the "
+                           "repo's; `make logs s=llama-swap` shows what llama-swap said")
+
+
+def test_a_key_llama_swap_doesnt_know_points_at_the_runbook():
+    probe = FakeProbe()
+    assert failures(probe, key="another-key") == {
+        "llama-swap": "/running with your key answered 401: llama-swap doesn't know the key in SPARK_API_KEY — see "
+                      "'When something is wrong' in website/how-to/deploy.md",
+        "a model, end to end": "embed answered 401: llama-swap doesn't know the key in SPARK_API_KEY — see "
+                               "'When something is wrong' in website/how-to/deploy.md",
+    }
+
+
+def test_a_keyed_answer_that_isnt_ok_points_at_the_logs():
+    probe = FakeProbe()
+    answer = probe.http
+    probe.http = lambda url, key=None, body=None, timeout=10.0: (
+        (500, "") if key and url.endswith("/running") else answer(url, key=key, body=body, timeout=timeout))
+    assert failures(probe) == {"llama-swap": "/running with your key answered 500: `make logs s=llama-swap`"}
+
+
+def test_nothing_answering_is_not_a_refused_load():
+    probe = FakeProbe()
+    answer = probe.http
+    probe.http = lambda url, key=None, body=None, timeout=10.0: (
+        (0, "") if url.endswith("/v1/embeddings") else answer(url, key=key, body=body, timeout=timeout))
+    assert failures(probe) == {"a model, end to end": "llama-swap didn't answer: `make logs s=llama-swap`"}
+    probe.http = lambda url, key=None, body=None, timeout=10.0: (
+        (200, '{"data": []}') if url.endswith("/v1/embeddings") else answer(url, key=key, body=body, timeout=timeout))
+    assert failures(probe) == {"a model, end to end": "embed answered 200, but with no embedding: "
+                                                      "`make logs s=llama-swap`"}
+
+
+def test_a_registry_without_an_embeddings_model_says_how_to_give_it_one():
+    registry = dataclasses.replace(REG, models={name: m for name, m in REG.models.items()
+                                                if m.capability != "embeddings"})
+    detail = {c.name: c.detail for c in checks(FakeProbe(), KEY, registry) if not c.ok}
+    assert detail == {"a model, end to end": "the registry has no embeddings model, which this check loads: give "
+                                             "stack/models.yaml one, then `make apply`"}
+
+
+def test_a_hold_dry_run_that_found_nothing_says_how_to_look():
+    probe = FakeProbe()
+    probe.commands[HOLD_DRY_RUN] = (0, "==> hold the GPU stack\n", "")
+    assert failures(probe) == {"GPU set": "the hold's dry run found no GPU set: `make hold-gpu-dry-run` shows what "
+                                          "it found"}
 
 
 def test_without_a_key_the_key_checks_fail_and_the_others_still_run():
