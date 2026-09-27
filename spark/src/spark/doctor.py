@@ -40,10 +40,7 @@ WEB = (("Open WebUI", "http://127.0.0.1:3000/"), ("SearXNG", "http://127.0.0.1:8
 HOLD_DRY_RUN = ["bash", "stack/host/bootstrap.sh", "--hold-gpu", "--dry-run"]
 HOLD_SUMMARY = re.compile(r"^==> GPU set: (\d+) packages, (\d+) already held$", re.MULTILINE)
 HOLD_STOPS = re.compile(r"\(a real run stops here: (.+)\)$", re.MULTILINE)
-# A key a header can't carry as it is: never sent, and never shown, since the likely cause is a CRLF line in the
-# file it was set from, and http.client's error would print the whole header.
-UNSENDABLE = ("the key in this shell isn't printable ASCII (a stray CR or LF?), so it wasn't sent: set it again, "
-              "as website/how-to/deploy.md's *Before the first deploy* does")
+KEY_ENV = "SPARK_API_KEY"  # where doctor reads your llama-swap key, unless --key-env names another variable
 
 
 @dataclass(frozen=True)
@@ -60,6 +57,18 @@ def _who(st: os.stat_result) -> tuple[str, str, int]:
 
 def _sendable(key: str) -> bool:
     return key.isascii() and key.isprintable()
+
+
+def _unusable(key: str | None, key_env: str) -> str | None:
+    """Why the key read from `key_env` can't be sent, or None when it can. A key a header can't carry as it is is
+    never sent, and never shown: the likely cause is a CRLF line in the file it was set from, and http.client's
+    error would print the whole header."""
+    if key is None:
+        return f"no key in this shell: {key_env} isn't set"
+    if not _sendable(key):
+        return (f"the key in {key_env} isn't printable ASCII (a stray CR or LF?), so it wasn't sent: set it again, "
+                "as website/how-to/deploy.md's *Before the first deploy* does")
+    return None
 
 
 class _KeyStaysHere(urllib.request.HTTPRedirectHandler):
@@ -276,7 +285,7 @@ def units(probe: Probe) -> Check:
     return Check("stack units", True, "llama-swap, the brake and the web services are active")
 
 
-def llama_swap(probe: Probe, key: str | None) -> Check:
+def llama_swap(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
     health, _ = probe.http(f"{paths.LLAMASWAP_URL}/health")
     if health != 200:
         return Check("llama-swap", False, f"/health answered {health or 'nothing'}: `make logs s=llama-swap`")
@@ -284,10 +293,8 @@ def llama_swap(probe: Probe, key: str | None) -> Check:
     if anonymous != 401:
         return Check("llama-swap", False, f"/running without a key answered {anonymous or 'nothing'}, "
                                           "not 401: its keys aren't enforced")
-    if key is None:
-        return Check("llama-swap", False, "no key in this shell: SPARK_API_KEY isn't set")
-    if not _sendable(key):
-        return Check("llama-swap", False, UNSENDABLE)
+    if unusable := _unusable(key, key_env):
+        return Check("llama-swap", False, unusable)
     keyed, _ = probe.http(f"{paths.LLAMASWAP_URL}/running", key=key)
     if _redirect(keyed):
         return Check("llama-swap", False, f"/running with your key answered {_redirected(keyed)}")
@@ -327,7 +334,8 @@ def load_deployed_registry(path: Path) -> tuple[Registry | None, str | None]:
         return None, f"{path} doesn't load: " + " ".join(f"{type(err).__name__}: {err}".split())
 
 
-def model(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None) -> Check:
+def model(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,
+          key_env: str = KEY_ENV) -> Check:
     """One request through llama-swap to the embeddings model: loaded if it isn't, on the GPU."""
     name = "a model, end to end"
     if registry is None:
@@ -335,10 +343,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
     models = [m.name for m in registry.models.values() if m.capability == "embeddings"]
     if not models:
         return Check(name, False, "the registry has no embeddings model")
-    if key is None:
-        return Check(name, False, "no key in this shell: SPARK_API_KEY isn't set")
-    if not _sendable(key):
-        return Check(name, False, UNSENDABLE)
+    if unusable := _unusable(key, key_env):
+        return Check(name, False, unusable)
     code, body = probe.http(f"{paths.LLAMASWAP_URL}/v1/embeddings", key=key,
                             body={"model": models[0], "input": "doctor"}, timeout=300)
     try:
@@ -353,11 +359,15 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
                               "was refused")
 
 
-def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None) -> list[Check]:
+def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,
+           key_env: str = KEY_ENV) -> list[Check]:
+    """Every check, in order. `key` is what the shell's `key_env` holds, and the checks that need it name that
+    variable when it's missing."""
     return [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe),
         firewall(probe), secrets_folder(probe),
-        root_copies(probe), units(probe), llama_swap(probe, key), web(probe), model(probe, key, registry, problem),
+        root_copies(probe), units(probe), llama_swap(probe, key, key_env), web(probe),
+        model(probe, key, registry, problem, key_env),
     ]
 
 
@@ -369,7 +379,7 @@ def report(results: list[Check]) -> str:
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("doctor", help="Phase 0's guardrails and the stack, checked (on the Spark)")
-    p.add_argument("--key-env", default="SPARK_API_KEY", help="env var holding a llama-swap key")
+    p.add_argument("--key-env", default=KEY_ENV, help="env var holding a llama-swap key")
     p.set_defaults(func=run)
 
 
@@ -379,6 +389,6 @@ def run(args: argparse.Namespace) -> int:
         print("doctor: run it from the repo root (make doctor)")
         return 2
     registry, problem = load_deployed_registry(paths.REGISTRY)
-    results = checks(Probe(repo), key_from_env(args.key_env), registry, problem)
+    results = checks(Probe(repo), key_from_env(args.key_env), registry, problem, args.key_env)
     print(report(results))
     return 0 if all(c.ok for c in results) else 1

@@ -238,6 +238,28 @@ def test_without_a_key_the_key_checks_fail_and_the_others_still_run():
     }
 
 
+def spark_doctor(monkeypatch, capsys, probe, *args: str) -> tuple[int, str]:
+    """`spark doctor ARGS`, from the repo root, on `probe` and the fixture registry: its exit status and output."""
+    monkeypatch.setattr(doctor, "Probe", lambda repo: probe)
+    monkeypatch.setattr(doctor, "load_deployed_registry", lambda path: (REG, None))
+    monkeypatch.chdir(ROOT)
+    code = cli.main(["doctor", *args])
+    shown = capsys.readouterr()
+    return code, shown.out + shown.err
+
+
+def test_a_missing_key_names_the_variable_doctor_read(monkeypatch, capsys):
+    # --key-env picks the variable: the FAIL line names that one, not the default.
+    detail = {c.name: c.detail for c in checks(FakeProbe(), None, REG, key_env="LLAMASWAP_KEY_SPARK") if not c.ok}
+    assert detail == {"llama-swap": "no key in this shell: LLAMASWAP_KEY_SPARK isn't set",
+                      "a model, end to end": "no key in this shell: LLAMASWAP_KEY_SPARK isn't set"}
+    code, shown = spark_doctor(monkeypatch, capsys, FakeProbe(), "--key-env", "MY_OWN_KEY")
+    assert code == 1 and "no key in this shell: MY_OWN_KEY isn't set" in shown and "SPARK_API_KEY" not in shown
+    monkeypatch.setenv("MY_OWN_KEY", "fake-key\r")
+    code, shown = spark_doctor(monkeypatch, capsys, FakeProbe(), "--key-env", "MY_OWN_KEY")
+    assert "the key in MY_OWN_KEY isn't printable ASCII" in shown and "fake-key" not in shown
+
+
 def test_a_refused_load_points_at_make_status():
     probe = FakeProbe()
     answer = probe.http
