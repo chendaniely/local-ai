@@ -312,7 +312,7 @@ node, untested).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
   zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,
-  since that zsh passes a trailing one to the command (added 2026-09-26). Full rule in
+  since that zsh passes a trailing one to the command (Dan's rule, 2026-09-27). Full rule in
   [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
@@ -335,7 +335,9 @@ node, untested).
   [Phase 0 retrospective](website/design/phase-0-retro.md).
 - **Python through uv, and the `Makefile` as the front door** — no system Python, no pip, and one
   Python minor version, pinned in `spark/.python-version`. uv uses only its own interpreters
-  (`python-preference = "only-managed"` in `spark/pyproject.toml`).
+  (`python-preference = "only-managed"` in `spark/pyproject.toml`), and locks only releases at
+  least seven days old (`exclude-newer = "7 days"` there, a rolling window, with Dependabot's uv
+  PRs waiting as long; Dan's decision, 2026-09-27).
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)

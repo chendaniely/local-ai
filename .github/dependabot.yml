@@ -17,6 +17,10 @@ updates:
     schedule:
       interval: weekly
       day: friday
+    # spark/pyproject.toml locks only releases seven days old (exclude-newer); proposing a newer
+    # one would fail to lock, so Dependabot waits as long (Dan's decision, 2026-09-27).
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     commit-message:
       prefix: "build(spark)"

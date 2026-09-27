@@ -3251,7 +3251,9 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
   doesn't hold, so a package left in the venv can't hide the gap.) Then add the dependency, so
   `spark/pyproject.toml` reads `dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34"]` (since
   2026-09-26, `"huggingface_hub>=0.34,<2"`, commit cf21a82, from Task 8's review: the lock had taken
-  2.0.0, a new major on a new HTTP stack uploaded two days before; it now holds 1.33.0), and run
+  2.0.0, a new major on a new HTTP stack uploaded two days before; it now holds 1.33.0 — and since
+  2026-09-27, 1.32.0, the lock taking only releases at least seven days old: Dan's decision,
+  recorded in plan.md), and run
   `uv lock --project spark`. The same run passes.
 
 - [ ] **Step 5: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
@@ -7221,7 +7223,10 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   their models (the `rss` and `oom` columns in Task 13 Step 5). Swap size and swappiness depend on
   the swap line (Task 16 Step 3).
   Update `plan.md` (with a Revisions line), the scenario pages and `changelog.md` before
-  Phase 2 starts.
+  Phase 2 starts. *(Added 2026-09-27, Dan's decision:* also look back at the lock's seven-day
+  window — did it hold back a fix the stack needed, did Dependabot's uv PRs and a hand-run
+  `uv lock` behave as `updates.md` says, and was a per-package exception needed — and record in
+  plan.md whether it stays.)*
 - [ ] **Step 6: Commit** — what Steps 1, 2 and 5 changed, staged by name (a file that didn't
   change adds nothing):
 

@@ -395,8 +395,12 @@ Docker.
 - **Weekly upgrade day, on Saturdays** (monthly until 2026-09-24). Skipping one is fine; the next
   one catches up. Automated PRs collect version bumps: Dependabot proposes GitHub Actions and
   `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI
-  scans every commit message). `stack/versions.yaml`'s pins, the workflows' `version:` inputs,
-  uv's `required-version` and the gitleaks pin still move by hand (Backlog). Bumps are applied one
+  scans every commit message). The lock takes only releases at least seven days old, a rolling
+  window (`exclude-newer = "7 days"` in `spark/pyproject.toml`), and Dependabot's uv PRs wait as
+  long (`cooldown` in `.github/dependabot.yml`); an urgent fix gets a per-package exception
+  (Dan's decision, 2026-09-27; `updates.md` has the steps). `stack/versions.yaml`'s pins, the
+  workflows' `version:` inputs, uv's `required-version` and the gitleaks pin still move by hand
+  (Backlog). Bumps are applied one
   component at a time → render → validate → back up databases → deploy → `spark doctor` →
   changelog entry.
 - **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
@@ -556,8 +560,8 @@ Each item gets its own design pass when its turn comes.
 - **Dev and learning:** FIM autocomplete · a private eval suite (growing from the bake-off tasks) ·
   LoRA fine-tuning and serving · overnight batch inference · speculative-decoding tuning · a class mode.
 - **Ops:** a usage and utilization dashboard · weights on the Synology (measure NAS read throughput
-  first; and a model's `models--…` folder doesn't hold its bytes — huggingface_hub 1.33 keeps
-  Xet-stored files in a store shared across repos, under `hf/hub/blobs`, unless
+  first; and a model's `models--…` folder doesn't hold its bytes — huggingface_hub 1.32 and 1.33
+  keep Xet-stored files in a store shared across repos, under `hf/hub/blobs`, unless
   `HF_HUB_DISABLE_SHARED_BLOBS` is set, and the repo's files are links into it, so moving one
   folder, or `du` on one, misleads; Phase 1 Task 8's review, 2026-09-26) · HTTPS on the LAN (which
   would also bring the web UI to WireGuard) · the web UI banner (if Open WebUI gains a status API)
@@ -625,7 +629,14 @@ Each item gets its own design pass when its turn comes.
   earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
   `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
   `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
-- **Fresh releases in the lock — Dan's decision** (found 2026-09-26, in Phase 1 Task 8's reviews).
+- ~~**Fresh releases in the lock — Dan's decision**~~ **Resolved 2026-09-27: a rolling seven-day
+  window.** Dan chose it while the stack is still early, to see how it works in practice: uv
+  0.12.18 takes `exclude-newer = "7 days"` and records the span in the lock (`exclude-newer-span =
+  "P7D"`), so no date moves by hand, and Dependabot's uv PRs get `cooldown: default-days: 7`. The
+  lock now holds huggingface_hub 1.32.0 and filelock 4.0.1; *Weekly upgrade day*, above, has the
+  decision, and `updates.md` the steps, a per-package exception for an urgent fix included. Phase
+  1's Task 17 looks back at how it went. What was open (found 2026-09-26, in Phase 1 Task 8's
+  reviews):
   `uv lock` takes the newest release that fits, even one uploaded that day: Task 8's lock holds
   huggingface_hub 1.33.0 and filelock 4.0.4, both uploaded that week, and the pull runs them as
   `spark`, with network egress. A release's first days are when a bad or compromised upload is most
@@ -933,6 +944,15 @@ Each item gets its own design pass when its turn comes.
   adds `make doctor` as a sender. Phase 1's plan: Task 12 Step 1 expects doctor's three
   bootstrap-related lines to pass after the re-run, Tasks 13 and 16 expect 15 of 15 checks with
   `make status` first, and Task 18's Mac run gains the new Makefile and bootstrap code.
+- **2026-09-27** — Dan's decision on *Fresh releases in the lock*, now resolved: `spark/uv.lock`
+  takes only releases at least seven days old, a rolling window (`exclude-newer = "7 days"`; uv
+  records the span in the lock, so no date moves by hand), and Dependabot's uv PRs wait as long.
+  The lock moved to huggingface_hub 1.32.0 and filelock 4.0.1; 1.32.0's source has the token
+  reader, the telemetry switch and the shared blob store Task 8's work relies on, and the suite
+  passes. *Weekly upgrade day* records it, `updates.md` gains the steps
+  and a per-package exception for an urgent fix, CLAUDE.md's uv rule and README's summary say so,
+  and Phase 1's Task 17 looks back at how it went. The same day, Dan made the no-`#`-in-Mac-blocks
+  rule (432dfb3) his own.
 
 ## Sources
 

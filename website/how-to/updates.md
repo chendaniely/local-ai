@@ -371,6 +371,22 @@ and for `spark/uv.lock`. On upgrade day, for each one:
 They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
 or the gitleaks pin; those still move by hand.
 
+The `spark/uv.lock` PRs propose only releases at least seven days old. `spark/pyproject.toml`
+locks nothing newer (`exclude-newer = "7 days"`, a rolling window), and `.github/dependabot.yml`
+waits as long (Dan's decision, 2026-09-27): a bad or compromised upload is most often caught in its
+first days. An update by hand follows the same window. **On the Spark** (or the Mac), in the clone,
+this takes the newest release of `<name>` that is a week old:
+
+```bash
+uv lock --project spark --upgrade-package <name>
+```
+
+A fix you need sooner, such as a security release, gets an exception for that one package: add
+`exclude-newer-package = { <name> = "<now, e.g. 2026-09-27T12:00:00Z>" }` under `[tool.uv]` in
+`spark/pyproject.toml`, run the same `uv lock`, and take the line out once that release is a week
+old; before then, a plain `uv lock` would move the package back. Dependabot's security PRs don't
+wait, so one for a release younger than a week fails to lock until then.
+
 ## Upgrade day: gitleaks
 
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its

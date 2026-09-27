@@ -164,10 +164,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   doesn't treat a `#` line as a comment, it prints `command not found: #` (seen 2026-09-25). In a
   phase plan, the task's label (**[Spark]**, **[Mac]**, **[Dan]**) says where its steps run, and a
   step that runs elsewhere names the machine. The same goes for any `#` in a shell block that runs
-  on the Mac, a trailing comment included (added 2026-09-26): that zsh passes the `#` and every word
-  after it to the command, and a quote in them leaves the line open. What a comment would say goes
-  in the prose above the block. Dan's Spark shell is bash, where comments work; a block holding a
-  config file's text, not shell commands, keeps that file's own comments.
+  on the Mac, a trailing comment included (added 2026-09-26; Dan's rule since 2026-09-27): that zsh
+  passes the `#` and every word after it to the command, and a quote in them leaves the line open.
+  What a comment would say goes in the prose above the block. Dan's Spark shell is bash, where
+  comments work; a block holding a config file's text, not shell commands, keeps that file's own
+  comments.
 
 ## Building it
 
@@ -197,7 +198,10 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   minor version everywhere, pinned in `spark/.python-version`: it has to live in `spark/`, because
   uv looks for it only in the project directory. uv's own interpreters only: `spark/pyproject.toml`
   sets `python-preference = "only-managed"`, so uv never builds the venv on a system Python (Dan's
-  decision, 2026-09-26, after the Spark's venv turned out to run Ubuntu's 3.12.3).
+  decision, 2026-09-26, after the Spark's venv turned out to run Ubuntu's 3.12.3). The lock takes
+  only releases at least seven days old: `exclude-newer = "7 days"` there, a rolling window, and
+  Dependabot's uv PRs wait as long (Dan's decision, 2026-09-27). An urgent fix gets a per-package
+  exception, taken out once the release is a week old; `website/how-to/updates.md` has the steps.
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
   and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets
