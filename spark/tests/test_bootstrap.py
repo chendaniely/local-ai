@@ -125,7 +125,10 @@ FAKE_APT_MARK = """#!/usr/bin/env bash
 # $DPKG_FIXTURE to h, as a real hold does; `unhold` turns it back to i. `showhold` lists what was
 # recorded. `hold` and `unhold` are also logged in $CALLS, when a test sets it. $APT_MARK_CUT names a
 # file holding how many holds to cut off, as Ctrl-C or TERM would: the shell that ran apt-mark and
-# the script above it get TERM, and nothing is held.
+# the script above it get TERM, and nothing is held. Those are $PPID and its parent, which are
+# rehold's subshell and the script only while the hold runs in rehold's subshell, as upgrade day's
+# holds do. Called any other way, as real_hold calls hold_gpu_stack, the parent's parent is something
+# else, pytest itself there: so only upgrade_env sets $APT_MARK_CUT.
 mark() {  # mark LETTER PKG...: set each package's first status letter in the fixture
   local letter="$1" st pkg ver
   shift
@@ -154,7 +157,7 @@ case "$1" in
     mark h "${took[@]}"
     ;;
   unhold)
-    echo "apt-mark $*" >> "$CALLS"
+    [[ -z "${CALLS:-}" ]] || echo "apt-mark $*" >> "$CALLS"
     shift
     mark i "$@"
     ;;
@@ -752,6 +755,13 @@ def test_a_grub_refusal_after_a_move_that_moved_nothing_still_starts_nothing(tmp
     assert "systemctl start" not in result.stderr
 
 
+def grub_env(tmp_path: Path) -> dict[str, str]:
+    """grub_check's environment, built (built_env): grub-editenv's stand-in first on PATH, and the stand-in
+    grub.cfg and grubenv."""
+    return built_env(tmp_path, tmp_path / "bin", BOOTSTRAP_GRUB_CFG=str(tmp_path / "grub.cfg"),
+                     BOOTSTRAP_GRUBENV=str(tmp_path / "grubenv"))
+
+
 def grub_check(tmp_path: Path, kernel: str, cfg: str | None, env_block: str | None) -> subprocess.CompletedProcess[str]:
     """grub_boots KERNEL against a stand-in grub.cfg and grubenv; None leaves that file out. Nothing
     it prints may carry the root filesystem's UUID."""
@@ -765,8 +775,7 @@ def grub_check(tmp_path: Path, kernel: str, cfg: str | None, env_block: str | No
         ["bash", "-c", 'source "$1" --dry-run && grub_boots "$2"', "bash", str(SCRIPT), kernel],
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
-             "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")},
+        env=grub_env(tmp_path),
     )
     assert ROOT_FS_UUID not in result.stdout + result.stderr
     return result
@@ -852,7 +861,7 @@ def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
     bindir.mkdir()
     (bindir / "sudo").write_text('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\nexit 1\n')
     (bindir / "sudo").chmod(0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "TMUX": "", "CALLS": str(tmp_path / "calls")}
+    env = built_env(tmp_path, bindir, TMUX="", CALLS=str(tmp_path / "calls"))
     result = subprocess.run(["make", "-s", "-C", str(ROOT), "upgrade-gpu"], capture_output=True, text=True, env=env)
     assert result.returncode != 0
     assert "tmux new -As upgrade" in result.stdout + result.stderr
@@ -1549,3 +1558,29 @@ def test_the_install_units_environments_are_built_not_copied(tmp_path, monkeypat
     # What test_make_install_units_drops_sudos_cached_credential_whatever_happens gives make.
     sudo = built_env(tmp_path, tmp_path / "bin", CALLS="calls", SUDO_DOES="0")
     assert sorted(sudo) == ["CALLS", "HOME", "PATH", "SUDO_DOES"] and sudo["HOME"] != os.environ["HOME"]
+
+
+def test_the_upgrade_environments_are_built_not_copied(tmp_path, monkeypatch):
+    # Task 10's scan (R3), as for install_env: upgrade day's stand-ins, the GRUB check's and the tmux test's.
+    monkeypatch.setenv("THE_TESTS_OWN", "never the script's")
+    for folder in ("upgrade", "grub"):
+        (tmp_path / folder).mkdir()
+    upgrade = upgrade_env(tmp_path / "upgrade", GOOD_PLAN)
+    assert sorted(upgrade) == ["ACTIVE_UNITS", "APT_ANSWER", "APT_MARK_CUT", "APT_MARK_HELD", "APT_PLAN",
+                               "BOOTSTRAP_GRUBENV", "BOOTSTRAP_GRUB_CFG", "CALLS", "DPKG_AFTER", "DPKG_FIXTURE",
+                               "GRUB_AFTER", "HOME", "KERNELS", "KERNELS_AFTER", "MODULE_KERNELS", "PATH"]
+    grub = grub_env(tmp_path / "grub")
+    assert sorted(grub) == ["BOOTSTRAP_GRUBENV", "BOOTSTRAP_GRUB_CFG", "HOME", "PATH"]
+    # What test_make_upgrade_gpu_refuses_to_start_outside_tmux gives make.
+    tmux = built_env(tmp_path, tmp_path / "bin", TMUX="", CALLS="calls")
+    assert sorted(tmux) == ["CALLS", "HOME", "PATH", "TMUX"]
+    assert os.environ["HOME"] not in (upgrade["HOME"], grub["HOME"], tmux["HOME"])
+
+
+def test_the_apt_mark_stand_in_logs_only_when_asked_and_releases_as_apt_mark_does(tmp_path):
+    # Task 10's scan (R17): its unhold, like its hold, logs to $CALLS only when a test sets it, and turns the status
+    # letter from h back to i, as the real one does.
+    env = gpu_env(tmp_path, HELD_BEFORE)
+    result = subprocess.run(["apt-mark", "unhold", "nvidia-driver-580-open"], capture_output=True, text=True, env=env)
+    assert (result.returncode, result.stderr) == (0, "")
+    assert "ii\tnvidia-driver-580-open\t1.0\n" in (tmp_path / "installed.tsv").read_text()
