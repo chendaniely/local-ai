@@ -136,7 +136,9 @@ def test_a_dry_run_lists_only_the_restarts_the_real_run_makes(tmp_path):
 
 
 def test_a_restart_that_fails_says_the_files_are_deployed_and_how_to_finish(tmp_path):
-    # The next apply finds nothing to change, so this is the one time to say which unit still needs it.
+    # A unit that couldn't start again is stopped, and apply restarts only units that run, so the next apply finds
+    # nothing to change: this is the one time to say which unit still needs it. (One that still runs, because systemd
+    # refused the restart, started before its files were written, and the next apply restarts it: Task 7's fix round 1.)
     code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
                                    fails=(BRAKE,))
     assert code == 1
