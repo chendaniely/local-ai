@@ -420,4 +420,5 @@ gitleaks is a direct install, so apt and snap never update it. On upgrade day, l
    ```
 
 3. **On the Spark**, `make test` — the hook tests run the real gitleaks — and a `changelog.md`
-   entry.
+   entry. Then **on the Mac**, in the clone, `make test` too: step 1 moved the Mac's own copy, and
+   its hooks use it.
