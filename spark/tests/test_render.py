@@ -9,7 +9,8 @@ import yaml
 import spark.render
 from spark import cli
 from spark.registry import load_registry
-from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render, write_tree
+from spark.render import (COMPOSE_DIR, HF_HOME, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render,
+                          write_tree)
 from spark.versions import load_versions
 
 FIX = Path(__file__).parent / "fixtures"
@@ -121,6 +122,16 @@ def test_engines_and_downloads_cache_in_folders_bootstrap_gives_spark():
         text = files[f"systemd/{unit}"]
         assert "Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache" in text, unit
         assert "Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache" in text, unit
+
+
+def test_the_pull_unit_downloads_where_the_engines_read_and_sends_no_telemetry():
+    # `spark models pull` puts each file where model_path says, under render's HF_HOME, and the library keeps its own
+    # files (a token file, its Xet cache) under the unit's HF_HOME: the two are one folder. HF_HUB_DISABLE_TELEMETRY
+    # stops the library's daily agent-registry request to the Hub (Task 8's review).
+    service = rendered()["systemd/local-ai-pull.service"].splitlines()
+    for line in (f"Environment=HF_HOME={HF_HOME}", "Environment=HF_HUB_DISABLE_PROGRESS_BARS=1",
+                 "Environment=HF_HUB_DISABLE_TELEMETRY=1", f"ExecStart={SPARK_BIN} models pull"):
+        assert line in service, line
 
 
 def test_what_root_runs_has_a_root_owned_copy_and_the_rest_has_none():

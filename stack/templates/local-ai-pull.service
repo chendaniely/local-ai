@@ -13,5 +13,7 @@ Environment=HF_HOME=/var/lib/local-ai/hf
 Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache
 Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache
 Environment=HF_HUB_DISABLE_PROGRESS_BARS=1
+# Without it the library also asks the Hub, at most daily, for a list of AI agents to name in its user agent.
+Environment=HF_HUB_DISABLE_TELEMETRY=1
 Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
 ExecStart=/opt/local-ai/app/.venv/bin/spark models pull
