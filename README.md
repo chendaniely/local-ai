@@ -109,8 +109,8 @@ when that file was retired on 2026-09-23.
 - ⚠️ **A DHCP reservation only takes effect on a fresh request.** This bit twice — both times the
   box held an older pool lease and ignored a perfectly correct reservation until the interface was
   bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong. Bounce
-  with `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`, run from the
-  *other* interface so it doesn't sever the session.
+  it on the Spark, from an SSH session over the *other* interface so it doesn't sever the session:
+  `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`.
 - **The wired NIC is on `.201`** (2026-09-24, after a bounce from the Wi-Fi side). It had been
   holding an older pool address until then.
 - **On the tailnet** (2026-09-24), tagged `tag:spark`, so its key never expires, with MagicDNS and
