@@ -528,10 +528,18 @@ def rendered_roots() -> dict[str, str]:
     return {rel: text for rel, text in files.items() if installed_path(rel) is not None}
 
 
+def built_env(tmp_path: Path, bindir: Path, **settings: str) -> dict[str, str]:
+    """An environment built, not copied, as gpu_env's is: PATH with the fakes in `bindir` first, a
+    HOME of its own under `tmp_path`, and `settings`. Nothing else of the test's own environment."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    return {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(home), **settings}
+
+
 def install_env(tmp_path: Path) -> dict[str, str]:
     """Stand-ins for make install-units: the staging folder `spark apply` writes, holding what it
     stages for root; root's two folders; and runuser, install and systemctl, which log to
-    tmp_path/calls and change nothing outside tmp_path."""
+    tmp_path/calls and change nothing outside tmp_path. The environment is built (built_env)."""
     for folder in ("bin", "units", "systemd"):
         (tmp_path / folder).mkdir()
     for rel, text in rendered_roots().items():
@@ -540,18 +548,18 @@ def install_env(tmp_path: Path) -> dict[str, str]:
     for name, text in (("runuser", FAKE_RUNUSER), ("install", FAKE_INSTALL), ("systemctl", FAKE_SYSTEMD)):
         (tmp_path / "bin" / name).write_text(text)
         (tmp_path / "bin" / name).chmod(0o755)
-    return {
-        **os.environ,
-        "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
-        "CALLS": str(tmp_path / "calls"),
-        "SYSTEMD_STATE": str(tmp_path / "systemd"),
-        "BOOTSTRAP_STAGED": str(tmp_path / "stage"),
-        "BOOTSTRAP_UNIT_DIR": str(tmp_path / "units"),
-        "BOOTSTRAP_COMPOSE_DIR": str(tmp_path / "compose"),
+    return built_env(
+        tmp_path,
+        tmp_path / "bin",
+        CALLS=str(tmp_path / "calls"),
+        SYSTEMD_STATE=str(tmp_path / "systemd"),
+        BOOTSTRAP_STAGED=str(tmp_path / "stage"),
+        BOOTSTRAP_UNIT_DIR=str(tmp_path / "units"),
+        BOOTSTRAP_COMPOSE_DIR=str(tmp_path / "compose"),
         # Root's copies must be root's own. Here whoever runs the tests stands in for root.
-        "BOOTSTRAP_ROOT_USER": pwd.getpwuid(os.getuid()).pw_name,
-        "SUDO_USER": "alice",
-    }
+        BOOTSTRAP_ROOT_USER=pwd.getpwuid(os.getuid()).pw_name,
+        SUDO_USER="alice",
+    )
 
 
 def install_units(env: dict[str, str], answer: str = "") -> subprocess.CompletedProcess[str]:
@@ -839,7 +847,7 @@ def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_p
     (bindir / "sudo").chmod(0o755)
     for does in ("0", "1", "int"):
         calls_file = tmp_path / f"calls-{does}"
-        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CALLS": str(calls_file), "SUDO_DOES": does}
+        env = built_env(tmp_path, bindir, CALLS=str(calls_file), SUDO_DOES=does)
         result = subprocess.run(["make", "-s", "-C", str(ROOT), "install-units"], capture_output=True, text=True,
                                 env=env, start_new_session=True)
         assert (result.returncode == 0) == (does == "0"), does  # the install's own outcome
@@ -850,3 +858,16 @@ def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_p
             time.sleep(0.1)
         assert calls[0] == "sudo bash stack/host/bootstrap.sh --install-units", does
         assert calls[1:] and set(calls[1:]) == {"sudo -k"}, does
+
+
+def test_the_install_units_environments_are_built_not_copied(tmp_path, monkeypatch):
+    # As gpu_env's is (test_the_scripts_environment_is_built_not_copied): nothing of the test's own environment reaches
+    # the script, or make, but PATH, behind the fakes. They get a HOME of their own, and the fakes' settings.
+    monkeypatch.setenv("THE_TESTS_OWN", "never the script's")
+    env = install_env(tmp_path)
+    assert sorted(env) == ["BOOTSTRAP_COMPOSE_DIR", "BOOTSTRAP_ROOT_USER", "BOOTSTRAP_STAGED", "BOOTSTRAP_UNIT_DIR",
+                           "CALLS", "HOME", "PATH", "SUDO_USER", "SYSTEMD_STATE"]
+    assert env["PATH"] == f"{tmp_path / 'bin'}:{os.environ['PATH']}" and env["HOME"] != os.environ["HOME"]
+    # What test_make_install_units_drops_sudos_cached_credential_whatever_happens gives make.
+    sudo = built_env(tmp_path, tmp_path / "bin", CALLS="calls", SUDO_DOES="0")
+    assert sorted(sudo) == ["CALLS", "HOME", "PATH", "SUDO_DOES"] and sudo["HOME"] != os.environ["HOME"]
