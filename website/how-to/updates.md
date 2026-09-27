@@ -100,7 +100,8 @@ repo has it, no folder that llama-server would read a `config.ini` from (`/etc/l
 `/var/lib/local-ai/.config`), its three units active, llama-swap answering and refusing a call
 without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
 llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
-only reads, needs no sudo, and uses your `SPARK_API_KEY`.
+changes nothing but this: it loads the embeddings model if it isn't loaded, which also clears the
+last refusal record that `make status` shows. It needs no sudo, and uses your `SPARK_API_KEY`.
 
 What brings the stack back by itself:
 

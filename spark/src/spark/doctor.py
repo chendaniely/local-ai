@@ -1,7 +1,9 @@
 """`spark doctor` (`make doctor`), v0 — Phase 0's guardrails and the stack, checked in one pass.
 
-Run it on the Spark, from the repo root, after any update, a reboot or upgrade day. It only reads:
-it changes nothing, needs no sudo, and never prints a key. `spark doctor` proper, one check per
+Run it on the Spark, from the repo root, after any update, a reboot or upgrade day. It changes
+nothing but this: it loads the embeddings model if it isn't loaded, which also clears the last
+refusal record (`spark launch` clears it when it admits a start), so run `make status` first when
+that record matters. It needs no sudo, and never prints a key. `spark doctor` proper, one check per
 scenario, arrives with the gate in Phase 2.
 """
 

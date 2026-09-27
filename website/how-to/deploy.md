@@ -243,15 +243,7 @@ make doctor
 
 ## When something is wrong
 
-**On the Spark**, start with `make doctor`: Phase 0's guardrails and the stack in one pass, and
-each `FAIL` says what to do. Its `root's copies` line fails when something root runs isn't root's
-own file, and says to run `make install-units`.
-
-```bash
-make doctor
-```
-
-**On the Spark**, then look at the state, then at the logs of whatever looks wrong:
+**On the Spark**, look at the state first, then at the logs of whatever looks wrong:
 
 ```bash
 make status
@@ -271,6 +263,16 @@ without that means llama-swap doesn't know the key this shell has. It should be 
 [Secret files](secret-files.md) step 9 added to `llama-swap.env` as `LLAMASWAP_KEY_DAN_MAC`. Until
 the key works, apply can't tell what's loaded, so it won't restart llama-swap, and `make apply-now`
 would restart it only to fail the check that follows, which asks llama-swap with the same key.
+
+Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass. Each `FAIL` says what
+to do. Its `root's copies` line fails when something root runs isn't root's own file, and says to
+run `make install-units`. It comes after `make status`, not before, because it does more than look:
+its end-to-end check loads the embeddings model if it isn't loaded. A load that starts clears the
+last refusal record, the `refused` line `make status` shows, and a load that's refused replaces it.
+
+```bash
+make doctor
+```
 
 `make pull` ends with this run's lines from the pull's journal, failed or not, and a `FAILED` line's
 reason says which cause it is. A repo, file name or revision that doesn't exist is fixed in
