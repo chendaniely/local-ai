@@ -3,6 +3,8 @@ title: "Updates"
 description: "What you can run any time, what updates by itself, what waits for upgrade day, and how to check everything is back afterwards."
 ---
 
+Everything here runs **on the Spark**, as you, unless a step says otherwise.
+
 `sudo apt update && sudo apt upgrade` is safe to run any time, as often as habit says: it can't
 move the GPU stack while the set is held. The set is held except in two cases: midway through
 upgrade day, and a package of the set you have just installed, until `make hold-gpu` holds it too
@@ -15,7 +17,7 @@ Saturdays**. Skipping one is fine; the next one catches up.
 | The GPU set: kernel, NVIDIA modules, driver, CUDA | apt, held | Upgrade day — [the GPU set](#upgrade-day-the-gpu-set) |
 | GitHub Actions and `spark/uv.lock` | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
 | gitleaks | a direct install in `/usr/local/bin` | Upgrade day — [gitleaks](#upgrade-day-gitleaks); no package manager sees it |
-| uv | your `~/.local/bin` | Upgrade day: `uv self update <version>`, the version `stack/versions.yaml` pins |
+| uv | the Spark: your `~/.local/bin`; the Mac: as installed there | Upgrade day, **on the Spark**: `uv self update <version>`, the version `stack/versions.yaml` pins; the Mac's uv, which the hooks also run, moves to the same version on the Mac |
 | Python for `spark/` | `spark/.python-version` pins 3.12 | Only deliberately, on upgrade day: change the pin, and each machine rebuilds `spark/.venv` on its next `uv run` |
 | The desktop's snaps (browser, mail, Snap Store, firmware updater) and their runtimes | snap | By themselves, about four times a day |
 | Claude Code | your `~/.local/bin` | By itself |
@@ -102,7 +104,8 @@ repo has it, no folder that llama-server could read a `config.ini` from (`/etc/l
 without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
 llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
 changes nothing but this: it loads the embeddings model if it isn't loaded, which also clears the
-last refusal record that `make status` shows. It needs no sudo, and uses your `SPARK_API_KEY`.
+last refusal record that `make status` shows. It needs no sudo, and uses your `SPARK_API_KEY`,
+which [Deploy the stack](deploy.md#before-the-first-deploy) puts in the Spark's `~/.secrets`.
 
 What brings the stack back by itself:
 
@@ -175,15 +178,16 @@ This prints nothing when they are:
 git status --short -- Makefile stack/host
 ```
 
-Stop your own GPU jobs and `agent`'s first: `make upgrade-gpu` stops only llama-swap and the brake.
-Then, **on the Spark**, run it, or do the numbered steps below by hand:
+Stop your own GPU jobs first, and `agent`'s as `agent` (`sudo -iu agent`, or its own session):
+`make upgrade-gpu` stops only llama-swap and the brake. Then, **on the Spark**, run it, or do the
+numbered steps below by hand:
 
 ```bash
 make upgrade-gpu
 ```
 
 1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts
-   them again), and your own GPU jobs and `agent`'s.
+   them again), your own GPU jobs, and `agent`'s as `agent`.
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
    the Claude session working on the repo (the Spark's, by default) to work out why.
@@ -363,10 +367,11 @@ modules), the previous kernel won't help.
 Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
 and for `spark/uv.lock`. On upgrade day, for each one:
 
-1. Read what it bumps and its release notes, and let CI finish green.
-2. Read the PR's commit message, then merge it with a merge commit or a rebase. Never squash it: a
-   squash can paste the release notes into the message, CI scans every commit message with the
-   repo's patterns, and once merged, a finding in history can't be taken back or marked allowed.
+1. **On github.com**, read what it bumps and its release notes, and let CI finish green.
+2. There, read the PR's commit message, then merge it with a merge commit or a rebase. Never squash
+   it: a squash can paste the release notes into the message, CI scans every commit message with
+   the repo's patterns, and once merged, a finding in history can't be taken back or marked
+   allowed.
 
 They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
 or the gitleaks pin; those still move by hand.
@@ -374,8 +379,9 @@ or the gitleaks pin; those still move by hand.
 The `spark/uv.lock` PRs propose only releases at least seven days old. `spark/pyproject.toml`
 locks nothing newer (`exclude-newer = "7 days"`, a rolling window), and `.github/dependabot.yml`
 waits as long (Dan's decision, 2026-09-27): a bad or compromised upload is most often caught in its
-first days. An update by hand follows the same window. **On the Spark** (or the Mac), in the clone,
-this takes the newest release of `<name>` that is a week old:
+first days. An update by hand follows the same window. **On the Spark**, in the clone (or on the
+Mac, when the Mac's session holds the branch), this takes the newest release of `<name>` that is a
+week old:
 
 ```bash
 uv lock --project spark --upgrade-package <name>
@@ -392,11 +398,12 @@ wait, so one for a release younger than a week fails to lock until then.
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its
 [releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version:
 
-1. On the Mac, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
+1. **On the Mac**, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
    `.github/workflows/ci.yml`, the URL in the "download gitleaks" step and the `linux_x64` checksum
    in the "check gitleaks against its pinned checksum" step (the checksum is in the release's
    `checksums.txt`); and the version in [Leak guards](leak-guards.md)' install block. Then
-   `brew upgrade gitleaks` for the Mac's own copy.
+   `brew upgrade gitleaks` for the Mac's own copy. Push it, after
+   [the scan before every push](leak-guards.md#before-every-push), and pull it on the Spark.
 2. **On the Spark**, install it over the old one. Set `v` to the new version; the checksum is
    checked before anything is installed:
 
@@ -412,4 +419,5 @@ gitleaks is a direct install, so apt and snap never update it. On upgrade day, l
    gitleaks version   # the new version
    ```
 
-3. `make test` — the hook tests run the real gitleaks — and a `changelog.md` entry.
+3. **On the Spark**, `make test` — the hook tests run the real gitleaks — and a `changelog.md`
+   entry.

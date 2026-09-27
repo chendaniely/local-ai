@@ -3,19 +3,26 @@ title: "Bootstrap the Spark"
 description: "Bounce the wired NIC, run make bootstrap, check the results, and set up agent's SSH and Claude Code login."
 ---
 
+Everything here runs **on the Spark**, as you, in an SSH session from the Mac, except where a step
+says the Mac or `agent`.
+
 ## Before you start
 
-1. SSH into the Spark over **Wi-Fi** — not the wired interface. Bouncing the interface you're
-   connected through would drop your own session.
-2. Find the wired interface's name: `nmcli device status`.
+1. **On the Mac**, SSH into the Spark over **Wi-Fi** (its `.200` address) — not the wired
+   interface. Bouncing the interface you're connected through would drop your own session.
+2. **On the Spark**, find the wired interface's name: `nmcli device status`.
 3. **On the Spark**, bounce it so it takes its DHCP reservation:
 
    ```bash
    sudo nmcli device disconnect <wired-iface> && sudo nmcli device connect <wired-iface>
    ```
-4. Confirm the wired address now ends in `.201`.
+4. **On the Spark**, confirm the wired address now ends in `.201`.
 
 ## Run it
+
+**On the Spark**, as you, from the clone (`cd ~/git/hub/local-ai`), in an SSH session. Type
+`make bootstrap`, never `sudo make bootstrap`: the target asks for your password itself, and under
+an outer `sudo` it would give your groups to root.
 
 1. `make bootstrap-dry-run` — read the output before doing anything else. Its hold step prints
    `GPU set: N packages, M already held`: on a bootstrapped Spark, all of them held (151 at the
@@ -58,19 +65,23 @@ description: "Bounce the wired NIC, run make bootstrap, check the results, and s
    a link it planted there could turn a root write into a write to any file on the box. The copy
    is deleted only once the key is in. Run again, it stops at the missing copy and changes
    nothing; with a fresh copy, it adds the key a second time, which is harmless.
-3. `ssh brightroar-agent` (the alias from [SSH from the Mac](ssh.md))
+3. **On the Mac**, log in as `agent`: `ssh brightroar-agent` (the alias from
+   [SSH from the Mac](ssh.md))
 4. **On the Spark**, as `agent` — the installer refuses to run under sudo:
 
    ```bash
    curl -fsSL https://claude.ai/install.sh | bash
    ```
-5. Log in: run `claude`. With no browser on the box, press `c` to copy the login URL, open it on
-   the Mac, and paste the code back.
+5. **On the Spark, still as `agent`**, log in: run `claude`. With no browser on the box, press `c`
+   to copy the login URL, open it on the Mac, and paste the code back into `agent`'s `claude` on
+   the Spark.
 
 `agent` makes its own `~/work` too, the same way: its first `git clone` into it creates it.
 Bootstrap doesn't, since it runs as root.
 
 ## Live checks (you run these — they need sudo)
+
+**On the Spark, as you** — not in step 3's `agent` session, which has no sudo:
 
 - `sudo -u agent sh -c 'if test -x "$1"; then echo "OPEN: stop and fix permissions"; else echo "closed: good"; fi' _ "$HOME"`
   → `closed: good`. `$HOME` expands in your shell, so it names your home whatever your login is;

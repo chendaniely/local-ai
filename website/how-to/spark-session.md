@@ -98,7 +98,8 @@ guard before you go on.
 
 ## Plugins
 
-Install the same Claude Code plugins you use on the Mac — at least `superpowers`.
+**On the Spark**, in that Claude Code session, install the same plugins you use on the Mac — at
+least `superpowers`.
 
 ## GitHub: a token for this repository only
 

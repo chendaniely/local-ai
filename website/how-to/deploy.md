@@ -5,7 +5,8 @@ description: "The first deploy on the Spark, the web UI over tailscale serve, an
 
 Everything here runs **on the Spark**, from your clone of this repo, except in two places **on the
 Mac**: sending your llama-swap key, in *Before the first deploy*, and the tunnel and the browser, in
-*The web UI's first account*.
+*The web UI's first account*. In *The web UI*, you log in from a browser on the Mac or the
+phone.
 
 ## Before the first deploy
 
@@ -75,8 +76,8 @@ change ([the plan](../design/plan.md#users-access-and-security)'s *Users, access
 git status --short -- Makefile stack/host
 ```
 
-Then, **on the Spark**, install root's copies. It runs under sudo, and it asks before it installs
-anything:
+Then, **on the Spark**, as you, install root's copies. It runs sudo itself, so don't type `sudo` in
+front, and it asks before it installs anything:
 
 ```bash
 make install-units
@@ -185,8 +186,9 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:3000
 ```
 
 It survives reboots. `tailscale serve status` shows the address; it names your tailnet, so read it
-privately. Log in with the account you made. To undo it, `sudo tailscale serve reset`; to serve it
-again after that, run the command above again.
+privately. Then, on the Mac or the phone, open that address and log in with the account you made.
+To undo it, on the Spark, `sudo tailscale serve reset`; to serve it again after that, run the
+command above again.
 
 ## Every later change
 

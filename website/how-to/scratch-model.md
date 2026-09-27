@@ -215,7 +215,8 @@ To switch models, edit `x-settings` and run `sudo docker compose up` again.
 `ssh -N -L 8000:127.0.0.1:8000 brightroar`, then base URL `http://localhost:8000/v1`. vLLM has no chat
 page, so use a client.
 
-**B5. Stop it:** Ctrl-C, or `sudo docker compose down` in `~/scratch/vllm`.
+**B5. On the Spark, stop it:** Ctrl-C where `sudo docker compose up` runs, or
+`sudo docker compose down` in `~/scratch/vllm`. **On the Mac**, Ctrl-C closes B4's tunnel.
 
 ## What you can run
 

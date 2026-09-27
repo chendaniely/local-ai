@@ -12,8 +12,9 @@ curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
 
-Then, in the admin console: **Machines** → the Spark → **Disable key expiry**. A headless server
-whose key expires silently drops off the tailnet.
+It prints a login URL: open it in a browser on the Mac and log in. Then, in the admin console:
+**Machines** → the Spark → **Disable key expiry**. A headless server whose key expires silently
+drops off the tailnet.
 
 ## Turn on MagicDNS and HTTPS
 

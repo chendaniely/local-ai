@@ -175,13 +175,14 @@ awk -v n=<line> 'NR <= n && length($0) == 40 && /^[0-9a-f]+$/ {c = $0} NR == n {
 ```
 
 A pull request's run, a Dependabot PR's included, checks out GitHub's merge commit, which isn't in
-your clone. `git fetch origin pull/<number>/merge` fetches the PR's current one; use `FETCH_HEAD` as
-`<sha>`. It matches the run's only while neither branch has moved since.
+your clone. **On the Mac**, before that block, `git fetch origin pull/<number>/merge` fetches the
+PR's current one; use `FETCH_HEAD` as `<sha>`. It matches the run's only while neither branch has
+moved since.
 
 **Merging Dependabot's PRs.** The allow marker can't excuse a finding in history: it would only
 change a new commit, never the old one. So read a Dependabot PR's commit message before you merge
-it, and merge with a merge commit or a rebase, not a squash that pastes its release notes into the
-message ([Updates](updates.md#upgrade-day-the-automated-prs)).
+it, and merge it on github.com with a merge commit or a rebase, not a squash that pastes its
+release notes into the message ([Updates](updates.md#upgrade-day-the-automated-prs)).
 
 ## When a line is safe but flagged
 
