@@ -183,9 +183,10 @@ when that file was retired on 2026-09-23.
     and a new step installs needrestart's override, `/etc/needrestart/conf.d/local-ai.conf`, so that
     needrestart never restarts a `local-ai-*` unit (`748a093`). Until it runs again, the box keeps
     the first run's owners, earlyoom arguments and polkit rule, and has neither cache folder nor the
-    override, so `make doctor`'s *spark's folders* and *needrestart* lines fail (checked read-only
-    on 2026-09-26: `/var/lib/local-ai` is `spark:spark 751`, and the override isn't there).
-    Phase 1's Task 12, Step 1 re-runs it.
+    override, so `make doctor`'s *spark's folders*, *needrestart* and *earlyoom* lines fail. Checked
+    read-only: `/var/lib/local-ai` is `spark:spark 751` and the override isn't there (2026-09-26),
+    and the running earlyoom avoids `sshd`, not `sshd.*` (2026-09-27). Phase 1's Task 12, Step 1
+    re-runs it.
   - ~~**Keys-only SSH**~~ **Done 2026-09-25**
     ([SSH from the Mac](website/how-to/ssh.md#keys-only)), with its one-time public IPv6 check,
     whose result goes in the vault.
