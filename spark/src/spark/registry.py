@@ -13,6 +13,13 @@ import yaml
 ENGINES = {"llama.cpp": {"chat", "embeddings"}, "whisper.cpp": {"transcription"}}
 NAME = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
+# A Hugging Face repo id, org/name, as the Hub allows one: neither part starts or ends with '.' or '-', and '--' and
+# '..' never appear ('--' is the Hub cache's separator: models--org--name).
+_REPO_PART = r"[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?"
+REPO = re.compile(rf"{_REPO_PART}/{_REPO_PART}")
+# A file in the pinned snapshot: relative, folders split by '/', and every part starting with a letter, a digit or '_',
+# so never '.' or '..'.
+SNAPSHOT_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*(?:/[A-Za-z0-9_][A-Za-z0-9._-]*)*")
 UNSAFE_ARG = re.compile(r"[\s'\"]")
 SECTIONS = ("budget", "brake", "engines", "models")
 
@@ -156,7 +163,7 @@ def _section(data: dict, key: str, cls: type):
 
 
 def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
-    if not isinstance(name, str) or not NAME.match(name):
+    if not isinstance(name, str) or not NAME.fullmatch(name):  # fullmatch: `$` also matches before a final newline
         raise RegistryError(f"{name!r}: names are lowercase letters, digits, '.' and '-'")
     if not isinstance(raw, dict):
         raise RegistryError(f"{name}: a model must be a mapping of its fields")
@@ -171,7 +178,7 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
     if not isinstance(src, dict):
         raise RegistryError(f"{name}: source must be a mapping of repo, revision and file")
     _known(f"{name}: source", src, SOURCE_KEYS)
-    if not REVISION.match(str(src.get("revision", ""))):
+    if not REVISION.fullmatch(str(src.get("revision", ""))):
         raise RegistryError(f"{name}: source.revision must be a 40-hex commit, not a branch or tag")
     for key in ("repo", "file"):
         if src.get(key) in (None, ""):
@@ -182,6 +189,16 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
         raise RegistryError(
             f"{name}: source.mmproj must be a non-empty string when present, not {src['mmproj']!r}"
         )
+    repo = src["repo"]
+    if not REPO.fullmatch(repo) or "--" in repo or ".." in repo:
+        raise RegistryError(f"{name}: source.repo must be org/name as the Hub names a repo: letters, digits, '.', '_' "
+                            f"and '-', neither part starting or ending with '.' or '-', no '--' or '..'; not {repo!r}")
+    for key in ("file", "mmproj"):
+        # The engine gets <the snapshot>/<file>: anything else could name a file the pinned revision doesn't have.
+        if key in src and not SNAPSHOT_FILE.fullmatch(src[key]):
+            raise RegistryError(f"{name}: source.{key} must be a relative path inside the pinned snapshot: letters, "
+                                f"digits, '.', '_' and '-', folders split by '/', no part starting with '.' or '-' "
+                                f"(so no '..'); not {src[key]!r}")
     listed_args = _list(name, raw, "args")
     for arg in listed_args:
         if isinstance(arg, (dict, list)):

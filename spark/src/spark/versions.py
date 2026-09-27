@@ -10,6 +10,12 @@ import yaml
 
 MACHINES = {"mac", "spark", "synology", "ci"}
 PIN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")
+# A version and an image go into files root runs (the llama-swap unit's ExecStart, Compose's image:) and into the
+# Stack page's table, so each is plain text. A version is a Docker tag and a path segment; an image is a lowercase
+# registry path, a port after its host at most, with neither tag nor digest (those are version and pin).
+VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_IMAGE_PART = r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?"
+IMAGE = re.compile(rf"{_IMAGE_PART}(?::[0-9]+)?(?:/{_IMAGE_PART})*")
 
 
 class VersionsError(ValueError):
@@ -36,11 +42,22 @@ def load_versions(path: Path) -> dict[str, Component]:
     for name, raw in (data.get("components") or {}).items():
         if raw.get("version") in (None, ""):
             raise VersionsError(f"{name}: version is required")
+        version = raw["version"]
+        if not isinstance(version, str):  # `version: 1.10` reads as the number 1.1
+            raise VersionsError(f"{name}: version must be text, in quotes if it looks like a number; YAML read "
+                                f"{version!r}")
+        if not VERSION.fullmatch(version):  # fullmatch: `$` also matches before a final newline
+            raise VersionsError(f"{name}: version must be letters, digits, '.', '_' and '-', starting with a letter "
+                                f"or digit; not {version!r}")
+        image = raw.get("image")
+        if image is not None and not (isinstance(image, str) and IMAGE.fullmatch(image)):
+            raise VersionsError(f"{name}: image must be a lowercase registry path, a port after its host at most, "
+                                f"without a tag or digest (those are version and pin); not {image!r}")
         where = tuple(raw.get("where") or ())
         if not where or not set(where) <= MACHINES:
             raise VersionsError(f"{name}: 'where' must list some of {sorted(MACHINES)}")
         pin = raw.get("pin")
-        if pin is not None and not PIN.match(str(pin)):
+        if pin is not None and not PIN.fullmatch(str(pin)):
             raise VersionsError(f"{name}: pin must be sha256:<64 hex>, git:<40 hex>, or null")
         for key in ("docs", "changelog"):
             if not str(raw.get(key, "")).startswith("https://"):

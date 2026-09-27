@@ -411,3 +411,63 @@ def test_a_role_may_repeat_its_own_models_name():
     # The fixture's embed and stt do: llama-swap finds the same model either way.
     registry = load_registry(FIXTURE)
     assert "embed" in registry.models["embed"].roles and "stt" in registry.models["stt"].roles
+
+
+# Task 6's fix round 2: a model's files come from its pinned snapshot, and from nowhere else.
+
+OUTSIDE = [  # (the source field, a value that leaves the pinned snapshot, or wouldn't reach it as one path)
+    pytest.param("file", "../../../../../../../tmp/other.gguf", id="file climbs out"),  # --model at /var/tmp/other.gguf
+    pytest.param("file", "Q4_K_M/../../other.gguf", id="file climbs out of a folder"),
+    pytest.param("file", "/tmp/other.gguf", id="file absolute"),
+    pytest.param("file", "vision gguf", id="file with whitespace"),
+    pytest.param("file", "${env.LLAMASWAP_KEY_AGENT}.bin", id="file with a reference"),
+    pytest.param("file", "vision\\.gguf", id="file with a backslash"),
+    pytest.param("file", "vision.gguf\n", id="file with a trailing newline"),
+    pytest.param("mmproj", "../vision-mmproj.gguf", id="mmproj climbs out"),
+    pytest.param("mmproj", "/tmp/vision-mmproj.gguf", id="mmproj absolute"),
+]
+
+
+@pytest.mark.parametrize("key, value", OUTSIDE)
+def test_a_source_file_stays_inside_the_pinned_snapshot(tmp_path, key, value):
+    path = mutated(tmp_path, lambda d: d["models"]["vision-chat"]["source"].update({key: value}))
+    with pytest.raises(RegistryError, match=f"^vision-chat: source.{key} must be a relative path inside the pinned "):
+        load_registry(path)
+
+
+def test_a_source_file_may_sit_in_a_folder_of_the_repo(tmp_path):
+    file = "Q4_K_M/vision-00001-of-00002.gguf"
+    path = mutated(tmp_path, lambda d: d["models"]["vision-chat"]["source"].update(file=file))
+    assert load_registry(path).models["vision-chat"].source.file == file
+
+
+REPOS = [  # none is a Hugging Face repo id, org/name
+    pytest.param("vision-GGUF", id="no org"),  # render's model_path raised a bare ValueError on it
+    pytest.param("example-org/vision/GGUF", id="three parts"),
+    pytest.param("/example-org/vision-GGUF", id="absolute"),
+    pytest.param("../example-org/vision-GGUF", id="climbs out"),
+    pytest.param("example-org/vision GGUF", id="whitespace"),
+    pytest.param("example--org/vision-GGUF", id="a double dash"),  # the Hub cache's separator: models--org--name
+    pytest.param("example-org/vision..GGUF", id="a double dot"),
+    pytest.param("example-org/vision-GGUF\n", id="a trailing newline"),
+    pytest.param("example-org/${env.LLAMASWAP_KEY_AGENT}", id="a reference"),
+]
+
+
+@pytest.mark.parametrize("repo", REPOS)
+def test_a_source_repo_is_org_and_name(tmp_path, repo):
+    path = mutated(tmp_path, lambda d: d["models"]["vision-chat"]["source"].update(repo=repo))
+    with pytest.raises(RegistryError, match="^vision-chat: source.repo must be org/name"):
+        load_registry(path)
+
+
+@pytest.mark.parametrize("change, message", [
+    pytest.param(lambda d: d["models"]["vision-chat"]["source"].update(revision="1" * 40 + "\n"),
+                 "vision-chat: source.revision must be a 40-hex commit", id="revision"),
+    pytest.param(lambda d: d["models"].update({"coder\n": d["models"].pop("coder")}),
+                 "'coder\\n': names are lowercase letters", id="model name"),
+])
+def test_a_trailing_newline_never_passes(tmp_path, change, message):
+    # A pattern's `$` matches just before a final newline, so each is matched whole.
+    with pytest.raises(RegistryError, match=f"^{re.escape(message)}"):
+        load_registry(mutated(tmp_path, change))

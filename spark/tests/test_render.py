@@ -257,13 +257,15 @@ def test_every_flag_render_passes_is_refused_in_every_spelling(tmp_path):
                     rendered(path)
 
 
-FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in)
+FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in). The registry refuses one in a source
+    # file (test_registry.py), so the engines' paths carry it here. registry_with writes models in name order, so coder
+    # is the first llama.cpp model.
     pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--alias", "${env.LLAMASWAP_KEY_SPARK}"]),
                  "coder", "${env.LLAMASWAP_KEY_SPARK}", id="an arg"),
-    pytest.param(lambda d: d["models"]["stt"]["source"].update(file="${env.LLAMASWAP_KEY_AGENT}.bin"),
-                 "stt", "${env.LLAMASWAP_KEY_AGENT}", id="a source file"),
+    pytest.param(lambda d: d["engines"].update({"llama.cpp": "/opt/${env.LLAMASWAP_KEY_AGENT}/llama-server"}),
+                 "coder", "${env.LLAMASWAP_KEY_AGENT}", id="llama.cpp's path"),
     pytest.param(lambda d: d["engines"].update({"whisper.cpp": "/opt/${MODEL_ID}/whisper-server"}),
-                 "stt", "${MODEL_ID}", id="an engine's path"),
+                 "stt", "${MODEL_ID}", id="whisper.cpp's path"),
 ]
 
 
@@ -281,12 +283,13 @@ def test_a_role_is_never_filled_in(tmp_path):
         rendered(path)
 
 
-SPLIT = [  # (the edit, the model it lands in): each word would reach the engine as other words
+SPLIT = [  # (the edit, the model it lands in): each word would reach the engine as other words. The registry refuses
+    # these in a source file or projector (test_registry.py), so the engines' paths carry them here.
     pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--ho\\st", "0.0.0.0"]), "coder",
                  id="a backslash"),  # --ho\st is --host once llama-swap unescapes it
-    pytest.param(lambda d: d["models"]["stt"]["source"].update(file="whisper.bin --host 0.0.0.0"), "stt",
-                 id="whitespace"),
-    pytest.param(lambda d: d["models"]["vision-chat"]["source"].update(mmproj='vision-"mmproj".gguf'), "vision-chat",
+    pytest.param(lambda d: d["engines"].update({"whisper.cpp": "/opt/local-ai/bin/whisper-server --host 0.0.0.0"}),
+                 "stt", id="whitespace"),
+    pytest.param(lambda d: d["engines"].update({"llama.cpp": '/opt/local-ai/bin/"llama-server"'}), "coder",
                  id="quotes"),
 ]
 
