@@ -124,7 +124,10 @@ esac
 
 def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
     """An environment whose dpkg-query reports `installed` (package → status) and whose apt-mark
-    only writes to a file, so even the real (not dry-run) hold changes nothing on this machine."""
+    only writes to a file, so even the real (not dry-run) hold changes nothing on this machine. It is
+    built, not copied: nothing of the test's own environment but PATH, which finds the fakes and the
+    tools the script runs, and a HOME of its own (Task 7's fix round 2: a launch that fails prints
+    the environment it was given)."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, text in (("dpkg-query", FAKE_DPKG_QUERY), ("apt-mark", FAKE_APT_MARK)):
@@ -132,9 +135,11 @@ def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
         (bindir / name).chmod(0o755)
     fixture = tmp_path / "installed.tsv"
     fixture.write_text("".join(f"{status}\t{pkg}\n" for pkg, status in installed.items()))
+    home = tmp_path / "home"
+    home.mkdir()
     return {
-        **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
+        "HOME": str(home),
         "DPKG_FIXTURE": str(fixture),
         "APT_MARK_HELD": str(tmp_path / "held"),
     }
@@ -279,11 +284,12 @@ def test_hold_gpu_mode_runs_only_the_hold(tmp_path, args):
 def test_make_hold_gpu_re_holds_the_set_and_nothing_else(tmp_path):
     # Upgrade day's re-hold, from the front door: `make hold-gpu-dry-run` previews exactly the hold,
     # and `make hold-gpu` runs the same mode under sudo. -n prints the recipe without running it.
+    env = gpu_env(tmp_path, INSTALLED)
     preview = subprocess.run(
         ["make", "-s", "-C", str(ROOT), "hold-gpu-dry-run"],
         capture_output=True,
         text=True,
-        env=gpu_env(tmp_path, INSTALLED),
+        env=env,
     )
     assert preview.returncode == 0, preview.stderr
     lines = preview.stdout.splitlines()
@@ -291,7 +297,7 @@ def test_make_hold_gpu_re_holds_the_set_and_nothing_else(tmp_path):
     assert len(commands) == 1, commands
     assert hold_line(lines) == GPU_SET
     recipe = subprocess.run(
-        ["make", "-n", "-C", str(ROOT), "hold-gpu"], capture_output=True, text=True, check=True
+        ["make", "-n", "-C", str(ROOT), "hold-gpu"], capture_output=True, text=True, check=True, env=env
     )
     assert "sudo bash stack/host/bootstrap.sh --hold-gpu" in recipe.stdout.splitlines()
     makefile = (ROOT / "Makefile").read_text().splitlines()
@@ -308,9 +314,21 @@ def test_a_default_dry_run_never_reads_the_hosts_own_packages(tmp_path, monkeypa
     assert any("a real run stops here: nothing installed matches" in line for line in dry_run())
 
 
+def test_the_scripts_environment_is_built_not_copied(tmp_path):
+    # Task 7's fix round 2: a launch that fails prints the environment it was given, and pytest prints the arguments
+    # of a call in a failing assert (so names and homes are taken first, here). The script's environment holds
+    # nothing of the test's own: PATH, to find the fakes and the tools, a HOME of its own, and the fakes' settings.
+    # NO_PACKAGES is built at import, before any fixture runs, so it too must be built, not copied.
+    env = gpu_env(tmp_path, {})
+    names, import_names = sorted(env), sorted(NO_PACKAGES)
+    home, test_home, import_home = env["HOME"], os.environ["HOME"], NO_PACKAGES["HOME"]
+    assert names == import_names == ["APT_MARK_HELD", "DPKG_FIXTURE", "HOME", "PATH"]
+    assert home != test_home and home != import_home
+
+
 def test_an_unknown_option_is_refused_before_anything_runs():
     # A mistyped --dry-run under sudo must not turn into a real run.
-    result = script("--dry-run", "--dryrun", env=dict(os.environ))
+    result = script("--dry-run", "--dryrun", env=NO_PACKAGES)
     assert result.returncode == 2
     assert "unknown option" in result.stderr
     assert result.stdout == ""

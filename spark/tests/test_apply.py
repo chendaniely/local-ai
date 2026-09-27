@@ -453,6 +453,7 @@ class Box:
         self.units = dict.fromkeys(RUNNING_UNITS)
         self.answers = [LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")]
         self.interrupted, self.failing, self.uv_fails, self.validate_code, self.validate_env = set(), set(), False, 0, None
+        self.uv_env = None
         self.events = []
         monkeypatch.setattr(spark_apply, "DEPLOY", str(self.opt))
         monkeypatch.setattr(spark_render, "UNIT_DIR", str(tmp_path / "root/systemd"))
@@ -488,6 +489,7 @@ class Box:
             return subprocess.CompletedProcess(cmd, self.validate_code)
         if cmd[:2] == ["uv", "sync"]:
             self.events.append("uv sync")
+            self.uv_env = kwargs.get("env")
             if self.uv_fails:
                 raise subprocess.CalledProcessError(2, cmd)
             put(self.app / ".venv/bin/spark", "", time.time())
@@ -736,8 +738,21 @@ def test_a_file_apply_cant_load_is_named_not_a_traceback(box, what, text):
     assert lines[0].startswith(f"spark apply: the {what} {path} won't load: ")
 
 
+def test_uv_sync_is_given_the_tests_own_environment_and_uvs_settings_only(box):
+    # Task 7's fix round 2: apply hands uv sync its environment, and the fake it reaches raises when uv fails, so a
+    # traceback would print it. It's the test's own (conftest.py's fake_environment). Names only, taken first: pytest
+    # prints the arguments of a call in a failing assert.
+    box.deployed()
+    box.answers = [[]]
+    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    box.apply()
+    names = set(box.uv_env) - {"PYTEST_CURRENT_TEST"}
+    assert names <= {"PATH", "HOME", "LANG", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE"}
+
+
 def test_validate_is_run_with_path_and_placeholder_keys_only(box, monkeypatch):
-    # Minor 9, as run() runs it.
+    # Minor 9, as run() runs it, in the test's own environment (conftest.py): PROBE_SECRET stands in for a secret of
+    # Dan's, and the expectation is built from that fake, never the shell's.
     monkeypatch.setenv("PROBE_SECRET", "not for llama-swap")
     box.deployed()
     box.answers = [[]]
