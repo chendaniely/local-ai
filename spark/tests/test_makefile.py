@@ -34,22 +34,41 @@ def calls(tmp_path: Path) -> list[str]:
     return path.read_text().splitlines() if path.exists() else []
 
 
+# The pull's journal, one "YYYY-MM-DD HH:MM:SS text" line an entry, in $JOURNAL. The stand-in systemctl logs this run's
+# FAILED line there, stamped with the time it runs, as the pull logs its lines; the stand-in journalctl prints the
+# entries from --since on, as journalctl does, or all of them without it.
+PULL = 'printf "%s %s\\n" "$(date "+%Y-%m-%d %H:%M:%S")" "pull: coder: coder.gguf: FAILED — this run" >> "$JOURNAL"\n' \
+       'exit "$PULL_EXIT"'
+JOURNAL = ('since=""\n'
+           'while [[ $# -gt 0 ]]; do case "$1" in --since) since="$2"; shift 2 ;; *) shift ;; esac; done\n'
+           'while IFS= read -r entry; do\n'
+           '  if [[ -z "$since" || ! "${entry:0:19}" < "$since" ]]; then echo "${entry:20}"; fi\n'
+           'done < "$JOURNAL"')
+EARLIER = "2020-01-01 00:00:00 pull: coder: coder.gguf: FAILED — an earlier run\n"
+
+
 @pytest.mark.parametrize("pull", [0, 1], ids=["pulled", "failed"])
-def test_make_pull_shows_the_pulls_journal_whether_or_not_it_failed(tmp_path, pull):
+def test_make_pull_shows_this_runs_journal_whether_or_not_it_failed(tmp_path, pull):
     # A file that fails makes the pull exit 1, and the FAILED line that says why is in its journal: make shows the
-    # journal then too, and still fails.
-    env = fakes(tmp_path, systemctl=f"exit {pull}", journalctl='echo "pull: coder: coder.gguf: FAILED — a stand-in"')
-    result = make("pull", env=env)
-    assert calls(tmp_path) == ["systemctl start local-ai-pull.service",
-                               "journalctl -u local-ai-pull.service -n 40 --no-pager"]
-    assert "FAILED — a stand-in" in result.stdout
+    # journal then too, and still fails. Only this run's lines (Task 9's fix round 1, M3): an earlier run's FAILED
+    # lines, shown above them, would read as this run's.
+    env = fakes(tmp_path, systemctl=PULL, journalctl=JOURNAL)
+    (tmp_path / "journal").write_text(EARLIER)
+    result = make("pull", env={**env, "JOURNAL": str(tmp_path / "journal"), "PULL_EXIT": str(pull)})
+    start, read = calls(tmp_path)
+    assert start == "systemctl start local-ai-pull.service"
+    assert re.fullmatch(r"journalctl -u local-ai-pull\.service --since \d{4}-\d\d-\d\d \d\d:\d\d:\d\d --no-pager",
+                        read), read
+    assert "FAILED — this run" in result.stdout and "an earlier run" not in result.stdout
     assert (result.returncode == 0) == (pull == 0), result.stderr
 
 
 def test_make_pull_is_one_recipe_line_that_keeps_the_pulls_status():
-    # On two lines, make stopped at the failed start, before the journal.
+    # On two lines, make stopped at the failed start, before the journal. The time is taken before the start: an
+    # InvocationID wouldn't do, since a oneshot that ended cleanly can be unloaded, and its ID with it.
     assert make("-n", "pull").stdout.splitlines() == [
-        "systemctl start local-ai-pull.service; s=$?; journalctl -u local-ai-pull.service -n 40 --no-pager; exit $s"]
+        "t=$(date '+%Y-%m-%d %H:%M:%S'); systemctl start local-ai-pull.service; s=$?; "
+        'journalctl -u local-ai-pull.service --since "$t" --no-pager; exit $s']
 
 
 def test_help_starts_every_description_in_one_column():

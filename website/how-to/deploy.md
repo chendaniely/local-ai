@@ -83,8 +83,8 @@ registry. Nothing runs yet, so it restarts nothing.
 make pull
 ```
 
-It prints nothing until the pull ends, then the pull's last 40 journal lines, whether or not it
-failed. `make logs` is a snapshot, and the pull logs one line per file as each finishes, so to
+It prints nothing until the pull ends, then this run's lines from the pull's journal, whether or not
+it failed. `make logs` is a snapshot, and the pull logs one line per file as each finishes, so to
 follow it, **on the Spark**, in another pane:
 
 ```bash
@@ -222,10 +222,11 @@ account is told the brake's state is unknown to it.
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
 
-`make pull` ends with the pull's journal, failed or not, and a `FAILED` line's reason says which
-cause it is. Only a wrong file name or revision is fixed in `stack/models.yaml`: fix it there, then
-`make apply` and `make pull`. For the rest (a missing or gated repo, a bad or refused token, the
-network or a server error, a full or unwritable disk), fix the cause, then `make pull` again.
+`make pull` ends with this run's lines from the pull's journal, failed or not, and a `FAILED` line's
+reason says which cause it is. Only a wrong file name or revision is fixed in `stack/models.yaml`:
+fix it there, then `make apply` and `make pull`. For the rest (a missing or gated repo, a bad or
+refused token, the network or a server error, a full or unwritable disk), fix the cause, then
+`make pull` again.
 
 If `make apply` keeps saying a file differs from root's copy, `make install-units-dry-run` shows the
 difference, and `make install-units` installs it.

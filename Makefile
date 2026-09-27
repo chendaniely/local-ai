@@ -55,7 +55,7 @@ install-units: ## On the Spark (Dan; sudo): install root's copies of the units a
 	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --install-units
 
 pull: ## On the Spark: download the model files at their pinned revisions (as the spark user)
-	systemctl start local-ai-pull.service; s=$$?; journalctl -u local-ai-pull.service -n 40 --no-pager; exit $$s
+	t=$$(date '+%Y-%m-%d %H:%M:%S'); systemctl start local-ai-pull.service; s=$$?; journalctl -u local-ai-pull.service --since "$$t" --no-pager; exit $$s
 
 status: ## On the Spark: what's loaded, memory before the brake, the brake, the last refusal
 	$(SPARK) status
