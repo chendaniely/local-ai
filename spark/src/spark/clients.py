@@ -27,16 +27,46 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
             "compat": dict(COMPAT), "models": models}
 
 
+class ClientsError(ValueError):
+    """A refusal: the message is the reason, and names the file."""
+
+
+# What json.loads gives for each kind of JSON value but an object.
+KINDS = {list: "an array", str: "a string", int: "a number", float: "a number", bool: "true or false",
+         type(None): "null"}
+
+
+def _load_pi(path: Path) -> dict:
+    """pi's models file, an object whose providers are an object too; or a ClientsError that names the file, as
+    render's _load names its files: json's own message names none. The error it came from goes no further, since
+    json's and the codec's keep the file's text, and the file can hold other providers' keys."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+        raise ClientsError(f"pi's models file {path} won't load: {err}") from None
+    if not isinstance(data, dict):
+        raise ClientsError(f"pi's models file {path} holds {KINDS[type(data)]} at its top level, not the object pi "
+                           "reads")
+    providers = data.get("providers", {})
+    if not isinstance(providers, dict):
+        raise ClientsError(f"pi's models file {path}: its providers are {KINDS[type(providers)]}, not the object pi "
+                           "reads")
+    return data
+
+
 def merge_pi(path: Path, provider: dict) -> Path | None:
     """Put `provider` under providers.spark, keep every other provider, and back up the old file.
-    Returns the backup, or None when there was no file to back up."""
+    Returns the backup, or None when there was no file to back up. A file that won't load, or that
+    isn't the object pi reads, is refused before anything is written. The backup keeps the file's
+    mode, since the file can hold other providers' keys. The file is written in place, so a link to
+    it, from a dotfiles repo say, stays a link."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(json.dumps({"providers": {"spark": provider}}, indent=2) + "\n")
         return None
-    data = json.loads(path.read_text())
+    data = _load_pi(path)
     backup = path.with_suffix(".json.bak")
-    shutil.copyfile(path, backup)
+    shutil.copy2(path, backup)
     data.setdefault("providers", {})["spark"] = provider
     path.write_text(json.dumps(data, indent=2) + "\n")
     return backup
