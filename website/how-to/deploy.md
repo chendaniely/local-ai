@@ -9,15 +9,36 @@ account*, where the tunnel and the browser are **on the Mac**.
 ## Before the first deploy
 
 Phase 0 is done, bootstrap and the secret files included, and the engines are installed (the
-Phase 1 plan, Task 11). **On the Spark**, check that your session has the groups bootstrap gave
-you. This lists `spark-admin` and `adm` among them:
+Phase 1 plan, Task 11).
+
+Your shells on the Spark need your own llama-swap key: `make status` and `make apply` ask
+llama-swap what's loaded (`GET /running`) with the key in `SPARK_API_KEY`. It's the same value as on
+the Mac, one key per person, not per machine, and [Secret files](secret-files.md) put it only in the
+Mac's `~/.secrets`. **On the Mac**, send it to the Spark's `~/.secrets`, without displaying it:
+
+```bash
+( . ~/.secrets; printf 'export SPARK_API_KEY=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat >> ~/.secrets'
+```
+
+**On the Spark**, once, load it in every shell. This puts the line that loads it first in
+`~/.bashrc`, above Ubuntu's early return for non-interactive shells:
+
+```bash
+grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
+```
+
+From then on the key is in every shell of yours on the Spark, a Claude Code session's included, so
+that session's secrets guard, step 3 of [The Spark session](spark-session.md), must already hold.
+
+Then end tmux with `tmux kill-server`, log out, and log back in: a new login picks up the key, and
+the groups bootstrap gave you, which a session older than bootstrap lacks. **On the Spark**, in the
+new session, check both. `id -nG` lists `spark-admin` and `adm` among your groups, and the second
+line prints `True`. It prints only `True` or `False`, never the key.
 
 ```bash
 id -nG
+python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"
 ```
-
-If it doesn't, your session predates bootstrap: end tmux with `tmux kill-server`, log out, and log
-back in.
 
 `make bootstrap` has run from the clone you deploy from since `stack/host/` last changed: re-run it
 whenever that folder changes. Its sudo runs this clone's own `Makefile` and
@@ -181,7 +202,8 @@ If the real run would refuse, because llama-swap would restart while models are 
 apply can't tell whether they are, the dry run says so:
 `apply: dry run — would refuse: …; with --now it would restart …`. It exits 1 and ends in make's own
 error line, `make: *** … Error 1`. That line is the answer, not a fault: run it again when the
-models are idle, or `make apply-now`.
+models are idle, or `make apply-now`. The one exception is a refusal after
+`apply: llama-swap GET /running: HTTP 401`: see *When something is wrong*.
 
 Then, **on the Spark**, change it:
 
@@ -197,7 +219,8 @@ restarts each unit still running its older definition.
 
 If llama-swap would restart, for its config or for its unit, while models are loaded, or while apply
 can't tell whether they are, apply changes nothing and says so. Run it again when they're idle, or
-`make apply-now` to restart llama-swap anyway.
+`make apply-now` to restart llama-swap anyway. If it couldn't tell because llama-swap answered
+`HTTP 401`, neither helps: see *When something is wrong*.
 
 If a model starts loading after apply's first look, apply deploys the files, puts llama-swap's
 restart off, says so and exits 1; the next `make apply` makes the restart once the models are idle.
@@ -221,6 +244,13 @@ account is told the brake's state is unknown to it.
 
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
+
+A `problem` line in `make status` that ends in `HTTP 401 (no key in $SPARK_API_KEY)` means this
+shell has no key: set it up as *Before the first deploy* says, then log in afresh. `HTTP 401`
+without that means llama-swap doesn't know the key this shell has. It should be the Mac's, which
+[Secret files](secret-files.md) step 9 added to `llama-swap.env` as `LLAMASWAP_KEY_DAN_MAC`. Until
+the key works, apply can't tell what's loaded, so it won't restart llama-swap, and `make apply-now`
+would restart it only to fail the check that follows, which asks llama-swap with the same key.
 
 `make pull` ends with this run's lines from the pull's journal, failed or not, and a `FAILED` line's
 reason says which cause it is. Only a wrong file name or revision is fixed in `stack/models.yaml`:
