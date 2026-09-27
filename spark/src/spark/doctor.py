@@ -74,8 +74,8 @@ def _sendable(key: str) -> bool:
 
 
 def _unusable(key: str | None, key_env: str) -> str | None:
-    """Why the key read from `key_env` can't be sent, or None when it can. A key a header can't carry as it is is
-    never sent, and never shown: the likely cause is a CRLF line in the file it was set from, and http.client's
+    """Why the key read from `key_env` can't be sent, or None when it can. A key that a header can't carry unchanged
+    is never sent, and never shown: the likely cause is a CRLF line in the file it was set from, and http.client's
     error would print the whole header."""
     if key is None:
         return f"no key in this shell: {key_env} isn't set"
