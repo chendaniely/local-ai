@@ -6504,8 +6504,11 @@ nvidia-smi --query-gpu=driver_version --format=csv,noheader   # 580 or later, fo
 Expected: as commented. (`nvidia-smi` is fine for the driver version; it's the memory figures it
 can't report on GB10.) If `id -nG` lacks `spark-admin`, this session started before bootstrap: Dan
 logs out, runs `tmux kill-server`, logs back in and restarts the session — the tmux server keeps the
-groups it started with. If the driver is older than 580, stop and tell Dan: the prebuilt llama.cpp
-needs it, and driver upgrades are held on purpose.
+groups it started with. *(Corrected 2026-09-27, from the labels audit: in that order,
+`tmux kill-server` would run on the Mac, after the logout. Dan, on the Spark, ends tmux
+(`tmux kill-server`), logs out, logs back in from the Mac (`ssh brightroar`) and restarts the
+session.)* If the driver is older than 580, stop and tell Dan: the prebuilt llama.cpp needs it, and
+driver upgrades are held on purpose.
 
 - [ ] **Step 2: llama-swap v257** — its checksum is already in `stack/versions.yaml`:
 
@@ -6546,9 +6549,10 @@ ldd "$d/llama-server" | grep 'not found' || echo "all libraries found"
 Expected: both files `OK`; all libraries found; a version line naming b11146; the GB10 as a CUDA
 device; `sm_121a` in the list — native code for this GPU, so a first load doesn't compile PTX. (No
 `libggml-cuda.so`? Run `cuobjdump` on `llama-server` itself.) If there's no `sm_121`, note it in
-the changelog: Phase 5's bake-off compares a source build. **[Dan]** checks that `agent` reaches the
-GPU without docker: `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`
-lists the same device.
+the changelog: Phase 5's bake-off compares a source build. **[Dan, on the Spark]** checks that
+`agent` reaches the GPU without docker:
+`sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices` lists the same
+device.
 
 - [ ] **Step 4: whisper.cpp v1.9.4, built for this GPU** (there's no CUDA prebuilt)
 
@@ -6606,8 +6610,8 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
   `sshd.*`. This phase adds `spark`'s two cache folders, the needrestart override, and the polkit
   rule that lets `spark-admin` start, stop and restart the four units and nothing more. From the
   clone on `phase-1`, over SSH with nothing open on the desktop (bootstrap stops a running desktop and
-  restarts earlyoom), Dan runs `make bootstrap-dry-run`, reads it, then runs `make bootstrap`. Then
-  the Spark session checks:
+  restarts earlyoom), Dan runs, on the Spark, `make bootstrap-dry-run`, reads it, then runs
+  `make bootstrap`. Then the Spark session checks:
 
 ```bash
 stat -c '%U:%G %a %n' /var/lib/local-ai /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
@@ -6633,12 +6637,12 @@ packages the hold holds, nothing else. `/home/agent/work` from the first bootstr
 and *earlyoom* lines, which fail until this re-run (README §Current state, *A bootstrap re-run*),
 now say `ok`. The stack's lines and the end-to-end check still fail: nothing is deployed yet.
 
-Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `grep`s of `grub.cfg`
-run with sudo, and tells the Spark session what it printed, with "an id" in place of every UUID and
-PARTUUID: in `root=` and in each entry id (`gnulinux-…-<UUID>`), a default, `saved_entry` or
-`next_entry` that is an id included. None of them goes into the repo. With the last two lines
-above, it checks two things `make upgrade-gpu` relies on (Task 10) and nothing has checked yet on
-this box:
+Then Dan runs, on the Spark, the GRUB check from `website/how-to/updates.md` step 5, whose
+`grep`s of `grub.cfg` run with sudo, and tells the Spark session what it printed, with "an id" in
+place of every UUID and PARTUUID: in `root=` and in each entry id (`gnulinux-…-<UUID>`), a
+default, `saved_entry` or `next_entry` that is an id included. None of them goes into the repo.
+With the last two lines above, it checks two things `make upgrade-gpu` relies on (Task 10) and
+nothing has checked yet on this box:
 
 - GRUB boots the newest kernel, the one its checks read: the GRUB check passes. Entry 0's first
   `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and neither `next_entry`
@@ -6664,11 +6668,11 @@ records the re-run and both results in the changelog.
   units, `compose/compose.yaml` or `compose/searxng/settings.yml`; and apply stages them and stops,
   naming `make install-units`. Nothing else is deployed yet: no app, no `llama-swap.yaml`.
 
-- [ ] **Step 3 [Dan]: install root's copies** — `make install-units` (sudo asks for your password
-  once, and the `sudo -k` it ends with forgets it). It shows each of the six files in full, since
-  root has none yet: read them, because they are the files root will run. They aren't all that runs
-  as root: sudo also runs this clone's own `Makefile` and `bootstrap.sh`, which it doesn't show.
-  Answer `y`. Check:
+- [ ] **Step 3 [Dan, on the Spark]: install root's copies** — `make install-units` (sudo asks for
+  your password once, and the `sudo -k` it ends with forgets it). It shows each of the six files in
+  full, since root has none yet: read them, because they are the files root will run. They aren't
+  all that runs as root: sudo also runs this clone's own `Makefile` and `bootstrap.sh`, which it
+  doesn't show. Answer `y`. Check:
 
 ```bash
 systemctl list-unit-files 'local-ai-*'
@@ -6706,7 +6710,7 @@ make install-units-dry-run
 - [ ] **Step 1 [Dan]: your key on the Spark** — the checks below use `SPARK_API_KEY`, with the same
   value as on the Mac (one key per person, not per machine). From here on it is in every shell of
   yours, the Spark session's included, so the session's secrets guard must already hold (the Mac →
-  Spark switch point). From the Mac, without displaying it:
+  Spark switch point). From the Mac, send it to the Spark's `~/.secrets` without displaying it:
   `( . ~/.secrets; printf 'export SPARK_API_KEY=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat >> ~/.secrets'`.
   On the Spark, once, load it in every shell — as the first line of `~/.bashrc`, above Ubuntu's early
   return for non-interactive shells:
@@ -6714,8 +6718,8 @@ make install-units-dry-run
   Restart the Spark session. Check: `python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"`
   → `True`.
 
-- [ ] **Step 2: Start it** (the key goes to curl on stdin, never on its command line — see Global
-  Constraints)
+- [ ] **Step 2 [Spark]: Start it** (the key goes to curl on stdin, never on its command line — see
+  Global Constraints)
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
@@ -6761,17 +6765,17 @@ systemctl restart local-ai-compose
   with a single quote or any backslash, writes nothing and prints neither value; choose a password
   without them.
 
-  Log in through the tunnel with that email and password. Then remove both lines, and restart once
-  more so the container no longer holds them:
+  Log in through the tunnel, on the Mac, with that email and password. Then, on the Spark, remove
+  both lines, and restart once more so the container no longer holds them:
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
 systemctl restart local-ai-compose
 ```
 
-- [ ] **Step 4: One request per model, with memory readings** — from nothing loaded, one at a time.
-  `reading` prints how long the request took and MemAvailable before it, the lowest while it ran
-  (sampled ten times a second) and after it:
+- [ ] **Step 4 [Spark]: One request per model, with memory readings** — from nothing loaded, one
+  at a time. `reading` prints how long the request took and MemAvailable before it, the lowest
+  while it ran (sampled ten times a second) and after it:
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
@@ -6803,7 +6807,7 @@ Expected: four readings; each chat reply names the model that was asked for (the
 tokens thinking — then `.choices[0].message.reasoning_content` holds them); a 1024-dimension
 embedding; the JFK sample's text, and a word count above zero (`verbose_json` carries word timings).
 
-- [ ] **Step 5: What runs, as whom, and what the OOM killers would pick**
+- [ ] **Step 5 [Spark]: What runs, as whom, and what the OOM killers would pick**
 
 ```bash
 make status
@@ -6830,16 +6834,17 @@ can't read `/etc/ufw/ufw.conf`, record the file's mode (`stat -c '%a %U:%G' /etc
 and change that check to match, in the repo, with its test, as a plan revision. Step 3's browser
 already loaded Open WebUI's page. What is not yet seen on this box is doctor's own expectation:
 `200` from `/` on both Open WebUI and SearXNG. This first `make doctor` is that check. If its web
-line fails, look at the pages in a browser. Step 3's tunnel forwards only
-Open WebUI's port 3000; to see SearXNG, open a second one,
-`ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
+line fails, Dan looks at the pages in a browser, on the Mac. Step 3's tunnel forwards only
+Open WebUI's port 3000; to see SearXNG, he opens a second one there,
+`ssh -N -L 8888:127.0.0.1:8888 brightroar`, and loads `http://127.0.0.1:8888`. If they work there,
 change doctor's expectation to what each answered, in the repo, with its test, as a plan revision.
 
 *Added 2026-09-26, from Task 6's review:* SearXNG's image sets no `USER`, and with
 `FORCE_OWNERSHIP: "false"` its entrypoint only warns when `/var/lib/local-ai/searxng`
-(`spark:spark 0750`) isn't its own. So check here that it can write its folder: a search works, and
-`make logs s=searxng` shows no ownership warning. If it can't, fix the folder's owner in bootstrap,
-with its test, as a plan revision.
+(`spark:spark 0750`) isn't its own. So check here that it can write its folder: a search works
+(Dan, on the Mac, through the SearXNG tunnel above), and, on the Spark, `make logs s=searxng` shows
+no ownership warning. If it can't, fix the folder's owner in bootstrap, with its test, as a plan
+revision.
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
@@ -6848,8 +6853,9 @@ earlyoom's choice among engines is arbitrary. Task 17's forward look then decide
 `spark launch` should give resident models a lower `oom_score_adj` than on-demand ones, for example
 900 against 1000, so earlyoom agrees with the brake's order.
 
-Then **[Dan]** checks earlyoom's victim with the engines loaded, without killing anything: Phase 0's
-Task 11 Step 2 check, with the repo's current regexes, for about five seconds, then Ctrl-C:
+Then **[Dan, on the Spark]** checks earlyoom's victim with the engines loaded, without killing
+anything: Phase 0's Task 11 Step 2 check, with the repo's current regexes, for about five seconds,
+then Ctrl-C:
 
 ```bash
 sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
@@ -6859,12 +6865,14 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 Expected: the process it would kill is an engine; note which one.
 
-- [ ] **Step 6: Footprints** — a model's footprint is about *before − lowest*. Where a reading is
-  above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's `footprint_gib` to the
-  reading, rounded up, and leave `footprint_measured: false` — Phase 2 measures at full context
-  after a soak. Then `make apply`: only `models.yaml` changed, so only the brake restarts.
+- [ ] **Step 6 [Spark]: Footprints** — a model's footprint is about *before − lowest*. Where a
+  reading is above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's
+  `footprint_gib` to the reading, rounded up, and leave `footprint_measured: false` — Phase 2
+  measures at full context after a soak. Then `make apply`: only `models.yaml` changed, so only the
+  brake restarts.
 
-- [ ] **Step 7: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's bootstrap re-run
+- [ ] **Step 7 [Spark]: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's
+  bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
   override, and the narrowed polkit rule: `spark-admin` starts, stops and restarts the four units by
   exact name and nothing more, no `reload-daemon`, which `pkcheck` confirmed by answering `2`), with
@@ -6894,8 +6902,9 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 
 - [ ] **Step 1: Serve it on the tailnet** — the phase's first web exposure, so only once Task 13
   Step 3 made the admin account, and keys-only SSH and the Spark's repo-only GitHub token are done
-  (the Mac → Spark switch point): `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`, then
-  `tailscale serve status`. Read the output privately: the HTTPS address names the tailnet.
+  (the Mac → Spark switch point). **On the Spark:**
+  `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`, then `tailscale serve status`.
+  Read the output privately: the HTTPS address names the tailnet.
 - [ ] **Step 2: Log in** — on the phone with Tailscale on, open the address and log in with the
   account from Task 13 Step 3. In a private tab, confirm that a second signup is refused.
   Optional: Admin Panel → Settings → Models, and hide `qwen3-embedding-0.6b` and
@@ -6923,12 +6932,12 @@ python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"
 cd ~/git/hub/local-ai && make clients
 ```
 
-Then `make tunnel` in a spare terminal, and leave it open. *(Corrected 2026-09-26: the block's
-comments moved into this paragraph, and `make tunnel` out of the block, since the Mac's zsh passes
-a trailing `#` to the command — CLAUDE.md's labels rule.)* The pull brings Tasks 1–10, pushed after
-Task 10; npm moves pi down from 0.86.1, inside the crash range; `pi --version` prints `0.85.1`; the
-Python line prints `True`; and `make clients` adds the spark provider, keeping the old file as a
-backup.
+Then, in a spare terminal on the Mac, from the clone, `make tunnel`, and leave it open.
+*(Corrected 2026-09-26: the block's comments moved into this paragraph, and `make tunnel` out of
+the block, since the Mac's zsh passes a trailing `#` to the command — CLAUDE.md's labels rule.)*
+The pull brings Tasks 1–10, pushed after Task 10; npm moves pi down from 0.86.1, inside the crash
+range; `pi --version` prints `0.85.1`; the Python line prints `True`; and `make clients` adds the
+spark provider, keeping the old file as a backup.
 
 In pi: `/model` → `qwen3.6-35b-a3b`, and a small real task in a scratch repo. Expected: it finishes,
 and the footer names `qwen3.6-35b-a3b`.
@@ -6945,14 +6954,15 @@ decision for Task 17.
   steps 2 and 3, written through `agent`'s own login from the Mac, never as root:
   - `ssh brightroar-agent 'mkdir -p ~/.claude'`, then copy the script the hook runs to the same
     place under `agent`'s `~/.claude` (`scp … brightroar-agent:.claude/…`).
-  - `ssh brightroar-agent`, and add the same `PreToolUse` hook and deny rules to `agent`'s
-    `~/.claude/settings.json`, with every `/Users/dan` in a path changed to `/home/agent`.
+  - `ssh brightroar-agent`, and there, on the Spark as `agent`, add the same `PreToolUse` hook and
+    deny rules to `agent`'s `~/.claude/settings.json`, with every `/Users/dan` in a path changed to
+    `/home/agent`.
   - A `~/.claude/CLAUDE.md` for `agent` that holds only your global file's secrets rule, not the
     rest of that file: `agent` works on untrusted input, and the rest is yours. Put the section in a
     file on the Mac, then `scp` it to `brightroar-agent:.claude/CLAUDE.md`.
-  - Check it as the Spark session's first action does: in `agent`'s `claude`, `/hooks` lists the
-    hook, `/permissions` the deny rules, and `test -e ~/.secrets && echo present || echo absent` is
-    refused.
+  - Check it as the Spark session's first action does: on the Spark, in `agent`'s `claude`, `/hooks`
+    lists the hook, `/permissions` the deny rules, and
+    `test -e ~/.secrets && echo present || echo absent` is refused.
 
 - [ ] **Step 3 [Dan, on the Spark]: Node, and the agent's key**
 
@@ -6973,7 +6983,7 @@ Constraints). `printf` is a builtin, so the value never reaches a command line. 
 missing, the line refuses and writes nothing, as `secret-files.md` step 5 does. Run again, it
 rewrites the file with the same line.
 
-- [ ] **Step 4 [Dan, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
+- [ ] **Step 4 [Dan, on the Spark, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
 
 ```bash
 grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
@@ -6983,8 +6993,9 @@ git clone --branch phase-1 https://github.com/chendaniely/local-ai ~/work/local-
 exit
 ```
 
-`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. Then, in a
-fresh login as `agent` (`ssh brightroar-agent` from the Mac), so the key and `~/.local/bin` load:
+`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. Then, from
+the Mac, log in afresh as `agent` (`ssh brightroar-agent`), so the key and `~/.local/bin` load, and
+in that session, on the Spark as `agent`:
 
 ```bash
 python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"   # True
@@ -7013,9 +7024,9 @@ git commit -m "docs(machine): 🤖 record pi for agent and the web UI on the tai
 
 ### Task 16 [Spark + Dan]: drills — the brake, a load that doesn't fit, a fresh clone, an upgrade and a reboot
 
-- [ ] **Step 1: The brake at raised thresholds (S05)** — load the coder, then run one brake tick
-  against a copy of the registry whose thresholds sit just above what's available now, so the brake
-  fires while the box still has plenty of memory:
+- [ ] **Step 1 [Spark]: The brake at raised thresholds (S05)** — load the coder, then run one
+  brake tick against a copy of the registry whose thresholds sit just above what's available now,
+  so the brake fires while the box still has plenty of memory:
 
 ```bash
 coder() { curl -s -o /dev/null -w '%{http_code}\n' -H @- -H 'Content-Type: application/json' \
@@ -7046,7 +7057,7 @@ unload is sent (sets `GRACE_S`, 15 s); how much `MemAvailable` moves poll to pol
 held (sets `FLOOR_TOLERANCE_GIB`, 0.5 GiB); and what v257 does when asked to unload an engine that
 is still `starting`. The commands for them are written and run when this task runs, not before.
 
-- [ ] **Step 2: While the hold stands, the coder can't come back**
+- [ ] **Step 2 [Spark]: While the hold stands, the coder can't come back**
 
 ```bash
 coder() { curl -s -o /dev/null -w '%{http_code}\n' -H @- -H 'Content-Type: application/json' \
@@ -7061,7 +7072,8 @@ coder                                                      # 200 again
 
 Expected: as commented. The refused start leaves nothing running, so there's no reload thrash.
 
-- [ ] **Step 3: A load that doesn't fit is refused, and nothing is unloaded (S03, previewed)** —
+- [ ] **Step 3 [Spark]: A load that doesn't fit is refused, and nothing is unloaded (S03,
+  previewed)** —
   unload the coder, then hold memory with a throwaway process until about 45 GiB is left: above the
   brake's warn line (28), below what the coder needs (29 plus the 24 GiB reserve). This is the one
   drill that really fills memory, so it also records swap, and what the OOM killers would pick:
@@ -7090,16 +7102,22 @@ earlyoom ignores swap (`-s 100,100`). Whether anonymous memory swaps out before 
 the brake is not yet known. Record the line; Task 17's forward look sets swap size and swappiness
 from it (plan.md, *To verify on the box*).
 
-- [ ] **Step 4: A fresh clone reproduces the deploy** — first, the Spark session runs
-  leak-guards.md's [*Before every push*](../how-to/leak-guards.md#before-every-push) with
+- [ ] **Step 4 [Spark, then Dan]: A fresh clone reproduces the deploy** — first, the Spark session
+  runs leak-guards.md's [*Before every push*](../how-to/leak-guards.md#before-every-push) with
   `phase-1` as `<branch>`, and **Dan OKs pushing** the Spark's commits (`git push`), so the clone
   has everything. The bootstrap here is a real re-run: it stops a running desktop and restarts
-  earlyoom, so Dan runs it over SSH with nothing open on the desktop, or from the console. Then:
+  earlyoom, so Dan runs it over SSH with nothing open on the desktop, or from the console.
+  *(Corrected 2026-09-27, from the labels audit: the block gave `make bootstrap` the comment
+  `# [Dan], in this directory: sudo; every step is already in place`, as if the session ran the
+  rest. The block is one shell's, `$fresh` and the `cd` included, and the session can't type Dan's
+  password, so Dan runs all of it, on the Spark, in his own terminal. He types `make bootstrap` as
+  shown, never under `sudo`: it asks for his password itself. Every step is already in place.)*
+  Then:
 
 ```bash
 fresh=$(mktemp -d) && git clone --branch phase-1 https://github.com/chendaniely/local-ai "$fresh/local-ai"
 cd "$fresh/local-ai"
-make bootstrap              # [Dan], in this directory: sudo; every step is already in place
+make bootstrap
 make apply                  # apply: nothing to change
 make install-units-dry-run  # nothing to install: root's copies match what this clone renders
 cd ~ && rm -rf "$fresh"
@@ -7120,8 +7138,8 @@ api http://127.0.0.1:9100/running | jq -r '.running[].model'               # the
 systemctl show -p ActiveEnterTimestamp local-ai-llama-swap local-ai-brake  # when each unit started
 ```
 
-**[Dan]** runs `sudo apt update && sudo apt upgrade` as on any day, and answers as usual. Then the
-session runs the same three commands again, plus:
+**[Dan, on the Spark]** runs `sudo apt update && sudo apt upgrade` as on any day, and answers as
+usual. Then the session runs the same three commands again, plus:
 
 ```bash
 grep -A4 '^Start-Date' /var/log/apt/history.log | tail -8   # what this upgrade moved
@@ -7132,9 +7150,9 @@ and `make doctor` passing. If apt moved nothing the engines use (no `libc6` or `
 list), this half proves less. Say so in the changelog, and repeat it after the next upgrade that
 moves one.
 
-Then **[Dan]** runs `sudo reboot`. The reboot ends the Spark session: Dan starts it again
-([The Spark session](../how-to/spark-session.md), *Start the session*), and starts no unit by hand.
-Then:
+Then **[Dan, on the Spark]** runs `sudo reboot`. The reboot ends the Spark session: Dan starts it
+again ([The Spark session](../how-to/spark-session.md), *Start the session*), and starts no unit by
+hand. Then:
 
 ```bash
 systemctl is-active local-ai-llama-swap local-ai-brake local-ai-compose   # active, three times: started at boot
@@ -7156,9 +7174,10 @@ this one did in the changelog, and in `updates.md` if it stopped them; then
 `systemctl start local-ai-compose`. If apt didn't move Docker, the drill waits for an upgrade that
 does, as the `libc6` half does.
 
-- [ ] **Step 6: Changelog; commit** — the drills, with dates and what each showed: the brake and the
-  refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh clone, and the
-  routine upgrade (what apt moved, and whether it touched a library the engines use) and the reboot.
+- [ ] **Step 6 [Spark]: Changelog; commit** — the drills, with dates and what each showed: the
+  brake and the refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh
+  clone, and the routine upgrade (what apt moved, and whether it touched a library the engines use)
+  and the reboot.
 
 ```bash
 git add changelog.md
