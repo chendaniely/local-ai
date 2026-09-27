@@ -96,3 +96,12 @@ components:
     context7: null
     changelog: https://github.com/searxng/searxng/commits/master
     advisories: https://github.com/searxng/searxng/security/advisories
+  pi:
+    version: 0.85.1   # 0.86.0–0.87.1 are reported to crash llama-server; stay below them
+    where: [mac, spark]
+    pin: null
+    deployed: false
+    docs: https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+    context7: null
+    changelog: https://www.npmjs.com/package/@earendil-works/pi-coding-agent?activeTab=versions
+    advisories: null

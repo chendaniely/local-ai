@@ -444,3 +444,409 @@ def test_earlyoom_never_picks_the_ssh_daemon_or_its_session_processes():
 @pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")
 def test_shellcheck_is_clean():
     subprocess.run(["shellcheck", str(SCRIPT)], check=True)
+
+
+# make install-units: root's own copies of what `spark apply` stages for root, the four units and
+# the Compose project as `spark render` writes them (Task 6), read as the admin from that folder.
+FAKE_RUNUSER = """#!/usr/bin/env bash
+# Stands in for runuser -u USER -- COMMAND...: logs the call in $CALLS, then runs the command as
+# whoever runs the tests, since only root can switch users. $SWAP_ON_READ, "PATH|fifo" or
+# "PATH|zero", swaps the file the command reads for a FIFO or a link to /dev/zero first, as
+# something racing bootstrap between its check and its read could.
+echo "runuser $*" >> "$CALLS"
+while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+shift
+for last; do :; done
+if [[ -n "${SWAP_ON_READ:-}" && "$last" == "${SWAP_ON_READ%|*}" ]]; then
+  rm -f "$last"
+  if [[ "${SWAP_ON_READ#*|}" == fifo ]]; then mkfifo "$last"; else ln -s /dev/zero "$last"; fi
+fi
+exec "$@"
+"""
+
+FAKE_INSTALL = """#!/usr/bin/env bash
+# Stands in for GNU install, and logs each call in $CALLS. `install -d [-o U] [-g G] [-m MODE] DIR...`
+# makes each folder with MODE; `install [-o U] [-g G] [-m MODE] SRC DEST` replaces DEST with a copy
+# of SRC, a link at DEST included and never followed, as GNU install does. Only root can set an
+# owner, so the owner and group are left as they are.
+echo "install $*" >> "$CALLS"
+dirs=0 mode=0755
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d) dirs=1; shift ;;
+    -o|-g) shift 2 ;;
+    -m) mode="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+if (( dirs )); then
+  for dir in "$@"; do mkdir -p "$dir"; chmod "$mode" "$dir"; done
+else
+  rm -f "$2"
+  cp "$1" "$2"
+  chmod "$mode" "$2"
+fi
+"""
+
+FAKE_SYSTEMD = """#!/usr/bin/env bash
+# Stands in for systemctl as make install-units uses it. daemon-reload and enable are logged in $CALLS
+# and change $SYSTEMD_STATE: a reload leaves its time there, and enable records each unit, which
+# is-enabled then reads. `show --property=NeedDaemonReload --value UNIT...` says yes for a unit
+# whose file in $BOOTSTRAP_UNIT_DIR is newer than the last reload, as systemd does for a loaded unit.
+state="$SYSTEMD_STATE"
+case "$1" in
+  daemon-reload) echo "systemctl $*" >> "$CALLS"; touch "$state/reloaded" ;;
+  enable) echo "systemctl $*" >> "$CALLS"; shift; printf '%s\\n' "$@" >> "$state/enabled" ;;
+  is-enabled) for unit; do :; done; [[ -f "$state/enabled" ]] && grep -qxF "$unit" "$state/enabled" ;;
+  show)
+    shift
+    for unit; do
+      case "$unit" in --*) continue ;; esac
+      if [[ -f "$state/reloaded" && "$BOOTSTRAP_UNIT_DIR/$unit" -nt "$state/reloaded" ]]; then echo yes; else echo no; fi
+    done
+    ;;
+  *) echo "fake systemctl: unexpected: $*" >&2; exit 1 ;;
+esac
+"""
+
+ROOT_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+              "local-ai-pull.service"]
+# The order install-units reads and installs them in: the units, then the Compose project.
+ROOT_FILES = [f"systemd/{unit}" for unit in ROOT_UNITS] + ["compose/compose.yaml", "compose/searxng/settings.yml"]
+
+
+def rendered_roots() -> dict[str, str]:
+    """What `spark apply` stages for root: the four units and the Compose project, as `spark render`
+    writes them (Task 6)."""
+    from spark.registry import load_registry
+    from spark.render import installed_path, render
+    from spark.versions import load_versions
+
+    fixtures = Path(__file__).parent / "fixtures"
+    files = render(load_registry(fixtures / "models.yaml"), load_versions(fixtures / "versions.yaml"),
+                   (fixtures / "models.yaml").read_text(), templates=ROOT / "stack/templates")
+    return {rel: text for rel, text in files.items() if installed_path(rel) is not None}
+
+
+def install_env(tmp_path: Path) -> dict[str, str]:
+    """Stand-ins for make install-units: the staging folder `spark apply` writes, holding what it
+    stages for root; root's two folders; and runuser, install and systemctl, which log to
+    tmp_path/calls and change nothing outside tmp_path."""
+    for folder in ("bin", "units", "systemd"):
+        (tmp_path / folder).mkdir()
+    for rel, text in rendered_roots().items():
+        (tmp_path / "stage" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "stage" / rel).write_text(text)
+    for name, text in (("runuser", FAKE_RUNUSER), ("install", FAKE_INSTALL), ("systemctl", FAKE_SYSTEMD)):
+        (tmp_path / "bin" / name).write_text(text)
+        (tmp_path / "bin" / name).chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "SYSTEMD_STATE": str(tmp_path / "systemd"),
+        "BOOTSTRAP_STAGED": str(tmp_path / "stage"),
+        "BOOTSTRAP_UNIT_DIR": str(tmp_path / "units"),
+        "BOOTSTRAP_COMPOSE_DIR": str(tmp_path / "compose"),
+        # Root's copies must be root's own. Here whoever runs the tests stands in for root.
+        "BOOTSTRAP_ROOT_USER": pwd.getpwuid(os.getuid()).pw_name,
+        "SUDO_USER": "alice",
+    }
+
+
+def install_units(env: dict[str, str], answer: str = "") -> subprocess.CompletedProcess[str]:
+    """make install-units for real, not its dry run, against install_env's stand-ins, with `answer`
+    typed at its question (see real_hold)."""
+    return subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && install_units', "bash", str(SCRIPT)],
+        input=answer,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def copy_path(tmp_path: Path, rel: str) -> Path:
+    """Where the stand-ins keep root's copy of a staged file."""
+    top, _, rest = rel.partition("/")
+    return tmp_path / ("units" if top == "systemd" else "compose") / rest
+
+
+def installed(tmp_path: Path) -> dict[str, str]:
+    """Root's copies, as the stand-ins hold them, keyed as `spark apply` stages them."""
+    return {rel: copy_path(tmp_path, rel).read_text() for rel in ROOT_FILES if copy_path(tmp_path, rel).exists()}
+
+
+def calls(tmp_path: Path) -> list[str]:
+    path = tmp_path / "calls"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def changes(tmp_path: Path) -> list[str]:
+    """What the stand-ins were asked to change: everything logged but runuser's reads."""
+    return [line for line in calls(tmp_path) if not line.startswith("runuser ")]
+
+
+def test_install_units_shows_what_root_will_run_then_asks_and_installs_it(tmp_path):
+    result = install_units(install_env(tmp_path), "y\n")
+    assert result.returncode == 0, result.stderr
+    # Nothing is installed yet, so it shows the whole of every file before it asks.
+    for rel in ROOT_FILES:
+        assert f"--- installed: {copy_path(tmp_path, rel)}" in result.stdout
+        assert f"+++ staged: {tmp_path}/stage/{rel}" in result.stdout
+    assert installed(tmp_path) == rendered_roots()  # every file staged for root, nothing else
+    for rel in ROOT_FILES:
+        assert copy_path(tmp_path, rel).stat().st_mode & 0o777 == 0o644
+    for folder in ("compose", "compose/searxng"):
+        assert (tmp_path / folder).stat().st_mode & 0o777 == 0o755
+    assert changes(tmp_path)[0] == f"install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng"
+    copies = [line for line in changes(tmp_path)[1:-2]]
+    assert [line.split()[-1] for line in copies] == [str(copy_path(tmp_path, rel)) for rel in ROOT_FILES]
+    assert all(line.startswith("install -o root -g root -m 0644 ") for line in copies)
+    assert changes(tmp_path)[-2:] == [
+        "systemctl daemon-reload",
+        "systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]  # the pull unit runs only when asked
+    assert "make apply" in result.stdout.splitlines()[-1]
+
+
+def test_install_units_reads_each_staged_file_as_the_admin_never_as_root(tmp_path):
+    install_units(install_env(tmp_path), "y\n")
+    reads = [line for line in calls(tmp_path) if line.startswith("runuser ")]
+    assert reads == [f"runuser -u alice -- timeout 10 head -c 65537 -- {tmp_path}/stage/{rel}"
+                     for rel in ROOT_FILES]  # within 10 s and one byte past the 64 KiB cap
+
+
+@pytest.mark.parametrize("answer", ["n\n", "\n", ""], ids=["no", "enter", "end-of-input"])
+def test_anything_but_yes_installs_nothing(tmp_path, answer):
+    result = install_units(install_env(tmp_path), answer)
+    assert result.returncode == 1 and "nothing was installed" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("planted", ["link", "folder", "missing"])
+def test_a_staged_file_that_isnt_a_regular_file_is_refused(tmp_path, planted):
+    # The staging folder is the admin's, so anything running as the admin can plant a link there. A
+    # link to a file only root can read must never become a copy root installs, or shows.
+    env = install_env(tmp_path)
+    secret = tmp_path / "shadow"
+    secret.write_text("root's own secret\n")
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.unlink()
+    if planted == "link":
+        brake.symlink_to(secret)
+    elif planted == "folder":
+        brake.mkdir()
+    result = install_units(env, "y\n")
+    assert result.returncode == 1
+    assert f"{brake} is missing or isn't a regular file" in result.stderr
+    assert "root's own secret" not in result.stdout + result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_a_staged_file_the_admin_cant_read_is_refused(tmp_path):
+    env = install_env(tmp_path)
+    (tmp_path / "stage/systemd/local-ai-brake.service").chmod(0)
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "alice can't read" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("sudo_user", [None, "root"], ids=["no-sudo-user", "root"])
+def test_install_units_needs_sudo_from_the_admins_own_account(tmp_path, sudo_user):
+    env = install_env(tmp_path)
+    if sudo_user is None:
+        del env["SUDO_USER"]
+    else:
+        env["SUDO_USER"] = sudo_user
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "with sudo from your own account" in result.stderr
+    assert calls(tmp_path) == []  # it read nothing and installed nothing
+
+
+def test_run_again_with_nothing_changed_it_changes_nothing(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units(env)  # no answer: it must not ask
+    assert result.returncode == 0, result.stderr
+    assert "nothing to install" in result.stdout and "--- installed" not in result.stdout
+    assert changes(tmp_path) == []  # no install, no reload, no enable
+
+
+def test_only_what_changed_is_shown_and_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# a new line\n")
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert "+# a new line" in result.stdout and "local-ai-llama-swap.service" not in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        str(tmp_path / "units/local-ai-brake.service")]
+    assert "systemctl daemon-reload" in changes(tmp_path)
+    assert not any(line.startswith("systemctl enable") for line in changes(tmp_path))  # enabled already
+
+
+def test_a_copy_that_isnt_roots_own_regular_file_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    (tmp_path / "units/local-ai-brake.service").chmod(0o664)  # group-writable
+    pull = tmp_path / "units/local-ai-pull.service"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text(pull.read_text())
+    pull.unlink()
+    pull.symlink_to(elsewhere)  # the same text, through a link
+    (tmp_path / "compose").chmod(0o775)
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert f"{tmp_path}/units/local-ai-brake.service: the same text, but not root's own regular file" in result.stdout
+    assert f"{pull}: a link, which root's own regular file replaces" in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        f"{tmp_path}/compose/searxng", str(tmp_path / "units/local-ai-brake.service"), str(pull)]
+    assert not pull.is_symlink() and elsewhere.read_text() == pull.read_text()
+    assert (tmp_path / "units/local-ai-brake.service").stat().st_mode & 0o777 == 0o644
+    assert (tmp_path / "compose").stat().st_mode & 0o777 == 0o755
+
+
+def test_a_copy_that_another_user_owns_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units({**env, "BOOTSTRAP_ROOT_USER": "nobody"}, "y\n")  # not whoever owns them
+    assert result.returncode == 0, result.stderr
+    assert len([line for line in changes(tmp_path) if line.startswith("install -o")]) == len(ROOT_FILES)
+
+
+def test_run_again_after_a_run_cut_off_before_its_reload_it_reloads(tmp_path):
+    # The earlier run installed a new unit and stopped before telling systemd, so systemd still
+    # runs the old definition. The files match now, and systemd says it needs a reload.
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    reloaded = (tmp_path / "systemd/reloaded").stat().st_mtime
+    os.utime(tmp_path / "units/local-ai-brake.service", (reloaded + 5, reloaded + 5))
+    result = install_units(env)
+    assert result.returncode == 0 and "nothing to install" in result.stdout
+    assert changes(tmp_path) == ["systemctl daemon-reload"]
+
+
+def test_install_units_dry_run_shows_the_changes_and_changes_nothing(tmp_path):
+    result = script("--install-units", "--dry-run", env=install_env(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert f"+++ staged: {tmp_path}/stage/systemd/local-ai-brake.service" in result.stdout
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f"+ install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng",
+        *(f"+ install -o root -g root -m 0644 {tmp_path}/stage/{rel} {copy_path(tmp_path, rel)}" for rel in ROOT_FILES),
+        "+ systemctl daemon-reload",
+        "+ systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]
+    assert calls(tmp_path) == [] and installed(tmp_path) == {}  # a dry run reads as whoever runs it
+
+
+def test_make_install_units_runs_the_install_mode_under_sudo():
+    # -s: GNU make 4 prints "Entering directory" lines under -C otherwise.
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units"],
+                            capture_output=True, text=True, check=True)
+    assert recipe.stdout.splitlines() == [
+        "trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --install-units"]
+    preview = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units-dry-run"],
+                             capture_output=True, text=True, check=True)
+    assert preview.stdout.splitlines() == ["bash stack/host/bootstrap.sh --install-units --dry-run"]
+    phony = next(line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith(".PHONY:"))
+    assert {"install-units", "install-units-dry-run"} <= set(phony.split()[1:])
+
+
+def test_install_units_is_a_mode_of_its_own():
+    # --dry-run first, so a broken guard would only print a plan.
+    result = script("--dry-run", "--hold-gpu", "--install-units", env=NO_PACKAGES)
+    assert result.returncode == 2 and result.stdout == ""
+    assert "separate modes" in result.stderr  # not the unknown option it is before this task
+
+
+def test_install_units_lists_the_units_render_writes():
+    # bootstrap names the units by hand; this keeps its lists and render's the same.
+    from spark.render import UNITS
+
+    text = SCRIPT.read_text()
+    listed = {name: re.search(rf"^{name}=\((.*)\)", text, re.MULTILINE).group(1).split()
+              for name in ("ROOT_UNITS", "ENABLED_UNITS")}
+    assert listed["ROOT_UNITS"] == list(UNITS)
+    roots = rendered_roots()
+    assert listed["ENABLED_UNITS"] == [unit for unit in UNITS if "\n[Install]\n" in roots[f"systemd/{unit}"]]
+
+
+# A carriage return, an escape sequence and a C1 control such as CSI (U+009B, C2 9B in UTF-8) can
+# make a terminal hide a line of the diff; a NUL makes diff print only "Binary files … differ".
+# Built at run time, never written in the repo.
+HIDDEN = "ExecStartPre=+/bin/sh -c 'touch /tmp/planted'"
+CONTROL = {"cr-and-escape": HIDDEN + chr(13) + chr(27) + "[2K# nothing to see\n", "nul": HIDDEN + chr(0) + "\n",
+           "c1-csi": HIDDEN + chr(0x9B) + "2K# nothing to see\n",
+           "c1-first": HIDDEN + chr(0x80) + "\n", "c1-last": HIDDEN + chr(0x9F) + "\n"}
+
+
+@pytest.mark.parametrize("mode", ["real", "dry-run"])
+@pytest.mark.parametrize("payload", sorted(CONTROL))
+def test_a_staged_file_with_control_characters_is_refused_before_anything_shows(tmp_path, mode, payload):
+    env = install_env(tmp_path)
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + CONTROL[payload])
+    result = install_units(env, "y\n") if mode == "real" else script("--install-units", "--dry-run", env=env)
+    assert result.returncode == 1
+    assert f"{brake} holds control characters" in result.stderr
+    assert "planted" not in result.stdout + result.stderr  # no line of it, no diff
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_printable_text_beyond_ascii_is_no_control(tmp_path):
+    # The templates' own em dashes (E2 80 94) pass, and so do C2 A0 to C2 BF, printable: only C2 80
+    # to C2 9F encode C1 controls.
+    env = install_env(tmp_path)
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# " + chr(0xA0) + chr(0xB7) + " caf" + chr(0xE9) + "\n")
+    assert install_units(env, "y\n").returncode == 0
+    assert installed(tmp_path)["systemd/local-ai-brake.service"] == brake.read_text()
+
+
+def test_a_staged_file_swapped_for_a_fifo_after_the_check_times_out(tmp_path):
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    env = {**install_env(tmp_path), "SWAP_ON_READ": f"{brake}|fifo", "BOOTSTRAP_READ_TIMEOUT": "1"}
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and f"alice can't read {brake}, or not within 1 s" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_a_staged_file_swapped_for_an_endless_device_is_cut_off_at_the_cap(tmp_path):
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    result = install_units({**install_env(tmp_path), "SWAP_ON_READ": f"{brake}|zero"}, "y\n")
+    assert result.returncode == 1 and f"{brake} is over 65536 bytes" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_path):
+    # Otherwise the `make apply` Dan runs next, in the same terminal, would run with sudo's cache warm.
+    # "int" is a Ctrl-C at the password or the question, which reaches the terminal's whole foreground
+    # job: here make gets a session of its own, and the stand-in sends SIGINT to all of it.
+    import time
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\n[[ "$1" == -k ]] && exit 0\n'
+                                 'if [[ "$SUDO_DOES" == int ]]; then kill -INT 0; sleep 5; fi\nexit "$SUDO_DOES"\n')
+    (bindir / "sudo").chmod(0o755)
+    for does in ("0", "1", "int"):
+        calls_file = tmp_path / f"calls-{does}"
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CALLS": str(calls_file), "SUDO_DOES": does}
+        result = subprocess.run(["make", "-s", "-C", str(ROOT), "install-units"], capture_output=True, text=True,
+                                env=env, start_new_session=True)
+        assert (result.returncode == 0) == (does == "0"), does  # the install's own outcome
+        for _ in range(50):  # make can end before its shell's trap has run
+            calls = calls_file.read_text().splitlines()
+            if len(calls) > 1:
+                break
+            time.sleep(0.1)
+        assert calls[0] == "sudo bash stack/host/bootstrap.sh --install-units", does
+        assert calls[1:] and set(calls[1:]) == {"sudo -k"}, does

@@ -14,6 +14,7 @@ file, not this one.
 | llama-swap | v257 | spark | yes | [docs](https://github.com/mostlygeek/llama-swap) | [changelog](https://github.com/mostlygeek/llama-swap/releases) | — |
 | llama.cpp | b11146 | spark | not yet | [docs](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) | [changelog](https://github.com/ggml-org/llama.cpp/releases) | [advisories](https://github.com/ggml-org/llama.cpp/security/advisories) |
 | open-webui | v0.11.4 | spark | yes | [docs](https://docs.openwebui.com/) | [changelog](https://github.com/open-webui/open-webui/releases) | [advisories](https://github.com/open-webui/open-webui/security/advisories) |
+| pi | 0.85.1 | mac, spark | n/a | [docs](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | [changelog](https://www.npmjs.com/package/@earendil-works/pi-coding-agent?activeTab=versions) | — |
 | quarto | 1.10.3 | mac, ci | n/a | [docs](https://quarto.org/docs/) | [changelog](https://github.com/quarto-dev/quarto-cli/releases) | — |
 | searxng | 2026.9.23-3cd69d30e | spark | yes | [docs](https://docs.searxng.org/) | [changelog](https://github.com/searxng/searxng/commits/master) | [advisories](https://github.com/searxng/searxng/security/advisories) |
 | uv | 0.12.18 | mac, spark | n/a | [docs](https://docs.astral.sh/uv/) | [changelog](https://github.com/astral-sh/uv/releases) | [advisories](https://github.com/astral-sh/uv/security/advisories) |

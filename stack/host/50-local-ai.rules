@@ -1,17 +1,18 @@
-// Installed by stack/host/bootstrap.sh. Lets members of spark-admin reload systemd and manage the
-// local-ai-* units (start, stop, restart) without sudo — so `make apply` needs no password.
+// Installed by stack/host/bootstrap.sh. Lets members of spark-admin start, stop and restart the
+// stack's four units without sudo, and nothing more: no other unit or verb, no daemon-reload, no
+// enabling or linking unit files. What the units run is root's own copy, which only
+// `make install-units` (sudo) installs, so this gives no say over what root runs.
+// systemd (v255, src/core/dbus-unit.c, bus_unit_method_start_generic) passes manage-units the
+// unit's full name as "unit" and the job as "verb". polkit runs this in Duktape: ES5, so var.
 polkit.addRule(function (action, subject) {
-  if (!subject.isInGroup("spark-admin")) {
+  var units = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+               "local-ai-pull.service"];
+  var verbs = ["start", "stop", "restart"];
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || !subject.isInGroup("spark-admin")) {
     return polkit.Result.NOT_HANDLED;
   }
-  if (action.id === "org.freedesktop.systemd1.reload-daemon") {
+  if (units.indexOf(action.lookup("unit")) >= 0 && verbs.indexOf(action.lookup("verb")) >= 0) {
     return polkit.Result.YES;
-  }
-  if (action.id === "org.freedesktop.systemd1.manage-units") {
-    var unit = action.lookup("unit") || "";
-    if (unit.indexOf("local-ai-") === 0) {
-      return polkit.Result.YES;
-    }
   }
   return polkit.Result.NOT_HANDLED;
 });

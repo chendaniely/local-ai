@@ -36,6 +36,7 @@ sudo apt install tmux gh
 4. [SSH from the Mac](ssh.md)
 5. [Join Tailscale](tailscale.md)
 6. [Secret files](secret-files.md)
+7. [Deploy the stack](deploy.md)
 
 **After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
 IPv6 check, which need the tailnet name.
