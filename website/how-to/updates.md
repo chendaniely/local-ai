@@ -50,7 +50,8 @@ What a routine upgrade can restart by itself:
   `sudo needrestart -r l` lists what is still waiting for a restart.
 - **Containers, when Docker itself upgrades.** Docker comes from NVIDIA's repository here. An
   upgrade stops every running container, and only those with a restart policy come back by
-  themselves.
+  themselves. The stack's web services may not, whatever their policy:
+  [After any update](#after-any-update-is-everything-back) says why.
 - **Nothing that needs a reboot, until you reboot.** If `/var/run/reboot-required` exists afterwards,
   `cat /var/run/reboot-required.pkgs` names the package that asked. Reboot when nothing is running,
   and only once [upgrade day's step 5](#upgrade-day-the-gpu-set) checks pass: a routine upgrade can
@@ -107,8 +108,14 @@ What brings the stack back by itself:
 
 - the units are enabled, so a reboot starts them;
 - llama-swap and the brake restart if they crash;
-- the containers' restart policy brings them back after a Docker upgrade;
 - needrestart leaves the units alone.
+
+A Docker upgrade may not. The web services' unit requires Docker, so a restart of Docker restarts
+it too. An upgrade that stops Docker and starts it again leaves the web services stopped, whatever
+their containers' restart policy: the unit's stop removes the containers (`docker compose down`),
+and nothing starts the unit again until `systemctl start local-ai-compose`. Which of the two a
+Docker upgrade does is not yet tried on this box. `make doctor` shows which: its `stack units` line
+names the web services' unit when it is stopped, with the command that starts it.
 
 llama-swap preloads nothing, so after a reboot each model loads on its first request.
 
@@ -158,6 +165,21 @@ and `tmux attach -t upgrade` brings you back:
 ```bash
 tmux new -As upgrade
 cd ~/git/hub/local-ai
+```
+
+**On the Spark**, in that session, check before `make upgrade-gpu` that the clone's `Makefile` and
+`stack/host/bootstrap.sh` are as committed: its sudo runs both, as step 4's `make hold-gpu` does.
+This prints nothing when they are:
+
+```bash
+git status --short -- Makefile stack/host
+```
+
+Stop your own GPU jobs and `agent`'s first: `make upgrade-gpu` stops only llama-swap and the brake.
+Then, **on the Spark**, run it, or do the numbered steps below by hand:
+
+```bash
+make upgrade-gpu
 ```
 
 1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts

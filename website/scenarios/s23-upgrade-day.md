@@ -15,15 +15,15 @@ model: needrestart leaves the `local-ai-*` units alone. On upgrade day, `make up
 GRUB check included. First it checks that GRUB will boot the newest kernel, and stops there, with
 the set still held and nothing moved, if not. Then it releases the set and reads apt's plan. It
 refuses a plan that would remove the NVIDIA modules metapackage, install a kernel with no modules
-for it, or change the driver branch. Only then does it stop what uses the GPU and move the set with
-`full-upgrade`. It re-holds the set, the hold and nothing else. Before it asks for the reboot, it
-checks that the newest kernel has an NVIDIA module, and that GRUB will boot that kernel: its menu's
-first entry is that kernel, and nothing picks another. GRUB does by default, but that is not yet
-checked on this box. After the reboot the stack comes back by itself, and `make doctor` confirms it:
-the GPU on the new driver, the running kernel's modules held, a model loaded end to end.
-Dependabot's PRs are merged or rebased, never squashed. (Corrected 2026-09-25: this said
-`make upgrade-gpu` runs all but the GRUB check, which I would run myself before it and again before
-the reboot. Dan decided that it runs the check itself.)
+for it, or change the driver branch. Only then does it stop llama-swap and the brake (my own GPU
+jobs I stop first) and move the set with `full-upgrade`. It re-holds the set, the hold and nothing
+else. Before it asks for the reboot, it checks that the newest kernel has an NVIDIA module, and that
+GRUB will boot that kernel: its menu's first entry is that kernel, and nothing picks another. GRUB
+does by default, but that is not yet checked on this box. After the reboot the stack comes back by
+itself, and `make doctor` confirms it: the GPU on the new driver, the running kernel's modules held,
+a model loaded end to end. Dependabot's PRs are merged or rebased, never squashed. (Corrected
+2026-09-25: this said `make upgrade-gpu` runs all but the GRUB check, which I would run myself
+before it and again before the reboot. Dan decided that it runs the check itself.)
 
 **What I see.** Each step's result as it runs, and the new kernel, driver and CUDA versions to
 record in `changelog.md` and `README.md` §Current state. If it refuses, I see which package would
@@ -34,9 +34,10 @@ GRUB id or a UUID.
 
 **How to override.** Skip a week: the set stays held, and the next upgrade day catches up. Move the
 set early only for a kernel or NVIDIA driver security fix. A new driver branch is a move I plan and
-make by hand. Every way out of `make upgrade-gpu` runs the hold, and only the hold after apt's move
-is tried again. The set can still stay released: when the hold stops (a package dpkg didn't finish,
-a hold that didn't take, no kernel or nothing matching), or when a signal cuts off a hold the way
-out runs, the retry included. Each time, it says to run `make hold-gpu`. After the steps by hand,
-`make hold-gpu` is the hold. A box that comes back without a GPU has its own steps in
-[Updates](../how-to/updates.md#if-it-goes-wrong), including booting the previous kernel.
+make by hand. Every way out of `make upgrade-gpu` after it releases the set runs the hold, and only
+the hold after apt's move is tried again. The set can still stay released: when the hold stops (a
+package dpkg didn't finish, a hold that didn't take, no kernel or nothing matching), or when a
+signal cuts off a hold the way out runs, the retry included. Each time, it says to run
+`make hold-gpu`. After the steps by hand, `make hold-gpu` is the hold. A box that comes back without
+a GPU has its own steps in [Updates](../how-to/updates.md#if-it-goes-wrong), including booting the
+previous kernel.
