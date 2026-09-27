@@ -576,8 +576,12 @@ Each item gets its own design pass when its turn comes.
   group `spark` can read although only root needs to (systemd's `EnvironmentFile=` and root's
   Compose read the secret files), and from llama-swap's `/proc/<pid>/environ`, which any process of
   the same user can read (checked on the box) — and can delete the brake's hold, since `spark` owns
-  the hold folder. In Phase 1 the keys gate only llama-swap on 127.0.0.1. → Phase 1's Task 17
-  security review decides whether engines get a user of their own (Dan's decision, 2026-09-26).
+  the hold folder. In Phase 1 the keys gate only llama-swap on 127.0.0.1. A registry edit can also
+  point an engine at files `spark` can read without compromising it, the secret files included:
+  llama-server's `--chat-template-file`, `--path` and `--media-path`, and whisper-server's
+  `--public` and its `POST /load` (Task 6's review, 2026-09-26; `spark render`'s denylist doesn't
+  cover them). → Phase 1's Task 17 security review decides whether engines get a user of their own
+  (Dan's decision, 2026-09-26), and whether render allows only listed engine options.
 - **Phase 1's launch check is a static fit** (2026-09-26). It has no pending term and doesn't
   serialize loads, so two engines started close together can both pass while memory outside the
   stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
@@ -832,6 +836,18 @@ Each item gets its own design pass when its turn comes.
   for `spark-admin`. Phase 1's plan: Task 9's Makefile adds `make brake-release`, since the advice
   `spark brake --release` names a command that isn't on Dan's PATH; the brake's and llama-swap's
   units keep systemd's default `UMask`, so `spark-admin` can read the hold and refusal records.
+- **2026-09-26** — Phase 1, Task 6's reviews (two fix rounds). The real registry pins the four
+  models' current Hugging Face commits, resolved on the box. `spark render` now refuses, with the
+  reason, a registry edit that would rebind an engine off 127.0.0.1, put a key in its command,
+  download a model at start, override a setting render derives from the registry, or load a file
+  outside the pinned snapshot; llama-server always runs `--offline`; a version or image can't add a
+  line to what root runs; the Compose test pins each service's exact bind (commits f2ffd3b, 1e7e022,
+  ed6195a, b26c6e5, a0a8612, 98f5f56; Task 6's and Task 1's listings note them). Refusals print
+  `spark <command>: <reason>`. The open risk *Engines share llama-swap's user* adds the engine
+  options that read or serve files, and Task 17 also decides an allowlist of engine options.
+  Phase 1's plan:
+  Task 11 checks each engine's path against its pinned version, and Task 13 checks that SearXNG can
+  write its folder.
 
 ## Sources
 

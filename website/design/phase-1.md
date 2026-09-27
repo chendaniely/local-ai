@@ -507,7 +507,10 @@ or a single value where a list goes, is a `RegistryError` naming the model or se
 field), 828bee5 (a boolean in `args` is refused) and 69cc076 (unknown and repeated keys and a
 null in `args` are refused; flags must be booleans, strings non-empty and numbers finite; budget
 and brake values must be above 0). Task 1's review asked for them. The interfaces and the
-messages here are unchanged, except that the name message now quotes the name with `!r`.*
+messages here are unchanged, except that the name message now quotes the name with `!r`. Later,
+from Task 6's reviews: commit 1e7e022 refuses a role that is another model's name, and a0a8612
+keeps `source.file` and `source.mmproj` inside the pinned snapshot, requires `source.repo` to be
+`org/name`, and makes the name, revision and pin patterns match whole strings.*
 
 - [ ] **Step 5: Run the tests — they pass**
 
@@ -1680,6 +1683,12 @@ def test_rejects_a_component_without_a_version(tmp_path):
 
   Run `uv run --frozen --project spark spark docs stack --write` so the Stack page follows.
 
+  *Superseded 2026-09-26 — `versions.py` now differs; see commit a0a8612: a version or image
+  holding whitespace, a control character or anything outside a plain-text charset is refused, so
+  none can add a line or an option to the unit or the Compose file root runs; a version must be
+  YAML text (`version: 1.10` reads as 1.1); the pin pattern matches whole strings. Task 6's review
+  asked for them.*
+
 - [ ] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
   context memory) until Phase 2 measures them. Resolve each repo's current commit on the Spark
   (public API, no token needed; bootstrap installed `jq`) and paste the 40-hex values:
@@ -2080,6 +2089,13 @@ def test_the_real_registry_renders():
     assert set(yaml.safe_load(files["llama-swap.yaml"])["models"]) == set(registry.models)
 ```
 
+*Superseded 2026-09-26 — the tests now go much further; see commits f2ffd3b, 1e7e022, b26c6e5,
+a0a8612 and 98f5f56: the Compose test parses the YAML and pins each service's exact bind; every
+engine command, the real registry's included, is checked for a 127.0.0.1 bind, no key and no
+`${` but `${PORT}`; and registry edits that rebind an engine, carry a key, download at start,
+override a flag render sets, or step outside the pinned snapshot are refused. Task 6's reviews
+asked for them.*
+
 Add to `spark/tests/test_bootstrap.py` (Phase 0's), after
 `test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in_it`:
 
@@ -2274,6 +2290,15 @@ def run(args: argparse.Namespace) -> int:
     print(f"render: {len(files)} files → {args.out}")
     return 0
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits f2ffd3b, 1e7e022, b26c6e5, a0a8612 and
+98f5f56. Render refuses, naming the model and the arg, an arg that sets a flag it owns (the bind,
+the port, the model, the projector, a key), downloads at start, or re-sets a flag it emits from a
+registry field, in every spelling (read from llama.cpp b11146's option table); any `${` but
+`${PORT}`; and a command word the engine wouldn't get as written. llama-server always runs
+`--offline`. An image pin must be a `sha256:` digest; a missing component and a file that won't
+load are named; the budget refusal's numbers can't read as a fit. `spark` commands print
+`spark <command>: <reason>` for a refusal instead of a traceback. Task 6's reviews asked for them.*
 
 Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
 From here on CI's tests render the real registry (`test_the_real_registry_renders`). A step that
@@ -6240,6 +6265,12 @@ branch: only the push happens here.
 - Modify: `stack/versions.yaml` (the llama.cpp and whisper.cpp pins), `website/reference/stack.md`
   (regenerated), `changelog.md`, `README.md` §Current state
 
+*Added 2026-09-26, from Task 6's review:* each engine's path lives in the registry
+(`stack/models.yaml`'s `engines:`, such as `/opt/local-ai/bin/llama.cpp/b11146/llama-server`) and
+its version in `stack/versions.yaml`, and `spark render` cross-checks neither. When this task pins
+and installs the engines, check that each path names the version pinned, or add that check to
+render, with its test, as a plan revision.
+
 - [ ] **Step 1: The branch, this session's groups, the driver**
 
 ```bash
@@ -6567,6 +6598,12 @@ is that check. If its web line fails, look at the pages in a browser. Step 3's t
 Open WebUI's port 3000; to see SearXNG, open a second one,
 `ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
 change doctor's expectation to what each answered, in the repo, with its test, as a plan revision.
+
+*Added 2026-09-26, from Task 6's review:* SearXNG's image sets no `USER`, and with
+`FORCE_OWNERSHIP: "false"` its entrypoint only warns when `/var/lib/local-ai/searxng`
+(`spark:spark 0750`) isn't its own. So check here that it can write its folder: a search works, and
+`make logs s=searxng` shows no ownership warning. If it can't, fix the folder's owner in bootstrap,
+with its test, as a plan revision.
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
