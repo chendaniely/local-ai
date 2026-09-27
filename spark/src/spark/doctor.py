@@ -83,17 +83,18 @@ class Probe:
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _KeyStaysHere)
 
     def run(self, argv: list[str]) -> tuple[int, str, str]:
+        """A command's status and output, a byte that isn't UTF-8 read as U+FFFD; 127 when it couldn't run."""
         try:
-            done = subprocess.run(argv, cwd=self.repo, capture_output=True, text=True, timeout=120)
+            done = subprocess.run(argv, cwd=self.repo, capture_output=True, text=True, errors="replace", timeout=120)
         except (OSError, subprocess.TimeoutExpired) as err:
             return 127, "", str(err)
         return done.returncode, done.stdout, done.stderr
 
     def read(self, path: Path) -> str | None:
-        """A file's text, or None if it can't be read. A relative path is inside the repo."""
+        """A file's text, or None if it can't be read, or isn't UTF-8. A relative path is inside the repo."""
         try:
             return (self.repo / path).read_text()
-        except OSError:
+        except (OSError, ValueError):  # ValueError: a byte that isn't UTF-8 (UnicodeDecodeError)
             return None
 
     def owner(self, path: Path) -> tuple[str, str, int] | None:

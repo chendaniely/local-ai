@@ -189,6 +189,15 @@ def test_doctor_checks_every_copy_that_apply_stages_for_root():
     assert set(doctor.ROOT_FOLDERS) == {Path(COMPOSE_DIR), Path(COMPOSE_DIR, "searxng")}
 
 
+def test_a_byte_that_isnt_utf_8_is_no_crash(tmp_path):
+    # One odd byte in a file doctor reads, or in what a command prints, must not end the report: the file reads as
+    # one it can't read, and the command's output keeps a stand-in character for the byte.
+    (tmp_path / "ufw.conf").write_bytes(b"ENABLED=yes\n# caf\xe9\n")
+    probe = Probe(ROOT)
+    assert probe.read(tmp_path / "ufw.conf") is None
+    assert probe.run(["printf", "caf\\351\\n"]) == (0, "caf�\n", "")
+
+
 def test_the_probe_reads_a_link_as_a_link(tmp_path):
     (tmp_path / "file").write_text("x")
     (tmp_path / "folder").mkdir()
