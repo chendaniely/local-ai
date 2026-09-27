@@ -37,9 +37,12 @@ def test_a_refusal_says_why_in_one_line(tmp_path, capsys):
 
 
 @pytest.mark.parametrize("bad", ["a missing registry", "a folder for a registry", "a registry that isn't YAML",
-                                 "versions that aren't YAML"])
+                                 "a registry that isn't UTF-8", "a registry that isn't valid",
+                                 "a registry nested too deep", "a missing versions file", "versions that aren't YAML",
+                                 "versions that aren't UTF-8"])
 def test_a_file_that_cant_be_read_says_why_in_one_line(tmp_path, capsys, bad):
-    # OSError (missing, a folder) and yaml.YAMLError (not YAML) are refusals too, not tracebacks.
+    # OSError (missing, a folder), yaml.YAMLError (not YAML) and a decoding error are refusals too, not tracebacks,
+    # and each names its file, as launch does: YAML's message says only "<unicode string>", and a codec's names none.
     registry, versions = tmp_path / "models.yaml", tmp_path / "versions.yaml"
     registry.write_text((FIX / "models.yaml").read_text())
     versions.write_text((FIX / "versions.yaml").read_text())
@@ -50,13 +53,24 @@ def test_a_file_that_cant_be_read_says_why_in_one_line(tmp_path, capsys, bad):
         registry.mkdir()
     elif bad == "a registry that isn't YAML":
         registry.write_text("budget: {allocatable_gib: 102\n  : [\n")
-    else:
+    elif bad == "a registry that isn't UTF-8":
+        registry.write_bytes(b"budget: {allocatable_gib: \xff}\n")
+    elif bad == "a registry that isn't valid":
+        registry.write_text("budget: {allocatable_gib: 102}\n")
+    elif bad == "a registry nested too deep":  # load_registry raises RecursionError
+        registry.write_text("budget: " + "[" * 100_000 + "]" * 100_000 + "\n")
+    elif bad == "a missing versions file":
+        versions.unlink()
+    elif bad == "versions that aren't YAML":
         versions.write_text("components: {llama-swap: [\n")
+    else:
+        versions.write_bytes(b"components: {llama-swap: \xff}\n")
     out = tmp_path / "out"
     code = cli.main(["render", "--out", str(out), "--registry", str(registry), "--versions", str(versions)])
     err = capsys.readouterr().err
+    named = f"the registry {registry}" if "registry" in bad else f"the versions file {versions}"
     assert code == 1
-    assert err.startswith("spark render: ") and "Traceback" not in err, err
+    assert err.startswith(f"spark render: {named} won't load: ") and "Traceback" not in err, err
     assert not out.exists()  # a refused render writes nothing
 
 

@@ -34,7 +34,7 @@ SPELLINGS = {
     "llama.cpp": (
         ("--host",), ("--port",), ("-m", "--model"), ("-mm", "--mmproj"), ("-c", "--ctx-size"), ("-np", "--parallel"),
         ("-ngl", "--gpu-layers", "--n-gpu-layers"), ("-cram", "--cache-ram"), ("--embedding", "--embeddings"),
-        ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
+        ("--offline",), ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
         ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
         ("-dr", "--docker-repo"), ("--mmproj-auto", "--no-mmproj", "--no-mmproj-auto"),
     ),
@@ -110,7 +110,10 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
     else:
         cmd = [binary, "--host", "127.0.0.1", "--port", "${PORT}", "--model", main,
                "--ctx-size", str(model.ctx), "--parallel", str(model.parallel),
-               "--gpu-layers", "all", "--cache-ram", str(model.cache_ram_mib)]
+               "--gpu-layers", "all", "--cache-ram", str(model.cache_ram_mib),
+               # Defense in depth: a download option the refusals miss still fetches nothing (llama.cpp b11146's
+               # common/arg.cpp:3927). whisper-server has no such option.
+               "--offline"]
         if model.source.mmproj:
             cmd += ["--mmproj", model_path(model.source, model.source.mmproj)]
         if model.capability == "embeddings":
@@ -147,8 +150,8 @@ def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
     render's own ${PORT}. llama-swap v257 fills in ${env.…} anywhere in its config, a key included."""
     for word in words:
         if _SPLITS.search(word):
-            raise RenderError(f"{name}: {word!r} wouldn't reach the engine as one word: llama-swap splits a command "
-                              "as a POSIX shell does, so whitespace, quotes and backslashes are refused")
+            raise RenderError(f"{name}: {word!r} wouldn't reach the engine as written: llama-swap splits and unescapes "
+                              "a command as a POSIX shell does, so whitespace, quotes and backslashes are refused")
         if "${" in word.replace("${PORT}", ""):
             raise RenderError(f"{name}: {word!r} holds a ${{…}} llama-swap would fill in, and GET /running shows every "
                               "command whole; only render's own ${PORT} may appear")
@@ -241,8 +244,19 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
+def _load(what: str, path: Path, load):
+    """load(path), or a RenderError that names the file, as `spark launch` does: YAML's own message says only
+    "<unicode string>", and a decoding error names no file at all."""
+    try:
+        return load(path)
+    except (OSError, ValueError, yaml.YAMLError, RecursionError) as err:  # RecursionError: YAML nested too deep
+        raise RenderError(f"the {what} {path} won't load: {err}") from err
+
+
 def run(args: argparse.Namespace) -> int:
-    files = render(load_registry(args.registry), load_versions(args.versions), args.registry.read_text())
+    registry = _load("registry", args.registry, load_registry)
+    versions = _load("versions file", args.versions, load_versions)
+    files = render(registry, versions, _load("registry", args.registry, Path.read_text))
     write_tree(files, args.out)
     print(f"render: {len(files)} files → {args.out}")
     return 0

@@ -225,7 +225,7 @@ SETTINGS = [  # (the model, a spelling of a flag render passes it), from each en
     *[("coder", flag) for flag in ("-c", "--ctx-size", "--ctx_size", "-np", "--parallel", "-ngl", "--gpu-layers",
                                    "--n-gpu-layers", "--n_gpu_layers", "-cram", "--cache-ram", "--cache-ram=0")],
     ("embed", "--embedding"), ("embed", "--embeddings"),
-    ("stt", "--inference-path"),
+    ("stt", "--inference-path"), ("coder", "--offline"),
 ]
 
 
@@ -297,7 +297,7 @@ SPLIT = [  # (the edit, the model it lands in): each word would reach the engine
 @pytest.mark.parametrize("change, model", SPLIT)
 def test_a_word_llama_swap_would_split_or_unescape_is_refused(tmp_path, change, model):
     # llama-swap splits a command as a POSIX shell does, so the checks above only hold if every word stays one.
-    with pytest.raises(RenderError, match=f"^{re.escape(model)}: .* wouldn't reach the engine as one word"):
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: .* wouldn't reach the engine as written"):
         rendered(registry_with(tmp_path, change))
 
 
@@ -380,6 +380,8 @@ def test_each_engine_gets_its_own_flags():
     assert values(vision, "--mmproj") == [f"{snapshot}/vision-mmproj.gguf"]
     assert "--mmproj" not in embed + stt + coder  # only a model with a projector gets one
     assert "--embedding" in embed and "--embedding" not in vision + stt + coder
+    # llama-server runs offline; whisper-server has no such flag, and would stop at one it doesn't know.
+    assert [cmd.count("--offline") for cmd in (vision, embed, coder, stt)] == [1, 1, 1, 0]
     # whisper-server answers where llama-swap and Open WebUI send audio, and gets none of llama-server's flags.
     assert values(stt, "--inference-path") == ["/v1/audio/transcriptions"]
     assert not {"--ctx-size", "--parallel", "--gpu-layers", "--cache-ram", "--embedding"} & set(stt)
@@ -405,6 +407,16 @@ def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, 
     assert cli.main(["render", "--out", str(out), *files]) == 0
     assert capsys.readouterr().out == f"render: 8 files → {out}\n"
     assert tree(out) == (rendered() if given else real())
+
+
+@pytest.mark.parametrize("path", [FIX / "models.yaml", ROOT / "stack/models.yaml"], ids=["fixture", "real"])
+def test_llama_server_always_runs_offline(path):
+    # Defense in depth (Task 6's fix round 2): a download option the refusals miss, or one set before the command line
+    # is read, still can't fetch anything. whisper-server has no such option.
+    registry = load_registry(path)
+    for name, model in registry.models.items():
+        expected = 1 if model.engine == "llama.cpp" else 0
+        assert engine_cmd(model, registry).count("--offline") == expected, name
 
 
 def test_the_brake_and_llama_swap_keep_systemds_default_umask():
