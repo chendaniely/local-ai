@@ -49,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return args.func(args)
-    # A refusal (RegistryError, RenderError, VersionsError), a file that can't be read, or one that isn't YAML: the
-    # message is the reason. A command's own exit codes are returned above, untouched.
+    # A refusal (RegistryError, RenderError, VersionsError, PullError), a file that can't be read, or one that isn't
+    # YAML: the message is the reason. A command's own exit codes are returned above, untouched.
     except (ValueError, OSError, yaml.YAMLError) as err:
         print(f"spark {args.command}: {err}", file=sys.stderr)
         return 1
