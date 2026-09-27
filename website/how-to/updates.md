@@ -46,7 +46,7 @@ What a routine upgrade can restart by itself:
 - **Services on replaced libraries.** After every apt run, needrestart restarts the services still
   using a library the upgrade replaced. It leaves Docker, the login services and DGX OS's own
   dashboard alone. Bootstrap installs `/etc/needrestart/conf.d/local-ai.conf`, so it leaves the
-  stack's `local-ai-*` units alone too, so a habitual upgrade never restarts a model mid-use.
+  stack's `local-ai-*` units alone too, and a habitual upgrade never restarts a model mid-use.
   `sudo needrestart -r l` lists what is still waiting for a restart.
 - **Containers, when Docker itself upgrades.** Docker comes from NVIDIA's repository here. An
   upgrade stops every running container, and only those with a restart policy come back by
@@ -97,7 +97,7 @@ repo's arguments, ufw on, the secrets folder closed to you, and spark's folders 
 them (`/var/lib/local-ai` root's, the brake's folder spark's, shared with `spark-admin`). It checks
 the stack too: root's own copies of the units and the Compose project (each root's regular file or
 folder, not a link, and not writable by group or others), needrestart's override installed as the
-repo has it, no folder that llama-server would read a `config.ini` from (`/etc/llama.cpp` or
+repo has it, no folder that llama-server could read a `config.ini` from (`/etc/llama.cpp` or
 `/var/lib/local-ai/.config`), its three units active, llama-swap answering and refusing a call
 without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
 llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
@@ -137,26 +137,26 @@ Saturday; that wait is the cost of holding the set.
 *Not yet performed on this box.* Every step below, the recovery included, is untried until the
 first upgrade day.
 
-`make upgrade-gpu` runs steps 1 to 5 as one command, in tmux, from the clone; it refuses to start
-outside tmux. Step 5's GRUB check included, it runs all of them. First the GRUB check, as step 2
-says: if GRUB won't boot the newest kernel, it stops there, with the set still held and nothing
-moved, and says why. Then it releases the set, reads apt's plan and refuses it before anything moves
-if it breaks step 3's rule, stops llama-swap and the brake, and moves the set (you read apt's plan
-and answer). Then it holds the set again with `make hold-gpu`'s hold, runs step 5's two checks on
-the new newest kernel, the module and then GRUB, and says whether to reboot: `DON'T REBOOT` names
-the reason, and never a GRUB id or UUID. Every way out after the release runs the hold, and only the
-hold after apt's move is tried again. The set can still stay released: when the hold stops (a
-package dpkg didn't finish, a hold that didn't take, no kernel or nothing matching), or when a
-signal cuts off a hold the way out runs, the retry included. In each case it says to run
-`make hold-gpu`. It judges whether apt moved anything by each package's state and version, not the
-hold letter, and it checks that the newest kernel still has its module. If apt moved even part of
-the set, left the newest kernel without a module, or GRUB failed after the move, it sends you to
-[If it goes wrong](#if-it-goes-wrong) rather than to a reboot or a restart of the stack. Only when
-none of these happened does it say how to start the stack again. `make upgrade-gpu-dry-run` prints
-the steps without running them. The numbered steps are what it runs, to read along with, and to do
-by hand if it can't; step 5's GRUB check by hand is for those steps. (Corrected 2026-09-25: this
-said it would run all but the GRUB check, which you would run before it and again before the
-reboot. Dan decided that it runs the check itself.)
+`make upgrade-gpu` runs steps 1 to 5, llama-swap and the brake being step 1's part, as one command,
+in tmux, from the clone; it refuses to start outside tmux. Step 5's GRUB check included, it runs all
+of them. First the GRUB check, as step 2 says: if GRUB won't boot the newest kernel, it stops there,
+with the set still held and nothing moved, and says why. Then it releases the set, reads apt's plan
+and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the brake, and
+moves the set (you read apt's plan and answer). Then it holds the set again with `make hold-gpu`'s
+hold, runs step 5's two checks on the new newest kernel, the module and then GRUB, and says whether
+to reboot: `DON'T REBOOT` names the reason, and never a GRUB id or UUID. Every way out after the
+release runs the hold, and only the hold after apt's move is tried again. The set can still stay
+released: when the hold stops (a package dpkg didn't finish, a hold that didn't take, no kernel or
+nothing matching), or when a signal cuts off a hold the way out runs, the retry included. In each
+case it says to run `make hold-gpu`. It judges whether apt moved anything by each package's state
+and version, not the hold letter, and it checks that the newest kernel still has its module. If apt
+moved even part of the set, left the newest kernel without a module, or GRUB failed after the move,
+it sends you to [If it goes wrong](#if-it-goes-wrong) rather than to a reboot or a restart of the
+stack. Only when none of these happened does it say how to start the stack again.
+`make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what it
+runs, to read along with, and to do by hand if it can't; step 5's GRUB check by hand is for those
+steps. (Corrected 2026-09-25: this said it would run all but the GRUB check, which you would run
+before it and again before the reboot. Dan decided that it runs the check itself.)
 
 **On the Spark**, work in tmux, from the clone. A dropped SSH session in the middle of
 `full-upgrade` is the likeliest way to leave the set half-moved; in tmux the upgrade carries on,
