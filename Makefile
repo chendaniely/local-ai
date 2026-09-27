@@ -31,13 +31,13 @@ bootstrap-dry-run: ## Print what bootstrap would do; changes nothing
 	bash stack/host/bootstrap.sh --dry-run
 
 bootstrap: ## Host setup on the Spark (Dan; asks for sudo once)
-	sudo bash stack/host/bootstrap.sh
+	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh
 
 hold-gpu-dry-run: ## Print what re-holding the GPU set would do; changes nothing
 	bash stack/host/bootstrap.sh --hold-gpu --dry-run
 
 hold-gpu: ## Re-hold the GPU set and nothing else — upgrade day (Dan; asks for sudo once)
-	sudo bash stack/host/bootstrap.sh --hold-gpu
+	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --hold-gpu
 
 apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
 	$(SPARK) apply

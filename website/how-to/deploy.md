@@ -20,8 +20,11 @@ If it doesn't, your session predates bootstrap: end tmux with `tmux kill-server`
 back in.
 
 `make bootstrap` has run from the clone you deploy from since `stack/host/` last changed: re-run it
-whenever that folder changes. It stops a running desktop and restarts earlyoom, so run it over SSH
-with nothing open on the desktop.
+whenever that folder changes. Its sudo runs this clone's own `Makefile` and
+`stack/host/bootstrap.sh`, so first check that `git status --short -- Makefile stack/host` prints
+nothing: both are as committed. It stops a running desktop and restarts earlyoom, so run it over SSH
+with nothing open on the desktop. Like `make install-units`, it ends with `sudo -k`, so sudo's
+cached credential doesn't outlast it.
 
 ## First deploy
 
@@ -166,8 +169,9 @@ again after that, run the command above again.
 git pull
 ```
 
-If it changed anything under `stack/host/`, run `make bootstrap` first. Then, **on the Spark**,
-see what would change:
+If it changed anything under `stack/host/`, run `make bootstrap` first, once
+`git status --short -- Makefile stack/host` prints nothing: bootstrap's sudo runs both. Then, **on
+the Spark**, see what would change:
 
 ```bash
 make apply-dry-run
@@ -186,9 +190,10 @@ make apply
 ```
 
 If a unit or the Compose project changed, apply stages it and deploys nothing else. Then, **on the
-Spark**, run `make install-units`, read what it shows, and answer. It shows every staged file root
-would install, but not the clone's own scripts, which sudo runs too. Then `make apply` again: that
-second apply restarts each unit still running its older definition.
+Spark**, check again that `git status --short -- Makefile stack/host` prints nothing, run
+`make install-units`, read what it shows, and answer. It shows every staged file root would install,
+but not the clone's own scripts, which sudo runs too. Then `make apply` again: that second apply
+restarts each unit still running its older definition.
 
 If llama-swap would restart, for its config or for its unit, while models are loaded, or while apply
 can't tell whether they are, apply changes nothing and says so. Run it again when they're idle, or

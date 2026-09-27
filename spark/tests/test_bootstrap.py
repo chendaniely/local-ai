@@ -299,7 +299,8 @@ def test_make_hold_gpu_re_holds_the_set_and_nothing_else(tmp_path):
     recipe = subprocess.run(
         ["make", "-n", "-C", str(ROOT), "hold-gpu"], capture_output=True, text=True, check=True, env=env
     )
-    assert "sudo bash stack/host/bootstrap.sh --hold-gpu" in recipe.stdout.splitlines()
+    # Task 9's fix round 1 (M2): it drops sudo's cached credential on the way out, as install-units does.
+    assert "trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --hold-gpu" in recipe.stdout.splitlines()
     makefile = (ROOT / "Makefile").read_text().splitlines()
     phony = next(line for line in makefile if line.startswith(".PHONY:"))
     assert {"hold-gpu", "hold-gpu-dry-run"} <= set(phony.split()[1:])
@@ -858,6 +859,39 @@ def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_p
             time.sleep(0.1)
         assert calls[0] == "sudo bash stack/host/bootstrap.sh --install-units", does
         assert calls[1:] and set(calls[1:]) == {"sudo -k"}, does
+
+
+# The stand-in for sudo in the test above, for the other targets that run sudo.
+FAKE_SUDO = ('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\n[[ "$1" == -k ]] && exit 0\n'
+             'if [[ "$SUDO_DOES" == int ]]; then kill -INT 0; sleep 5; fi\nexit "$SUDO_DOES"\n')
+
+
+@pytest.mark.parametrize(("target", "runs"), [("bootstrap", "sudo bash stack/host/bootstrap.sh"),
+                                             ("hold-gpu", "sudo bash stack/host/bootstrap.sh --hold-gpu")])
+def test_make_bootstrap_and_hold_gpu_drop_sudos_cached_credential_too(tmp_path, target, runs):
+    # Task 9's fix round 1 (M2). The clone's own code runs next in that terminal (`make apply` runs spark from the
+    # clone), so no target leaves sudo's cache warm, however it ends: a Ctrl-C at the password included ("int").
+    import time
+
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), target], capture_output=True, text=True, check=True)
+    assert recipe.stdout.splitlines() == [f"trap 'sudo -k' EXIT INT TERM HUP; {runs}"]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text(FAKE_SUDO)
+    (bindir / "sudo").chmod(0o755)
+    for does in ("0", "1", "int"):
+        calls_file = tmp_path / f"calls-{does}"
+        env = built_env(tmp_path, bindir, CALLS=str(calls_file), SUDO_DOES=does)
+        result = subprocess.run(["make", "-s", "-C", str(ROOT), target], capture_output=True, text=True, env=env,
+                                start_new_session=True)
+        assert (result.returncode == 0) == (does == "0"), (target, does)
+        for _ in range(50):  # make can end before its shell's trap has run
+            calls = calls_file.read_text().splitlines()
+            if len(calls) > 1:
+                break
+            time.sleep(0.1)
+        assert calls[0] == runs, (target, does)
+        assert calls[1:] and set(calls[1:]) == {"sudo -k"}, (target, does)
 
 
 def test_the_install_units_environments_are_built_not_copied(tmp_path, monkeypatch):
