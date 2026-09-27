@@ -1,20 +1,26 @@
 """`spark apply` — render, validate, list what changes, deploy under /opt/local-ai, and restart only
 what changed. It never restarts llama-swap, which stops every model, while models are loaded, or
-while it can't tell — unless told to with --now.
+while it can't tell — unless told to with --now. It asks llama-swap what is loaded before it changes
+anything and again just before the restart, restarts llama-swap first, and after the restart waits
+for llama-swap to answer.
 
 The units and the Compose project that root runs are root's own copies, which only
 `make install-units` (sudo) installs: apply stages them in /opt/local-ai/etc and never writes
 root's copies. While the staged ones differ from root's, apply stages them and stops, and deploys
-and restarts nothing else until root has them."""
+and restarts nothing else until root has them.
+
+A run cut off part-way leaves the next nothing to miss: each file is replaced whole, the app counts
+as changed until a sync of it finishes, and a running unit that started before its files were
+written or synced is restarted, as one that started before root's copy was installed is."""
 
 from __future__ import annotations
 
 import argparse
 import math
 import os
-import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +28,7 @@ from pathlib import Path
 from spark import paths
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.registry import load_registry
-from spark.render import DEPLOY, KEY_ENVS, installed_path, render, write_tree
+from spark.render import DEPLOY, KEY_ENVS, _load, installed_path, render, write_atomic, write_tree
 from spark.versions import load_versions, unpinned
 
 LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
@@ -31,6 +37,17 @@ COMPOSE_UNIT = "local-ai-compose.service"
 RUNNING_UNITS = (LLAMA_SWAP_UNIT, BRAKE_UNIT, COMPOSE_UNIT)  # the pull unit runs only when asked
 UNKNOWN_START = math.inf  # a running unit whose start time can't be read: later than any copy
 NOT_APP = {".venv", "__pycache__", ".pytest_cache"}
+# In the deployed app's venv, written once `uv sync` succeeded and removed before a sync starts: until it is back,
+# the app counts as changed, so a sync that failed or was cut off is tried again, and so is one whose venv is gone.
+SYNC_STAMP = ".venv/.spark-apply-synced"
+APP = "app"  # the app, among the files apply deploys itself: when its last sync finished (deployed_times)
+# The files apply deploys itself, and the long-running unit that runs on each.
+DEPLOYED = {"llama-swap.yaml": LLAMA_SWAP_UNIT, "models.yaml": BRAKE_UNIT, APP: BRAKE_UNIT}
+READY_SECONDS = 30.0  # how long a restarted llama-swap has to answer GET /running
+
+
+class SyncError(RuntimeError):
+    """The app couldn't be synced; the message says how far the sync got."""
 
 
 def diff_tree(files: dict[str, str], etc: Path) -> list[str]:
@@ -39,17 +56,27 @@ def diff_tree(files: dict[str, str], etc: Path) -> list[str]:
                   if not (Path(etc) / rel).exists() or (Path(etc) / rel).read_text() != content)
 
 
+def _app_files(top: Path) -> set[str]:
+    """The app's files under `top`, by their path relative to it: never the venv's, nor caches."""
+    found = set()
+    for folder, dirs, names in os.walk(top):
+        dirs[:] = [name for name in dirs if name not in NOT_APP]
+        found.update((Path(folder) / name).relative_to(top).as_posix() for name in names)
+    return found
+
+
+def _differs(src: Path, app: Path, rel: str) -> bool:
+    return not (app / rel).is_file() or (app / rel).read_bytes() != (src / rel).read_bytes()
+
+
 def app_diff(src: Path, app: Path) -> list[str]:
-    """Files of the repo's spark/ project that are missing from, or differ in, the deployed copy."""
-    changed = []
-    for f in sorted(Path(src).rglob("*")):
-        rel = f.relative_to(src)
-        if f.is_dir() or NOT_APP & set(rel.parts):
-            continue
-        dest = Path(app) / rel
-        if not dest.exists() or dest.read_bytes() != f.read_bytes():
-            changed.append(str(rel))
-    return changed
+    """What syncing the app would change: files of the repo's spark/ project that are missing from, or differ in,
+    the deployed copy, and deployed files the project no longer has. Until a sync has finished (SYNC_STAMP), every
+    file of the project counts."""
+    src, app = Path(src), Path(app)
+    ours = _app_files(src)
+    synced = (app / SYNC_STAMP).is_file()
+    return sorted({rel for rel in ours if not synced or _differs(src, app, rel)} | (_app_files(app) - ours))
 
 
 def not_installed(files: dict[str, str], installed: dict[str, str | None]) -> list[str]:
@@ -59,17 +86,22 @@ def not_installed(files: dict[str, str], installed: dict[str, str | None]) -> li
 
 
 def unit_of(rel: str) -> str | None:
-    """The long-running unit a file of root's defines; the Compose project is the compose unit's."""
+    """The long-running unit that runs on a file: a unit of root's is its own, the Compose project is the compose
+    unit's, and of what apply deploys itself, llama-swap runs on its config and the brake on the registry and the
+    app (APP)."""
     if rel.startswith("compose/"):
         return COMPOSE_UNIT
+    if rel in DEPLOYED:
+        return DEPLOYED[rel]
     unit = rel.removeprefix("systemd/")
     return unit if unit in RUNNING_UNITS else None
 
 
 def outdated_units(started: dict[str, float | None], changed_at: dict[str, float]) -> list[str]:
-    """Running units whose start began before a file of theirs was installed, so they still run the
-    older definition. `started`: when each unit's start began (None when it isn't running);
-    `changed_at`: when each of root's copies was installed (its modification time)."""
+    """Running units whose start began before a file of theirs was installed or written, so they still
+    run an older one. `started`: when each unit's start began (None when it isn't running);
+    `changed_at`: when each of root's copies was installed, and each file apply deploys itself was
+    written (their modification times; deployed_times)."""
     units = set()
     for rel, when in changed_at.items():
         unit = unit_of(rel)
@@ -107,23 +139,54 @@ def models_loaded(client, unit_active: bool, log=print) -> list[str] | None:
         return None
 
 
+def wait_for_running(client, timeout: float, sleep=time.sleep, clock=time.monotonic) -> str | None:
+    """After llama-swap's restart: None once it answers GET /running in v257's shape; if it still hasn't when
+    `timeout` seconds are up, what it last said. -validate isn't enough on its own: llama-swap ignores config keys it
+    doesn't know, so every config change is followed by a start and GET /running."""
+    deadline = clock() + timeout
+    while True:
+        try:
+            client.running()
+            return None
+        except LlamaSwapError as err:  # LlamaSwapUnreachable too: not up yet
+            said = str(err)
+        left = deadline - clock()
+        if left <= 0:
+            return said
+        sleep(min(1.0, left))
+
+
+def deployed_times(etc: Path, app: Path) -> dict[str, float]:
+    """When apply last wrote each file it deploys itself, and when the app's last sync finished (APP): the
+    modification times of those there are, keyed as outdated_units takes them."""
+    where = {rel: Path(etc) / rel for rel in DEPLOYED if rel != APP} | {APP: Path(app) / SYNC_STAMP}
+    times = {}
+    for rel, path in where.items():
+        try:
+            times[rel] = path.stat().st_mtime
+        except FileNotFoundError:
+            continue
+    return times
+
+
 def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | None], unreadable: set[str],
                 outdated: list[str], active, app_changes: list[str], running: list[str] | None, now_ok: bool,
-                dry_run: bool, sync_app, run_cmd, log) -> int:
+                dry_run: bool, sync_app, run_cmd, log, recheck=None, came_up=None) -> int:
+    """Stage root's files, or deploy the rest and restart what runs on it. 0: done, nothing to do, or root's files
+    staged for `make install-units`. 1: refused (by a dry run too), the app's sync failed, or after the files were
+    deployed a restart failed, was put off, or llama-swap didn't answer after it. `recheck()` says what llama-swap
+    has loaded just before its restart, as models_loaded does; `came_up()`, after it, why llama-swap doesn't answer,
+    None once it does (wait_for_running). Either left out isn't asked. `sync_app()` raises SyncError when it fails."""
     changed = diff_tree(files, etc)
     pending = not_installed(files, installed)
-    restart = sorted(set(units_to_restart(changed, bool(app_changes))) | set(outdated))
+    # llama-swap first, so nothing comes between the second look at what it has loaded and its restart.
+    restart = sorted(set(units_to_restart(changed, bool(app_changes))) | set(outdated),
+                     key=lambda unit: (unit != LLAMA_SWAP_UNIT, unit))
     if not (changed or app_changes or pending or restart):
         log("apply: nothing to change")
         return 0
-    for rel in changed:
-        log(f"apply: changes etc/{rel}")
-    if app_changes:
-        log(f"apply: changes the app ({len(app_changes)} files)")
-    for unit in outdated:
-        log(f"apply: {unit} still runs an older definition than root's copy")
     if pending:
-        # Root's files first: until root has them, deploy and restart nothing else.
+        # Root's files first: until root has them, deploy and restart nothing else, and list nothing else.
         for rel in pending:
             if rel in unreadable:
                 log(f"apply: can't read root's copy of {rel} ({installed_path(rel)}) from your account: "
@@ -139,37 +202,68 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
         log(f"apply: staged in {etc}; nothing else is deployed or restarted until `make install-units` (sudo) "
             "installs root's copies — then run `make apply` again")
         return 0
+    for rel in changed:
+        log(f"apply: changes etc/{rel}")
+    if app_changes:
+        log(f"apply: changes the app ({len(app_changes)} files)")
+    for unit in outdated:
+        log(f"apply: {unit} started before its latest files were in place, so it still runs older ones")
+    restarts = [unit for unit in restart if active(unit)]  # apply starts nothing
     refusal = None
-    if LLAMA_SWAP_UNIT in restart and not now_ok and running != []:
+    # A stopped llama-swap has nothing loaded, whatever /running said, and isn't restarted.
+    if LLAMA_SWAP_UNIT in restarts and not now_ok and running != []:
         loaded = "can't tell which models are loaded" if running is None else f"models are loaded ({', '.join(running)})"
-        refusal = f"apply: {loaded}, and restarting llama-swap stops every model; re-run when idle, or with --now"
+        refusal = f"{loaded}, and restarting llama-swap stops every model"
     if dry_run:
-        log("apply: dry run — would restart " + (", ".join(unit for unit in restart if active(unit)) or "nothing"))
         for unit in restart:
             if not active(unit):
                 log(f"apply: dry run — {unit} isn't running; it starts with the new config")
         if refusal:
-            log(refusal)
+            log(f"apply: dry run — would refuse: {refusal}; with --now it would restart {', '.join(restarts)}")
+            return 1
+        log("apply: dry run — would restart " + (", ".join(restarts) or "nothing"))
         return 0
     if refusal:
-        log(refusal + " (nothing was changed)")
+        log(f"apply: {refusal}; re-run when idle, or with --now (nothing was changed)")
         return 1
     if app_changes:
-        sync_app()
+        try:
+            sync_app()
+        except SyncError as err:
+            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `make apply` syncs it again")
+            return 1
     write_tree({rel: files[rel] for rel in changed}, etc)
     failed = False
     for unit in restart:
         if not active(unit):
             log(f"apply: {unit} isn't running; it starts with the new config")
             continue
+        if unit == LLAMA_SWAP_UNIT and not now_ok and recheck is not None:
+            loaded = recheck()  # a model may have started loading while apply synced and wrote
+            if loaded != []:
+                # Its files are deployed, so it's outdated now: the next apply restarts it, once no model is loaded.
+                failed = True
+                what = ("can't tell which models are loaded" if loaded is None
+                        else f"models are now loaded ({', '.join(loaded)})")
+                log(f"apply: didn't restart {unit}: {what}, and restarting it stops every model; its new files are "
+                    "deployed, so re-run when idle, or with --now")
+                continue
         try:
             run_cmd(["systemctl", "restart", unit])
         except (subprocess.CalledProcessError, OSError):
-            # The files are deployed, so the next apply sees nothing to change: say it now.
+            # The files are deployed. A unit that couldn't start again is stopped now, and apply restarts only units
+            # that run, so the next apply won't: say how to finish while it's known.
             failed = True
             name = unit.removeprefix("local-ai-").removesuffix(".service")
             log(f"apply: restarting {unit} failed, and its new files are deployed: see `make logs s={name}`, "
                 f"and once it's fixed, `systemctl restart {unit}`")
+            continue
+        if unit == LLAMA_SWAP_UNIT and came_up is not None:
+            said = came_up()
+            if said is not None:
+                failed = True
+                log(f"apply: restarted {unit}, but llama-swap didn't answer GET /running in time ({said}): see "
+                    "`make logs s=llama-swap`")
     return 1 if failed else 0
 
 
@@ -233,13 +327,14 @@ def read_copies(files: dict[str, str],
 
 
 def validation_env(env: Mapping[str, str]) -> dict[str, str]:
-    """llama-swap's environment for -validate: a placeholder for each key, each its own, since the real
-    ones are in a file Dan can't read."""
-    return dict(env) | {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
+    """llama-swap's environment for -validate: `env`'s PATH, and a placeholder for each key, each its own,
+    since the real ones are in a file Dan can't read. Nothing else: Dan's environment can hold secrets
+    of his own, and -validate needs none of it."""
+    return {"PATH": env.get("PATH", os.defpath)} | {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
 
 
 def _validate_llama_swap(config: str, binary: Path) -> bool:
-    """llama-swap's own check, with placeholder keys."""
+    """llama-swap's own check, with placeholder keys and nothing else of Dan's environment."""
     if not binary.exists():
         print(f"apply: {binary} isn't installed yet — skipping llama-swap -validate")
         return True
@@ -250,16 +345,48 @@ def _validate_llama_swap(config: str, binary: Path) -> bool:
         return run.returncode == 0
 
 
+def _remove_empty_folders(app: Path) -> None:
+    """Folders a file's removal left empty, deepest first; never the venv's, nor caches."""
+    folders = []
+    for folder, dirs, _ in os.walk(app):
+        dirs[:] = [name for name in dirs if name not in NOT_APP]
+        folders.append(Path(folder))
+    for folder in reversed(folders[1:]):  # folders[0] is the app itself
+        if not any(folder.iterdir()):
+            folder.rmdir()
+
+
 def _sync_app(src: Path, app: Path) -> None:
-    for rel in app_diff(src, app):
-        (app / rel).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src / rel, app / rel)
+    """Make the app the repo's spark/ project: each changed file replaced whole (`spark launch` imports the app on
+    every load), each file the project no longer has deleted, then `uv sync`. The stamp goes first and comes back
+    only once uv sync succeeded, so a sync cut off anywhere counts as not done. SyncError says how far it got."""
+    src, app = Path(src), Path(app)
+    try:
+        (app / SYNC_STAMP).unlink(missing_ok=True)
+        ours = _app_files(src)
+        for rel in sorted(ours):
+            if _differs(src, app, rel):
+                write_atomic(app / rel, (src / rel).read_bytes())
+        for rel in sorted(_app_files(app) - ours):
+            (app / rel).unlink()
+        _remove_empty_folders(app)
+    except OSError as err:
+        raise SyncError(f"copying the app into {app} failed ({err})") from None
     # UV_PYTHON_INSTALL_DIR: a Python that uv downloads lands where the spark user can read it.
     # UV_LINK_MODE=copy: the deployed venv shares no files with Dan's uv cache.
     # VIRTUAL_ENV is dropped: `make apply` runs inside `uv run`, which points it at the repo's venv.
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
     env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy"}
-    subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--project", str(app)], check=True, env=env)
+    try:
+        subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--project", str(app)], check=True, env=env)
+    except (subprocess.CalledProcessError, OSError) as err:
+        why = f"exit {err.returncode}" if isinstance(err, subprocess.CalledProcessError) else str(err)
+        raise SyncError(f"the app's files are copied into {app}, but `uv sync` failed ({why}), so its environment "
+                        "isn't synced") from None
+    try:
+        write_atomic(app / SYNC_STAMP, "synced by spark apply\n")
+    except OSError as err:
+        raise SyncError(f"the app is synced, but recording it in {app / SYNC_STAMP} failed ({err})") from None
 
 
 def register(subparsers) -> None:
@@ -278,12 +405,14 @@ def run(args: argparse.Namespace) -> int:
         return 2
     if subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
         print("apply: note — this clone has uncommitted changes, and they are part of what gets deployed")
-    versions = load_versions(repo / "stack/versions.yaml")
+    # Loaded as `spark render` loads them: a file that won't load is named, in a refusal, not a traceback.
+    versions = _load("versions file", repo / "stack/versions.yaml", load_versions)
     missing = unpinned(versions)
     if missing:
         print(f"apply: no pin yet for {', '.join(missing)} — record it in stack/versions.yaml first")
         return 1
-    files = render(load_registry(registry_path), versions, registry_path.read_text())
+    files = render(_load("registry", registry_path, load_registry), versions,
+                   _load("registry", registry_path, Path.read_text))
     binary = Path(f"{DEPLOY}/bin/llama-swap/{versions['llama-swap'].version}/llama-swap")
     if not _validate_llama_swap(files["llama-swap.yaml"], binary):
         print("apply: llama-swap rejected the rendered config; nothing was changed")
@@ -291,10 +420,12 @@ def run(args: argparse.Namespace) -> int:
     started = start_times(RUNNING_UNITS, _show)
     client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=3)
     running = models_loaded(client, unit_active=started[LLAMA_SWAP_UNIT] is not None)
+    etc, src, app = Path(f"{DEPLOY}/etc"), repo / "spark", Path(f"{DEPLOY}/app")
     installed, changed_at, unreadable = read_copies(files)
-    src, app = repo / "spark", Path(f"{DEPLOY}/app")
-    return apply_files(files, Path(f"{DEPLOY}/etc"), installed=installed, unreadable=unreadable,
+    changed_at |= deployed_times(etc, app)
+    return apply_files(files, etc, installed=installed, unreadable=unreadable,
                        outdated=outdated_units(started, changed_at), active=lambda unit: started.get(unit) is not None,
                        app_changes=app_diff(src, app), running=running, now_ok=args.now, dry_run=args.dry_run,
                        sync_app=lambda: _sync_app(src, app), run_cmd=lambda cmd: subprocess.run(cmd, check=True),
-                       log=print)
+                       log=print, recheck=lambda: models_loaded(client, unit_active=True),
+                       came_up=lambda: wait_for_running(client, READY_SECONDS))
