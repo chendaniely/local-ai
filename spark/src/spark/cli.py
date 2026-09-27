@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import apply
 
     apply.register(subparsers)
+    from spark import models
+
+    models.register(subparsers)
     return parser
 
 
