@@ -65,7 +65,9 @@ Tailscale serve · pi 0.85.1.
   and `/etc/local-ai/compose/` · `/etc/local-ai/secrets/*.env` ·
   `/var/lib/local-ai/{hf,open-webui,searxng,brake,cache,cuda-cache}` · `HF_HOME=/var/lib/local-ai/hf`.
   `/var/lib/local-ai` is `spark`'s home but root's (since Phase 0's review), and `spark` writes only
-  inside its children. So nothing may cache under `$HOME`: a unit that runs engines or pulls models
+  inside its children. (On the box, once Task 12 Step 1 re-runs bootstrap: until then it is still
+  `spark`'s, as bootstrap's first run left it — README §Current state, *A bootstrap re-run*; checked
+  2026-09-26.) So nothing may cache under `$HOME`: a unit that runs engines or pulls models
   sets `XDG_CACHE_HOME=/var/lib/local-ai/cache` and `CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache`,
   two folders bootstrap gives `spark` (Task 6).
 - **What root runs is root's own** (Dan's decision, 2026-09-25). The four units are root's copies in
@@ -1900,6 +1902,11 @@ Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
 ExecStart=/opt/local-ai/app/.venv/bin/spark models pull
 ```
 
+*Superseded 2026-09-26 — this unit now also sets `HF_HUB_DISABLE_TELEMETRY=1` (commit e40372d,
+from Task 8's review): without it, huggingface_hub asks the Hub, at most once a day and before its
+cache check, for a list of AI agents to name in its user agent, and writes `.agent_harnesses.json`
+under `HF_HOME`. A render test pins the unit's settings.*
+
 `stack/templates/compose.yaml`:
 
 ```yaml
@@ -3108,6 +3115,14 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
   failed); CLI `spark models pull`, run as the `spark` user by `local-ai-pull.service` (`make pull`).
   Each file lands at `{HF_HOME}/hub/models--{org}--{name}/snapshots/{revision}/{file}` — the path
   Task 6's `model_path` gives the engines.
+- *Added 2026-09-26, from Task 8's reviews (commits 32deab1, ae9708f):* it also consumes render's
+  `_load`, and huggingface_hub's `get_token`. `pull` gains `redact=None`, the token its lines
+  replace with a marker; new are `sanitise(text, token)`, `check_token(token)`, `PullError` (a
+  `ValueError`), `TOKEN` and `URL_QUERY`. `run_pull` refuses, before any download, a token that a
+  header or an error message would carry altered, never showing it; and for the whole run it passes
+  the library's own log lines through `sanitise` and keeps out those of its token module, which
+  can quote a token file's content, printing instead one line that names the folder those files
+  are in (`HF_HOME`). The unit's `HF_TOKEN`, from `hf.env`, never reads those files.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3158,6 +3173,13 @@ def test_the_download_library_comes_from_the_lock():
     assert callable(hf_hub_download)
 ```
 
+*Superseded 2026-09-26 — the tests now go much further; see commits cf21a82, 32deab1 and ae9708f,
+from Task 8's reviews: all five calls pinned from the fixture's values; each FAILED line's reason;
+the command's path through `cli.main`; a malformed token refused, and shown nowhere; a failure's
+text with the token, a URL's query and a newline logged as one clean line; a
+broken token file kept out of the output; a registry that won't load named; and pyproject.toml's
+dependencies checked against the ones `uv.lock` was made for, which `--frozen` never compares.*
+
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_models.py` → FAIL
   (`ModuleNotFoundError`: no `spark.models` yet).
 
@@ -3206,6 +3228,12 @@ def run_pull(args: argparse.Namespace) -> int:
     return pull(load_registry(paths.REGISTRY), download=hf_hub_download, log=lambda m: print(m, flush=True))
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits 32deab1 and ae9708f, from Task 8's
+reviews. A token with a control character printed whole in every FAILED line, into a journal Dan's
+sessions read; the Interfaces' dated note says what `run_pull` does now. The registry loads through
+render's `_load`, so a file that won't load is named, not a traceback, and a bare `spark models`
+names its missing subcommand.*
+
 Register in `cli.py`: `from spark import models` / `models.register(subparsers)`.
 
 - [ ] **Step 4: The download library comes from the lock** — run
@@ -3214,7 +3242,9 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
   `ModuleNotFoundError: No module named 'huggingface_hub'`: the import is lazy, so nothing else
   fails, and `--frozen` installs only what `uv.lock` holds. (`--exact` also removes what the lock
   doesn't hold, so a package left in the venv can't hide the gap.) Then add the dependency, so
-  `spark/pyproject.toml` reads `dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34"]`, and run
+  `spark/pyproject.toml` reads `dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34"]` (since
+  2026-09-26, `"huggingface_hub>=0.34,<2"`, commit cf21a82, from Task 8's review: the lock had taken
+  2.0.0, a new major on a new HTTP stack uploaded two days before; it now holds 1.33.0), and run
   `uv lock --project spark`. The same run passes.
 
 - [ ] **Step 5: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
@@ -4274,7 +4304,9 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
     Then `make apply` again: it syncs the app into
     `/opt/local-ai/app` and deploys llama-swap's config and the registry, and since nothing runs yet
     it restarts nothing. Then `make pull` (the model files, downloaded by the `spark` user;
-    `make logs s=pull` in another pane shows progress),
+    `make logs s=pull` in another pane shows progress; corrected 2026-09-26, from Task 8's review:
+    `make logs` is a snapshot, and the pull logs one line per file as each finishes, so
+    `journalctl -fu local-ai-pull` in another pane is what follows it),
     `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose` (no sudo: the polkit rule
     lets you start, stop and restart the four units, nothing more), and `make status`.
   - **The web UI's first account, straight after the first start.** From the Mac, open a tunnel in a
@@ -6538,6 +6570,10 @@ make install-units-dry-run
   `grep -o '/var/lib/local-ai/hf/hub/[^ ]*' /opt/local-ai/etc/llama-swap.yaml`. A `FAILED` line means
   a wrong file name or revision: fix `stack/models.yaml`, commit, `make apply`, `make pull` again.
   Then `df -h /`, and note the space left for the changelog.
+  *(Corrected 2026-09-26, from Task 8's review: a `FAILED` line has other causes too — a missing or
+  gated repo, a bad or refused token, the network or a server error, a full or unwritable disk —
+  and its reason says which. Only a wrong file name or revision is fixed in `stack/models.yaml`;
+  for the rest, fix the cause and `make pull` again.)*
 
 ***
 
@@ -7011,7 +7047,11 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   `make upgrade-gpu`, Open WebUI's Functions as the container's root over `spark`-owned data, and
   Dan's account reaching `spark` through `/opt/local-ai`, and `make install-units`' byte check,
   which passes bytes that aren't valid UTF-8 (Task 9's known limit). Fix what they find, one commit
-  per fix.
+  per fix. *(Added 2026-09-26, from Tasks 2, 3, 6 and 8's reviews: the security reviewer also takes
+  the open risks `plan.md` sends to this review, for Dan to decide — Engines share llama-swap's
+  user (whether the engines and `spark models pull` get a user of their own, and whether render
+  allows only listed engine options), and Anyone on the box can take 127.0.0.1:9100 (a port below
+  1024, refusing redirects, a cap on what the client reads).)*
 - [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
   v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*

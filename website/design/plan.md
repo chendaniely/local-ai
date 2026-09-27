@@ -548,9 +548,13 @@ Each item gets its own design pass when its turn comes.
 - **Dev and learning:** FIM autocomplete · a private eval suite (growing from the bake-off tasks) ·
   LoRA fine-tuning and serving · overnight batch inference · speculative-decoding tuning · a class mode.
 - **Ops:** a usage and utilization dashboard · weights on the Synology (measure NAS read throughput
-  first) · HTTPS on the LAN (which would also bring the web UI to WireGuard) · the web UI banner (if
-  Open WebUI gains a status API) · automatic restarts from the watchdog · Home Assistant with remote
-  power (check the UEFI "restore on AC power loss" setting) · a GPU clock cap (only if needed) · a pi
+  first; and a model's `models--…` folder doesn't hold its bytes — huggingface_hub 1.33 keeps
+  Xet-stored files in a store shared across repos, under `hf/hub/blobs`, unless
+  `HF_HUB_DISABLE_SHARED_BLOBS` is set, and the repo's files are links into it, so moving one
+  folder, or `du` on one, misleads; Phase 1 Task 8's review, 2026-09-26) · HTTPS on the LAN (which
+  would also bring the web UI to WireGuard) · the web UI banner (if Open WebUI gains a status API)
+  · automatic restarts from the watchdog · Home Assistant with remote power (check the UEFI
+  "restore on AC power loss" setting) · a GPU clock cap (only if needed) · a pi
   footer extension · suggest a pre-start admission hook upstream (llama-swap #1127) · automated
   update proposals for what Dependabot can't read — `stack/versions.yaml`'s pins, the workflows'
   `version:` inputs, uv's `required-version`, the gitleaks pin (Renovate's regex manager, or a
@@ -581,7 +585,15 @@ Each item gets its own design pass when its turn comes.
   llama-server's `--chat-template-file`, `--path` and `--media-path`, and whisper-server's
   `--public` and its `POST /load` (Task 6's review, 2026-09-26; `spark render`'s denylist doesn't
   cover them). → Phase 1's Task 17 security review decides whether engines get a user of their own
-  (Dan's decision, 2026-09-26), and whether render allows only listed engine options.
+  (Dan's decision, 2026-09-26), and whether render allows only listed engine options. The same
+  reach belongs to `spark models pull`, which runs as `spark` with network egress by design: its
+  Python dependencies, huggingface_hub and the packages it brings, run with it (found 2026-09-26, in
+  Phase 1 Task 8's review). → Task 17 decides the same for the pull. The pull's journal lines never
+  carry a token (Task 8), but hf_xet keeps a log of its own per run under
+  `/var/lib/local-ai/hf/xet/logs`, which that redaction doesn't reach. Against a stand-in Hub it
+  wrote the authorization header as `[REDACTED]`; what a real download records is unmeasured.
+  Phase 1 sets no token (its repos aren't gated); before one is set, for a gated model, those logs
+  get checked.
 - **Phase 1's launch check is a static fit** (2026-09-26). It has no pending term and doesn't
   serialize loads, so two engines started close together can both pass while memory outside the
   stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
@@ -603,6 +615,14 @@ Each item gets its own design pass when its turn comes.
   earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
   `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
   `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
+- **Fresh releases in the lock — Dan's decision** (found 2026-09-26, in Phase 1 Task 8's reviews).
+  `uv lock` takes the newest release that fits, even one uploaded that day: Task 8's lock holds
+  huggingface_hub 1.33.0 and filelock 4.0.4, both uploaded that week, and the pull runs them as
+  `spark`, with network egress. A release's first days are when a bad or compromised upload is most
+  likely still undetected. `[tool.uv] exclude-newer`, set to a date a week back, would make the
+  lock take only releases at least that old (a dry run picked huggingface_hub 1.32.0 and filelock
+  4.0.0), at the cost of moving that date whenever a dependency moves. → Dan decides at the push
+  after Phase 1's Task 10.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
 - ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
   **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
@@ -860,6 +880,20 @@ Each item gets its own design pass when its turn comes.
   scenario, notes what Phase 1's apply does until then. Phase 1's plan: Task 9's deploy.md gains
   the put-off restart and the wait, Task 12's staging stop lists only root's files, and Task 18's
   Mac check names what in the suite has never run on a Mac.
+- **2026-09-26** — Phase 1, Task 8's reviews (two fix rounds). `spark models pull` refuses, before
+  any download and without showing it, a Hugging Face token that a header or an error message would
+  carry altered — one with a control character had printed whole in every FAILED line, into the
+  journal — and every line it and the library log goes through one sanitiser: the token becomes a
+  marker, a URL's query (a presigned URL's signature) is dropped, and the text stays on one line.
+  The registry loads through render's `_load`. huggingface_hub is held below 2, since the lock had
+  taken 2.0.0, a new major on a new HTTP stack two days old; the pull unit sets
+  `HF_HUB_DISABLE_TELEMETRY=1` (commits cf21a82, 32deab1, e40372d, ae9708f; Tasks 6 and 8's
+  listings note them). New open item: *Fresh releases in the lock*, Dan's decision. The open risk
+  *Engines share llama-swap's user* adds the pull and hf_xet's own logs, and the Ops backlog's
+  weights-on-the-Synology item notes the shared blob store. Phase 1's plan: Task 12 Step 4's FAILED
+  line gets its other causes, the planned deploy.md's pull line says what follows it, the Global
+  Constraints say when `/var/lib/local-ai` becomes root's on the box, and Task 17's security review
+  names the open risks it decides.
 
 ## Sources
 
