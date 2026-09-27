@@ -20,6 +20,11 @@ class LlamaSwapUnreachable(LlamaSwapError):
     unit's state tells which (`spark apply` asks systemd)."""
 
 
+class LlamaSwapAnswered(LlamaSwapError):
+    """It answered, but with an error, or with something it can't read: so it's up. A request never sent
+    (a bad URL, a key a header can't carry) is neither this nor LlamaSwapUnreachable."""
+
+
 @dataclass(frozen=True)
 class Running:
     model: str
@@ -61,13 +66,13 @@ class LlamaSwap:
             with self._opener.open(request, timeout=self.timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as err:
-            raise LlamaSwapError(f"{where}: HTTP {err.code}") from None
+            raise LlamaSwapAnswered(f"{where}: HTTP {err.code}") from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
             raise LlamaSwapUnreachable(f"llama-swap unreachable at {self.base_url}: {err}") from None
         except http.client.InvalidURL:  # one urlsplit lets through, such as a control character in the host
             raise LlamaSwapError(f"{where}: invalid URL {self.base_url!r} (want http://host:port)") from None
         except http.client.HTTPException as err:  # it answered, but the answer broke off or wasn't HTTP
-            raise LlamaSwapError(f"{where}: a broken answer ({type(err).__name__})") from None
+            raise LlamaSwapAnswered(f"{where}: a broken answer ({type(err).__name__})") from None
         except ValueError as err:  # a request it couldn't send, and its text can name a header's value
             refused = type(err).__name__
         # Raised here, not in the except, so that ValueError isn't even chained to it.
@@ -78,12 +83,13 @@ class LlamaSwap:
         try:
             listed = json.loads(body)["running"]
         except (ValueError, KeyError, TypeError, RecursionError) as err:  # unparsable, or has no "running"
-            raise LlamaSwapError(f"llama-swap GET /running: an answer it can't read ({type(err).__name__})") from None
+            unreadable = type(err).__name__
+            raise LlamaSwapAnswered(f"llama-swap GET /running: an answer it can't read ({unreadable})") from None
         # v257 always sends {"running": [...]}, each entry with a string model and state. Anything else must not
         # read as nothing running: apply would restart llama-swap over loaded models.
         if not (isinstance(listed, list) and all(isinstance(r, dict) and isinstance(r.get("model"), str)
                                                  and isinstance(r.get("state"), str) for r in listed)):
-            raise LlamaSwapError("llama-swap GET /running: an answer it can't read (not v257's shape)")
+            raise LlamaSwapAnswered("llama-swap GET /running: an answer it can't read (not v257's shape)")
         return [Running(r["model"], r["state"]) for r in listed]
 
     def unload(self, model: str) -> None:

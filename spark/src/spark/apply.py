@@ -9,9 +9,11 @@ The units and the Compose project that root runs are root's own copies, which on
 root's copies. While the staged ones differ from root's, apply stages them and stops, and deploys
 and restarts nothing else until root has them.
 
-A run cut off part-way leaves the next nothing to miss: each file is replaced whole, the app counts
+A run cut off part-way leaves the next run to finish it: each file is replaced whole, the app counts
 as changed until a sync of it finishes, and a running unit that started before its files were
-written or synced is restarted, as one that started before root's copy was installed is."""
+written or synced is restarted, as one that started before root's copy was installed is. The one
+exception is a unit whose start time apply can't read: it can't tell whether that unit is behind,
+so it names the unit and the command to restart it by hand."""
 
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from spark import paths
-from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
+from spark.llamaswap import LlamaSwap, LlamaSwapAnswered, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.registry import load_registry
 from spark.render import DEPLOY, KEY_ENVS, _load, installed_path, render, write_atomic, write_tree
 from spark.versions import load_versions, unpinned
@@ -35,7 +37,7 @@ LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
 BRAKE_UNIT = "local-ai-brake.service"
 COMPOSE_UNIT = "local-ai-compose.service"
 RUNNING_UNITS = (LLAMA_SWAP_UNIT, BRAKE_UNIT, COMPOSE_UNIT)  # the pull unit runs only when asked
-UNKNOWN_START = math.inf  # a running unit whose start time can't be read: later than any copy
+UNKNOWN_START = math.inf  # a running unit whose start time can't be read: later than any file's
 NOT_APP = {".venv", "__pycache__", ".pytest_cache"}
 # In the deployed app's venv, written once `uv sync` succeeded and removed before a sync starts: until it is back,
 # the app counts as changed, so a sync that failed or was cut off is tried again, and so is one whose venv is gone.
@@ -140,19 +142,27 @@ def models_loaded(client, unit_active: bool, log=print) -> list[str] | None:
 
 
 def wait_for_running(client, timeout: float, sleep=time.sleep, clock=time.monotonic) -> str | None:
-    """After llama-swap's restart: None once it answers GET /running in v257's shape; if it still hasn't when
-    `timeout` seconds are up, what it last said. -validate isn't enough on its own: llama-swap ignores config keys it
-    doesn't know, so every config change is followed by a start and GET /running."""
+    """After llama-swap's restart: None once it answers GET /running in v257's shape. Otherwise what went wrong, as
+    apply says it: at once for an answer that is an error (it's up, and no wait changes a wrong key, say) or a request
+    that was never sent; for no answer at all, once `timeout` seconds are up. -validate isn't enough on its own:
+    llama-swap ignores config keys it doesn't know, so every config change is followed by a start and GET /running."""
     deadline = clock() + timeout
     while True:
         try:
             client.running()
             return None
-        except LlamaSwapError as err:  # LlamaSwapUnreachable too: not up yet
-            said = str(err)
+        except LlamaSwapUnreachable as err:  # not up yet
+            unanswered = err
+        except LlamaSwapAnswered as err:
+            return (f"llama-swap answered GET /running with an error ({err}): it's up, but apply can't confirm it "
+                    "serves the new config")
+        except LlamaSwapError as err:  # never sent: a bad URL, or a key a header can't carry
+            return (f"apply couldn't ask llama-swap GET /running ({err}), so it can't confirm llama-swap serves the "
+                    "new config")
         left = deadline - clock()
         if left <= 0:
-            return said
+            return (f"llama-swap didn't answer GET /running within {timeout:g} s ({unanswered}): see "
+                    "`make logs s=llama-swap`")
         sleep(min(1.0, left))
 
 
@@ -174,9 +184,10 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
                 dry_run: bool, sync_app, run_cmd, log, recheck=None, came_up=None) -> int:
     """Stage root's files, or deploy the rest and restart what runs on it. 0: done, nothing to do, or root's files
     staged for `make install-units`. 1: refused (by a dry run too), the app's sync failed, or after the files were
-    deployed a restart failed, was put off, or llama-swap didn't answer after it. `recheck()` says what llama-swap
-    has loaded just before its restart, as models_loaded does; `came_up()`, after it, why llama-swap doesn't answer,
-    None once it does (wait_for_running). Either left out isn't asked. `sync_app()` raises SyncError when it fails."""
+    deployed a restart failed, was put off, or llama-swap didn't answer after it as v257 does. `recheck()` says what
+    llama-swap has loaded just before its restart, as models_loaded does; `came_up()`, after it, what went wrong, None
+    once llama-swap answered (wait_for_running). Either left out isn't asked. `sync_app()` raises SyncError when it
+    fails."""
     changed = diff_tree(files, etc)
     pending = not_installed(files, installed)
     # llama-swap first, so nothing comes between the second look at what it has loaded and its restart.
@@ -262,8 +273,7 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
             said = came_up()
             if said is not None:
                 failed = True
-                log(f"apply: restarted {unit}, but llama-swap didn't answer GET /running in time ({said}): see "
-                    "`make logs s=llama-swap`")
+                log(f"apply: restarted {unit}, but {said}")
     return 1 if failed else 0
 
 
@@ -284,8 +294,8 @@ def started_at(show: str) -> float | None:
 
 def start_times(units, show, log=print) -> dict[str, float | None]:
     """When each unit's start began (None when it isn't running), from `show(unit)`, `systemctl show`'s
-    output. A running unit whose time can't be read counts as started after every copy, so apply
-    never restarts it for one: it says so, and what to run by hand."""
+    output. A running unit whose time can't be read counts as started after every file, root's copies
+    and apply's own, so apply never restarts it for one: it says so, and what to run by hand."""
     started: dict[str, float | None] = {}
     for unit in units:
         try:
@@ -293,8 +303,9 @@ def start_times(units, show, log=print) -> dict[str, float | None]:
         except ValueError as err:
             started[unit] = UNKNOWN_START
             when = " once no model is loaded (restarting it stops them all)" if unit == LLAMA_SWAP_UNIT else ""
-            log(f"apply: can't read when {unit} started ({err}), so it can't tell whether {unit} runs root's "
-                f"latest copy: if `make install-units` changed its files, run `systemctl restart {unit}`{when}")
+            log(f"apply: can't read when {unit} started ({err}), so it can't tell whether {unit} runs its latest "
+                "files: if they changed since it started (`make install-units`, or an apply that didn't restart it), "
+                f"run `systemctl restart {unit}`{when}")
     return started
 
 

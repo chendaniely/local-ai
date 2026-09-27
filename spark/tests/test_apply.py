@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from spark import apply as spark_apply
-from spark import cli
+from spark import cli, llamaswap
 from spark import render as spark_render
 from spark.apply import (RUNNING_UNITS, UNKNOWN_START, app_diff, apply_files, diff_tree, models_loaded, not_installed,
                          outdated_units, read_copies, start_times, started_at, units_to_restart, validation_env)
@@ -222,17 +222,19 @@ def test_a_running_unit_whose_start_cant_be_read_is_named_not_skipped():
     logs = []
     started = start_times([LLAMA, BRAKE, COMPOSE], shows.get, log=logs.append)
     assert started[COMPOSE] is None and started[BRAKE] == UNKNOWN_START and started[LLAMA] < UNKNOWN_START
+    # Task 7's fix round 2 (M3): the line names both reasons its files can be newer, root's copies and apply's own.
     assert logs == [f"apply: can't read when {BRAKE} started (InactiveExitTimestamp='@1790371186'), so it can't "
-                    f"tell whether {BRAKE} runs root's latest copy: if `make install-units` changed its files, "
-                    f"run `systemctl restart {BRAKE}`"]
-    # Still running, so a changed config restarts it; but no copy, however new, counts as newer.
-    assert outdated_units(started, {"systemd/local-ai-brake.service": 9e9}) == []
+                    f"tell whether {BRAKE} runs its latest files: if they changed since it started "
+                    f"(`make install-units`, or an apply that didn't restart it), run `systemctl restart {BRAKE}`"]
+    # Still running, so a changed config restarts it; but no file, however new, counts as newer.
+    assert outdated_units(started, {"systemd/local-ai-brake.service": 9e9, "models.yaml": 9e9, "app": 9e9}) == []
     # Restarting llama-swap by hand stops every loaded model, so its line says when to.
     logs.clear()
     start_times([LLAMA], {LLAMA: shows[BRAKE]}.get, log=logs.append)
     assert logs == [f"apply: can't read when {LLAMA} started (InactiveExitTimestamp='@1790371186'), so it can't "
-                    f"tell whether {LLAMA} runs root's latest copy: if `make install-units` changed its files, "
-                    f"run `systemctl restart {LLAMA}` once no model is loaded (restarting it stops them all)"]
+                    f"tell whether {LLAMA} runs its latest files: if they changed since it started "
+                    f"(`make install-units`, or an apply that didn't restart it), run `systemctl restart {LLAMA}` "
+                    "once no model is loaded (restarting it stops them all)"]
 
 
 class Client:
@@ -399,13 +401,26 @@ def test_after_a_restart_apply_waits_a_bounded_time_for_llama_swap_to_answer():
         slept.append(seconds)
         now[0] += seconds
 
+    def wait(*answers, timeout=30):
+        now[0], slept[:] = 0.0, []
+        return spark_apply.wait_for_running(Answers(*answers), timeout, sleep=sleep, clock=lambda: now[0])
+
     down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")
-    assert spark_apply.wait_for_running(Answers(down, down, []), 30, sleep=sleep, clock=lambda: now[0]) is None
-    assert slept == [1.0, 1.0]
-    now[0], slept[:] = 0.0, []
-    odd = LlamaSwapError("llama-swap GET /running: an answer it can't read (not v257's shape)")
-    assert spark_apply.wait_for_running(Answers(odd), 2.5, sleep=sleep, clock=lambda: now[0]) == str(odd)
+    assert wait(down, down, []) is None and slept == [1.0, 1.0]
+    assert wait(down, timeout=2.5) == ("llama-swap didn't answer GET /running within 2.5 s "
+                                      f"({down}): see `make logs s=llama-swap`")
     assert slept == [1.0, 1.0, 0.5]  # never past its time
+    # Task 7's fix round 2 (M2): an answer, even an error, says llama-swap is up, and no wait changes it. Nor does one
+    # for a request that was never sent. So neither is waited out.
+    refused = llamaswap.LlamaSwapAnswered("llama-swap GET /running: HTTP 401")
+    assert wait(down, refused) == (f"llama-swap answered GET /running with an error ({refused}): it's up, but apply "
+                                   "can't confirm it serves the new config")
+    assert slept == [1.0]
+    unsent = LlamaSwapError("llama-swap GET /running: the API key isn't printable ASCII (a stray CR or LF?), so it "
+                            "wasn't sent")
+    assert wait(unsent) == (f"apply couldn't ask llama-swap GET /running ({unsent}), so it can't confirm llama-swap "
+                            "serves the new config")
+    assert slept == []
 
 
 def test_validate_gets_path_and_a_placeholder_for_each_key_and_nothing_else():
@@ -452,8 +467,8 @@ class Box:
         put(self.opt / "bin/llama-swap/v257/llama-swap", "", OLD)
         self.units = dict.fromkeys(RUNNING_UNITS)
         self.answers = [LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")]
-        self.interrupted, self.failing, self.uv_fails, self.validate_code, self.validate_env = set(), set(), False, 0, None
-        self.uv_env = None
+        self.interrupted, self.failing, self.uv_fails = set(), set(), False
+        self.validate_code, self.validate_env, self.uv_env = 0, None, None
         self.events = []
         monkeypatch.setattr(spark_apply, "DEPLOY", str(self.opt))
         monkeypatch.setattr(spark_render, "UNIT_DIR", str(tmp_path / "root/systemd"))
@@ -498,8 +513,10 @@ class Box:
             self.events.append(f"restart {cmd[2]}")
             if cmd[2] in self.interrupted:
                 raise KeyboardInterrupt  # Ctrl-C, before systemd took the job
-            if cmd[2] in self.failing:
-                raise subprocess.CalledProcessError(1, cmd)
+            if cmd[2] in self.failing:  # systemctl exits 1, which only check=True turns into an error, as for real
+                if kwargs.get("check"):
+                    raise subprocess.CalledProcessError(1, cmd)
+                return subprocess.CompletedProcess(cmd, 1)
             self.units[cmd[2]] = time.time()
             return subprocess.CompletedProcess(cmd, 0)
         raise AssertionError(f"apply ran {cmd}, which no test fakes")
@@ -593,6 +610,69 @@ def test_run_starts_no_unit_that_isnt_running(box):
     assert (code, events) == (0, ["-validate", "GET /running", "uv sync", "write llama-swap.yaml", "write models.yaml"])
     assert lines[-2:] == [f"apply: {LLAMA} isn't running; it starts with the new config",
                           f"apply: {BRAKE} isn't running; it starts with the new config"]
+
+
+def test_run_passes_dry_run_on_and_a_dry_run_changes_nothing(box):
+    # Task 7's fix round 2 (M1): `make apply-dry-run` goes through run(). It writes, syncs and restarts nothing, and
+    # exits as the real run would: 0 when idle, 1 when the real run would refuse.
+    box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": "old registry"})
+    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    box.answers = [[]]
+    code, lines, events = box.apply("--dry-run")
+    assert (code, events) == (0, ["-validate", "GET /running"])
+    assert lines[-1] == f"apply: dry run — would restart {LLAMA}, {BRAKE}"
+    assert (box.etc / "llama-swap.yaml").read_text() == "old config"
+    assert (box.app / "src/spark/cli.py").read_text() == "v1" and box.units == dict.fromkeys(RUNNING_UNITS, T0)
+    box.answers = [[Running("coder", "ready")]]
+    code, lines, events = box.apply("--dry-run")
+    assert (code, events) == (1, ["-validate", "GET /running"])
+    assert lines[-1] == ("apply: dry run — would refuse: models are loaded (coder), and restarting llama-swap stops "
+                         f"every model; with --now it would restart {LLAMA}, {BRAKE}")
+
+
+@pytest.mark.parametrize("stopped", [False, True], ids=["systemd refused it", "it couldn't start"])
+def test_run_says_when_a_restart_fails_and_the_next_run_does_what_it_can(box, stopped):
+    # Task 7's fix round 2 (M1): the failed-restart path through run(), whose systemctl must run with check=True: a job
+    # that fails exits 1, and only check turns that into an error (Box's fake does as subprocess.run does). Refused
+    # (a session without spark-admin), the brake still runs its older files, so the next run restarts it; unable to
+    # start (Type=exec: a binary missing, say), it's stopped, so only the line says how to finish.
+    box.deployed(old={"models.yaml": "old registry"})
+    box.answers = [[]]
+    box.failing = {BRAKE}
+    code, lines, events = box.apply()
+    assert (code, events) == (1, ["-validate", "GET /running", "write models.yaml", f"restart {BRAKE}"])
+    assert lines[-1] == (f"apply: restarting {BRAKE} failed, and its new files are deployed: see `make logs s=brake`, "
+                         f"and once it's fixed, `systemctl restart {BRAKE}`")
+    box.failing = set()
+    if stopped:
+        box.units[BRAKE] = None
+    code, lines, events = box.apply()
+    if stopped:
+        assert (code, events, lines) == (0, ["-validate", "GET /running"], ["apply: nothing to change"])
+    else:
+        assert (code, events) == (0, ["-validate", "GET /running", f"restart {BRAKE}"])
+
+
+def test_a_start_time_that_cant_be_read_is_named_after_a_run_that_was_cut_off(box, monkeypatch):
+    # Task 7's fix round 2 (M3): a cut-off run wrote llama-swap's config and never restarted it, and now its start time
+    # comes in another form. apply can't tell it's outdated, so it says what to run by hand, and why: its line names
+    # an apply that didn't restart it, not only `make install-units`.
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    box.answers = [[]]
+    box.interrupted = {LLAMA}
+    with pytest.raises(KeyboardInterrupt):
+        box.apply()
+    box.interrupted = set()
+    shows = {unit: systemctl_show(box.units[unit]) for unit in RUNNING_UNITS}
+    shows[LLAMA] = "ActiveState=active\nInactiveExitTimestamp=@1790371186\n"
+    monkeypatch.setattr(spark_apply, "_show", shows.get)
+    code, lines, events = box.apply()
+    assert (code, events) == (0, ["-validate", "GET /running"])
+    assert lines == [f"apply: can't read when {LLAMA} started (InactiveExitTimestamp='@1790371186'), so it can't tell "
+                     f"whether {LLAMA} runs its latest files: if they changed since it started (`make install-units`, "
+                     f"or an apply that didn't restart it), run `systemctl restart {LLAMA}` once no model is loaded "
+                     "(restarting it stops them all)",
+                     "apply: nothing to change"]
 
 
 def test_a_failed_sync_is_said_and_tried_again_until_it_succeeds(box):
@@ -703,13 +783,26 @@ def test_llama_swap_keeps_running_when_the_second_look_isnt_idle(box, second, sa
 def test_apply_says_when_a_restarted_llama_swap_doesnt_answer(box):
     # The plan's rule: every config change is followed by a start and GET /running, not just -validate.
     box.deployed(old={"llama-swap.yaml": "old config"})
-    odd = LlamaSwapError("llama-swap GET /running: an answer it can't read (not v257's shape)")
-    box.answers = [[], [], odd]
+    down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")
+    box.answers = [[], [], down]
     code, lines, events = box.apply()
     assert (code, events) == (1, ["-validate", "GET /running", "write llama-swap.yaml", "GET /running",
                                   f"restart {LLAMA}", "GET /running"])
-    assert lines[-1] == (f"apply: restarted {LLAMA}, but llama-swap didn't answer GET /running in time ({odd}): see "
-                         "`make logs s=llama-swap`")
+    assert lines[-1] == (f"apply: restarted {LLAMA}, but llama-swap didn't answer GET /running within 0 s ({down}): "
+                         "see `make logs s=llama-swap`")  # the Box gives it no time (READY_SECONDS)
+
+
+def test_apply_says_when_a_restarted_llama_swap_answers_with_an_error(box):
+    # Task 7's fix round 2 (M2): an answer, even a 401 from a wrong or missing key, shows llama-swap is up. apply says
+    # that, and exits 1, instead of saying it didn't answer.
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    refused = llamaswap.LlamaSwapAnswered("llama-swap GET /running: HTTP 401")
+    box.answers = [[], [], refused]
+    code, lines, events = box.apply()
+    assert (code, events) == (1, ["-validate", "GET /running", "write llama-swap.yaml", "GET /running",
+                                  f"restart {LLAMA}", "GET /running"])
+    assert lines[-1] == (f"apply: restarted {LLAMA}, but llama-swap answered GET /running with an error ({refused}): "
+                         "it's up, but apply can't confirm it serves the new config")
 
 
 def test_a_key_the_client_wont_send_blocks_nothing_while_llama_swaps_unit_is_stopped(box, monkeypatch):

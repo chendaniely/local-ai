@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from spark import llamaswap
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running, key_from_env
 
 SEEN: list[tuple[str, str, str | None]] = []
@@ -118,6 +119,31 @@ def test_a_wrong_key_is_not_mistaken_for_unreachable(server):
     with pytest.raises(LlamaSwapError) as caught:
         LlamaSwap(server, "bad").running()
     assert not isinstance(caught.value, LlamaSwapUnreachable)
+
+
+@pytest.mark.parametrize("answer, key", [
+    pytest.param({}, "bad", id="http-401"),
+    pytest.param({"body": {"running": "coder"}}, "good", id="not-v257s-shape"),
+    pytest.param({"body": "<html>busy</html>"}, "good", id="not-json"),
+    pytest.param({"short": True}, "good", id="cut-short"),
+])
+def test_an_answer_that_is_an_error_is_still_an_answer(server, answer, key):
+    # Task 7's fix round 2: after a restart, apply waits for llama-swap to answer, and stops at the first answer, even
+    # one that is an error: something answered, so llama-swap is up. LlamaSwapAnswered is a LlamaSwapError.
+    ANSWER.update(answer)
+    with pytest.raises(llamaswap.LlamaSwapAnswered):
+        LlamaSwap(server, key).running()
+
+
+@pytest.mark.parametrize("url, key", [
+    pytest.param("http://127.0.0.1:9", "good", id="nothing-answers"),
+    pytest.param("http://", "good", id="a-bad-url"),
+    pytest.param("http://127.0.0.1:9", "fake-key\r", id="a-key-a-header-cant-carry"),
+])
+def test_no_answer_is_ever_taken_for_one(url, key):
+    with pytest.raises(LlamaSwapError) as caught:
+        LlamaSwap(url, key, timeout=0.5).running()
+    assert not isinstance(caught.value, llamaswap.LlamaSwapAnswered)
 
 
 
