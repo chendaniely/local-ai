@@ -44,6 +44,18 @@ def test_a_first_write_backs_up_nothing_and_says_so(tmp_path, monkeypatch, capsy
     assert "(there was no previous file)" in capsys.readouterr().out
 
 
+def test_the_models_file_is_found_when_the_command_runs_not_at_import(tmp_path, monkeypatch, capsys):
+    # Task 9's rulings, R10. The tests import clients when they're collected, before conftest gives each a HOME of its
+    # own: a path fixed then is the real ~/.pi of whoever runs them, and a test that forgot to patch it wrote there.
+    written = []
+    monkeypatch.setattr(clients, "merge_pi", lambda path, provider: written.append(path))  # writes nothing, anywhere
+    monkeypatch.setenv("HOME", str(tmp_path))
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    assert clients.run_pi(argparse.Namespace(registry=registry, base_url="u", key_env="K", write=True)) == 0
+    assert written == [tmp_path / ".pi/agent/models.json"]
+    assert f"to {tmp_path / '.pi/agent/models.json'} (there was no previous file)" in capsys.readouterr().out
+
+
 # Task 9's rulings, R9: pi's models file holds other providers' entries, their keys included, and can be the user's own
 # hand-kept file.
 

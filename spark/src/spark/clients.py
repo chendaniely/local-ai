@@ -9,7 +9,7 @@ from pathlib import Path
 
 from spark.registry import Registry, load_registry
 
-PI_MODELS = Path("~/.pi/agent/models.json").expanduser()
+PI_MODELS = Path("~/.pi/agent/models.json")  # expanded when run_pi runs, under the HOME it runs with
 COMPAT = {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": False,
           "supportsUsageInStreaming": True, "supportsStrictMode": False, "maxTokensField": "max_tokens"}
 
@@ -88,7 +88,8 @@ def run_pi(args: argparse.Namespace) -> int:
     if not args.write:
         print(json.dumps(provider, indent=2))
         return 0
-    backup = merge_pi(PI_MODELS, provider)
+    path = PI_MODELS.expanduser()
+    backup = merge_pi(path, provider)
     kept = f"the previous file is {backup}" if backup else "there was no previous file"
-    print(f"clients: wrote the 'spark' provider to {PI_MODELS} ({kept})")
+    print(f"clients: wrote the 'spark' provider to {path} ({kept})")
     return 0
