@@ -1643,8 +1643,10 @@ def test_the_upgrade_environments_are_built_not_copied(tmp_path, monkeypatch):
 
 def test_the_apt_mark_stand_in_logs_only_when_asked_and_releases_as_apt_mark_does(tmp_path):
     # Task 10's scan (R17): its unhold, like its hold, logs to $CALLS only when a test sets it, and turns the status
-    # letter from h back to i, as the real one does.
+    # letter from h back to i, as the real one does. The stand-in is run by its path, so the real apt-mark can't be
+    # the one that runs (Task 10's review, M8).
     env = gpu_env(tmp_path, HELD_BEFORE)
-    result = subprocess.run(["apt-mark", "unhold", "nvidia-driver-580-open"], capture_output=True, text=True, env=env)
+    result = subprocess.run([str(tmp_path / "bin" / "apt-mark"), "unhold", "nvidia-driver-580-open"],
+                            capture_output=True, text=True, env=env)
     assert (result.returncode, result.stderr) == (0, "")
     assert "ii\tnvidia-driver-580-open\t1.0\n" in (tmp_path / "installed.tsv").read_text()

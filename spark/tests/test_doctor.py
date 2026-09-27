@@ -628,8 +628,10 @@ def test_an_answer_that_isnt_http_or_breaks_off_is_no_answer_not_a_crash(path):
 
 
 def test_a_request_urllib_cant_make_is_no_answer_not_a_crash():
-    # A URL with no scheme, from a SPARK_LLAMASWAP_URL that is set but empty, raises ValueError in urllib; a key
-    # http.client won't put in a header raises one that names the header's value, and a Latin-1 key it sends.
+    # A URL with no scheme, from a SPARK_LLAMASWAP_URL that is set but empty, raises ValueError in urllib: only that
+    # one reaches http()'s catch. A key http.client won't put in a header would raise one that names the header's
+    # value, and a Latin-1 key it would send: http()'s own guard refuses both first, before any request is made,
+    # and that guard is what the loop covers (Task 10's review, M8).
     probe = Probe(ROOT)
     assert probe.http("/health") == (0, "")
     for key in ("fake-key\r", "fake-key-é"):
