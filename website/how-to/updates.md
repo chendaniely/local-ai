@@ -92,9 +92,12 @@ make doctor
 
 It checks Phase 0's guardrails: the leak hooks, the GPU set held (the running kernel's modules
 package included), the driver's kernel module agreeing with `nvidia-smi`, earlyoom running with the
-repo's arguments, ufw on, and the secrets folder closed to you. It checks the stack too: root's own
-copies of the units and the Compose project (each root's regular file or folder, not a link, and not
-writable by group or others), its three units active, llama-swap answering and refusing a call
+repo's arguments, ufw on, the secrets folder closed to you, and spark's folders as bootstrap sets
+them (`/var/lib/local-ai` root's, the brake's folder spark's, shared with `spark-admin`). It checks
+the stack too: root's own copies of the units and the Compose project (each root's regular file or
+folder, not a link, and not writable by group or others), needrestart's override installed as the
+repo has it, no folder that llama-server would read a `config.ini` from (`/etc/llama.cpp` or
+`/var/lib/local-ai/.config`), its three units active, llama-swap answering and refusing a call
 without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
 llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
 only reads, needs no sudo, and uses your `SPARK_API_KEY`.

@@ -177,9 +177,14 @@ when that file was retired on 2026-09-23.
     the `updates.md` from before Phase 0's council, whose re-hold ran all of `make bootstrap` and
     whose recovery line could leave the box without a GPU.
   - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
-    becomes root's, and earlyoom avoids `sshd.*` (`3735420`); and `spark` gets two cache folders,
-    `/var/lib/local-ai/cache` and `/var/lib/local-ai/cuda-cache` (`7c6616a`). Until it runs again,
-    the box keeps the first run's owners and earlyoom arguments, and has neither cache folder.
+    becomes root's, and earlyoom avoids `sshd.*` (`3735420`); `spark` gets two cache folders,
+    `/var/lib/local-ai/cache` and `/var/lib/local-ai/cuda-cache` (`7c6616a`); the polkit rule lets
+    `spark-admin` start, stop and restart the four `local-ai-*` units and nothing more (`414ddaf`);
+    and a new step installs needrestart's override, `/etc/needrestart/conf.d/local-ai.conf`, so that
+    needrestart never restarts a `local-ai-*` unit (`748a093`). Until it runs again, the box keeps
+    the first run's owners, earlyoom arguments and polkit rule, and has neither cache folder nor the
+    override, so `make doctor`'s *spark's folders* and *needrestart* lines fail (checked read-only
+    on 2026-09-26: `/var/lib/local-ai` is `spark:spark 751`, and the override isn't there).
     Phase 1's Task 12, Step 1 re-runs it.
   - ~~**Keys-only SSH**~~ **Done 2026-09-25**
     ([SSH from the Mac](website/how-to/ssh.md#keys-only)), with its one-time public IPv6 check,

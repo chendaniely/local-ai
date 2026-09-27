@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import io
 import json
+import os
 import subprocess
 import threading
 import urllib.error
@@ -49,11 +50,17 @@ class FakeProbe:
             Path("/proc/4242/cmdline"): "\0".join(["/usr/bin/earlyoom", *REPO_ARGS]) + "\0",
             doctor.EARLYOOM_DEFAULT: (ROOT / "stack/host/earlyoom.default").read_text(),
             UFW_CONF: "# /etc/ufw/ufw.conf\nENABLED=yes\nLOGLEVEL=low\n",
+            # needrestart's override, installed by bootstrap as the repo has it.
+            doctor.NEEDRESTART_CONF: (ROOT / "stack/host/needrestart.conf").read_text(),
+            doctor.NEEDRESTART_REPO: (ROOT / "stack/host/needrestart.conf").read_text(),
         }
         self.owners = {SECRETS: ("root", "spark", 0o750)}
         # Root's own copies of the units and the Compose project, as `make install-units` leaves them.
         self.entries = {path: ("root", "root", 0o755, "folder") for path in doctor.ROOT_FOLDERS}
         self.entries |= {path: ("root", "root", 0o644, "file") for path in doctor.ROOT_FILES}
+        # spark's home, root's own, and the brake's folder, as bootstrap sets them.
+        self.entries |= {path: (*owner, "folder") for path, owner in doctor.SPARK_FOLDERS}
+        self.present = {}  # a path that exists (True) or can't be told about (None); any other doesn't exist
         self.open_folders = set()
         self.pages = {f"{URL}/health": 200, "http://127.0.0.1:3000/": 200, "http://127.0.0.1:8888/": 200}
         self.keys_sent = []
@@ -73,6 +80,9 @@ class FakeProbe:
     def entry(self, path):
         return self.entries.get(Path(path))
 
+    def exists(self, path):
+        return self.present.get(Path(path), False)
+
     def http(self, url, *, key=None, body=None, timeout=10.0):
         self.keys_sent.append(key)
         if url == f"{URL}/running":
@@ -91,7 +101,7 @@ def failures(probe, key=KEY):
 
 def test_a_healthy_spark_passes_every_check():
     results = checks(FakeProbe(), KEY, REG)
-    assert len(results) == 12 and [c.name for c in results if not c.ok] == []
+    assert len(results) == 15 and [c.name for c in results if not c.ok] == []
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -219,6 +229,62 @@ def test_the_probe_reads_a_link_as_a_link(tmp_path):
     assert probe.entry(tmp_path / "missing") is None
 
 
+def test_sparks_folders_must_be_as_bootstrap_sets_them():
+    # Task 10's scan (R10). /var/lib/local-ai is spark's home but root's, so spark can't swap a folder root creates
+    # in it for a link (Phase 0's review); the brake's folder is spark's, shared with spark-admin. On brightroar this
+    # fails until Phase 1's Task 12 Step 1 re-runs bootstrap: its first run left /var/lib/local-ai spark's.
+    probe = FakeProbe()
+    probe.entries[Path("/var/lib/local-ai")] = ("spark", "spark", 0o750, "folder")
+    assert failures(probe) == {"spark's folders": "/var/lib/local-ai is spark:spark 750, not root:root 755: "
+                                                  "`make bootstrap` sets it"}
+    probe.entries[Path("/var/lib/local-ai/brake")] = ("spark", "spark-admin", 0o777, "link")
+    assert failures(probe)["spark's folders"] == (
+        "/var/lib/local-ai is spark:spark 750, not root:root 755; /var/lib/local-ai/brake is a link, not a folder: "
+        "`make bootstrap` sets them")
+    probe = FakeProbe()
+    del probe.entries[Path("/var/lib/local-ai/brake")]
+    assert failures(probe) == {"spark's folders": "/var/lib/local-ai/brake is missing, or out of your account's "
+                                                  "reach: `make bootstrap` sets it"}
+
+
+def test_llama_server_finds_no_config_file_to_read():
+    # Task 10's scan (R10). llama-server reads config.ini from /etc/llama.cpp/, then from $HOME/.config/llama.cpp/,
+    # before its command line, and the engines run with HOME=/var/lib/local-ai: options added there would come
+    # around the flags render refuses.
+    probe = FakeProbe()
+    probe.present[Path("/etc/llama.cpp")] = True
+    assert failures(probe) == {"engine config files": "/etc/llama.cpp exists, and llama-server reads its config.ini "
+                                                      "before its command line: look at what it holds, then remove it"}
+    probe.present = {Path("/var/lib/local-ai/.config"): None}
+    assert failures(probe) == {"engine config files": "can't tell from your account whether /var/lib/local-ai/.config "
+                                                      "exists: `sudo ls -ld /var/lib/local-ai/.config` can"}
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can look into any folder")
+def test_the_probe_tells_a_missing_path_from_one_out_of_reach(tmp_path):
+    (tmp_path / "there").mkdir()
+    (tmp_path / "dangling").symlink_to(tmp_path / "nowhere")
+    (tmp_path / "shut/inside").mkdir(parents=True)
+    (tmp_path / "shut").chmod(0)
+    try:
+        found = [Probe(ROOT).exists(tmp_path / name) for name in ("there", "dangling", "missing", "shut/inside")]
+    finally:
+        (tmp_path / "shut").chmod(0o755)
+    assert found == [True, True, False, None]
+
+
+def test_needrestart_leaves_the_stack_alone():
+    # Task 10's scan (R14): the stack's behaviour changed, so it gets its doctor check. On brightroar this fails
+    # until Phase 1's Task 12 Step 1 re-runs bootstrap, which installs the override.
+    probe = FakeProbe()
+    del probe.files[doctor.NEEDRESTART_CONF]
+    assert failures(probe) == {"needrestart": "/etc/needrestart/conf.d/local-ai.conf is missing, or can't be read: "
+                                              "`make bootstrap` installs it"}
+    probe.files[doctor.NEEDRESTART_CONF] = "$nrconf{override_rc}->{qr(^local-ai-llama)} = 0;\n"
+    assert failures(probe) == {"needrestart": "/etc/needrestart/conf.d/local-ai.conf differs from "
+                                              "stack/host/needrestart.conf: `make bootstrap` installs the repo's"}
+
+
 def test_a_deployed_registry_that_wont_load_is_a_fail_line_not_a_traceback(tmp_path):
     for text, kind in (("budget: [unclosed\n", "doesn't load: "), (None, "is missing")):
         path = tmp_path / "models.yaml"
@@ -343,7 +409,7 @@ def test_the_report_shows_every_check_and_never_the_key():
     text = report(checks(probe, KEY, REG))
     assert KEY in probe.keys_sent and KEY not in text
     assert text.splitlines()[0] == "ok    leak hooks: on in this clone"
-    assert text.splitlines()[-1] == "doctor: 12 of 12 checks pass"
+    assert text.splitlines()[-1] == "doctor: 15 of 15 checks pass"
 
 
 def test_doctor_runs_only_from_the_repo_root(tmp_path, monkeypatch, capsys):

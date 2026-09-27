@@ -919,6 +919,17 @@ def test_doctor_reads_the_holds_dry_run_as_it_is_printed(tmp_path):
         assert check.ok is ok and words in check.detail, (name, check)
 
 
+def test_doctor_expects_what_bootstrap_sets():
+    # `make doctor` checks spark's folders and needrestart's override against what bootstrap sets them to (Task 10's
+    # rulings R10 and R14), so the two agree.
+    from spark import doctor
+
+    for path, (user, group, mode) in doctor.SPARK_FOLDERS:
+        assert f"-o {user} -g {group} -m {mode:04o}" in install_d_line(str(path)), path
+    line = next(line for line in dry_run() if "/etc/needrestart/conf.d/" in line)
+    assert line.split()[-2:] == [str(ROOT / doctor.NEEDRESTART_REPO), str(doctor.NEEDRESTART_CONF)]
+
+
 def test_the_scripts_environment_is_built_not_copied(tmp_path):
     # Task 7's fix round 2: a launch that fails prints the environment it was given, and pytest prints the arguments
     # of a call in a failing assert (so names and homes are taken first, here). The script's environment holds

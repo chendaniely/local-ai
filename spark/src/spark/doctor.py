@@ -34,6 +34,18 @@ ROOT_FILES = (*(Path(render.UNIT_DIR, unit) for unit in render.UNITS),
               Path(render.COMPOSE_DIR, "compose.yaml"), Path(render.COMPOSE_DIR, "searxng/settings.yml"))
 UFW_CONF = Path("/etc/ufw/ufw.conf")
 EARLYOOM_DEFAULT = Path("stack/host/earlyoom.default")
+# needrestart's override, which bootstrap installs from the repo's copy.
+NEEDRESTART_CONF = Path("/etc/needrestart/conf.d/local-ai.conf")
+NEEDRESTART_REPO = Path("stack/host/needrestart.conf")
+# spark's home, which is root's (Phase 0's review), and the brake's folder, spark's and shared with spark-admin:
+# each with the owner, group and mode bootstrap gives it.
+STATE_HOME = Path("/var/lib/local-ai")
+SPARK_FOLDERS = ((STATE_HOME, ("root", "root", 0o755)), (paths.STATE, ("spark", "spark-admin", 0o2770)))
+# Where llama-server looks for a config.ini, which it reads before its command line (llama.cpp b11146, as Task 10's
+# pre-dispatch scan read it): /etc/llama.cpp/, then $XDG_CONFIG_HOME/llama.cpp/ or $HOME/.config/llama.cpp/. The
+# engines run with HOME=/var/lib/local-ai, spark's, and no XDG_CONFIG_HOME. Options added there would come around
+# the flags render refuses, so neither folder may exist.
+ENGINE_CONFIG = (Path("/etc/llama.cpp"), STATE_HOME / ".config")
 # Each should answer 200 on / (Probe.http follows a redirect for a request without a key). Not yet seen
 # on the box: the first `make doctor` there is the check.
 WEB = (("Open WebUI", "http://127.0.0.1:3000/"), ("SearXNG", "http://127.0.0.1:8888/"))
@@ -129,6 +141,17 @@ class Probe:
             return None
         kinds = ((stat.S_ISLNK, "link"), (stat.S_ISDIR, "folder"), (stat.S_ISREG, "file"))
         return *owner, next((kind for test, kind in kinds if test(st.st_mode)), "other")
+
+    def exists(self, path: Path) -> bool | None:
+        """Whether a path exists, a link included, dangling or not; None when this account can't tell, as when a
+        folder on the way to it is closed to it (entry says None for both)."""
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return None
+        return True
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
              timeout: float = 10.0) -> tuple[int, str]:
@@ -259,7 +282,60 @@ def secrets_folder(probe: Probe) -> Check:
     return Check("secrets folder", True, "root:spark 750, and closed to you")
 
 
+def spark_folders(probe: Probe) -> Check:
+    """spark's home is root's, so spark can't swap a folder that root creates in it for a link, and the brake's
+    folder is spark's, shared with spark-admin: each a folder, read without following a link, as bootstrap sets it.
+    On brightroar this fails until Phase 1's Task 12 Step 1 re-runs bootstrap: its first run left the home spark's."""
+    wrong = []
+    for path, (user, group, mode) in SPARK_FOLDERS:
+        entry = probe.entry(path)
+        if entry is None:
+            wrong.append(f"{path} is missing, or out of your account's reach")
+        elif entry[3] != "folder":
+            wrong.append(f"{path} is a {entry[3]}, not a folder")
+        elif entry[:3] != (user, group, mode):
+            wrong.append(f"{path} is {entry[0]}:{entry[1]} {entry[2]:o}, not {user}:{group} {mode:o}")
+    if wrong:
+        them = "them" if len(wrong) > 1 else "it"
+        return Check("spark's folders", False, "; ".join(wrong) + f": `make bootstrap` sets {them}")
+    return Check("spark's folders", True, f"{STATE_HOME} is root's, and the brake's folder spark's, shared with "
+                                          "spark-admin")
+
+
 # The stack
+
+
+def needrestart(probe: Probe) -> Check:
+    """needrestart restarts no local-ai-* unit after an apt run: the override bootstrap installs is the repo's.
+    On brightroar this fails until Phase 1's Task 12 Step 1 re-runs bootstrap, which installs it."""
+    want = probe.read(NEEDRESTART_REPO)
+    if want is None:
+        return Check("needrestart", False, f"can't read the repo's {NEEDRESTART_REPO}: run doctor from the clone's "
+                                           "root")
+    installed = probe.read(NEEDRESTART_CONF)
+    if installed is None:
+        return Check("needrestart", False, f"{NEEDRESTART_CONF} is missing, or can't be read: `make bootstrap` "
+                                           "installs it")
+    if installed != want:
+        return Check("needrestart", False, f"{NEEDRESTART_CONF} differs from {NEEDRESTART_REPO}: `make bootstrap` "
+                                           "installs the repo's")
+    return Check("needrestart", True, "leaves the local-ai-* units alone: the repo's override is installed")
+
+
+def engine_config(probe: Probe) -> Check:
+    """llama-server finds no config.ini to read before its command line (ENGINE_CONFIG)."""
+    wrong = []
+    for path in ENGINE_CONFIG:
+        there = probe.exists(path)
+        if there is None:
+            wrong.append(f"can't tell from your account whether {path} exists: `sudo ls -ld {path}` can")
+        elif there:
+            wrong.append(f"{path} exists, and llama-server reads its config.ini before its command line: look at "
+                         "what it holds, then remove it")
+    if wrong:
+        return Check("engine config files", False, "; ".join(wrong))
+    folders = " and ".join(str(path) for path in ENGINE_CONFIG)
+    return Check("engine config files", True, f"llama-server finds no config.ini: {folders} don't exist")
 
 
 def root_copies(probe: Probe) -> Check:
@@ -397,9 +473,9 @@ def checks(probe: Probe, key: str | None, registry: Registry | None, problem: st
     variable when it's missing."""
     return [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe),
-        firewall(probe), secrets_folder(probe),
-        root_copies(probe), units(probe), llama_swap(probe, key, key_env), web(probe),
-        model(probe, key, registry, problem, key_env),
+        firewall(probe), secrets_folder(probe), spark_folders(probe),
+        root_copies(probe), needrestart(probe), engine_config(probe), units(probe), llama_swap(probe, key, key_env),
+        web(probe), model(probe, key, registry, problem, key_env),
     ]
 
 
