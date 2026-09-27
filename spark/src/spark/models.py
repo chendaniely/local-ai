@@ -18,6 +18,9 @@ TOKEN = re.compile(r"[!#-&(-\[\]-~]+")
 # A URL's query string, up to what ends the URL: a space, a quote, a bracket, or a sentence's last stop. A presigned
 # CDN URL's signature is a credential for its file.
 URL_QUERY = re.compile(r"(https?://[^\s?#'\"<>()]*)\?[^\s#'\"<>()]*?(?=[.,;:]?(?:[\s#'\"<>()]|$))", re.IGNORECASE)
+# The library's module that reads the token files, again for every request (build_hf_headers calls get_token). When a
+# file won't parse, it logs the line it read, which can hold a token the pull was never told.
+TOKEN_LOGGER = "huggingface_hub.utils._auth"
 
 
 class PullError(ValueError):
@@ -27,9 +30,10 @@ class PullError(ValueError):
 def sanitise(text: str, token: str | None = None) -> str:
     """`text` fit for the pull's journal, which Dan's sessions read: the token replaced by a marker, every URL's query
     string dropped, and all on one line, so an entry that starts with `pull:` holds the whole reason."""
+    text = URL_QUERY.sub(r"\1", text)  # first: a query can hold the token, and the marker's < > would end the URL there
     if token:
         text = text.replace(token, "<token>")
-    return " ".join(URL_QUERY.sub(r"\1", text).split())
+    return " ".join(text.split())
 
 
 def check_token(token: str | None) -> None:
@@ -43,19 +47,27 @@ def check_token(token: str | None) -> None:
 
 
 class _Sanitised(logging.Filter):
-    """The library's own lines (a retry, a resumed download) go through sanitise() too."""
+    """The library's own lines (a retry, a resumed download) go through sanitise() too. A line it logs while the token
+    is read (`holding`), or from the module that reads the token files, can quote a token sanitise() isn't told: the
+    first becomes a note of where, never what, and the rest are dropped."""
 
-    def __init__(self, token: str | None) -> None:
+    def __init__(self, folder: str) -> None:
         super().__init__()
-        self.token = token
+        self.folder, self.token, self.holding, self.told = folder, None, False, False
 
     def filter(self, record: logging.LogRecord) -> bool:
-        text = record.getMessage()
-        if record.exc_info:
-            text += " " + logging.Formatter().formatException(record.exc_info)
-        record.msg, record.args = sanitise(text, self.token), None
+        if self.holding or record.name == TOKEN_LOGGER:
+            text, show = (f"pull: huggingface_hub logged a problem reading its token files in {self.folder}; it isn't "
+                          f"shown, since it can quote a token"), not self.told
+            self.told = True
+        else:
+            text, show = record.getMessage(), True
+            if record.exc_info:
+                text += " " + logging.Formatter().formatException(record.exc_info)
+            text = sanitise(text, self.token)
+        record.msg, record.args = text, None  # in place, so a handler after this one gets the same text
         record.exc_info = record.exc_text = record.stack_info = None
-        return True
+        return show
 
 
 def pull(registry: Registry, *, download, hf_home: str = HF_HOME, log=print, redact: str | None = None) -> int:
@@ -84,15 +96,21 @@ def register(subparsers) -> None:
 
 
 def run_pull(args: argparse.Namespace) -> int:
-    from huggingface_hub import get_token, hf_hub_download  # only this command needs it
+    from huggingface_hub import constants, get_token, hf_hub_download  # only this command needs it
 
     registry = _load("registry", paths.REGISTRY, load_registry)  # a refusal names the file, even one nested too deep
-    token = get_token()  # the one the library sends: HF_TOKEN, else the token file under HF_HOME
-    check_token(token)
-    handlers, sanitised = list(logging.getLogger("huggingface_hub").handlers), _Sanitised(token)
-    for handler in handlers:
+    handlers = list(logging.getLogger("huggingface_hub").handlers)
+    sanitised = _Sanitised(folder=str(Path(constants.HF_TOKEN_PATH).parent))
+    for handler in handlers:  # before the token is read: a line from reading it can quote it
         handler.addFilter(sanitised)
     try:
+        sanitised.holding = True
+        try:
+            token = get_token()  # the one the library sends: HF_TOKEN, else the token file under HF_HOME
+        finally:
+            sanitised.holding = False
+        check_token(token)
+        sanitised.token = token
         return pull(registry, download=hf_hub_download, hf_home=HF_HOME, log=lambda m: print(m, flush=True),
                     redact=token)
     finally:

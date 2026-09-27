@@ -98,6 +98,16 @@ def test_sanitise_drops_url_queries_and_keeps_one_line(text, shown):
     assert spark_models.sanitise(text) == shown
 
 
+@pytest.mark.parametrize("text, token, shown", [
+    (f"at https://cdn.example/p?access_token={VALID}&X-Amz-Signature=SENTINELsig.", VALID, "at https://cdn.example/p."),
+    ("https://h.example/p?sig=SENTINEL and = here", "=", "https://h.example/p and <token> here"),
+])
+def test_a_query_holding_the_token_is_dropped_whole(text, token, shown):
+    # Task 8's re-review: replacing the token first put the marker's < and > inside the query, which ended the URL
+    # there and kept the rest of the query, a presigned URL's signature included.
+    assert spark_models.sanitise(text, token) == shown
+
+
 def test_a_token_is_refused_unless_a_header_and_a_repr_carry_it_as_written():
     # Printable ASCII but a space, a quote or a backslash: h11 refuses whitespace and prints the header, and a repr()
     # escapes a quote or a backslash, which would hide the token from sanitise().
@@ -119,12 +129,14 @@ def hub(monkeypatch, tmp_path):
     library's token files there too (never a real one), and a download that records each call and runs `hook`."""
     import huggingface_hub
     from huggingface_hub import constants
+    from huggingface_hub.utils import _auth
 
     home = tmp_path / "hf"
     monkeypatch.setattr(paths, "REGISTRY", FIX)
     monkeypatch.setattr(spark_models, "HF_HOME", str(home))
     monkeypatch.setattr(constants, "HF_TOKEN_PATH", str(home / "token"))
     monkeypatch.setattr(constants, "HF_STORED_TOKENS_PATH", str(home / "stored_tokens"))
+    monkeypatch.setattr(_auth, "_OAUTH_REFRESH_CACHE", None)  # the library's 300 s memory of a token file it checked
     state = SimpleNamespace(home=home, calls=[], hook=None)
 
     def download(**kw):
@@ -200,6 +212,83 @@ def test_the_librarys_own_lines_go_through_the_same_sanitiser(hub, monkeypatch):
     assert stream.getvalue().splitlines() == 5 * [
         "Error while downloading from https://cdn.example/blob: echo <token> Trying to resume download..."]
     assert handler.filters == filters  # and the pull takes its filter off again
+
+
+OTHER = "hf_SENTINELotherTOKEN98765"  # a second fake token: one the pull is never told
+NOTE = "pull: huggingface_hub logged a problem reading its token files in {}; it isn't shown, since it can quote a token"
+
+
+def library_lines(monkeypatch) -> io.StringIO:
+    """What the library's own handler writes (to stderr, in the unit)."""
+    stream = io.StringIO()
+    monkeypatch.setattr(logging.getLogger("huggingface_hub").handlers[0], "stream", stream)
+    return stream
+
+
+def broken_token_files(home: Path, token: str) -> None:
+    """A token file, and a stored_tokens file with no section header: configparser's error quotes its first line."""
+    home.mkdir(exist_ok=True)
+    (home / "token").write_text(f"{token}\n")
+    (home / "stored_tokens").write_text(f"hf_token = {OTHER}\n")
+
+
+def test_a_problem_reading_the_token_files_is_told_without_what_was_read(hub, monkeypatch, capsys):
+    # Task 8's re-review: reading the token, the library logs configparser's error for a broken stored_tokens file,
+    # and the error quotes the line it read: a token the pull hasn't been told. The pull says where, never what.
+    stream = library_lines(monkeypatch)
+    broken_token_files(hub.home, VALID)
+    assert cli.main(["models", "pull"]) == 0
+    out, err = capsys.readouterr()
+    assert stream.getvalue().splitlines() == [NOTE.format(hub.home)]
+    assert len(hub.calls) == 5 and "SENTINEL" not in stream.getvalue() + out + err
+
+
+def test_a_malformed_token_in_broken_token_files_shows_neither(hub, monkeypatch, capsys):
+    stream = library_lines(monkeypatch)
+    hub.home.mkdir()
+    (hub.home / "token").write_text("hf_SENTINEL\x0bfake\n")
+    (hub.home / "stored_tokens").write_text("hf_token = hf_SENTINEL\x0bfake\n")
+    assert cli.main(["models", "pull"]) == 1
+    out, err = capsys.readouterr()
+    assert hub.calls == [] and "the token file under HF_HOME" in err
+    assert "SENTINEL" not in stream.getvalue() + out + err
+
+
+def test_any_line_logged_while_the_token_is_read_stays_out(hub, monkeypatch, capsys):
+    # Held while the token is read, whichever module logs it: a later library could read the files from another one.
+    import huggingface_hub
+
+    stream = library_lines(monkeypatch)
+
+    def get_token():
+        logging.getLogger("huggingface_hub.elsewhere").error("can't parse the line: hf_token = %s", OTHER)
+        return VALID
+
+    monkeypatch.setattr(huggingface_hub, "get_token", get_token)
+    assert cli.main(["models", "pull"]) == 0
+    out, err = capsys.readouterr()
+    assert stream.getvalue().splitlines() == [NOTE.format(hub.home)]
+    assert "SENTINEL" not in stream.getvalue() + out + err
+
+
+def test_the_token_files_read_again_during_the_downloads_stay_out_too(hub, monkeypatch, capsys):
+    # The library reads the token again for every request (build_hf_headers calls get_token), and once its 300 s memory
+    # of the token file lapses it reads stored_tokens again, and logs the same error mid-download.
+    from huggingface_hub import get_token
+    from huggingface_hub.utils import _auth
+
+    stream = library_lines(monkeypatch)
+    broken_token_files(hub.home, VALID)
+
+    def request(**kw):
+        _auth._OAUTH_REFRESH_CACHE = None  # 300 s later
+        get_token()
+
+    hub.hook = request
+    assert cli.main(["models", "pull"]) == 0
+    out, err = capsys.readouterr()
+    assert stream.getvalue().splitlines() == [NOTE.format(hub.home)]  # once, however often the library logs it
+    assert "SENTINEL" not in stream.getvalue() + out + err
 
 
 @pytest.mark.parametrize("bad", ["nested too deep", "not YAML"])
