@@ -6,7 +6,10 @@ reached from a MacBook or other devices over Tailscale, WireGuard, or the home L
 
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
 [the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
-first tools, the host bootstrap and the docs site. Nothing serves a model until Phase 1.
+first tools, the host bootstrap and the docs site. Nothing serves a model until Phase 1, which is
+under way on the `phase-1` branch: its code, tests and runbooks are built (Tasks 1–10, 2026-09-27),
+and the box work starts with Task 11 — where it stands and what comes next heads
+[its plan](website/design/phase-1.md).
 
 ## Design in one line
 

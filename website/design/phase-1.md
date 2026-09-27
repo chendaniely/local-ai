@@ -23,6 +23,16 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
+> **Progress (2026-09-27).** The switch point and Tasks 1–10 are done: code, tests and runbooks,
+> each task reviewed, pushed on `phase-1` (through `5737e14`, CI green), and ticked below. Nothing
+> is deployed on the box yet. **Next: Task 11 [Spark].** Its Step 1 needs a Spark session with
+> `spark-admin` in its groups, and the session that ran Tasks 1–10 predates bootstrap's group
+> change. So first, **on the Spark**, `tmux kill-server` and log out; then, **on the Mac**,
+> `ssh brightroar`; then start the session as [The Spark session](../how-to/spark-session.md) says,
+> and ask it to continue at Task 11. Dan's own steps start in Task 12, marked **[Dan]**.
+> `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
+> still shows Phase 0, and the site shows whatever Dan last published by hand.
+
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
 `tailscale serve`) and from pi on the Mac and in tmux as `agent`, protected by a minimal memory brake
@@ -186,21 +196,21 @@ Tailscale serve · pi 0.85.1.
 
 ## ⇄ Switch point — Mac → Spark
 
-- [ ] **The Mac session hands over** (2026-09-25, before Task 1): `make test lint docs` is clean on
+- [x] **The Mac session hands over** (2026-09-25, before Task 1): `make test lint docs` is clean on
   the Mac. (The check that every `<paste>` in `stack/models.yaml` is a real 40-hex revision is Task
   6's now, where `load_registry` refuses anything else.)
-- [ ] **Scan what goes out, then Dan OKs the push.** First leak-guards.md's
+- [x] **Scan what goes out, then Dan OKs the push.** First leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push), with `main` as `<branch>`,
   since `phase-1` isn't on GitHub yet: `outgoing: exit=0`, `tracked: exit=0`, and gitleaks'
   `no leaks found`. Then **Dan OKs** `git push -u origin phase-1`. `gh run watch` — CI is green.
-- [ ] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
+- [x] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
   any **[Spark]** task. That runbook's *Before the first session* steps 2 and 3 (the global rules
   file and the secrets guard) arrived after the Spark's Phase 0 sessions, and nothing records them
   on the box. If the Spark's `~/.claude` lacks either, do them now. Then start the session and check
   the guard first: `/hooks` lists the hook, `/permissions` the deny rules, and the session must be
   refused `test -e ~/.secrets && echo present || echo absent`. Don't go on until it is: Task 13
   Step 1 puts a key in every shell of yours, the session's included.
-- [ ] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
+- [x] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
   security review asked: keys-only SSH ([SSH from the Mac](../how-to/ssh.md#keys-only), with its
   public IPv6 check) and the Spark's GitHub token for this repository only
   ([The Spark session](../how-to/spark-session.md#github-a-token-for-this-repository-only)). Unless
@@ -210,7 +220,9 @@ Tailscale serve · pi 0.85.1.
     ends in `Permission denied (publickey).`, as in ssh.md's own check.
   - The token: on the Spark, `gh auth status` names your account with the token masked. On
     github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
-    old *GitHub CLI* authorization is revoked.
+    old *GitHub CLI* authorization is revoked. *(2026-09-27: both steps done on 2026-09-25, as
+    README §Current state records; the old authorization's revocation is Dan's recollection, not
+    yet checked on github.com.)*
 
   The Spark session records each one newly done in `changelog.md` and README §Current state, and
   commits that before Task 1, whose own commit stages only its registry files:
@@ -246,7 +258,7 @@ Tailscale serve · pi 0.85.1.
     `static_total_gib() -> float`
   - `load_registry(path: Path) -> Registry`
 
-- [ ] **Step 1: Branch and fixture**
+- [x] **Step 1: Branch and fixture**
 
 On the Spark, from the clone: `cd ~/git/hub/local-ai && git fetch && git switch phase-1 && git pull`.
 The Mac session created `phase-1` and pushed it at the switch point above.
@@ -310,7 +322,7 @@ models:
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `spark/tests/test_registry.py`:
 
@@ -376,12 +388,12 @@ field, a single value for a list), 828bee5 (a boolean in `args`) and 69cc076 (un
 keys, flags that aren't booleans, empty strings, non-finite numbers, budget and brake values not
 above 0). The six tests here are unchanged.*
 
-- [ ] **Step 3: Run them and watch them fail**
+- [x] **Step 3: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_registry.py`
 Expected: FAIL — `ModuleNotFoundError: spark.registry`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `spark/src/spark/registry.py`:
 
@@ -517,12 +529,12 @@ from Task 6's reviews: commit 1e7e022 refuses a role that is another model's nam
 keeps `source.file` and `source.mmproj` inside the pinned snapshot, requires `source.repo` to be
 `org/name`, and makes the name, revision and pin patterns match whole strings.*
 
-- [ ] **Step 5: Run the tests — they pass**
+- [x] **Step 5: Run the tests — they pass**
 
 Run: `uv run --frozen --project spark pytest spark/tests`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add spark/src/spark/registry.py spark/tests/test_registry.py spark/tests/fixtures/models.yaml
@@ -561,7 +573,7 @@ git commit -m "feat(spark): 🤖 add the model registry" \
     `{"at", "model", "reason"}` in `last-refusal.json` for `spark status` — the client itself only sees
     a failed start — and the next successful start clears it
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_launch.py`:
 
@@ -683,12 +695,12 @@ shortfall and never read as a fit; the exact boundary; the hold fsynced before a
 and 548ab5c (a damaged hold or a registry that won't load refused and recorded, not a crash; usage
 errors; a hold file on disk; a missing `MemTotal`). Task 2's review asked for them.*
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_launch.py`
 Expected: FAIL — `ImportError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/paths.py`:
 
@@ -935,17 +947,17 @@ returns only a whole record (a dict whose `at`, `model` and `reason` are strings
 
 Register in `cli.py` beside the others: `from spark import launch` / `launch.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass**
+- [x] **Step 4: Run the tests — they pass**
 
 Run: `uv run --frozen --project spark pytest spark/tests`
 Expected: all pass.
 
-- [ ] **Step 5: README §Contents** — its `spark/` row says the CLI has "the leak check and the docs
+- [x] **Step 5: README §Contents** — its `spark/` row says the CLI has "the leak check and the docs
   tools so far", which `spark launch` makes untrue. The row becomes: "The `spark` CLI, a uv project
   with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help`
   lists them)." The commands later tasks add fall under it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add spark/src/spark/{paths,memory,hold,admission,launch,cli}.py spark/tests/test_launch.py README.md
@@ -976,7 +988,7 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
   "nothing answered" (`LlamaSwapUnreachable`) and from a request never sent (a plain
   `LlamaSwapError`).
 
-- [ ] **Step 1: Write the failing tests** (a real local HTTP server, no mocks of urllib)
+- [x] **Step 1: Write the failing tests** (a real local HTTP server, no mocks of urllib)
 
 `spark/tests/test_llamaswap.py`:
 
@@ -1083,12 +1095,12 @@ Task 7's reviews, adds `LlamaSwapAnswered`'s cases: a 401, an answer not in v257
 isn't JSON and one cut short raise it; a closed port, a bad URL and a key a header can't carry
 don't.*
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_llamaswap.py`
 Expected: FAIL — `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/llamaswap.py`:
 
@@ -1165,9 +1177,9 @@ Task 3's review asked for them. Commit 81b8124, from Task 7's reviews, adds `Lla
 `LlamaSwapError` for an answer that is an error or can't be read, so apply can tell an answer from
 none.*
 
-- [ ] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add spark/src/spark/llamaswap.py spark/tests/test_llamaswap.py
@@ -1198,7 +1210,7 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
 Phase 1's order is *on-demand models first, then residents, largest first* — one unload per tick,
 then re-measure. The idle-first order arrives with the gate in Phase 2 (it needs in-flight data).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_brake.py`:
 
@@ -1290,9 +1302,9 @@ multi-tick loops with a counted sleep, a failing unload, a failing hold write, a
 unanswered unloads, `MemAvailable` noise, a registry that won't load, and a state folder the brake
 can't search. Each rule is pinned by a mutant that fails a test. Task 4's reviews asked for them.*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_brake.py` → FAIL (`ModuleNotFoundError`).
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_brake.py` → FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/brake.py`:
 
@@ -1409,9 +1421,9 @@ reads "brake: holding new loads until `make brake-release`" (commit d3481ab, Tas
 
 Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/brake.py spark/src/spark/cli.py spark/tests/test_brake.py && git commit -m "feat(spark): 🤖 add the minimal memory brake" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/brake.py spark/src/spark/cli.py spark/tests/test_brake.py && git commit -m "feat(spark): 🤖 add the minimal memory brake" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
@@ -1430,7 +1442,7 @@ Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
   `format_text(status: dict) -> str`; CLI `spark status [--json] [--key-env NAME]` (exit 0 always —
   it reports problems, it doesn't fail on them).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_status.py`:
 
@@ -1484,9 +1496,9 @@ can't read, a model the registry doesn't list, a damaged refusal record, roundin
 and control characters. The stored reason above keeps an older wording; launch now writes "needs
 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short".*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_status.py` → FAIL.
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_status.py` → FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/status.py`:
 
@@ -1592,9 +1604,9 @@ this account can release says "`make brake-release` to clear" (commit d3481ab, T
 
 Register in `cli.py`: `from spark import status` / `status.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 ### Task 6 [Spark]: `spark render` — the real registry, templates, and the rendered config
@@ -1643,7 +1655,7 @@ stopped here for the choice.)
   `/var/lib/local-ai/cuda-cache`, which the llama-swap and pull units name as `XDG_CACHE_HOME` and
   `CUDA_CACHE_PATH`.
 
-- [ ] **Step 1: `versions.py` gains an optional image name, commit pins and a required version** —
+- [x] **Step 1: `versions.py` gains an optional image name, commit pins and a required version** —
   tests first. A source build (whisper.cpp) is pinned by the commit it was built from. Add to
   `spark/tests/test_versions.py`:
 
@@ -1709,7 +1721,7 @@ def test_rejects_a_component_without_a_version(tmp_path):
   YAML text (`version: 1.10` reads as 1.1); the pin pattern matches whole strings. Task 6's review
   asked for them.*
 
-- [ ] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
+- [x] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
   context memory) until Phase 2 measures them. Resolve each repo's current commit on the Spark
   (public API, no token needed; bootstrap installed `jq`) and paste the 40-hex values:
 
@@ -1801,7 +1813,7 @@ models:
   placeholder the whisper engine ignores.) Every `<paste>` must be replaced before committing —
   `load_registry` rejects anything that isn't 40 hex.
 
-- [ ] **Step 3: Templates** (`str.format` placeholders in braces; a literal brace is doubled, `{{ }}`)
+- [x] **Step 3: Templates** (`str.format` placeholders in braces; a literal brace is doubled, `{{ }}`)
 
 `stack/templates/local-ai-llama-swap.service`:
 
@@ -1977,7 +1989,7 @@ search:
     - json
 ```
 
-- [ ] **Step 4: Write the failing tests**
+- [x] **Step 4: Write the failing tests**
 
 `spark/tests/fixtures/versions.yaml`, like `stack/versions.yaml` but with only the three components
 render reads, each with every required field (`version` included); llama-swap is unpinned and the
@@ -2139,11 +2151,11 @@ def test_spark_gets_its_cache_folders_from_root():
         assert "-o spark -g spark -m 0750" in install_d_line(path)
 ```
 
-- [ ] **Step 5: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_render.py spark/tests/test_bootstrap.py`
+- [x] **Step 5: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_render.py spark/tests/test_bootstrap.py`
   → FAIL: `render.py` doesn't exist yet, and the dry run has no `install -d` line for either cache
   folder.
 
-- [ ] **Step 6: Implement**
+- [x] **Step 6: Implement**
 
 In `stack/host/bootstrap.sh`, `directories()` becomes this. The line that creates `spark`'s folders
 gains the two cache folders, next to `hf`, so root makes them directly under its own
@@ -2338,15 +2350,15 @@ From here on CI's tests render the real registry (`test_the_real_registry_render
 runs the CLI itself, `spark render --out`, is Task 18's, on the Mac, since the Spark's
 repository-only token can't push a change under `.github/workflows/`.
 
-- [ ] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
+- [x] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
   `make lint` (bootstrap changed).
 
-- [ ] **Step 8: README §Contents** — its `stack/` row names only the pinned versions and the host
+- [x] **Step 8: README §Contents** — its `stack/` row names only the pinned versions and the host
   setup. It becomes: "The model registry (`models.yaml`), pinned versions (`versions.yaml`), the
   templates `spark render` fills (`templates/`) and the host setup (`host/`: bootstrap, earlyoom's
   config, the polkit rule)."
 
-- [ ] **Step 9: Commit** — every file this task changed, by name; `git status --short` then lists
+- [x] **Step 9: Commit** — every file this task changed, by name; `git status --short` then lists
   nothing of it:
 
 ```bash
@@ -2478,7 +2490,7 @@ the restart off: the files stay deployed, apply says so and exits 1, and the nex
 makes the restart once the models are idle. So the window is only between that second look and
 `systemctl restart`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_apply.py`:
 
@@ -2783,9 +2795,9 @@ dry run and a failing unit. Every test now runs in an environment it built itsel
 (`spark/tests/conftest.py`, pinned by `test_environment.py`), so no failing test can print a value
 from the shell's. Task 7's reviews asked for them.*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_apply.py` → FAIL (`ModuleNotFoundError`).
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_apply.py` → FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/apply.py`:
 
@@ -3101,9 +3113,9 @@ a minimal environment.*
 
 Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/apply.py spark/src/spark/cli.py spark/tests/test_apply.py && git commit -m "feat(spark): 🤖 add spark apply" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/apply.py spark/src/spark/cli.py spark/tests/test_apply.py && git commit -m "feat(spark): 🤖 add spark apply" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
@@ -3131,7 +3143,7 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
   can quote a token file's content, printing instead one line that names the folder those files
   are in (`HF_HOME`). The unit's `HF_TOKEN`, from `hf.env`, never reads those files.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_models.py`:
 
@@ -3187,10 +3199,10 @@ text with the token, a URL's query and a newline logged as one clean line; a
 broken token file kept out of the output; a registry that won't load named; and pyproject.toml's
 dependencies checked against the ones `uv.lock` was made for, which `--frozen` never compares.*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_models.py` → FAIL
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_models.py` → FAIL
   (`ModuleNotFoundError`: no `spark.models` yet).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/models.py`:
 
@@ -3243,7 +3255,7 @@ names its missing subcommand.*
 
 Register in `cli.py`: `from spark import models` / `models.register(subparsers)`.
 
-- [ ] **Step 4: The download library comes from the lock** — run
+- [x] **Step 4: The download library comes from the lock** — run
   `uv run --frozen --exact --project spark pytest spark/tests/test_models.py`. The two pull tests
   pass, and `test_the_download_library_comes_from_the_lock` fails with
   `ModuleNotFoundError: No module named 'huggingface_hub'`: the import is lazy, so nothing else
@@ -3256,9 +3268,9 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
   recorded in plan.md), and run
   `uv lock --project spark`. The same run passes.
 
-- [ ] **Step 5: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 5: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 6: Commit** — `git add spark/pyproject.toml spark/uv.lock spark/src/spark/models.py spark/src/spark/cli.py spark/tests/test_models.py && git commit -m "feat(spark): 🤖 add spark models pull" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 6: Commit** — `git add spark/pyproject.toml spark/uv.lock spark/src/spark/models.py spark/src/spark/cli.py spark/tests/test_models.py && git commit -m "feat(spark): 🤖 add spark models pull" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
@@ -3320,7 +3332,7 @@ Register in `cli.py`: `from spark import models` / `models.register(subparsers)`
     nothing that `stop` and `start` don't already allow.
   - `spark/tests/test_bootstrap.py`: `calls(tmp_path)`, which Task 10's tests use too.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_clients.py`:
 
@@ -3372,9 +3384,9 @@ Task 9's pre-dispatch scan: the backup keeps the original's mode; a `models.json
 or whose top level isn't an object, is refused naming the file, with no error chained that would
 carry its text; and `run_pi` finds the file under the HOME it runs with.*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/clients.py`:
 
@@ -3454,7 +3466,7 @@ text. `PI_MODELS` is found when `run_pi` runs, not at import, so a test can't wr
 
 Register in `cli.py`: `from spark import clients` / `clients.register(subparsers)`.
 
-- [ ] **Step 4: Pin pi in `stack/versions.yaml`**, then `uv run --frozen --project spark spark docs stack --write`:
+- [x] **Step 4: Pin pi in `stack/versions.yaml`**, then `uv run --frozen --project spark spark docs stack --write`:
 
 ```yaml
   pi:
@@ -3468,7 +3480,7 @@ Register in `cli.py`: `from spark import clients` / `clients.register(subparsers
     advisories: null
 ```
 
-- [ ] **Step 5: Write the failing tests for root's copies and the polkit rule**
+- [x] **Step 5: Write the failing tests for root's copies and the polkit rule**
 
 Add at the end of `spark/tests/test_bootstrap.py` (Phase 0's): stand-ins for `runuser`, GNU
 `install` and `systemctl` that log what they are asked and change only files under the test's
@@ -3981,7 +3993,7 @@ def test_the_rule_names_exactly_the_units_render_writes():
 scan): in CI, where `CI` is set, a missing Node fails the two tests instead of skipping them, so a
 green run means the rule's tests ran.*
 
-- [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
+- [x] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
   → FAIL: `install_units: command not found` (exit 127); `--install-units` is an unknown option
   (exit 2), so the mode test finds no "separate modes"; `make` has no `install-units` or
   `install-units-dry-run` target; bootstrap has no `ROOT_UNITS` or `ENABLED_UNITS`. Phase 0's
@@ -3995,7 +4007,7 @@ green run means the rule's tests ran.*
   `restart` out of the new rule's `verbs`, then emptied the list, and that test failed both times.
   Their green is CI's `tests` job, on the push after Task 10.
 
-- [ ] **Step 7: Implement root's copies**
+- [x] **Step 7: Implement root's copies**
 
 In `stack/host/bootstrap.sh`, the header's usage lines gain, after the `--hold-gpu` lines:
 
@@ -4229,7 +4241,7 @@ polkit.addRule(function (action, subject) {
 });
 ```
 
-- [ ] **Step 8: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
+- [x] **Step 8: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
   install-units install-units-dry-run pull status logs tunnel clients`); recipe lines start with a
   tab:
 
@@ -4283,7 +4295,7 @@ pads to 22 characters; `make logs` without `s=` says how to ask; and `make boots
 `make hold-gpu` end with `sudo -k`, as `make install-units` does. The three messages name
 `make brake-release` (commit d3481ab).*
 
-- [ ] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
+- [x] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
   `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`). Its
   commands go in blocks, each with the machine in bold in the paragraph right above it (CLAUDE.md,
   *Conventions*: Dan's rule, 2026-09-25): **On the Mac** for the second section's, and
@@ -4314,7 +4326,7 @@ pads to 22 characters; `make logs` without `s=` says how to ask; and `make boots
   the Spark listens on the LAN" became "none of the stack's ports listens beyond 127.0.0.1", and no
   block that runs on the Mac holds a `#` comment.*
 
-- [ ] **Step 10: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
+- [x] **Step 10: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
   `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
   Each bullet below is one section of the runbook. Its bold words are the section's heading, and
   the rest is what the section says. Write it in the runbook's own words, and copy the commands
@@ -4422,7 +4434,7 @@ pads to 22 characters; `make logs` without `s=` says how to ask; and `make boots
   `make apply` and `make pull`; a gated repo needs a token in `hf.env`; for the rest, fix the cause
   and `make pull` again.*
 
-- [ ] **Step 11: The How-to index and README**
+- [x] **Step 11: The How-to index and README**
   - `website/how-to/index.qmd`: the *In order* list gains `7. [Deploy the stack](deploy.md)` after
     secret files. The *Updates* line stays last, as ongoing, and pi stays in the listing only: it
     sets up a client, not the box.
@@ -4434,7 +4446,7 @@ pads to 22 characters; `make logs` without `s=` says how to ask; and `make boots
   - The install-units tests run coreutils' `timeout`, which Ubuntu has, and a Mac only from
     Homebrew: Task 18, on the Mac, records it among the MacBook's tools.
 
-- [ ] **Step 12: Tests pass; the site builds; commit**
+- [x] **Step 12: Tests pass; the site builds; commit**
 
 Run: `uv run --frozen --project spark pytest spark/tests && make lint`
 Expected: all pass, with `test_polkit.py`'s two Node tests skipped: CI's `tests` job runs them on
@@ -4592,7 +4604,7 @@ and exits 1. Stand-in paths that an environment variable overrides make it testa
 doesn't build it yet. Until the decision lands, Dan re-runs updates.md's GRUB check after
 `make upgrade-gpu` and before `sudo reboot`.
 
-- [ ] **Step 1: Write the failing tests for bootstrap**
+- [x] **Step 1: Write the failing tests for bootstrap**
 
 In `spark/tests/test_bootstrap.py`, the stand-ins behave more like the real tools.
 
@@ -5251,13 +5263,13 @@ comment says when its cut is right. New tests: a dry run never says the set is s
 `make hold-gpu`" with no start hint; and a dry run cut off by a signal says nothing of a hold. So
 Step 2's RED is 40 failed, and the passing count grew with Task 9's tests.*
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
   → FAIL: `--upgrade-gpu` is an unknown option (exit 2, so the mode test finds no "separate
   modes"), `upgrade_gpu` and `grub_boots` aren't defined, the dry run has no needrestart line,
   `stack/host/needrestart.conf` doesn't exist, and `make` has no `upgrade-gpu` target. Phase 0's and
   Task 9's bootstrap tests still pass.
 
-- [ ] **Step 3: Implement the override and the upgrade mode**
+- [x] **Step 3: Implement the override and the upgrade mode**
 
 `stack/host/needrestart.conf`:
 
@@ -5652,7 +5664,7 @@ a real run. `on_upgrade_exit` installs its signal trap before it clears the EXIT
 way out's hold was killed by a signal, it says to run `make hold-gpu` and gives no start hint. A dry
 run sets no way out and no traps.*
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
   then `make lint`. Then `make upgrade-gpu-dry-run`: it prints the steps, the GRUB check before the
   release and after the move among them. Its GRUB and plan lines always say where a real run would
   stop (`unless GRUB boots it`, `if the plan would leave …`). Its hold lines report what this box
@@ -5665,7 +5677,7 @@ run sets no way out and no traps.*
   to finish dpkg first. Read what it prints before an upgrade day relies on this command; this
   plan doesn't assume which of these this box prints.
 
-- [ ] **Step 5: Write the failing tests for `spark doctor`**
+- [x] **Step 5: Write the failing tests for `spark doctor`**
 
 `spark/tests/test_doctor.py`:
 
@@ -5972,13 +5984,13 @@ holds `brake --release` (what `make brake-release` runs) and the Makefile's Phas
 above it, that removing a registration breaks no other test, was already untrue: the status,
 apply, brake, models and clients tests all call `cli.main`.*
 
-- [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_doctor.py spark/tests/test_bootstrap.py`
+- [x] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_doctor.py spark/tests/test_bootstrap.py`
   → FAIL: collecting `test_doctor.py` stops the run, `ImportError: cannot import name 'doctor'
   from 'spark'`. Then the CLI test on its own,
   `uv run --frozen --project spark pytest spark/tests/test_cli.py` → FAIL at `["doctor"]`, with
   argparse's `invalid choice: 'doctor'`: every other command is registered already.
 
-- [ ] **Step 7: Implement `spark doctor`**
+- [x] **Step 7: Implement `spark doctor`**
 
 `spark/src/spark/doctor.py`:
 
@@ -6345,9 +6357,9 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor
 ```
 
-- [ ] **Step 8: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 8: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 9: The runbooks say what now exists.** Since 2026-09-25 each command block in the
+- [x] **Step 9: The runbooks say what now exists.** Since 2026-09-25 each command block in the
   runbooks has the machine in bold in the paragraph right above it (CLAUDE.md, *Conventions*: Dan's
   rule), and each block these edits add gets one too; here, all of them run **on the Spark**. A new
   paragraph goes above a block's labelled paragraph, never between that paragraph and its block.
@@ -6448,7 +6460,7 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
   override, Task 9's polkit rule, and the doctor lines that fail until it runs: spark's folders,
   needrestart and earlyoom.*
 
-- [ ] **Step 10: Check and commit**
+- [x] **Step 10: Check and commit**
 
 Run: `make test lint`
 Expected: all pass. `make docs`, the site render with no warnings, is Task 18's, on the Mac, until
@@ -6469,7 +6481,7 @@ The Mac needs Tasks 1–10's code before Task 15 (pi's provider and `make tunnel
 the two of Task 9's polkit tests that skip on the Spark without Node. The Spark session keeps the
 branch: only the push happens here.
 
-- [ ] The Spark session runs leak-guards.md's
+- [x] The Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
   then **Dan OKs the push** (`git push`). `gh run watch`: CI is green. The run's page, or
   `gh run view <id> --log`, shows its `tests` job ending `… passed, 2 skipped`: those two are the
