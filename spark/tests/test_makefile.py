@@ -2,6 +2,7 @@
 exits with when one fails. (make install-units' tests are in test_bootstrap.py, with bootstrap's.)"""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -49,3 +50,26 @@ def test_make_pull_is_one_recipe_line_that_keeps_the_pulls_status():
     # On two lines, make stopped at the failed start, before the journal.
     assert make("-n", "pull").stdout.splitlines() == [
         "systemctl start local-ai-pull.service; s=$?; journalctl -u local-ai-pull.service -n 40 --no-pager; exit $s"]
+
+
+def test_help_starts_every_description_in_one_column():
+    # install-units-dry-run is 21 characters: a 20-character column pushed its description one place right.
+    lines = make("help").stdout.splitlines()
+    assert len({re.match(r"  \S+ +", line).end() for line in lines}) == 1, lines
+
+
+def test_make_logs_without_a_service_says_how_to_ask(tmp_path):
+    # Without s= it ran `journalctl -u local-ai-.service`, which names no unit: it showed nothing, and said nothing.
+    env = fakes(tmp_path, journalctl="")
+    result = make("logs", env=env)
+    assert result.returncode == 2 and calls(tmp_path) == []
+    assert "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng" in result.stderr
+
+
+@pytest.mark.parametrize(("service", "asked"), [
+    ("llama-swap", "journalctl -u local-ai-llama-swap.service -n 100 --no-pager"),
+    ("open-webui", "journalctl CONTAINER_NAME=local-ai-open-webui-1 -n 100 --no-pager"),
+])
+def test_make_logs_reads_a_units_journal_or_a_containers(tmp_path, service, asked):
+    env = fakes(tmp_path, journalctl="")
+    assert make("logs", f"s={service}", env=env).returncode == 0 and calls(tmp_path) == [asked]

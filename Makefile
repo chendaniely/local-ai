@@ -7,7 +7,7 @@ SPARK   := $(UV) spark
 .PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run apply apply-dry-run apply-now install-units install-units-dry-run pull status brake-release logs tunnel clients
 
 help: ## List the targets
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
 test: ## Run the unit and render tests
 	uv run --frozen --project spark pytest spark/tests
@@ -64,7 +64,7 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
 	$(SPARK) brake --release
 
 logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|searxng
-	@case "$(s)" in open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
+	@case "$(s)" in "") echo "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng" >&2; exit 2 ;; open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
 
 tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 (Ctrl-C closes it)
 	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
