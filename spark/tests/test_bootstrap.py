@@ -92,14 +92,27 @@ GPU_SET = {
 }
 
 FAKE_DPKG_QUERY = """#!/usr/bin/env bash
-# Stands in for dpkg-query -W -f=... PATTERN...: prints the fixture's packages that match each
-# pattern, and exits 1 if any pattern matched nothing, as dpkg-query does.
+# Stands in for dpkg-query -W -f=FORMAT PATTERN...: prints each fixture package that matches a
+# pattern, in FORMAT: ${db:Status-Abbrev} is the fixture's two status letters and a space,
+# ${Package} the name and ${Version} the version. It exits 1 if any pattern matched nothing, as
+# dpkg-query does.
 status=0
+format='${db:Status-Abbrev}\\t${Package}\\n'
+abbrev='${db:Status-Abbrev}' package='${Package}' version='${Version}'
+for arg in "$@"; do
+  case "$arg" in -f=*) format="${arg#-f=}" ;; esac
+done
 for pat in "$@"; do
   case "$pat" in -*) continue ;; esac
   found=0
-  while IFS=$'\\t' read -r st pkg; do
-    if [[ $pkg == $pat ]]; then printf '%s \\t%s\\n' "$st" "$pkg"; found=1; fi
+  while IFS=$'\\t' read -r st pkg ver; do
+    if [[ $pkg == $pat ]]; then
+      line=${format//"$abbrev"/"$st "}
+      line=${line//"$package"/$pkg}
+      line=${line//"$version"/$ver}
+      printf '%b' "$line"
+      found=1
+    fi
   done < "$DPKG_FIXTURE"
   (( found )) || status=1
 done
@@ -108,13 +121,42 @@ exit "$status"
 
 FAKE_APT_MARK = """#!/usr/bin/env bash
 # Stands in for apt-mark. `hold PKG...` records each package in $APT_MARK_HELD, except any named in
-# $APT_MARK_IGNORES (a hold that silently didn't take); `showhold` lists what was recorded.
+# $APT_MARK_IGNORES (a hold that silently didn't take), and turns its first status letter in
+# $DPKG_FIXTURE to h, as a real hold does; `unhold` turns it back to i. `showhold` lists what was
+# recorded. `hold` and `unhold` are also logged in $CALLS, when a test sets it. $APT_MARK_CUT names a
+# file holding how many holds to cut off, as Ctrl-C or TERM would: the shell that ran apt-mark and
+# the script above it get TERM, and nothing is held.
+mark() {  # mark LETTER PKG...: set each package's first status letter in the fixture
+  local letter="$1" st pkg ver
+  shift
+  while IFS=$'\\t' read -r st pkg ver; do
+    if [[ " $* " == *" $pkg "* ]]; then st="$letter${st:1}"; fi
+    printf '%s\\t%s\\t%s\\n' "$st" "$pkg" "$ver"
+  done < "$DPKG_FIXTURE" > "$DPKG_FIXTURE.new"
+  mv "$DPKG_FIXTURE.new" "$DPKG_FIXTURE"
+}
 case "$1" in
   hold)
+    [[ -z "${CALLS:-}" ]] || echo "apt-mark $*" >> "$CALLS"
+    if [[ -s "${APT_MARK_CUT:-}" ]] && (( $(cat "$APT_MARK_CUT") > 0 )); then
+      echo $(( $(cat "$APT_MARK_CUT") - 1 )) > "$APT_MARK_CUT"
+      script="$(ps -o ppid= -p "$PPID" | tr -d ' ')"
+      kill -TERM "$PPID" "$script"
+      exit 143
+    fi
     shift
+    took=()
     for pkg in "$@"; do
-      [[ " ${APT_MARK_IGNORES:-} " == *" $pkg "* ]] || printf '%s\\n' "$pkg" >> "$APT_MARK_HELD"
+      [[ " ${APT_MARK_IGNORES:-} " == *" $pkg "* ]] && continue
+      printf '%s\\n' "$pkg" >> "$APT_MARK_HELD"
+      took+=("$pkg")
     done
+    mark h "${took[@]}"
+    ;;
+  unhold)
+    echo "apt-mark $*" >> "$CALLS"
+    shift
+    mark i "$@"
     ;;
   showhold) if [[ -f "$APT_MARK_HELD" ]]; then sort -u "$APT_MARK_HELD"; fi ;;
   *) echo "fake apt-mark: unexpected: $*" >&2; exit 1 ;;
@@ -122,9 +164,14 @@ esac
 """
 
 
+def dpkg_lines(installed: dict[str, str], versions: dict[str, str] | None = None) -> str:
+    """The fixture as the stand-ins read it: status, package and version (1.0 unless given)."""
+    return "".join(f"{status}\t{pkg}\t{(versions or {}).get(pkg, '1.0')}\n" for pkg, status in installed.items())
+
+
 def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
     """An environment whose dpkg-query reports `installed` (package → status) and whose apt-mark
-    only writes to a file, so even the real (not dry-run) hold changes nothing on this machine. It is
+    only writes to files, so even the real (not dry-run) hold changes nothing on this machine. It is
     built, not copied: nothing of the test's own environment but PATH, which finds the fakes and the
     tools the script runs, and a HOME of its own (Task 7's fix round 2: a launch that fails prints
     the environment it was given)."""
@@ -134,7 +181,7 @@ def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
         (bindir / name).write_text(text)
         (bindir / name).chmod(0o755)
     fixture = tmp_path / "installed.tsv"
-    fixture.write_text("".join(f"{status}\t{pkg}\n" for pkg, status in installed.items()))
+    fixture.write_text(dpkg_lines(installed))
     home = tmp_path / "home"
     home.mkdir()
     return {
@@ -313,6 +360,563 @@ def test_a_default_dry_run_never_reads_the_hosts_own_packages(tmp_path, monkeypa
     for name in ("PATH", "DPKG_FIXTURE"):
         monkeypatch.setenv(name, host[name])
     assert any("a real run stops here: nothing installed matches" in line for line in dry_run())
+
+
+# Upgrade day. The box before it: the set held (hi), and one package held for another reason.
+HELD_BEFORE = {**{pkg: "hi" if pkg in GPU_SET else status for pkg, status in INSTALLED.items()},
+               "docker-ce": "hi"}
+OLD, NEW = "7.0.0-1019-nvidia", "7.0.0-1020-nvidia"
+# The set released (ii), as apt-mark unhold leaves it.
+RELEASED = {pkg: "ii" if pkg in GPU_SET else status for pkg, status in HELD_BEFORE.items()}
+# After apt moved the set: released, the new kernel's modules in, the old kernel's removed.
+AFTER = {**RELEASED, f"linux-modules-nvidia-580-open-{NEW}": "ii", f"linux-modules-nvidia-580-open-{OLD}": "rc"}
+NEW_SET = GPU_SET - {f"linux-modules-nvidia-580-open-{OLD}"} | {f"linux-modules-nvidia-580-open-{NEW}"}
+
+# `apt-get -s dist-upgrade` for a set that moves cleanly: a new kernel with its modules.
+GOOD_PLAN = f"""NOTE: This is only a simulation!
+Inst linux-image-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-modules-nvidia-580-open-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-image-nvidia-hwe-24.04 [7.0.0-1019.19] (7.0.0-1020.20 example [arm64])
+Inst linux-modules-nvidia-580-open-nvidia-hwe-24.04 [7.0.0-1019.19] (7.0.0-1020.20 example [arm64])
+Remv linux-modules-nvidia-580-open-{OLD} [7.0.0-1019.19]
+Conf linux-image-{NEW} (7.0.0-1020.20 example [arm64])
+"""
+# The driver moves before its modules for the new kernel exist: apt drops the modules metapackage.
+PLAN_WITHOUT_THE_METAPACKAGE = f"""Inst linux-image-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-image-nvidia-hwe-24.04 [7.0.0-1019.19] (7.0.0-1020.20 example [arm64])
+Inst nvidia-driver-580-open [580.178-0ubuntu1] (580.200-0ubuntu1 example [arm64])
+Remv linux-modules-nvidia-580-open-nvidia-hwe-24.04 [7.0.0-1019.19]
+Remv linux-modules-nvidia-580-open-{OLD} [7.0.0-1019.19]
+"""
+# A new kernel whose modules aren't published yet.
+PLAN_WITHOUT_MODULES = f"""Inst linux-image-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-image-nvidia-hwe-24.04 [7.0.0-1019.19] (7.0.0-1020.20 example [arm64])
+"""
+# A new driver branch: the 580 metapackage and driver go, the 590 ones come.
+PLAN_NEW_DRIVER_BRANCH = f"""Inst linux-image-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-modules-nvidia-590-open-{NEW} (7.0.0-1020.20 example [arm64])
+Inst linux-modules-nvidia-590-open-nvidia-hwe-24.04 (7.0.0-1020.20 example [arm64])
+Inst nvidia-driver-590-open (590.40-0ubuntu1 example [arm64])
+Remv linux-modules-nvidia-580-open-nvidia-hwe-24.04 [7.0.0-1019.19]
+Remv nvidia-driver-580-open [580.178-0ubuntu1]
+"""
+
+FAKE_APT_GET = """#!/usr/bin/env bash
+# Stands in for apt-get: `-s dist-upgrade` prints $APT_PLAN. The real `dist-upgrade` answers as
+# $APT_ANSWER says: yes, and it moves the set; no, and it aborts, changing nothing; partial, and it
+# fails after moving it. A move makes the installed packages $DPKG_AFTER and the installed kernels
+# $KERNELS_AFTER, and grub.cfg $GRUB_AFTER, since installing a kernel runs update-grub. Every call
+# is logged.
+moved() { cp "$DPKG_AFTER" "$DPKG_FIXTURE"; cp "$KERNELS_AFTER" "$KERNELS"; cp "$GRUB_AFTER" "$BOOTSTRAP_GRUB_CFG"; }
+echo "apt-get $*" >> "$CALLS"
+case "$*" in
+  update) ;;
+  "-s dist-upgrade") cat "$APT_PLAN" ;;
+  dist-upgrade)
+    case "$APT_ANSWER" in
+      no) echo "Abort."; exit 1 ;;
+      partial) moved; echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" >&2; exit 100 ;;
+      *) moved ;;
+    esac
+    ;;
+  *) echo "fake apt-get: unexpected: $*" >&2; exit 1 ;;
+esac
+"""
+
+FAKE_DPKG = """#!/usr/bin/env bash
+echo "dpkg $*" >> "$CALLS"
+"""
+
+FAKE_SYSTEMCTL = """#!/usr/bin/env bash
+# Stands in for systemctl: the units in $ACTIVE_UNITS are active, and `stop` is logged.
+case "$1" in
+  is-active) for unit; do :; done; [[ " $ACTIVE_UNITS " == *" $unit "* ]] ;;
+  stop) echo "systemctl $*" >> "$CALLS" ;;
+  *) echo "fake systemctl: unexpected: $*" >&2; exit 1 ;;
+esac
+"""
+
+FAKE_LINUX_VERSION = """#!/usr/bin/env bash
+# Stands in for linux-version: `list` prints the kernels in the file $KERNELS, and `sort --reverse`
+# puts the newest first (the test kernels sort by name).
+case "$1" in
+  list) cat "$KERNELS" ;;
+  sort) sort -r ;;
+esac
+"""
+
+FAKE_MODINFO = """#!/usr/bin/env bash
+# Stands in for `modinfo -k KERNEL -F version nvidia`: only the kernels in $MODULE_KERNELS have one.
+if [[ " $MODULE_KERNELS " == *" $2 "* ]]; then echo 580.200; else echo "modinfo: ERROR: Module nvidia not found." >&2; exit 1; fi
+"""
+
+FAKE_GRUB_EDITENV = """#!/usr/bin/env bash
+# Stands in for `grub-editenv FILE list` as root runs it: prints FILE's name=value lines. Like the
+# real one, it creates a missing FILE as an empty block, and fails on one that isn't a GRUB
+# environment block.
+[[ "$2" == list ]] || { echo "fake grub-editenv: unexpected: $*" >&2; exit 1; }
+[[ -e "$1" ]] || printf '# GRUB Environment Block\\n' > "$1"
+head -1 "$1" | grep -qx '# GRUB Environment Block' || { echo "grub-editenv: error: invalid environment block." >&2; exit 1; }
+grep -v '^#' "$1" || true  # an empty block lists nothing, and that is no error
+"""
+
+# The root filesystem's UUID is in grub.cfg's linux lines and entry ids, and can be in grubenv. This
+# one is made at run time, so no UUID, not even a made-up one, is written in the repo. Nothing the
+# GRUB check prints may carry it.
+ROOT_FS_UUID = "-".join(os.urandom(n).hex() for n in (4, 2, 2, 2, 6))
+PREVIOUS = "7.0.0-1018-nvidia"  # a kernel older than OLD
+
+# grub.cfg as Ubuntu's grub-mkconfig (GRUB 2.12) writes it, cut down to what the check reads and what
+# carries the UUID: 00_header's default= lines, then 10_linux's entry 0 and its submenu.
+GRUB_CFG = """### BEGIN /etc/grub.d/00_header ###
+if [ -s $prefix/grubenv ]; then
+  set have_grubenv=true
+  load_env
+fi
+if [ "${initrdfail}" = 1 ]; then
+   set next_entry="${prev_entry}"
+   set prev_entry=
+   save_env prev_entry
+fi
+if [ "${next_entry}" ] ; then
+   set default="${next_entry}"
+   set next_entry=
+   save_env next_entry
+   set boot_once=true
+else
+   set default=@DEFAULT@
+fi
+@EXTRA@
+### BEGIN /etc/grub.d/10_linux ###
+menuentry 'Ubuntu' --class ubuntu $menuentry_id_option 'gnulinux-simple-@UUID@' {
+	search --no-floppy --fs-uuid --set=root @UUID@
+	linux	/boot/vmlinuz-@ENTRY0@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+	initrd	/boot/initrd.img-@ENTRY0@
+}
+submenu 'Advanced options for Ubuntu' $menuentry_id_option 'gnulinux-advanced-@UUID@' {
+@SUBMENU@}
+"""
+SUBMENU_ENTRY = """	menuentry 'Ubuntu, with Linux @KERNEL@' --class ubuntu $menuentry_id_option 'gnulinux-@KERNEL@-advanced-@UUID@' {
+		search --no-floppy --fs-uuid --set=root @UUID@
+		linux	/boot/vmlinuz-@KERNEL@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+		initrd	/boot/initrd.img-@KERNEL@
+	}
+"""
+# What 00_header adds when the default is a bare title nested in the submenu: a third default= line.
+TITLE_REWRITE = ('if [ "${default}" = "Ubuntu, with Linux @KERNEL@" ]; then '
+                 'default="Advanced options for Ubuntu>Ubuntu, with Linux @KERNEL@"; fi')
+
+
+def grub_cfg(*kernels: str, default: str = '"0"', extra: str = "", bare: bool = False) -> str:
+    """grub.cfg for `kernels` in menu order, entry 0 first, GRUB starting `default`. `extra` is
+    another line after the default= lines; `bare` drops `set` from the else branch's default=."""
+    submenu = "".join(SUBMENU_ENTRY.replace("@KERNEL@", kernel) for kernel in kernels)
+    text = GRUB_CFG.replace("@SUBMENU@", submenu).replace("@ENTRY0@", kernels[0])
+    text = text.replace("@DEFAULT@", default).replace("@EXTRA@", extra.replace("@KERNEL@", kernels[-1]))
+    if bare:
+        text = text.replace("   set default=" + default, "   default=" + default)
+    return text.replace("@UUID@", ROOT_FS_UUID)
+
+
+def grubenv(**entries: str) -> str:
+    """A GRUB environment block as grub-editenv writes it: its header, name=value lines, then # to
+    1024 bytes."""
+    text = "# GRUB Environment Block\n" + "".join(f"{name}={value}\n" for name, value in entries.items())
+    return text + "#" * (1024 - len(text))
+
+
+def entry_id(kernel: str) -> str:
+    """The submenu entry's id for `kernel`, as a default or a grubenv entry names it: it carries the UUID."""
+    return f"gnulinux-advanced-{ROOT_FS_UUID}>gnulinux-{kernel}-advanced-{ROOT_FS_UUID}"
+
+
+def upgrade_env(tmp_path: Path, plan: str, *, answer: str = "yes", after: dict[str, str] = AFTER,
+                after_versions: dict[str, str] | None = None, module_kernels: str = f"{OLD} {NEW}",
+                cut_holds: int = 0, kernels_after: tuple[str, ...] = (OLD, NEW),
+                grub_before: str | None = None, grub_after: str | None = None,
+                env_block: str | None = None) -> dict[str, str]:
+    """gpu_env, plus stand-ins for everything upgrade day runs. Nothing touches this machine: the
+    fakes only log to tmp_path/calls. Before the move OLD is the newest kernel and GRUB boots it;
+    the move installs `kernels_after`, and update-grub leaves `grub_after`, NEW first unless given."""
+    env = gpu_env(tmp_path, HELD_BEFORE)
+    for name, text in (("apt-get", FAKE_APT_GET), ("dpkg", FAKE_DPKG), ("systemctl", FAKE_SYSTEMCTL),
+                       ("linux-version", FAKE_LINUX_VERSION), ("modinfo", FAKE_MODINFO),
+                       ("grub-editenv", FAKE_GRUB_EDITENV)):
+        (tmp_path / "bin" / name).write_text(text)
+        (tmp_path / "bin" / name).chmod(0o755)
+    (tmp_path / "plan").write_text(plan)
+    (tmp_path / "after.tsv").write_text(dpkg_lines(after, after_versions))
+    (tmp_path / "cut").write_text(str(cut_holds))
+    (tmp_path / "kernels").write_text(f"{PREVIOUS}\n{OLD}\n")
+    (tmp_path / "kernels.after").write_text("".join(f"{kernel}\n" for kernel in (PREVIOUS, *kernels_after)))
+    (tmp_path / "grub.cfg").write_text(grub_before or grub_cfg(OLD, PREVIOUS))
+    (tmp_path / "grub.cfg.after").write_text(grub_after or grub_cfg(NEW, OLD, PREVIOUS))
+    (tmp_path / "grubenv").write_text(env_block or grubenv(saved_entry="", next_entry=""))
+    return {**env, "CALLS": str(tmp_path / "calls"), "APT_PLAN": str(tmp_path / "plan"),
+            "DPKG_AFTER": str(tmp_path / "after.tsv"), "APT_ANSWER": answer,
+            "ACTIVE_UNITS": "local-ai-llama-swap.service local-ai-brake.service",
+            "KERNELS": str(tmp_path / "kernels"), "KERNELS_AFTER": str(tmp_path / "kernels.after"),
+            "MODULE_KERNELS": module_kernels, "APT_MARK_CUT": str(tmp_path / "cut"),
+            "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "GRUB_AFTER": str(tmp_path / "grub.cfg.after"),
+            "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")}
+
+
+def real_upgrade(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Upgrade day for real, not its dry run, against upgrade_env's fakes (see real_hold). Whatever
+    happens, nothing it prints carries the root filesystem's UUID."""
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && upgrade_gpu', "bash", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
+
+
+def sorted_set(packages: set[str]) -> str:
+    return " ".join(sorted(packages))
+
+
+START_THE_STACK = "systemctl start local-ai-llama-swap.service local-ai-brake.service"
+RECOVERY = "'If it goes wrong' in website/how-to/updates.md"
+
+
+def test_upgrade_day_moves_the_set_and_holds_it_again(tmp_path):
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN))
+    assert result.returncode == 0, result.stderr
+    assert calls(tmp_path) == [
+        f"apt-mark unhold {sorted_set(GPU_SET)}",  # the set, not docker-ce, held for its own reasons
+        "dpkg --configure -a",
+        "apt-get update",
+        "apt-get -s dist-upgrade",
+        "systemctl stop local-ai-llama-swap.service",
+        "systemctl stop local-ai-brake.service",
+        "apt-get dist-upgrade",
+        f"apt-mark hold {sorted_set(NEW_SET)}",
+    ]
+    assert held(tmp_path) == NEW_SET
+    assert f"==> GRUB boots {OLD}, the newest kernel" in result.stdout  # before anything moved
+    assert f"==> ready: {NEW}, the newest kernel, has NVIDIA driver 580.200, and GRUB boots it" in result.stdout
+    assert "sudo reboot, then make doctor" in result.stdout
+
+
+@pytest.mark.parametrize("plan, reason", [
+    (PLAN_WITHOUT_THE_METAPACKAGE, "it removes linux-modules-nvidia-580-open-nvidia-hwe-24.04"),
+    (PLAN_WITHOUT_MODULES, f"it installs the kernel {NEW} with no NVIDIA modules for it"),
+], ids=["removes-the-modules-metapackage", "kernel-without-modules"])
+def test_a_plan_that_leaves_a_kernel_without_its_module_is_refused_before_anything_moves(tmp_path, plan, reason):
+    result = real_upgrade(upgrade_env(tmp_path, plan))
+    assert result.returncode == 1
+    assert reason in result.stderr and "nothing was installed or removed" in result.stderr
+    assert "try again next upgrade day" in result.stderr
+    assert "apt-get dist-upgrade" not in calls(tmp_path)  # only the simulation ran
+    assert not any(line.startswith("systemctl stop") for line in calls(tmp_path))
+    assert calls(tmp_path)[-1] == f"apt-mark hold {sorted_set(GPU_SET)}"  # held again on the way out
+    assert held(tmp_path) == GPU_SET
+
+
+def test_a_new_driver_branch_is_refused_as_a_move_made_by_hand(tmp_path):
+    result = real_upgrade(upgrade_env(tmp_path, PLAN_NEW_DRIVER_BRANCH))
+    assert result.returncode == 1
+    assert ("the driver branch changes: it removes linux-modules-nvidia-580-open-nvidia-hwe-24.04 "
+            "and installs linux-modules-nvidia-590-open-nvidia-hwe-24.04") in result.stderr
+    assert "planned and made by hand" in result.stderr
+    assert "try again next upgrade day" not in result.stderr
+    assert "apt-get dist-upgrade" not in calls(tmp_path)
+    assert held(tmp_path) == GPU_SET
+
+
+def test_answering_no_holds_the_set_again_and_says_how_to_start_the_stack(tmp_path):
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="no"))
+    assert result.returncode == 1
+    assert calls(tmp_path)[-2:] == ["apt-get dist-upgrade", f"apt-mark hold {sorted_set(GPU_SET)}"]
+    assert held(tmp_path) == GPU_SET
+    # The hold letter went from h to i and back, and nothing else changed: nothing moved, so
+    # starting the stack again is safe.
+    assert START_THE_STACK in result.stderr and RECOVERY not in result.stderr
+
+
+def test_a_no_whose_hold_stops_still_says_how_to_start_the_stack(tmp_path):
+    # Dan answers no, and the way out's hold then stops on a hold that didn't take. Nothing moved,
+    # so the verdict is still the start hint, with no warning against a reboot; the hold's own
+    # message says what is left to do.
+    env = {**upgrade_env(tmp_path, GOOD_PLAN, answer="no"), "APT_MARK_IGNORES": "linux-image-nvidia-hwe-24.04"}
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "did not hold" in result.stderr and "then run make hold-gpu" in result.stderr
+    assert held(tmp_path) == GPU_SET - {"linux-image-nvidia-hwe-24.04"}
+    assert START_THE_STACK in result.stderr
+    assert "reboot" not in result.stderr and RECOVERY not in result.stderr
+
+
+def test_a_kernel_without_a_module_stops_the_reboot(tmp_path):
+    # apt reported success, but the newest kernel, which GRUB boots next by default, has no NVIDIA
+    # module.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, module_kernels=OLD))
+    assert result.returncode == 1
+    assert f"DON'T REBOOT — {NEW}" in result.stderr
+    assert held(tmp_path) == NEW_SET  # held before the check
+    # The set moved: no hint to reboot or start the stack, only the way to the recovery.
+    assert "sudo reboot" not in result.stdout and "systemctl start" not in result.stderr
+    assert RECOVERY in result.stderr
+
+
+def test_a_move_that_fails_partway_points_at_the_recovery(tmp_path):
+    # apt stops partway: the driver is unpacked but not configured, so the hold can't hold it.
+    half_moved = {**AFTER, "nvidia-driver-580-open": "iU"}
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="partial", after=half_moved))
+    assert result.returncode == 1
+    assert "nvidia-driver-580-open (iU)" in result.stderr and "run make hold-gpu" in result.stderr
+    assert "systemctl start" not in result.stderr and RECOVERY in result.stderr
+
+
+def test_a_move_that_only_changes_versions_counts_as_moved(tmp_path):
+    # The same packages in the same states, the driver at a new version, and then apt fails: the set
+    # moved, so there is no hint to start the stack or reboot.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="partial", after=RELEASED,
+                                      after_versions={"nvidia-driver-580-open": "580.200"}))
+    assert result.returncode == 100  # apt's own status: the hold on the way out worked
+    assert held(tmp_path) == GPU_SET
+    assert "systemctl start" not in result.stderr and RECOVERY in result.stderr
+
+
+def test_a_new_kernel_without_its_module_gets_no_start_hint(tmp_path):
+    # apt installs a new kernel, which isn't in the set, and fails before its NVIDIA modules come:
+    # the set looks as it was, but the next boot would start a kernel without a module.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="partial", after=RELEASED, module_kernels=OLD))
+    assert result.returncode == 100
+    assert held(tmp_path) == GPU_SET
+    assert "the newest kernel has no NVIDIA module" in result.stderr and RECOVERY in result.stderr
+    assert "systemctl start" not in result.stderr
+
+
+def test_a_cut_off_hold_is_tried_again_on_the_way_out(tmp_path):
+    # Ctrl-C or TERM while the set is being held again must not leave it released.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, cut_holds=1))
+    assert result.returncode == 143
+    assert "holding the GPU set again" in result.stderr
+    assert [line for line in calls(tmp_path) if line.startswith("apt-mark hold")] == [
+        f"apt-mark hold {sorted_set(NEW_SET)}"] * 2
+    assert held(tmp_path) == NEW_SET
+
+
+def test_a_hold_cut_off_twice_says_what_is_left_to_do(tmp_path):
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, cut_holds=2))
+    assert result.returncode == 130
+    assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
+    assert "don't reboot until step 5's checks pass" in result.stderr  # apt had run
+    assert held(tmp_path) == set()
+
+
+def test_a_signal_during_the_way_outs_own_hold_leaves_the_set_released(tmp_path):
+    # After a "no", the way out's hold is the first one, and it isn't tried again: one signal there
+    # leaves the set released, and says what to do.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, answer="no", cut_holds=1))
+    assert result.returncode == 130
+    assert "stopped while holding the GPU set again — run make hold-gpu" in result.stderr
+    assert held(tmp_path) == set()
+
+
+def test_a_grub_that_wont_boot_the_newest_kernel_refuses_before_anything_is_released(tmp_path):
+    # Someone ran grub-reboot, so the next boot starts another entry. Found before the release, it
+    # leaves the set held and nothing moved, as updates.md step 2 says.
+    env = upgrade_env(tmp_path, GOOD_PLAN, env_block=grubenv(saved_entry="", next_entry=entry_id(PREVIOUS)))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "not moving the GPU set: grubenv's next_entry picks another entry for the next boot" in result.stderr
+    assert "Nothing was released or moved" in result.stderr
+    assert calls(tmp_path) == []  # no release, no dpkg, no apt
+    assert (tmp_path / "installed.tsv").read_text() == dpkg_lines(HELD_BEFORE)  # still held
+
+
+def test_a_grub_that_wont_boot_the_new_kernel_after_the_move_says_dont_reboot(tmp_path):
+    # update-grub put the old kernel first after the move (GRUB_FLAVOUR_ORDER can): the next boot
+    # would start OLD, whatever the new kernel has.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, grub_after=grub_cfg(OLD, NEW, PREVIOUS)))
+    assert result.returncode == 1
+    assert f"DON'T REBOOT — GRUB boots {OLD}, not {NEW}" in result.stderr and RECOVERY in result.stderr
+    assert held(tmp_path) == NEW_SET  # held before the checks
+    assert "sudo reboot" not in result.stdout and "systemctl start" not in result.stderr
+
+
+def test_a_grub_refusal_after_a_move_that_moved_nothing_still_starts_nothing(tmp_path):
+    # apt moved nothing in the set, but GRUB's default changed meanwhile: no hint to start the stack
+    # or reboot, only the way to the recovery.
+    env = upgrade_env(tmp_path, GOOD_PLAN, after=RELEASED, kernels_after=(OLD,),
+                      grub_after=grub_cfg(OLD, PREVIOUS, default='"1"'))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "DON'T REBOOT — grub.cfg's default isn't entry 0" in result.stderr
+    assert "GRUB may not boot the newest kernel. Don't reboot or start the stack yet" in result.stderr
+    assert "systemctl start" not in result.stderr
+
+
+def grub_check(tmp_path: Path, kernel: str, cfg: str | None, env_block: str | None) -> subprocess.CompletedProcess[str]:
+    """grub_boots KERNEL against a stand-in grub.cfg and grubenv; None leaves that file out. Nothing
+    it prints may carry the root filesystem's UUID."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/grub-editenv").write_text(FAKE_GRUB_EDITENV)
+    (tmp_path / "bin/grub-editenv").chmod(0o755)
+    for name, text in (("grub.cfg", cfg), ("grubenv", env_block)):
+        if text is not None:
+            (tmp_path / name).write_text(text)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && grub_boots "$2"', "bash", str(SCRIPT), kernel],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+             "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")},
+    )
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
+
+
+@pytest.mark.parametrize("default, env_block", [
+    ('"0"', grubenv(saved_entry="", next_entry="")),
+    ('"0"', grubenv(saved_entry=entry_id(OLD))),  # "0" never reads saved_entry
+    ('"${saved_entry}"', grubenv()),
+    ('"${saved_entry}"', grubenv(saved_entry="0")),
+    ('"${saved_entry}"', grubenv(saved_entry="", next_entry="", prev_entry="")),  # as grub-reboot leaves them
+], ids=["0", "0-with-saved-entry", "saved-none", "saved-0", "saved-empty"])
+def test_the_stock_grub_boots_the_newest_kernel(tmp_path, default, env_block):
+    result = grub_check(tmp_path, NEW, grub_cfg(NEW, OLD, default=default), env_block)
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("cfg, env_block, reason", [
+    (grub_cfg(OLD, NEW), grubenv(), f"GRUB boots {OLD}, not {NEW}"),
+    (grub_cfg(NEW, OLD, extra=TITLE_REWRITE), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, bare=True), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, default=f'"{entry_id(OLD)}"'), grubenv(), "grub.cfg's default isn't entry 0"),
+    (grub_cfg(NEW, OLD), grubenv(next_entry=entry_id(OLD)), "grubenv's next_entry picks another entry"),
+    (grub_cfg(NEW, OLD), grubenv(prev_entry=entry_id(OLD)), "grubenv's prev_entry picks another entry"),
+    (grub_cfg(NEW, OLD, default='"${saved_entry}"'), grubenv(saved_entry=entry_id(OLD)),
+     "grubenv's saved_entry picks another entry than 0"),
+    (None, grubenv(), "can't read"),
+    (grub_cfg(NEW, OLD), None, "can't read GRUB's environment block"),
+    (grub_cfg(NEW, OLD), "saved_entry=0\n", "can't read GRUB's environment block"),  # grub-editenv refuses it
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", "vmlinuz"), grubenv(), "entry 0 starts no vmlinuz-<version> kernel"),
+    # Only a name that is a kernel version is ever printed, whatever grub.cfg holds.
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", f"vmlinuz-{ROOT_FS_UUID}"), grubenv(),
+     "entry 0 starts no vmlinuz-<version> kernel"),
+], ids=["entry-0-an-older-kernel", "a-third-default-line", "a-bare-default", "an-id-as-the-default",
+        "next-entry", "prev-entry", "saved-entry-not-0", "no-grub-cfg", "no-grubenv", "grubenv-read-fails",
+        "entry-0-unnamed", "entry-0-not-a-version"])
+def test_anything_else_says_why_and_never_what_it_read(tmp_path, cfg, env_block, reason):
+    result = grub_check(tmp_path, NEW, cfg, env_block)
+    assert result.returncode == 1 and reason in result.stdout, result
+    # A check only reads: root's grub-editenv would create a missing grubenv, and pass on it.
+    assert (tmp_path / "grubenv").exists() == (env_block is not None)
+
+
+def test_no_newest_kernel_is_not_a_kernel_grub_boots(tmp_path):
+    result = grub_check(tmp_path, "", grub_cfg(NEW, OLD), grubenv())
+    assert result.returncode == 1 and "linux-version found no kernel" in result.stdout
+
+
+def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
+    result = script("--upgrade-gpu", "--dry-run", env=upgrade_env(tmp_path, GOOD_PLAN))
+    assert result.returncode == 0, result.stderr
+    commands = [line.split("   (")[0] for line in result.stdout.splitlines() if line.startswith("+ ")]
+    assert commands == [
+        "+ grub_boots <the newest kernel>",
+        f"+ apt-mark unhold {sorted_set(GPU_SET)}",
+        "+ dpkg --configure -a",
+        "+ apt-get update",
+        "+ apt-get -s dist-upgrade",
+        "+ systemctl stop local-ai-llama-swap.service",
+        "+ systemctl stop local-ai-brake.service",
+        "+ apt-get dist-upgrade",
+        f"+ apt-mark hold {sorted_set(GPU_SET)}",
+        "+ modinfo -k <the newest kernel> -F version nvidia",
+        "+ grub_boots <the newest kernel>",
+    ]
+    assert calls(tmp_path) == []  # no stand-in was asked to change anything
+
+
+def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
+    # A dropped SSH session in the middle of apt is the likeliest way to half-move the set.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\nexit 1\n')
+    (bindir / "sudo").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "TMUX": "", "CALLS": str(tmp_path / "calls")}
+    result = subprocess.run(["make", "-s", "-C", str(ROOT), "upgrade-gpu"], capture_output=True, text=True, env=env)
+    assert result.returncode != 0
+    assert "tmux new -As upgrade" in result.stdout + result.stderr
+    assert calls(tmp_path) == []  # sudo was never reached
+    # -s: GNU make 4 prints "Entering directory" lines under -C otherwise.
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "upgrade-gpu"],
+                            capture_output=True, text=True, check=True)
+    assert "sudo bash stack/host/bootstrap.sh --upgrade-gpu" in recipe.stdout.splitlines()
+    phony = next(line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith(".PHONY:"))
+    assert {"upgrade-gpu", "upgrade-gpu-dry-run"} <= set(phony.split()[1:])
+
+
+@pytest.mark.parametrize("mode", ["--hold-gpu", "--install-units"])
+def test_upgrade_gpu_is_a_mode_of_its_own(mode):
+    # --dry-run first, so a broken guard would only print a plan.
+    result = script("--dry-run", mode, "--upgrade-gpu", env=NO_PACKAGES)
+    assert result.returncode == 2 and result.stdout == ""
+    assert "separate modes" in result.stderr  # not the unknown option it is before this task
+
+
+def test_bootstrap_installs_the_needrestart_override():
+    line = next(line for line in dry_run() if "/etc/needrestart/conf.d/" in line)
+    assert line.startswith("+ install -D -m 0644 ") and line.split()[-2].endswith("/stack/host/needrestart.conf")
+    assert line.endswith(" /etc/needrestart/conf.d/local-ai.conf")
+
+
+# How needrestart reads a /etc/needrestart/conf.d/*.conf file: as Perl, after its own config, which
+# already overrides some services (dbus stands in for them). Prints each unit's restart setting:
+# 0 is never restarted automatically; "default" is restarted when a library it uses was replaced.
+NEEDRESTART_EVAL = r"""
+our %nrconf = (override_rc => {qr(^dbus) => 0});
+my $fn = shift;
+eval do { local(@ARGV, $/) = $fn; <> };
+die "Error parsing $fn: $@" if $@;
+for my $unit (@ARGV) {
+  my ($re) = grep { $unit =~ /$_/ } keys %{$nrconf{override_rc}};
+  print "$unit ", (defined $re ? $nrconf{override_rc}{$re} : "default"), "\n";
+}
+"""
+
+
+@pytest.mark.skipif(shutil.which("perl") is None, reason="perl not installed")
+def test_needrestart_never_restarts_a_local_ai_unit():
+    # Restart mode is automatic on this box, and llama-swap's unit stops every loaded model when it
+    # restarts. The override must add to needrestart's own list, never replace it.
+    units = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+             "local-ai-pull.service", "ssh.service", "dbus.service"]
+    out = subprocess.run(["perl", "-e", NEEDRESTART_EVAL, str(ROOT / "stack/host/needrestart.conf"), *units],
+                         capture_output=True, text=True, check=True).stdout
+    assert out.splitlines() == [
+        "local-ai-llama-swap.service 0",
+        "local-ai-brake.service 0",
+        "local-ai-compose.service 0",
+        "local-ai-pull.service 0",
+        "ssh.service default",
+        "dbus.service 0",
+    ]
+
+
+def test_doctor_reads_the_holds_dry_run_as_it_is_printed(tmp_path):
+    # `make doctor` judges the GPU set from this dry run, so the two agree on what the set is.
+    from spark.doctor import judge_gpu_set
+
+    held_set = {pkg: "hi" if status == "ii" else status for pkg, status in INSTALLED.items()}
+    cases = {
+        "held": (held_set, True, f"all {len(GPU_SET)} packages held"),
+        "one-new": ({**held_set, "libcublas-13-0": "ii"}, False, f"1 of {len(GPU_SET)} packages aren't held"),
+        "interrupted": ({**held_set, "nvidia-driver-580-open": "iU"}, False, "sudo dpkg --configure -a"),
+        "nothing": ({}, False, "nothing installed matches"),
+    }
+    for name, (installed, ok, words) in cases.items():
+        (tmp_path / name).mkdir()
+        result = script("--hold-gpu", "--dry-run", env=gpu_env(tmp_path / name, installed))
+        check = judge_gpu_set(result.returncode, result.stdout, result.stderr)
+        assert check.ok is ok and words in check.detail, (name, check)
 
 
 def test_the_scripts_environment_is_built_not_copied(tmp_path):

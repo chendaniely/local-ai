@@ -4,7 +4,7 @@
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run apply apply-dry-run apply-now install-units install-units-dry-run pull status brake-release logs tunnel clients
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now install-units install-units-dry-run pull status brake-release logs tunnel clients doctor
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -39,6 +39,13 @@ hold-gpu-dry-run: ## Print what re-holding the GPU set would do; changes nothing
 hold-gpu: ## Re-hold the GPU set and nothing else — upgrade day (Dan; asks for sudo once)
 	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --hold-gpu
 
+upgrade-gpu-dry-run: ## Print what upgrade day would do to the GPU set; changes nothing
+	bash stack/host/bootstrap.sh --upgrade-gpu --dry-run
+
+upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sudo once)
+	@test -n "$$TMUX" || { echo "make upgrade-gpu: run it inside tmux (tmux new -As upgrade), so a dropped SSH session can't stop apt halfway" >&2; exit 1; }
+	sudo bash stack/host/bootstrap.sh --upgrade-gpu
+
 apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
 	$(SPARK) apply
 
@@ -71,3 +78,6 @@ tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 (Ctrl-C 
 
 clients: ## Add the Spark provider to pi on this machine
 	$(SPARK) clients pi --write
+
+doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
+	$(SPARK) doctor

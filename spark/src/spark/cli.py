@@ -41,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import clients
 
     clients.register(subparsers)
+    from spark import doctor
+
+    doctor.register(subparsers)
     return parser
 
 

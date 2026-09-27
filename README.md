@@ -23,11 +23,11 @@ this line, was parked on 2026-09-23.)
 | [`website/design/plan.md`](website/design/plan.md) | The plan: goals, constraints, decisions, design, phases, open items. Start here. It replaced `planning.md`, the initial plan, on 2026-09-23. |
 | [`changelog.md`](changelog.md) | Dated log of what changed on the machine, newest first. |
 | [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) | Notes on Niels Bantilan's stack (below) — GB10 hardware facts, gotchas, and what does and doesn't transfer to a single Spark. |
-| [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the GPU-set hold, and deploying the stack (`apply`, `install-units`, `pull`, `status`, `brake-release`, `logs`, `tunnel`, `clients`). |
+| [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap, the GPU-set hold and upgrade day's move (`upgrade-gpu`), deploying the stack (`apply`, `install-units`, `pull`, `status`, `logs`, `tunnel`, `clients`), and `doctor`, which checks the guardrails and the stack. |
 | [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
 | [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
-| [`stack/`](stack) | The model registry (`models.yaml`), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`) and the host setup (`host/`: bootstrap, earlyoom's config, the polkit rule). |
+| [`stack/`](stack) | The model registry (`models.yaml`), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`) and the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule). |
 | [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
 ## Hosts

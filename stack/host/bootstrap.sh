@@ -7,12 +7,20 @@
 #   Install root's copies:      make install-units   (of the units and the Compose project that
 #                               make apply staged; it runs this script with --install-units, and
 #                               make install-units-dry-run previews it)
+#   Move the GPU set:           make upgrade-gpu   (upgrade day, in tmux; it runs this script with
+#                               --upgrade-gpu, and make upgrade-gpu-dry-run previews it)
 # Safe to re-run: every step checks before it changes anything.
 set -euo pipefail
 
 DRY_RUN=0
 HOLD_ONLY=0
 INSTALL_UNITS=0
+UPGRADE=0
+REHELD=1     # upgrade day: 0 from the moment the GPU set is released until it is held again
+STOPPED=""   # upgrade day: the stack's units it stopped
+MOVING=0     # upgrade day: 1 from the moment apt starts moving the set
+MOVE_FROM="" # upgrade day: the set's contents just before that (gpu_set_contents)
+GRUB_FAILED=0 # upgrade day: 1 when GRUB may not boot the newest kernel after the move
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Under sudo (make bootstrap) the admin is SUDO_USER; a dry run has no sudo, so it is whoever runs it.
@@ -30,12 +38,13 @@ parse_args() {
       --dry-run) DRY_RUN=1 ;;
       --hold-gpu) HOLD_ONLY=1 ;;
       --install-units) INSTALL_UNITS=1 ;;
+      --upgrade-gpu) UPGRADE=1 ;;
       # A mistyped --dry-run under sudo must not turn into a real run.
-      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu and --install-units)" >&2; exit 2 ;;
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu, --install-units and --upgrade-gpu)" >&2; exit 2 ;;
     esac
   done
-  if (( HOLD_ONLY && INSTALL_UNITS )); then
-    echo "bootstrap: --hold-gpu and --install-units are separate modes; pick one" >&2
+  if (( HOLD_ONLY + INSTALL_UNITS + UPGRADE > 1 )); then
+    echo "bootstrap: --hold-gpu, --install-units and --upgrade-gpu are separate modes; pick one" >&2
     exit 2
   fi
 }
@@ -152,6 +161,261 @@ hold_gpu_stack() {
   say "GPU set held: $total packages"
 }
 
+# Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
+# and refuses one that would leave a kernel without its NVIDIA module or change the driver branch,
+# moves the set, holds it again with the hold and nothing else, and checks the newest kernel for its
+# NVIDIA module before it asks for the reboot. It runs updates.md's GRUB check itself (grub_boots),
+# before it releases the set and again before it asks for the reboot: the next boot starts the
+# newest kernel only while GRUB boots it. Every way out after the release holds the set again.
+# website/how-to/updates.md has the same steps by hand, and the recovery.
+
+# The GPU set as dpkg has it now: each package's status letters, name and version, found with the
+# hold's own patterns.
+gpu_set_state() {
+  local pattern
+  local -a patterns=()
+  while IFS= read -r pattern; do patterns+=("$pattern"); done < <(gpu_hold_patterns)
+  { dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\t${Version}\n' "${patterns[@]}" 2>/dev/null || true; } |
+    LC_ALL=C sort -u
+}
+
+# The set's held members: not everything apt-mark lists, so a package held for another reason stays
+# held.
+held_gpu_set() {
+  gpu_set_state | awk '$1 == "hi" {print $2}' | LC_ALL=C sort -u
+}
+
+# The set without its hold letter, the first status letter: apt-mark turns ii into hi and back
+# without moving anything. Two of these, before and after, say whether apt moved anything in the
+# set, a package's state or its version.
+gpu_set_contents() {
+  gpu_set_state | cut -c2- | LC_ALL=C sort
+}
+
+# The newest kernel, which the next boot starts only while GRUB boots it (grub_boots), and the
+# version of the NVIDIA module built for a kernel: nothing when it has none.
+newest_kernel() {
+  linux-version list | linux-version sort --reverse | head -1
+}
+module_version() {
+  modinfo -k "$1" -F version nvidia 2>/dev/null || true
+}
+
+# Where GRUB keeps its menu and its environment block. Tests point these at stand-ins.
+GRUB_CFG="${BOOTSTRAP_GRUB_CFG:-/boot/grub/grub.cfg}"
+GRUBENV="${BOOTSTRAP_GRUBENV:-/boot/grub/grubenv}"
+
+# Whether the next boot starts KERNEL, read from what GRUB will do, as updates.md step 5's GRUB
+# check reads it: entry 0's first linux line in grub.cfg names vmlinuz-KERNEL; the default= lines
+# are exactly the stock two, set default="${next_entry}" and set default="0", or
+# "${saved_entry}" while grubenv's saved_entry is empty or 0; and grubenv holds no next_entry or
+# prev_entry with a value. Otherwise, or when a read fails, it prints why and fails. It never
+# prints what it read: grub.cfg's linux lines and entry ids, and grubenv's entries, carry the root
+# filesystem's UUID. A kernel is named only by a version it has checked is one.
+grub_boots() {
+  local want="$1" linux entry0 defaults other env saved
+  local version='^[0-9]+\.[0-9]+[0-9A-Za-z.+~-]*$'
+  # shellcheck disable=SC2016  # GRUB's own ${...}, matched as written
+  local next='set default="${next_entry}"' saved_default='set default="${saved_entry}"'
+  if [[ -z "$want" ]]; then echo "linux-version found no kernel"; return 1; fi
+  if [[ ! -r "$GRUB_CFG" ]]; then echo "can't read $GRUB_CFG"; return 1; fi
+  linux="$(grep -m1 -E '^[[:space:]]*linux[[:space:]]' "$GRUB_CFG" || true)"
+  entry0="$(awk '{print $2}' <<<"$linux")"
+  entry0="${entry0##*/}"
+  if [[ "$entry0" != vmlinuz-* || ! "${entry0#vmlinuz-}" =~ $version ]]; then
+    echo "grub.cfg's entry 0 starts no vmlinuz-<version> kernel"
+    return 1
+  fi
+  entry0="${entry0#vmlinuz-}"
+  if [[ "$entry0" != "$want" ]]; then echo "GRUB boots $entry0, not $want"; return 1; fi
+  defaults="$(grep 'default=' "$GRUB_CFG" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+  other="$(grep -vxF "$next" <<<"$defaults" || true)"
+  if [[ "$(grep -cxF "$next" <<<"$defaults" || true)" != 1 || "$(grep -c . <<<"$other" || true)" != 1 ||
+        "$other" != 'set default='* ]]; then
+    echo "grub.cfg's default= lines aren't the stock two"
+    return 1
+  fi
+  if [[ "$other" != 'set default="0"' && "$other" != "$saved_default" ]]; then
+    echo "grub.cfg's default isn't entry 0"
+    return 1
+  fi
+  if [[ ! -r "$GRUBENV" ]] || ! env="$(grub-editenv "$GRUBENV" list 2>/dev/null)"; then
+    echo "can't read GRUB's environment block, $GRUBENV"
+    return 1
+  fi
+  if grep -q '^next_entry=.' <<<"$env"; then echo "grubenv's next_entry picks another entry for the next boot"; return 1; fi
+  if grep -q '^prev_entry=.' <<<"$env"; then echo "grubenv's prev_entry picks another entry after a failed boot"; return 1; fi
+  saved="$(sed -n 's/^saved_entry=//p' <<<"$env")"
+  if [[ "$other" == "$saved_default" && -n "$saved" && "$saved" != 0 ]]; then
+    echo "grubenv's saved_entry picks another entry than 0"
+    return 1
+  fi
+  return 0
+}
+
+# Reads `apt-get -s dist-upgrade` on stdin and prints why the plan must not run. It would remove the
+# modules metapackage (which brings in each new kernel's NVIDIA modules), swap it for another driver
+# branch's, or install a kernel, linux-image-<version>, with no linux-modules-nvidia-* ending in
+# <version>. A kernel counts as new by that name, a digit after "linux-image-"; that DGX OS names its
+# kernels so is not yet checked on the box (Phase 1's Task 12 lists them). The newest-kernel check
+# before the reboot catches a kernel this misses.
+refused_plan() {
+  local plan kernel
+  plan="$(awk '$1 == "Inst" || $1 == "Remv" {sub(/:.*/, "", $2); print $1, $2}')"
+  awk '$2 ~ /^linux-modules-nvidia-.*-nvidia-hwe-/ {if ($1 == "Remv") gone[$2] = 1; else came[$2] = 1}
+       END {
+         for (g in gone) {
+           other = ""
+           for (c in came) if (!(c in gone)) other = c
+           if (other != "") print "  the driver branch changes: it removes " g " and installs " other
+           else print "  it removes " g ", the metapackage that brings in the NVIDIA modules for each new kernel"
+         }
+       }' <<<"$plan"
+  while IFS= read -r kernel; do
+    awk -v tail="-$kernel" '$1 == "Inst" && $2 ~ /^linux-modules-nvidia-/ && substr($2, length($2) - length(tail) + 1) == tail {found = 1} END {exit !found}' <<<"$plan" ||
+      echo "  it installs the kernel $kernel with no NVIDIA modules for it"
+  done < <(awk '$1 == "Inst" && $2 ~ /^linux-image-[0-9]/ {sub(/^linux-image-/, "", $2); print $2}' <<<"$plan")
+}
+
+# Holds the set again. A hold that ran to the end and stopped has said what is wrong, and running it
+# again would say the same. A hold cut off by a signal (exit status 128 or more) leaves REHELD at 0,
+# so the way out tries once more.
+rehold() {
+  local code=0
+  ( hold_gpu_stack ) || code=$?
+  if (( code == 0 )); then REHELD=1; return 0; fi
+  if (( code < 128 )); then
+    REHELD=1
+    echo "bootstrap: the GPU set is not held again yet — do what the hold says above, then run make hold-gpu" >&2
+  fi
+  return 1
+}
+
+# A signal while the way out holds the set again: say what is left to do.
+cut_off_while_holding() {
+  echo "bootstrap: stopped while holding the GPU set again — run make hold-gpu" >&2
+  if (( MOVING )); then
+    echo "bootstrap: apt may have moved the set, so don't reboot until step 5's checks pass: 'If it goes wrong' in website/how-to/updates.md" >&2
+  fi
+  exit 130
+}
+
+on_upgrade_exit() {
+  local code=$?
+  trap - EXIT
+  trap cut_off_while_holding HUP INT TERM
+  if (( ! REHELD )); then
+    echo "bootstrap: upgrade day stopped before the end — holding the GPU set again" >&2
+    rehold || code=1
+  fi
+  if (( code != 0 )); then
+    # After apt started, the stack may start again only if the set is as it was and the newest
+    # kernel still has its module: apt can install a new kernel, outside the set, and then fail.
+    local unsafe=""
+    if (( MOVING )); then
+      if [[ "$(gpu_set_contents)" != "$MOVE_FROM" ]]; then
+        unsafe="the GPU set moved before this stopped"
+      elif [[ -z "$(module_version "$(newest_kernel)")" ]]; then
+        unsafe="the newest kernel has no NVIDIA module"
+      elif (( GRUB_FAILED )); then
+        unsafe="GRUB may not boot the newest kernel"
+      fi
+    fi
+    if [[ -n "$unsafe" ]]; then
+      echo "bootstrap: $unsafe. Don't reboot or start the stack yet: follow 'If it goes wrong' in website/how-to/updates.md" >&2
+    elif [[ -n "$STOPPED" ]]; then
+      echo "bootstrap: nothing in the GPU set moved, so start what was stopped again: systemctl start$STOPPED" >&2
+    fi
+  fi
+  exit "$code"
+}
+
+upgrade_gpu() {
+  say "upgrade day: move the GPU set as one — website/how-to/updates.md"
+  local pkgs refusal unit kernel version grub
+  local -a stack_units=(local-ai-llama-swap.service local-ai-brake.service)
+  # GRUB must boot the newest kernel before anything moves (updates.md step 2), so that after the
+  # move the same check can only find what the move changed.
+  if (( DRY_RUN )); then
+    printf '+ grub_boots <the newest kernel>   (a real run stops here, before anything is released, unless GRUB boots it)\n'
+  else
+    kernel="$(newest_kernel)"
+    if ! grub="$(grub_boots "$kernel")"; then
+      {
+        echo "bootstrap: not moving the GPU set: $grub."
+        echo "Nothing was released or moved. Run step 5's GRUB check in website/how-to/updates.md, and bring what it prints to the Claude session working on the repo"
+      } >&2
+      exit 1
+    fi
+    say "GRUB boots $kernel, the newest kernel"
+  fi
+  pkgs="$(held_gpu_set)"
+  REHELD=0
+  trap on_upgrade_exit EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ -z "$pkgs" ]]; then
+    say "nothing in the GPU set is held; the end of this run holds it"
+  else
+    # shellcheck disable=SC2086  # one package per word is intended
+    run apt-mark unhold $pkgs
+  fi
+  run dpkg --configure -a
+  run apt-get update
+  # apt-get's dist-upgrade is apt's full-upgrade: it may remove packages, which moving the set needs.
+  # Read the plan first, and refuse it before anything moves.
+  if (( DRY_RUN )); then
+    printf '+ apt-get -s dist-upgrade   (a real run stops here if the plan would leave a kernel without its NVIDIA module, or changes the driver branch)\n'
+  else
+    refusal="$(apt-get -s dist-upgrade | refused_plan)"
+    if [[ -n "$refusal" ]]; then
+      {
+        echo "bootstrap: not moving the GPU set, because of apt's plan:"
+        echo "$refusal"
+        if grep -q 'driver branch' <<<"$refusal"; then
+          echo "nothing was installed or removed; a new driver branch is a move planned and made by hand (website/how-to/updates.md)"
+        else
+          echo "nothing was installed or removed; try again next upgrade day (website/how-to/updates.md)"
+        fi
+      } >&2
+      exit 1
+    fi
+  fi
+  # The engines use the GPU; the reboot starts them again, and the brake with them.
+  for unit in "${stack_units[@]}"; do
+    if (( DRY_RUN )); then printf '+ systemctl stop %s   (if running)\n' "$unit"; continue; fi
+    if systemctl is-active --quiet "$unit"; then
+      systemctl stop "$unit"
+      STOPPED="$STOPPED $unit"
+    fi
+  done
+  if (( ! DRY_RUN )); then
+    MOVE_FROM="$(gpu_set_contents)"
+    MOVING=1
+  fi
+  run apt-get dist-upgrade
+  rehold || exit 1
+  if (( DRY_RUN )); then
+    printf '+ modinfo -k <the newest kernel> -F version nvidia\n'
+    printf "+ grub_boots <the newest kernel>   (a real run says DON'T REBOOT unless GRUB boots it)\n"
+    return 0
+  fi
+  kernel="$(newest_kernel)"
+  version="$(module_version "$kernel")"
+  if [[ -z "$version" ]]; then
+    echo "bootstrap: DON'T REBOOT — $kernel, the newest kernel, has no NVIDIA module. See 'If it goes wrong' in website/how-to/updates.md" >&2
+    exit 1
+  fi
+  if ! grub="$(grub_boots "$kernel")"; then
+    GRUB_FAILED=1
+    echo "bootstrap: DON'T REBOOT — $grub. See 'If it goes wrong' in website/how-to/updates.md" >&2
+    exit 1
+  fi
+  say "ready: $kernel, the newest kernel, has NVIDIA driver $version, and GRUB boots it — record both, and CUDA's version, in changelog.md"
+  say "now: sudo reboot, then make doctor"
+}
+
 users_and_groups() {
   say "users and groups"
   ensure_group spark
@@ -200,6 +464,11 @@ earlyoom_config() {
   run install -m 0644 "$HERE/earlyoom.default" /etc/default/earlyoom
   run systemctl enable earlyoom
   run systemctl restart earlyoom
+}
+
+needrestart_config() {
+  say "needrestart — leave the stack's local-ai-* units alone after an apt run"
+  run install -D -m 0644 "$HERE/needrestart.conf" /etc/needrestart/conf.d/local-ai.conf
 }
 
 firewall() {
@@ -360,12 +629,17 @@ main() {
     install_units
     return 0
   fi
+  if (( UPGRADE )); then
+    upgrade_gpu
+    return 0
+  fi
   packages
   hold_gpu_stack
   users_and_groups
   directories
   headless
   earlyoom_config
+  needrestart_config
   firewall
   polkit_rule
   say "done — continue with website/how-to/bootstrap.md, 'After bootstrap'"

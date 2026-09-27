@@ -45,8 +45,9 @@ What a routine upgrade can restart by itself:
 
 - **Services on replaced libraries.** After every apt run, needrestart restarts the services still
   using a library the upgrade replaced. It leaves Docker, the login services and DGX OS's own
-  dashboard alone. From Phase 1 it leaves the stack alone too, so a habitual upgrade never restarts
-  a model mid-use. `sudo needrestart -r l` lists what is still waiting for a restart.
+  dashboard alone. Bootstrap installs `/etc/needrestart/conf.d/local-ai.conf`, so it leaves the
+  stack's `local-ai-*` units alone too, so a habitual upgrade never restarts a model mid-use.
+  `sudo needrestart -r l` lists what is still waiting for a restart.
 - **Containers, when Docker itself upgrades.** Docker comes from NVIDIA's repository here. An
   upgrade stops every running container, and only those with a restart policy come back by
   themselves.
@@ -83,10 +84,29 @@ gitleaks has no snap (checked 2026-09-24), which is why it is a direct install.
 
 ## After any update: is everything back?
 
-Nothing on the box serves anything yet, so today there is nothing to bring back. Phase 1 adds the
-stack, and with it the steps for this section. The plan requires that the stack comes back by
-itself after a routine upgrade, a Docker upgrade, a reboot or an upgrade day, and that `make doctor`
-confirms it.
+**On the Spark**, from the clone, check Phase 0's guardrails and the stack in one pass:
+
+```bash
+make doctor
+```
+
+It checks Phase 0's guardrails: the leak hooks, the GPU set held (the running kernel's modules
+package included), the driver's kernel module agreeing with `nvidia-smi`, earlyoom running with the
+repo's arguments, ufw on, and the secrets folder closed to you. It checks the stack too: root's own
+copies of the units and the Compose project (each root's regular file or folder, not a link, and not
+writable by group or others), its three units active, llama-swap answering and refusing a call
+without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
+llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
+only reads, needs no sudo, and uses your `SPARK_API_KEY`.
+
+What brings the stack back by itself:
+
+- the units are enabled, so a reboot starts them;
+- llama-swap and the brake restart if they crash;
+- the containers' restart policy brings them back after a Docker upgrade;
+- needrestart leaves the units alone.
+
+llama-swap preloads nothing, so after a reboot each model loads on its first request.
 
 ## Upgrade day: the GPU set
 
@@ -106,6 +126,27 @@ Saturday; that wait is the cost of holding the set.
 *Not yet performed on this box.* Every step below, the recovery included, is untried until the
 first upgrade day.
 
+`make upgrade-gpu` runs steps 1 to 5 as one command, in tmux, from the clone; it refuses to start
+outside tmux. Step 5's GRUB check included, it runs all of them. First the GRUB check, as step 2
+says: if GRUB won't boot the newest kernel, it stops there, with the set still held and nothing
+moved, and says why. Then it releases the set, reads apt's plan and refuses it before anything moves
+if it breaks step 3's rule, stops llama-swap and the brake, and moves the set (you read apt's plan
+and answer). Then it holds the set again with `make hold-gpu`'s hold, runs step 5's two checks on
+the new newest kernel, the module and then GRUB, and says whether to reboot: `DON'T REBOOT` names
+the reason, and never a GRUB id or UUID. Every way out after the release runs the hold, and only the
+hold after apt's move is tried again. The set can still stay released: when the hold stops (a
+package dpkg didn't finish, a hold that didn't take, no kernel or nothing matching), or when a
+signal cuts off a hold the way out runs, the retry included. In each case it says to run
+`make hold-gpu`. It judges whether apt moved anything by each package's state and version, not the
+hold letter, and it checks that the newest kernel still has its module. If apt moved even part of
+the set, left the newest kernel without a module, or GRUB failed after the move, it sends you to
+[If it goes wrong](#if-it-goes-wrong) rather than to a reboot or a restart of the stack. Only when
+none of these happened does it say how to start the stack again. `make upgrade-gpu-dry-run` prints
+the steps without running them. The numbered steps are what it runs, to read along with, and to do
+by hand if it can't; step 5's GRUB check by hand is for those steps. (Corrected 2026-09-25: this
+said it would run all but the GRUB check, which you would run before it and again before the
+reboot. Dan decided that it runs the check itself.)
+
 **On the Spark**, work in tmux, from the clone. A dropped SSH session in the middle of
 `full-upgrade` is the likeliest way to leave the set half-moved; in tmux the upgrade carries on,
 and `tmux attach -t upgrade` brings you back:
@@ -115,15 +156,12 @@ tmux new -As upgrade
 cd ~/git/hub/local-ai
 ```
 
-1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
-   steps as one command, step 5's GRUB check included: before it releases the set, and again
-   before it says to reboot. (Corrected 2026-09-25: this said it would run all but the GRUB check,
-   which you would run before it and again before the reboot. Dan decided that it runs the check
-   itself.)
+1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts
+   them again), and your own GPU jobs and `agent`'s.
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
-   the Claude session working on the repo (the Spark's, by default) to work out why. Then release
-   the set:
+   the Claude session working on the repo (the Spark's, by default) to work out why.
+   `make upgrade-gpu` runs this check itself, before it releases the set. Then release the set:
 
    **On the Spark:**
 
@@ -157,7 +195,8 @@ cd ~/git/hub/local-ai
    In the first two cases the new kernel would boot without a GPU. Answering no installs and
    removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
    new driver branch: answer no and re-hold. Moving to a new branch is not a routine upgrade day.
-   You plan that move for a day you choose, and make it by hand.
+   You plan that move for a day you choose, and make it by hand. `make upgrade-gpu` refuses all
+   three too.
 4. Hold the new set: `make hold-gpu`. It prints `GPU set: N packages, M already held`, then
    `GPU set held: N packages`. It stops instead, naming the packages, if one isn't cleanly
    installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
@@ -200,6 +239,8 @@ cd ~/git/hub/local-ai
      `prev_entry` becomes the next entry when `initrdfail=1`: unlikely on a box that booted, but
      cheap to rule out.
 
+   `make upgrade-gpu` runs this same check itself after the move, before it says to reboot.
+
    Anything else, or any of these commands failing: **don't reboot yet**, and bring what they
    printed to the Claude session working on the repo (the Spark's, by default). Much of it carries
    the root filesystem's UUID: `root=UUID=…`, or
@@ -232,21 +273,26 @@ cd ~/git/hub/local-ai
    ```
 
    If the last line prints nothing, the running kernel's modules aren't held: run `make hold-gpu`
-   and check again. From Phase 1, run `make doctor` too; it loads a model end to end.
+   and check again. Then `make doctor`: every line `ok`.
 8. Record the new kernel, driver and CUDA versions in `changelog.md`, and bring the GPU set's line
    in `README.md` §Current state up to date.
 
 ### If it goes wrong
 
 **You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
-stops on a package that isn't cleanly installed, do what it says, then run it again. If step 3
-changed anything before it stopped, run step 5 before any reboot, both its checks. Once both pass,
-carry on at step 6. If the module is missing, go to the next paragraph; if only the GRUB check
-fails, don't reboot yet, as step 5 says.
+stops on a package that isn't cleanly installed, do what it says, then run it again.
+`make upgrade-gpu` runs the hold again by itself on its way out, so `make hold-gpu` by hand is for
+the manual steps, or for when its own hold stopped or was cut off. If step 3 changed anything
+before it stopped, run step 5 before any reboot, both its checks. Once both pass, carry on at
+step 6. If the module is missing, go to the next paragraph; if only the GRUB check fails, don't
+reboot yet, as step 5 says: a `DON'T REBOOT` from `make upgrade-gpu` that names GRUB, `grub.cfg`
+or `grubenv`, or says it can't read one of them, is that case.
 
-**Step 5's module check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is
-a kernel with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH
-still works: nothing on the network path needs the GPU. Every command here is safe to run again:
+**Step 5's module check failed, `nvidia-smi` fails after the reboot, or `make upgrade-gpu` said
+`DON'T REBOOT` because the newest kernel has no NVIDIA module, or that apt may have moved the
+set.** The likeliest cause is a kernel with no NVIDIA module, from a set that didn't finish moving.
+The box still boots and SSH still works: nothing on the network path needs the GPU. Every command
+here is safe to run again:
 
 1. **On the Spark**, release the set and finish the move, answering as step 3 says:
 

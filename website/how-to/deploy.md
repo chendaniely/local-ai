@@ -235,9 +235,23 @@ key, gets a line saying so, and apply exits 1. A run cut off part-way is finishe
 `make apply`, except for a unit whose start time apply can't read: it names that unit, with the
 command to restart it.
 
+Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass:
+
+```bash
+make doctor
+```
+
 ## When something is wrong
 
-**On the Spark**, look at the state first, then at the logs of whatever looks wrong:
+**On the Spark**, start with `make doctor`: Phase 0's guardrails and the stack in one pass, and
+each `FAIL` says what to do. Its `root's copies` line fails when something root runs isn't root's
+own file, and says to run `make install-units`.
+
+```bash
+make doctor
+```
+
+**On the Spark**, then look at the state, then at the logs of whatever looks wrong:
 
 ```bash
 make status

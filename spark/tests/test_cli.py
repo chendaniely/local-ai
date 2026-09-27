@@ -86,3 +86,14 @@ def test_a_command_keeps_the_exit_code_it_chose(tmp_path, monkeypatch, capsys):
     assert cli.main(["launch", "coder", "--", "/bin/engine"]) == 3
     assert capsys.readouterr().err.startswith(f"spark: not starting coder: the registry {registry} won't load: ")
     assert launch.read_refusal(tmp_path)["model"] == "coder"
+
+
+def test_the_commands_the_units_and_the_makefile_run_are_registered():
+    parser = cli.build_parser()
+    # llama-swap starts every engine as `spark launch <model> -- <engine command…>`: the -- stays.
+    args = parser.parse_args(["launch", "m", "--", "/bin/x", "--port", "1"])
+    assert args.rest == ["m", "--", "/bin/x", "--port", "1"]
+    for argv in (["brake", "--key-env", "LLAMASWAP_KEY_SPARK"], ["models", "pull"], ["status"], ["apply"],
+                 ["apply", "--dry-run"], ["apply", "--now"], ["render", "--out", "rendered"],
+                 ["clients", "pi", "--write"], ["doctor"]):
+        assert callable(parser.parse_args(argv).func), argv
