@@ -32,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import render as render_cmd
 
     render_cmd.register(subparsers)
+    from spark import apply
+
+    apply.register(subparsers)
     return parser
 
 
