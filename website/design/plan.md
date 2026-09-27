@@ -175,7 +175,10 @@ In order of how much they constrain the design:
   - sudo caches Dan's credential for about 15 minutes in each terminal, and anything running as
     Dan in that terminal meanwhile can use sudo without a password. `make install-units` ends with
     `sudo -k`, so the `make apply` that follows can't use it; `make bootstrap`, `make hold-gpu` and
-    `make upgrade-gpu` keep the cache.
+    `make upgrade-gpu` keep the cache. (Corrected 2026-09-26, from Phase 1 Task 9's review:
+    `make bootstrap` and `make hold-gpu` now end with `sudo -k` too, and Task 10 gives
+    `make upgrade-gpu` the same, so no sudo target leaves the cache for the clone's code that runs
+    next.)
   - Root's containers read `spark`-owned data: Open WebUI's Functions, kept under
     `/var/lib/local-ai/open-webui`, run as the container's root with host networking.
   - Dan's account can make `spark` run anything, through `/opt/local-ai`'s `app`, `bin`, `etc` and
@@ -894,6 +897,21 @@ Each item gets its own design pass when its turn comes.
   line gets its other causes, the planned deploy.md's pull line says what follows it, the Global
   Constraints say when `/var/lib/local-ai` becomes root's on the box, and Task 17's security review
   names the open risks it decides.
+- **2026-09-26** — Phase 1, Task 9's pre-dispatch scan and review (one fix round). Task 9 built
+  pi's provider, `make install-units` with root's copies, the polkit rule, the deploy targets and
+  two runbooks. Its fixes: the brake's advice names `make brake-release`, since `spark` isn't on
+  Dan's PATH; `make bootstrap` and `make hold-gpu` end with `sudo -k`, as `make install-units`
+  does — *Paths that stay open* is corrected, and Task 10 does the same for `make upgrade-gpu`; in
+  CI a missing Node fails the polkit rule's tests instead of skipping them; `spark clients` keeps a
+  backup's mode and names a file it can't read; `make pull` shows only its own run's journal; and
+  deploy.md sets up Dan's own key on the Spark before the first deploy (commits 414ddaf to 914d6d4;
+  Tasks 2, 4, 5 and 9's listings note them). A separate commit (432dfb3) keeps `#` comments out of
+  shell blocks that run on the Mac, whose zsh passes them to the command; CLAUDE.md's labels rule
+  says so. Phase 1's plan: Task 12 Step 4's `FAILED` line is corrected again (a repo that doesn't
+  exist is fixed in the registry, and `make apply` comes before `make pull`), Task 15 checks
+  whether pi 0.85.1 expands `${SPARK_API_KEY}` and its Mac block loses its comments, Task 16's
+  brake drill expects `make brake-release`, and Task 17's security review gains three smaller
+  items.
 
 ## Sources
 

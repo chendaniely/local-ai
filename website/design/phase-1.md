@@ -827,7 +827,9 @@ def admit(model: Model, mem: MemInfo, budget: Budget, hold: Hold | None) -> Deci
 
 *Superseded 2026-09-26 — the code now differs; see commit e575700: the fit is decided on exact
 decimals, and a refusal rounds the need up and what's available down, so its numbers never read as
-a fit: "needs 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short".*
+a fit: "needs 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short". A refusal under
+the brake's hold says to run `make brake-release` (commit d3481ab, Task 9), since `spark` isn't on
+Dan's PATH.*
 
 `spark/src/spark/launch.py`:
 
@@ -1399,7 +1401,8 @@ each is recorded once) and ebd3ad1 (memory on its way back counts before another
 more than `FLOOR_TOLERANCE_GIB` = 0.5 GiB; both are unmeasured on this box). llama-swap v257 answers
 an unload only after the engine exits and runs unloads one at a time (read in its source). And
 commit 88f98aa, from Task 5's review: `spark brake --release` says who can release when this
-account can't write the state folder, and exits 1, instead of a traceback.*
+account can't write the state folder, and exits 1, instead of a traceback. The hold's log line
+reads "brake: holding new loads until `make brake-release`" (commit d3481ab, Task 9).*
 
 Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
@@ -1581,7 +1584,8 @@ its own key-free text; an account that can't read the brake's state folder is to
 unknown to it, not HOLDING, and the release is offered only to an account that can write it; a model
 the registry doesn't list is shown as such; numbers round so they never read past or short of the
 brake line wrongly; control characters are escaped; `--json` adds `problems`, `registry_loaded`
-and `brake.state`. The brake reads "no hold", not "off". Task 5's review asked for them.*
+and `brake.state`. The brake reads "no hold", not "off". Task 5's review asked for them. A hold
+this account can release says "`make brake-release` to clear" (commit d3481ab, Task 9).*
 
 Register in `cli.py`: `from spark import status` / `status.register(subparsers)`.
 
@@ -3358,6 +3362,11 @@ def test_a_first_write_backs_up_nothing_and_says_so(tmp_path, monkeypatch, capsy
     assert "(there was no previous file)" in capsys.readouterr().out
 ```
 
+*Superseded 2026-09-26 — the tests now go further; see commits 562ede4, d62e225 and f479129, from
+Task 9's pre-dispatch scan: the backup keeps the original's mode; a `models.json` that won't load,
+or whose top level isn't an object, is refused naming the file, with no error chained that would
+carry its text; and `run_pi` finds the file under the HOME it runs with.*
+
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
 
 - [ ] **Step 3: Implement**
@@ -3430,6 +3439,13 @@ def run_pi(args: argparse.Namespace) -> int:
     print(f"clients: wrote the 'spark' provider to {PI_MODELS} ({kept})")
     return 0
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits 562ede4, d62e225 and f479129, from Task
+9's pre-dispatch scan. `models.json` can hold other providers' keys, so `merge_pi` backs up with
+`shutil.copy2`, keeping the original's mode; a file that won't load, or whose top level isn't a
+JSON object, is refused naming the file, and raised unchained, since json's error holds the whole
+text. `PI_MODELS` is found when `run_pi` runs, not at import, so a test can't write Dan's real
+`~/.pi`.*
 
 Register in `cli.py`: `from spark import clients` / `clients.register(subparsers)`.
 
@@ -3861,6 +3877,10 @@ def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_p
         assert calls[1:] and set(calls[1:]) == {"sudo -k"}, does
 ```
 
+*Superseded 2026-09-26 — the tests now differ; see commits 43995ee and 25617b8, from Task 9's scan
+and review: `install_env` and the `sudo -k` test build their environment, as `gpu_env` does, rather
+than copying the shell's; and `make bootstrap` and `make hold-gpu` are held to the same `sudo -k`.*
+
 `spark/tests/test_polkit.py` runs the rule in Node with polkit, the action and the subject stubbed,
 and skips without a JavaScript engine on PATH, as the needrestart test skips without perl:
 
@@ -3951,6 +3971,10 @@ def test_the_rule_names_exactly_the_units_render_writes():
     listed = re.search(r"var units = \[(.*?)\];", RULES.read_text(), re.DOTALL).group(1)
     assert re.findall(r'"([^"]+)"', listed) == list(RENDERED) == UNITS
 ```
+
+*Superseded 2026-09-26 — `needs_node` now skips only outside CI (commit 9d07e3e, from Task 9's
+scan): in CI, where `CI` is set, a missing Node fails the two tests instead of skipping them, so a
+green run means the rule's tests ran.*
 
 - [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
   → FAIL: `install_units: command not found` (exit 127); `--install-units` is an unknown option
@@ -4247,6 +4271,13 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
 	$(SPARK) brake --release
 ```
 
+*Superseded 2026-09-26 — the targets now differ; see commits 77aba16, c0f1146, 323b262 and
+25617b8, from Task 9's scan and review. `make pull` takes the time, starts the unit, then shows the
+pull's journal since that time whether or not it failed, and exits with the start's status; `help`
+pads to 22 characters; `make logs` without `s=` says how to ask; and `make bootstrap` and
+`make hold-gpu` end with `sudo -k`, as `make install-units` does. The three messages name
+`make brake-release` (commit d3481ab).*
+
 - [ ] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
   `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`). Its
   commands go in blocks, each with the machine in bold in the paragraph right above it (CLAUDE.md,
@@ -4270,6 +4301,13 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
     never writes in `agent`'s home. From the agent's clone:
     `uv run --frozen --project spark spark clients pi --write`. Work inside tmux: `tmux new -As work`,
     then `pi`; `Ctrl-b d` detaches, and `tmux attach -t work` picks it up after logging back in.
+
+  *Superseded 2026-09-26 — pi.md now differs from this outline (commit bc7dbdf, from Task 9's
+  scan): its third section runs as the two people who run it — the Node install and the agent's
+  key, from Task 15 Step 3, **on the Spark, with sudo**; then Task 15 Step 4's setup **as
+  `agent`**, cloning the default branch, since the runbook outlives the phase branch. "Nothing on
+  the Spark listens on the LAN" became "none of the stack's ports listens beyond 127.0.0.1", and no
+  block that runs on the Mac holds a `#` comment.*
 
 - [ ] **Step 10: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
   `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
@@ -4364,6 +4402,20 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
     with its reason, for an account in `spark-admin`; any other account is told the brake's state is
     unknown to it. If `make apply` keeps saying a file differs from root's copy,
     `make install-units-dry-run` shows the difference, and `make install-units` installs it.
+
+  *Superseded 2026-09-26 — deploy.md now says more than this outline; see commits 354c995,
+  8172764, facd839 and 914d6d4, from Task 9's scan and review. *Before the first deploy* sets up
+  Dan's own `SPARK_API_KEY` on the Spark (Task 13 Step 1's commands), without which `make status`
+  answers 401 and every later `make apply` that would restart llama-swap refuses; the key's send is
+  the page's second step on the Mac, and the Spark's copy is recorded in the vault, by name only.
+  A refused dry run exits 1 and ends in make's error line, which is its answer, not a fault.
+  `journalctl -fu local-ai-pull` follows the pull. Each block in *The web UI's first account* names
+  its machine, and the two `sudo bash -c` blocks are run a line at a time. *Every later change*
+  repeats the `git status` check before `make bootstrap` and `make install-units`. *When something
+  is wrong* adds a 401 (no key in this shell), `make brake-release`, and the pull's `FAILED` lines:
+  a repo, file name or revision that doesn't exist is fixed in `stack/models.yaml`, then
+  `make apply` and `make pull`; a gated repo needs a token in `hf.env`; for the rest, fix the cause
+  and `make pull` again.*
 
 - [ ] **Step 11: The How-to index and README**
   - `website/how-to/index.qmd`: the *In order* list gains `7. [Deploy the stack](deploy.md)` after
@@ -6573,7 +6625,10 @@ make install-units-dry-run
   *(Corrected 2026-09-26, from Task 8's review: a `FAILED` line has other causes too — a missing or
   gated repo, a bad or refused token, the network or a server error, a full or unwritable disk —
   and its reason says which. Only a wrong file name or revision is fixed in `stack/models.yaml`;
-  for the rest, fix the cause and `make pull` again.)*
+  for the rest, fix the cause and `make pull` again.)* *(Corrected again the same day, from Task 9's
+  review: a repo that doesn't exist, mistyped or renamed, is fixed in `stack/models.yaml` too, and
+  each fix there is followed by `make apply` before `make pull`, since the pull reads the deployed
+  registry. A gated repo needs a token in `hf.env`, then `make pull`.)*
 
 ***
 
@@ -6790,16 +6845,28 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
   left it (the Mac commits nothing while the Spark session owns the branch):
 
 ```bash
-cd ~/git/hub/local-ai && git switch phase-1 && git pull                    # Tasks 1–10, pushed after Task 10
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1   # down from 0.86.1, inside the crash range
-pi --version                                                               # 0.85.1
-python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"      # True
-cd ~/git/hub/local-ai && make clients                                      # the spark provider, old file backed up
-make tunnel                                                                # in a spare terminal; leave it open
+cd ~/git/hub/local-ai && git switch phase-1 && git pull
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+pi --version
+python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"
+cd ~/git/hub/local-ai && make clients
 ```
+
+Then `make tunnel` in a spare terminal, and leave it open. *(Corrected 2026-09-26: the block's
+comments moved into this paragraph, and `make tunnel` out of the block, since the Mac's zsh passes
+a trailing `#` to the command — CLAUDE.md's labels rule.)* The pull brings Tasks 1–10, pushed after
+Task 10; npm moves pi down from 0.86.1, inside the crash range; `pi --version` prints `0.85.1`; the
+Python line prints `True`; and `make clients` adds the spark provider, keeping the old file as a
+backup.
 
 In pi: `/model` → `qwen3.6-35b-a3b`, and a small real task in a scratch repo. Expected: it finishes,
 and the footer names `qwen3.6-35b-a3b`.
+
+*Added 2026-09-26, from Task 9:* `make clients` writes the key into `models.json` as
+`"${SPARK_API_KEY}"`, for pi to expand. pi's current docs say it does, but 0.85.1's behaviour is
+unchecked. If pi's first request is refused with a 401, 0.85.1 doesn't expand it: record that here
+and stop. Don't put the key's value in `models.json` to get past it; how pi gets the key is then a
+decision for Task 17.
 
 - [ ] **Step 2 [Dan]: `agent`'s Claude Code gets the secrets guard, before `agent` holds a key** —
   Step 3 puts a key in `agent`'s `~/.secrets`, and `agent`'s Claude Code (Phase 0) runs in its
@@ -6894,7 +6961,10 @@ make status
 
 Expected: `brake: holding new loads until `spark brake --release`` and
 `brake: unloaded qwen3.6-35b-a3b at … GiB available` — the on-demand model goes first and the
-residents stay; `make status` shows HOLDING with the coder unloaded.
+residents stay; `make status` shows HOLDING with the coder unloaded. *(Corrected 2026-09-26, from
+Task 9: the first line now ends `until `make brake-release``, and `make status` says
+`make brake-release` to clear, since `spark` isn't on Dan's PATH; Step 2's
+`uv run --frozen --project spark spark brake --release` is what that target runs.)*
 
 *Added 2026-09-26, from Task 4's reviews:* if the coder takes more than 2 s to stop, the second line
 reads `brake: no answer in 2 s; counting qwen3.6-35b-a3b as on its way (…)` instead: llama-swap v257
@@ -7051,7 +7121,17 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   the open risks `plan.md` sends to this review, for Dan to decide — Engines share llama-swap's
   user (whether the engines and `spark models pull` get a user of their own, and whether render
   allows only listed engine options), and Anyone on the box can take 127.0.0.1:9100 (a port below
-  1024, refusing redirects, a cap on what the client reads).)*
+  1024, refusing redirects, a cap on what the client reads).)* *(Added 2026-09-26, from Task 9's
+  review: also three smaller items for it. `make install-units`' screen passes bidi controls
+  (U+202A–U+202E, U+2066–U+2069) and zero-width characters as ordinary UTF-8, and a terminal that
+  handles bidi text can reorder how a `+` line reads. When root's compose folder is missing or isn't
+  root's own, install-units still reads the copies in it by path, where a swapped link could make it
+  show a file only root can read; counting both as changed and diffing them against `/dev/null`
+  closes it. And the `git status` check before a sudo target guards only against accidents: anything
+  running as Dan can hide a change from it (`git update-index --skip-worktree`) or answer
+  install-units' question through `tmux send-keys`. Of the paths above, sudo's cached credential
+  after bootstrap is closed since: `make bootstrap` and `make hold-gpu` end with `sudo -k` (Task 9's
+  review), as `make upgrade-gpu` does from Task 10; the reviewer confirms it.)*
 - [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
   v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*
