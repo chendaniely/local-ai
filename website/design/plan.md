@@ -470,7 +470,12 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   stack comes back by itself, and `make doctor` v0 confirms it. v0 checks Phase 0's guardrails (the
   leak hooks, the GPU set held, earlyoom, ufw, the secrets folder closed) and the stack's smoke
   checks: weekly upgrade day needs that before Phase 2, where `spark doctor` proper, one check per
-  scenario, arrives. `website/how-to/updates.md` gains the recovery steps.
+  scenario, arrives. `website/how-to/updates.md` gains the recovery steps. (Corrected 2026-09-26,
+  from Phase 1 Task 10's scan: after a Docker upgrade the web services don't always come back by
+  themselves. Their unit requires Docker and stops them with `docker compose down`, so a restart of
+  Docker restarts them, but an upgrade that stops Docker and starts it again leaves them stopped
+  until `systemctl start local-ai-compose`, which `make doctor`'s stack-units check catches. Which
+  one DGX OS's Docker upgrade does is not yet tried on this box; Task 16's drills find out.)
 - [Mac] pi config + SSH tunnel · CI's render step, the site render and the merge that brings it
   into `main`.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
@@ -608,7 +613,9 @@ Each item gets its own design pass when its turn comes.
   listen there and receive the key the brake sends every 250 ms, and the keys `spark status` and
   `spark apply` send. The client also follows redirects with the key. → Task 17's security review
   decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
-  refusing redirects, and a cap on what the client reads.
+  refusing redirects, and a cap on what the client reads. (Added 2026-09-26, from Phase 1 Task 10's
+  scan: `make doctor` sends Dan's key too, once an unkeyed `/health` answers, which a squatter can
+  make it do; it follows no redirect.)
 - **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
   llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
   unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
@@ -912,6 +919,20 @@ Each item gets its own design pass when its turn comes.
   whether pi 0.85.1 expands `${SPARK_API_KEY}` and its Mac block loses its comments, Task 16's
   brake drill expects `make brake-release`, and Task 17's security review gains three smaller
   items.
+- **2026-09-26** — Phase 1, Task 10's pre-dispatch scan and review (one fix round). Task 10 built
+  the needrestart override, `make upgrade-gpu` and `make doctor`. Its fixes: doctor sends Dan's key
+  only to llama-swap — never through a proxy or a redirect, never shown, never to a URL that isn't
+  one — and every FAIL says what to do; three checks joined (spark's folders, the engines' config
+  files, the needrestart override: fifteen in all); doctor isn't read-only, since its end-to-end
+  check loads the embeddings model and so clears the last refusal record, so `make status` comes
+  first; `make upgrade-gpu` ends with `sudo -k`; and a signal that kills only the way out's hold
+  now says to run `make hold-gpu` instead of suggesting the stack be started while the GPU set
+  stays released (commits 748a093 to 1e5152b; Task 10's listings note them). The Phase 1 line above
+  is corrected: a Docker upgrade that stops Docker and starts it again leaves the web services
+  stopped, which Task 16's drill checks. The open risk *Anyone on the box can take 127.0.0.1:9100*
+  adds `make doctor` as a sender. Phase 1's plan: Task 12 Step 1 expects doctor's three
+  bootstrap-related lines to pass after the re-run, Tasks 13 and 16 expect 15 of 15 checks with
+  `make status` first, and Task 18's Mac run gains the new Makefile and bootstrap code.
 
 ## Sources
 

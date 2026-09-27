@@ -142,7 +142,10 @@ Tailscale serve · pi 0.85.1.
    gets the way out's usual verdict instead. Whether anything moved is judged without the hold
    letter, so answering no counts as nothing moved. It suggests starting the stack only when
    nothing moved and the newest kernel still has its module, even when a hold then stopped, and
-   never a reboot after a partial move. *(Task 10.)*
+   never a reboot after a partial move. *(Task 10.)* *(Corrected 2026-09-26, from Task 10's
+   review: "every way out runs the hold" means every way out after the release — a GRUB refusal
+   before the release releases and holds nothing — and a signal that kills only the way out's hold
+   now also ends in "run `make hold-gpu`", with no start hint; commit ecd2264.)*
 8. **Something running as Dan edits a unit or the Compose project, or plants a link where
    `spark apply` stages them** — expected: root runs none of it. `spark apply` stages the change and
    stops; `make install-units` shows it as a diff and asks before root installs it. It refuses, with
@@ -4495,6 +4498,10 @@ true, and Tasks 12, 13 and 16 run them on the box:
     | 129, 130, 143 | HUP, INT or TERM anywhere else, and the hold on the way out then worked |
     | 2 | a usage error |
 
+    *Corrected 2026-09-26, from Task 10's review:* a dry run releases nothing and sets no way out,
+    so a signal ends it as it would end any command (commit 0a342a1); and the 130 row also covers a
+    signal that killed only the way out's hold, which now says to run `make hold-gpu` (ecd2264).
+
     Every way out after the release runs the hold. The hold that follows apt's move is the only
     one tried twice: cut off by a signal, the way out runs it again. The set stays released in
     three cases, and each time it says to run `make hold-gpu`:
@@ -4530,7 +4537,8 @@ true, and Tasks 12, 13 and 16 run them on the box:
     by hand on this box, before the first upgrade day relies on this one.
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
-    `upgrade-gpu-dry-run`.
+    `upgrade-gpu-dry-run`. (Since 2026-09-26, from Task 10's scan: `upgrade-gpu` ends with
+    `sudo -k`, as `install-units`, `bootstrap` and `hold-gpu` do; commit 4122330.)
   - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable`, `entry` and
     `http` (`entry(path)`: owner, group, permission bits and kind, `file`, `folder`, `link` or
     `other`, read without following a link); `judge_gpu_set(code, out, err) -> Check`;
@@ -4540,7 +4548,11 @@ true, and Tasks 12, 13 and 16 run them on the box:
     `checks(probe, key, registry, problem=None) -> list[Check]`, twelve of them, a registry that
     didn't load being the end-to-end check's FAIL, with `problem` as its reason;
     `report(results) -> str`; CLI `spark doctor [--key-env NAME]`: exit 0 when every check passes,
-    1 when any fails, 2 when it isn't run from the repo root. Make target `doctor`.
+    1 when any fails, 2 when it isn't run from the repo root. Make target `doctor`. (Since
+    2026-09-26, from Task 10's scan and review: `Probe` also has `exists(path)` — True, False, or
+    None when it can't tell — and `checks` takes `key_env="SPARK_API_KEY"`, the variable its
+    messages name. There are fifteen checks: spark's folders, the engines' config files and the
+    needrestart override joined.)
   - `spark/tests/test_cli.py`: a test that every command the units and the Makefile run parses,
     `launch`'s `--` passed through to it untouched.
 
@@ -5228,6 +5240,15 @@ def test_needrestart_never_restarts_a_local_ai_unit():
     ]
 ```
 
+*Superseded 2026-09-26 — the tests now differ; see commits 748a093, 9fe819c, 4122330, e34fff1,
+ecd2264, 0a342a1 and b98255e, from Task 10's scan and review. `gpu_env` stays as be4c3c3 built it
+(the listing's copied the shell's environment at import); `grub_check`'s and the tmux test's
+environments are built too; the apt-mark stand-in's `unhold` has the `hold` branch's guard, and its
+comment says when its cut is right. New tests: a dry run never says the set is still released;
+`make upgrade-gpu` ends with `sudo -k`; a signal that kills only the way out's hold ends in "run
+`make hold-gpu`" with no start hint; and a dry run cut off by a signal says nothing of a hold. So
+Step 2's RED is 40 failed, and the passing count grew with Task 9's tests.*
+
 - [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
   → FAIL: `--upgrade-gpu` is an unknown option (exit 2, so the mode test finds no "separate
   modes"), `upgrade_gpu` and `grub_boots` aren't defined, the dry run has no needrestart line,
@@ -5622,6 +5643,13 @@ upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sud
 
 The tmux check sits in the Makefile because `sudo` drops `$TMUX` from the environment.
 
+*Superseded 2026-09-26 — the code now differs; see commits 9fe819c, 4122330, ecd2264 and 0a342a1,
+from Task 10's scan and review. `upgrade-gpu`'s sudo line is `trap 'sudo -k' EXIT INT TERM HUP;
+sudo bash stack/host/bootstrap.sh --upgrade-gpu`. `rehold` says the set is still released only in
+a real run. `on_upgrade_exit` installs its signal trap before it clears the EXIT trap, and when the
+way out's hold was killed by a signal, it says to run `make hold-gpu` and gives no start hint. A dry
+run sets no way out and no traps.*
+
 - [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
   then `make lint`. Then `make upgrade-gpu-dry-run`: it prints the steps, the GRUB check before the
   release and after the move among them. Its GRUB and plan lines always say where a real run would
@@ -5913,6 +5941,12 @@ def test_doctor_reads_the_holds_dry_run_as_it_is_printed(tmp_path):
         assert check.ok is ok and words in check.detail, (name, check)
 ```
 
+*Superseded 2026-09-26 — the tests now go much further; see commits 92bcc9c to 357aeb6 and
+f6cdc27 to b98255e, from Task 10's scan and review: `FakeProbe` has `exists`; the healthy run
+counts 15 of 15; each FAIL's remedy is pinned; a proxy, a redirect and keys with a CR, an LF or a
+non-ASCII letter never carry or show the key; an invalid `SPARK_LLAMASWAP_URL` gets no key; a byte
+that isn't UTF-8 can't end the report; and the new checks each pass and fail.*
+
 `doctor` is the last command Phase 1 adds, so this task also adds one test, at the end of
 `spark/tests/test_cli.py` (Phase 0's), that parses every command the units and the Makefile run.
 Removing a registration from `cli.py` breaks no other test, and llama-swap's `cmd` depends on
@@ -5929,6 +5963,12 @@ def test_the_commands_the_units_and_the_makefile_run_are_registered():
                  ["clients", "pi", "--write"], ["doctor"]):
         assert callable(parser.parse_args(argv).func), argv
 ```
+
+*Superseded 2026-09-26 — this test now differs (commit 29b9430, from Task 10's scan): its list also
+holds `brake --release` (what `make brake-release` runs) and the Makefile's Phase 0 commands,
+`leakcheck --message /dev/null`, `docs stack --write` and `docs check-scenarios`. The sentence
+above it, that removing a registration breaks no other test, was already untrue: the status,
+apply, brake, models and clients tests all call `cli.main`.*
 
 - [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_doctor.py spark/tests/test_bootstrap.py`
   → FAIL: collecting `test_doctor.py` stops the run, `ImportError: cannot import name 'doctor'
@@ -6285,6 +6325,16 @@ proxy-free opener (`urllib.request.build_opener(urllib.request.ProxyHandler({}))
 a key without sending anything, with a check line that names the problem and never the key. Its
 tests cover both, first failing against the listing as it stands.*
 
+*Superseded 2026-09-26 — the code now differs; see commits 92bcc9c, 8b7e416, 5d050c3, d11351a,
+2d38442, 4a6ab28, 357aeb6, f6cdc27 and a99ea4f, from Task 10's scan and review. The note above is
+done, and more: the key goes only to llama-swap, never through a proxy or a redirect, and a key
+that isn't printable ASCII is refused unsent and unshown; a URL in `SPARK_LLAMASWAP_URL` that isn't
+http(s) fails the llama-swap and model lines and gets no key; a byte that isn't UTF-8 can't end the
+report; messages name the key variable actually read; every FAIL says what to do; three checks
+joined (spark's folders, the engines' config files, the needrestart override); and doctor no longer
+says it changes nothing: its end-to-end check loads the embeddings model if it isn't loaded, which
+also clears the last refusal record, so `make status` comes first.*
+
 Register in `cli.py`: `from spark import doctor` / `doctor.register(subparsers)`. In the `Makefile`,
 `.PHONY` gains `doctor`, and:
 
@@ -6382,6 +6432,19 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     - the `stack/` row's host setup becomes "(`host/`: bootstrap, earlyoom's and needrestart's
       config, the polkit rule)";
     - the `spark/` row stays as Task 2 left it: `spark --help` lists `doctor` too.
+
+  *Superseded 2026-09-26 — the runbooks now say more than this outline; see commits 4a6ab28,
+  1cea890, c932868, 482643b and 1e5152b, from Task 10's scan and review. `make doctor` isn't
+  read-only: its end-to-end check loads the embeddings model if it isn't loaded, which also clears
+  the last refusal record, so deploy.md's *When something is wrong* starts with `make status`, then
+  `make doctor`. A Docker upgrade that stops Docker and starts it again leaves the web services
+  stopped (their unit requires Docker and stops them with `docker compose down`) until
+  `systemctl start local-ai-compose`; not yet tried on this box. The list of doctor's checks has the
+  three new ones. The upgrade-day paragraph runs the `git status` check before `make upgrade-gpu`,
+  and says `make upgrade-gpu` runs steps 1 to 5, llama-swap and the brake being step 1's part. The
+  README's `Makefile` row keeps `brake-release`, and *A bootstrap re-run* names the needrestart
+  override, Task 9's polkit rule, and the doctor lines that fail until it runs: spark's folders,
+  needrestart and earlyoom.*
 
 - [ ] **Step 10: Check and commit**
 
@@ -6563,6 +6626,10 @@ container showed; not yet checked on this box. And polkit takes a unit and a ver
 from root.) `release = hold`: upgrade day releases exactly the
 packages the hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is,
 `agent`'s own; bootstrap no longer touches it.
+
+*Added 2026-09-26, from Task 10's review:* then `make doctor`. Its *spark's folders*, *needrestart*
+and *earlyoom* lines, which fail until this re-run (README §Current state, *A bootstrap re-run*),
+now say `ok`. The stack's lines and the end-to-end check still fail: nothing is deployed yet.
 
 Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `grep`s of `grub.cfg`
 run with sudo, and tells the Spark session what it printed, with "an id" in place of every UUID and
@@ -6754,12 +6821,14 @@ The journal count is `0`:
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
 root's now. If it isn't, the lines name the path: point that tool's cache at
 `/var/lib/local-ai/cache` in the unit template (Task 6's), in the repo, with its test, as a plan
-revision. `make doctor` ends `doctor: 12 of 12 checks pass`. If its firewall line says it can't read
-`/etc/ufw/ufw.conf`, record the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) and change that
-check to match, in the repo, with its test, as a plan revision. Step 3's browser already loaded Open
-WebUI's page. What is not yet seen on this box is doctor's own expectation: `200` from `/` on both
-Open WebUI and SearXNG. This first `make doctor`
-is that check. If its web line fails, look at the pages in a browser. Step 3's tunnel forwards only
+revision. `make doctor` ends `doctor: 12 of 12 checks pass` (corrected 2026-09-26, from Task 10:
+`15 of 15`, with spark's folders, the engines' config files and the needrestart override, the first
+and last of which pass only after Task 12 Step 1's bootstrap re-run). If its firewall line says it
+can't read `/etc/ufw/ufw.conf`, record the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`)
+and change that check to match, in the repo, with its test, as a plan revision. Step 3's browser
+already loaded Open WebUI's page. What is not yet seen on this box is doctor's own expectation:
+`200` from `/` on both Open WebUI and SearXNG. This first `make doctor` is that check. If its web
+line fails, look at the pages in a browser. Step 3's tunnel forwards only
 Open WebUI's port 3000; to see SearXNG, open a second one,
 `ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
 change doctor's expectation to what each answered, in the repo, with its test, as a plan revision.
@@ -7074,6 +7143,17 @@ make status
 Expected: as commented, and the web UI loads and answers on the phone: `tailscale serve` survives
 the reboot. llama-swap preloads nothing, so each model loads on its first request.
 
+*Corrected 2026-09-26, from Task 10:* `make doctor` now runs 15 checks, not 12 (spark's folders,
+the engines' config files and the needrestart override joined), so both lines above expect
+`15 of 15`. Run `make status` before `make doctor` wherever both appear: doctor's end-to-end check
+loads the embeddings model, and that clears the last refusal record `make status` would show. And
+if this upgrade moved Docker (`docker-ce` or `containerd.io` in apt's list), check the web services
+too: `systemctl is-active local-ai-compose`. An upgrade that restarts Docker restarts them; one that
+stops it and starts it again leaves them stopped (plan.md's corrected Phase 1 line). Record which
+this one did in the changelog, and in `updates.md` if it stopped them; then
+`systemctl start local-ai-compose`. If apt didn't move Docker, the drill waits for an upgrade that
+does, as the `libc6` half does.
+
 - [ ] **Step 6: Changelog; commit** — the drills, with dates and what each showed: the brake and the
   refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh clone, and the
   routine upgrade (what apt moved, and whether it touched a library the engines use) and the reboot.
@@ -7211,7 +7291,13 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
   git and uv do so with that empty `HOME`, and the Mac's `/usr/bin/git` is Xcode's shim. The tests
   that run `make hooks` and bootstrap passed on the Mac in Phase 0, but now run in that
   environment, on bash 3.2 and GNU make 3.81. And `write_hold` flushes its folder after the rename
-  (`os.fsync` on the folder), which is unverified on APFS.
+  (`os.fsync` on the folder), which is unverified on APFS. *(Added 2026-09-26, from Tasks 9 and
+  10: so do the tests of what those tasks added to the Makefile and bootstrap — the `sudo -k` traps,
+  `make pull`'s one-line recipe, `make logs`' refusal, the doctor recipe's check of its output and
+  the tmux test's `make -s -n -C`, which make 3.81 answers with directory lines — and bootstrap's
+  `--install-units` and `--upgrade-gpu` modes, on bash 3.2, whose stand-ins lean on shell details
+  that version may read differently: `FAKE_DPKG_QUERY`'s `${format//"$abbrev"/"$st "}` relies on
+  quote removal in a pattern substitution's replacement.)*
 
 - [ ] **Step 4: Commit**
 
