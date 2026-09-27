@@ -3,8 +3,9 @@ title: "Deploy the stack"
 description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."
 ---
 
-Everything here runs **on the Spark**, from your clone of this repo, except in *The web UI's first
-account*, where the tunnel and the browser are **on the Mac**.
+Everything here runs **on the Spark**, from your clone of this repo, except in two places **on the
+Mac**: sending your llama-swap key, in *Before the first deploy*, and the tunnel and the browser, in
+*The web UI's first account*.
 
 ## Before the first deploy
 
@@ -29,6 +30,9 @@ grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~
 
 From then on the key is in every shell of yours on the Spark, a Claude Code session's included, so
 that session's secrets guard, step 3 of [The Spark session](spark-session.md), must already hold.
+
+**In the vault**, record in its entry note that the Spark's `~/.secrets` holds `SPARK_API_KEY` too,
+with the same value as the Mac's: by name only, never the value.
 
 Then end tmux with `tmux kill-server`, log out, and log back in: a new login picks up the key, and
 the groups bootstrap gave you, which a session older than bootstrap lacks. **On the Spark**, in the
