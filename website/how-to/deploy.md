@@ -153,7 +153,8 @@ services.
   neither value. Compose reads `\'` as an escaped quote, so a password ending in `\` would leave
   the quote open, and Compose's error would print the password into the journal.
 
-**On the Spark:**
+**On the Spark**, run it a line at a time. Its first line asks for input, your sudo password and
+then the admin's email and password, and pasted whole, the next line would be read as the answer:
 
 ```bash
 sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
@@ -161,7 +162,8 @@ systemctl restart local-ai-compose
 ```
 
 Log in through the tunnel, on the Mac, with that email and password. Then, **on the Spark**, remove
-both lines, and restart once more so the container no longer holds them:
+both lines, and restart once more so the container no longer holds them. Run this a line at a time
+too: sudo may ask for your password, and pasted whole, the next line would be read as the answer.
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
@@ -253,10 +255,12 @@ the key works, apply can't tell what's loaded, so it won't restart llama-swap, a
 would restart it only to fail the check that follows, which asks llama-swap with the same key.
 
 `make pull` ends with this run's lines from the pull's journal, failed or not, and a `FAILED` line's
-reason says which cause it is. Only a wrong file name or revision is fixed in `stack/models.yaml`:
-fix it there, then `make apply` and `make pull`. For the rest (a missing or gated repo, a bad or
-refused token, the network or a server error, a full or unwritable disk), fix the cause, then
-`make pull` again.
+reason says which cause it is. A repo, file name or revision that doesn't exist is fixed in
+`stack/models.yaml`, then `make apply` and `make pull`: the pull reads the registry `make apply`
+deployed. A gated or private repo needs your Hugging Face account to have access, and that account's
+token in `hf.env`, the pull unit's optional secret file ([Secret files](secret-files.md) step 7),
+then `make pull`. For the rest (a bad or refused token, the network or a server error, a full or
+unwritable disk), fix the cause, then `make pull` again.
 
 If `make apply` keeps saying a file differs from root's copy, `make install-units-dry-run` shows the
 difference, and `make install-units` installs it.
