@@ -30,7 +30,7 @@ def admit(model: Model, mem: MemInfo, budget: Budget, hold: Hold | None) -> Deci
         return Decision(
             False,
             f"the memory brake has held new loads since {hold.since} ({hold.reason}); "
-            "run `spark brake --release` once memory is back",
+            "run `make brake-release` once memory is back",
         )
     available = min(mem.available_gib, budget.allocatable_gib)  # overcommitting can hard-freeze a GB10
     needed, free, reserve = _gib(model.footprint_gib), _gib(available), _gib(budget.reserve_gib)

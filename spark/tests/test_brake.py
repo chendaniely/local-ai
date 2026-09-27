@@ -60,6 +60,14 @@ def test_loop_unloads_and_records_the_hold(tmp_path):
     assert read_hold(tmp_path) == Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",))
 
 
+def test_the_hold_names_the_command_that_lifts_it(tmp_path):
+    # `spark` isn't on Dan's PATH: the Makefile runs it through uv, from the clone.
+    logs = []
+    run_brake(REG, FakeClient([Running("coder", "ready")]), tmp_path, read_mem=lambda: MemInfo(121.7, 18),
+              sleep=lambda s: None, log=logs.append, now=lambda: "t", once=True)
+    assert "brake: holding new loads until `make brake-release`" in logs
+
+
 def test_loop_survives_llama_swap_being_down(tmp_path):
     logs = []
     run_brake(REG, FakeClient(fail=True), tmp_path, read_mem=lambda: MemInfo(121.7, 18),

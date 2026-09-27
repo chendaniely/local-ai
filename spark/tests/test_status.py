@@ -39,7 +39,7 @@ def test_unreachable_llama_swap_is_reported_not_raised():
 
 def test_a_hold_is_shown_with_how_to_release():
     text = format_text(gather(MemInfo(121.7, 70.0), REG, [], Hold("t0", "18.0 GiB available", ("coder",))))
-    assert "HOLDING since t0" in text and "spark brake --release" in text
+    assert "HOLDING since t0" in text and "make brake-release" in text
 
 
 def test_the_last_refused_load_is_explained():
@@ -125,7 +125,7 @@ def test_a_registry_that_wont_load_is_said_and_the_rest_still_shown(spark_status
     assert code == 0 and out.splitlines()[:3] == [
         "memory   70 GiB available of 122 GiB · 50 GiB before the brake (20 GiB, the plan's default)",
         "loaded   coder (ready)",
-        "brake    HOLDING since t0 (18.0 GiB available); unloaded: coder — `spark brake --release` to clear",
+        "brake    HOLDING since t0 (18.0 GiB available); unloaded: coder — `make brake-release` to clear",
     ]
     assert f"problem  the registry {registry} won't load: " in out
     code, out, _ = spark_status("--json", registry=registry)
@@ -257,7 +257,7 @@ def test_a_damaged_hold_still_holds_and_what_it_unloaded_is_unknown(spark_status
     (tmp_path / "state" / "hold.json").write_text("{not json")
     code, out, _ = spark_status()
     assert code == 0 and "brake    HOLDING since an unknown time (hold file " in out
-    assert "; unloaded: unknown — `spark brake --release` to clear" in out
+    assert "; unloaded: unknown — `make brake-release` to clear" in out
     code, out, _ = spark_status("--json")
     brake = standard(out)["brake"]
     assert brake["state"] == "holding" and brake["since"] is None and brake["unloaded"] is None

@@ -148,7 +148,7 @@ class _Brake:
                 self.warned = True
             elif action.kind == "hold" and read_hold(self.state_dir) is None:
                 if self.write(Hold(self.now(), f"{mem.available_gib:.1f} GiB available", ())):
-                    self.log("brake: holding new loads until `spark brake --release`")
+                    self.log("brake: holding new loads until `make brake-release`")
             elif action.kind == "unload":
                 self.unload(action.model, mem, states.get(action.model))
 

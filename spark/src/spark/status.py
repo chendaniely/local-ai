@@ -134,7 +134,7 @@ def _brake(b: dict) -> str:
         return b["state"]  # "no hold", or "unknown"
     since = UNREADABLE_SINCE if b["since"] is None else b["since"]
     unloaded = "unknown" if b["unloaded"] is None else (", ".join(b["unloaded"]) or "nothing yet")
-    release = "`spark brake --release` to clear" if b["can_release"] else "spark-admin can release it"
+    release = "`make brake-release` to clear" if b["can_release"] else "spark-admin can release it"
     return f"HOLDING since {since} ({b['reason']}); unloaded: {unloaded} — {release}"
 
 

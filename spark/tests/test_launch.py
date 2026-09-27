@@ -104,7 +104,7 @@ def test_admit_refuses_while_the_brake_holds():
     reg = load_registry(FIXTURE)
     hold = Hold(since="2026-09-23T10:00:00", reason="18.0 GiB available", unloaded=("coder",))
     decision = admit(reg.models["embed"], MemInfo(121.7, 90.0), reg.budget, hold)
-    assert not decision.ok and "brake" in decision.reason and "spark brake --release" in decision.reason
+    assert not decision.ok and "brake" in decision.reason and "make brake-release" in decision.reason
 
 
 def test_hold_round_trip(tmp_path):
@@ -231,7 +231,7 @@ def test_launch_refuses_while_the_brakes_hold_file_stands(tmp_path, monkeypatch,
     assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
     assert capsys.readouterr().err == (
         "spark: not starting embed: the memory brake has held new loads since 2026-09-23T10:00:00 "
-        "(18.0 GiB available); run `spark brake --release` once memory is back\n"
+        "(18.0 GiB available); run `make brake-release` once memory is back\n"
     )
     assert launch.read_refusal(tmp_path)["model"] == "embed"
 
@@ -245,7 +245,7 @@ def test_launch_refuses_while_a_damaged_hold_file_stands(tmp_path, monkeypatch, 
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
     err = capsys.readouterr().err
-    assert err.startswith("spark: not starting embed: ") and "spark brake --release" in err
+    assert err.startswith("spark: not starting embed: ") and "make brake-release" in err
     assert str(tmp_path / "hold.json") in err
     refusal = launch.read_refusal(tmp_path)  # the older record is replaced, so `spark status` shows why
     assert refusal["model"] == "embed" and str(tmp_path / "hold.json") in refusal["reason"]

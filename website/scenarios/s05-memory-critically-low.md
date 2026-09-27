@@ -15,5 +15,6 @@ coder first, then the always-loaded models.
 
 **What I see.** A high-priority "brake" notification, and a hold shown in `spark status`.
 
-**How to override.** `spark brake --release` once memory is back. Thresholds live in
-`stack/models.yaml`.
+**How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
+`make brake-release`, in the clone — `spark` isn't on my PATH, and the target runs it through uv.)*
+Thresholds live in `stack/models.yaml`.
