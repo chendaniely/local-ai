@@ -675,6 +675,15 @@ Each item gets its own design pass when its turn comes.
   its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
   not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
   a direct call, so that phase decides how to close it.
+- **Page cache and the launch check** (added 2026-09-27, from Phase 1's Task 12) → the launch check
+  admits against `MemAvailable`, which counts reclaimable page cache as available. On GB10 the
+  driver has been seen to reclaim page cache too slowly while a model loads: loading a large
+  safetensors checkpoint stalled for about 20 minutes with `MemFree` pinned at 8 GB
+  (`cosmicbboy-local-ai.md` §E.1, `[verified]` on his Sparks; not yet seen here, or with
+  llama.cpp). Phase 1's pull left 43 GiB of page cache on this box, with 75 GiB free (`free -g`,
+  2026-09-27). At the registry's estimates, Phase 1's four models fit in the free part, so its
+  loads are unlikely to test it. Still to decide, once a load on a full cache has been watched: nothing, E.1's drop-caches
+  loop during a load, or a check against `MemFree` plus what can be dropped.
 - **To verify on the box:** `121` vs `121a-real`; ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
   as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
   Parakeet quality on whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
@@ -963,6 +972,13 @@ Each item gets its own design pass when its turn comes.
   upgrade-day check (step 7) now also checks that it finds its libraries, and says to rebuild it if
   not. Both engines' registry paths name their pinned versions, checked by hand. `spark render`
   still doesn't cross-check them.
+- **2026-09-27** — Phase 1's Task 12 deployed the config and pulled the models, and its forward
+  look changed two things. A new open risk, *Page cache and the launch check*: the pull left
+  43 GiB of page cache, which `MemAvailable` counts as available, and GB10 has been seen to reclaim
+  it too slowly while a model loads. Task 13 Step 4 now records `free -g` before its first reading.
+  And Task 13 Step 5's SearXNG check is corrected: the image's entrypoint runs SearXNG as root in
+  its container and warns at every start about each mount its own user doesn't own, so the
+  warning is expected. A working search and no permission error in its log are the check.
 
 ## Sources
 

@@ -23,12 +23,17 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-27).** The switch point and Tasks 1–11 are done, each reviewed and ticked
-> below: Tasks 1–10 built the code, tests and runbooks, and Task 11 installed the three engines on
-> the box, at their pins, in a session started after Dan's reboot gave it `spark-admin`. Nothing
-> else from this phase is on the box yet: no config is deployed and nothing runs. **Next: Task 12 [Spark + Dan].**
-> Its Step 1 starts with Dan, **on the Spark**, over SSH with nothing open on the desktop:
-> `make bootstrap-dry-run`, read it, then `make bootstrap`; the Spark session checks the result.
+> **Progress (2026-09-27).** The switch point and Tasks 1–12 are done, each reviewed and ticked
+> below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
+> box, at their pins, in a session started after Dan's reboot gave it `spark-admin`. Task 12 re-ran
+> bootstrap, installed root's copies of the units and the Compose project, deployed the config and
+> the app, and pulled the five model files; Task 13 Step 7 records it in the changelog and README.
+> Nothing runs yet. The units are enabled but not started, so **don't reboot before Task 13
+> Step 3**: a boot would start Open WebUI before its admin account exists. **Next: Task 13
+> [Spark + Dan].** Its Step 1 is Dan's. He sends `SPARK_API_KEY` from the Mac, adds the line that
+> loads it to `~/.bashrc` on the Spark, and restarts the Spark session, which continues at Step 2.
+> Step 3, Open WebUI's first account, follows Step 2's start at once, so the Mac is ready for its
+> tunnel.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -6615,7 +6620,7 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 
 ### Task 12 [Spark + Dan]: deploy the config, pull the models
 
-- [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`, and
+- [x] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`, and
   only once CI is green on the push after Task 10: its `tests` job runs the two of Task 9's polkit
   tests that skip on the Spark, and this step installs that rule.
   Phase 0's review changed bootstrap after it last ran on the box: `/var/lib/local-ai` is now root's
@@ -6673,7 +6678,7 @@ If either differs, stop. That check must change, in the repo (this session, with
 revision), or the box's GRUB setup must (Dan), before an upgrade day relies on it. Task 13 Step 7
 records the re-run and both results in the changelog.
 
-- [ ] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
+- [x] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
   Expected: every file under `/opt/local-ai/etc` and the app are listed as new (corrected
   2026-09-26, from Task 7's reviews: apply lists only root's six files, each as "root has no copy
   of … yet", since until root has them it lists nothing else);
@@ -6681,7 +6686,7 @@ records the re-run and both results in the changelog.
   units, `compose/compose.yaml` or `compose/searxng/settings.yml`; and apply stages them and stops,
   naming `make install-units`. Nothing else is deployed yet: no app, no `llama-swap.yaml`.
 
-- [ ] **Step 3 [Dan, on the Spark]: install root's copies** — `make install-units` (sudo asks for
+- [x] **Step 3 [Dan, on the Spark]: install root's copies** — `make install-units` (sudo asks for
   your password once, and the `sudo -k` it ends with forgets it). It shows each of the six files in
   full, since root has none yet: read them, because they are the files root will run. They aren't
   all that runs as root: sudo also runs this clone's own `Makefile` and `bootstrap.sh`, which it
@@ -6698,7 +6703,7 @@ make install-units-dry-run
   runs only when asked); `root:root 644 regular file` for each file and `root:root 755 directory` for
   the two folders; and the dry run says `nothing to install`.
 
-- [ ] **Step 4 [Spark]: deploy the rest, pull the model files** — `make apply`. Expected: it deploys
+- [x] **Step 4 [Spark]: deploy the rest, pull the model files** — `make apply`. Expected: it deploys
   `llama-swap.yaml` and `models.yaml`, syncs the app (`uv sync` builds `/opt/local-ai/app/.venv`),
   and restarts nothing: no unit runs yet, so each starts with the new config. Then `make pull`.
   About 40 GB, downloaded by the `spark` user; it prints nothing until it finishes, so follow it with
@@ -6820,6 +6825,11 @@ Expected: four readings; each chat reply names the model that was asked for (the
 tokens thinking — then `.choices[0].message.reasoning_content` holds them); a 1024-dimension
 embedding; the JFK sample's text, and a word count above zero (`verbose_json` carries word timings).
 
+*Added 2026-09-27, from Task 12's forward review:* before the first reading, run `free -g` and record
+its `free` and `buff/cache` columns with the readings. The pull fills the page cache (43 GiB on
+2026-09-27), which the launch check counts as available: plan.md, *Page cache and the launch
+check*.
+
 - [ ] **Step 5 [Spark]: What runs, as whom, and what the OOM killers would pick**
 
 ```bash
@@ -6857,7 +6867,15 @@ change doctor's expectation to what each answered, in the repo, with its test, a
 (`spark:spark 0750`) isn't its own. So check here that it can write its folder: a search works
 (Dan, on the Mac, through the SearXNG tunnel above), and, on the Spark, `make logs s=searxng` shows
 no ownership warning. If it can't, fix the folder's owner in bootstrap, with its test, as a plan
-revision.
+revision. *(Corrected 2026-09-27, from Task 12's forward review: the ownership warning appears at
+every start, so it can't be the test. The image sets no `USER`, and its entrypoint at the pinned
+commit (`container/entrypoint.sh` at `3cd69d30e`) never drops to its `searxng` user (uid 977), so
+SearXNG runs as root in its container. With `FORCE_OWNERSHIP` false, the entrypoint prints a
+`!!! WARNING` block, "not owned by searxng:searxng", for each mount 977 doesn't own:
+`/etc/searxng`, from root's `compose/searxng`, and `/var/cache/searxng`, `spark`'s (uid 996). Root
+in the container writes the folder whoever owns it. So expect those two blocks, and check instead
+that a search works and that `make logs s=searxng` shows no `Permission denied` and no
+`Read-only file system`. Bootstrap changes only if one of those appears.)*
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
