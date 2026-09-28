@@ -13,6 +13,8 @@ Confidence labels:
 - **[verified]** — measured by Niels on real GB10 hardware, quoted from the repo.
 - **[adapted]** — translated to one node here. Reasonable, but untested by anyone.
 
+In §I, which isn't from Niels's repo, **[verified]** means measured on `brightroar`.
+
 ---
 
 ## A. Four hardware facts to internalize first
@@ -291,10 +293,13 @@ What each number sets in the brake is in `spark/src/spark/brake.py`'s comments. 
 - **An idle engine stops fast.** The brake unloaded the idle coder, `qwen3.6-35b-a3b`, and its
   process was gone 0.6 s after the tick began. The brake waits up to 15 s (`GRACE_S`). A busy
   engine's stop was not measured. **[verified]**
-- **`MemAvailable` noise while memory is held.** Polled every 250 ms for 60 s: with nothing
-  generating, it moved within ±0.02 GiB. While a Gemma session generated, it fell 4.1 GiB over
-  45 s in steps up to 0.58 GiB, and 1 poll in 239 moved more than 0.5 GiB
-  (`FLOOR_TOLERANCE_GIB`). **[verified]**
+- **How `MemAvailable` moves while the brake holds.** Polled every 250 ms for 60 s, with 93 GiB
+  available: for the first 15 s, with nothing generating, it moved within ±0.02 GiB. Then a Gemma
+  session generated, and it fell 4.1 GiB over 45 s in steps up to 0.58 GiB: 1 poll in 239 moved
+  more than 0.5 GiB (`FLOOR_TOLERANCE_GIB`). **[verified]** By arithmetic, one of Gemma's context
+  checkpoints, its sliding-window cache, is about 0.59 GiB (25 layers × 8 KV heads × 256 × K and
+  V × 2 bytes, over 3,072 cells), so that step was probably an allocation, not noise. **Not
+  verified.**
 - **v257 stops an engine that is still starting.** Asked to unload it, llama-swap answered `200`
   in 0.01 s and left no process. The request that had started the load got a `500`. **[verified]**
 - **What the OOM killers would pick.** With a throwaway process holding memory down to about

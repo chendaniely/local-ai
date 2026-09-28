@@ -19,17 +19,19 @@ from spark.registry import BrakeThresholds, Registry, load_registry
 # How long memory from an unload counts as on its way back before the brake stops waiting for it and tries the
 # next model. llama-swap v257 gives an engine its unloadTimeout (10 s by default; the stack's config leaves it) to
 # exit on SIGTERM before it SIGKILLs it, so a slow but normal stop takes up to 10 s. The 5 s beyond allow for the
-# kill and for the memory to show in MemAvailable. The wait costs no safety: once memory falls more than
-# FLOOR_TOLERANCE_GIB below where it was, it ends. Measured on brightroar, 2026-09-28 (Phase 1 drills): an idle
-# coder's process was gone 0.6 s after the brake's tick began. A busy engine's stop is not yet measured; Phase 1's
-# close decides whether 15 s stays.
+# kill and for the memory to show in MemAvailable, neither yet measured on this box. The wait costs no safety: once
+# memory falls more than FLOOR_TOLERANCE_GIB below where it was, it ends. Measured on brightroar, 2026-09-28 (Phase 1
+# drills): an idle coder's process was gone 0.6 s after the brake's tick began. A busy engine's stop is not yet
+# measured; Phase 1's close decides whether 15 s stays.
 GRACE_S = 15.0
 
 # How far MemAvailable may dip below where it was when an unload began before the brake stops waiting for that
 # unload's memory: noise is not a fall. Measured on brightroar, 2026-09-28 (Phase 1 drills), polling every 250 ms
-# while the brake held: with nothing generating, MemAvailable moved within ±0.02 GiB; while a Gemma session
-# generated, it fell 4.1 GiB over 45 s in steps up to 0.58 GiB, and 1 poll in 239 moved more than 0.5 GiB. Phase 1's
-# close decides whether 0.5 GiB stays.
+# while the brake held, with 93 GiB available: for the first 15 s, with nothing generating, MemAvailable moved within
+# ±0.02 GiB; then, while a Gemma session generated, it fell 4.1 GiB over 45 s in steps up to 0.58 GiB, and 1 poll in
+# 239 moved more than 0.5 GiB. That step matches one of Gemma's context checkpoints by arithmetic (~0.59 GiB), so it
+# was probably a real allocation, which the brake is right to count as a fall; not verified. Phase 1's close decides
+# whether 0.5 GiB stays.
 FLOOR_TOLERANCE_GIB = 0.5
 
 # An engine's state only moves on: starting, ready, stopping. A model listed at an earlier state than the brake last
@@ -205,14 +207,14 @@ class _Brake:
             self.client.unload(model)
         except LlamaSwapUnreachable as err:
             # v257 answers an unload only once the engine has exited, and carries on with it when the caller gives
-            # up: no answer in 2 s is a slow stop, so its memory counts as on its way. (An engine still starting is
-            # stopped at once: measured 2026-09-28, v257 answered 200 in 0.01 s, left no process, and failed the
-            # request that started it with a 500.)
+            # up: no answer in 2 s is a slow stop, so its memory counts as on its way.
             self.log(f"brake: no answer in 2 s; counting {model} as on its way ({err})")
         except LlamaSwapError as err:
             self.log(f"brake: unloading {model} failed: {err}")
             return
         else:
+            # This includes an engine still starting, which v257 stops at once: measured 2026-09-28, it answered 200 in
+            # 0.01 s, left no process, and failed the request that started it with a 500.
             self.log(f"brake: unloaded {model} at {mem.available_gib:.1f} GiB available")
         self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock,
                                            STAGES.get(state, STAGES["ready"]))

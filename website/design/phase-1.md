@@ -1817,7 +1817,9 @@ models:
 
   (`--parallel 1` for the coder: MTP doesn't yet support more slots or a projector. `ctx: 1` is a
   placeholder the whisper engine ignores.) Every `<paste>` must be replaced before committing —
-  `load_registry` rejects anything that isn't 40 hex.
+  `load_registry` rejects anything that isn't 40 hex. *(Superseded since: Tasks 13–14 raised the
+  footprints and gave Gemma its image flags, and the context change, below Task 16 (2026-09-28),
+  raised every `ctx` to its model's maximum. `stack/models.yaml` is the current registry.)*
 
 - [x] **Step 3: Templates** (`str.format` placeholders in braces; a literal brace is doubled, `{{ }}`)
 
@@ -3388,7 +3390,9 @@ def test_a_first_write_backs_up_nothing_and_says_so(tmp_path, monkeypatch, capsy
 *Superseded 2026-09-26 — the tests now go further; see commits 562ede4, d62e225 and f479129, from
 Task 9's pre-dispatch scan: the backup keeps the original's mode; a `models.json` that won't load,
 or whose top level isn't an object, is refused naming the file, with no error chained that would
-carry its text; and `run_pi` finds the file under the HOME it runs with.*
+carry its text; and `run_pi` finds the file under the HOME it runs with. Superseded again
+2026-09-28 (the context change, below Task 16): a model's window is now its whole `ctx`, 32,768
+for the fixture's two-slot model, since its slots share one pool.*
 
 - [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
 
@@ -3468,7 +3472,8 @@ def run_pi(args: argparse.Namespace) -> int:
 `shutil.copy2`, keeping the original's mode; a file that won't load, or whose top level isn't a
 JSON object, is refused naming the file, and raised unchained, since json's error holds the whole
 text. `PI_MODELS` is found when `run_pi` runs, not at import, so a test can't write Dan's real
-`~/.pi`.*
+`~/.pi`. Superseded again 2026-09-28 (the context change, below Task 16): `window = m.ctx`, since
+render gives a model's slots one shared pool.*
 
 Register in `cli.py`: `from spark import clients` / `clients.register(subparsers)`.
 
@@ -7264,27 +7269,53 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
 *Added 2026-09-28, Dan's decision (plan.md's Revisions): every model at its full context.* Gemma
 took 16,384 tokens per request, its 32,768 split over two slots, and the coder 131,072.
 `stack/models.yaml` raises each `ctx` to its GGUF's own maximum: 262,144 for Gemma and the coder,
-and 32,768 for the embedding model, whose micro-batch rises with it. Render passes `--kv-unified`
-to a model with more than one slot, so Gemma's slots share one pool and one request can use all
-of it, and `spark clients` tells pi a model's whole `ctx`. Tests hold each model to its header's
-maximum and the embedding model's micro-batch to its context, and pin the flag and pi's window. The
-footprints rise to estimates, 26, 10 and 32 GiB.
+and 32,768 for the embedding model. Render passes `--kv-unified` to a model with more than one
+slot, so Gemma's slots share one pool and one request can use all of it, and `spark clients` tells
+pi a model's whole `ctx`. Tests hold each model to its header's maximum and pin the flag and pi's
+window. *(Revised the same day, after the change's review, before it was deployed:* the embedding
+model's micro-batch stays at what actually runs, 2048: it pools its last token, so llama-server
+splits a long input, and the batch size caps the micro-batch, so the first version's 32,768 would
+have changed nothing. With a shared pool, llama-server b11146 clears idle slots whenever a task
+starts, which would cost a long chat its cache at each of Open WebUI's title calls, so render also
+passes `--no-cache-idle-slots`. And Gemma keeps at most 8 context checkpoints, about 0.6 GiB each
+in host memory, where the default 32 could hold about 19 GiB in one long chat.)* The footprints
+rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budget allows. No
+`spark doctor` check comes with it: the render tests pin the flags and pi's window, and Step 1
+reads the engines' own settings once (a ruling, 2026-09-28; Task 17 can weigh a check that reads
+each engine's `/props`).
 
-llama-swap's config changes, and restarting llama-swap stops every engine, so **[Dan, on the
-Spark]** runs `make apply-now` (or `make apply` with nothing loaded). Then, **on the Spark**, the
-session checks each model after a cold load:
+- [ ] **Step 1 [Dan, then Spark]: Deploy, and check each model at full context** — llama-swap's
+  config changes, and restarting llama-swap stops every engine, so **[Dan, on the Spark]** runs
+  `make apply-now` (or `make apply` with nothing loaded). Then the session loads each model cold and
+  reads what its engine started with. **On the Spark**, llama-swap keeps each engine's output, and
+  this prints the line each llama-server logs at start:
 
-- its engine's log says `n_ctx_slot = 262144, kv_unified = 'true'` for Gemma, `262144` for the
-  coder and `32768` for the embedding model;
-- Gemma and the coder each answer a prompt of about 100,000 tokens, and the embedding model embeds
-  an input of about 30,000;
-- its footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the
-  reading is above the estimate, with `footprint_measured: false`; and `make doctor` passes 15 of
-  15.
+```bash
+curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization: Bearer $SPARK_API_KEY" | grep -a 'n_ctx_slot'
+```
 
-**[Dan, on the Mac]** pulls and runs `make clients`, so pi's windows match; **as `agent`, on the
-Spark**, its clone pulls and `spark clients pi --write` runs again (`pi.md`, *The context
-window*). A `docs(machine)` commit records the readings in `changelog.md` and `README.md`.
+  Expected: `n_slots = 2, n_ctx_slot = 262144, kv_unified = 'true'` for Gemma, `n_ctx_slot = 262144`
+  for the coder and `n_ctx_slot = 32768` for the embedding model. Gemma and the coder each answer a
+  prompt of about 100,000 tokens, and the embedding model embeds an input of about 30,000. Each
+  footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the reading is
+  above the estimate, with `footprint_measured: false`. `make doctor` passes 15 of 15.
+- [ ] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
+  a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's title call
+  would be, then a second turn that repeats the first with the reply and a new question. The second
+  turn's `timings.prompt_n`, in its response, should be a few thousand tokens at most, not the
+  whole conversation. Over several more turns, `MemAvailable` should fall by no more than about
+  5 GiB beyond the footprint, 8 checkpoints of about 0.6 GiB. The commands are written and run when
+  this step runs, as Step 1's measurements were.
+- [ ] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
+  the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so
+  pi's windows match what the Spark now serves; **as `agent`, on the Spark**, its clone pulls and
+  `spark clients pi --write` runs again (`pi.md`, *The context window*). **[Dan, on the phone]**
+  checks S09's new claims: a chat's *Controls → Advanced Params* offers `max_tokens` and
+  *Reasoning Effort*, and *Admin Panel → Settings → Interface* has *Context Compaction*. S09's
+  "not yet checked on the phone" marker comes out once that passes.
+- [ ] **Step 4 [Spark]: Changelog, README; commit** — a `docs(machine)` commit records the
+  readings in `changelog.md` and `README.md`.
 
 ***
 
@@ -7298,7 +7329,10 @@ window*). A `docs(machine)` commit records the readings in `changelog.md` and `R
   Step 2 finds it untrue
 
 - [ ] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
-  (the dates from Task 14). S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
+  (the dates from Task 14). *(Corrected 2026-09-28: S09 has since gained the context change's
+  claims about what the phone can change, which Task 14 didn't check. S09's date is that of the
+  context change's phone check, below Task 16, and the page's "not yet checked on the phone" marker
+  comes out only once that check passes.)* S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
   models first and that the idle-first order and notifications arrive in Phase 2. S23:
   `status: built`, with the date Task 16 Step 5's routine upgrade and reboot passed. It becomes
   `verified`, with that day's date, only once `make upgrade-gpu` has moved the set on a real
@@ -7341,7 +7375,12 @@ window*). A `docs(machine)` commit records the readings in `changelog.md` and `R
   Two decisions wait on this phase's readings. Whether `spark launch` gives resident
   models a lower `oom_score_adj` than on-demand ones depends on whether the engines' RSS counts
   their models (the `rss` and `oom` columns in Task 13 Step 5). Swap size and swappiness depend on
-  the swap line (Task 16 Step 3).
+  the swap line (Task 16 Step 3). *(Added 2026-09-28, from Task 16's review:* two more wait on
+  Task 16 Step 1's readings, recorded in `cosmicbboy-local-ai.md` §I and the brake's comments:
+  whether the brake's `GRACE_S` stays 15 s, when only an idle engine's stop was measured, and
+  whether `FLOOR_TOLERANCE_GIB` stays 0.5 GiB, when the one larger step was probably a Gemma
+  context checkpoint rather than noise. Also weigh the context change's readings, below Task 16:
+  the footprints at full context and the checkpoints' memory over a long conversation.)*
   Update `plan.md` (with a Revisions line), the scenario pages and `changelog.md` before
   Phase 2 starts. *(Added 2026-09-27, Dan's decision:* also look back at the lock's seven-day
   window — did it hold back a fix the stack needed, did Dependabot's uv PRs and a hand-run

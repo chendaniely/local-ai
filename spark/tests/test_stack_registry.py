@@ -4,16 +4,31 @@ from spark.registry import load_registry
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 LLAMA_CPP_BATCH_DEFAULT = 2048  # llama-server b11146's --batch-size default; it caps --ubatch-size
-# Each pinned GGUF's own context_length, read from its header on 2026-09-28. Every model runs at its maximum (Dan's
-# decision, 2026-09-28): a model added or swapped needs its entry here, read the same way.
-NATIVE_CTX = {"gemma-4-26B_q4_0-it.gguf": 262144, "Qwen3-Embedding-0.6B-Q8_0.gguf": 32768,
-              "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf": 262144}
+LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
+# Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
+# at its maximum (Dan's decision, 2026-09-28): a model added, swapped or moved to a new revision needs its entry here,
+# read the same way.
+NATIVE_CTX = {
+    ("google/gemma-4-26B-A4B-it-qat-q4_0-gguf", "d1c082be9cf3c8a514acf63b8761f4b41935842e",
+     "gemma-4-26B_q4_0-it.gguf"): 262144,
+    ("Qwen/Qwen3-Embedding-0.6B-GGUF", "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
+     "Qwen3-Embedding-0.6B-Q8_0.gguf"): 32768,
+    ("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
+     "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"): 262144,
+}
 
 
 def flag(args: tuple[str, ...], *spellings: str) -> int | None:
     for i, word in enumerate(args[:-1]):
         if word in spellings:
             return int(args[i + 1])
+    return None
+
+
+def option(args: tuple[str, ...], *spellings: str) -> str | None:
+    for i, w in enumerate(args[:-1]):
+        if w in spellings:
+            return args[i + 1]
     return None
 
 
@@ -36,13 +51,18 @@ def test_every_llama_cpp_model_runs_at_its_full_context():
     llama = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "llama.cpp"]
     assert llama
     for model in llama:
-        assert model.ctx == NATIVE_CTX[model.source.file], model.name
+        assert model.ctx == NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)], model.name
 
 
-def test_embedding_models_take_a_whole_input_in_one_ubatch():
-    # An embedding model reads its input with non-causal attention, all in one micro-batch: an input longer than
-    # --ubatch-size is refused, so the micro-batch holds the whole context.
+def test_an_embedding_model_pools_its_last_token_or_holds_its_whole_context_in_one_ubatch():
+    # llama-server b11146 splits an input across micro-batches only when the model pools its last token (its KV cache
+    # carries the rest: server-context.cpp, can_split). Otherwise an input longer than the micro-batch is refused, and
+    # the micro-batch is the smaller of --ubatch-size and --batch-size (llama-context.cpp).
     embed = [m for m in load_registry(STACK_REGISTRY).models.values() if m.capability == "embeddings"]
     assert embed
     for model in embed:
-        assert (flag(model.args, "-ub", "--ubatch-size") or 0) >= model.ctx, model.name
+        if option(model.args, "--pooling") == "last":
+            continue
+        ubatch = flag(model.args, "-ub", "--ubatch-size") or LLAMA_CPP_UBATCH_DEFAULT
+        batch = flag(model.args, "-b", "--batch-size") or LLAMA_CPP_BATCH_DEFAULT
+        assert min(ubatch, batch) >= model.ctx, model.name

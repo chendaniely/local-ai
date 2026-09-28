@@ -112,7 +112,7 @@ In order of how much they constrain the design:
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
-| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
+| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
@@ -479,7 +479,9 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   themselves. Their unit requires Docker and stops them with `docker compose down`, so a restart of
   Docker restarts them, but an upgrade that stops Docker and starts it again leaves them stopped
   until `systemctl start local-ai-compose`, which `make doctor`'s stack-units check catches. Which
-  one DGX OS's Docker upgrade does is not yet tried on this box; Task 16's drills find out.)
+  one DGX OS's Docker upgrade does is not yet tried on this box; Task 16's drills find out.
+  *Corrected 2026-09-28:* they couldn't. The routine upgrade Task 16 ran moved no Docker package,
+  so this waits for an upgrade that does, under *To verify on the box*.)
 - [Mac] pi config + SSH tunnel · CI's render step, the site render and the merge that brings it
   into `main`.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
@@ -698,7 +700,12 @@ Each item gets its own design pass when its turn comes.
   RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
   brake's order (Phase 1 measures it)~~ (resolved 2026-09-28: it doesn't, and earlyoom's pick
   didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions); whether memory swaps out before `MemAvailable` reaches the
-  brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness.
+  brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness; that
+  the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
+  one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
+  to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
+  memory context checkpoints take over a long conversation (estimated at about 0.6 GiB each for
+  Gemma, 8 at most per slot; added 2026-09-28).
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -1030,12 +1037,31 @@ Each item gets its own design pass when its turn comes.
   use all 262,144 tokens. Giving each slot a full window instead would cost twice the KV memory. Two
   long requests at once can exhaust the shared pool, which a single user rarely does. pi's
   `contextWindow` is now the model's whole `ctx`, not `ctx` over the slots. Only 5 of Gemma's 30
-  layers and 10 of the coder's 40 keep a full-length cache, so the footprints rise by an estimated
-  15 GiB in all, from 20, 4 and 29 GiB to 26, 10 and 32. The embedding model's share, about 6 GiB,
-  is the largest for what it gains: its micro-batch has to hold a whole input, and Open WebUI sends
-  it short chunks. All four come to 71 GiB, within the 78 the budget allows. The estimates are
-  measured once deployed. The phone can't change the context, since Open
-  WebUI's `num_ctx` is for Ollama, and `pi.md` and S09 say what each client can change.
+  layers keep a full-length cache, and 10 of the coder's 40 main layers plus its MTP block, so the
+  longer caches cost little. Revised the same day, after the change's review and before it was
+  deployed, from llama.cpp b11146's source:
+  - The embedding model's micro-batch stays at the 2048 that actually runs. It pools its last
+    token, so llama-server splits a long input, and `--batch-size` (2048 by default) caps
+    `--ubatch-size`, so the 8192 it had, and the 32,768 the first version gave it, changed
+    nothing.
+  - With a shared pool, llama-server saves idle slots to the prompt cache and clears them whenever
+    a task starts. A long chat outgrows Gemma's 1 GiB prompt cache, so each of Open WebUI's title
+    calls would have cost it a full re-read. Render also passes `--no-cache-idle-slots`: an idle
+    slot keeps its cache until the pool runs short.
+  - Context checkpoints, which llama-server keeps in host memory, a few per chat turn, are thinned
+    to 8,192 tokens apart only once a slot holds 32. So how many a long chat keeps grows with the
+    context, about 0.6 GiB each for Gemma: up to about 19 GiB at 262,144 tokens, against about 2 at
+    16,384. Gemma keeps at most 8 (`--ctx-checkpoints 8`), counted in its footprint.
+  The footprints rise to estimates, from 20, 4 and 29 GiB to 31, 7 and 32: 73 GiB for all four,
+  within the 78 the budget allows, measured once deployed. The phone can't change the context,
+  since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each client can change.
+- **2026-09-28** — From the review of Task 16's record. The routine upgrade moved neither `libc6`
+  nor `libstdc++6` nor Docker, so Phase 1's Docker line, which said Task 16 would find out what a
+  Docker upgrade does to the web services, gains a dated correction, and *To verify on the box*
+  gains an upgrade that moves the C libraries and one that moves Docker. It also gains the memory
+  that context checkpoints take over a long conversation. Task 17's forward look gains the brake's
+  two numbers that Task 16 measured, `GRACE_S` and `FLOOR_TOLERANCE_GIB`: only an idle engine's
+  stop was measured, and the one step above 0.5 GiB was probably a Gemma checkpoint, not noise.
 
 ## Sources
 

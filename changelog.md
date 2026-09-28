@@ -13,15 +13,17 @@ records the *current* state; this records how it got there.
 **The brake, at raised thresholds (S05).** The Spark session loaded the coder and ran one brake
 tick against a copy of the registry whose thresholds sat just above the memory available: 65 GiB,
 against a warn line of 75, a brake line of 70 and a reserve of 71. The brake held new loads and
-unloaded the coder, the only on-demand model, at 65.3 GiB available. The three residents stayed,
-and `make status` read HOLDING. While the hold stood, the coder's start was refused with a `500`
+unloaded the coder, the only on-demand model, at 65.3 GiB available. The two residents then
+loaded, Gemma and whisper, stayed (the embedding model wasn't loaded until Step 3), and
+`make status` read HOLDING. While the hold stood, the coder's start was refused with a `500`
 and `make status` named the hold. `make brake-release` released it, and the coder answered again.
 
 **Measured along the way** (`cosmicbboy-local-ai.md` §I, `brake.py`'s comments). The idle
 coder's process was gone 0.6 s after the tick began; the brake waits up to 15 s. While the brake
-held and nothing generated, `MemAvailable` moved within ±0.02 GiB poll to poll. While a Gemma
-session generated, it fell in steps up to 0.58 GiB, and 1 poll in 239 moved more than the 0.5 GiB
-tolerance. And v257 stops an engine that is still starting as soon as it's asked, failing the
+held, with 93 GiB available, `MemAvailable` moved within ±0.02 GiB poll to poll for the first 15 s,
+while nothing generated. Then a Gemma session generated, and it fell in steps up to 0.58 GiB: 1 poll
+in 239 moved more than the 0.5 GiB tolerance. That step matches one of Gemma's context checkpoints
+by arithmetic (about 0.59 GiB), so it was probably an allocation, not noise; not verified. And v257 stops an engine that is still starting as soon as it's asked, failing the
 request that started it. Whether the 15 s and the 0.5 GiB stay is for Task 17 to decide.
 
 **A load that doesn't fit is refused, and nothing is unloaded (S03, previewed).** The three

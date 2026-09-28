@@ -131,12 +131,16 @@ in.
 The Spark sets each model's context, not pi. It comes from `ctx` in `stack/models.yaml`, llama-server
 reserves it when the model loads, and no request can go past it. Every model runs at its full
 context (Dan's decision, 2026-09-28): 262,144 tokens for Gemma and for the coder. Gemma has two
-slots, and they share that context, so one request can use all of it.
+slots, and they share that context, so one request can use all of it. Requests running at the same
+time share it too: a pi session near the end of Gemma's window and a long phone chat can't both
+fit, and llama-server makes room by dropping the cache of whichever is idle, which then has to be
+read again.
 
 pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`, which
-`make clients` writes from the registry. So after the registry's `ctx` changes, pull and run
-`make clients` again **on the Mac**, and **on the Spark, as `agent`**, pull its clone and run the
-`spark clients pi --write` line above again. pi compacts a session by itself once it passes
+`make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on
+the Spark and pushed, pull and run `make clients` again **on the Mac**, and **on the Spark, as
+`agent`**, pull its clone and run the `spark clients pi --write` line above again. Not before: pi
+told a bigger window than the engine serves sends requests the engine refuses with a `400`. pi compacts a session by itself once it passes
 `contextWindow` minus `reserveTokens`, and `/compact` does it by hand.
 
 To make pi compact sooner, raise `reserveTokens` in `~/.pi/agent/settings.json`, on the machine whose

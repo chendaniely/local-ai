@@ -22,15 +22,18 @@ models:
       file: gemma-4-26B_q4_0-it.gguf
       mmproj: gemma-4-26B-it-mmproj.gguf
     # Every model at its full context (Dan's decision, 2026-09-28); Gemma's two slots share it (render's --kv-unified).
-    # Footprint: 20 GiB measured at 32768, plus ~5 for the longer KV cache and attention mask (estimated, to measure).
+    # Footprint: 20 GiB measured at 32768, plus ~5 for the longer KV cache and attention mask, plus ~5 for 8 context
+    # checkpoints (estimated, to measure).
     ctx: 262144
     parallel: 2
     cache_ram_mib: 1024
-    footprint_gib: 26
+    footprint_gib: 31
     footprint_measured: false
     # An image's tokens are decoded in one micro-batch, and one too big for it aborts the engine: pin Gemma 4's
     # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
-    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120"]
+    # A context checkpoint (its sliding-window cache, ~0.6 GiB, in host memory) is kept a few per chat turn, thinned
+    # to 8192 tokens apart only once a slot holds the cap: at 32, a long chat could keep ~19 GiB. Cap them at 8.
+    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "8"]
   qwen3-embedding-0.6b:
     capability: embeddings
     roles: [embed]
@@ -40,14 +43,15 @@ models:
       repo: Qwen/Qwen3-Embedding-0.6B-GGUF
       revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
       file: Qwen3-Embedding-0.6B-Q8_0.gguf
-    # An input is embedded in one micro-batch, so it holds the whole context. Footprint: 3.3 GiB measured at 8192,
-    # plus ~6 for four times the KV cache, micro-batch and attention mask (estimated, to measure).
+    # Footprint: 3.3 GiB measured at 8192, plus ~2.6 for four times the KV cache (estimated, to measure).
     ctx: 32768
     parallel: 1
     cache_ram_mib: 0
-    footprint_gib: 10
+    footprint_gib: 7
     footprint_measured: false
-    args: [--pooling, last, --ubatch-size, "32768"]
+    # It pools its last token, so llama-server splits a long input across micro-batches, and the micro-batch is
+    # llama-server's batch size, 2048, which caps --ubatch-size. (This said 8192 until 2026-09-28, capped the same way.)
+    args: [--pooling, last, --ubatch-size, "2048"]
   whisper-large-v3-turbo:
     capability: transcription
     roles: [stt]

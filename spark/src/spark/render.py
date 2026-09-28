@@ -40,7 +40,7 @@ SPELLINGS = {
         ("--offline",), ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
         ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
         ("-dr", "--docker-repo"), ("--mmproj-auto", "--no-mmproj", "--no-mmproj-auto"),
-        ("-kvu", "--kv-unified", "-no-kvu", "--no-kv-unified"),
+        ("-kvu", "--kv-unified", "-no-kvu", "--no-kv-unified"), ("--cache-idle-slots", "--no-cache-idle-slots"),
     ),
     "whisper.cpp": (("--host",), ("--port",), ("-m", "--model"), ("--inference-path",)),
 }
@@ -121,8 +121,11 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
                "--offline"]
         if model.parallel > 1:
             # One KV pool for all the slots, so any one request can use the whole context rather than ctx / parallel
-            # (Dan's decision, 2026-09-28). Two long requests at once share it.
-            cmd += ["--kv-unified"]
+            # (Dan's decision, 2026-09-28). Two long requests at once share it. With a shared pool, b11146 saves idle
+            # slots to the prompt cache and clears them whenever a task starts, and a long chat outgrows the cache, so
+            # Open WebUI's title call after each turn would cost the chat its cache. Without that, an idle slot keeps
+            # its cache until the pool runs short (server-context.cpp, try_clear_idle_slots).
+            cmd += ["--kv-unified", "--no-cache-idle-slots"]
         if model.source.mmproj:
             cmd += ["--mmproj", model_path(model.source, model.source.mmproj)]
         if model.capability == "embeddings":
