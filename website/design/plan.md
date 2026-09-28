@@ -1047,16 +1047,17 @@ Each item gets its own design pass when its turn comes.
     nothing.
   - With a shared pool, llama-server saves idle slots to the prompt cache and clears them whenever
     a task starts. A long chat outgrows Gemma's 1 GiB prompt cache, so each of Open WebUI's task
-    calls, the follow-ups, tags and search queries it asks for after a turn, would have cost it a
-    full re-read. Render also passes `--no-cache-idle-slots`: an idle slot keeps its cache until
+    calls, the search queries, follow-ups and tags it asks for around each turn, would have cost it
+    a full re-read. Render also passes `--no-cache-idle-slots`: an idle slot keeps its cache until
     the pool runs short.
   - Context checkpoints, which llama-server keeps in host memory, are added a few per chat turn,
     about 0.6 GiB each for Gemma, and a slot's are thinned only once it holds the cap, 32 by
     default. So a dozen turns can fill a slot, about 19 GiB, at any context: the risk predates this
-    change. Task 13's Gemma, whose memory grew by about 4 GiB over long answers, and Task 16's
-    0.58 GiB steps fit it. The full context only keeps the slot near the cap once it's full. A chat
-    restores only its latest checkpoint, so Gemma keeps at most 4 per slot
-    (`--ctx-checkpoints 4`, a per-slot cap), 8 in all, counted in its footprint.
+    change. Task 16's 0.58 GiB steps, taken while a pi session was using Gemma, probably were
+    checkpoints; not verified. The full context only keeps the slot near the cap once it's
+    full. A continuing chat restores its latest checkpoint, and an edit further back falls back to
+    re-reading the whole prompt, so Gemma keeps at most 4 per slot (`--ctx-checkpoints 4`, a
+    per-slot cap), 8 in all, counted in its footprint.
   The footprints rise to estimates, from 20, 4 and 29 GiB to 31, 7 and 32: 73 GiB for all four,
   within the 78 the budget allows, measured once deployed. The phone can't change the context,
   since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each client can change.

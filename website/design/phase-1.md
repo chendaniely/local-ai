@@ -7300,15 +7300,17 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   prompt of about 100,000 tokens, and the embedding model embeds an input of about 30,000. Each
   footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the reading is
   above the estimate, with `footprint_measured: false`. Gemma's reading is compared with 26 GiB, its
-  estimate without the checkpoints' 5, which a cold load doesn't allocate and Step 2 measures.
+  estimate without the checkpoints' 5, which a cold load doesn't allocate and Step 2 measures; if
+  it's higher, the registry gets the reading plus 5.
   `make doctor` passes 15 of 15.
 - [ ] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
   a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's task calls
   are, then a second turn that repeats the first with the reply and a new question. The second
   turn's `timings.prompt_n`, in its response, should be a few thousand tokens at most, not the
   whole conversation. Over several more turns, `MemAvailable` should fall by no more than about
-  2.5 GiB beyond the cold load's reading for this one chat: 4 checkpoints of about 0.6 GiB. The commands are written and run when
-  this step runs, as Step 1's measurements were.
+  3.5 GiB beyond the cold load's reading: this chat's 4 checkpoints of about 0.6 GiB, plus up to
+  1 GiB for the prompt cache and the short request's own small checkpoints. The commands are
+  written and run when this step runs, as Step 1's measurements were.
 - [ ] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
   the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so

@@ -33,7 +33,8 @@ models:
     # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
     # A context checkpoint (its sliding-window cache, ~0.6 GiB, in host memory) is added a few per chat turn, and a
     # slot's are thinned only once it holds the cap: at the default 32 per slot, one long chat could keep ~19 GiB,
-    # whatever the context. A chat only restores its latest, so cap them at 4 per slot, 8 in all (~5 GiB).
+    # whatever the context. A continuing chat restores its latest (an edit further back re-reads the whole prompt), so
+    # cap them at 4 per slot, 8 in all (~5 GiB).
     args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4"]
   qwen3-embedding-0.6b:
     capability: embeddings
