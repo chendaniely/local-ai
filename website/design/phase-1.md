@@ -6959,6 +6959,15 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 - [ ] **Step 3: S09, the phone away from home** — on mobile data, Tailscale on: add the page to the
   home screen; ask about a photo; dictate a message with the microphone. Each answer is labelled
   `gemma-4-26b-a4b`.
+  *(Corrected 2026-09-28, from the run: a photo aborted Gemma's engine, big or small, and every
+  later message in that chat did too, since each resends the photo. llama.cpp decodes an image's
+  tokens in one micro-batch, and an image with more tokens than `--ubatch-size`, 512 by default,
+  trips an assertion that kills the engine, not just the request. b11146 gives a Gemma 4 image up
+  to 1120 tokens, about 2.6 MP. The registry now gives Gemma `--ubatch-size 2048` and
+  `--image-max-tokens 1120`, and a test holds every vision model to a micro-batch that fits its
+  image budget. **[Dan, on the Spark]** deploys it with `make apply-now`: llama-swap restarts, so
+  all four models stop and load again on their next request. Then ask about a photo again, in a
+  new chat.)*
 - [ ] **Step 4: S20, web search from the phone** — turn on web search in a chat and ask about
   something from this week; the answer cites its sources.
 - [ ] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on

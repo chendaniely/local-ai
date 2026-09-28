@@ -1004,6 +1004,15 @@ Each item gets its own design pass when its turn comes.
   their `oom_score`s sat within 9 of each other (1334–1343). earlyoom's dry run picked Gemma,
   which is resident, over the on-demand coder, the opposite of the brake's order. Task 17 decides
   whether resident models get a lower `oom_score_adj`.
+- **2026-09-28** — Phase 1's Task 14 found that any photo aborted Gemma's engine. llama.cpp
+  decodes an image's tokens in one micro-batch, and an image with more tokens than
+  `--ubatch-size`, 512 by default, trips an assertion (`llama-context.cpp`) that kills the whole
+  engine, not just the request. llama.cpp b11146 gives a Gemma 4 image up to 1120 tokens, about
+  2.6 MP (`set_limit_image_tokens(70, 1120)` in `clip.cpp`), and scales bigger ones down to that.
+  So every photo over about 1.2 MP failed, and every later message in its chat too, since each
+  resends it. The registry now gives Gemma `--ubatch-size 2048` and `--image-max-tokens 1120`,
+  Gemma 4's own maximum, and a test on the repo's registry holds every vision model to a
+  micro-batch that fits its image budget. The engine's footprint is measured again once deployed.
 
 ## Sources
 

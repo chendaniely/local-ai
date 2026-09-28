@@ -26,7 +26,9 @@ models:
     cache_ram_mib: 1024
     footprint_gib: 19
     footprint_measured: false
-    args: [--load-mode, none]
+    # An image's tokens are decoded in one micro-batch, and one too big for it aborts the engine: pin Gemma 4's
+    # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
+    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120"]
   qwen3-embedding-0.6b:
     capability: embeddings
     roles: [embed]
