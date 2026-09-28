@@ -158,6 +158,12 @@ when that file was retired on 2026-09-23.
   recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
   2026-09-25). Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
+- **The engines** (2026-09-27, Phase 1 Task 11), installed but not yet run by anything: llama-swap
+  **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
+  CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
+  and whisper.cpp **v1.9.4**, built here for `121a-real`, in `/opt/local-ai/bin/whisper.cpp/v1.9.4/`.
+  whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. Checksums, commits
+  and GPU code in the changelog; the pins in `stack/versions.yaml`.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for

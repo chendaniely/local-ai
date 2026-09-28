@@ -8,6 +8,38 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-27 — The engines, at their pins (Phase 1, Task 11)
+
+Installed **on the Spark**, as Dan, following Task 11 of
+[the Phase 1 plan](website/design/phase-1.md). Nothing runs them yet; Task 12 deploys the config
+and starts the stack. The driver was **580.178.04** and `nvcc` **13.0**, the GPU set as bootstrap
+held it.
+
+- **llama-swap v257** → `/opt/local-ai/bin/llama-swap/v257/llama-swap`. The release tarball
+  matched the checksum already pinned in `stack/versions.yaml`; `-version` reports `v257 (f00d375)`.
+- **llama.cpp b11146**, the prebuilt `ubuntu-cuda-13.4-arm64` build and its `cudart-` companion,
+  → `/opt/local-ai/bin/llama.cpp/b11146/`. Both tarballs matched the sha256 digests GitHub
+  publishes for the release's assets; the binaries' tarball is the pin
+  (`sha256:4e00496a…`, in full in `stack/versions.yaml`). `--version` reports build 11146, commit
+  `7fe450e19`; `--list-devices` shows the GB10 as `CUDA0`. `libggml-cuda.so` loads the CUDA 13.4
+  runtime and cuBLAS copied beside it, and only the driver's `libcuda.so.1` from the system.
+  `cuobjdump --list-elf libggml-cuda.so` lists `sm_86`, `sm_89`, `sm_120a` and **`sm_121a`** —
+  native code for this GPU, so a first load needn't compile PTX.
+- **whisper.cpp v1.9.4**, built from source (there's no CUDA prebuilt) at commit `927cfce3…`
+  (the pin, in full in `stack/versions.yaml`), → `/opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server`.
+  CMake ran with `-DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=121a-real -DBUILD_SHARED_LIBS=OFF`
+  and reported `Using CMAKE_CUDA_ARCHITECTURES=121a-real`, with no warning about an unsupported
+  architecture (its three warnings were no ccache, `-mcpu=native`, and no NCCL, which matters
+  only with several GPUs). Checked with `cuobjdump --list-elf` on `whisper-server`: it lists
+  **`sm_121a`** alone, and `--list-ptx` lists nothing. That it *runs* on the GPU is Task 13's
+  check. Unlike llama.cpp it uses the **system's CUDA 13.0 runtime**
+  (`/usr/local/cuda-13.0`, found through `ld.so.conf` and the binary's runpath), so it moves with
+  the held GPU set: after an upgrade day that changes CUDA, check it still loads, or rebuild it.
+  The clone stays in `~/src/whisper.cpp`; its `samples/jfk.wav` is Task 13's speech test.
+
+Each engine's path in `stack/models.yaml` names the version pinned in `stack/versions.yaml`
+(checked by hand; `spark render` doesn't cross-check them).
+
 ## 2026-09-26 — `spark/`'s environment on uv's own Python
 
 The clone's `spark/.venv` had been built on Ubuntu's Python 3.12.3. `spark/pyproject.toml` now

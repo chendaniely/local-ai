@@ -61,7 +61,7 @@ components:
   llama.cpp:
     version: b11146
     where: [spark]
-    pin: null
+    pin: sha256:4e00496ab6cdee9c00afb11de3cb9d10f9da7e17147d8ed14ca3af05209b400f
     deployed: true
     docs: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
     context7: /ggml-org/llama.cpp
@@ -70,7 +70,7 @@ components:
   whisper.cpp:
     version: v1.9.4
     where: [spark]
-    pin: null
+    pin: git:927cfce34f31707e17f2bff35c349632fb9e2c3a
     deployed: true
     docs: https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
     context7: /ggml-org/whisper.cpp
