@@ -116,7 +116,7 @@ In order of how much they constrain the design:
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
-| **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
+| **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model, with thinking off for task calls (`TASK_MODEL_PARAMS`; Dan's decision, 2026-09-28), while chats keep it; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
@@ -979,6 +979,16 @@ Each item gets its own design pass when its turn comes.
   And Task 13 Step 5's SearXNG check is corrected: the image's entrypoint runs SearXNG as root in
   its container and warns at every start about each mount its own user doesn't own, so the
   warning is expected. A working search and no permission error in its log are the check.
+- **2026-09-28** — Dan's decision: Open WebUI's task calls run without thinking, and chats keep
+  it. Phase 1's Task 13 found that both chat models think by default, with no limit: Gemma took
+  about 2,200 tokens, some 28 seconds, before a five-word reply. Gemma is the task model, so
+  titles, tags and search queries would be slow, or empty once a cap ran out. Dan keeps thinking
+  at its highest in chats and turns it down there by hand. So Open WebUI gets
+  `TASK_MODEL_PARAMS`, whose keys v0.11.4 adds to every task request:
+  `chat_template_kwargs` with `enable_thinking` false, and a 1000-token cap, since setting it
+  replaces the title task's own. Per request, that switch took both models from thousands of
+  tokens to 7 or 8. A render test pins the setting; `make doctor` can't see task calls, which need
+  an Open WebUI login, so Task 13 checks one on the box. S20, web search, records the behaviour.
 
 ## Sources
 

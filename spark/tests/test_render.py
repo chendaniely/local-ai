@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shlex
@@ -108,6 +109,15 @@ def test_open_webui_is_given_the_registrys_task_embedding_and_stt_models():
     webui = yaml.safe_load(rendered()["compose/compose.yaml"])["services"]["open-webui"]["environment"]
     assert (webui["TASK_MODEL_EXTERNAL"], webui["RAG_EMBEDDING_MODEL"], webui["AUDIO_STT_MODEL"]) == (
         "vision-chat", "embed", "stt")
+
+
+def test_open_webui_task_calls_run_without_thinking():
+    # Titles, tags and search queries go to the 'small' model, which thinks by default: thousands of tokens
+    # before a five-word title. Open WebUI v0.11.4 adds TASK_MODEL_PARAMS' keys to every task request, and
+    # setting it replaces the title task's own 1000-token cap, so the cap comes along. Chats keep thinking.
+    webui = yaml.safe_load(rendered()["compose/compose.yaml"])["services"]["open-webui"]["environment"]
+    assert json.loads(webui["TASK_MODEL_PARAMS"]) == {
+        "chat_template_kwargs": {"enable_thinking": False}, "max_tokens": 1000}
 
 
 def test_llama_swap_listens_on_localhost_only():

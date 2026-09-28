@@ -18,6 +18,9 @@ services:
       ENABLE_CODE_EXECUTION: "false"
       ENABLE_CODE_INTERPRETER: "false"
       TASK_MODEL_EXTERNAL: {task_model}
+      # Titles, tags and search queries without thinking, and at the title task's own 1000-token cap,
+      # which setting this replaces. Chats keep thinking.
+      TASK_MODEL_PARAMS: '{{"chat_template_kwargs": {{"enable_thinking": false}}, "max_tokens": 1000}}'
       RAG_EMBEDDING_ENGINE: openai
       RAG_OPENAI_API_BASE_URL: http://127.0.0.1:9100/v1
       RAG_EMBEDDING_MODEL: {embedding_model}

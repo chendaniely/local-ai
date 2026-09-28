@@ -6902,6 +6902,18 @@ Expected: the process it would kill is an engine; note which one.
   measures at full context after a soak. Then `make apply`: only `models.yaml` changed, so only the
   brake restarts.
 
+*Added 2026-09-28, Dan's decision (plan.md's Revisions): Open WebUI's task calls run without
+thinking.* Step 4 found that both chat models think by default, and Gemma is the task model, so
+`stack/templates/compose.yaml` gains `TASK_MODEL_PARAMS`, which a render test pins. Root's copy of
+the Compose file changes with it, so Step 6's `make apply` first stages `compose/compose.yaml` and
+stops, as its dry run showed. **[Dan, on the Spark]** runs `make install-units`, reads the change
+and answers `y`. Then `make apply` again deploys `models.yaml` and restarts what the change needs.
+To check it, **[Dan, on the Mac]** starts a new chat with Gemma in Open WebUI, through Step 3's
+tunnel, and sends a message. **On the Spark**, `journalctl -u local-ai-llama-swap` then shows the
+title request, a non-streamed `POST /v1/chat/completions` from Open WebUI's `aiohttp`, answered in
+a second or two with a small body, not the half a minute a title takes with thinking on. Step 7
+records it.
+
 - [ ] **Step 7 [Spark]: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's
   bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
