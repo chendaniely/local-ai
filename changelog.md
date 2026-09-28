@@ -8,6 +8,37 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — pi on the Mac and for `agent` (Phase 1, Task 15)
+
+**The Mac's pi** was installed at 0.85.1 (`website/how-to/pi.md`), with `make clients` and
+`make tunnel`. Through the tunnel, the coder, `qwen3.6-35b-a3b`, served a real pi task. pi 0.85.1
+expands `"${SPARK_API_KEY}"` in its `models.json`, so no key's value sits in either machine's
+pi config.
+
+**`agent`'s Claude Code got the secrets guard first,** before `agent` held any key: the same hook
+script and 35 deny rules as Dan's Spark session, paths moved to `/home/agent`, and a `CLAUDE.md`
+holding only Dan's secrets rule. Checked: `agent`'s `claude` refused an existence check on its
+secrets file.
+
+**Node 22,** by Dan, **on the Spark**: he read NodeSource's `setup_22.x` script, then ran it with
+sudo and installed `nodejs` 22.23.3-1nodesource1, with npm 10.9.9. The repository is in
+`/etc/apt/sources.list.d/nodesource.sources`, so apt updates it. Ubuntu's own `nodejs` is 18.19,
+and pi 0.85.1 needs Node 22.19 or later.
+
+**`agent`'s key and tools.** Root read only `agent`'s llama-swap key from the service secrets and
+wrote it, as `agent` and never displayed, into `agent`'s `~/.secrets` as `SPARK_API_KEY`;
+`agent`'s `~/.bashrc` loads it first. As `agent`: uv 0.12.19, from its installer, which takes the
+latest (the repo records 0.12.18), and pi 0.85.1, both in `~/.local/bin`, and a clone of `phase-1`
+in `~/work/local-ai`, used only for `spark clients`. uv built that clone's environment on its own
+CPython 3.12.14, and `spark clients pi --write` wrote pi's `spark` provider. Checked: after a new
+login, the key loads; pi, in tmux, ran a task on the coder (requests at 12:40–12:43, all `200`);
+the session survived a detach, a logout and a reattach; and `claude` starts logged in in a second
+window.
+
+**An update took pi to 0.87.1,** the newest release and the last in the range reported to crash
+llama-server. `agent`'s pi went back to 0.85.1, and no engine crashed from 12:30 on. `pi.md` now
+says to check the version after any update.
+
 ## 2026-09-28 — The web UI on the phone (Phase 1, Task 14)
 
 **Served on the tailnet.** Dan, **on the Spark**:

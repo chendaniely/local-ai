@@ -12,7 +12,9 @@ where it runs as `agent`, inside tmux.
 
 pi is pinned to 0.85.1. Releases 0.86.0 through 0.87.1 are reported to crash llama-server, most
 likely through a llama.cpp bug that their longer prompt triggers. Move up only to a release outside
-that range, and change `stack/versions.yaml` in the same commit.
+that range, and change `stack/versions.yaml` in the same commit. An update takes pi off the pin:
+on 2026-09-28 one took it to 0.87.1, the newest release then and the last in the range. So after
+any update, check `pi --version`, and put pi back with the install line below, `agent`'s included.
 
 ## On the Mac
 

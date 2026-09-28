@@ -23,15 +23,17 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-28).** The switch point and Tasks 1–14 are done, each reviewed and ticked
+> **Progress (2026-09-28).** The switch point and Tasks 1–15 are done, each reviewed and ticked
 > below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
 > box, at their pins. Task 12 re-ran bootstrap, installed root's copies of the units and the
 > Compose project, deployed the config and the app, and pulled the five model files. Task 13
 > started the stack: four models serve through llama-swap, Open WebUI has Dan's admin account,
 > `make doctor` passes 15 of 15, and Open WebUI's task calls run without thinking (Dan's
 > decision). Task 14 served Open WebUI to the tailnet over HTTPS: S09 and S20 passed on Dan's
-> phone, once a fix stopped photos from aborting Gemma's engine. **Next: Task 15 [Dan + Spark],**
-> pi on the Mac and as `agent`. Its Step 1 is Dan's, on the Mac: pull `phase-1`, then install pi.
+> phone, once a fix stopped photos from aborting Gemma's engine. Task 15 set up pi on the Mac and
+> for `agent`, whose Claude Code got the secrets guard before its key. **Next: Task 16 [Spark +
+> Dan],** the drills: the brake, a load that doesn't fit, a fresh clone, an upgrade and a reboot.
+> Its Step 1, the brake at raised thresholds, is the Spark session's.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -6982,7 +6984,7 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 
 ### Task 15 [Dan + Spark]: pi on the Mac, and as `agent` in tmux
 
-- [ ] **Step 1 [Dan, on the Mac]: pi through the tunnel** — first the branch as the push after Task 10
+- [x] **Step 1 [Dan, on the Mac]: pi through the tunnel** — first the branch as the push after Task 10
   left it (the Mac commits nothing while the Spark session owns the branch):
 
 ```bash
@@ -6998,7 +7000,8 @@ Then, in a spare terminal on the Mac, from the clone, `make tunnel`, and leave i
 the block, since the Mac's zsh passes a trailing `#` to the command — CLAUDE.md's labels rule.)*
 The pull brings Tasks 1–10, pushed after Task 10; npm moves pi down from 0.86.1, inside the crash
 range; `pi --version` prints `0.85.1`; the Python line prints `True`; and `make clients` adds the
-spark provider, keeping the old file as a backup.
+spark provider, keeping the old file as a backup. *(Corrected 2026-09-28, from the run: the pull
+brought Tasks 1–14, since Tasks 11–14 were pushed before it.)*
 
 In pi: `/model` → `qwen3.6-35b-a3b`, and a small real task in a scratch repo. Expected: it finishes,
 and the footer names `qwen3.6-35b-a3b`.
@@ -7007,9 +7010,11 @@ and the footer names `qwen3.6-35b-a3b`.
 `"${SPARK_API_KEY}"`, for pi to expand. pi's current docs say it does, but 0.85.1's behaviour is
 unchecked. If pi's first request is refused with a 401, 0.85.1 doesn't expand it: record that here
 and stop. Don't put the key's value in `models.json` to get past it; how pi gets the key is then a
-decision for Task 17.
+decision for Task 17. *(Checked 2026-09-28: it expands it. pi 0.85.1's requests came back `200`
+through the tunnel from the Mac, and on the Spark as `agent`, with only `"${SPARK_API_KEY}"` in
+`models.json`.)*
 
-- [ ] **Step 2 [Dan]: `agent`'s Claude Code gets the secrets guard, before `agent` holds a key** —
+- [x] **Step 2 [Dan]: `agent`'s Claude Code gets the secrets guard, before `agent` holds a key** —
   Step 3 puts a key in `agent`'s `~/.secrets`, and `agent`'s Claude Code (Phase 0) runs in its
   shells. Give it the guard the Spark session got in [The Spark session](../how-to/spark-session.md)'s
   steps 2 and 3, written through `agent`'s own login from the Mac, never as root:
@@ -7025,7 +7030,7 @@ decision for Task 17.
     lists the hook, `/permissions` the deny rules, and
     `test -e ~/.secrets && echo present || echo absent` is refused.
 
-- [ ] **Step 3 [Dan, on the Spark]: Node, and the agent's key**
+- [x] **Step 3 [Dan, on the Spark]: Node, and the agent's key**
 
 ```bash
 d=$(mktemp -d) && curl -fsSL https://deb.nodesource.com/setup_22.x -o "$d/nodesource_setup.sh" && less "$d/nodesource_setup.sh"
@@ -7044,7 +7049,7 @@ Constraints). `printf` is a builtin, so the value never reaches a command line. 
 missing, the line refuses and writes nothing, as `secret-files.md` step 5 does. Run again, it
 rewrites the file with the same line.
 
-- [ ] **Step 4 [Dan, on the Spark, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
+- [x] **Step 4 [Dan, on the Spark, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
 
 ```bash
 grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
@@ -7071,7 +7076,7 @@ tmux window, `claude` starts already logged in (Phase 0); it talks to Anthropic,
 Expected: pi finishes the task; its footer names `qwen3.6-35b-a3b`; reattaching works. The agent's
 clone is only for `spark clients` — the agent never commits to this repo.
 
-- [ ] **Step 5 [Spark]: Changelog, README; commit** — record Node 22 from NodeSource, pi 0.85.1 and uv
+- [x] **Step 5 [Spark]: Changelog, README; commit** — record Node 22 from NodeSource, pi 0.85.1 and uv
   for `agent`, the agent's key (by reference) and its Claude Code secrets guard, the Mac's pi pinned
   to 0.85.1, and the S09 and S20 dates from Task 14.
 

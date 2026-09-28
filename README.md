@@ -160,8 +160,9 @@ when that file was retired on 2026-09-23.
   came with DGX OS, from NVIDIA's repository; **earlyoom 1.7-2** is Ubuntu's package, installed by
   bootstrap; **Tailscale 1.102.4** came from its own install script (2026-09-24; its version
   recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
-  2026-09-25). Claude Code here talks straight to Anthropic — it is a client like any other, not a
-  change to the Claude path.
+  2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
+  pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
+  talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
 - **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
   CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
@@ -183,6 +184,13 @@ when that file was retired on 2026-09-23.
   the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
   with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
   since a photo aborted its engine at the default.
+- **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
+  `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
+  `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
+  `spark clients`, which wrote pi's `spark` provider. Its Claude Code got the same secrets guard as
+  Dan's Spark session before the key arrived: the hook script, the 35 deny rules, and a `CLAUDE.md`
+  holding only the secrets rule. Its pi runs the coder through llama-swap, in tmux, and the session
+  survives a detach and a new login.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
