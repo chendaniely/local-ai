@@ -23,7 +23,7 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-28).** The switch point and Tasks 1–15 are done, each reviewed and ticked
+> **Progress (2026-09-28).** The switch point and Tasks 1–16 are done, each reviewed and ticked
 > below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
 > box, at their pins. Task 12 re-ran bootstrap, installed root's copies of the units and the
 > Compose project, deployed the config and the app, and pulled the five model files. Task 13
@@ -31,9 +31,11 @@ date: 2026-09-23
 > `make doctor` passes 15 of 15, and Open WebUI's task calls run without thinking (Dan's
 > decision). Task 14 served Open WebUI to the tailnet over HTTPS: S09 and S20 passed on Dan's
 > phone, once a fix stopped photos from aborting Gemma's engine. Task 15 set up pi on the Mac and
-> for `agent`, whose Claude Code got the secrets guard before its key. **Next: Task 16 [Spark +
-> Dan],** the drills: the brake, a load that doesn't fit, a fresh clone, an upgrade and a reboot.
-> Its Step 1, the brake at raised thresholds, is the Spark session's.
+> for `agent`, whose Claude Code got the secrets guard before its key. Task 16 ran the drills:
+> the brake held and unloaded the coder, a load that didn't fit was refused, a fresh clone matched
+> the deploy, and the stack kept serving through a routine upgrade and came back by itself after
+> a reboot. **Next:** Dan's decision of 2026-09-28, every model at its maximum context, with
+> Gemma's two slots sharing one pool; then **Task 17 [Spark],** Phase 1's close.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7090,7 +7092,7 @@ git commit -m "docs(machine): 🤖 record pi for agent and the web UI on the tai
 
 ### Task 16 [Spark + Dan]: drills — the brake, a load that doesn't fit, a fresh clone, an upgrade and a reboot
 
-- [ ] **Step 1 [Spark]: The brake at raised thresholds (S05)** — load the coder, then run one
+- [x] **Step 1 [Spark]: The brake at raised thresholds (S05)** — load the coder, then run one
   brake tick against a copy of the registry whose thresholds sit just above what's available now,
   so the brake fires while the box still has plenty of memory:
 
@@ -7122,8 +7124,11 @@ This drill is also where three of the brake's numbers get measured, and each res
 unload is sent (sets `GRACE_S`, 15 s); how much `MemAvailable` moves poll to poll while memory is
 held (sets `FLOOR_TOLERANCE_GIB`, 0.5 GiB); and what v257 does when asked to unload an engine that
 is still `starting`. The commands for them are written and run when this task runs, not before.
+*(Checked 2026-09-28: the coder's process was gone 0.6 s after the tick began, so the second line
+read `unloaded`. The three measurements are in `cosmicbboy-local-ai.md` §I and the brake's
+comments; whether `GRACE_S` and `FLOOR_TOLERANCE_GIB` change is Task 17's call.)*
 
-- [ ] **Step 2 [Spark]: While the hold stands, the coder can't come back**
+- [x] **Step 2 [Spark]: While the hold stands, the coder can't come back**
 
 ```bash
 coder() { curl -s -o /dev/null -w '%{http_code}\n' -H @- -H 'Content-Type: application/json' \
@@ -7138,7 +7143,7 @@ coder                                                      # 200 again
 
 Expected: as commented. The refused start leaves nothing running, so there's no reload thrash.
 
-- [ ] **Step 3 [Spark]: A load that doesn't fit is refused, and nothing is unloaded (S03,
+- [x] **Step 3 [Spark]: A load that doesn't fit is refused, and nothing is unloaded (S03,
   previewed)** —
   unload the coder, then hold memory with a throwaway process until about 45 GiB is left: above the
   brake's warn line (28), below what the coder needs (29 plus the 24 GiB reserve). This is the one
@@ -7168,7 +7173,7 @@ earlyoom ignores swap (`-s 100,100`). Whether anonymous memory swaps out before 
 the brake is not yet known. Record the line; Task 17's forward look sets swap size and swappiness
 from it (plan.md, *To verify on the box*).
 
-- [ ] **Step 4 [Spark, then Dan]: A fresh clone reproduces the deploy** — first, the Spark session
+- [x] **Step 4 [Spark, then Dan]: A fresh clone reproduces the deploy** — first, the Spark session
   runs leak-guards.md's [*Before every push*](../how-to/leak-guards.md#before-every-push) with
   `phase-1` as `<branch>`, and **Dan OKs pushing** the Spark's commits (`git push`), so the clone
   has everything. The bootstrap here is a real re-run: it stops a running desktop and restarts
@@ -7193,7 +7198,7 @@ Expected: bootstrap finishes without error, apply prints `apply: nothing to chan
 dry run says `nothing to install` — the running stack, root's copies included, is exactly what the
 repo describes.
 
-- [ ] **Step 5 [Dan + Spark]: a routine `apt upgrade`, then a reboot (S23)** — after each, the stack
+- [x] **Step 5 [Dan + Spark]: a routine `apt upgrade`, then a reboot (S23)** — after each, the stack
   must serve again with no hand on it. With the residents loaded, the Spark session notes what runs
   and since when:
 
@@ -7240,7 +7245,12 @@ this one did in the changelog, and in `updates.md` if it stopped them; then
 `systemctl start local-ai-compose`. If apt didn't move Docker, the drill waits for an upgrade that
 does, as the `libc6` half does.
 
-- [ ] **Step 6 [Spark]: Changelog; commit** — the drills, with dates and what each showed: the
+*Checked 2026-09-28:* both halves passed. The upgrade moved 21 packages, but none of `libc6`,
+`libstdc++6` or Docker, so it proves less, and both checks wait for an upgrade that moves them
+(changelog). After the reboot, the three units were active with no hand on them,
+`make doctor` passed 15 of 15, and the web UI answered on Dan's phone.
+
+- [x] **Step 6 [Spark]: Changelog; commit** — the drills, with dates and what each showed: the
   brake and the refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh
   clone, and the routine upgrade (what apt moved, and whether it touched a library the engines use)
   and the reboot.

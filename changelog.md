@@ -8,6 +8,52 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — The Phase 1 drills (Phase 1, Task 16)
+
+**The brake, at raised thresholds (S05).** The Spark session loaded the coder and ran one brake
+tick against a copy of the registry whose thresholds sat just above the memory available: 65 GiB,
+against a warn line of 75, a brake line of 70 and a reserve of 71. The brake held new loads and
+unloaded the coder, the only on-demand model, at 65.3 GiB available. The three residents stayed,
+and `make status` read HOLDING. While the hold stood, the coder's start was refused with a `500`
+and `make status` named the hold. `make brake-release` released it, and the coder answered again.
+
+**Measured along the way** (`cosmicbboy-local-ai.md` §I, `brake.py`'s comments). The idle
+coder's process was gone 0.6 s after the tick began; the brake waits up to 15 s. While the brake
+held and nothing generated, `MemAvailable` moved within ±0.02 GiB poll to poll. While a Gemma
+session generated, it fell in steps up to 0.58 GiB, and 1 poll in 239 moved more than the 0.5 GiB
+tolerance. And v257 stops an engine that is still starting as soon as it's asked, failing the
+request that started it. Whether the 15 s and the 0.5 GiB stay is for Task 17 to decide.
+
+**A load that doesn't fit is refused, and nothing is unloaded (S03, previewed).** The three
+residents were loaded, and a throwaway process held memory down to about 45 GiB available: above
+the brake's warn line, so no hold. The coder's load was refused, and `make status` said why: it
+needs 29.0 GiB, 45.5 GiB was available, and the 24 GiB reserve left it 7.5 GiB short. Nothing was
+unloaded. The engines' `oom_score` were Gemma 1370, the embedding model 1336 and whisper 1334,
+against the hog's 860: the kernel and earlyoom would pick an engine first. Swap barely moved: at
+most 312 KiB used, 312 KiB swapped out, none in. Once the hog was killed, the coder loaded.
+
+**A fresh clone reproduces the deploy.** Dan, on the Spark: a fresh clone of `phase-1` in a
+temporary folder, then `make bootstrap`, which finished and restarted none of the stack's units.
+`make apply` printed `apply: nothing to change` and `make install-units-dry-run` found nothing to
+install: the running stack, root's copies included, is what the repo describes.
+
+**A routine upgrade.** Dan, on the Spark: `sudo apt update && sudo apt upgrade` at 13:16. apt moved
+21 packages, among them apparmor, libexpat1, libevent, python3-requests, gnome-shell, FreeRDP's
+libraries and linux-firmware-amd-graphics. needrestart restarted avahi-daemon, cups, cups-browsed,
+lldpd and polkit, deferred dbus, and left the `local-ai-*` units alone, as the repo's override
+tells it to. llama-swap, the brake and the web services kept their start times, all four models
+stayed loaded, and `make doctor` passed 15 of 15. **This half proves less than it could:** apt
+moved none of `libc6`, `libstdc++6`, `libgcc-s1` or `libgomp1`, and neither the engines nor
+llama-swap links a library it did move (`ldd`). It is repeated after the next upgrade that moves
+`libc6` or `libstdc++6`. Docker didn't move either, so the check that an upgrade leaves the web
+services running waits for an upgrade that moves `docker-ce` or `containerd.io`.
+
+**A reboot (S23).** Dan: `sudo reboot`. The box was back at 13:21. llama-swap and the brake went
+active at 13:21:51 and the web services at 13:21:53, with no unit started by hand. `make status`
+showed nothing loaded, since llama-swap preloads nothing, and no hold. `make doctor` passed 15 of
+15, loading the embedding model on the way. `tailscale serve` survived: the web UI loaded and
+answered on Dan's phone over the tailnet.
+
 ## 2026-09-28 — pi on the Mac and for `agent` (Phase 1, Task 15)
 
 **The Mac's pi** was installed at 0.85.1 (`website/how-to/pi.md`), with `make clients` and

@@ -281,6 +281,29 @@ If a second Spark ever arrives, `dgx-spark/dual-dgx/README.md` §0.3 is the firs
 
 ---
 
+## I. Measured on `brightroar` — the Phase 1 drills
+
+Not from Niels's repo: numbers measured on this box, one GB10, on 2026-09-28 (Phase 1, Task 16),
+with llama-swap v257 and llama.cpp b11146. **[verified]** here means measured on `brightroar`.
+What each number sets in the brake is in `spark/src/spark/brake.py`'s comments. Phase 1's close
+(Task 17) decides whether the settings change.
+
+- **An idle engine stops fast.** The brake unloaded the idle coder, `qwen3.6-35b-a3b`, and its
+  process was gone 0.6 s after the tick began. The brake waits up to 15 s (`GRACE_S`). A busy
+  engine's stop was not measured. **[verified]**
+- **`MemAvailable` noise while memory is held.** Polled every 250 ms for 60 s: with nothing
+  generating, it moved within ±0.02 GiB. While a Gemma session generated, it fell 4.1 GiB over
+  45 s in steps up to 0.58 GiB, and 1 poll in 239 moved more than 0.5 GiB
+  (`FLOOR_TOLERANCE_GIB`). **[verified]**
+- **v257 stops an engine that is still starting.** Asked to unload it, llama-swap answered `200`
+  in 0.01 s and left no process. The request that had started the load got a `500`. **[verified]**
+- **What the OOM killers would pick.** With a throwaway process holding memory down to about
+  45 GiB available, the engines' `oom_score` were Gemma 1370, the embedding model 1336 and whisper
+  1334, against the hog's 860, so the kernel and earlyoom would pick an engine first. Swap barely
+  moved: at most 312 KiB used, 312 KiB swapped out, none in. **[verified]**
+
+---
+
 ## What makes his repo unusually good
 
 Two things most runbooks lack, worth imitating in this one:

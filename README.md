@@ -183,7 +183,9 @@ when that file was retired on 2026-09-23.
   `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
   the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
   with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
-  since a photo aborted its engine at the default.
+  since a photo aborted its engine at the default. The stack comes back after a reboot with no hand
+  on it, and a routine `apt upgrade` left it running. Both were checked on 2026-09-28 (Task 16).
+  That upgrade moved no library the engines use.
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
