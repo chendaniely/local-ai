@@ -23,7 +23,7 @@ models:
       mmproj: gemma-4-26B-it-mmproj.gguf
     # Every model at its full context (Dan's decision, 2026-09-28); Gemma's two slots share it (render's --kv-unified).
     # Footprint: 20 GiB measured at 32768, plus ~5 for the longer KV cache and attention mask, plus ~5 for 8 context
-    # checkpoints (estimated, to measure).
+    # checkpoints, 4 per slot (estimated, to measure).
     ctx: 262144
     parallel: 2
     cache_ram_mib: 1024
@@ -31,9 +31,10 @@ models:
     footprint_measured: false
     # An image's tokens are decoded in one micro-batch, and one too big for it aborts the engine: pin Gemma 4's
     # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
-    # A context checkpoint (its sliding-window cache, ~0.6 GiB, in host memory) is kept a few per chat turn, thinned
-    # to 8192 tokens apart only once a slot holds the cap: at 32, a long chat could keep ~19 GiB. Cap them at 8.
-    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "8"]
+    # A context checkpoint (its sliding-window cache, ~0.6 GiB, in host memory) is added a few per chat turn, and a
+    # slot's are thinned only once it holds the cap: at the default 32 per slot, one long chat could keep ~19 GiB,
+    # whatever the context. A chat only restores its latest, so cap them at 4 per slot, 8 in all (~5 GiB).
+    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4"]
   qwen3-embedding-0.6b:
     capability: embeddings
     roles: [embed]

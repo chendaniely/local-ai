@@ -7276,9 +7276,10 @@ window. *(Revised the same day, after the change's review, before it was deploye
 model's micro-batch stays at what actually runs, 2048: it pools its last token, so llama-server
 splits a long input, and the batch size caps the micro-batch, so the first version's 32,768 would
 have changed nothing. With a shared pool, llama-server b11146 clears idle slots whenever a task
-starts, which would cost a long chat its cache at each of Open WebUI's title calls, so render also
-passes `--no-cache-idle-slots`. And Gemma keeps at most 8 context checkpoints, about 0.6 GiB each
-in host memory, where the default 32 could hold about 19 GiB in one long chat.)* The footprints
+starts, which would cost a long chat its cache at each of Open WebUI's task calls, so render also
+passes `--no-cache-idle-slots`. And Gemma keeps at most 4 context checkpoints per slot, 8 in all,
+about 0.6 GiB each in host memory, where the default 32 per slot could hold about 19 GiB in one
+long chat, at any context.)* The footprints
 rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budget allows. No
 `spark doctor` check comes with it: the render tests pin the flags and pi's window, and Step 1
 reads the engines' own settings once (a ruling, 2026-09-28; Task 17 can weigh a check that reads
@@ -7298,13 +7299,15 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   for the coder and `n_ctx_slot = 32768` for the embedding model. Gemma and the coder each answer a
   prompt of about 100,000 tokens, and the embedding model embeds an input of about 30,000. Each
   footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the reading is
-  above the estimate, with `footprint_measured: false`. `make doctor` passes 15 of 15.
+  above the estimate, with `footprint_measured: false`. Gemma's reading is compared with 26 GiB, its
+  estimate without the checkpoints' 5, which a cold load doesn't allocate and Step 2 measures.
+  `make doctor` passes 15 of 15.
 - [ ] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
-  a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's title call
-  would be, then a second turn that repeats the first with the reply and a new question. The second
+  a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's task calls
+  are, then a second turn that repeats the first with the reply and a new question. The second
   turn's `timings.prompt_n`, in its response, should be a few thousand tokens at most, not the
   whole conversation. Over several more turns, `MemAvailable` should fall by no more than about
-  5 GiB beyond the footprint, 8 checkpoints of about 0.6 GiB. The commands are written and run when
+  2.5 GiB beyond the cold load's reading for this one chat: 4 checkpoints of about 0.6 GiB. The commands are written and run when
   this step runs, as Step 1's measurements were.
 - [ ] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since

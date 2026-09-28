@@ -411,7 +411,8 @@ def test_each_engine_gets_its_own_flags():
     assert "--mmproj" not in embed + stt + coder  # only a model with a projector gets one
     assert "--embedding" in embed and "--embedding" not in vision + stt + coder
     # A model with more than one slot gives them one shared pool, so any one request can use its whole context, and an
-    # idle slot keeps its cache until the pool runs short: cached idle slots are cleared at every new task.
+    # idle slot keeps its cache until the pool runs short (without the second flag, llama-server would save idle slots
+    # to the prompt cache and clear them at every new task).
     assert vision.count("--kv-unified") == 1 and "--kv-unified" not in embed + stt + coder
     assert vision.count("--no-cache-idle-slots") == 1 and "--no-cache-idle-slots" not in embed + stt + coder
     # llama-server runs offline; whisper-server has no such flag, and would stop at one it doesn't know.

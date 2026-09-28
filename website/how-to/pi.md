@@ -140,12 +140,13 @@ pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`,
 `make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on
 the Spark and pushed, pull and run `make clients` again **on the Mac**, and **on the Spark, as
 `agent`**, pull its clone and run the `spark clients pi --write` line above again. Not before: pi
-told a bigger window than the engine serves sends requests the engine refuses with a `400`. pi compacts a session by itself once it passes
-`contextWindow` minus `reserveTokens`, and `/compact` does it by hand.
+told a bigger window than the engine serves sends requests the engine refuses with a `400`. pi
+compacts a session by itself once it passes `contextWindow` minus `reserveTokens`, and `/compact`
+does it by hand.
 
 To make pi compact sooner, raise `reserveTokens` in `~/.pi/agent/settings.json`, on the machine whose
 pi it is. `keepRecentTokens` sets how much of the recent conversation a compaction keeps whole. Both
-are shown at their defaults in pi 0.85.1's docs:
+are shown at their defaults, the same in pi 0.85.1's docs and in 0.87.1's:
 
 ```json
 {

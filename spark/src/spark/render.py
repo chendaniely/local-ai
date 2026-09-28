@@ -123,7 +123,7 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
             # One KV pool for all the slots, so any one request can use the whole context rather than ctx / parallel
             # (Dan's decision, 2026-09-28). Two long requests at once share it. With a shared pool, b11146 saves idle
             # slots to the prompt cache and clears them whenever a task starts, and a long chat outgrows the cache, so
-            # Open WebUI's title call after each turn would cost the chat its cache. Without that, an idle slot keeps
+            # Open WebUI's task calls after each turn would cost the chat its cache. Without that, an idle slot keeps
             # its cache until the pool runs short (server-context.cpp, try_clear_idle_slots).
             cmd += ["--kv-unified", "--no-cache-idle-slots"]
         if model.source.mmproj:

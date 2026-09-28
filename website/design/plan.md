@@ -705,7 +705,8 @@ Each item gets its own design pass when its turn comes.
   one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
   to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
   memory context checkpoints take over a long conversation (estimated at about 0.6 GiB each for
-  Gemma, 8 at most per slot; added 2026-09-28).
+  Gemma, 4 at most per slot; the coder's, its recurrent state plus its MTP draft's, not yet
+  estimated, 32 at most; added 2026-09-28).
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -1045,13 +1046,17 @@ Each item gets its own design pass when its turn comes.
     `--ubatch-size`, so the 8192 it had, and the 32,768 the first version gave it, changed
     nothing.
   - With a shared pool, llama-server saves idle slots to the prompt cache and clears them whenever
-    a task starts. A long chat outgrows Gemma's 1 GiB prompt cache, so each of Open WebUI's title
-    calls would have cost it a full re-read. Render also passes `--no-cache-idle-slots`: an idle
-    slot keeps its cache until the pool runs short.
-  - Context checkpoints, which llama-server keeps in host memory, a few per chat turn, are thinned
-    to 8,192 tokens apart only once a slot holds 32. So how many a long chat keeps grows with the
-    context, about 0.6 GiB each for Gemma: up to about 19 GiB at 262,144 tokens, against about 2 at
-    16,384. Gemma keeps at most 8 (`--ctx-checkpoints 8`), counted in its footprint.
+    a task starts. A long chat outgrows Gemma's 1 GiB prompt cache, so each of Open WebUI's task
+    calls, the follow-ups, tags and search queries it asks for after a turn, would have cost it a
+    full re-read. Render also passes `--no-cache-idle-slots`: an idle slot keeps its cache until
+    the pool runs short.
+  - Context checkpoints, which llama-server keeps in host memory, are added a few per chat turn,
+    about 0.6 GiB each for Gemma, and a slot's are thinned only once it holds the cap, 32 by
+    default. So a dozen turns can fill a slot, about 19 GiB, at any context: the risk predates this
+    change. Task 13's Gemma, whose memory grew by about 4 GiB over long answers, and Task 16's
+    0.58 GiB steps fit it. The full context only keeps the slot near the cap once it's full. A chat
+    restores only its latest checkpoint, so Gemma keeps at most 4 per slot
+    (`--ctx-checkpoints 4`, a per-slot cap), 8 in all, counted in its footprint.
   The footprints rise to estimates, from 20, 4 and 29 GiB to 31, 7 and 32: 73 GiB for all four,
   within the 78 the budget allows, measured once deployed. The phone can't change the context,
   since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each client can change.
