@@ -23,14 +23,15 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-28).** The switch point and Tasks 1–13 are done, each reviewed and ticked
+> **Progress (2026-09-28).** The switch point and Tasks 1–14 are done, each reviewed and ticked
 > below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
 > box, at their pins. Task 12 re-ran bootstrap, installed root's copies of the units and the
 > Compose project, deployed the config and the app, and pulled the five model files. Task 13
 > started the stack: four models serve through llama-swap, Open WebUI has Dan's admin account,
 > `make doctor` passes 15 of 15, and Open WebUI's task calls run without thinking (Dan's
-> decision). Everything still listens on 127.0.0.1 only. **Next: Task 14 [Dan],** the web UI on
-> the phone. Its Step 1, `tailscale serve` with sudo, is the phase's first web exposure.
+> decision). Task 14 served Open WebUI to the tailnet over HTTPS: S09 and S20 passed on Dan's
+> phone, once a fix stopped photos from aborting Gemma's engine. **Next: Task 15 [Dan + Spark],**
+> pi on the Mac and as `agent`. Its Step 1 is Dan's, on the Mac: pull `phase-1`, then install pi.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -6947,16 +6948,20 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 
 ### Task 14 [Dan]: the web UI on the phone (S09, S20)
 
-- [ ] **Step 1: Serve it on the tailnet** — the phase's first web exposure, so only once Task 13
+- [x] **Step 1: Serve it on the tailnet** — the phase's first web exposure, so only once Task 13
   Step 3 made the admin account, and keys-only SSH and the Spark's repo-only GitHub token are done
   (the Mac → Spark switch point). **On the Spark:**
   `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`, then `tailscale serve status`.
   Read the output privately: the HTTPS address names the tailnet.
-- [ ] **Step 2: Log in** — on the phone with Tailscale on, open the address and log in with the
+- [x] **Step 2: Log in** — on the phone with Tailscale on, open the address and log in with the
   account from Task 13 Step 3. In a private tab, confirm that a second signup is refused.
   Optional: Admin Panel → Settings → Models, and hide `qwen3-embedding-0.6b` and
   `whisper-large-v3-turbo` from the chat picker (they're listed because llama-swap lists every model).
-- [ ] **Step 3: S09, the phone away from home** — on mobile data, Tailscale on: add the page to the
+  *(Corrected 2026-09-28, from the run: once the admin exists, the page offers no sign-up at all,
+  so there is no refusal to see there. The API refuses one: on the Spark, a sign-up request to
+  `/api/v1/auths/signup` got `403`. Open WebUI v0.11.4 checks that before anything else once an
+  account exists and sign-up is off.)*
+- [x] **Step 3: S09, the phone away from home** — on mobile data, Tailscale on: add the page to the
   home screen; ask about a photo; dictate a message with the microphone. Each answer is labelled
   `gemma-4-26b-a4b`.
   *(Corrected 2026-09-28, from the run: a photo aborted Gemma's engine, big or small, and every
@@ -6968,9 +6973,9 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
   image budget. **[Dan, on the Spark]** deploys it with `make apply-now`: llama-swap restarts, so
   all four models stop and load again on their next request. Then ask about a photo again, in a
   new chat.)*
-- [ ] **Step 4: S20, web search from the phone** — turn on web search in a chat and ask about
+- [x] **Step 4: S20, web search from the phone** — turn on web search in a chat and ask about
   something from this week; the answer cites its sources.
-- [ ] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on
+- [x] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on
   the scenario pages at the close.
 
 ***

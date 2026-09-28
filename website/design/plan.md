@@ -1013,6 +1013,8 @@ Each item gets its own design pass when its turn comes.
   resends it. The registry now gives Gemma `--ubatch-size 2048` and `--image-max-tokens 1120`,
   Gemma 4's own maximum, and a test on the repo's registry holds every vision model to a
   micro-batch that fits its image budget. The engine's footprint is measured again once deployed.
+  Measured the same day: 18.7 GiB on a cold load, against 17.6 at a micro-batch of 512, and about
+  1.2 GiB more once it has read its first image, so the registry's estimate rose from 19 to 20 GiB.
 
 ## Sources
 

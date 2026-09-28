@@ -6,7 +6,7 @@ Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the
 check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
 its runbooks and scenario pages. Phase 1 is under way on the `phase-1` branch: Tasks 1–10 built its
 code, tests and runbooks (2026-09-27), and since Task 13 (2026-09-28) the box serves its four models
-through llama-swap, with Open WebUI on 127.0.0.1. The *Progress* note at the head of
+through llama-swap, with Open WebUI served to the tailnet over HTTPS (Task 14). The *Progress* note at the head of
 [its plan](website/design/phase-1.md) says where it stands and what comes next.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM

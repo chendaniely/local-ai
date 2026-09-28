@@ -179,7 +179,10 @@ when that file was retired on 2026-09-23.
   `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
   `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`,
   with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
-  `make doctor`: 15 of 15.
+  `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
+  the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
+  with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
+  since a photo aborted its engine at the default.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for

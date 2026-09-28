@@ -8,6 +8,32 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — The web UI on the phone (Phase 1, Task 14)
+
+**Served on the tailnet.** Dan, **on the Spark**:
+`sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`. Open WebUI answers over HTTPS on the
+Spark's tailnet name, on Dan's phone at home and on mobile data; the address stays out of this
+repo. Dan logged in with his admin account. A private tab offers no sign-up at all, and the API
+refuses one: a sign-up request to `/api/v1/auths/signup` on the Spark got `403`. The embedding
+and speech-to-text models are hidden from the chat picker.
+
+**S09 and S20 passed on 2026-09-28**, on the phone: chat, dictation and voice mode (about 0.25 s
+per transcription), a photo question once the fix below was in, and web search answered with its
+sources.
+
+**A photo aborted Gemma's engine,** big or small, and so did every later message in that chat,
+since each resends the photo. The engine died on `GGML_ASSERT` "non-causal attention requires
+n_ubatch >= n_tokens" in `llama-context.cpp`, reached from `mtmd_helper_decode_image_chunk`.
+llama.cpp b11146 gives a Gemma 4 image up to 1120 tokens, about 2.6 MP, scaling bigger images
+down to that, and decodes an image in one micro-batch, which was the default 512. The registry now
+gives Gemma `--ubatch-size 2048` and `--image-max-tokens 1120`. Dan deployed it with
+`make apply-now` at 02:30: llama-swap restarted, so every model stopped and loaded again on its
+next request. A 3000×2000 test image then came to 1,105 prompt tokens and was described in 4 s.
+
+**Gemma's footprint,** measured again: 18.7 GiB on a cold load, against 17.6 at a micro-batch of
+512, and about 1.2 GiB more once it has read its first image. So the registry's estimate rose from
+19 to 20 GiB. It reaches the box with the next `make apply`, which restarts only the brake.
+
 ## 2026-09-28 — The stack runs (Phase 1, Task 13)
 
 **On the Spark**, in a new Claude session. Dan had logged out and back in, so the session had his
