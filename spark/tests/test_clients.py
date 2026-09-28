@@ -20,8 +20,8 @@ def test_provider_lists_chat_models_by_real_name_with_an_env_key():
     by_id = {m["id"]: m for m in p["models"]}
     assert set(by_id) == {"vision-chat", "coder"}  # no embeddings or speech models in a chat picker
     assert by_id["vision-chat"]["input"] == ["text", "image"] and by_id["coder"]["input"] == ["text"]
-    assert by_id["vision-chat"]["contextWindow"] == 16384  # 32768 split over 2 slots
-    assert by_id["vision-chat"]["maxTokens"] == 8192 and by_id["coder"]["maxTokens"] == 32768
+    assert by_id["vision-chat"]["contextWindow"] == 32768  # its 2 slots share the pool: one request can use it all
+    assert by_id["vision-chat"]["maxTokens"] == 16384 and by_id["coder"]["maxTokens"] == 32768
 
 
 def test_merge_keeps_other_providers_and_backs_up(tmp_path):

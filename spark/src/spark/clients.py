@@ -19,7 +19,7 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
     for m in registry.models.values():
         if m.capability != "chat":
             continue  # embeddings and speech models don't belong in a chat picker
-        window = m.ctx // m.parallel  # llama-server splits its context across the slots
+        window = m.ctx  # the slots share one pool (render's --kv-unified): one request can use all of it
         models.append({"id": m.name, "name": m.name, "reasoning": True,
                        "input": ["text", "image"] if m.source.mmproj else ["text"],
                        "contextWindow": window, "maxTokens": min(32768, window // 2)})

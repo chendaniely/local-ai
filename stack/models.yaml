@@ -21,10 +21,12 @@ models:
       revision: "d1c082be9cf3c8a514acf63b8761f4b41935842e"
       file: gemma-4-26B_q4_0-it.gguf
       mmproj: gemma-4-26B-it-mmproj.gguf
-    ctx: 32768
+    # Every model at its full context (Dan's decision, 2026-09-28); Gemma's two slots share it (render's --kv-unified).
+    # Footprint: 20 GiB measured at 32768, plus ~5 for the longer KV cache and attention mask (estimated, to measure).
+    ctx: 262144
     parallel: 2
     cache_ram_mib: 1024
-    footprint_gib: 20
+    footprint_gib: 26
     footprint_measured: false
     # An image's tokens are decoded in one micro-batch, and one too big for it aborts the engine: pin Gemma 4's
     # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
@@ -38,12 +40,14 @@ models:
       repo: Qwen/Qwen3-Embedding-0.6B-GGUF
       revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
       file: Qwen3-Embedding-0.6B-Q8_0.gguf
-    ctx: 8192
+    # An input is embedded in one micro-batch, so it holds the whole context. Footprint: 3.3 GiB measured at 8192,
+    # plus ~6 for four times the KV cache, micro-batch and attention mask (estimated, to measure).
+    ctx: 32768
     parallel: 1
     cache_ram_mib: 0
-    footprint_gib: 4
+    footprint_gib: 10
     footprint_measured: false
-    args: [--pooling, last, --ubatch-size, "8192"]
+    args: [--pooling, last, --ubatch-size, "32768"]
   whisper-large-v3-turbo:
     capability: transcription
     roles: [stt]
@@ -68,9 +72,10 @@ models:
       repo: unsloth/Qwen3.6-35B-A3B-MTP-GGUF
       revision: "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
       file: Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
-    ctx: 131072
+    # Footprint: 29 GiB estimated at 131072 (26.4 measured), plus ~3 for twice the KV cache (estimated, to measure).
+    ctx: 262144
     parallel: 1
     cache_ram_mib: 2048
-    footprint_gib: 29
+    footprint_gib: 32
     footprint_measured: false
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]

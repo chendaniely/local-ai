@@ -112,7 +112,7 @@ In order of how much they constrain the design:
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
-| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
+| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
@@ -1023,6 +1023,19 @@ Each item gets its own design pass when its turn comes.
   45,822-token conversation sent to Gemma, whose requests top out at 16,384 tokens (32,768 of
   context over 2 slots). *To verify on the box* keeps pi's crash range open; Task 17 decides
   whether a deliberate test comes before the pin moves.
+- **2026-09-28** — Dan's decision: every model runs at its native maximum context, which the
+  pinned GGUF headers give as 262,144 tokens for Gemma 4 26B and Qwen3.6-35B-A3B and 32,768 for
+  Qwen3-Embedding-0.6B. Whisper has no context window. Gemma's two slots now share one KV pool
+  (`--kv-unified`, which render passes to any model with more than one slot), so one request can
+  use all 262,144 tokens. Giving each slot a full window instead would cost twice the KV memory. Two
+  long requests at once can exhaust the shared pool, which a single user rarely does. pi's
+  `contextWindow` is now the model's whole `ctx`, not `ctx` over the slots. Only 5 of Gemma's 30
+  layers and 10 of the coder's 40 keep a full-length cache, so the footprints rise by an estimated
+  15 GiB in all, from 20, 4 and 29 GiB to 26, 10 and 32. The embedding model's share, about 6 GiB,
+  is the largest for what it gains: its micro-batch has to hold a whole input, and Open WebUI sends
+  it short chunks. All four come to 71 GiB, within the 78 the budget allows. The estimates are
+  measured once deployed. The phone can't change the context, since Open
+  WebUI's `num_ctx` is for Ollama, and `pi.md` and S09 say what each client can change.
 
 ## Sources
 

@@ -7261,6 +7261,31 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
+*Added 2026-09-28, Dan's decision (plan.md's Revisions): every model at its full context.* Gemma
+took 16,384 tokens per request, its 32,768 split over two slots, and the coder 131,072.
+`stack/models.yaml` raises each `ctx` to its GGUF's own maximum: 262,144 for Gemma and the coder,
+and 32,768 for the embedding model, whose micro-batch rises with it. Render passes `--kv-unified`
+to a model with more than one slot, so Gemma's slots share one pool and one request can use all
+of it, and `spark clients` tells pi a model's whole `ctx`. Tests hold each model to its header's
+maximum and the embedding model's micro-batch to its context, and pin the flag and pi's window. The
+footprints rise to estimates, 26, 10 and 32 GiB.
+
+llama-swap's config changes, and restarting llama-swap stops every engine, so **[Dan, on the
+Spark]** runs `make apply-now` (or `make apply` with nothing loaded). Then, **on the Spark**, the
+session checks each model after a cold load:
+
+- its engine's log says `n_ctx_slot = 262144, kv_unified = 'true'` for Gemma, `262144` for the
+  coder and `32768` for the embedding model;
+- Gemma and the coder each answer a prompt of about 100,000 tokens, and the embedding model embeds
+  an input of about 30,000;
+- its footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the
+  reading is above the estimate, with `footprint_measured: false`; and `make doctor` passes 15 of
+  15.
+
+**[Dan, on the Mac]** pulls and runs `make clients`, so pi's windows match; **as `agent`, on the
+Spark**, its clone pulls and `spark clients pi --write` runs again (`pi.md`, *The context
+window*). A `docs(machine)` commit records the readings in `changelog.md` and `README.md`.
+
 ***
 
 ### Task 17 [Spark]: close Phase 1

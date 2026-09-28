@@ -279,6 +279,14 @@ def test_every_flag_render_passes_is_refused_in_every_spelling(tmp_path):
                     rendered(path)
 
 
+@pytest.mark.parametrize("model", ["vision-chat", "coder"])
+def test_args_may_not_cap_a_slots_share_of_the_pool(tmp_path, model):
+    # pi is told a request can use the model's whole context; a per-slot cap would make that untrue.
+    path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend(["--kv-unified-per-slot", "4096"]))
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set --kv-unified-per-slot: "):
+        rendered(path)
+
+
 FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in). The registry refuses one in a source
     # file (test_registry.py), so the engines' paths carry it here. registry_with writes models in name order, so coder
     # is the first llama.cpp model.
@@ -402,6 +410,8 @@ def test_each_engine_gets_its_own_flags():
     assert values(vision, "--mmproj") == [f"{snapshot}/vision-mmproj.gguf"]
     assert "--mmproj" not in embed + stt + coder  # only a model with a projector gets one
     assert "--embedding" in embed and "--embedding" not in vision + stt + coder
+    # A model with more than one slot gives them one shared pool, so any one request can use its whole context.
+    assert vision.count("--kv-unified") == 1 and "--kv-unified" not in embed + stt + coder
     # llama-server runs offline; whisper-server has no such flag, and would stop at one it doesn't know.
     assert [cmd.count("--offline") for cmd in (vision, embed, coder, stt)] == [1, 1, 1, 0]
     # whisper-server answers where llama-swap and Open WebUI send audio, and gets none of llama-server's flags.

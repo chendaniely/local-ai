@@ -40,6 +40,7 @@ SPELLINGS = {
         ("--offline",), ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
         ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
         ("-dr", "--docker-repo"), ("--mmproj-auto", "--no-mmproj", "--no-mmproj-auto"),
+        ("-kvu", "--kv-unified", "-no-kvu", "--no-kv-unified"),
     ),
     "whisper.cpp": (("--host",), ("--port",), ("-m", "--model"), ("--inference-path",)),
 }
@@ -49,12 +50,13 @@ _KEY = "an engine takes no key: llama-swap checks the keys, and shows every comm
 _DOWNLOAD = "an engine loads only what the registry pins: a download bypasses the pinned revision"
 _SET = ("render sets it, and an engine takes the last value it's given: the model would run other than as it was "
         "admitted")
+_POOL = "a model's slots share its whole context, and pi is told one request can use all of it"
 # What an engine is never given, whether or not render passes it. The downloads are every option llama-server
 # b11146 takes that fetches weights at start (-hf's projector switch included); whisper-server v1.9.4 has none.
 REFUSED = {
     "llama.cpp": {
         "--host": _BIND, "--port": _BIND, "--model": _FILES, "--mmproj": _FILES,
-        "--api-key": _KEY, "--api-key-file": _KEY, "--hf-token": _KEY,
+        "--api-key": _KEY, "--api-key-file": _KEY, "--hf-token": _KEY, "--kv-unified-per-slot": _POOL,
         **dict.fromkeys(("--hf-repo", "--hf-file", "--hf-repo-draft", "--model-url", "--mmproj-url", "--docker-repo",
                          "--mmproj-auto", "--embd-gemma-default", "--fim-qwen-1.5b-default", "--fim-qwen-3b-default",
                          "--fim-qwen-7b-default", "--fim-qwen-7b-spec", "--fim-qwen-14b-spec",
@@ -117,6 +119,10 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
                # Defense in depth: a download option the refusals miss still fetches nothing (llama.cpp b11146's
                # common/arg.cpp:3927). whisper-server has no such option.
                "--offline"]
+        if model.parallel > 1:
+            # One KV pool for all the slots, so any one request can use the whole context rather than ctx / parallel
+            # (Dan's decision, 2026-09-28). Two long requests at once share it.
+            cmd += ["--kv-unified"]
         if model.source.mmproj:
             cmd += ["--mmproj", model_path(model.source, model.source.mmproj)]
         if model.capability == "embeddings":
