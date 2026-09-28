@@ -8,6 +8,80 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — The stack runs (Phase 1, Task 13)
+
+**On the Spark**, in a new Claude session. Dan had logged out and back in, so the session had his
+llama-swap key: he sent it from the Mac, and `~/.bashrc` loads it. The session started llama-swap
+and the brake at 01:17. It started the web services at 01:20, once Dan's tunnel from the Mac was
+open, because the first account made in Open WebUI becomes its admin. Dan made his account at
+once, and Open WebUI now reports sign-up closed. Everything listens on 127.0.0.1: llama-swap on
+9100 (`/health` answers without a key, `/running` refuses a call without one), the engines on
+5800–5803, Open WebUI on 3000, SearXNG on 8888.
+
+**First loads,** one request per model from nothing loaded. `MemAvailable` is given before each
+request and at its lowest while it ran. Beforehand, `free -g` showed 70 GiB free and 48 GiB of
+page cache, left by the pull.
+
+| Model | Load and answer | Before → lowest (GiB) | Footprint (GiB) | Registry estimate |
+|---|---|---|---|---|
+| `gemma-4-26b-a4b` | 9 s | 117.8 → 100.2 | 17.6 | 19 |
+| `qwen3-embedding-0.6b` | 2 s | 100.2 → 96.9 | 3.3 | 1.5, raised to 4 |
+| `whisper-large-v3-turbo` | 2 s | 96.9 → 94.4 | 2.5 | 3 |
+| `qwen3.6-35b-a3b` | 10 s | 94.4 → 68.0 | 26.4 | 29 |
+
+The embedding had 1024 dimensions. Whisper transcribed the JFK sample on the GPU, with word
+timings. Both chat models think by default, with no limit. On the test's 512-token cap each spent
+every token thinking and returned no text; given room, Gemma answered after about 2,200 tokens.
+They generated at 78 tokens/s (Gemma) and 93 (the coder). Each reply names its model by the GGUF
+file's path, which is what llama-server does without `--alias`.
+
+**What runs, as whom.** Each engine runs as `spark`, with `oom_score_adj` 1000. Their RSS was 1.6,
+0.6, 0.4 and 2.1 GiB (Gemma, embeddings, whisper, coder). `nvidia-smi`, which does report
+per-process memory here, gave 16.3, 2.8, 2.0 and 24.5 GiB. Their `oom_score`s were 1340, 1336, 1334
+and 1343. So a model's GPU memory doesn't count toward its engine's RSS. Dan's earlyoom dry run
+would kill Gemma's engine. That's an engine, as intended, but a resident model ahead of the
+on-demand coder, the opposite of the brake's order. By then Gemma's RSS had grown to 5.7 GiB.
+`make doctor`: 15 of 15. llama-swap's and the pull's journals hold no permission error. SearXNG
+searches: 26 results, then 35 once warm; duckduckgo times out, taking 2.7 s from here against a
+3 s limit. Its log holds no permission error, and its two ownership warnings are expected.
+
+**Two changes at 01:51.** Dan ran `make apply`, `make install-units` and `make apply` again. The
+embedding model's `footprint_gib` rose from 1.5 to 4. And Open WebUI's task calls now run without
+thinking: `TASK_MODEL_PARAMS` in root's Compose file, Dan's decision (plan.md's Revisions). The
+brake and the web services restarted; llama-swap and the loaded models didn't. A new chat's title
+then came back in 1.2 s, 997 bytes, while the chat itself streamed 7.4 s of thinking and answer.
+
+## 2026-09-27 — Deployed, and the models pulled (Phase 1, Task 12)
+
+**Bootstrap re-run,** by Dan, **on the Spark**, from the clone on `phase-1`:
+`make bootstrap-dry-run`, then `make bootstrap`. `/var/lib/local-ai` is now root's
+(`root:root 755`), and `spark` has two cache folders, `/var/lib/local-ai/cache` and
+`/var/lib/local-ai/cuda-cache` (`spark:spark 750`). earlyoom avoids `sshd.*`:
+`/etc/default/earlyoom` matches the repo's. needrestart's override is in
+`/etc/needrestart/conf.d/local-ai.conf`. The polkit rule is the narrowed one: `spark-admin` starts,
+stops and restarts the four `local-ai-*` units, by exact name, and nothing more. It has no
+`reload-daemon`, which `pkcheck` confirmed by answering `2`. The GPU set stayed held, 151 packages
+of 151, and upgrade day's release list is exactly the hold list. `make doctor`: 10 of 15, its three
+bootstrap lines now passing; the other five waited for the deploy.
+
+**The GRUB check,** Dan's, with sudo (`updates.md` step 5): passed. The newest kernel is
+`7.0.0-1019-nvidia`, and entry 0's `linux` line boots it. The `default=` lines are the stock two,
+so GRUB starts entry 0, and `grub-editenv list` is empty. The installed kernels are
+`linux-image-6.11.0-1016-nvidia` and `linux-image-7.0.0-1019-nvidia`, each named with the version
+`uname -r` prints.
+
+**Root's own copies.** Dan ran `make apply`, which staged them, and `make install-units`. The four
+units are in `/etc/systemd/system/local-ai-*.service` and the Compose project in
+`/etc/local-ai/compose`, `root:root`, files 644 and folders 755. llama-swap, the brake and the web
+services are enabled; the pull unit is `static`. A second `make apply` deployed `llama-swap.yaml`,
+`models.yaml` and the app in `/opt/local-ai/app`, and started nothing.
+
+**The models.** `make pull` ran 11 min 38 s as `spark` and downloaded five files, about 36 GiB,
+into `/var/lib/local-ai/hf`. Each is at its pinned revision and at the path the config gives its
+engine, and none of the repos is gated. 752 GiB of disk is left. The pull's cgroup peaked at
+39.9 GiB, which is page cache: `free -g` then showed 43 GiB of it (plan.md, *Page cache and the
+launch check*).
+
 ## 2026-09-27 — The engines, at their pins (Phase 1, Task 11)
 
 Installed **on the Spark**, as Dan, following Task 11 of

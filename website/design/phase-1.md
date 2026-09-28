@@ -23,17 +23,14 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-27).** The switch point and Tasks 1–12 are done, each reviewed and ticked
+> **Progress (2026-09-28).** The switch point and Tasks 1–13 are done, each reviewed and ticked
 > below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
-> box, at their pins, in a session started after Dan's reboot gave it `spark-admin`. Task 12 re-ran
-> bootstrap, installed root's copies of the units and the Compose project, deployed the config and
-> the app, and pulled the five model files; Task 13 Step 7 records it in the changelog and README.
-> Nothing runs yet. The units are enabled but not started, so **don't reboot before Task 13
-> Step 3**: a boot would start Open WebUI before its admin account exists. **Next: Task 13
-> [Spark + Dan].** Its Step 1 is Dan's. He sends `SPARK_API_KEY` from the Mac, adds the line that
-> loads it to `~/.bashrc` on the Spark, and restarts the Spark session, which continues at Step 2.
-> Step 3, Open WebUI's first account, follows Step 2's start at once, so the Mac is ready for its
-> tunnel.
+> box, at their pins. Task 12 re-ran bootstrap, installed root's copies of the units and the
+> Compose project, deployed the config and the app, and pulled the five model files. Task 13
+> started the stack: four models serve through llama-swap, Open WebUI has Dan's admin account,
+> `make doctor` passes 15 of 15, and Open WebUI's task calls run without thinking (Dan's
+> decision). Everything still listens on 127.0.0.1 only. **Next: Task 14 [Dan],** the web UI on
+> the phone. Its Step 1, `tailscale serve` with sudo, is the phase's first web exposure.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -6725,7 +6722,7 @@ make install-units-dry-run
 
 ### Task 13 [Spark + Dan]: start the stack, smoke-test it, first footprint readings
 
-- [ ] **Step 1 [Dan]: your key on the Spark** — the checks below use `SPARK_API_KEY`, with the same
+- [x] **Step 1 [Dan]: your key on the Spark** — the checks below use `SPARK_API_KEY`, with the same
   value as on the Mac (one key per person, not per machine). From here on it is in every shell of
   yours, the Spark session's included, so the session's secrets guard must already hold (the Mac →
   Spark switch point). From the Mac, send it to the Spark's `~/.secrets` without displaying it:
@@ -6736,7 +6733,7 @@ make install-units-dry-run
   Restart the Spark session. Check: `python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"`
   → `True`.
 
-- [ ] **Step 2 [Spark]: Start it** (the key goes to curl on stdin, never on its command line — see
+- [x] **Step 2 [Spark]: Start it** (the key goes to curl on stdin, never on its command line — see
   Global Constraints)
 
 ```bash
@@ -6753,7 +6750,7 @@ make status
 Expected: as commented. Nothing is loaded yet — Phase 1 has no preload, so each model loads on its
 first request and stays (ttl 0). Open WebUI takes a minute on its first start (`make logs s=open-webui`).
 
-- [ ] **Step 3 [Dan]: Open WebUI's first account, now** — before anything else. From the Mac, in a
+- [x] **Step 3 [Dan]: Open WebUI's first account, now** — before anything else. From the Mac, in a
   spare terminal, `ssh -N -L 3000:127.0.0.1:3000 brightroar`; open `http://127.0.0.1:3000` and
   create your account. Phase 0's research found that the first account can sign up even with
   `ENABLE_SIGNUP` false, and becomes the admin; after it, signup is closed. That is not yet tried on
@@ -6791,7 +6788,7 @@ sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e 
 systemctl restart local-ai-compose
 ```
 
-- [ ] **Step 4 [Spark]: One request per model, with memory readings** — from nothing loaded, one
+- [x] **Step 4 [Spark]: One request per model, with memory readings** — from nothing loaded, one
   at a time. `reading` prints how long the request took and MemAvailable before it, the lowest
   while it ran (sampled ten times a second) and after it:
 
@@ -6830,7 +6827,14 @@ its `free` and `buff/cache` columns with the readings. The pull fills the page c
 2026-09-27), which the launch check counts as available: plan.md, *Page cache and the launch
 check*.
 
-- [ ] **Step 5 [Spark]: What runs, as whom, and what the OOM killers would pick**
+*(Corrected 2026-09-28, from the run: two of the expectations above didn't hold, and neither is an
+engine fault. Each reply's `model` is the GGUF file's path, since llama-server names a model by
+its file unless given `--alias`, which render doesn't pass. And Gemma thinks too, not only the
+coder, so both chat replies spent all 512 tokens in `reasoning_content` and came back with empty
+`content`. Given room, both answered; with thinking off, in 7 or 8 tokens. The changelog has the
+readings, and the thinking led to Dan's decision below.)*
+
+- [x] **Step 5 [Spark]: What runs, as whom, and what the OOM killers would pick**
 
 ```bash
 make status
@@ -6896,7 +6900,7 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 Expected: the process it would kill is an engine; note which one.
 
-- [ ] **Step 6 [Spark]: Footprints** — a model's footprint is about *before − lowest*. Where a
+- [x] **Step 6 [Spark]: Footprints** — a model's footprint is about *before − lowest*. Where a
   reading is above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's
   `footprint_gib` to the reading, rounded up, and leave `footprint_measured: false` — Phase 2
   measures at full context after a soak. Then `make apply`: only `models.yaml` changed, so only the
@@ -6914,7 +6918,7 @@ title request, a non-streamed `POST /v1/chat/completions` from Open WebUI's `aio
 a second or two with a small body, not the half a minute a title takes with thinking on. Step 7
 records it.
 
-- [ ] **Step 7 [Spark]: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's
+- [x] **Step 7 [Spark]: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's
   bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
   override, and the narrowed polkit rule: `spark-admin` starts, stops and restarts the four units by

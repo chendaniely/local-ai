@@ -4,9 +4,9 @@ Personal local-AI stack for a **single DGX Spark (GB10)**, reached from a MacBoo
 over Tailscale (the primary path), the home LAN, or WireGuard (for a device on another tailnet).
 Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the `spark` CLI's leak
 check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
-its runbooks and scenario pages. Nothing serves a model yet; that starts with Phase 1, under way on
-the `phase-1` branch: Tasks 1–10 (code, tests, runbooks) are done and pushed (2026-09-27), and the
-box work starts with Task 11. The *Progress* note at the head of
+its runbooks and scenario pages. Phase 1 is under way on the `phase-1` branch: Tasks 1–10 built its
+code, tests and runbooks (2026-09-27), and since Task 13 (2026-09-28) the box serves its four models
+through llama-swap, with Open WebUI on 127.0.0.1. The *Progress* note at the head of
 [its plan](website/design/phase-1.md) says where it stands and what comes next.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
@@ -141,7 +141,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
   `TORCH_CUDA_ARCH_LIST=12.1a`, or they silently target the wrong arch. NVIDIA's own llama.cpp
-  playbook uses `121a-real`; which is right gets verified in Phase 1.
+  playbook uses `121a-real`; which is right gets verified in Phase 1. *Checked 2026-09-28 (Phase 1,
+  Tasks 11 and 13):* whisper.cpp built with `CMAKE_CUDA_ARCHITECTURES=121a-real` holds only
+  `sm_121a` code (`cuobjdump --list-elf`), and it transcribes on this GPU. ggml's CMake itself turns
+  a detected `121-real` into `121a-real`. So `121a-real` builds native code that runs here. No `121`
+  build was made, so this says nothing about whether `121` fails.
 - **The GPU set moves as one, and only on upgrade day.** The kernel, the NVIDIA modules built for
   it, the driver and CUDA are held together (`apt-mark showhold` lists them). Never unhold or
   upgrade part of the set, while debugging or otherwise: a kernel with no matching NVIDIA module

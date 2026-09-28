@@ -684,17 +684,20 @@ Each item gets its own design pass when its turn comes.
   2026-09-27). At the registry's estimates, Phase 1's four models fit in the free part, so its
   loads are unlikely to test it. Still to decide, once a load on a full cache has been watched: nothing, E.1's drop-caches
   loop during a load, or a check against `MemFree` plus what can be dropped.
-- **To verify on the box:** `121` vs `121a-real`; ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
+- **To verify on the box:** ~~`121` vs `121a-real`~~ (resolved 2026-09-28: `121a-real` builds
+  native `sm_121a` code that runs here; no `121` build was made; see Revisions); ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
   as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
   Parakeet quality on whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
   Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
-  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); that GRUB
-  boots the newest kernel, which the move's check before the reboot relies on; whether GIGABYTE
-  ships this box's firmware through fwupd; whether a model's GPU memory counts toward its engine's
+  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); ~~that GRUB
+  boots the newest kernel, which the move's check before the reboot relies on~~ (resolved
+  2026-09-27: Phase 1's Task 12 ran the check, and it passed; see Revisions); whether GIGABYTE
+  ships this box's firmware through fwupd; ~~whether a model's GPU memory counts toward its engine's
   RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
-  brake's order (Phase 1 measures it); whether memory swaps out before `MemAvailable` reaches the
+  brake's order (Phase 1 measures it)~~ (resolved 2026-09-28: it doesn't, and earlyoom's pick
+  didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions); whether memory swaps out before `MemAvailable` reaches the
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
@@ -989,6 +992,18 @@ Each item gets its own design pass when its turn comes.
   replaces the title task's own. Per request, that switch took both models from thousands of
   tokens to 7 or 8. A render test pins the setting; `make doctor` can't see task calls, which need
   an Open WebUI login, so Task 13 checks one on the box. S20, web search, records the behaviour.
+- **2026-09-28** — Phase 1's Task 13 started the stack on the box and settled three items from
+  *To verify on the box*. **`121` vs `121a-real`:** the whisper.cpp build for `121a-real`
+  (Task 11) holds only `sm_121a` code, and it transcribed on the GPU, where whisper-server held
+  about 2 GiB. ggml's own CMake turns a detected `121-real` into `121a-real`. So `121a-real` builds
+  native code that runs here; no `121` build was made, so nothing says `121` fails. CLAUDE.md's
+  `sm_121` gotcha records it. **GRUB boots the newest kernel:** Task 12's check passed on
+  2026-09-27. Entry 0 boots the newest kernel, the `default=` lines are the stock two (GRUB starts
+  entry 0), and GRUB's saved environment is empty. **A model's GPU memory and its engine's RSS:**
+  the engines' RSS was 0.4–2.1 GiB, against 2–25 GiB each on the GPU (`nvidia-smi`), and
+  their `oom_score`s sat within 9 of each other (1334–1343). earlyoom's dry run picked Gemma,
+  which is resident, over the on-demand coder, the opposite of the brake's order. Task 17 decides
+  whether resident models get a lower `oom_score_adj`.
 
 ## Sources
 

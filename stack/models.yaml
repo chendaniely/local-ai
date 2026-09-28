@@ -39,7 +39,7 @@ models:
     ctx: 8192
     parallel: 1
     cache_ram_mib: 0
-    footprint_gib: 1.5
+    footprint_gib: 4
     footprint_measured: false
     args: [--pooling, last, --ubatch-size, "8192"]
   whisper-large-v3-turbo:

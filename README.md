@@ -6,9 +6,9 @@ reached from a MacBook or other devices over Tailscale, WireGuard, or the home L
 
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
 [the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
-first tools, the host bootstrap and the docs site. Nothing serves a model until Phase 1, which is
-under way on the `phase-1` branch: its code, tests and runbooks are built (Tasks 1–10, 2026-09-27),
-and the box work starts with Task 11 — where it stands and what comes next heads
+first tools, the host bootstrap and the docs site. Phase 1 is under way on the `phase-1` branch: its
+code, tests and runbooks are built (Tasks 1–10, 2026-09-27), and since Task 13 (2026-09-28) the box
+serves its four models — where it stands and what comes next heads
 [its plan](website/design/phase-1.md).
 
 ## Design in one line
@@ -120,13 +120,17 @@ when that file was retired on 2026-09-23.
   HTTPS certificates on. The ACL policy replaced the allow-all default: Dan's devices reach each
   other, and reach the Spark on 22 and 443 only. There is no route home, by choice. Until then it
   was reachable only over the home LAN.
-- **Bootstrapped** (2026-09-24, and re-run cleanly). It boots to a console, and a desktop starts
+- **Bootstrapped** (2026-09-24, and re-run cleanly; re-run again on 2026-09-27 by Phase 1's Task 12,
+  for the changes listed under *Pending from Phase 0's close*). It boots to a console, and a desktop starts
   on demand. ufw is on with SSH only. earlyoom is the only out-of-memory killer (systemd-oomd is
   inactive). The GPU set (kernel, NVIDIA modules, driver, CUDA) is held, 151 packages. Three
   identities: Dan (`chendaniely`, in `spark-admin`), `spark` (runs the stack, no login, not in
   `docker`) and `agent` (tmux agents, with its own SSH key and Claude Code; no sudo, docker or
-  `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` manage
-  `local-ai-*` units but not start transient ones. No containers exist yet.
+  `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` start,
+  stop and restart the four `local-ai-*` units, by exact name, and nothing more; `pkcheck` confirms
+  it can't reload systemd. *(Until the 2026-09-27 re-run, it let `spark-admin` manage any
+  `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
+  Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before).
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
@@ -158,13 +162,24 @@ when that file was retired on 2026-09-23.
   recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
   2026-09-25). Claude Code here talks straight to Anthropic — it is a client like any other, not a
   change to the Claude path.
-- **The engines** (2026-09-27, Phase 1 Task 11), installed but not yet run by anything: llama-swap
+- **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
   CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
   and whisper.cpp **v1.9.4**, built here for `121a-real`, in `/opt/local-ai/bin/whisper.cpp/v1.9.4/`.
   whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. `agent` runs
   llama-server and sees the GPU without docker. Checksums, commits and GPU code in the changelog;
   the pins in `stack/versions.yaml`.
+- **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
+  its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
+  in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
+  and the web services are enabled and running; the pull unit runs only when asked. Everything
+  listens on 127.0.0.1 only: llama-swap on 9100, keys required; the engines on 5800 and up;
+  Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
+  model, and Open WebUI's task model, whose task calls run without thinking),
+  `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
+  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`,
+  with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
+  `make doctor`: 15 of 15.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
@@ -186,7 +201,8 @@ when that file was retired on 2026-09-23.
     `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Until then the clone had
     the `updates.md` from before Phase 0's council, whose re-hold ran all of `make bootstrap` and
     whose recovery line could leave the box without a GPU.
-  - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
+  - ~~**A bootstrap re-run.**~~ **Done 2026-09-27** by Phase 1's Task 12, Step 1: everything below
+    is on the box, and `make doctor`'s three lines pass. Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
     becomes root's, and earlyoom avoids `sshd.*` (`3735420`); `spark` gets two cache folders,
     `/var/lib/local-ai/cache` and `/var/lib/local-ai/cuda-cache` (`7c6616a`); the polkit rule lets
     `spark-admin` start, stop and restart the four `local-ai-*` units and nothing more (`414ddaf`);
