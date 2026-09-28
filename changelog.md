@@ -13,7 +13,8 @@ records the *current* state; this records how it got there.
 **The Mac's pi** was installed at 0.85.1 (`website/how-to/pi.md`), with `make clients` and
 `make tunnel`. Through the tunnel, the coder, `qwen3.6-35b-a3b`, served a real pi task. pi 0.85.1
 expands `"${SPARK_API_KEY}"` in its `models.json`, so no key's value sits in either machine's
-pi config.
+pi config. Homebrew's pi, 0.87.1, has since taken over the Mac's `pi` command, and it stays:
+Dan's decision (plan.md's Revisions).
 
 **`agent`'s Claude Code got the secrets guard first,** before `agent` held any key: the same hook
 script and 35 deny rules as Dan's Spark session, paths moved to `/home/agent`, and a `CLAUDE.md`
@@ -36,8 +37,10 @@ the session survived a detach, a logout and a reattach; and `claude` starts logg
 window.
 
 **An update took pi to 0.87.1,** the newest release and the last in the range reported to crash
-llama-server. `agent`'s pi went back to 0.85.1, and no engine crashed from 12:30 on. `pi.md` now
-says to check the version after any update.
+llama-server. `agent`'s pi went back to 0.85.1, and `pi.md` now says to check the version after any
+update. The Mac's stays on Homebrew's 0.87.1. Its requests at 12:17–12:18 crashed no engine; its
+four `400`s were a 45,822-token conversation sent to Gemma, whose requests top out at 16,384
+tokens.
 
 ## 2026-09-28 — The web UI on the phone (Phase 1, Task 14)
 

@@ -98,7 +98,8 @@ components:
     advisories: https://github.com/searxng/searxng/security/advisories
   pi:
     version: 0.85.1   # 0.86.0–0.87.1 are reported to crash llama-server; stay below them
-    where: [mac, spark]
+    # agent's, on the Spark. The Mac's comes from Homebrew, unpinned (Dan's decision, 2026-09-28).
+    where: [spark]
     pin: null
     deployed: false
     docs: https://www.npmjs.com/package/@earendil-works/pi-coding-agent

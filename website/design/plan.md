@@ -121,7 +121,7 @@ In order of how much they constrain the design:
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
-| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
 
@@ -1015,6 +1015,14 @@ Each item gets its own design pass when its turn comes.
   micro-batch that fits its image budget. The engine's footprint is measured again once deployed.
   Measured the same day: 18.7 GiB on a cold load, against 17.6 at a micro-batch of 512, and about
   1.2 GiB more once it has read its first image, so the registry's estimate rose from 19 to 20 GiB.
+- **2026-09-28** — Dan's decision: the Mac's pi comes from Homebrew and follows it, unpinned. It
+  was 0.87.1 that day, inside the range reported to crash llama-server, and holding a Homebrew
+  install at one version is more trouble than that risk. The pin, 0.85.1, stays for `agent`'s pi on
+  the Spark: `stack/versions.yaml` now lists pi for the Spark only, and `pi.md` says so. So far,
+  0.87.1's requests from the Mac have crashed no engine. Its only errors were four `400`s, from a
+  45,822-token conversation sent to Gemma, whose requests top out at 16,384 tokens (32,768 of
+  context over 2 slots). *To verify on the box* keeps pi's crash range open; Task 17 decides
+  whether a deliberate test comes before the pin moves.
 
 ## Sources
 

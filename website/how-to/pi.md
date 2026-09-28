@@ -10,20 +10,30 @@ where it runs as `agent`, inside tmux.
 
 ## The version
 
-pi is pinned to 0.85.1. Releases 0.86.0 through 0.87.1 are reported to crash llama-server, most
-likely through a llama.cpp bug that their longer prompt triggers. Move up only to a release outside
-that range, and change `stack/versions.yaml` in the same commit. An update takes pi off the pin:
-on 2026-09-28 one took it to 0.87.1, the newest release then and the last in the range. So after
-any update, check `pi --version`, and put pi back with the install line below, `agent`'s included.
+`agent`'s pi, on the Spark, is pinned to 0.85.1. Releases 0.86.0 through 0.87.1 are reported to
+crash llama-server, most likely through a llama.cpp bug that their longer prompt triggers. Move it
+up only to a release outside that range, and change `stack/versions.yaml` in the same commit. An
+update takes pi off the pin: on 2026-09-28 one took it to 0.87.1, the newest release then and the
+last in the range. So after any update, check `pi --version`, and put it back with the install line
+under *On the Spark, as `agent`*.
+
+The Mac's pi isn't pinned (Dan's decision, 2026-09-28): it comes from Homebrew, which moves it with
+each upgrade, and holding a Homebrew install at one version is more trouble than the risk. That day
+it was 0.87.1, inside the range, and its requests crashed no engine.
 
 ## On the Mac
 
-**On the Mac**, install pi at its pin, then check it: `pi --version` prints `0.85.1`.
+**On the Mac**, pi comes from Homebrew, at whatever version Homebrew has; check it:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 pi --version
 ```
+
+*(Changed 2026-09-28, Dan's decision: this section installed pi at the pin with
+`npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1`, as Phase 1's Task 15 did,
+until Homebrew's pi, 0.87.1, took over the `pi` command. If an engine ever crashes on a request from
+the Mac's pi, that npm line is the way back to the pin, with Homebrew's pi removed first so the two
+don't both claim `pi`.)*
 
 pi reads your key from `SPARK_API_KEY`, so your shell must export it:
 [Secret files](secret-files.md) put it in `~/.secrets`. **On the Mac**, check it without showing it.
