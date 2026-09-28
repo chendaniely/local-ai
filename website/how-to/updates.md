@@ -304,7 +304,17 @@ make upgrade-gpu
    ```
 
    If the last line prints nothing, the running kernel's modules aren't held: run `make hold-gpu`
-   and check again. Then `make doctor`: every line `ok`.
+   and check again. Then check whisper-server, which `make doctor` never loads. It was built on
+   this box against the system's CUDA (Phase 1, Task 11), while llama.cpp carries its own CUDA
+   runtime, so a CUDA move can leave whisper-server without a library:
+
+   ```bash
+   ldd /opt/local-ai/bin/whisper.cpp/*/whisper-server | grep 'not found' || echo "all libraries found"
+   ```
+
+   Expected: `all libraries found`. A `not found` line means rebuild it the way
+   [Phase 1's plan](../design/phase-1.md), Task 11 Step 4, built it, into the same folder. Then
+   `make doctor`: every line `ok`.
 8. Record the new kernel, driver and CUDA versions in `changelog.md`, and bring the GPU set's line
    in `README.md` §Current state up to date.
 

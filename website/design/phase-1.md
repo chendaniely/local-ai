@@ -23,13 +23,12 @@ date: 2026-09-23
 > CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
 > rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
 
-> **Progress (2026-09-27).** The switch point and Tasks 1–10 are done: code, tests and runbooks,
-> each task reviewed, pushed on `phase-1` (through `5737e14`, CI green), and ticked below. Nothing
-> is deployed on the box yet. **Next: Task 11 [Spark].** Its Step 1 needs a Spark session with
-> `spark-admin` in its groups, and the session that ran Tasks 1–10 predates bootstrap's group
-> change. So first, **on the Spark**, `tmux kill-server` and log out; then, **on the Mac**,
-> `ssh brightroar`; then start the session as [The Spark session](../how-to/spark-session.md) says,
-> and ask it to continue at Task 11. Dan's own steps start in Task 12, marked **[Dan]**.
+> **Progress (2026-09-27).** The switch point and Tasks 1–11 are done, each reviewed and ticked
+> below: Tasks 1–10 built the code, tests and runbooks, and Task 11 installed the three engines on
+> the box, at their pins, in a session started after Dan's reboot gave it `spark-admin`. Nothing
+> else from this phase is on the box yet: no config is deployed and nothing runs. **Next: Task 12 [Spark + Dan].**
+> Its Step 1 starts with Dan, **on the Spark**, over SSH with nothing open on the desktop:
+> `make bootstrap-dry-run`, read it, then `make bootstrap`; the Spark session checks the result.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -6502,9 +6501,11 @@ branch: only the push happens here.
 (`stack/models.yaml`'s `engines:`, such as `/opt/local-ai/bin/llama.cpp/b11146/llama-server`) and
 its version in `stack/versions.yaml`, and `spark render` cross-checks neither. When this task pins
 and installs the engines, check that each path names the version pinned, or add that check to
-render, with its test, as a plan revision.
+render, with its test, as a plan revision. *(Done 2026-09-27: checked by hand, and both paths name
+the pinned version; `changelog.md` records it. Render still doesn't cross-check them, which Task
+17's review can take up.)*
 
-- [ ] **Step 1: The branch, this session's groups, the driver**
+- [x] **Step 1: The branch, this session's groups, the driver**
 
 ```bash
 cd ~/git/hub/local-ai && git fetch && git switch phase-1 && git pull
@@ -6522,7 +6523,7 @@ groups it started with. *(Corrected 2026-09-27, from the labels audit: in that o
 session.)* If the driver is older than 580, stop and tell Dan: the prebuilt llama.cpp needs it, and
 driver upgrades are held on purpose.
 
-- [ ] **Step 2: llama-swap v257** — its checksum is already in `stack/versions.yaml`:
+- [x] **Step 2: llama-swap v257** — its checksum is already in `stack/versions.yaml`:
 
 ```bash
 tmp=$(mktemp -d)
@@ -6536,7 +6537,7 @@ install -D -m 0755 "$tmp/llama-swap" /opt/local-ai/bin/llama-swap/v257/llama-swa
 
 Expected: `OK` from `sha256sum`; a version line naming 257.
 
-- [ ] **Step 3: llama.cpp b11146 — the prebuilt arm64 + CUDA 13.4 build**
+- [x] **Step 3: llama.cpp b11146 — the prebuilt arm64 + CUDA 13.4 build**
 
 ```bash
 b=b11146; d=/opt/local-ai/bin/llama.cpp/$b; tmp=$(mktemp -d)
@@ -6566,7 +6567,7 @@ the changelog: Phase 5's bake-off compares a source build. **[Dan, on the Spark]
 `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices` lists the same
 device.
 
-- [ ] **Step 4: whisper.cpp v1.9.4, built for this GPU** (there's no CUDA prebuilt)
+- [x] **Step 4: whisper.cpp v1.9.4, built for this GPU** (there's no CUDA prebuilt)
 
 ```bash
 v=v1.9.4; src=~/src/whisper.cpp; d=/opt/local-ai/bin/whisper.cpp/$v
@@ -6586,7 +6587,7 @@ found; `sm_121a` in the list. `121a-real` asks for native code for this GPU and 
 list shows what the binary holds: with static libraries, the CUDA code is linked into
 `whisper-server` itself. Keep the clone: `samples/jfk.wav` is Task 13's speech test.
 
-- [ ] **Step 5: Pins, changelog, README; commit**
+- [x] **Step 5: Pins, changelog, README; commit**
 
 In `stack/versions.yaml`: `llama.cpp` → `pin: sha256:<digest of llama-b11146-bin-ubuntu-cuda-13.4-arm64.tar.gz>`;
 `whisper.cpp` → `pin: git:<the commit from step 4>`. Run

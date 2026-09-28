@@ -675,8 +675,9 @@ Each item gets its own design pass when its turn comes.
   its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
   not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
   a direct call, so that phase decides how to close it.
-- **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
-  whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
+- **To verify on the box:** `121` vs `121a-real`; ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
+  as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
+  Parakeet quality on whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
   Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
@@ -953,6 +954,15 @@ Each item gets its own design pass when its turn comes.
   and a per-package exception for an urgent fix, CLAUDE.md's uv rule and README's summary say so,
   and Phase 1's Task 17 looks back at how it went. The same day, Dan made the no-`#`-in-Mac-blocks
   rule (432dfb3) his own.
+- **2026-09-27** — Phase 1's Task 11 installed the engines on the box, at their pins. Resolved from
+  *To verify on the box*: `agent`'s CUDA access. Dan ran
+  `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`, and it listed the
+  GB10 as `CUDA0`, with `agent` outside the docker group. Learned: whisper.cpp, built on the box,
+  loads the system's CUDA 13.0 runtime, which moves with the held GPU set, while the prebuilt
+  llama.cpp carries its own 13.4. `make doctor` never loads whisper-server, so `updates.md`'s
+  upgrade-day check (step 7) now also checks that it finds its libraries, and says to rebuild it if
+  not. Both engines' registry paths name their pinned versions, checked by hand. `spark render`
+  still doesn't cross-check them.
 
 ## Sources
 

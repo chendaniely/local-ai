@@ -21,8 +21,11 @@ held it.
   → `/opt/local-ai/bin/llama.cpp/b11146/`. Both tarballs matched the sha256 digests GitHub
   publishes for the release's assets; the binaries' tarball is the pin
   (`sha256:4e00496a…`, in full in `stack/versions.yaml`). `--version` reports build 11146, commit
-  `7fe450e19`; `--list-devices` shows the GB10 as `CUDA0`. `libggml-cuda.so` loads the CUDA 13.4
-  runtime and cuBLAS copied beside it, and only the driver's `libcuda.so.1` from the system.
+  `7fe450e19`; `--list-devices` shows the GB10 as `CUDA0`. `libggml-cuda.so` loads the CUDA
+  runtime (it reports 13.4) and cuBLAS copied beside it; of its CUDA libraries, only the driver's
+  `libcuda.so.1` comes from the system. Dan then checked that `agent` reaches the GPU without
+  docker: `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices` lists the
+  same `CUDA0`, the GB10.
   `cuobjdump --list-elf libggml-cuda.so` lists `sm_86`, `sm_89`, `sm_120a` and **`sm_121a`** —
   native code for this GPU, so a first load needn't compile PTX.
 - **whisper.cpp v1.9.4**, built from source (there's no CUDA prebuilt) at commit `927cfce3…`
@@ -34,7 +37,8 @@ held it.
   **`sm_121a`** alone, and `--list-ptx` lists nothing. That it *runs* on the GPU is Task 13's
   check. Unlike llama.cpp it uses the **system's CUDA 13.0 runtime**
   (`/usr/local/cuda-13.0`, found through `ld.so.conf` and the binary's runpath), so it moves with
-  the held GPU set: after an upgrade day that changes CUDA, check it still loads, or rebuild it.
+  the held GPU set: `updates.md`'s upgrade-day check (step 7) now checks that it still finds its
+  libraries, and says to rebuild it if not.
   The clone stays in `~/src/whisper.cpp`; its `samples/jfk.wav` is Task 13's speech test.
 
 Each engine's path in `stack/models.yaml` names the version pinned in `stack/versions.yaml`

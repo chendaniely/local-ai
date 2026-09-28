@@ -162,8 +162,9 @@ when that file was retired on 2026-09-23.
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
   CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
   and whisper.cpp **v1.9.4**, built here for `121a-real`, in `/opt/local-ai/bin/whisper.cpp/v1.9.4/`.
-  whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. Checksums, commits
-  and GPU code in the changelog; the pins in `stack/versions.yaml`.
+  whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. `agent` runs
+  llama-server and sees the GPU without docker. Checksums, commits and GPU code in the changelog;
+  the pins in `stack/versions.yaml`.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
