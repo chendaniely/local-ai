@@ -385,7 +385,9 @@ node, untested).
   Python minor version, pinned in `spark/.python-version`. uv uses only its own interpreters
   (`python-preference = "only-managed"` in `spark/pyproject.toml`), and locks only releases at
   least seven days old (`exclude-newer = "7 days"` there, a rolling window, with Dependabot's uv
-  PRs waiting as long; Dan's decision, 2026-09-27).
+  PRs waiting as long; Dan's decision, 2026-09-27). The same week applies to every version pinned
+  by hand in `stack/versions.yaml` unless an urgent fix needs it sooner (Dan's decision,
+  2026-09-28).
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)

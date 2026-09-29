@@ -136,7 +136,9 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
   them casually.
 - **Never reload llama-swap while models are loaded** — in v257 a config reload stops every engine.
-  Changes go through `spark apply`, which waits for idle or asks.
+  Changes go through `make apply`, which refuses to restart llama-swap while models are loaded;
+  `make apply-now` restarts it anyway, when you choose to. (Corrected 2026-09-28, from Phase 1's
+  council: this said `spark apply` "waits for idle or asks", which it never did.)
 - **Tens of tok/s is the realistic band** on a large MoE. Don't promise more: the reference repo's
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
@@ -209,6 +211,10 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   only releases at least seven days old: `exclude-newer = "7 days"` there, a rolling window, and
   Dependabot's uv PRs wait as long (Dan's decision, 2026-09-27). An urgent fix gets a per-package
   exception, taken out once the release is a week old; `website/how-to/updates.md` has the steps.
+  The same seven days apply to every version set by hand in `stack/versions.yaml` — the engines,
+  llama-swap, the container images, the tools: pin a release only once it is a week old, unless an
+  urgent fix needs it sooner, and say so in the commit (Dan's decision, 2026-09-28, at Phase 1's
+  close: llama.cpp and llama-swap went in 4–5 days after release).
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
   and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets
