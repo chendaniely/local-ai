@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from spark import paths
@@ -15,6 +16,7 @@ from spark.hold import UNREADABLE_SINCE, Hold, read_hold, release_hold, write_ho
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.memory import MemInfo, read_meminfo
 from spark.registry import BrakeThresholds, Registry, load_registry
+from spark.render import write_atomic
 
 # How long memory from an unload counts as on its way back before the brake stops waiting for it and tries the
 # next model. llama-swap v257 gives an engine its unloadTimeout (10 s by default; the stack's config leaves it) to
@@ -40,6 +42,51 @@ STAGES = {"starting": 0, "ready": 1, "stopping": 2}
 
 # The plan's starting thresholds (Admission and memory rules, 5), for when the registry won't load.
 FALLBACK = BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250)
+
+# The start check (Phase 1's council, 2026-09-28). The brake asks llama-swap nothing while memory is above the warn
+# line, so a key llama-swap refuses would first show in an emergency, as an unload that fails. So at start it asks
+# once, with its key, what runs, logs the answer, and records it here, in its state folder (2770 spark:spark-admin),
+# where `spark status` and `spark doctor` read it.
+KEY_CHECK_FILE = "key-check.json"
+# How long the check waits for llama-swap to answer at all: at boot the brake starts as soon as llama-swap's binary
+# runs (both units are Type=exec), before llama-swap listens. Any answer, an error included, ends the wait.
+KEY_CHECK_S = 30.0
+
+
+@dataclass(frozen=True)
+class KeyCheck:
+    at: str
+    ok: bool | None  # None while the brake still waits for llama-swap to answer
+    detail: str
+    key_env: str
+
+
+def parse_key_check(text: str) -> KeyCheck:
+    """A start check as the brake records it; ValueError for anything else."""
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("not a start check: expected a JSON object")
+    at, ok, detail, key_env = (data.get(name) for name in ("at", "ok", "detail", "key_env"))
+    if not (isinstance(at, str) and (ok is None or isinstance(ok, bool)) and isinstance(detail, str)
+            and isinstance(key_env, str)):
+        raise ValueError("not a start check: at, detail and key_env must be strings, ok true, false or null")
+    return KeyCheck(at, ok, detail, key_env)
+
+
+def read_key_check(state_dir: Path) -> tuple[KeyCheck | None, str | None]:
+    """The brake's last start check, or None when it recorded none; and, for a record that can't be read, why."""
+    path = Path(state_dir) / KEY_CHECK_FILE
+    try:
+        return parse_key_check(path.read_text()), None
+    except FileNotFoundError:
+        return None, None
+    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+        return None, f"the brake's start check {path} can't be read: {err}"
+
+
+def write_key_check(state_dir: Path, check: KeyCheck) -> None:
+    """Whole (write_atomic). The unit's umask leaves a new record readable to spark-admin, the folder's group."""
+    write_atomic(Path(state_dir) / KEY_CHECK_FILE, json.dumps(asdict(check)))
 
 
 @dataclass(frozen=True)
@@ -242,8 +289,50 @@ class _Brake:
         return known.footprint_gib if known else 0.0
 
 
+class StartCheck:
+    """Whether llama-swap answers GET /running with the brake's key, asked at start. It is asked after each poll, not
+    before the first, so braking never waits for it: again on the next poll while nothing answers, until
+    KEY_CHECK_S have passed, and never once there is an answer. The record from the brake's last start is replaced
+    at once, so a check that never finishes can't pass for this one."""
+
+    def __init__(self, client, state_dir: Path, key_env: str, log, now=_now, clock=time.monotonic):
+        self.client, self.state_dir, self.key_env, self.log, self.now, self.clock = (
+            client, Path(state_dir), key_env, log, now, clock)
+        self.deadline = clock() + KEY_CHECK_S
+        self.done = False
+        self.record(None, f"waiting for llama-swap to answer, for {KEY_CHECK_S:g} s at most")
+
+    def ask(self) -> None:
+        if self.done:
+            return
+        try:
+            self.client.running()
+        except LlamaSwapUnreachable as err:
+            if self.clock() < self.deadline:
+                return
+            ok, detail = False, f"llama-swap didn't answer in {KEY_CHECK_S:g} s ({err})"
+        except LlamaSwapError as err:  # its text never holds the key
+            no_key = "" if getattr(self.client, "api_key", True) else f" (no key in ${self.key_env})"
+            ok, detail = False, f"{err}{no_key}"
+        else:
+            ok, detail = True, f"llama-swap answers GET /running with the key in ${self.key_env}"
+        self.done = True
+        if ok:
+            self.log(f"brake: {detail}")
+        else:
+            self.log(f"brake: ALERT — its start check failed: {detail}. Until llama-swap answers it with its key, the "
+                     "brake can hold new loads but can't unload a model")
+        self.record(ok, detail)
+
+    def record(self, ok: bool | None, detail: str) -> None:
+        try:
+            write_key_check(self.state_dir, KeyCheck(self.now(), ok, detail, self.key_env))
+        except OSError as err:  # a missing or read-only folder: check_state_dir has said so too
+            self.log(f"brake: ALERT — can't record its start check in {self.state_dir}: {err}")
+
+
 def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep=time.sleep,
-              log=print, now=_now, once: bool = False) -> None:
+              log=print, now=_now, once: bool = False, start_check: StartCheck | None = None) -> None:
     brake = _Brake(registry, client, state_dir, log, now)
     brake.check_state_dir()
     while True:
@@ -254,6 +343,8 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
         else:
             brake.once.cleared("memory", "brake: memory reads again")
             brake.poll(mem)
+        if start_check is not None:
+            start_check.ask()
         if once:
             return
         pause = registry.brake.poll_ms / 1000
@@ -299,5 +390,8 @@ def run(args: argparse.Namespace) -> int:
         registry = _NoRegistry()
     # 2 s, not the default 10: a hung llama-swap must not hold a tick that acts on memory it just read.
     client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=2)
-    run_brake(registry, client, paths.STATE, log=log, once=args.once)
+    # Only the brake that keeps running checks its key: a --once run, such as a drill's with another key, would
+    # replace the unit's record with its own.
+    start_check = None if args.once else StartCheck(client, paths.STATE, args.key_env, log)
+    run_brake(registry, client, paths.STATE, log=log, once=args.once, start_check=start_check)
     return 0

@@ -233,9 +233,10 @@ can't tell whether they are, apply changes nothing and says so. Run it again whe
 If a model starts loading after apply's first look, apply deploys the files, puts llama-swap's
 restart off, says so and exits 1; the next `make apply` makes the restart once the models are idle.
 A restarted llama-swap that doesn't answer within 30 s, or answers with an error such as a wrong
-key, gets a line saying so, and apply exits 1. A run cut off part-way is finished by the next
-`make apply`, except for a unit whose start time apply can't read: it names that unit, with the
-command to restart it.
+key, gets a line saying so, and apply exits 1. So does a restarted brake that isn't still running
+3 s later, or that systemd has had to restart meanwhile. A run cut off part-way is finished by the
+next `make apply`, except for a unit whose start time apply can't read: it names that unit, with
+the command to restart it.
 
 Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass:
 
@@ -258,6 +259,16 @@ account is told the brake's state is unknown to it.
 
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
+
+The same line says whether llama-swap took the brake's own key, `LLAMASWAP_KEY_SPARK`, when the
+brake started. If that start check failed, the brake can't unload a model, and `make doctor`'s
+`stack units` line fails too. `make logs s=brake` shows its `ALERT`, with llama-swap's answer. The
+key is in `llama-swap.env`, which [Secret files](secret-files.md) step 3 wrote. Once that's right,
+**on the Spark**, restart the brake, and it checks again:
+
+```bash
+systemctl restart local-ai-brake
+```
 
 A `problem` line in `make status` that ends in `HTTP 401 (no key in $SPARK_API_KEY)` means this
 shell has no key: set it up as *Before the first deploy* says, then log in afresh. `HTTP 401`

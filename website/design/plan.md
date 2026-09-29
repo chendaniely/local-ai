@@ -634,6 +634,12 @@ Each item gets its own design pass when its turn comes.
   earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
   `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
   `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
+  (Added 2026-09-28, from Phase 1's council: the brake asks llama-swap nothing above the warn line,
+  so a key llama-swap refused would first show in an emergency, as unloads that fail. At start it
+  now asks once, with its own key, what runs, logs the answer, and records it in its state folder.
+  `make status` shows the result on its `brake` line, `make doctor`'s `stack units` line fails
+  unless it passed, and `spark apply` checks that the brake is still running 3 s after it restarts
+  it.)
 - ~~**Fresh releases in the lock — Dan's decision**~~ **Resolved 2026-09-27: a rolling seven-day
   window.** Dan chose it while the stack is still early, to see how it works in practice: uv
   0.12.18 takes `exclude-newer = "7 days"` and records the span in the lock (`exclude-newer-span =
@@ -1084,6 +1090,13 @@ Each item gets its own design pass when its turn comes.
   `spark status` and `spark apply` use followed a redirect with the key, to wherever it pointed. It
   now refuses one, with the handler doctor's probe already used. *Anyone on the box can take
   127.0.0.1:9100* gains the correction; the port stays open to any user, for Dan to decide.
+- **2026-09-28** — From Phase 1's council (reliability). The deployed brake had never sent its key:
+  it asks llama-swap only below the warn line, so a key llama-swap refused would have shown first
+  in an emergency. At start the brake now checks that llama-swap takes its key, logs the answer, and
+  records it where `make status` shows it and `make doctor`'s `stack units` line reads it (still 15
+  checks). `spark apply` checks that the brake is still running 3 s after restarting it, since
+  `Type=exec` counts a brake that stops once it runs as started. *The minimal brake's reach* says
+  so.
 
 ## Sources
 

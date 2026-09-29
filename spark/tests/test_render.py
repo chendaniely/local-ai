@@ -507,7 +507,8 @@ def test_the_brake_and_llama_swap_keep_systemds_default_umask():
 
 def test_a_restart_of_the_brake_or_llama_swap_fails_when_its_binary_cant_start():
     # Task 7's fix round 1: with systemd's default Type=simple, `systemctl restart` succeeds as soon as systemd forks,
-    # even when the binary is missing. Type=exec waits until it runs, so `spark apply` hears of a start that failed.
+    # even when the binary is missing. Type=exec waits until it runs, so `spark apply` hears of a binary that can't be
+    # run. One that stops once it runs still passes: apply checks each unit afterwards (Phase 1's council).
     files = rendered()
     for unit, kept in (("local-ai-llama-swap.service", ["Restart=on-failure", "RestartSec=5", "KillMode=control-group"]),
                        ("local-ai-brake.service", ["Restart=always", "RestartSec=2", "OOMScoreAdjust=-900"])):

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spark import paths, render
+from spark.brake import KEY_CHECK_FILE, parse_key_check
 from spark.llamaswap import _KeyStaysHere, _url_ok, key_from_env
 from spark.registry import Registry, load_registry
 
@@ -359,7 +360,36 @@ def _logs_then_start(units: list[str]) -> str:
     return f"{logs}, then `systemctl start {' '.join(units)}`"
 
 
+def _printable(text: str) -> str:
+    """`text` with every character a terminal would act on written out instead: it comes from a file spark writes."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
+
+
+def brake_start_check(probe: Probe) -> tuple[bool, str]:
+    """Whether llama-swap took the brake's own key when the brake started, as the brake recorded it in its state folder
+    (Phase 1's council, 2026-09-28): an active brake whose key llama-swap refuses could unload nothing."""
+    path = paths.STATE / KEY_CHECK_FILE
+    text = probe.read(path)
+    if text is None:
+        return False, (f"the brake runs, but {path}, its start check, is missing or can't be read from your account: "
+                       "`make logs s=brake`")
+    try:
+        check = parse_key_check(text)
+    except (ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+        return False, f"the brake runs, but its start check {path} can't be read: {_printable(str(err))}"
+    at, detail = _printable(check.at), _printable(check.detail)
+    if check.ok is None:
+        return False, (f"the brake's start check has waited for llama-swap since {at}: run doctor again in 30 s, or "
+                       "`make logs s=brake`")
+    if not check.ok:
+        return False, (f"the brake's start check failed at {at}: {detail}, so below the brake line it can't unload a "
+                       "model — `make logs s=brake`, and 'When something is wrong' in website/how-to/deploy.md")
+    return True, f"llama-swap took the brake's key at {at}"
+
+
 def units(probe: Probe) -> Check:
+    """The stack's units are active, and the brake's start check passed: folded in here, so that doctor keeps one
+    line per concern and its count."""
     _, out, _ = probe.run(["systemctl", "is-active", *UNITS])
     states = out.split()
     down = [(unit, state) for unit, state in zip(UNITS, states) if state != "active"]
@@ -368,7 +398,10 @@ def units(probe: Probe) -> Check:
         return Check("stack units", False, f"{named}: {_logs_then_start([unit for unit, _ in down])}")
     if len(states) != len(UNITS):
         return Check("stack units", False, f"systemctl didn't answer: {_logs_then_start(list(UNITS))}")
-    return Check("stack units", True, "llama-swap, the brake and the web services are active")
+    passed, said = brake_start_check(probe)
+    if not passed:
+        return Check("stack units", False, said)
+    return Check("stack units", True, f"llama-swap, the brake and the web services are active, and {said}")
 
 
 def _bad_url() -> str | None:

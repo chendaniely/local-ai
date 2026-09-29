@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from spark import cli, doctor
+from spark import brake, cli, doctor
 from spark.doctor import SECRETS, UFW_CONF, UNITS, Probe, checks, earlyoom_args, report
 from spark.registry import load_registry
 from spark.render import COMPOSE_DIR, installed_path, render
@@ -53,6 +53,10 @@ class FakeProbe:
             # needrestart's override, installed by bootstrap as the repo has it.
             doctor.NEEDRESTART_CONF: (ROOT / "stack/host/needrestart.conf").read_text(),
             doctor.NEEDRESTART_REPO: (ROOT / "stack/host/needrestart.conf").read_text(),
+            # The brake's start check: llama-swap took its key.
+            doctor.paths.STATE / brake.KEY_CHECK_FILE: json.dumps(
+                {"at": "2026-09-28T19:00:00", "ok": True, "key_env": "LLAMASWAP_KEY_SPARK",
+                 "detail": "llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK"}),
         }
         self.owners = {SECRETS: ("root", "spark", 0o750)}
         # Root's own copies of the units and the Compose project, as `make install-units` leaves them.
@@ -320,6 +324,50 @@ def test_a_unit_that_is_down_is_named():
     assert failures(probe)["stack units"] == (
         "systemctl didn't answer: `make logs s=llama-swap` and `make logs s=brake` and `make logs s=compose`, then "
         "`systemctl start local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service`")
+
+
+CHECK = doctor.paths.STATE / brake.KEY_CHECK_FILE
+START_CHECKS = [  # (the brake's record of its start check, or None for none; what the stack units line says)
+    pytest.param(None, f"the brake runs, but {CHECK}, its start check, is missing or can't be read from your account: "
+                       "`make logs s=brake`", id="missing"),
+    pytest.param("{not json", f"the brake runs, but its start check {CHECK} can't be read: ", id="damaged"),
+    pytest.param(json.dumps({"at": "T", "ok": False, "detail": "llama-swap GET /running: HTTP 401",
+                             "key_env": "LLAMASWAP_KEY_SPARK"}),
+                 "the brake's start check failed at T: llama-swap GET /running: HTTP 401, so below the brake line it "
+                 "can't unload a model — `make logs s=brake`, and 'When something is wrong' in "
+                 "website/how-to/deploy.md", id="failed"),
+    pytest.param(json.dumps({"at": "T", "ok": None, "detail": "waiting", "key_env": "LLAMASWAP_KEY_SPARK"}),
+                 "the brake's start check has waited for llama-swap since T: run doctor again in 30 s, or "
+                 "`make logs s=brake`", id="waiting"),
+]
+
+
+@pytest.mark.parametrize("record, detail", START_CHECKS)
+def test_an_active_brake_whose_start_check_didnt_pass_fails_the_stack_units_line(record, detail):
+    # Phase 1's council (reliability I1): a brake whose key llama-swap refuses is active, and could unload nothing.
+    # Folded into the stack units line, so doctor still counts 15 checks.
+    probe = FakeProbe()
+    if record is None:
+        del probe.files[CHECK]
+    else:
+        probe.files[CHECK] = record
+    results = checks(probe, KEY, REG)
+    failed = {c.name: c.detail for c in results if not c.ok}
+    assert len(results) == 15 and set(failed) == {"stack units"}
+    assert failed["stack units"].startswith(detail), failed
+
+
+def test_a_stopped_brake_is_named_whatever_its_last_start_check_said():
+    probe = FakeProbe()
+    probe.commands[("systemctl", "is-active", *UNITS)] = (3, "active\nfailed\nactive\n", "")
+    assert failures(probe) == {"stack units": "local-ai-brake.service (failed): `make logs s=brake`, then "
+                                              "`systemctl start local-ai-brake.service`"}
+
+
+def test_a_passing_start_check_is_said_on_the_stack_units_line():
+    units = next(c for c in checks(FakeProbe(), KEY, REG) if c.name == "stack units")
+    assert units.ok and units.detail == ("llama-swap, the brake and the web services are active, and llama-swap took "
+                                         "the brake's key at 2026-09-28T19:00:00")
 
 
 def test_llama_swap_must_refuse_a_call_without_a_key():

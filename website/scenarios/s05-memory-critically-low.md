@@ -14,6 +14,9 @@ there. earlyoom is the last resort. Phase 1 ships a minimal brake that unloads t
 coder first, then the always-loaded models.
 
 **What I see.** A high-priority "brake" notification, and a hold shown in `spark status`.
+*(Added 2026-09-28: that line of `make status` also says whether llama-swap took the brake's own
+key when the brake started, and `make doctor`'s `stack units` line fails if it didn't. A brake
+whose key llama-swap refuses can unload nothing.)*
 
 **How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
 `make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't

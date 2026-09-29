@@ -1,4 +1,5 @@
-"""`spark status` — what's loaded, how much memory is left before the brake, and the brake's hold.
+"""`spark status` — what's loaded, how much memory is left before the brake, the brake's hold, and whether llama-swap
+took the brake's own key when the brake started.
 
 It reports problems, it doesn't fail on them: what it can't read, it says so, shows the rest, and exits 0. What it says
 must be true for whoever runs it. The brake's state folder is 2770 spark:spark-admin, so an account outside spark-admin
@@ -13,13 +14,14 @@ import math
 import os
 import stat
 from collections.abc import Mapping
+from dataclasses import asdict
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 
 import yaml
 
 from spark import paths
-from spark.brake import FALLBACK
+from spark.brake import FALLBACK, KeyCheck, read_key_check
 from spark.hold import UNREADABLE_SINCE, Hold, read_hold
 from spark.launch import check_refusal
 from spark.llamaswap import LlamaSwap, LlamaSwapError, Running, key_from_env
@@ -31,7 +33,7 @@ from spark.registry import Registry, load_registry
 NEAR_GIB = 10
 TENTH = Decimal("0.1")
 # What can go wrong, in the order of the lines it bears on: problems are listed in this order.
-PARTS = ("registry", "memory", "llama-swap", "loaded", "state", "refusal")
+PARTS = ("registry", "memory", "llama-swap", "loaded", "state", "key check", "refusal")
 
 
 def _down(value: Decimal) -> float:
@@ -42,11 +44,12 @@ def _down(value: Decimal) -> float:
 
 def gather(mem: MemInfo | None, registry: Registry | None, running: list[Running] | None, hold: Hold | None,
            refusal: dict | None = None, *, problems: Mapping[str, str] | None = None,
-           can_release: bool = True) -> dict:
+           can_release: bool = True, key_check: KeyCheck | None = None) -> dict:
     """What `spark status` shows, as data. A `mem`, `registry` or `running` of None couldn't be read, and `problems`
     says why, by part (PARTS): with no registry, headroom is measured to the plan's brake line, and `running` None
-    with no "llama-swap" problem reads as llama-swap unreachable. A `hold` or `refusal` of None is none. A "state"
-    problem means the brake's state folder is closed to this account: the hold is then unknown, not absent."""
+    with no "llama-swap" problem reads as llama-swap unreachable. A `hold`, `refusal` or `key_check` (the brake's
+    start check) of None is none. A "state" problem means the brake's state folder is closed to this account: the hold
+    and the start check are then unknown, not absent."""
     problems = dict(problems or {})
     if mem is not None and not (math.isfinite(mem.total_gib) and math.isfinite(mem.available_gib)):
         problems.setdefault("memory", f"memory reads that aren't numbers: {mem}")
@@ -88,6 +91,7 @@ def gather(mem: MemInfo | None, registry: Registry | None, running: list[Running
         stand_in = hold.since == UNREADABLE_SINCE  # read_hold's stand-in for a file it couldn't read: it still holds
         brake = {"state": "holding", "since": None if stand_in else hold.since, "reason": hold.reason,
                  "unloaded": None if stand_in else list(hold.unloaded), "can_release": can_release}
+    brake["key_check"] = None if key_check is None or "state" in problems else asdict(key_check)
     return {
         "memory": memory,
         "registry_loaded": registry is not None,
@@ -129,13 +133,26 @@ def _loaded(entries: list[dict] | None, registry_loaded: bool) -> str:
     return " · ".join(parts)
 
 
+def _key_check(check: dict | None) -> str:
+    """What the brake line says of the brake's start check: whether llama-swap took its key when it started."""
+    if check is None:
+        return "no start check recorded (`make logs s=brake`)"
+    if check["ok"] is None:
+        return f"its start check is waiting for llama-swap (since {check['at']})"
+    if check["ok"]:
+        return f"llama-swap took its key at {check['at']}"
+    return f"its start check FAILED at {check['at']}: {check['detail']} — `make logs s=brake`"
+
+
 def _brake(b: dict) -> str:
+    if b["state"] == "unknown":
+        return "unknown"  # the hold and the start check alike
     if b["state"] != "holding":
-        return b["state"]  # "no hold", or "unknown"
+        return f"no hold · {_key_check(b['key_check'])}"
     since = UNREADABLE_SINCE if b["since"] is None else b["since"]
     unloaded = "unknown" if b["unloaded"] is None else (", ".join(b["unloaded"]) or "nothing yet")
     release = "`make brake-release` to clear" if b["can_release"] else "spark-admin can release it"
-    return f"HOLDING since {since} ({b['reason']}); unloaded: {unloaded} — {release}"
+    return f"HOLDING since {since} ({b['reason']}); unloaded: {unloaded} — {release} · {_key_check(b['key_check'])}"
 
 
 def _shown(line: str) -> str:
@@ -200,16 +217,19 @@ def run(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as err:
         mem = None
         problems["memory"] = f"can't read memory: {err}"
-    hold = refusal = None
+    hold = refusal = key_check = None
     if _closed(paths.STATE):
         problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold and the last refusal are "
                              "unknown to it; spark-admin can read them")
     else:
         hold = read_hold(paths.STATE)
+        key_check, damaged = read_key_check(paths.STATE)
+        if damaged:
+            problems["key check"] = damaged
         refusal, damaged = check_refusal(paths.STATE)
         if damaged:
             problems["refusal"] = damaged
     status = gather(mem, registry, running, hold, refusal, problems=problems,
-                    can_release=os.access(paths.STATE, os.W_OK | os.X_OK))
+                    can_release=os.access(paths.STATE, os.W_OK | os.X_OK), key_check=key_check)
     print(json.dumps(status, indent=2, allow_nan=False) if args.json else format_text(status))
     return 0

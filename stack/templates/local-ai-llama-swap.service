@@ -5,7 +5,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# exec: `systemctl restart` waits until the binary runs, so a llama-swap that can't start fails the restart.
+# exec: `systemctl restart` waits until the binary is running, so one that can't be run at all fails the
+# restart. A llama-swap that stops once it runs, on a config it rejects, passes it: `spark apply` waits for it
+# to answer GET /running afterwards.
 Type=exec
 User=spark
 Group=spark

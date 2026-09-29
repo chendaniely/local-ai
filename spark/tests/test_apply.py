@@ -34,7 +34,7 @@ def seeded(etc):
 
 
 def run_apply(etc, files, *, installed=ROOTS, unreadable=(), outdated=(), active=(LLAMA, BRAKE, COMPOSE),
-              app_changes=(), running=(), now_ok=False, dry_run=False, fails=()):
+              app_changes=(), running=(), now_ok=False, dry_run=False, fails=(), stays_up=None):
     ran, logs, synced = [], [], []
 
     def run_cmd(cmd):  # systemctl, as a stand-in: a unit in `fails` doesn't restart
@@ -45,7 +45,7 @@ def run_apply(etc, files, *, installed=ROOTS, unreadable=(), outdated=(), active
     code = apply_files(files, etc, installed=dict(installed), unreadable=set(unreadable), outdated=list(outdated),
                        active=lambda unit: unit in active, app_changes=list(app_changes),
                        running=None if running is None else list(running), now_ok=now_ok, dry_run=dry_run,
-                       sync_app=lambda: synced.append(True), run_cmd=run_cmd, log=logs.append)
+                       sync_app=lambda: synced.append(True), run_cmd=run_cmd, log=logs.append, stays_up=stays_up)
     return code, ran, logs, synced
 
 
@@ -423,6 +423,56 @@ def test_after_a_restart_apply_waits_a_bounded_time_for_llama_swap_to_answer():
     assert slept == []
 
 
+# Phase 1's council (reliability I1): Type=exec counts the brake as started once its Python runs, before the app is
+# imported, so a brake that fails once it runs passes `systemctl restart` and then restarts every 2 s.
+
+UP = "ActiveState=active\nSubState=running\nNRestarts=0\n"
+
+
+@pytest.mark.parametrize("after, said", [
+    pytest.param(UP, None, id="stays-up"),
+    pytest.param("ActiveState=activating\nSubState=auto-restart\nNRestarts=1\n",
+                 "it isn't running 3 s later (activating, auto-restart): see `make logs s=brake`",
+                 id="between-restarts"),
+    pytest.param("ActiveState=failed\nSubState=failed\nNRestarts=5\n",
+                 "it isn't running 3 s later (failed, failed): see `make logs s=brake`", id="gave-up"),
+    pytest.param("ActiveState=active\nSubState=running\nNRestarts=1\n",
+                 "systemd restarted it again within 3 s, so it stops once it runs: see `make logs s=brake`",
+                 id="running-again"),
+    pytest.param("ActiveState=active\nSubState=running\n",
+                 "apply can't tell whether it stayed up, since systemd gave no restart count: "
+                 "`systemctl status local-ai-brake.service`", id="no-count"),
+])
+def test_after_restarting_the_brake_apply_checks_it_stays_up(after, said):
+    shows, slept = iter([UP, after]), []
+    assert spark_apply.check_stays_up(BRAKE, show=lambda unit: next(shows), sleep=slept.append) == said
+    assert slept == [spark_apply.STAY_UP_S] == [3.0]  # longer than the unit's RestartSec, 2 s
+
+
+def test_a_brake_that_doesnt_stay_up_after_its_restart_is_said(tmp_path):
+    asked = []
+
+    def stays_up(unit):
+        asked.append(unit)
+        return "it isn't running 3 s later (activating, auto-restart): see `make logs s=brake`"
+
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
+                                   app_changes=["src/spark/brake.py"], stays_up=stays_up)
+    assert code == 1 and asked == [BRAKE]  # not llama-swap, which apply asks /running instead
+    assert ran == [["systemctl", "restart", LLAMA], ["systemctl", "restart", BRAKE]]
+    assert logs[-1] == (f"apply: restarted {BRAKE}, but it isn't running 3 s later (activating, auto-restart): see "
+                        "`make logs s=brake`")
+
+
+@pytest.mark.parametrize("how", ["restart fails", "dry run", "not running"])
+def test_only_a_brake_apply_restarted_is_checked(tmp_path, how):
+    asked = []
+    run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/brake.py"], stays_up=asked.append,
+              fails=(BRAKE,) if how == "restart fails" else (), dry_run=how == "dry run",
+              active=(LLAMA, COMPOSE) if how == "not running" else (LLAMA, BRAKE, COMPOSE))
+    assert asked == []
+
+
 def test_validate_gets_path_and_a_placeholder_for_each_key_and_nothing_else():
     # Minor 9: Dan's environment can hold secrets of his own, and -validate needs none of it.
     placeholders = {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
@@ -479,7 +529,15 @@ class Box:
                             SimpleNamespace(run=self.run, CalledProcessError=subprocess.CalledProcessError))
         monkeypatch.setattr(spark_apply, "write_tree", self.write_tree)
         monkeypatch.setattr(spark_apply, "READY_SECONDS", 0.0)  # one try: no test waits
+        # What systemd says of the brake after its restart, one answer per look, the last repeated: it stays up.
+        self.brake_shows = ["ActiveState=active\nSubState=running\nNRestarts=0\n"]
+        monkeypatch.setattr(spark_apply, "_show_restarts", self.show_restarts)
+        monkeypatch.setattr(spark_apply, "STAY_UP_S", 0.0)  # no test waits
         monkeypatch.chdir(self.repo)
+
+    def show_restarts(self, unit):
+        assert unit == BRAKE, unit
+        return self.brake_shows.pop(0) if len(self.brake_shows) > 1 else self.brake_shows[0]
 
     def client(self, url, key, timeout):
         box = self
@@ -734,6 +792,18 @@ def test_the_restarts_a_cut_off_run_owed_are_made_by_the_next(box):
     assert (code, events) == (0, ["-validate", "GET /running", "GET /running", f"restart {LLAMA}", "GET /running",
                                   f"restart {BRAKE}"])
     assert f"apply: {LLAMA} started before its latest files were in place, so it still runs older ones" in lines
+
+
+def test_apply_says_when_the_brake_it_restarted_doesnt_stay_up(box):
+    # Phase 1's council (reliability I1): the app fails once it runs, so the restart passes and the unit loops.
+    box.deployed()
+    box.answers = [[]]
+    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    box.brake_shows = [UP, "ActiveState=activating\nSubState=auto-restart\nNRestarts=1\n"]
+    code, lines, events = box.apply()
+    assert (code, events) == (1, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}"])
+    assert lines[-1] == (f"apply: restarted {BRAKE}, but it isn't running 0 s later (activating, auto-restart): see "
+                         "`make logs s=brake`")  # the Box gives it no time (STAY_UP_S)
 
 
 def test_a_brake_that_started_before_the_apps_last_sync_is_restarted(box):

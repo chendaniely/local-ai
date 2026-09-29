@@ -2,7 +2,7 @@
 what changed. It never restarts llama-swap, which stops every model, while models are loaded, or
 while it can't tell — unless told to with --now. It asks llama-swap what is loaded before it changes
 anything and again just before the restart, restarts llama-swap first, and after the restart waits
-for llama-swap to answer.
+for llama-swap to answer. After the brake's restart it checks that the brake is still running.
 
 The units and the Compose project that root runs are root's own copies, which only
 `make install-units` (sudo) installs: apply stages them in /opt/local-ai/etc and never writes
@@ -46,6 +46,9 @@ APP = "app"  # the app, among the files apply deploys itself: when its last sync
 # The files apply deploys itself, and the long-running unit that runs on each.
 DEPLOYED = {"llama-swap.yaml": LLAMA_SWAP_UNIT, "models.yaml": BRAKE_UNIT, APP: BRAKE_UNIT}
 READY_SECONDS = 30.0  # how long a restarted llama-swap has to answer GET /running
+# How long after its restart the brake must still be running, with no restart of systemd's own in between: longer than
+# the unit's RestartSec, 2 s, so a brake that stops once it runs has been restarted by then.
+STAY_UP_S = 3.0
 
 
 class SyncError(RuntimeError):
@@ -166,6 +169,30 @@ def wait_for_running(client, timeout: float, sleep=time.sleep, clock=time.monoto
         sleep(min(1.0, left))
 
 
+def _props(show: str) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in show.splitlines() if "=" in line)
+
+
+def check_stays_up(unit: str, show, sleep=time.sleep, wait: float | None = None) -> str | None:
+    """After the brake's restart: None once it still runs `wait` seconds (STAY_UP_S) later, and systemd hasn't restarted
+    it meanwhile. Otherwise what went wrong, as apply says it. `show(unit)` is `systemctl show`'s ActiveState, SubState
+    and NRestarts. Type=exec counts the brake as started once its Python runs, before the app is imported, so a brake
+    that stops once it runs passes `systemctl restart` and then restarts every 2 s (Restart=always)."""
+    wait = STAY_UP_S if wait is None else wait
+    before = _props(show(unit)).get("NRestarts")
+    sleep(wait)
+    after = _props(show(unit))
+    name = unit.removeprefix("local-ai-").removesuffix(".service")
+    if after.get("ActiveState") != "active":
+        state = f"{after.get('ActiveState') or 'unknown'}, {after.get('SubState') or 'unknown'}"
+        return f"it isn't running {wait:g} s later ({state}): see `make logs s={name}`"
+    if before is None or after.get("NRestarts") is None:
+        return f"apply can't tell whether it stayed up, since systemd gave no restart count: `systemctl status {unit}`"
+    if after["NRestarts"] != before:
+        return f"systemd restarted it again within {wait:g} s, so it stops once it runs: see `make logs s={name}`"
+    return None
+
+
 def deployed_times(etc: Path, app: Path) -> dict[str, float]:
     """When apply last wrote each file it deploys itself, and when the app's last sync finished (APP): the
     modification times of those there are, keyed as outdated_units takes them."""
@@ -181,13 +208,14 @@ def deployed_times(etc: Path, app: Path) -> dict[str, float]:
 
 def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | None], unreadable: set[str],
                 outdated: list[str], active, app_changes: list[str], running: list[str] | None, now_ok: bool,
-                dry_run: bool, sync_app, run_cmd, log, recheck=None, came_up=None) -> int:
+                dry_run: bool, sync_app, run_cmd, log, recheck=None, came_up=None, stays_up=None) -> int:
     """Stage root's files, or deploy the rest and restart what runs on it. 0: done, nothing to do, or root's files
     staged for `make install-units`. 1: refused (by a dry run too), the app's sync failed, or after the files were
-    deployed a restart failed, was put off, or llama-swap didn't answer after it as v257 does. `recheck()` says what
-    llama-swap has loaded just before its restart, as models_loaded does; `came_up()`, after it, what went wrong, None
-    once llama-swap answered (wait_for_running). Either left out isn't asked. `sync_app()` raises SyncError when it
-    fails."""
+    deployed a restart failed, was put off, llama-swap didn't answer after it as v257 does, or the brake didn't stay
+    up. `recheck()` says what llama-swap has loaded just before its restart, as models_loaded does; `came_up()`, after
+    it, what went wrong, None once llama-swap answered (wait_for_running); `stays_up(unit)`, after the brake's restart,
+    what went wrong, None once it stayed up (check_stays_up). Any left out isn't asked. `sync_app()` raises SyncError
+    when it fails."""
     changed = diff_tree(files, etc)
     pending = not_installed(files, installed)
     # llama-swap first, so nothing comes between the second look at what it has loaded and its restart.
@@ -274,6 +302,11 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
             if said is not None:
                 failed = True
                 log(f"apply: restarted {unit}, but {said}")
+        if unit == BRAKE_UNIT and stays_up is not None:
+            said = stays_up(unit)
+            if said is not None:
+                failed = True
+                log(f"apply: restarted {unit}, but {said}")
     return 1 if failed else 0
 
 
@@ -312,6 +345,11 @@ def start_times(units, show, log=print) -> dict[str, float | None]:
 def _show(unit: str) -> str:
     return subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=InactiveExitTimestamp",
                            "--timestamp=us+utc", unit], capture_output=True, text=True).stdout
+
+
+def _show_restarts(unit: str) -> str:
+    return subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=SubState",
+                           "--property=NRestarts", unit], capture_output=True, text=True).stdout
 
 
 def read_copies(files: dict[str, str],
@@ -439,4 +477,5 @@ def run(args: argparse.Namespace) -> int:
                        app_changes=app_diff(src, app), running=running, now_ok=args.now, dry_run=args.dry_run,
                        sync_app=lambda: _sync_app(src, app), run_cmd=lambda cmd: subprocess.run(cmd, check=True),
                        log=print, recheck=lambda: models_loaded(client, unit_active=True),
-                       came_up=lambda: wait_for_running(client, READY_SECONDS))
+                       came_up=lambda: wait_for_running(client, READY_SECONDS),
+                       stays_up=lambda unit: check_stays_up(unit, _show_restarts))

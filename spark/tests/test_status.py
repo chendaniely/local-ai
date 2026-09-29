@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from spark import cli, launch, memory, paths
+from spark.brake import KeyCheck, write_key_check
 from spark.hold import Hold, write_hold
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
 from spark.memory import MemInfo
@@ -100,7 +101,7 @@ def test_status_through_the_cli(spark_status):
     code, out, made = spark_status()
     assert code == 0 and out == ("memory   70 GiB available of 122 GiB · 50 GiB before the brake (20 GiB)\n"
                                  "loaded   coder (on demand, ~28 GiB, ready)\n"
-                                 "brake    no hold\n")
+                                 "brake    no hold · no start check recorded (`make logs s=brake`)\n")
     assert made == [{"url": paths.LLAMASWAP_URL, "key": None, "timeout": 3}]
 
 
@@ -125,7 +126,8 @@ def test_a_registry_that_wont_load_is_said_and_the_rest_still_shown(spark_status
     assert code == 0 and out.splitlines()[:3] == [
         "memory   70 GiB available of 122 GiB · 50 GiB before the brake (20 GiB, the plan's default)",
         "loaded   coder (ready)",
-        "brake    HOLDING since t0 (18.0 GiB available); unloaded: coder — `make brake-release` to clear",
+        "brake    HOLDING since t0 (18.0 GiB available); unloaded: coder — `make brake-release` to clear · no start "
+        "check recorded (`make logs s=brake`)",
     ]
     assert f"problem  the registry {registry} won't load: " in out
     code, out, _ = spark_status("--json", registry=registry)
@@ -156,7 +158,8 @@ def test_memory_that_cant_be_read_is_said_and_the_rest_still_shown(spark_status,
         fake.write_text(meminfo)
     code, out, _ = spark_status(mem=lambda: memory.read_meminfo(fake))
     assert code == 0 and out.splitlines()[:3] == [
-        "memory   unknown", "loaded   coder (on demand, ~28 GiB, ready)", "brake    no hold"]
+        "memory   unknown", "loaded   coder (on demand, ~28 GiB, ready)",
+        "brake    no hold · no start check recorded (`make logs s=brake`)"]
     assert "problem  can't read memory: " in out and error in out
     code, out, _ = spark_status("--json", mem=lambda: memory.read_meminfo(fake))
     status = standard(out)
@@ -342,3 +345,51 @@ def test_json_stays_standard_for_memory_that_isnt_a_number(spark_status):
     code, out, _ = spark_status("--json", mem=MemInfo(float("nan"), float("inf")))
     status = standard(out)
     assert code == 0 and status["memory"] is None and "memory" in status["problems"][0]
+
+
+# Phase 1's council (reliability I1): the brake line says whether llama-swap took the brake's own key when it started.
+
+KEY_ENV = "LLAMASWAP_KEY_SPARK"
+CHECKS = [  # (the brake's record, what the brake line says of it)
+    pytest.param(KeyCheck("t2", True, "llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK", KEY_ENV),
+                 "llama-swap took its key at t2", id="passed"),
+    pytest.param(KeyCheck("t2", False, "llama-swap GET /running: HTTP 401", KEY_ENV),
+                 "its start check FAILED at t2: llama-swap GET /running: HTTP 401 — `make logs s=brake`", id="failed"),
+    pytest.param(KeyCheck("t2", None, "waiting for llama-swap to answer, for 30 s at most", KEY_ENV),
+                 "its start check is waiting for llama-swap (since t2)", id="waiting"),
+]
+
+
+@pytest.mark.parametrize("check, said", CHECKS)
+def test_the_brake_line_says_whether_llama_swap_took_the_brakes_key(spark_status, tmp_path, check, said):
+    write_key_check(tmp_path / "state", check)
+    code, out, _ = spark_status()
+    assert code == 0 and f"brake    no hold · {said}" in out.splitlines()
+    write_hold(tmp_path / "state", Hold("t0", "18.0 GiB available", ()))
+    code, out, _ = spark_status()
+    assert code == 0 and out.splitlines()[2].endswith(f"`make brake-release` to clear · {said}")
+    code, out, _ = spark_status("--json")
+    assert standard(out)["brake"]["key_check"] == {"at": "t2", "ok": check.ok, "detail": check.detail,
+                                                   "key_env": KEY_ENV}
+
+
+def test_a_start_check_record_that_cant_be_read_is_a_problem_not_a_crash(spark_status, tmp_path):
+    record = tmp_path / "state" / "key-check.json"
+    record.write_text("{not json")
+    code, out, _ = spark_status()
+    assert code == 0 and "brake    no hold · no start check recorded (`make logs s=brake`)" in out.splitlines()
+    assert any(line.startswith(f"problem  the brake's start check {record} can't be read") for line in out.splitlines())
+
+
+def test_an_account_that_cant_read_the_state_folder_is_told_nothing_of_the_start_check(spark_status, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root reads any folder")
+    state = tmp_path / "state"
+    write_key_check(state, KeyCheck("t2", True, "passed", KEY_ENV))
+    state.chmod(0)
+    try:
+        code, out, _ = spark_status("--json")
+    finally:
+        state.chmod(0o700)
+    brake = standard(out)["brake"]
+    assert code == 0 and brake["state"] == "unknown" and brake["key_check"] is None

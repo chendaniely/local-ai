@@ -544,3 +544,178 @@ def test_a_hold_release_cant_remove_says_why(tmp_path, capsys):
     assert brake.release(tmp_path) == 1
     err = capsys.readouterr().err
     assert err.startswith("brake: can't release the hold: ") and str(tmp_path / "hold.json") in err
+
+
+# Phase 1's council (reliability I1): the brake asks llama-swap nothing above the warn line, so at start it checks once
+# that llama-swap takes its key, logs the answer, and records it where `spark status` and `spark doctor` read it.
+
+KEY_ENV = "LLAMASWAP_KEY_SPARK"
+
+
+class Answers:
+    """llama-swap as the start check meets it: each GET /running takes the next of `answers`, an error to raise or
+    anything else to answer with, the last one again once they run out. `api_key` is the key it was made with."""
+
+    def __init__(self, *answers, api_key="not-a-real-key"):
+        self.answers, self.api_key, self.calls = list(answers), api_key, 0
+
+    def running(self):
+        self.calls += 1
+        answer = self.answers[min(self.calls, len(self.answers)) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def unload(self, model):
+        raise AssertionError("the start check never unloads")
+
+
+class Clock:
+    """A monotonic clock that moves only when told to."""
+
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def start(client, state, logs, clock=None):
+    return brake.StartCheck(client, state, KEY_ENV, logs.append, now=lambda: "T", clock=clock or Clock())
+
+
+def run_with_check(client, state, *, polls=3, available=60.0, clock=None, each_poll=None):
+    """The brake, with its start check, for `polls` polls at `available` GiB; `each_poll(i)` runs after poll i."""
+    logs, done = [], []
+    check = start(client, state, logs, clock)
+
+    def sleep(seconds):
+        done.append(seconds)
+        if each_poll:
+            each_poll(len(done))
+        if len(done) >= polls:
+            raise Enough
+
+    try:
+        run_brake(REG, client, state, read_mem=lambda: MemInfo(121.7, available), sleep=sleep, log=logs.append,
+                  now=lambda: "T", start_check=check)
+    except Enough:
+        pass
+    return logs
+
+
+def test_at_start_the_brake_records_that_llama_swap_takes_its_key(tmp_path):
+    client = Answers([Running("coder", "ready")])
+    logs = run_with_check(client, tmp_path)
+    assert client.calls == 1  # once, though memory is fine, and never again
+    assert logs == ["brake: llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK"]
+    assert brake.read_key_check(tmp_path) == (
+        brake.KeyCheck("T", True, "llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK", KEY_ENV),
+        None)
+
+
+@pytest.mark.parametrize("error, key, why", [
+    pytest.param(LlamaSwapError("llama-swap GET /running: HTTP 401"), "not-a-real-key",
+                 "llama-swap GET /running: HTTP 401", id="refused"),
+    pytest.param(LlamaSwapError("llama-swap GET /running: HTTP 401"), None,
+                 "llama-swap GET /running: HTTP 401 (no key in $LLAMASWAP_KEY_SPARK)", id="no-key"),
+    pytest.param(LlamaSwapError("llama-swap GET /running: an answer it can't read (not v257's shape)"),
+                 "not-a-real-key", "llama-swap GET /running: an answer it can't read (not v257's shape)",
+                 id="unreadable"),
+])
+def test_a_start_check_that_fails_is_an_alert_and_is_recorded(tmp_path, error, key, why):
+    client = Answers(error, api_key=key)
+    logs = run_with_check(client, tmp_path)
+    assert client.calls == 1  # an answer, even an error, ends it
+    assert logs == [f"brake: ALERT — its start check failed: {why}. Until llama-swap answers it with its key, the "
+                    "brake can hold new loads but can't unload a model"]
+    assert brake.read_key_check(tmp_path) == (brake.KeyCheck("T", False, why, KEY_ENV), None)
+    text = (tmp_path / brake.KEY_CHECK_FILE).read_text() + "\n".join(logs)
+    assert "not-a-real-key" not in text  # the key is never written, nor logged
+
+
+def test_the_start_check_waits_for_llama_swap_to_come_up(tmp_path):
+    # At boot the brake starts as soon as llama-swap's binary runs, before it listens.
+    down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: [Errno 111] Connection refused")
+    client, clock = Answers(down, down, [], api_key="k"), Clock()
+    seen = []
+
+    def each_poll(i):
+        seen.append(brake.read_key_check(tmp_path)[0].ok)
+        clock.t += 1
+
+    logs = run_with_check(client, tmp_path, polls=5, clock=clock, each_poll=each_poll)
+    assert client.calls == 3 and seen == [None, None, True, True, True]
+    assert logs == ["brake: llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK"]
+
+
+def test_a_llama_swap_that_never_answers_fails_the_start_check_after_its_wait(tmp_path):
+    down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: timed out")
+    client, clock = Answers(down), Clock()
+
+    def each_poll(i):
+        clock.t += 10
+
+    logs = run_with_check(client, tmp_path, polls=6, clock=clock, each_poll=each_poll)
+    assert client.calls == 4  # at 0, 10, 20 and 30 s after the start
+    why = f"llama-swap didn't answer in 30 s ({down})"
+    assert logs == [f"brake: ALERT — its start check failed: {why}. Until llama-swap answers it with its key, the "
+                    "brake can hold new loads but can't unload a model"]
+    assert brake.read_key_check(tmp_path)[0] == brake.KeyCheck("T", False, why, KEY_ENV)
+
+
+def test_the_last_starts_record_is_replaced_at_once(tmp_path):
+    # A brake that dies before its check finishes must not leave its last start's pass standing.
+    brake.write_key_check(tmp_path, brake.KeyCheck("earlier", True, "passed last time", KEY_ENV))
+    start(Answers([]), tmp_path, [])
+    check, problem = brake.read_key_check(tmp_path)
+    assert problem is None and (check.at, check.ok) == ("T", None) and "waiting for llama-swap" in check.detail
+
+
+def test_braking_never_waits_for_the_start_check(tmp_path):
+    # The first poll acts on memory before the check asks anything.
+    order = []
+
+    class Recording(Answers):
+        def running(self):
+            order.append("running")
+            return super().running()
+
+    run_brake(REG, Recording([]), tmp_path, read_mem=lambda: order.append("memory") or MemInfo(121.7, 60),
+              sleep=lambda s: None, log=lambda line: None, now=lambda: "T", once=True,
+              start_check=start(Recording([]), tmp_path, []))
+    assert order == ["memory", "running"]
+
+
+def test_a_start_check_it_cant_record_is_said_and_the_brake_runs_on(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root writes through a read-only mode")
+    tmp_path.chmod(0o555)
+    try:
+        logs = run_with_check(Answers([]), tmp_path)
+    finally:
+        tmp_path.chmod(0o755)
+    assert sum(f"can't record its start check in {tmp_path}" in line for line in logs) == 2  # the wait, then the pass
+    assert "brake: llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK" in logs
+
+
+@pytest.mark.parametrize("once", [False, True])
+def test_only_the_brake_that_keeps_running_checks_its_key(tmp_path, monkeypatch, once):
+    # A --once run, as a drill's with Dan's key, would replace the unit's record with its own.
+    seen = {}
+    monkeypatch.setattr(brake, "load_registry", lambda path: REG)
+    monkeypatch.setattr(brake.paths, "STATE", tmp_path)
+    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(kw))
+    assert brake.run(argparse.Namespace(release=False, once=once, key_env=KEY_ENV)) == 0
+    check = seen["start_check"]
+    assert (check is None) if once else (check.key_env == KEY_ENV and check.client.timeout == 2)
+    assert (tmp_path / brake.KEY_CHECK_FILE).exists() is not once
+
+
+@pytest.mark.parametrize("damage", ["{garbage", '{"at": "T", "ok": "yes", "detail": "d", "key_env": "K"}',
+                                    '{"at": "T", "ok": 1, "detail": "d", "key_env": "K"}', "[1]"])
+def test_a_start_check_record_that_cant_be_read_says_why(tmp_path, damage):
+    (tmp_path / brake.KEY_CHECK_FILE).write_text(damage)
+    check, problem = brake.read_key_check(tmp_path)
+    record = tmp_path / brake.KEY_CHECK_FILE
+    assert check is None and problem.startswith(f"the brake's start check {record} can't be read")
