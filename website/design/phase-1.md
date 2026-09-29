@@ -6518,7 +6518,8 @@ its version in `stack/versions.yaml`, and `spark render` cross-checks neither. W
 and installs the engines, check that each path names the version pinned, or add that check to
 render, with its test, as a plan revision. *(Done 2026-09-27: checked by hand, and both paths name
 the pinned version; `changelog.md` records it. Render still doesn't cross-check them, which Task
-17's review can take up.)*
+17's review can take up.)* *(Taken up 2026-09-28, from Phase 1's council: a test on the repo's
+registry checks that each engine's path names its pinned version. Render itself still doesn't.)*
 
 - [x] **Step 1: The branch, this session's groups, the driver**
 

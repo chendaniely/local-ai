@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from spark.registry import load_registry
+from spark.versions import load_versions
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
+STACK_VERSIONS = STACK_REGISTRY.with_name("versions.yaml")
 LLAMA_CPP_BATCH_DEFAULT = 2048  # llama-server b11146's --batch-size default; it caps --ubatch-size
 LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
 # Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
@@ -66,3 +68,13 @@ def test_an_embedding_model_pools_its_last_token_or_holds_its_whole_context_in_o
         ubatch = flag(model.args, "-ub", "--ubatch-size") or LLAMA_CPP_UBATCH_DEFAULT
         batch = flag(model.args, "-b", "--batch-size") or LLAMA_CPP_BATCH_DEFAULT
         assert min(ubatch, batch) >= model.ctx, model.name
+
+
+def test_each_engine_runs_from_the_folder_of_its_pinned_version():
+    # A version bump leaves the old version's folder in place, so a bump that edits only versions.yaml would go on
+    # running the old engine while versions.yaml, the Stack page and README named the new one (Phase 1's council,
+    # toolstack I2). Each engine's path names its version, as the llama-swap unit's does.
+    registry, versions = load_registry(STACK_REGISTRY), load_versions(STACK_VERSIONS)
+    assert set(registry.engines) == {"llama.cpp", "whisper.cpp"}
+    for engine, path in registry.engines.items():
+        assert f"/{versions[engine].version}/" in path, (engine, path, versions[engine].version)

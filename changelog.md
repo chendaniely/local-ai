@@ -255,7 +255,8 @@ held it.
   The clone stays in `~/src/whisper.cpp`; its `samples/jfk.wav` is Task 13's speech test.
 
 Each engine's path in `stack/models.yaml` names the version pinned in `stack/versions.yaml`
-(checked by hand; `spark render` doesn't cross-check them).
+(checked by hand; `spark render` doesn't cross-check them). *(Since 2026-09-28, from Phase 1's
+council, a test on the repo's registry checks it: `spark/tests/test_stack_registry.py`.)*
 
 ## 2026-09-26 — `spark/`'s environment on uv's own Python
 
