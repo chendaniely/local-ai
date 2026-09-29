@@ -2,7 +2,8 @@
 title: "S20 · Web search from the phone"
 scenario-id: S20
 phase: 1
-status: planned
+status: verified
+verified: 2026-09-28
 ---
 
 **Situation.** I ask Open WebUI about something recent.
@@ -15,3 +16,6 @@ own answer keeps its thinking (Dan's decision, 2026-09-28).
 **What I see.** Cited answers.
 
 **How to override.** Turn web search off per chat.
+
+*Status: verified, 2026-09-28 (Phase 1, Task 14): on the phone, a question about something recent
+was searched through SearXNG and answered with its sources.*

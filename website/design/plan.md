@@ -319,7 +319,8 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
   `make doctor` follows it. While models are loaded it refuses a llama-swap restart, unless
   `--now`, rather than waiting. And there is no `make deploy` from the Mac yet: whether Phase 1
   builds it is left for its close, Task 17. S17, a Phase 2 scenario, still expects the diff and
-  the wait.)
+  the wait. *Decided 2026-09-28, at that close (Dan):* no `make deploy`. Work runs on the Spark by
+  default, so `make apply` there is the path.)
 - **Hybrid runtime:** Compose for Open WebUI and SearXNG (later LiteLLM and Postgres); systemd for
   llama-swap and the gate; engines are pinned binaries or on-demand containers; host setup happens in
   bootstrap; ntfy and the watchdog run under Compose on the Synology; the Mac pieces install with
@@ -492,6 +493,12 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
   `make apply` reproduces it; after a routine `apt upgrade` and after a reboot, the stack is serving
   again without a hand on it.
+- *Status:* closing, 2026-09-28. Tasks 1–17 ran on the Spark from 2026-09-25 to 2026-09-28, and
+  every done-when criterion above holds, with the routine upgrade's weaker evidence (Dan's
+  decision: *To verify on the box* keeps the upgrades still to come). Task 18, on the Mac, adds
+  CI's render step, renders the site and merges `phase-1` into `main`.
+- *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
+  from this plan and why, what the reviews found, and what Phase 2 inherits.
 
 **Phase 2 — Fit check, brake, visibility**
 
@@ -500,6 +507,20 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent`.
 - [Mac] SwiftBar plugin · harness hooks on the Mac.
 - [Dan] ntfy + watchdog in Container Manager on the Synology.
+- *From Phase 1's close (2026-09-28; its forward look is in Revisions):* llama-swap moves behind
+  a Unix socket with the gate, since anyone on the box can take 127.0.0.1:9100 while it restarts;
+  the engines and `spark models pull` get a user of their own, with render's allowlist of engine
+  options standing meanwhile; the drill measures a busy engine's stop and how long an unloaded
+  engine's memory takes to show in `MemAvailable` (for `GRACE_S` and `FLOOR_TOLERANCE_GIB`), swap
+  and swappiness at the real thresholds, and earlyoom's order; `agent`'s GPU jobs get an OOM score
+  before `agent` runs GPU work, and the gate finds the top GPU holder from `nvidia-smi`'s
+  per-process list; a soak at full context measures every footprint, checkpoints and prompt
+  caches included (rule 6); pi 0.87.1 for `agent` after a deliberate test; a higher
+  `--slot-prompt-similarity` for Gemma, weighed; each deployed component's upgrade runbook,
+  written with its first bump, and a test that ties the code's version assumptions to
+  `stack/versions.yaml`; `--alias`, so a reply names its model rather than its file; SearXNG's
+  request timeout; systemd sandboxing for the stack's units, and `cap_drop` for the web
+  containers. The retrospective lists the rest.
 - *Done when:* S01, S02, S03, S05, S06, S11, S12, S13, S14 and S17 are verified.
 
 **Phase 3 — App API + speech** (Dan's audio pipeline is the first app with its own key)
@@ -579,6 +600,14 @@ Each item gets its own design pass when its turn comes.
   `spark` check against each changelog) · tag the tailnet's always-on devices that aren't Dan's
   own (the NAS, if it runs Tailscale as Dan), so `autogroup:member`, which the ACL's grants to the
   Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway.
+- **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
+  context for now, and these are the levers to look at when memory gets tight; each saving is an
+  estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
+  (`--cache-type-k`/`-v q8_0` about halves it: roughly 2.5 GiB for Gemma and 2.8 for the coder at
+  full context, at a quality cost to measure); Gemma on one slot (its task calls would then queue
+  behind a chat); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
+  caches (1 GiB for Gemma, 2 for the coder); a context below the maximum where a model never needs
+  it; and fewer image tokens (`--image-max-tokens`, less detail).
 - **Parked:** Hermes · `claude-dgx` · a MacBook MLX fallback · other users.
 
 ## Open items and risks
@@ -1137,8 +1166,9 @@ Each item gets its own design pass when its turn comes.
   so.
 - **2026-09-28** — From Phase 1's council (reliability). Rule 6 counts a model's steady state after
   a soak at maximum context, and the footprints counted the load and the longer KV cache, plus
-  Gemma's checkpoints, but not the rest of what grows after admission: the prompt caches, the
-  coder's checkpoints, Gemma's image buffer and the embedding model's long-input buffer. At the
+  Gemma's checkpoints and its first image's buffer (its old 20 GiB was the cold load with one image
+  read), but not the rest of what grows after admission: the prompt caches, the coder's
+  checkpoints and the embedding model's long-input buffer. At the
   admission edge, that growth could put a load on the brake line, and the hold would then block
   every load. The registry's comments now say what each estimate counts, from the cold loads
   measured that day (24.7, 6.3 and 29.8 GiB): Gemma 32, the embedding model 8, and the coder 33 with
@@ -1184,6 +1214,25 @@ Each item gets its own design pass when its turn comes.
   together, so a refused start's reason and an engine's crash outlive the in-memory buffer every
   restart wiped. That evening's check found no prompt text in the engines' output at default
   verbosity, and the allowlist keeps logging options out. The llama-swap row says so.
+- **2026-09-28** — Phase 1's forward look (Task 17 Step 5), after its council. *Readings against
+  the budget:* at full context the cold loads took 24.7 GiB (Gemma), 6.3 (embeddings) and 29.8
+  (the coder), and whisper 2.5 (Task 13); the footprints, which now count what grows after
+  admission, sum to 76 of the 78 allowed. Loads took 5 s, 1 s and 21 s; prefill ran at about 1,900
+  tokens a second on Gemma and 1,600 on the coder, and decode at 78 and 93 (Task 13). The
+  CUDA-allocatable ceiling is still unmeasured. *A refused start's reason* didn't reach llama-swap's
+  journal in v257's default logging; from this close it does (`logToStdout: both`). *v257's
+  surprises:* a config reload stops every engine; unloading a starting engine answers at once and
+  fails the request that started it; a reply names its model by its file, for want of `--alias`;
+  and its built-in help shows a `logToStdout` value its own schema rejects. *Decided, with Dan:*
+  no `make deploy` from the Mac (*Deploy workflow*); residents at `oom_score_adj` 900 and
+  on-demand models at 1000, so earlyoom follows the brake; `GRACE_S` stays 15 s and
+  `FLOOR_TOLERANCE_GIB` becomes 1.0 GiB; render allows only listed engine options; engines log to
+  the journal; swap and swappiness wait for Phase 2's measurement; the seven-day window stays and
+  now also covers pins set by hand (`CLAUDE.md`); Dependabot's PRs #1–#3 merge on the Mac after
+  Phase 1's merge; Phase 1 closes on the routine upgrade's weaker evidence; S09 is verified on
+  Task 14's phone pass, its newer settings checked in the Mac's browser; every model keeps its full
+  context, with the settings that would save memory in the Backlog. Phase 2's line lists what it
+  inherits, and [the retrospective](phase-1-retro.md) holds the deferred minors.
 
 ## Sources
 

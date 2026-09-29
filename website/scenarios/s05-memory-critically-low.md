@@ -2,7 +2,7 @@
 title: "S05 · Memory critically low"
 scenario-id: S05
 phase: 1
-status: planned
+status: built
 ---
 
 **Situation.** A job keeps growing, and free memory falls toward the band where this box has
@@ -31,3 +31,7 @@ the box until the next deploy's earlyoom dry run.)*
 `make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't
 on my PATH, and the target runs it through uv.)*
 Thresholds live in `stack/models.yaml`.
+
+*Status: built, 2026-09-28 (Phase 1). Phase 1's minimal brake unloads the on-demand models first:
+Task 16's drill, at raised thresholds, held new loads and unloaded the coder while the residents
+stayed. The idle-first order and the notifications arrive in Phase 2.*

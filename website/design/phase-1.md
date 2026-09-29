@@ -6,6 +6,9 @@ date: 2026-09-23
 
 # Phase 1 — First milestone: web UI + pi — Implementation Plan
 
+> **Retrospective:** [Phase 1 — retrospective](phase-1-retro.md) records what this plan built, where
+> the build departed from it and why, what the reviews found, and what Phase 2 inherits.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax. Every task is labelled **[Spark]**, **[Mac]** or **[Dan]**; ⇄ marks a
@@ -35,9 +38,11 @@ date: 2026-09-23
 > the brake held and unloaded the coder, a load that didn't fit was refused, a fresh clone matched
 > the deploy, and the stack kept serving through a routine upgrade and came back by itself after
 > a reboot. Then Dan's decision of 2026-09-28, every model at its maximum context, with Gemma's
-> two slots sharing one pool, was built, deployed and checked, below Task 16. **Now: Task 17
-> [Spark],** Phase 1's close, is under way: its council has reviewed the branch, and the fixes that
-> need no decision of Dan's are going in.
+> two slots sharing one pool, was built, deployed and checked, below Task 16. Task 17, Phase 1's
+> close: its council reviewed the branch, and its fixes and Dan's decisions are committed; the
+> forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
+> **Now:** Dan deploys the fixes (`make apply`, `make install-units`, `make apply-now`), the Spark
+> session checks and records them, and then the switch to the Mac for **Task 18 [Mac]**.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7365,7 +7370,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   forward look changes anything; `README.md` if Step 2 finds it untrue *(S12 added 2026-09-28, from
   Phase 1's council: it is a Phase 1 page too)*
 
-- [ ] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
+- [x] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
   (the dates from Task 14). *(Corrected 2026-09-28: S09 has since gained the context change's
   claims about what the phone can change, which Task 14 didn't check. S09's date is that of the
   context change's phone check, below Task 16, and the page's "not yet checked on the phone" marker
@@ -7386,7 +7391,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
 - [ ] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
   go to the vault's `zettelkasten/local-ai/` note, never to the repo. The session lists them in the
   chat, never in a file in the repo, and Dan files them in the vault.
-- [ ] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
+- [x] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
   and scenarios; reliability; security and simplicity; toolstack. The security reviewer starts
   from the paths `plan.md`'s *Users, access and security* names as still open (2026-09-25): sudo
   running the clone's own scripts, sudo's cached credential after bootstrap, `make hold-gpu` and
@@ -7408,7 +7413,11 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   install-units' question through `tmux send-keys`. Of the paths above, sudo's cached credential
   after bootstrap is closed since: `make bootstrap` and `make hold-gpu` end with `sudo -k` (Task 9's
   review), as `make upgrade-gpu` does from Task 10; the reviewer confirms it.)*
-- [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
+  *(Done 2026-09-28: four Opus reviewers; 0 Critical, 15 Important, 37 Minor across them. The
+  fixes went in as two batches, each re-reviewed; Dan decided the rest. The reports stay in the
+  session's workspace; [the retrospective](phase-1-retro.md) carries what they found and what is
+  deferred.)*
+- [x] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
   v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*
   left it here, 2026-09-25): decide it, and record the decision in plan.md with a Revisions line.
@@ -7428,6 +7437,8 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   window — did it hold back a fix the stack needed, did Dependabot's uv PRs and a hand-run
   `uv lock` behave as `updates.md` says, and was a per-package exception needed — and record in
   plan.md whether it stays.)*
+  *(Done 2026-09-28: plan.md's Revisions has the forward look, its Phase 2 line what Phase 2
+  inherits, and its Backlog the model settings Dan will revisit when more models are fitted.)*
 - [ ] **Step 6: Commit** — what Steps 1, 2 and 5 changed, staged by name (a file that didn't
   change adds nothing):
 

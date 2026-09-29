@@ -2,7 +2,7 @@
 title: "S23 · Upgrade day"
 scenario-id: S23
 phase: 1
-status: planned
+status: built
 ---
 
 **Situation.** It is Saturday, upgrade day. The held GPU set (the kernel, the NVIDIA modules built
@@ -52,3 +52,7 @@ signal cuts off a hold the way out runs, the retry included. Each time, it says 
 `make hold-gpu`. After the steps by hand, `make hold-gpu` is the hold. A box that comes back without
 a GPU has its own steps in [Updates](../how-to/updates.md#if-it-goes-wrong), including booting the
 previous kernel.
+
+*Status: built, 2026-09-28 (Phase 1): that day's routine `apt upgrade` and reboot passed, with the
+stack serving again and no hand on it (Task 16). It becomes verified only once `make upgrade-gpu`
+has moved the GPU set on a real upgrade day.*

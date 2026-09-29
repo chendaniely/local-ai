@@ -2,7 +2,8 @@
 title: "S09 · Phone away from home"
 scenario-id: S09
 phase: 1
-status: planned
+status: verified
+verified: 2026-09-28
 ---
 
 **Situation.** I'm away from home, Tailscale is on, and I open Open WebUI on my Android
@@ -32,3 +33,8 @@ passes a token threshold, 80,000 by default. That is off unless the admin turns 
 an error, so a new chat is the way on. (Added 2026-09-28, Dan's decision: every model at its full
 context. The labels are read from Open WebUI v0.11.4's source, and Dan found each of them in the
 web UI in the Mac's browser the same day; not yet checked on the phone.)
+
+*Status: verified, 2026-09-28 (Phase 1, Task 14): on the phone, at home and on mobile data, the
+web UI answered chats, a photo question, dictation and voice mode. The settings under *How to
+override* were checked in the web UI in the Mac's browser the same day (Dan's decision); the
+claims marked above as not yet checked stay marked.*
