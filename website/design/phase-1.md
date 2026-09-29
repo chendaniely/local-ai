@@ -7285,7 +7285,7 @@ rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budg
 reads the engines' own settings once (a ruling, 2026-09-28; Task 17 can weigh a check that reads
 each engine's `/props`).
 
-- [ ] **Step 1 [Dan, then Spark]: Deploy, and check each model at full context** — llama-swap's
+- [x] **Step 1 [Dan, then Spark]: Deploy, and check each model at full context** — llama-swap's
   config changes, and restarting llama-swap stops every engine, so **[Dan, on the Spark]** runs
   `make apply-now` (or `make apply` with nothing loaded). Then the session loads each model cold and
   reads what its engine started with. **On the Spark**, llama-swap keeps each engine's output, and
@@ -7303,7 +7303,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   estimate without the checkpoints' 5, which a cold load doesn't allocate and Step 2 measures; if
   it's higher, the registry gets the reading plus 5.
   `make doctor` passes 15 of 15.
-- [ ] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
+- [x] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
   a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's task calls
   are, then a second turn that repeats the first with the reply and a new question. The second
   turn's `timings.prompt_n`, in its response, should be a few thousand tokens at most, not the
@@ -7311,6 +7311,17 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   3.5 GiB beyond the cold load's reading: this chat's 4 checkpoints of about 0.6 GiB, plus up to
   1 GiB for the prompt cache and the short request's own small checkpoints. The commands are
   written and run when this step runs, as Step 1's measurements were.
+  *(Checked 2026-09-28, Steps 1 and 2. Dan deployed at 17:23. Each engine logged what Step 1
+  expects. Cold loads took 24.7, 6.3 and 29.8 GiB for Gemma, the embedding model and the coder,
+  all under the estimates, so the registry stays as it is. Gemma read a 125,951-token prompt in
+  66 s, the coder a 116,302-token one in 72 s, and the embedding model embedded 26,710 tokens. In a
+  126,000-token Gemma chat, each later turn re-read 38 to 48 tokens in about 0.27 s, including
+  after an Open WebUI-sized task call of 249 tokens, which went to the other slot. `MemAvailable`
+  fell about 0.9 GiB over seven turns. One turn missed its cache, and that was the test's doing: a
+  26-token task call matched the chat's slot. llama-server gives a new prompt the slot whose cached
+  start matches more than 10% of it (`--slot-prompt-similarity`, 0.10), and every Gemma prompt
+  opens with the same few template tokens. So a very short new chat can take a long chat's slot,
+  as it could before this change. Task 17 weighs a higher threshold.)*
 - [ ] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
   the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so
@@ -7385,7 +7396,9 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   whether the brake's `GRACE_S` stays 15 s, when only an idle engine's stop was measured, and
   whether `FLOOR_TOLERANCE_GIB` stays 0.5 GiB, when the one larger step was probably a Gemma
   context checkpoint rather than noise. Also weigh the context change's readings, below Task 16:
-  the footprints at full context and the checkpoints' memory over a long conversation.)*
+  the footprints at full context and the checkpoints' memory over a long conversation. And weigh a
+  higher `--slot-prompt-similarity` for Gemma, since at 0.10 a very short new prompt can take a
+  long chat's slot and its cache.)*
   Update `plan.md` (with a Revisions line), the scenario pages and `changelog.md` before
   Phase 2 starts. *(Added 2026-09-27, Dan's decision:* also look back at the lock's seven-day
   window — did it hold back a fix the stack needed, did Dependabot's uv PRs and a hand-run

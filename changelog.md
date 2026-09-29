@@ -8,6 +8,30 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — Every model at its full context (Dan's decision)
+
+**Deployed** by Dan, **on the Spark**, at 17:23: `make apply-now` restarted llama-swap and the
+brake. Every model now runs at its GGUF's own maximum context: 262,144 tokens for Gemma and the
+coder, and 32,768 for the embedding model. Gemma's two slots share one KV pool
+(`--kv-unified`) and keep their cache while idle (`--no-cache-idle-slots`). Each keeps at most 4
+context checkpoints (`--ctx-checkpoints 4`).
+
+**Checked the same evening.** Each engine logged its new context: Gemma `n_slots = 2,
+n_ctx_slot = 262144, kv_unified = 'true'`, the coder 262144 and the embedding model 32768.
+Cold loads took 24.7 GiB for Gemma, 6.3 for the embedding model and 29.8 for the coder. All were
+under the estimates (26 for Gemma before its checkpoints' 5, then 7 and 32), so the registry
+stays as it is. Gemma read a 125,951-token prompt in 66 s, about 1,900 tokens a second, and the
+coder a 116,302-token one in 72 s, about 1,600. The embedding model embedded 26,710 tokens,
+splitting them across micro-batches.
+
+**A long chat keeps its cache.** In a 126,000-token Gemma chat, each later turn re-read only its
+38 to 48 new tokens, in about 0.27 s against 66 s for the whole. That held after an Open
+WebUI-sized task call of 249 tokens, which went to Gemma's other slot. `MemAvailable` fell about
+0.9 GiB over seven turns. One turn missed its cache, because of the test: its 26-token task call
+matched the chat's slot. llama-server gives a new prompt the slot whose cached start matches more
+than 10% of it, and every Gemma prompt opens with the same few template tokens. So a very short
+new chat can take a long chat's slot, as it could before; Task 17 weighs a higher threshold.
+
 ## 2026-09-28 — The Phase 1 drills (Phase 1, Task 16)
 
 **The brake, at raised thresholds (S05).** The Spark session loaded the coder and ran one brake
