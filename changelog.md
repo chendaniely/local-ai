@@ -8,6 +8,23 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — Phase 1's council fixes deployed (Phase 1, Task 17)
+
+**Deployed** by Dan, **on the Spark**, at 21:19: `make apply` staged the new config and the two
+units (comment-only changes), `make install-units` installed root's copies, and `make apply-now`
+restarted llama-swap and the brake. What changed: the engines run with `--no-slots` and
+`--no-webui`; a registry's `args` may set only listed engine options; `spark launch` gives the
+resident engines `oom_score_adj` 900 and on-demand ones 1000; the coder keeps at most 8 context
+checkpoints; the footprints are now 32, 8, 3 and 33 GiB (76 of 78); the brake's floor tolerance is
+1.0 GiB; and the brake checks at start, in a thread of its own, that llama-swap takes its key.
+llama-swap stays at its default logging (Dan's decision that evening, before the deploy).
+
+**Checked.** `make status`: "llama-swap took its key at 2026-09-28T21:19:22", the first time the
+brake unit's own key was seen to work. `make doctor`: 15 of 15, its `stack units` line covering
+that check. `ps`: the coder at `oom_score_adj` 1000 (`oom_score` 1354), the two residents loaded at
+900 (1286 and 1270), so the kernel would pick the coder first. Each engine now answers `/slots`
+with `501` and its web root with `404`. earlyoom's dry run, which needs sudo, is still to run.
+
 ## 2026-09-28 — Every model at its full context (Dan's decision)
 
 **Deployed** by Dan, **on the Spark**, at 17:23: `make apply-now` restarted llama-swap and the

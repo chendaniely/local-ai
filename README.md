@@ -191,6 +191,11 @@ when that file was retired on 2026-09-23.
   context: 262,144 tokens for Gemma and the coder, and 32,768 for the embedding model. Gemma's
   two slots share one pool, keep their cache while idle, and keep at most 4 context checkpoints
   each. Cold loads take about 25, 6 and 30 GiB for Gemma, the embedding model and the coder.
+  Since Phase 1's council (deployed 2026-09-28): the engines serve neither `/slots` nor a web UI
+  of their own; a registry may pass them only listed options; the resident engines run at
+  `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
+  footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
+  which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
