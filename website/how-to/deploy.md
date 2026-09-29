@@ -258,6 +258,19 @@ make logs s=llama-swap
 `make status` as a `refused` line with its reason, for an account in `spark-admin`; any other
 account is told the brake's state is unknown to it.
 
+`make status` shows only the last refusal, and the next load that starts clears it. llama-swap's
+journal keeps them all: llama-swap sends the engines' output there with its own
+(`logToStdout: both`, from Phase 1's council, 2026-09-28), so `make logs s=llama-swap` also shows
+`spark launch`'s `spark: not starting <model>: <reason>` line, and the error an engine prints when
+it crashes.
+Before that change the journal had only llama-swap's `starting <model> failed: upstream command
+exited prematurely`. `make logs` shows the last 100 lines. To list every refusal the journal
+holds, **on the Spark**:
+
+```bash
+journalctl -u local-ai-llama-swap.service -g 'not starting' --no-pager
+```
+
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
 
