@@ -719,3 +719,11 @@ def test_a_start_check_record_that_cant_be_read_says_why(tmp_path, damage):
     check, problem = brake.read_key_check(tmp_path)
     record = tmp_path / brake.KEY_CHECK_FILE
     assert check is None and problem.startswith(f"the brake's start check {record} can't be read")
+
+
+def test_a_missing_state_folder_is_said_and_never_made_by_the_start_check(tmp_path):
+    # The folder is bootstrap's, 2770 spark:spark-admin: one the brake made would have neither that group nor that mode.
+    state = tmp_path / "missing"
+    logs = run_with_check(Answers([]), state)
+    assert not state.exists()
+    assert sum(f"can't record its start check in {state}" in line for line in logs) == 2

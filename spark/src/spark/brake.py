@@ -85,7 +85,11 @@ def read_key_check(state_dir: Path) -> tuple[KeyCheck | None, str | None]:
 
 
 def write_key_check(state_dir: Path, check: KeyCheck) -> None:
-    """Whole (write_atomic). The unit's umask leaves a new record readable to spark-admin, the folder's group."""
+    """Whole (write_atomic). The unit's umask leaves a new record readable to spark-admin, the folder's group. The
+    folder is bootstrap's: a missing one is an error, never made here, where it would get neither its group nor its
+    mode."""
+    if not Path(state_dir).is_dir():
+        raise FileNotFoundError(f"{state_dir} doesn't exist or isn't a folder")
     write_atomic(Path(state_dir) / KEY_CHECK_FILE, json.dumps(asdict(check)))
 
 
