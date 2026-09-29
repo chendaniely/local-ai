@@ -781,8 +781,9 @@ Each item gets its own design pass when its turn comes.
   memory context checkpoints take over a long conversation (estimated at about 0.6 GiB each for
   Gemma, 4 at most per slot; the coder's, its recurrent state plus its MTP draft's, not yet
   estimated, 32 at most; added 2026-09-28. Corrected the same day, from Phase 1's council: the
-  coder's are capped at 8, about 63 MiB each by arithmetic, and their size is the first thing a
-  soak at full context measures).
+  coder's are capped at 8; their recurrent state is about 63 MiB each by arithmetic, and the MTP
+  draft's share isn't estimated, so their size is the first thing a soak at full context
+  measures).
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
