@@ -7479,8 +7479,10 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
 
 - [ ] **Step 3: The Mac check and the site** — `make test lint docs`. Expected: all pass, on bash
   3.2 and GNU make 3.81, and `make docs` renders with no warnings: the How-to listing shows
-  deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). A failure here that the
-  Spark didn't see is a Mac difference: fix it here, with its test, and in this plan's listing.
+  deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). *(Added 2026-09-28, from
+  Phase 1's council: and pi.md as step 8, since its section on `agent`'s secrets guard comes before
+  `agent`'s key.)* A failure here that the Spark didn't see is a Mac difference: fix it here, with
+  its test, and in this plan's listing.
 
   *Added 2026-09-26, from Tasks 2 and 7's reviews:* this is the first run of Phase 1's whole suite
   on the Mac; until now it ran only on the Spark and in ubuntu:24.04. Four things there have never

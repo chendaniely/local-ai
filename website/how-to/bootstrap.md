@@ -74,7 +74,8 @@ an outer `sudo` it would give your groups to root.
    ```
 5. **On the Spark, still as `agent`**, log in: run `claude`. With no browser on the box, press `c`
    to copy the login URL, open it on the Mac, and paste the code back into `agent`'s `claude` on
-   the Spark.
+   the Spark. *(Added 2026-09-28: its secrets guard comes in [pi](pi.md), before `agent` gets a
+   key.)*
 
 `agent` makes its own `~/work` too, the same way: its first `git clone` into it creates it.
 Bootstrap doesn't, since it runs as root.

@@ -37,6 +37,7 @@ sudo apt install tmux gh
 5. [Join Tailscale](tailscale.md)
 6. [Secret files](secret-files.md)
 7. [Deploy the stack](deploy.md)
+8. [pi, the coding agent](pi.md) — `agent`'s Claude Code gets the secrets guard before its key.
 
 **After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
 IPv6 check, which need the tailnet name.

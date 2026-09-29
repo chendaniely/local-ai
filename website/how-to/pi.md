@@ -1,6 +1,6 @@
 ---
 title: "pi, the coding agent"
-description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."
+description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark, once agent's Claude Code has the secrets guard."
 ---
 
 pi reaches the Spark's models as one provider, `spark`: each chat model in the registry, under its
@@ -69,7 +69,93 @@ In pi, `/model` → a Spark model. The footer names the model that answers.
 ## On the Spark, as `agent`
 
 `agent` needs Node 22.19 or later, its own llama-swap key, uv, pi and a clone of this repo. Two
-people set that up: you, with sudo, then `agent` itself.
+people set that up: you, with sudo, then `agent` itself. First, before `agent` holds a key, its
+Claude Code gets the secrets guard.
+
+### The secrets guard, before the key
+
+*(Added 2026-09-28, from Phase 1's council: Task 15 set this up that day from commands that
+reached no runbook.)* `agent`'s Claude Code, which [Bootstrap the Spark](bootstrap.md) installs and
+logs in, gets the same guard as yours ([The Spark session](spark-session.md), step 3), with
+`agent`'s paths, and a `~/.claude/CLAUDE.md` of its own that holds only your secrets rule. It comes
+before the key, so no session of `agent`'s runs with the key and without the guard. The commands
+are short lines: on 2026-09-28, a long `jq … | ssh` line lost its end when it was pasted.
+
+**On the Mac**, copy the guard's script to `agent`:
+
+```bash
+ssh brightroar-agent 'mkdir -p ~/.claude/hooks'
+scp ~/.claude/hooks/block-secret-access.sh brightroar-agent:.claude/hooks/
+```
+
+**On the Mac**, write `agent`'s guard file and its `CLAUDE.md` into a fresh private folder, copy
+both into `agent`'s `~/.claude`, and remove the folder. The jq filter keeps only the guard's hook
+and the deny rules, with `/Users/dan/` in a rule turned into `/home/agent/`; the Mac's other
+settings stay behind. The awk keeps only the section of your `~/.claude/CLAUDE.md` whose heading
+names secrets. The copy replaces any `CLAUDE.md` that `agent` has.
+
+```bash
+d=$(mktemp -d)
+jq '{permissions: {deny: [.permissions.deny[]
+      | gsub("//Users/dan/"; "//home/agent/")]},
+    hooks: {PreToolUse: [.hooks.PreToolUse[]
+      | select(any(.hooks[]; (.command // "")
+        | test("block-secret-access")))]}}' \
+  ~/.claude/settings.json > "$d/agent-guard.json" &&
+awk '/^# /{keep = /secrets/} keep' \
+  ~/.claude/CLAUDE.md > "$d/CLAUDE.md" &&
+scp "$d/agent-guard.json" "$d/CLAUDE.md" brightroar-agent:.claude/
+rm -r "$d"
+```
+
+**On the Mac**, log in as `agent`:
+
+```bash
+ssh brightroar-agent
+```
+
+Then, **on the Spark, as `agent`**, merge the guard into `agent`'s settings. This keeps every entry
+`agent`'s file already has, saves the old file as `settings.json.bak`, and deletes the guard file
+once it's merged:
+
+```bash
+cd ~/.claude && { [ -f settings.json ] || echo '{}' > settings.json; } &&
+  cp -p settings.json settings.json.bak
+jq -s '.[0] as $cur | .[1] as $add | $cur
+  | .permissions.deny =
+      ((($cur.permissions.deny // []) + $add.permissions.deny) | unique)
+  | .hooks.PreToolUse = ([($cur.hooks.PreToolUse // [])[]
+      | select(all(.hooks[]?; (.command // "")
+        | test("block-secret-access") | not))]
+      + $add.hooks.PreToolUse)' \
+  settings.json agent-guard.json > settings.json.new &&
+  mv settings.json.new settings.json && rm agent-guard.json
+jq '{deny: (.permissions.deny | length),
+  pretooluse: [.hooks.PreToolUse[].hooks[].command]}' settings.json
+```
+
+The last command shows at least as many deny rules as the Mac's file has (`agent`'s showed 35 on
+2026-09-28), and `bash ~/.claude/hooks/block-secret-access.sh` among the hooks. Run again, after
+the Mac's step again, the merge leaves `settings.json` as it was, and the backup then holds the
+merged file. If the guard file isn't there, jq says so and `settings.json` stays as it was, with an
+empty `settings.json.new` beside it that the next run replaces. *(Run on 2026-09-28,
+on the Spark, on stand-in files in a scratch folder: jq 1.7, and gawk, mawk and busybox's awk,
+with `ssh` and `scp` stood in for. The Mac's two blocks ran under bash there; they haven't been
+run in the Mac's zsh, with its jq or its BSD awk.)*
+
+Then check it. **On the Spark, as `agent`**, start Claude Code, or restart it if it's running, so
+it loads the hook:
+
+```bash
+claude
+```
+
+`/hooks` lists the hook, and `/permissions` the deny rules. Then ask the session to run
+`test -e ~/.secrets && echo present || echo absent`: the hook must refuse it. The command reads
+nothing from the file either way, and the file doesn't exist yet. If it runs instead, stop, and fix
+the guard before `agent` gets its key. Then leave `claude` and log out: the next step runs as you.
+
+### Node, the key and pi
 
 **On the Spark (you, with sudo):** install Node from NodeSource, and give `agent` its key. Run it a
 line at a time: `less` shows you the setup script, and the next line runs it as root.
