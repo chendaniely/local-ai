@@ -15,10 +15,15 @@ Saturdays**. Skipping one is fine; the next one catches up.
 |---|---|---|
 | Everything else from apt | apt | Any time: `sudo apt update && sudo apt upgrade` |
 | The GPU set: kernel, NVIDIA modules, driver, CUDA | apt, held | Upgrade day — [the GPU set](#upgrade-day-the-gpu-set) |
-| GitHub Actions and `spark/uv.lock` | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
+| GitHub Actions and `spark/`'s Python dependencies, in `uv.lock` and `pyproject.toml` *(this said `spark/uv.lock` alone until 2026-09-28)* | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
 | gitleaks | a direct install in `/usr/local/bin` | Upgrade day — [gitleaks](#upgrade-day-gitleaks); no package manager sees it |
 | uv | the Spark: your `~/.local/bin`; the Mac: as installed there | Upgrade day, **on the Spark**: `uv self update <version>`, the version `stack/versions.yaml` pins; the Mac's uv, which the hooks also run, moves to the same version on the Mac |
 | Python for `spark/` | `spark/.python-version` pins 3.12 | Only deliberately, on upgrade day: change the pin, and each machine rebuilds `spark/.venv` on its next `uv run` |
+| llama.cpp (`llama-server`) | its release's prebuilt arm64 CUDA binaries, in `/opt/local-ai/bin/llama.cpp/<version>/`; `stack/versions.yaml` pins it | By hand, on upgrade day, one component at a time (the plan's *Weekly upgrade day*). Its runbook is written with its first bump |
+| llama-swap | its release binary, in `/opt/local-ai/bin/llama-swap/<version>/`; pinned | By hand, on upgrade day. Its runbook is written with its first bump |
+| whisper.cpp (`whisper-server`) | built on the Spark from its release, in `/opt/local-ai/bin/whisper.cpp/<version>/`; pinned by commit | By hand, on upgrade day. Its runbook is written with its first bump. A rebuild after the GPU set moves is [the GPU set](#upgrade-day-the-gpu-set)'s step 7 |
+| Open WebUI | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump. Before any upgrade, copy its data folder, `/var/lib/local-ai/open-webui`: Open WebUI migrates its database when it starts, and a migration can't be undone |
+| SearXNG | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump |
 | The desktop's snaps (browser, mail, Snap Store, firmware updater) and their runtimes | snap | By themselves, about four times a day |
 | Claude Code | your `~/.local/bin` | By itself |
 | Firmware | fwupd | Not automatically. Whether GIGABYTE publishes this box's firmware there is not yet checked |
@@ -376,7 +381,7 @@ modules), the previous kernel won't help.
 ## Upgrade day: the automated PRs
 
 Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
-and for `spark/uv.lock`. On upgrade day, for each one:
+and for `spark/`'s Python dependencies. On upgrade day, for each one:
 
 1. **On github.com**, read what it bumps and its release notes, and let CI finish green.
 2. There, read the PR's commit message, then merge it with a merge commit or a rebase. Never squash
@@ -387,12 +392,21 @@ and for `spark/uv.lock`. On upgrade day, for each one:
 They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
 or the gitleaks pin; those still move by hand.
 
-The `spark/uv.lock` PRs propose only releases at least seven days old. `spark/pyproject.toml`
+*(Corrected 2026-09-28, from Phase 1's council: this said the uv PRs update `spark/uv.lock`.)* A
+uv PR can change `spark/pyproject.toml` as well as, or instead of, the lock: PR #3, on 2026-09-25,
+raised the `[build-system]` floor on hatchling there and left `uv.lock` alone. The same updater
+could widen `huggingface_hub>=0.34,<2`, the cap Task 8's review set when the lock had taken 2.0.0,
+a new major on a new HTTP stack, once a 2.x release is a week old. So read a uv PR's
+`pyproject.toml` diff too, and treat one that moves a cap as a decision of its own, not a routine
+merge.
+
+The uv PRs propose only releases at least seven days old. `spark/pyproject.toml`
 locks nothing newer (`exclude-newer = "7 days"`, a rolling window), and `.github/dependabot.yml`
 waits as long (Dan's decision, 2026-09-27): a bad or compromised upload is most often caught in its
-first days. An update by hand follows the same window. **On the Spark**, in the clone (or on the
-Mac, when the Mac's session holds the branch), this takes the newest release of `<name>` that is a
-week old:
+first days. Dependabot reads both from `main`, which gets them with Phase 1's merge, so no uv PR had
+run under the window by 2026-09-28. An update by hand follows the same window. **On the Spark**,
+in the clone (or on the Mac, when the Mac's session holds the branch), this takes the newest
+release of `<name>` that is a week old:
 
 ```bash
 uv lock --project spark --upgrade-package <name>

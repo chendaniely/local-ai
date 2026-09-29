@@ -394,15 +394,16 @@ Docker.
   until it is known how it treats apt holds (an open item).
 - **Weekly upgrade day, on Saturdays** (monthly until 2026-09-24). Skipping one is fine; the next
   one catches up. Automated PRs collect version bumps: Dependabot proposes GitHub Actions and
-  `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI
-  scans every commit message). The lock takes only releases at least seven days old, a rolling
-  window (`exclude-newer = "7 days"` in `spark/pyproject.toml`), and Dependabot's uv PRs wait as
-  long (`cooldown` in `.github/dependabot.yml`); an urgent fix gets a per-package exception
+  `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI scans
+  every commit message). (Corrected 2026-09-28, from Phase 1's council: its uv PRs can change
+  `spark/pyproject.toml` too, as PR #3 raised a floor there, and could widen the `huggingface_hub<2`
+  cap; `updates.md` says to read that diff.) The lock takes only releases at least seven days old, a
+  rolling window (`exclude-newer = "7 days"` in `spark/pyproject.toml`), and Dependabot's uv PRs
+  wait as long (`cooldown` in `.github/dependabot.yml`); an urgent fix gets a per-package exception
   (Dan's decision, 2026-09-27; `updates.md` has the steps). `stack/versions.yaml`'s pins, the
   workflows' `version:` inputs, uv's `required-version` and the gitleaks pin still move by hand
-  (Backlog). Bumps are applied one
-  component at a time → render → validate → back up databases → deploy → `spark doctor` →
-  changelog entry.
+  (Backlog). Bumps are applied one component at a time → render → validate → back up databases →
+  deploy → `spark doctor` → changelog entry.
 - **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
   themselves; neither can move the GPU stack while every member of the set is held.
   `website/how-to/updates.md` says when that stops being true: midway through upgrade day, and for a
@@ -1125,6 +1126,13 @@ Each item gets its own design pass when its turn comes.
   ~20–30 GB, and at full context the residents measured 33.5 GiB cold and are budgeted at 43. The
   row gains a dated note, not a new figure, since the requirement is Dan's: the static budget has
   2 GiB left for later phases' additions, such as Phase 3's batch whisper and speaker labels.
+- **2026-09-28** — From Phase 1's council (toolstack, goal-fit). `updates.md` gains a row for each
+  of the stack's own pinned components, llama.cpp, llama-swap, whisper.cpp, Open WebUI and SearXNG,
+  which move by hand on upgrade day, one at a time; each one's runbook is written with its first
+  bump, and Open WebUI's data is copied before any upgrade, since its database migrations can't be
+  undone. It also corrects what Dependabot's uv PRs change: `spark/pyproject.toml` as well as the
+  lock, so a PR could widen the `huggingface_hub<2` cap. *Weekly upgrade day* gains the correction.
+  A test that ties the code's version-specific assumptions to `stack/versions.yaml` waits.
 
 ## Sources
 
