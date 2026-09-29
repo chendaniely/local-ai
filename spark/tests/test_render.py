@@ -120,6 +120,23 @@ def test_open_webui_task_calls_run_without_thinking():
         "chat_template_kwargs": {"enable_thinking": False}, "max_tokens": 1000}
 
 
+# Open WebUI v0.11.4's lockdown (Phase 1 council, security I2): each setting with the value that keeps it shut. S09's
+# and S20's guarantees rest on these, and a template edit that opened one would pass every other test.
+LOCKDOWN = {
+    "ENABLE_SIGNUP": "false",  # no account after the first, Dan's (the admin)
+    "ENABLE_CODE_EXECUTION": "false",  # no code run from a chat
+    "ENABLE_CODE_INTERPRETER": "false",
+    "ENABLE_DIRECT_CONNECTIONS": "false",  # no model endpoint of a user's own, around llama-swap's keys
+    "ENABLE_OLLAMA_API": "false",  # llama-swap is the only backend
+    "ENABLE_PERSISTENT_CONFIG": "false",  # these values, not ones saved from the admin panel, apply at every start
+}
+
+
+def test_open_webuis_lockdown_keeps_its_values(files):
+    webui = yaml.safe_load(files["compose/compose.yaml"])["services"]["open-webui"]["environment"]
+    assert {name: webui.get(name) for name in LOCKDOWN} == LOCKDOWN
+
+
 def test_llama_swap_listens_on_localhost_only():
     assert "-listen 127.0.0.1:9100" in rendered()["systemd/local-ai-llama-swap.service"]
 
