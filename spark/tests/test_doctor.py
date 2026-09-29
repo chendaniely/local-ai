@@ -333,9 +333,17 @@ START_CHECKS = [  # (the brake's record of its start check, or None for none; wh
     pytest.param("{not json", f"the brake runs, but its start check {CHECK} can't be read: ", id="damaged"),
     pytest.param(json.dumps({"at": "T", "ok": False, "detail": "llama-swap GET /running: HTTP 401",
                              "key_env": "LLAMASWAP_KEY_SPARK"}),
-                 "the brake's start check failed at T: llama-swap GET /running: HTTP 401, so below the brake line it "
-                 "can't unload a model — `make logs s=brake`, and 'When something is wrong' in "
+                 "the brake's start check failed at T: llama-swap GET /running: HTTP 401, so nothing shows that it "
+                 "can unload a model — `make logs s=brake`, and 'When something is wrong' in "
                  "website/how-to/deploy.md", id="failed"),
+    # The re-review of Phase 1's council fixes (N5): a check that failed because llama-swap was slow to answer at boot
+    # doesn't mean the brake can't unload now. The line says what failed and why, and claims no more.
+    pytest.param(json.dumps({"at": "T", "ok": False, "key_env": "LLAMASWAP_KEY_SPARK",
+                             "detail": "llama-swap didn't answer in 30 s (llama-swap unreachable at "
+                                       "http://127.0.0.1:9100: timed out)"}),
+                 "the brake's start check failed at T: llama-swap didn't answer in 30 s (llama-swap unreachable at "
+                 "http://127.0.0.1:9100: timed out), so nothing shows that it can unload a model — "
+                 "`make logs s=brake`, and 'When something is wrong' in website/how-to/deploy.md", id="failed-slow"),
     pytest.param(json.dumps({"at": "T", "ok": None, "detail": "waiting", "key_env": "LLAMASWAP_KEY_SPARK"}),
                  "the brake's start check has waited for llama-swap since T: run doctor again in 30 s, or "
                  "`make logs s=brake`", id="waiting"),

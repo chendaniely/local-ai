@@ -383,7 +383,10 @@ def brake_start_check(probe: Probe) -> tuple[bool, str]:
         return False, (f"the brake's start check has waited for llama-swap since {at}: run doctor again in 30 s, or "
                        "`make logs s=brake`")
     if not check.ok:
-        return False, (f"the brake's start check failed at {at}: {detail}, so below the brake line it can't unload a "
+        # What's known is that the check failed, and why. A brake whose check failed because llama-swap answered late
+        # can unload once it answers; one whose key llama-swap refuses can't (the re-review of Phase 1's council
+        # fixes, N5).
+        return False, (f"the brake's start check failed at {at}: {detail}, so nothing shows that it can unload a "
                        "model — `make logs s=brake`, and 'When something is wrong' in website/how-to/deploy.md")
     return True, f"llama-swap took the brake's key at {at}"
 

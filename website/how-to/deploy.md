@@ -275,10 +275,12 @@ While the brake holds new loads, `make status` says so on its `brake` line. Once
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
 
 The same line says whether llama-swap took the brake's own key, `LLAMASWAP_KEY_SPARK`, when the
-brake started. If that start check failed, the brake can't unload a model, and `make doctor`'s
-`stack units` line fails too. `make logs s=brake` shows its `ALERT`, with llama-swap's answer. The
-key is in `llama-swap.env`, which [Secret files](secret-files.md) step 3 wrote. Once that's right,
-**on the Spark**, restart the brake, and it checks again:
+brake started. If that start check failed, nothing shows that the brake can unload a model, and
+`make doctor`'s `stack units` line fails too. `make logs s=brake` shows its `ALERT`, with why. If
+llama-swap refused the key, the brake can't unload anything. If llama-swap didn't answer within
+30 s of the brake's start, the brake can unload once it answers, but its record stays failed. The
+key is in `llama-swap.env`, which [Secret files](secret-files.md) step 3 wrote. Once the key is
+right, or llama-swap answers, **on the Spark**, restart the brake, and it checks again:
 
 ```bash
 systemctl restart local-ai-brake
