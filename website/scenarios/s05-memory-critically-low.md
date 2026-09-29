@@ -24,8 +24,8 @@ whose key llama-swap refuses can unload nothing.)*
 which leaves out the models' GPU memory, and its dry run in Task 13, with every engine at the same
 `oom_score_adj`, picked Gemma, a resident, before the on-demand coder. *(Corrected 2026-09-28, from
 Phase 1's council: `spark launch` now gives a resident engine `oom_score_adj` 900 and an on-demand
-one 1000, so earlyoom picks the on-demand coder first, as the brake does. That order is untested on
-the box until the next deploy's earlyoom dry run.)*
+one 1000, so earlyoom picks the on-demand coder first, as the brake does. Checked after that day's
+deploy: earlyoom's dry run picked the coder's engine.)*
 
 **How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
 `make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't

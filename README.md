@@ -347,6 +347,12 @@ See [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) for the extracted single-
 each item labelled `[verified]` (measured on his hardware) or `[adapted]` (my translation to one
 node, untested).
 
+**[github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark)**
+— scripts that serve Qwen3.8-27B with SGLang in Docker on one DGX Spark, with three speculative
+decoders (MTP, DSpark and DFlash2), each measured on the box. The notes for Phase 5's coder
+bake-off (added 2026-09-28, read at its 2026-09-12 state); plan.md's Phase 5 line says what this
+stack must account for to run it. Its numbers are its own, not measured here.
+
 ## Conventions
 
 - **This repo is public, and git history is permanent.** Removing something in a later commit

@@ -23,7 +23,8 @@ llama-swap stays at its default logging (Dan's decision that evening, before the
 brake unit's own key was seen to work. `make doctor`: 15 of 15, its `stack units` line covering
 that check. `ps`: the coder at `oom_score_adj` 1000 (`oom_score` 1354), the two residents loaded at
 900 (1286 and 1270), so the kernel would pick the coder first. Each engine now answers `/slots`
-with `501` and its web root with `404`. earlyoom's dry run, which needs sudo, is still to run.
+with `501` and its web root with `404`. Dan's earlyoom dry run picked the coder's engine
+(`oom_score_adj` 1000, badness 1650) over the two residents, as the brake would.
 
 ## 2026-09-28 — Every model at its full context (Dan's decision)
 

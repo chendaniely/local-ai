@@ -41,9 +41,9 @@ date: 2026-09-23
 > two slots sharing one pool, was built, deployed and checked, below Task 16. Task 17, Phase 1's
 > close: its council reviewed the branch, and its fixes and Dan's decisions are committed; the
 > forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
-> **Now:** Dan deploys the fixes (`make apply`, `make install-units`, `make apply-now`), the Spark
-> session runs Task 17 Step 2's checks after it and records them, Dan files Step 3's private
-> findings in the vault, and then the switch to the Mac for **Task 18 [Mac]**.
+> Dan deployed the fixes, and Task 17 Step 2's checks passed; Step 3's private findings went to Dan
+> in the chat, to file in the vault. **Now: the switch point, then Task 18 [Mac]:** CI's render
+> step, the Mac check, the site render, and the merge into `main` with Dan's OK.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7390,7 +7390,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   tmux as `agent` kept through a detach, a logout and a reattach, was checked on 2026-09-28 in
   Task 15, and that the hooks and notifications arrive in Phase 2. The council's fix batch made that
   change.)* Then `uv run --frozen --project spark spark docs check-scenarios` passes.
-- [ ] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
+- [x] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
   session recorded; README §Contents still describes the `Makefile`, `spark/` and `stack/` rows as
   they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
   (`uv run --frozen --project spark spark docs stack --check`). The site render, `make docs`, is
@@ -7401,8 +7401,9 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   pid=,user=,oomadj=,comm= -C llama-server,whisper-server` shows 900 for the residents and 1000 for
   the coder once it loads; and that an engine no longer answers `/slots`. **[Dan, on the Spark]**
   reruns Task 13 Step 5's earlyoom dry run, which should now pick the coder. Then `changelog.md`
-  and README §Current state record it.)*
-- [ ] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
+  and README §Current state record it. Checked 2026-09-28, after Dan's deploy at 21:19: all of it
+  held, and the dry run picked the coder.)*
+- [x] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
   go to the vault's `zettelkasten/local-ai/` note, never to the repo. The session lists them in the
   chat, never in a file in the repo, and Dan files them in the vault.
 - [x] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
@@ -7453,7 +7454,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   plan.md whether it stays.)*
   *(Done 2026-09-28: plan.md's Revisions has the forward look, its Phase 2 line what Phase 2
   inherits, and its Backlog the model settings Dan will revisit when more models are fitted.)*
-- [ ] **Step 6: Commit** — what Steps 1, 2 and 5 changed, staged by name (a file that didn't
+- [x] **Step 6: Commit** — what Steps 1, 2 and 5 changed, staged by name (a file that didn't
   change adds nothing):
 
 ```bash

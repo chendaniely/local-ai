@@ -33,8 +33,8 @@ KEY_PREFIX = "LLAMASWAP_KEY_"
 # sat within 9 of each other, and earlyoom's dry run picked Gemma, a resident, before the on-demand coder. A resident
 # engine gets 900 and an on-demand one 1000, so earlyoom takes the on-demand coder first, as the brake does, unless a
 # resident's RSS exceeds the coder's by a tenth of RAM plus swap (what 100 points of adj are worth), and every engine
-# still goes before a process at 0 (Phase 1's council, 2026-09-28). Not yet seen on the box: the next deploy's earlyoom
-# dry run checks it.
+# still goes before a process at 0 (Phase 1's council, 2026-09-28). Seen on the box after that day's deploy: earlyoom's
+# dry run picked the coder's engine (adj 1000) over the two residents (900).
 OOM_SCORE_ADJ = Path("/proc/self/oom_score_adj")
 OOM_ADJ_RESIDENT, OOM_ADJ_ON_DEMAND = 900, 1000
 

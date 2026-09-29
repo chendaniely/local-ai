@@ -552,6 +552,27 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   TTFT, prefill at 4K/32K/64K, decode at 1/2/4/8 streams, tool-call reliability, Dan's 3–5 real tasks
   via pi, memory left free · client configs for the picks, rendered by the `spark` CLI (pi pinned
   outside its crash range, OpenCode 1.18.x).
+- *Qwen3.8-27B on SGLang (notes added 2026-09-28, from
+  [MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark),
+  read at its 2026-09-12 state; its numbers, not measured here):* on one GB10 it serves the NVFP4
+  checkpoint (~24 GB, dense BF16 `lm_head`) at native 262K context with an FP8 KV cache (~32.8 KB
+  per token), and reports code decode at about 51–55 tokens a second with DSpark or DFlash2
+  against 24–35 with MTP. What this stack must account for before the bake-off runs it:
+  - **A container engine under llama-swap.** SGLang runs in Docker, and llama-swap runs as
+    `spark`, which is kept out of the `docker` group; starting an engine container needs a design
+    that keeps root's containers root-started (like the web services' unit), for vLLM too.
+  - **Its memory claim.** `--mem-fraction-static` takes a fraction of the whole pool (its 0.90
+    here is ~109 GiB, and its KV pool alone measured ~81 GB), so it would overrun the residents
+    and the reserve. Set it from the registry's footprint and budget it like any engine; its own
+    history includes hard reboots at 0.95, and earlyoom killing its scheduler.
+  - **Its speculative decoders.** DSpark and DFlash2 are SGLang's, not llama.cpp's. DFlash2 needs a
+    dev image (no released tag had it), pinned by digest under the seven-day rule, and two of its
+    upstream issues were open: cross-request context bleed under concurrency (sglang #36548),
+    which matters with more than one key, and output diverging with thinking on (#38009).
+  - **Smaller things:** its default port, 8888, is SearXNG's here; it pins to the ten Cortex-X5
+    cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
+    `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
+    would need an SGLang engine with its own option allowlist.
 - [Mac] those client configs installed on the Mac · the `spark-endpoints` skill for
   chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
@@ -777,7 +798,7 @@ Each item gets its own design pass when its turn comes.
   brake's order (Phase 1 measures it)~~ (resolved 2026-09-28: it doesn't, and earlyoom's pick
   didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions; since Phase 1's
   council, 2026-09-28, residents start at `oom_score_adj` 900 and on-demand engines at 1000, an
-  order untested on the box until the next deploy's earlyoom dry run); whether memory swaps out before `MemAvailable` reaches the
+  order earlyoom's dry run confirmed after that day's deploy); whether memory swaps out before `MemAvailable` reaches the
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness; that
   the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
   one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
@@ -1208,7 +1229,7 @@ Each item gets its own design pass when its turn comes.
   follows the brake's order. `spark launch` gives a resident engine `oom_score_adj` 900 and an
   on-demand one 1000, since a model's GPU memory isn't in its engine's RSS, and says on stderr when
   it can't set it. *To verify* notes the order, untested on the box until the next deploy's
-  earlyoom dry run.
+  earlyoom dry run. (Checked after that deploy, 2026-09-28: the dry run picked the coder.)
 - **2026-09-28** — From Phase 1's council (security), Dan's decision: render allows only listed
   engine options. A registry's `args` may set only what the registry and the test fixture set that
   day, in every spelling each engine's `--help` gives, and anything else is refused, naming the
@@ -1254,6 +1275,10 @@ Each item gets its own design pass when its turn comes.
   `FLOOR_TOLERANCE_GIB` becomes 1.0 GiB; the brake checks at start that llama-swap takes its key.
   Phase 2's line lists what it inherits, and [the retrospective](phase-1-retro.md) holds the
   deferred minors.
+- **2026-09-28** — Phase 5 gains notes for serving Qwen3.8-27B with SGLang, from
+  MiaAI-Lab's DGX Spark repo (Dan's pointer): the engine, the speculative decoders DSpark and
+  DFlash2, and what this stack must account for to run it, above all a container engine under
+  llama-swap and SGLang's memory claim. The README's Reference section lists the repo.
 
 ## Sources
 
