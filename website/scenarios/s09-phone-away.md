@@ -10,8 +10,12 @@ phone.
 
 **What happens.** It's served over HTTPS through `tailscale serve` and installs as an app.
 Image questions go to the always-loaded vision model; voice input goes to speech-to-text.
+*(Corrected 2026-09-28, from Phase 1's council: in Phase 1 the vision model is resident, not
+preloaded. After a restart it loads on its first request, then stays loaded; Phase 2 preloads it.
+That it installs as an app is not yet recorded as checked.)*
 
-**What I see.** The real model name on every reply.
+**What I see.** The real model name on every reply. *(Not yet recorded as checked on the phone,
+2026-09-28.)*
 
 **How to override.** None needed. A chat can run to the model's full context, 262,144 tokens on
 Gemma, and a photo costs up to about 1,120 of them. The phone can't change the context: Open

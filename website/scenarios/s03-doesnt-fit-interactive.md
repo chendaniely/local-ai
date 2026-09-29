@@ -15,3 +15,9 @@ it's on the menu bar and through ntfy.
 
 **How to override.** Free memory (`spark make-room`, stop a job), pick a model that fits, or
 retry.
+
+*Until Phase 2 (added 2026-09-28, during Phase 1):* Phase 1's launch check refuses the same way:
+nothing is evicted or substituted. The client gets a plain error, and the explanation, the memory
+needed against what's available, is the `refused` line of `make status`, on the Spark. There is no
+menu bar or ntfy yet. Task 16's drill saw it: the coder's request got a `500`, and `make status`
+said it needed 29.0 GiB, with 45.5 GiB available and the 24 GiB reserve kept, 7.5 GiB short.

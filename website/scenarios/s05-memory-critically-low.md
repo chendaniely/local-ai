@@ -18,6 +18,12 @@ coder first, then the always-loaded models.
 key when the brake started, and `make doctor`'s `stack units` line fails if it didn't. A brake
 whose key llama-swap refuses can unload nothing.)*
 
+*Until Phase 2 (added 2026-09-28, from Phase 1's council):* nothing notifies me. The warning at
+28 GiB is a line in the brake's journal (`make logs s=brake`), and the hold shows on `make status`'s
+`brake` line, on the Spark. earlyoom, the last resort, doesn't follow the brake's order: it chooses
+among the engines by their RSS, which leaves out the models' GPU memory, and its dry run in Task 13
+picked Gemma, a resident, before the on-demand coder.
+
 **How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
 `make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't
 on my PATH, and the target runs it through uv.)*
