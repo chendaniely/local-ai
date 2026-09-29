@@ -244,11 +244,12 @@ make upgrade-gpu
    [If it goes wrong](#if-it-goes-wrong).
 
    **On the Spark**, then the GRUB check: that GRUB will boot that same kernel. It does by default,
-   as Ubuntu sets it up, but that is not yet checked on this box, and more settings can change it
-   than `/etc/default/grub` shows: some put another kernel first on the menu, others pick another
-   entry. So read what GRUB will actually do, from the menu it boots from, which installing a
-   kernel rebuilds, and from what it keeps between boots. `grub-editenv` runs without `sudo`, so
-   nothing here can change anything:
+   as Ubuntu sets it up, but that is not yet checked on this box *(checked 2026-09-27, in Phase 1's
+   Task 12: entry 0 booted the newest kernel, with the stock `default=` lines and an empty
+   `grub-editenv list`)*, and more settings can change it than `/etc/default/grub` shows: some put
+   another kernel first on the menu, others pick another entry. So read what GRUB will actually do,
+   from the menu it boots from, which installing a kernel rebuilds, and from what it keeps between
+   boots. `grub-editenv` runs without `sudo`, so nothing here can change anything:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1); echo "$k"   # the newest kernel

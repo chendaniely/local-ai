@@ -425,7 +425,10 @@ Docker.
   3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
   4. Check that the kernel GRUB boots has an NVIDIA module: the newest kernel's, and that GRUB
      will boot it, read from `grub.cfg`'s entry 0 and default and from `grub-editenv`. That GRUB
-     boots the newest kernel is not yet checked on this box.
+     boots the newest kernel is not yet checked on this box. (Checked 2026-09-27, in Phase 1's
+     Task 12: entry 0 boots the newest kernel, the `default=` lines are the stock two, and
+     `grub-editenv list` is empty. Installing a kernel rebuilds the menu, so every upgrade day
+     still runs the check.)
   5. Reboot.
   6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
 
@@ -1113,6 +1116,11 @@ Each item gets its own design pass when its turn comes.
   `--ctx-checkpoints 8`, since its default 32 was unbounded in its footprint. The set sums to 76
   of the 78 allowed, all still `footprint_measured: false`. The coder's checkpoints in *To verify*
   are capped now; their size is the first thing a soak measures.
+- **2026-09-28** — From Phase 1's council (goal-fit). Step 4 of upgrade day, in *Backups, recovery
+  and upgrades*, still said that GRUB booting the newest kernel was not yet checked on this box,
+  though Task 12 checked it on 2026-09-27 and *To verify* had marked it resolved. It gains the
+  dated result, as do S23 and `updates.md`; the check itself stays, since installing a kernel
+  rebuilds the menu.
 
 ## Sources
 

@@ -145,7 +145,8 @@ Until that account exists, whoever reaches the page first becomes the admin: any
 Spark, `agent` included, and every device on the tailnet once the page is served there. An admin
 reads every chat and can add Functions, Python that runs inside the container as root, with host
 networking. That the first account can sign up with `ENABLE_SIGNUP` false comes from Phase 0's
-research and is not yet tried on this box.
+research and is not yet tried on this box. *(Tried 2026-09-28, in Phase 1's Task 13: Dan made the
+admin account with sign-up closed, and Open WebUI then reported sign-up off.)*
 
 If the page refuses even the first signup, put the admin's email and password into
 `open-webui.env` at prompts, in the pattern of [Secret files](secret-files.md), and restart the web

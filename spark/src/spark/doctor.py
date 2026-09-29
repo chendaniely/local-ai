@@ -50,7 +50,8 @@ SPARK_FOLDERS = ((STATE_HOME, ("root", "root", 0o755)), (paths.STATE, ("spark", 
 # the flags render refuses, so neither folder may exist.
 ENGINE_CONFIG = (Path("/etc/llama.cpp"), STATE_HOME / ".config")
 # Each should answer 200 on / (Probe.http follows a redirect for a request without a key). Not yet seen
-# on the box: the first `make doctor` there is the check.
+# on the box: the first `make doctor` there is the check. (Seen 2026-09-28, in Phase 1's Task 13: both
+# answered 200.)
 WEB = (("Open WebUI", "http://127.0.0.1:3000/"), ("SearXNG", "http://127.0.0.1:8888/"))
 HOLD_DRY_RUN = ["bash", "stack/host/bootstrap.sh", "--hold-gpu", "--dry-run"]
 HOLD_SUMMARY = re.compile(r"^==> GPU set: (\d+) packages, (\d+) already held$", re.MULTILINE)

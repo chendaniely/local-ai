@@ -19,7 +19,9 @@ for it, or change the driver branch. Only then does it stop llama-swap and the b
 jobs I stop first) and move the set with `full-upgrade`. It re-holds the set, the hold and nothing
 else. Before it asks for the reboot, it checks that the newest kernel has an NVIDIA module, and that
 GRUB will boot that kernel: its menu's first entry is that kernel, and nothing picks another. GRUB
-does by default, but that is not yet checked on this box. After the reboot the stack comes back by
+does by default, but that is not yet checked on this box. *(Checked 2026-09-27, in Phase 1's Task
+12: it does. Installing a kernel rebuilds the menu, so every upgrade day still checks.)* After the
+reboot the stack comes back by
 itself, and `make doctor` confirms it: the GPU on the new driver, the running kernel's modules held,
 a model loaded end to end. Doctor never loads whisper-server, which was built on the box against the
 system's CUDA, so I also check that it still finds its libraries (Updates, step 7; added
