@@ -41,6 +41,7 @@ SPELLINGS = {
         ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
         ("-dr", "--docker-repo"), ("--mmproj-auto", "--no-mmproj", "--no-mmproj-auto"),
         ("-kvu", "--kv-unified", "-no-kvu", "--no-kv-unified"), ("--cache-idle-slots", "--no-cache-idle-slots"),
+        ("--slots", "--no-slots"), ("--ui", "--webui", "--no-ui", "--no-webui"),
     ),
     "whisper.cpp": (("--host",), ("--port",), ("-m", "--model"), ("--inference-path",)),
 }
@@ -118,7 +119,12 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
                "--gpu-layers", "all", "--cache-ram", str(model.cache_ram_mib),
                # Defense in depth: a download option the refusals miss still fetches nothing (llama.cpp b11146's
                # common/arg.cpp:3927). whisper-server has no such option.
-               "--offline"]
+               "--offline",
+               # An engine takes no key (llama-swap checks them), and any account on the box reaches 127.0.0.1. By
+               # default b11146 serves /slots, each slot's in-flight request (its prompt's size, its sampling
+               # settings, the token it last sampled), and its own web UI: neither, so another account learns nothing
+               # of a request it didn't send (Phase 1's council, 2026-09-28). whisper-server serves neither.
+               "--no-slots", "--no-webui"]
         if model.parallel > 1:
             # One KV pool for all the slots, so any one request can use the whole context rather than ctx / parallel
             # (Dan's decision, 2026-09-28). Two long requests at once share it. With a shared pool, b11146 saves idle

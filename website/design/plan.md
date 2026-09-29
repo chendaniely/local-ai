@@ -112,7 +112,7 @@ In order of how much they constrain the design:
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
-| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
+| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
@@ -676,7 +676,11 @@ Each item gets its own design pass when its turn comes.
   model directly, around llama-swap's keys. In Phases 1–2 that costs nothing: `agent` has a key of
   its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
   not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
-  a direct call, so that phase decides how to close it.
+  a direct call, so that phase decides how to close it. (Corrected 2026-09-28, from Phase 1's
+  council: a direct call reached more than a model. Each llama-server also served `/slots`, every
+  slot's in-flight request with its prompt's size, its sampling settings and the token it last
+  sampled, and its own web UI, both without a key. Render now passes `--no-slots` and `--no-webui`.
+  `GET /props`, the engine's read-only settings, still answers.)
 - **Page cache and the launch check** (added 2026-09-27, from Phase 1's Task 12) → the launch check
   admits against `MemAvailable`, which counts reclaimable page cache as available. On GB10 the
   driver has been seen to reclaim page cache too slowly while a model loads: loading a large
@@ -1068,6 +1072,11 @@ Each item gets its own design pass when its turn comes.
   that context checkpoints take over a long conversation. Task 17's forward look gains the brake's
   two numbers that Task 16 measured, `GRACE_S` and `FLOOR_TOLERANCE_GIB`: only an idle engine's
   stop was measured, and the one step above 0.5 GiB was probably a Gemma checkpoint, not noise.
+- **2026-09-28** — From Phase 1's council (security). Each llama-server served `/slots`, every
+  slot's in-flight request, and its own web UI to any account on the box, since an engine takes no
+  key. Render now passes `--no-slots` and `--no-webui` to every llama-server, and a registry's
+  `args` can't turn either back on. The llama.cpp row and *127.0.0.1 is not a boundary against
+  `agent`* say so.
 
 ## Sources
 

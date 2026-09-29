@@ -119,7 +119,10 @@ Tailscale serve · pi 0.85.1.
   llama-swap and a key. Nothing in this phase may rely on 127.0.0.1 to keep `agent` out. The gate
   (Phase 2) doesn't change this: it decides loads, not who reaches an engine. Phase 3's per-key
   allow-lists and concurrency limits don't hold against a direct call either, so that phase decides
-  how to close it (plan.md, *Open items and risks*).
+  how to close it (plan.md, *Open items and risks*). (Corrected 2026-09-28, from Phase 1's council:
+  each llama-server also served `/slots`, every slot's in-flight request, and its own web UI, both
+  without a key, so the direct route showed another account's requests too. Render now passes
+  `--no-slots` and `--no-webui`; `GET /props`, the engine's read-only settings, still answers.)
 - **Root never writes, `chown`s or `chmod`s through a path `agent` or `spark` can change.** A link
   planted there turns a root write into a write to any file on the box. To give `agent` a file,
   root reads only what it needs and `agent` writes the file (`runuser -u agent -- …`). A download
