@@ -130,7 +130,9 @@ when that file was retired on 2026-09-23.
   stop and restart the four `local-ai-*` units, by exact name, and nothing more; `pkcheck` confirms
   it can't reload systemd. *(Until the 2026-09-27 re-run, it let `spark-admin` manage any
   `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
-  Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before).
+  Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before): Open WebUI
+  **v0.11.4** and SearXNG **2026.9.23-3cd69d30e**, each at the digest `stack/versions.yaml` pins,
+  which root's Compose file names.
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
@@ -250,6 +252,10 @@ when that file was retired on 2026-09-23.
   userland.
 - **The repo's tools:** gitleaks **8.30.1** and shellcheck **0.11.0**, from Homebrew; uv
   **0.12.18**; Quarto **1.10.3**, for `make docs`; gh **2.101.0** (all as of 2026-09-24).
+- **pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
+  that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
+  each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
+  0.85.1, installed with npm; whether that copy is still installed is not recorded.
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version

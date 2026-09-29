@@ -231,7 +231,9 @@ held it.
 - **llama-swap v257** → `/opt/local-ai/bin/llama-swap/v257/llama-swap`. The release tarball
   matched the checksum already pinned in `stack/versions.yaml`; `-version` reports `v257 (f00d375)`.
 - **llama.cpp b11146**, the prebuilt `ubuntu-cuda-13.4-arm64` build and its `cudart-` companion,
-  → `/opt/local-ai/bin/llama.cpp/b11146/`. Both tarballs matched the sha256 digests GitHub
+  → `/opt/local-ai/bin/llama.cpp/b11146/`. *(Added 2026-09-28, from Phase 1's council: b11146 is
+  the build that llama.cpp's formal release v0.5.0, of 2026-09-23, names in its `nightly-tag.txt`.
+  GitHub marks every bNNNNN build a prerelease.)* Both tarballs matched the sha256 digests GitHub
   publishes for the release's assets; the binaries' tarball is the pin
   (`sha256:4e00496a…`, in full in `stack/versions.yaml`). `--version` reports build 11146, commit
   `7fe450e19`; `--list-devices` shows the GB10 as `CUDA0`. `libggml-cuda.so` loads the CUDA
