@@ -7351,9 +7351,10 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
 **Files:**
 
 - Modify: `website/scenarios/s05-memory-critically-low.md`, `website/scenarios/s09-phone-away.md`,
-  `website/scenarios/s20-web-search.md`, `website/scenarios/s23-upgrade-day.md`;
-  `website/design/plan.md` and `changelog.md` if the forward look changes anything; `README.md` if
-  Step 2 finds it untrue
+  `website/scenarios/s12-long-agent-run.md`, `website/scenarios/s20-web-search.md`,
+  `website/scenarios/s23-upgrade-day.md`; `website/design/plan.md` and `changelog.md` if the
+  forward look changes anything; `README.md` if Step 2 finds it untrue *(S12 added 2026-09-28, from
+  Phase 1's council: it is a Phase 1 page too)*
 
 - [ ] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
   (the dates from Task 14). *(Corrected 2026-09-28: S09 has since gained the context change's
@@ -7363,8 +7364,11 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   models first and that the idle-first order and notifications arrive in Phase 2. S23:
   `status: built`, with the date Task 16 Step 5's routine upgrade and reboot passed. It becomes
   `verified`, with that day's date, only once `make upgrade-gpu` has moved the set on a real
-  upgrade day, whether in Phase 1 or later. Then
-  `uv run --frozen --project spark spark docs check-scenarios` passes.
+  upgrade day, whether in Phase 1 or later. *(Added 2026-09-28, from Phase 1's council: S12 has
+  `phase: 1` and was left out. It is `status: built`, with a line saying Phase 1's half, a run in
+  tmux as `agent` kept through a detach, a logout and a reattach, was checked on 2026-09-28 in
+  Task 15, and that the hooks and notifications arrive in Phase 2. The council's fix batch made that
+  change.)* Then `uv run --frozen --project spark spark docs check-scenarios` passes.
 - [ ] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
   session recorded; README §Contents still describes the `Makefile`, `spark/` and `stack/` rows as
   they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
@@ -7420,11 +7424,13 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
 
 ```bash
 git add website/scenarios/s05-memory-critically-low.md website/scenarios/s09-phone-away.md \
-  website/scenarios/s20-web-search.md website/scenarios/s23-upgrade-day.md website/design/plan.md \
-  changelog.md README.md
+  website/scenarios/s12-long-agent-run.md website/scenarios/s20-web-search.md \
+  website/scenarios/s23-upgrade-day.md website/design/plan.md changelog.md README.md
 git commit -m "docs(plan): 🤖 close Phase 1: scenario statuses and the forward look" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+*(S12 added to the `git add` 2026-09-28, from Phase 1's council.)*
 
 ***
 
