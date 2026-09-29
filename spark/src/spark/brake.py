@@ -23,8 +23,10 @@ from spark.render import write_atomic
 # exit on SIGTERM before it SIGKILLs it, so a slow but normal stop takes up to 10 s. The 5 s beyond allow for the
 # kill and for the memory to show in MemAvailable, neither yet measured on this box. The wait costs no safety: once
 # memory falls more than FLOOR_TOLERANCE_GIB below where it was, it ends. Measured on brightroar, 2026-09-28 (Phase 1
-# drills): an idle coder's process was gone 0.6 s after the brake's tick began. A busy engine's stop is not yet
-# measured; Phase 1's close decides whether 15 s stays.
+# drills): an idle coder's process was gone 0.6 s after the brake's tick began. Decided at Phase 1's close
+# (2026-09-28, its council): 15 s stays. The measured stop never reaches it, since leaving /running ends the wait;
+# its ceiling is v257's 10 s unloadTimeout and the kill; and it costs nothing while memory is flat. A busy engine's
+# stop is still unmeasured: Phase 2's drill times it.
 GRACE_S = 15.0
 
 # How far MemAvailable may dip below where it was when an unload began before the brake stops waiting for that
@@ -32,9 +34,13 @@ GRACE_S = 15.0
 # while the brake held, with 93 GiB available: for the first 15 s, with nothing generating, MemAvailable moved within
 # ±0.02 GiB; then, while a Gemma session generated, it fell 4.1 GiB over 45 s in steps up to 0.58 GiB, and 1 poll in
 # 239 moved more than 0.5 GiB. That step matches one of Gemma's context checkpoints by arithmetic (~0.59 GiB), so it
-# was probably a real allocation, which the brake is right to count as a fall; not verified. Phase 1's close decides
-# whether 0.5 GiB stays.
-FLOOR_TOLERANCE_GIB = 0.5
+# was probably a real allocation; not verified. Decided at Phase 1's close (2026-09-28, its council): 1.0 GiB, up from
+# 0.5. At 0.5, one Gemma checkpoint allocated during a slow stop ends the wait, and the brake unloads a second model,
+# a resident, though nothing says the first unload failed. 1.0 clears one checkpoint and is still only 1/8 of the 8
+# GiB between the brake line (20) and earlyoom's (12). The cost: the brake waits through a real fall of up to 1 GiB.
+# Not yet measured: how long after an engine leaves /running its memory shows in MemAvailable. settle() drops the
+# credit the moment it leaves, so if that lags, the brake unloads a second model. Phase 2's drill measures it.
+FLOOR_TOLERANCE_GIB = 1.0
 
 # An engine's state only moves on: starting, ready, stopping. A model listed at an earlier state than the brake last
 # saw it in is a new engine.

@@ -272,9 +272,9 @@ def test_one_unload_whenever_its_memory_shows(tmp_path, delay):
 
 
 def test_it_stops_waiting_when_memory_keeps_falling(tmp_path):
-    # The coder's memory takes 20 polls, and memory falls 1 GiB a poll meanwhile, more than the noise the brake
-    # allows for: it must not wait, and the next model goes at the next poll (I2).
-    box = Box(18, ALL, delay=20, fall=1.0, polls=6)
+    # The coder's memory takes 20 polls, and memory falls 1.5 GiB a poll meanwhile, more than the noise the brake
+    # allows for (FLOOR_TOLERANCE_GIB, 1.0): it must not wait, and the next model goes at the next poll (I2).
+    box = Box(18, ALL, delay=20, fall=1.5, polls=6)
     brake_loop(box, tmp_path)
     assert box.requests == [(0, "coder"), (1, "vision-chat"), (2, "stt"), (3, "embed")]
 
@@ -416,6 +416,14 @@ def test_a_dip_of_exactly_the_tolerance_is_still_noise(tmp_path):
     assert box.requests == [(0, "coder")]
 
 
+def test_one_gemma_checkpoint_during_a_slow_stop_doesnt_unload_a_second_model(tmp_path):
+    # Phase 1's council (reliability m2): a Gemma context checkpoint, ~0.59 GiB, allocated while the coder stops, is a
+    # real allocation but not a sign that the unload failed. It must not end the wait, or a resident goes too.
+    box = Box(18, ALL, delay=8, set_avail={1: 18 - 0.59}, polls=4)
+    brake_loop(box, tmp_path)
+    assert box.requests == [(0, "coder")]
+
+
 def test_an_unanswered_unload_of_a_starting_model_counts_as_on_its_way(tmp_path):
     # v257 aborts a start without ever showing `stopping`: an unload with no answer in 2 s is still on its way (I2).
     box = Box(18, {"coder": "starting", "vision-chat": "ready", "stt": "ready", "embed": "ready"}, late={"coder"},
@@ -457,7 +465,7 @@ def test_a_model_back_from_stopping_is_a_new_engine(tmp_path):
 def test_a_credit_no_longer_counted_is_dropped_when_the_episode_ends(tmp_path):
     # The coder's stop hangs, and memory falls past it, so its credit stops counting and vision-chat goes. Memory
     # recovers, then falls below the line again with the coder still stopping: it counts again, so stt stays (N2).
-    box = Box(18, ALL, hung={"coder"}, set_avail={1: 17.0, 3: 60, 5: 18}, polls=8)
+    box = Box(18, ALL, hung={"coder"}, set_avail={1: 16.5, 3: 60, 5: 18}, polls=8)  # 1.5 below: past the tolerance
     brake_loop(box, tmp_path)
     assert box.requests == [(0, "coder"), (1, "vision-chat")]
 

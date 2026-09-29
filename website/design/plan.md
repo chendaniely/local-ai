@@ -642,6 +642,12 @@ Each item gets its own design pass when its turn comes.
   earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
   `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
   `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
+  (Decided 2026-09-28, at Phase 1's close, from its council: `GRACE_S` stays 15 s, and
+  `FLOOR_TOLERANCE_GIB` goes to 1.0 GiB, so one Gemma context checkpoint, about 0.59 GiB, allocated
+  during a slow stop no longer unloads a second model; it is still 1/8 of the 8 GiB between the
+  brake and earlyoom. Two things stay unmeasured, for Phase 2's drill: a busy engine's stop, and how
+  long after an engine leaves `/running` its memory shows in `MemAvailable`. The brake stops
+  counting that memory the moment the engine leaves, so a lag would unload a second model.)
   (Added 2026-09-28, from Phase 1's council: the brake asks llama-swap nothing above the warn line,
   so a key llama-swap refused would first show in an emergency, as unloads that fail. At start it
   now asks once, with its own key, what runs, logs the answer, and records it in its state folder.
@@ -1148,6 +1154,11 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-28** — From Phase 1's council (reliability, goal-fit), doc truth only. *Page cache and
   the launch check* gains a new reading and three options; *The minimal brake's reach* gains the
   measured rates of fall; the llama-swap row says Phase 1's apply refuses rather than waits.
+- **2026-09-28** — From Phase 1's council (reliability), decided at Phase 1's close: the brake's
+  `GRACE_S` stays 15 s and `FLOOR_TOLERANCE_GIB` goes from 0.5 to 1.0 GiB, since at 0.5 one Gemma
+  checkpoint during a slow stop would unload a resident too. *The minimal brake's reach* says so,
+  and leaves a busy engine's stop, and how long an unloaded engine's memory takes to show in
+  `MemAvailable`, to Phase 2's drill.
 
 ## Sources
 

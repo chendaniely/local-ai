@@ -288,7 +288,8 @@ If a second Spark ever arrives, `dgx-spark/dual-dgx/README.md` §0.3 is the firs
 Not from Niels's repo: numbers measured on this box, one GB10, on 2026-09-28 (Phase 1, Task 16),
 with llama-swap v257 and llama.cpp b11146. **[verified]** here means measured on `brightroar`.
 What each number sets in the brake is in `spark/src/spark/brake.py`'s comments. Phase 1's close
-(Task 17) decides whether the settings change.
+(Task 17) decides whether the settings change. *(Decided 2026-09-28, at Phase 1's close, from its
+council: see* What Phase 1's close decided *below.)*
 
 - **An idle engine stops fast.** The brake unloaded the idle coder, `qwen3.6-35b-a3b`, and its
   process was gone 0.6 s after the tick began. The brake waits up to 15 s (`GRACE_S`). A busy
@@ -296,16 +297,25 @@ What each number sets in the brake is in `spark/src/spark/brake.py`'s comments. 
 - **How `MemAvailable` moves while the brake holds.** Polled every 250 ms for 60 s, with 93 GiB
   available: for the first 15 s, with nothing generating, it moved within ±0.02 GiB. Then a Gemma
   session generated, and it fell 4.1 GiB over 45 s in steps up to 0.58 GiB: 1 poll in 239 moved
-  more than 0.5 GiB (`FLOOR_TOLERANCE_GIB`). **[verified]** By arithmetic, one of Gemma's context
-  checkpoints, its sliding-window cache, is about 0.59 GiB (25 layers × 8 KV heads × 256 × K and
-  V × 2 bytes, over 3,072 cells), so that step was probably an allocation, not noise. **Not
-  verified.**
+  more than 0.5 GiB (`FLOOR_TOLERANCE_GIB` then; 1.0 GiB since 2026-09-28, below). **[verified]**
+  By arithmetic, one of Gemma's context checkpoints, its sliding-window cache, is about 0.59 GiB
+  (25 layers × 8 KV heads × 256 × K and V × 2 bytes, over 3,072 cells), so that step was probably
+  an allocation, not noise. **Not verified.**
 - **v257 stops an engine that is still starting.** Asked to unload it, llama-swap answered `200`
   in 0.01 s and left no process. The request that had started the load got a `500`. **[verified]**
 - **What the OOM killers would pick.** With a throwaway process holding memory down to about
   45 GiB available, the engines' `oom_score` were Gemma 1370, the embedding model 1336 and whisper
   1334, against the hog's 860, so the kernel and earlyoom would pick an engine first. Swap barely
   moved: at most 312 KiB used, 312 KiB swapped out, none in. **[verified]**
+- **What Phase 1's close decided from these** (2026-09-28, from its council; a decision, not a
+  measurement). `GRACE_S` stays 15 s: the measured stop never reaches it, since an engine leaving
+  `/running` ends the wait, and it costs nothing while memory is flat. `FLOOR_TOLERANCE_GIB` goes
+  from 0.5 to 1.0 GiB. At 0.5, one Gemma checkpoint allocated during a slow stop would end the wait,
+  and the brake would unload a second model, a resident. 1.0 GiB clears one checkpoint, and is
+  still only 1/8 of the 8 GiB between the brake line (20 GiB) and earlyoom's (12 GiB). Not yet
+  measured: a busy engine's stop, and how long after an engine leaves `/running` its memory shows
+  in `MemAvailable`. The brake stops counting that memory as on its way the moment the engine
+  leaves, so if it lags, the brake unloads a second model. Phase 2's drill measures both.
 
 ---
 
