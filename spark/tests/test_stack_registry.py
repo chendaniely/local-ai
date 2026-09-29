@@ -78,3 +78,13 @@ def test_each_engine_runs_from_the_folder_of_its_pinned_version():
     assert set(registry.engines) == {"llama.cpp", "whisper.cpp"}
     for engine, path in registry.engines.items():
         assert f"/{versions[engine].version}/" in path, (engine, path, versions[engine].version)
+
+
+def test_every_chat_model_caps_its_context_checkpoints():
+    # llama-server keeps a chat's context checkpoints in host memory, after admission, 32 per slot unless capped: a
+    # footprint can count them only when they're capped (Phase 1's council, reliability I2).
+    chat = [m for m in load_registry(STACK_REGISTRY).models.values()
+            if m.engine == "llama.cpp" and m.capability == "chat"]
+    assert chat
+    for model in chat:
+        assert flag(model.args, "-ctxcp", "--ctx-checkpoints", "--swa-checkpoints") is not None, model.name

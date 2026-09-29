@@ -7284,7 +7284,9 @@ starts, which would cost a long chat its cache at each of Open WebUI's task call
 passes `--no-cache-idle-slots`. And Gemma keeps at most 4 context checkpoints per slot, 8 in all,
 about 0.6 GiB each in host memory, where the default 32 per slot could hold about 19 GiB in one
 long chat, at any context.)* The footprints
-rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budget allows. No
+rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budget allows.
+*(Corrected 2026-09-28, from Phase 1's council: they left out what grows after admission, so they
+are now 32, 8 and 33 GiB, the coder's checkpoints capped at 8, 76 in all; plan.md's Revisions.)* No
 `spark doctor` check comes with it: the render tests pin the flags and pi's window, and Step 1
 reads the engines' own settings once (a ruling, 2026-09-28; Task 17 can weigh a check that reads
 each engine's `/props`).

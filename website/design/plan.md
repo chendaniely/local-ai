@@ -621,10 +621,10 @@ Each item gets its own design pass when its turn comes.
   decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
   refusing redirects, and a cap on what the client reads. (Added 2026-09-26, from Phase 1 Task 10's
   scan: `make doctor` sends Dan's key too, once an unkeyed `/health` answers, which a squatter can
-  make it do; it follows no redirect.) (Corrected 2026-09-28, from Phase 1's council: the client that
-  the brake, `spark status` and `spark apply` use now refuses a redirect when it sends a key, as
-  doctor's probe does, so a squatter can't send the key on. The port itself stays open to any user,
-  for Dan to decide.)
+  make it do; it follows no redirect.) (Corrected 2026-09-28, from Phase 1's council: the client
+  that the brake, `spark status` and `spark apply` use now refuses a redirect when it sends a key,
+  as doctor's probe does, so a squatter can't send the key on. The port itself stays open to any
+  user, for Dan to decide.)
 - **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
   llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
   unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
@@ -719,7 +719,9 @@ Each item gets its own design pass when its turn comes.
   to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
   memory context checkpoints take over a long conversation (estimated at about 0.6 GiB each for
   Gemma, 4 at most per slot; the coder's, its recurrent state plus its MTP draft's, not yet
-  estimated, 32 at most; added 2026-09-28).
+  estimated, 32 at most; added 2026-09-28. Corrected the same day, from Phase 1's council: the
+  coder's are capped at 8, about 63 MiB each by arithmetic, and their size is the first thing a
+  soak at full context measures).
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -1072,8 +1074,12 @@ Each item gets its own design pass when its turn comes.
     re-reading the whole prompt, so Gemma keeps at most 4 per slot (`--ctx-checkpoints 4`, a
     per-slot cap), 8 in all, counted in its footprint.
   The footprints rise to estimates, from 20, 4 and 29 GiB to 31, 7 and 32: 73 GiB for all four,
-  within the 78 the budget allows, measured once deployed. The phone can't change the context,
-  since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each client can change.
+  within the 78 the budget allows, measured once deployed. (Corrected 2026-09-28, from Phase 1's
+  council: once deployed, the cold loads took 24.7, 6.3 and 29.8 GiB, under those estimates, but a
+  cold load leaves out what grows after admission. The footprints are now 32, 8 and 33, with the
+  coder's checkpoints capped at 8: 76 of the 78; see the Revisions line below.) The phone can't
+  change the context, since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each
+  client can change.
 - **2026-09-28** — From the review of Task 16's record. The routine upgrade moved neither `libc6`
   nor `libstdc++6` nor Docker, so Phase 1's Docker line, which said Task 16 would find out what a
   Docker upgrade does to the web services, gains a dated correction, and *To verify on the box*
@@ -1097,6 +1103,16 @@ Each item gets its own design pass when its turn comes.
   checks). `spark apply` checks that the brake is still running 3 s after restarting it, since
   `Type=exec` counts a brake that stops once it runs as started. *The minimal brake's reach* says
   so.
+- **2026-09-28** — From Phase 1's council (reliability). Rule 6 counts a model's steady state
+  after a soak at maximum context, and the footprints counted only the cold load and the KV cache,
+  though a cold load leaves out what grows after admission: the prompt cache, context checkpoints,
+  Gemma's image buffer and the embedding model's long-input buffer. At the admission edge, that
+  growth could put a load on the brake line, and the hold would then block every load. The
+  registry's comments now say what each estimate counts, from the cold loads measured that day
+  (24.7, 6.3 and 29.8 GiB): Gemma 32, the embedding model 8, and the coder 33 with
+  `--ctx-checkpoints 8`, since its default 32 was unbounded in its footprint. The set sums to 76
+  of the 78 allowed, all still `footprint_measured: false`. The coder's checkpoints in *To verify*
+  are capped now; their size is the first thing a soak measures.
 
 ## Sources
 
