@@ -86,14 +86,17 @@ models:
       revision: "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
       file: Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
     # Footprint, at its most after admission (Phase 1's council, 2026-09-28): a cold load at full context took 29.8 GiB
-    # (2026-09-28); a long request kept ~0.7 more; its prompt cache 2; its 8 context checkpoints ~0.5. ~33 in all: an
-    # estimate, until a soak at full context measures it, a checkpoint's size first.
+    # (2026-09-28); a long request kept ~0.7 more; its prompt cache 2; its 8 context checkpoints ~0.5, their recurrent
+    # part (the MTP draft's isn't estimated). ~33 in all: an estimate, until a soak at full context measures it, a
+    # checkpoint's size first.
     ctx: 262144
     parallel: 1
     cache_ram_mib: 2048
     footprint_gib: 33
     footprint_measured: false
-    # A checkpoint holds only its recurrent layers' state, ~63 MiB by arithmetic, not measured. The default, 32 per
-    # slot, would be ~2 GiB, so cap them at 8 (~0.5 GiB), counted in the footprint: an edit or a regenerate further
+    # A checkpoint holds its recurrent layers' state, ~63 MiB by arithmetic, and its MTP draft's state, which that
+    # leaves out (b11146 saves both: server-context.cpp, update_dft and data_spec); neither is measured. (Corrected
+    # 2026-09-28: this said "only its recurrent layers' state".) At the default, 32 per slot, the recurrent part alone
+    # would be ~2 GiB, so cap them at 8 (~0.5 GiB of it), counted in the footprint: an edit or a regenerate further
     # back in a pi session re-reads the prompt (Phase 1's council, 2026-09-28).
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]

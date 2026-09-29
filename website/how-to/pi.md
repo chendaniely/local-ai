@@ -137,11 +137,14 @@ jq '{deny: (.permissions.deny | length),
 The last command shows at least as many deny rules as the Mac's file has (`agent`'s showed 35 on
 2026-09-28), and `bash ~/.claude/hooks/block-secret-access.sh` among the hooks. Run again, after
 the Mac's step again, the merge leaves `settings.json` as it was, and the backup then holds the
-merged file. If the guard file isn't there, jq says so and `settings.json` stays as it was, with an
-empty `settings.json.new` beside it that the next run replaces. *(Run on 2026-09-28,
-on the Spark, on stand-in files in a scratch folder: jq 1.7, and gawk, mawk and busybox's awk,
-with `ssh` and `scp` stood in for. The Mac's two blocks ran under bash there; they haven't been
-run in the Mac's zsh, with its jq or its BSD awk.)*
+merged file. If the guard file isn't there, jq says it can't open it, `settings.json` stays as it
+was, and the last command shows it unchanged. A `settings.json.new` is left beside it, holding
+`agent`'s settings without the guard's hook: nothing uses it, and the next run replaces it.
+*(Corrected 2026-09-28: this said that file was empty. jq 1.7 runs the filter on the file it
+could read, then exits 2, which stops the `mv`. Re-run on stand-ins the same day.)* *(Run on
+2026-09-28, on the Spark, on stand-in files in a scratch folder: jq 1.7, and gawk, mawk and
+busybox's awk, with `ssh` and `scp` stood in for. The Mac's two blocks ran under bash there; they
+haven't been run in the Mac's zsh, with its jq or its BSD awk.)*
 
 Then check it. **On the Spark, as `agent`**, start Claude Code, or restart it if it's running, so
 it loads the hook:

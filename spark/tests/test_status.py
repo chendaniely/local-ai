@@ -248,8 +248,8 @@ def test_a_state_folder_this_account_cant_read_is_unknown_to_it(spark_status, tm
     assert code == 0 and "brake    unknown" in out.splitlines()
     assert "HOLDING" not in out and "--release" not in out
     assert not any(line.startswith("refused") for line in out.splitlines())
-    assert (f"problem  this account can't read {state}, so the brake's hold and the last refusal are unknown to it; "
-            "spark-admin can read them") in out.splitlines()
+    assert (f"problem  this account can't read {state}, so the brake's hold, its start check and the last refusal are "
+            "unknown to it; spark-admin can read them") in out.splitlines()
     code, out, _ = js
     status = standard(out)
     assert code == 0 and status["brake"]["state"] == "unknown" and status["last_refusal"] is None

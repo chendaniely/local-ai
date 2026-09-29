@@ -219,8 +219,8 @@ def run(args: argparse.Namespace) -> int:
         problems["memory"] = f"can't read memory: {err}"
     hold = refusal = key_check = None
     if _closed(paths.STATE):
-        problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold and the last refusal are "
-                             "unknown to it; spark-admin can read them")
+        problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold, its start check and the "
+                             "last refusal are unknown to it; spark-admin can read them")
     else:
         hold = read_hold(paths.STATE)
         key_check, damaged = read_key_check(paths.STATE)
