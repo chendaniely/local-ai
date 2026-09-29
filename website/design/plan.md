@@ -1126,9 +1126,9 @@ Each item gets its own design pass when its turn comes.
   admission edge, that growth could put a load on the brake line, and the hold would then block
   every load. The registry's comments now say what each estimate counts, from the cold loads
   measured that day (24.7, 6.3 and 29.8 GiB): Gemma 32, the embedding model 8, and the coder 33 with
-  `--ctx-checkpoints 8`, since its default, 32, wasn't counted in its footprint. The set sums to 76 of
-  the 78 allowed, all still `footprint_measured: false`. The coder's checkpoints in *To verify* are
-  capped now; their size is the first thing a soak measures.
+  `--ctx-checkpoints 8`, since its default, 32, wasn't counted in its footprint. The set sums to 76
+  of the 78 allowed, all still `footprint_measured: false`. The coder's checkpoints in *To verify*
+  are capped now; their size is the first thing a soak measures.
 - **2026-09-28** — From Phase 1's council (goal-fit). Step 4 of upgrade day, in *Backups, recovery
   and upgrades*, still said that GRUB booting the newest kernel was not yet checked on this box,
   though Task 12 checked it on 2026-09-27 and *To verify* had marked it resolved. It gains the
