@@ -140,7 +140,7 @@ def test_the_refusal_a_broken_registry_caused_is_shown(spark_status, tmp_path, m
     # `spark launch` records why it refused; status used to die on the same registry and hide it (I1).
     registry = tmp_path / "models.yaml"
     registry.write_text("budget: {allocatable_gib: 102}\n")
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=tmp_path / "state") == 3
     code, out, _ = spark_status(registry=registry)

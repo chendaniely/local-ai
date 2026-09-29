@@ -6902,7 +6902,9 @@ print `[N/A]` there; record what it prints). Whether a model's memory counts tow
 RSS on GB10 is not yet known. If it doesn't (an engine's `rss` far below its model's size),
 earlyoom's choice among engines is arbitrary. Task 17's forward look then decides whether
 `spark launch` should give resident models a lower `oom_score_adj` than on-demand ones, for example
-900 against 1000, so earlyoom agrees with the brake's order.
+900 against 1000, so earlyoom agrees with the brake's order. *(Decided 2026-09-28, from Phase 1's
+council: 900 for a resident, 1000 for an on-demand engine. From the deploy that brings it, the
+`oomadj` column above reads 900 for the three residents.)*
 
 Then **[Dan, on the Spark]** checks earlyoom's victim with the engines loaded, without killing
 anything: Phase 0's Task 11 Step 2 check, with the repo's current regexes, for about five seconds,

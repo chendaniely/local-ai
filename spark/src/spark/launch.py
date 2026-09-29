@@ -1,9 +1,10 @@
 """`spark launch <model> -- <engine cmd…>` — llama-swap runs every engine through this.
 
-It refuses a load while the brake holds or when the model doesn't fit, and marks the engine as the
-first process the kernel or earlyoom should kill — GB10's GPU memory may not count toward
-oom_score, so without this a user's job could be chosen instead. The engine gets llama-swap's
-environment without its API keys: it parses third-party model files and needs none of them.
+It refuses a load while the brake holds or when the model doesn't fit, and marks the engine among
+the first processes the kernel or earlyoom should kill, in the brake's order: an on-demand engine
+first, then a resident one. GB10's GPU memory doesn't count toward oom_score, so without this a
+user's job could be chosen instead. The engine gets llama-swap's environment without its API keys:
+it parses third-party model files and needs none of them.
 """
 
 from __future__ import annotations
@@ -27,6 +28,15 @@ from spark.registry import load_registry
 REFUSAL = "last-refusal.json"
 RECORD = ("at", "model", "reason")  # a refusal's fields, each text
 KEY_PREFIX = "LLAMASWAP_KEY_"
+# An engine's own oom_score_adj, set before the exec so the engine keeps it. A model's GPU memory isn't in its engine's
+# RSS (Phase 1, Task 13: RSS 0.4-2.1 GiB against 2-25 GiB on the GPU), so at one value for all the engines their scores
+# sat within 9 of each other, and earlyoom's dry run picked Gemma, a resident, before the on-demand coder. A resident
+# engine gets 900 and an on-demand one 1000, so earlyoom takes the on-demand coder first, as the brake does, unless a
+# resident's RSS exceeds the coder's by a tenth of RAM plus swap (what 100 points of adj are worth), and every engine
+# still goes before a process at 0 (Phase 1's council, 2026-09-28). Not yet seen on the box: the next deploy's earlyoom
+# dry run checks it.
+OOM_SCORE_ADJ = Path("/proc/self/oom_score_adj")
+OOM_ADJ_RESIDENT, OOM_ADJ_ON_DEMAND = 900, 1000
 
 
 def engine_env(env: Mapping[str, str]) -> dict[str, str]:
@@ -34,11 +44,14 @@ def engine_env(env: Mapping[str, str]) -> dict[str, str]:
     return {name: value for name, value in env.items() if not name.startswith(KEY_PREFIX)}
 
 
-def _mark_first_to_kill() -> None:
+def _mark_first_to_kill(name: str, resident: bool) -> None:
+    adj = OOM_ADJ_RESIDENT if resident else OOM_ADJ_ON_DEMAND
     try:
-        Path("/proc/self/oom_score_adj").write_text("1000")
-    except OSError:
-        pass  # not Linux, or not permitted — the brake still stands
+        OOM_SCORE_ADJ.write_text(str(adj))
+    except OSError as err:  # not Linux, or not permitted: the engine still starts, and the brake still stands
+        # One line on stderr, which llama-swap keeps, flushed now: the exec that follows would lose a buffered one.
+        print(f"spark: {name} starts without oom_score_adj {adj} ({err}), so the kernel and earlyoom may kill another "
+              "process before it", file=sys.stderr, flush=True)
 
 
 def record_refusal(state: Path, model: str, reason: str) -> None:
@@ -104,7 +117,7 @@ def main_launch(argv: list[str], *, registry: Path = paths.REGISTRY, state: Path
     if not decision.ok:
         return _refuse(state, name, decision.reason)
     clear_refusal(state)
-    _mark_first_to_kill()
+    _mark_first_to_kill(name, model.resident)
     os.execvpe(cmd[0], cmd, engine_env(os.environ))
     return 0  # reached only when execvpe is replaced in tests
 

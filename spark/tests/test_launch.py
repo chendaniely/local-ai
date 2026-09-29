@@ -175,10 +175,41 @@ def test_a_hold_that_goes_between_a_check_and_the_act_is_no_hold(tmp_path, monke
 def test_launch_execs_the_engine_when_it_fits(tmp_path, monkeypatch):
     calls = {}
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: calls.setdefault("oom", True))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: calls.setdefault("oom", args))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(file=f, argv=a))
     code = launch.main_launch(["coder", "--", "/bin/engine", "--port", "5800"], registry=FIXTURE, state=tmp_path)
-    assert code == 0 and calls == {"oom": True, "file": "/bin/engine", "argv": ["/bin/engine", "--port", "5800"]}
+    assert code == 0 and calls == {"oom": ("coder", False), "file": "/bin/engine",
+                                   "argv": ["/bin/engine", "--port", "5800"]}
+
+
+# Phase 1's council (reliability m5): earlyoom chooses among the engines by oom_score, and a model's GPU memory isn't in
+# its engine's RSS, so at one adjustment for all their scores sat within 9 of each other, and earlyoom's dry run picked
+# Gemma, a resident, before the on-demand coder. A resident engine starts at 900 and an on-demand one at 1000, so
+# earlyoom takes the on-demand coder first, as the brake does, and every engine still goes before a process at 0.
+
+@pytest.mark.parametrize("model, adj", [("coder", "1000"), ("vision-chat", "900"), ("embed", "900"), ("stt", "900")])
+def test_an_engine_is_marked_for_the_oom_killers_in_the_brakes_order(tmp_path, monkeypatch, model, adj):
+    oom = tmp_path / "oom_score_adj"
+    oom.write_text("0\n")
+    monkeypatch.setattr(launch, "OOM_SCORE_ADJ", oom)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: None)
+    assert launch.main_launch([model, "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 0
+    assert oom.read_text() == adj
+
+
+def test_an_engine_it_cant_mark_still_starts_and_says_so_in_one_line(tmp_path, monkeypatch, capsys):
+    # Not Linux, or a write the kernel refuses: the engine still starts, left at llama-swap's own 0, which scores below
+    # Dan's jobs. The line goes to stderr, which llama-swap keeps, before the exec that would lose a buffered one.
+    monkeypatch.setattr(launch, "OOM_SCORE_ADJ", tmp_path / "missing" / "oom_score_adj")
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    calls = {}
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(file=f, err=capsys.readouterr().err))
+    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 0
+    assert calls["file"] == "/bin/engine"
+    lines = calls["err"].splitlines()
+    assert len(lines) == 1 and lines[0].startswith("spark: coder starts without oom_score_adj 1000 (")
+    assert "No such file or directory" in lines[0] and "earlyoom" in lines[0]
 
 
 def test_the_engine_inherits_no_api_key(tmp_path, monkeypatch):
@@ -189,7 +220,7 @@ def test_the_engine_inherits_no_api_key(tmp_path, monkeypatch):
     monkeypatch.setenv("LLAMASWAP_KEY_SPARK", "x")
     monkeypatch.setenv("HF_HOME", "/var/lib/local-ai/hf")
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: None)
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: None)
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(env=env))
     launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
     assert [name for name in calls["env"] if name.startswith("LLAMASWAP_KEY_")] == []
@@ -199,7 +230,7 @@ def test_the_engine_inherits_no_api_key(tmp_path, monkeypatch):
 def test_launch_refuses_with_exit_3(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 30.0))
     # the real one would raise pytest's own oom_score_adj
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     code = launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
     assert code == 3
@@ -216,7 +247,7 @@ def test_launch_unknown_model_is_a_usage_error(tmp_path):
     ["coder", "x", "--", "/bin/engine"],
 ], ids=["nothing", "no --", "no -- before the command", "no command", "no model", "-- not second"])
 def test_launch_usage_errors(tmp_path, monkeypatch, capsys, argv):
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(argv, registry=FIXTURE, state=tmp_path) == 2
     assert capsys.readouterr().err == "usage: spark launch <model> -- <engine command…>\n"
@@ -226,7 +257,7 @@ def test_launch_usage_errors(tmp_path, monkeypatch, capsys, argv):
 def test_launch_refuses_while_the_brakes_hold_file_stands(tmp_path, monkeypatch, capsys):
     write_hold(tmp_path, Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",)))
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))  # plenty: only the hold refuses
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
     assert capsys.readouterr().err == (
@@ -241,7 +272,7 @@ def test_launch_refuses_while_a_damaged_hold_file_stands(tmp_path, monkeypatch, 
     launch.record_refusal(tmp_path, "vision-chat", "an older, unrelated reason")
     (tmp_path / "hold.json").write_bytes(damage)
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
     err = capsys.readouterr().err
@@ -265,7 +296,7 @@ def test_launch_refuses_when_the_registry_wont_load(tmp_path, monkeypatch, capsy
     elif setup is not None:
         registry.write_text(setup)
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=state) == 3
     err = capsys.readouterr().err
@@ -275,7 +306,7 @@ def test_launch_refuses_when_the_registry_wont_load(tmp_path, monkeypatch, capsy
 
 
 def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monkeypatch):
-    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda: None)
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: None)
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: None)
     monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 30.0))
     launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)

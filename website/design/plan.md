@@ -734,7 +734,9 @@ Each item gets its own design pass when its turn comes.
   ships this box's firmware through fwupd; ~~whether a model's GPU memory counts toward its engine's
   RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
   brake's order (Phase 1 measures it)~~ (resolved 2026-09-28: it doesn't, and earlyoom's pick
-  didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions); whether memory swaps out before `MemAvailable` reaches the
+  didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions; since Phase 1's
+  council, 2026-09-28, residents start at `oom_score_adj` 900 and on-demand engines at 1000, an
+  order untested on the box until the next deploy's earlyoom dry run); whether memory swaps out before `MemAvailable` reaches the
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness; that
   the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
   one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
@@ -1159,6 +1161,11 @@ Each item gets its own design pass when its turn comes.
   checkpoint during a slow stop would unload a resident too. *The minimal brake's reach* says so,
   and leaves a busy engine's stop, and how long an unloaded engine's memory takes to show in
   `MemAvailable`, to Phase 2's drill.
+- **2026-09-28** — From Phase 1's council (reliability), decided at Phase 1's close: earlyoom
+  follows the brake's order. `spark launch` gives a resident engine `oom_score_adj` 900 and an
+  on-demand one 1000, since a model's GPU memory isn't in its engine's RSS, and says on stderr when
+  it can't set it. *To verify* notes the order, untested on the box until the next deploy's
+  earlyoom dry run.
 
 ## Sources
 
