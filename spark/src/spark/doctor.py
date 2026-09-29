@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spark import paths, render
-from spark.llamaswap import _url_ok, key_from_env
+from spark.llamaswap import _KeyStaysHere, _url_ok, key_from_env
 from spark.registry import Registry, load_registry
 
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service")
@@ -84,17 +84,6 @@ def _unusable(key: str | None, key_env: str) -> str | None:
         return (f"the key in {key_env} isn't printable ASCII (a stray CR or LF?), so it wasn't sent: set it again, "
                 "as website/how-to/deploy.md's *Before the first deploy* does")
     return None
-
-
-class _KeyStaysHere(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only for a request without a key. urllib's own handler sends a redirected request on with
-    every header it was given, the key's included, to wherever the redirect points. With a key, the redirect is the
-    answer: urllib raises it as an HTTPError with the redirect's status."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if req.has_header("Authorization"):
-            return None
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class Probe:

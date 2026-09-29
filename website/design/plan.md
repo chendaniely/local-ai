@@ -621,7 +621,10 @@ Each item gets its own design pass when its turn comes.
   decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
   refusing redirects, and a cap on what the client reads. (Added 2026-09-26, from Phase 1 Task 10's
   scan: `make doctor` sends Dan's key too, once an unkeyed `/health` answers, which a squatter can
-  make it do; it follows no redirect.)
+  make it do; it follows no redirect.) (Corrected 2026-09-28, from Phase 1's council: the client that
+  the brake, `spark status` and `spark apply` use now refuses a redirect when it sends a key, as
+  doctor's probe does, so a squatter can't send the key on. The port itself stays open to any user,
+  for Dan to decide.)
 - **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
   llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
   unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
@@ -1077,6 +1080,10 @@ Each item gets its own design pass when its turn comes.
   key. Render now passes `--no-slots` and `--no-webui` to every llama-server, and a registry's
   `args` can't turn either back on. The llama.cpp row and *127.0.0.1 is not a boundary against
   `agent`* say so.
+- **2026-09-28** — From Phase 1's council (security). The llama-swap client that the brake,
+  `spark status` and `spark apply` use followed a redirect with the key, to wherever it pointed. It
+  now refuses one, with the handler doctor's probe already used. *Anyone on the box can take
+  127.0.0.1:9100* gains the correction; the port stays open to any user, for Dan to decide.
 
 ## Sources
 

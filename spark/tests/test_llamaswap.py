@@ -13,6 +13,7 @@ from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Run
 SEEN: list[tuple[str, str, str | None]] = []
 ANSWER: dict = {}  # a test sets what GET /running answers with the good key: a body, or "short"
 PROXIED: list[tuple[str, str | None]] = []
+ELSEWHERE: list[tuple[str, str, str | None]] = []
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -25,6 +26,12 @@ class Fake(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data.encode())
 
+    def _redirect(self, code: int):
+        self.send_response(code)
+        self.send_header("Location", ANSWER["redirect"])
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _sent(self) -> str:  # the target as the client sent it: self.path turns a leading "//" into "/"
         return self.requestline.split()[1]
 
@@ -32,6 +39,8 @@ class Fake(BaseHTTPRequestHandler):
         SEEN.append(("GET", self._sent(), self.headers.get("Authorization")))
         if self.headers.get("Authorization") != "Bearer good":
             return self._reply(401, {"error": {"message": "unauthorized: invalid or missing API key"}})
+        if ANSWER.get("redirect"):
+            return self._redirect(302)
         if ANSWER.get("short"):  # promises 100 bytes, sends 13, and the connection closes
             self.send_response(200)
             self.send_header("Content-Length", "100")
@@ -44,9 +53,24 @@ class Fake(BaseHTTPRequestHandler):
         SEEN.append(("POST", self._sent(), self.headers.get("Authorization")))
         if self.headers.get("Authorization") != "Bearer good":
             return self._reply(401, {"error": {"message": "unauthorized: invalid or missing API key"}})
+        if ANSWER.get("redirect"):  # urllib sends a POST on as a GET for a 303, and for a 301 or 302 too
+            return self._redirect(303)
         if self.path.endswith("/nope"):
             return self._reply(404, {"error": {"message": "model not found"}})
         self._reply(200, "OK")
+
+
+class Elsewhere(BaseHTTPRequestHandler):  # where a redirect points: records what reaches it
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        ELSEWHERE.append((self.command, self.path, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"running": []}')
+
+    do_POST = do_GET
 
 
 class Proxy(BaseHTTPRequestHandler):  # an HTTP proxy: records what reaches it, answers as an idle llama-swap
@@ -262,3 +286,17 @@ def test_a_trailing_slash_on_the_url_is_dropped(server):
 def test_unload_sends_the_model_name_as_one_quoted_segment(server):
     LlamaSwap(server, "good").unload("a/b c")
     assert SEEN == [("POST", "/api/models/unload/a%2Fb%20c", "Bearer good")]
+
+
+@pytest.mark.parametrize("call", ["running", "unload"])
+def test_a_redirect_is_the_answer_and_the_key_goes_nowhere_else(server, call):
+    # urllib sends a redirected request on with every header it was given, the key's included, to wherever the
+    # redirect points (Phase 1 council, security I3): the brake sends the key every 250 ms below the warn line, and
+    # status and apply on every run. As doctor's probe does, the client never follows one with the key.
+    ELSEWHERE.clear()
+    with serving(Elsewhere) as elsewhere:
+        ANSWER["redirect"] = f"{elsewhere}/stolen"
+        client = LlamaSwap(server, "good")
+        with pytest.raises(llamaswap.LlamaSwapAnswered, match="HTTP 30[23]"):
+            client.running() if call == "running" else client.unload("coder")
+    assert ELSEWHERE == []  # nothing reached it, so no key did

@@ -44,13 +44,25 @@ def _url_ok(url: str) -> bool:
     return parts.scheme in ("http", "https") and bool(parts.hostname)
 
 
+class _KeyStaysHere(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only for a request without a key. urllib's own handler sends a redirected request on with
+    every header it was given, the key's included, to wherever the redirect points. With a key, the redirect is the
+    answer: urllib raises it as an HTTPError with the redirect's status. `spark doctor`'s probe uses it too."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if req.has_header("Authorization"):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class LlamaSwap:
     def __init__(self, base_url: str, api_key: str | None, timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
-        # No proxy from the environment (http_proxy): the key would go to it, even for 127.0.0.1.
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # No proxy from the environment (http_proxy): the key would go to it, even for 127.0.0.1. And no redirect
+        # followed with the key (_KeyStaysHere): whatever answers on the port could send it anywhere.
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _KeyStaysHere)
 
     def _call(self, method: str, path: str) -> bytes:
         where = f"llama-swap {method} {path}"
