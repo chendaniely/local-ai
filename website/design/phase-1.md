@@ -7322,7 +7322,7 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   start matches more than 10% of it (`--slot-prompt-similarity`, 0.10), and every Gemma prompt
   opens with the same few template tokens. So a very short new chat can take a long chat's slot,
   as it could before this change. Task 17 weighs a higher threshold.)*
-- [ ] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
+- [x] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
   the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so
   pi's windows match what the Spark now serves; **as `agent`, on the Spark**, its clone pulls and
@@ -7330,7 +7330,12 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   checks S09's new claims: a chat's *Controls → Advanced Params* offers `max_tokens` and
   *Reasoning Effort*, and *Admin Panel → Settings → Interface* has *Context Compaction*. S09's
   "not yet checked on the phone" marker comes out once that passes.
-- [ ] **Step 4 [Spark]: Changelog, README; commit** — a `docs(machine)` commit records the
+  *(Checked 2026-09-28: pushed with Dan's OK after a clean scan. The Mac's pi and `agent`'s now
+  list both chat models at 262,144 tokens. Dan's phone wasn't with him, so he checked S09's labels
+  in the web UI in the Mac's browser, and found `max_tokens`, *Reasoning Effort* and
+  *Context Compaction*. He keeps compaction off. The phone's own view waits for Task 17 Step 1,
+  which dates S09 from it.)*
+- [x] **Step 4 [Spark]: Changelog, README; commit** — a `docs(machine)` commit records the
   readings in `changelog.md` and `README.md`.
 
 ***

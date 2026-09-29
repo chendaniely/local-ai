@@ -32,6 +32,12 @@ matched the chat's slot. llama-server gives a new prompt the slot whose cached s
 than 10% of it, and every Gemma prompt opens with the same few template tokens. So a very short
 new chat can take a long chat's slot, as it could before; Task 17 weighs a higher threshold.
 
+**The clients.** Pushed, then Dan ran `make clients` on the Mac, and `spark clients pi --write`
+ran as `agent`. Both pi configs now list Gemma and the coder at 262,144 tokens. In the web UI,
+checked in the Mac's browser, a chat's *Advanced Params* offer `max_tokens` and
+*Reasoning Effort*, and the admin's *Interface* settings have *Context Compaction*, which Dan
+keeps off.
+
 ## 2026-09-28 — The Phase 1 drills (Phase 1, Task 16)
 
 **The brake, at raised thresholds (S05).** The Spark session loaded the coder and ran one brake
