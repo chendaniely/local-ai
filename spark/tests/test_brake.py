@@ -1,5 +1,6 @@
 import argparse
 import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -588,27 +589,40 @@ class Clock:
         return self.t
 
 
-def start(client, state, logs, clock=None):
-    return brake.StartCheck(client, state, KEY_ENV, logs.append, now=lambda: "T", clock=clock or Clock())
+def start(client, state, logs, clock=None, sleep=None):
+    """A start check on `clock`, whose pause between asks moves that clock unless `sleep` says otherwise."""
+    clock = clock or Clock()
+
+    def advance(seconds):
+        clock.t += seconds
+
+    return brake.StartCheck(client, state, KEY_ENV, logs.append, now=lambda: "T", clock=clock, sleep=sleep or advance)
 
 
-def run_with_check(client, state, *, polls=3, available=60.0, clock=None, each_poll=None):
-    """The brake, with its start check, for `polls` polls at `available` GiB; `each_poll(i)` runs after poll i."""
+def finish(check):
+    """Waits for the check's own thread to end, when it has one."""
+    thread = getattr(check, "thread", None)
+    if thread is not None:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+
+def run_with_check(client, state, *, polls=3, available=60.0, clock=None, sleep=None):
+    """The brake, with its start check, for `polls` polls at `available` GiB; then the check, to its end."""
     logs, done = [], []
-    check = start(client, state, logs, clock)
+    check = start(client, state, logs, clock, sleep)
 
-    def sleep(seconds):
+    def poll(seconds):
         done.append(seconds)
-        if each_poll:
-            each_poll(len(done))
         if len(done) >= polls:
             raise Enough
 
     try:
-        run_brake(REG, client, state, read_mem=lambda: MemInfo(121.7, available), sleep=sleep, log=logs.append,
+        run_brake(REG, client, state, read_mem=lambda: MemInfo(121.7, available), sleep=poll, log=logs.append,
                   now=lambda: "T", start_check=check)
     except Enough:
         pass
+    finish(check)
     return logs
 
 
@@ -646,14 +660,16 @@ def test_the_start_check_waits_for_llama_swap_to_come_up(tmp_path):
     # At boot the brake starts as soon as llama-swap's binary runs, before it listens.
     down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: [Errno 111] Connection refused")
     client, clock = Answers(down, down, [], api_key="k"), Clock()
-    seen = []
+    seen, pauses = [], []
 
-    def each_poll(i):
+    def sleep(seconds):  # between asks: what the record says meanwhile
         seen.append(brake.read_key_check(tmp_path)[0].ok)
-        clock.t += 1
+        pauses.append(seconds)
+        clock.t += seconds
 
-    logs = run_with_check(client, tmp_path, polls=5, clock=clock, each_poll=each_poll)
-    assert client.calls == 3 and seen == [None, None, True, True, True]
+    logs = run_with_check(client, tmp_path, clock=clock, sleep=sleep)
+    assert client.calls == 3 and seen == [None, None] and pauses == [brake.KEY_CHECK_RETRY_S] * 2
+    assert brake.read_key_check(tmp_path)[0].ok is True
     assert logs == ["brake: llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK"]
 
 
@@ -661,10 +677,10 @@ def test_a_llama_swap_that_never_answers_fails_the_start_check_after_its_wait(tm
     down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: timed out")
     client, clock = Answers(down), Clock()
 
-    def each_poll(i):
+    def sleep(seconds):  # each ask and its pause take 10 s
         clock.t += 10
 
-    logs = run_with_check(client, tmp_path, polls=6, clock=clock, each_poll=each_poll)
+    logs = run_with_check(client, tmp_path, clock=clock, sleep=sleep)
     assert client.calls == 4  # at 0, 10, 20 and 30 s after the start
     why = f"llama-swap didn't answer in 30 s ({down})"
     assert logs == [f"brake: ALERT — its start check failed: {why}. Until llama-swap answers it with its key, the "
@@ -681,18 +697,33 @@ def test_the_last_starts_record_is_replaced_at_once(tmp_path):
 
 
 def test_braking_never_waits_for_the_start_check(tmp_path):
-    # The first poll acts on memory before the check asks anything.
-    order = []
+    # The re-review of Phase 1's council fixes (N4): a llama-swap that takes the connection and never answers held each
+    # ask for the client's 2 s timeout, and each poll with it, for 30 s. The check runs off the poll path, so the polls
+    # go on at their own pace while it waits.
+    answered, polls = threading.Event(), []
 
-    class Recording(Answers):
+    class Hung(Answers):
         def running(self):
-            order.append("running")
-            return super().running()
+            self.calls += 1
+            answered.wait(timeout=2)  # as long as the brake's client waits for an answer
+            self.polls_meanwhile = len(polls)
+            return []
 
-    run_brake(REG, Recording([]), tmp_path, read_mem=lambda: order.append("memory") or MemInfo(121.7, 60),
-              sleep=lambda s: None, log=lambda line: None, now=lambda: "T", once=True,
-              start_check=start(Recording([]), tmp_path, []))
-    assert order == ["memory", "running"]
+    def poll(seconds):
+        polls.append(seconds)
+        if len(polls) >= 5:
+            answered.set()
+            raise Enough
+
+    client = Hung()
+    check = start(client, tmp_path, [])
+    try:
+        run_brake(REG, FakeClient(), tmp_path, read_mem=lambda: MemInfo(121.7, 60), sleep=poll,
+                  log=lambda line: None, now=lambda: "T", start_check=check)
+    except Enough:
+        pass
+    finish(check)
+    assert client.calls == 1 and client.polls_meanwhile == 5  # every poll ran while the ask hung
 
 
 def test_a_start_check_it_cant_record_is_said_and_the_brake_runs_on(tmp_path):
@@ -713,10 +744,12 @@ def test_only_the_brake_that_keeps_running_checks_its_key(tmp_path, monkeypatch,
     seen = {}
     monkeypatch.setattr(brake, "load_registry", lambda path: REG)
     monkeypatch.setattr(brake.paths, "STATE", tmp_path)
-    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(kw))
+    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(kw, client=client))
     assert brake.run(argparse.Namespace(release=False, once=once, key_env=KEY_ENV)) == 0
     check = seen["start_check"]
-    assert (check is None) if once else (check.key_env == KEY_ENV and check.client.timeout == 2)
+    # The check asks from a thread of its own, with a client of its own, sharing nothing with the polls.
+    assert (check is None) if once else (check.key_env == KEY_ENV and check.client.timeout == 2
+                                         and check.client is not seen["client"])
     assert (tmp_path / brake.KEY_CHECK_FILE).exists() is not once
 
 

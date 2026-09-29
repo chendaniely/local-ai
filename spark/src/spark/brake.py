@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -57,6 +58,9 @@ KEY_CHECK_FILE = "key-check.json"
 # How long the check waits for llama-swap to answer at all: at boot the brake starts as soon as llama-swap's binary
 # runs (both units are Type=exec), before llama-swap listens. Any answer, an error included, ends the wait.
 KEY_CHECK_S = 30.0
+# The pause between asks while nothing answers. A refused connection comes back at once; a llama-swap that takes the
+# connection and never answers holds each ask for the client's timeout, 2 s, off the poll path.
+KEY_CHECK_RETRY_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -300,17 +304,32 @@ class _Brake:
 
 
 class StartCheck:
-    """Whether llama-swap answers GET /running with the brake's key, asked at start. It is asked after each poll, not
-    before the first, so braking never waits for it: again on the next poll while nothing answers, until
-    KEY_CHECK_S have passed, and never once there is an answer. The record from the brake's last start is replaced
-    at once, so a check that never finishes can't pass for this one."""
+    """Whether llama-swap answers GET /running with the brake's key, asked at start. It asks from a thread of its own
+    (start), off the poll path, so braking never waits for it, even on a llama-swap that takes the connection and
+    never answers (the re-review of Phase 1's council fixes, N4): again every KEY_CHECK_RETRY_S while nothing answers,
+    until KEY_CHECK_S have passed, and never once there is an answer. It needs a client of its own, one the polls
+    don't use. The record from the brake's last start is replaced at once, so a check that never finishes can't pass
+    for this one."""
 
-    def __init__(self, client, state_dir: Path, key_env: str, log, now=_now, clock=time.monotonic):
-        self.client, self.state_dir, self.key_env, self.log, self.now, self.clock = (
-            client, Path(state_dir), key_env, log, now, clock)
+    def __init__(self, client, state_dir: Path, key_env: str, log, now=_now, clock=time.monotonic, sleep=time.sleep):
+        self.client, self.state_dir, self.key_env, self.log, self.now, self.clock, self.sleep = (
+            client, Path(state_dir), key_env, log, now, clock, sleep)
         self.deadline = clock() + KEY_CHECK_S
         self.done = False
+        self.thread: threading.Thread | None = None
         self.record(None, f"waiting for llama-swap to answer, for {KEY_CHECK_S:g} s at most")
+
+    def start(self) -> None:
+        """Runs the check in a daemon thread, which ends with its answer; the brake runs on meanwhile."""
+        self.thread = threading.Thread(target=self.run, name="start-check", daemon=True)
+        self.thread.start()
+
+    def run(self) -> None:
+        while True:
+            self.ask()
+            if self.done:
+                return
+            self.sleep(KEY_CHECK_RETRY_S)
 
     def ask(self) -> None:
         if self.done:
@@ -345,6 +364,8 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
               log=print, now=_now, once: bool = False, start_check: StartCheck | None = None) -> None:
     brake = _Brake(registry, client, state_dir, log, now)
     brake.check_state_dir()
+    if start_check is not None:
+        start_check.start()
     while True:
         try:
             mem = read_mem()
@@ -353,8 +374,6 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
         else:
             brake.once.cleared("memory", "brake: memory reads again")
             brake.poll(mem)
-        if start_check is not None:
-            start_check.ask()
         if once:
             return
         pause = registry.brake.poll_ms / 1000
@@ -388,8 +407,11 @@ def run(args: argparse.Namespace) -> int:
     if args.release:
         return release(paths.STATE)
 
+    lines = threading.Lock()  # the start check logs from its own thread: one whole line at a time
+
     def log(line: str) -> None:
-        print(line, flush=True)
+        with lines:
+            print(line, flush=True)
 
     try:
         registry = load_registry(paths.REGISTRY)
@@ -401,7 +423,8 @@ def run(args: argparse.Namespace) -> int:
     # 2 s, not the default 10: a hung llama-swap must not hold a tick that acts on memory it just read.
     client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=2)
     # Only the brake that keeps running checks its key: a --once run, such as a drill's with another key, would
-    # replace the unit's record with its own.
-    start_check = None if args.once else StartCheck(client, paths.STATE, args.key_env, log)
+    # replace the unit's record with its own. The check asks from its own thread, with a client of its own.
+    start_check = None if args.once else StartCheck(LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env),
+                                                              timeout=2), paths.STATE, args.key_env, log)
     run_brake(registry, client, paths.STATE, log=log, once=args.once, start_check=start_check)
     return 0
