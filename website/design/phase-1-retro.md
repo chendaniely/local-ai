@@ -19,7 +19,7 @@ ledger.
 
 | Piece | What it is | Where |
 |---|---|---|
-| The `spark` CLI, grown | The registry loader, the launch check and the brake's hold, a llama-swap client, and `spark brake`, `status`, `render`, `apply`, `models pull`, `clients` and `doctor`. 873 tests, from Phase 0's 109. | `spark/` |
+| The `spark` CLI, grown | The registry loader, the launch check and the brake's hold, a llama-swap client, and `spark brake`, `status`, `render`, `apply`, `models pull`, `clients` and `doctor`. 906 tests at the close, from Phase 0's 109. | `spark/` |
 | The registry and render | `stack/models.yaml` renders into llama-swap's config, the systemd units and the Compose project. Render refuses, with the reason, an edit that rebinds an engine off 127.0.0.1, puts a key in a command, downloads a model, overrides a setting it derives, or loads a file outside the pinned snapshot. llama-server always runs `--offline`, `--no-slots` and `--no-webui`. | `stack/` · `spark/src/spark/render.py` |
 | Deploy with root's own copies | `make apply` stages; `make install-units` (sudo) shows the diff and installs root's copies; `make apply-now`, `make pull`, `make brake-release`, `make clients`, `make tunnel`. The polkit rule starts, stops and restarts the four units by name, and nothing more. | [Deploy the stack](../how-to/deploy.md) · `Makefile` |
 | The minimal brake and the launch check | `spark launch` refuses a load that doesn't fit, or while the brake holds, and says by how much. `spark brake` holds new loads and unloads, on-demand first, below 20 GiB; at start it checks that llama-swap takes its key. | plan.md, *Admission and memory rules* |
@@ -49,7 +49,7 @@ upgrade half is weak evidence: apt moved no library the engines use and no Docke
 | 2026-09-26 | Spark | Tasks 1–10, subagent-driven: `3a55a7f..1e5152b`, 83 commits, 46 of them `fix`. Task 1 first ran on a smaller model, which took its own harness's trailer; Dan had it redone on Opus, and every subagent since ran on Opus. Per task: an implementer whose first commit is the listing byte for byte, a review, fix rounds, a scoped re-review, then a plan record (*Superseded* notes, dated corrections, a Revisions line). Before Tasks 9 and 10, a read-only scan ran each brief on a scratch copy first, and its rulings went into the dispatch. 15 fix rounds in all, two Criticals (Tasks 4 and 7); 109 tests became 822. |
 | 2026-09-27 | Spark | The push point: Dan's seven-day window (`7170a52`); an audit of every command's label, 38 fixes; the first push, with CI green. Task 11, run by the session itself: the engines at their pins, and `agent` reaches the GPU. Task 12: Dan re-ran bootstrap and ran `make apply`, which Claude Code's auto-mode classifier refused the session, then `make install-units` and `make pull`. The GRUB check passed. `1e5152b..f31b84f`. |
 | 2026-09-28 | Spark, Dan | Tasks 13–15 (`f31b84f..fb96c8d`): the stack started, first footprints, task calls without thinking; the phone, where a photo aborted Gemma's engine until its micro-batch grew; pi on the Mac and as `agent`. Task 16's drills, then Dan's full-context decision, whose review found 7 Important and took two fix rounds against llama.cpp's source; deployed and checked (`fb96c8d..ce9df60`). |
-| 2026-09-28 | Spark | Task 17: a council of four read-only reviewers (0 Critical, 15 Important, 37 Minor, 17 decisions for Dan). Batch A fixed what needed no decision: `ce9df60..8c48549`, 17 commits, 873 tests. Dan decided the rest that evening. Batch B, the code for four of his decisions, was going in as this page was written; its first three commits are `8c48549..fa18819`. |
+| 2026-09-28 | Spark | Task 17: a council of four read-only reviewers (0 Critical, 15 Important, 37 Minor, 17 decisions for Dan). Batch A fixed what needed no decision: `ce9df60..8c48549`, 17 commits, 873 tests. Dan decided the rest that evening. Batch B, the code for two of his decisions and two of the session's rulings, followed (`8c48549..9a03b15`), then a follow-up of five minor fixes and the close's own commits. Its logging change was reversed before the deploy, by Dan, once the final review found whisper's file names and metadata would reach the journal. |
 
 Of the 144 commits, 57 are `fix`, 15 `feat`, 68 `docs` and 4 `build`. The ranges are git's `A..B`:
 the commits after `A`, up to and including `B`.
@@ -165,34 +165,38 @@ Proposals: promoting any of them to `CLAUDE.md`, as *Lessons from Phase 0* were,
 **Dan's decisions at Phase 1's close (2026-09-28),** as the session recorded them. plan.md's
 forward look, 2026-09-28, records them with their reasons.
 
-- *Now, in Phase 1:* render allows only listed engine options; llama-swap sends the engines' output
-  to the journal; earlyoom follows the brake, with resident engines at `oom_score_adj` 900 and
-  on-demand ones at 1000; the brake's floor tolerance becomes 1.0 GiB, and `GRACE_S` stays 15 s;
-  the brake checks its own key at start (built in batch A).
-- *In Phase 2:* llama-swap's port moves to a Unix socket with the gate; swap and swappiness are
-  measured at the real thresholds first; `agent`'s GPU jobs get an OOM score before `agent` runs
-  GPU work; pi 0.87.1 for `agent` after a deliberate test.
+- *Now, in Phase 1:* render allows only listed engine options.
+- *Reversed before it was deployed:* llama-swap sending the engines' output to the journal. The
+  check behind it had missed whisper, which logs each upload's file name and its metadata. Phase 2
+  revisits it with a check that covers speech.
+- *In Phase 2:* llama-swap's port moves to a Unix socket with the gate; the engines and the pull
+  get a user of their own; swap and swappiness are measured at the real thresholds first;
+  `agent`'s GPU jobs get an OOM score before `agent` runs GPU work; pi 0.87.1 for `agent` after a
+  deliberate test; systemd sandboxing for the stack's units and `cap_drop` for the web containers.
 - *Dropped:* `make deploy` from the Mac.
 - *Kept:* the seven-day window, which now covers pins set by hand as well.
 - *S09* is verified on Task 14's phone pass, with the context change's settings checked in the
   Mac's browser.
-- *Dependabot's* PRs #1–#3 merge on the Mac after Phase 1's merge.
+- *Dependabot's* PRs #1–#3 merge on the Mac after Phase 1's merge (Task 18 Step 7).
 - *Phase 1 closes* on the upgrade drill's weak evidence.
 - *Every model stays at its full context,* the embedding model's 32,768 included. The settings that
   would save memory are revisited when more models are fitted.
 
-The ledger records the council's other recommendations as accepted as written, among them that
-llama.cpp follows its formal releases and that alerts wait for Phase 2's ntfy.
+**Rulings at the close, from the council**, which Dan didn't decide himself: earlyoom follows the
+brake, with resident engines at `oom_score_adj` 900 and on-demand ones at 1000; the brake's floor
+tolerance becomes 1.0 GiB, and `GRACE_S` stays 15 s; the brake checks at start that llama-swap
+takes its key (batch A). The council's other recommendations, that llama.cpp follows its formal
+releases and that alerts wait for Phase 2's ntfy, went unchallenged; they were never put to Dan as
+decisions.
 
-**Still to do before the merge.** Batch B, then its deploy: `make apply`, `make install-units` (the
-unit comments changed), `make apply-now`. Until the new brake has run its start check,
-`make doctor` fails its `stack units` line. Then the changelog and README entries, and an earlyoom
-dry run for the new order, untested on the box until then. Task 17's scenario statuses, and its
-private findings, which go to the vault through Dan. Task 18: CI's render step, and the whole
-suite's first run on a Mac (the folder fsync on APFS, bash 3.2, make 3.81, the environment each
-test builds) along with pi.md's two Mac blocks. Then the merge; after it, the Spark's and
-`agent`'s clones move to `main`, and the first Friday's Dependabot run gets read. Goal-fit m7,
-`CLAUDE.md`'s "waits for idle or asks", which batch A couldn't change, goes in with the close.
+**Still to do before the merge** (as of the close's last commits). The deploy of the council's
+fixes: `make apply`, `make install-units` (the unit comments changed), `make apply-now`; until the
+new brake has run its start check, `make doctor` fails its `stack units` line. Then Task 17 Step
+2's checks, an earlyoom dry run for the new order among them, and the changelog and README
+entries. Task 17 Step 3's private findings, which go to the vault through Dan. Task 18: CI's render
+step, and the whole suite's first run on a Mac (the folder fsync on APFS, bash 3.2, make 3.81, the
+environment each test builds) along with pi.md's two Mac blocks; the merge; then Dependabot's PRs
+#1–#3, and the Spark's and `agent`'s clones move to `main`.
 
 **Pending on the box, for Dan.** `agent`'s uv (0.12.19) onto the 0.12.18 pin, or the pin moves.
 Whether the first `gh` login's authorization was revoked, and whether the Mac's npm-installed pi
@@ -305,6 +309,13 @@ code: a quoted `"false"` and a test that warn sits above brake (Task 1's redo, `
 (`548ab5c`). A sixth, render's incomplete denylist, gave way to Dan's allowlist. Of the forward
 items, the Node entry and the Mac's pi in the records went in with batch A, and pi's `400`s on
 Gemma at 16,384 tokens a slot ended with the full context.
+
+**From the final review (2026-09-28),** small, code-level, deferred: a doctor check that reads
+earlyoom's order (today the dry run is the only check); a value check for whisper-server's
+`--tmp-dir`, which the allowlist lets through and whisper-server passes to `/bin/sh` inside
+double quotes; three surviving mutants in the start check's tests (`flush=True`, `daemon=False`,
+the log lock); and doctor treating a start check still "waiting" long after `KEY_CHECK_S` as
+stopped, so a thread that dies can't leave that state for good.
 
 ## Starting over
 

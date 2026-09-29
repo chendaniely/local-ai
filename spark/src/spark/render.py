@@ -222,12 +222,13 @@ def llama_swap_config(registry: Registry) -> dict:
         "globalTTL": 0,
         "startPort": 5800,
         "logLevel": "info",
-        # The engines' output to the journal as well as the proxy's, so a refused start's reason (`spark launch`'s
-        # stderr) and an engine's crash outlive llama-swap's in-memory buffer, which every restart wipes (Dan's
-        # decision, 2026-09-28, from Phase 1's council). v257's values are proxy (its default), upstream, both and
-        # none: the enum in its embedded config-schema.json, which its config.example.yaml repeats. At default
-        # verbosity the engines log no prompt text (checked 2026-09-28), and the allowlist keeps logging options out.
-        "logToStdout": "both",
+        # Only llama-swap's own lines reach the journal: the engines' output, a refused start's reason (`spark
+        # launch`'s stderr) and an engine's crash included, stays in its in-memory buffer, which every restart wipes.
+        # v257's values are proxy (its default), upstream, both and none: the enum in its embedded
+        # config-schema.json. Dan's decision, 2026-09-28, reversing the same day's "both" before it was deployed:
+        # whisper-server logs each upload's file name and its ffmpeg conversion's metadata report, which the journal
+        # would keep. Phase 2 revisits it with a check that covers speech.
+        "logToStdout": "proxy",
         "apiKeys": [f"${{env.{name}}}" for name in KEY_ENVS],
         "models": models,
         "routing": {"router": {"use": "group", "settings": {"groups": {"stack": {

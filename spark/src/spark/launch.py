@@ -64,7 +64,7 @@ def record_refusal(state: Path, model: str, reason: str) -> None:
         tmp.write_text(json.dumps({"at": at, "model": model, "reason": reason}))
         os.replace(tmp, path)
     except OSError:
-        pass  # the reason still reaches llama-swap through stderr, and its journal (logToStdout: both)
+        pass  # the reason still reaches llama-swap through stderr, and its in-memory buffer
 
 
 def check_refusal(state: Path) -> tuple[dict | None, str | None]:

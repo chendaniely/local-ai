@@ -85,12 +85,13 @@ def test_the_group_never_evicts_and_holds_every_model():
     assert cfg["captureBuffer"] == 0
 
 
-def test_llama_swap_logs_the_engines_output_to_the_journal_too(files):
-    # Dan's decision (2026-09-28, from Phase 1's council, toolstack I3 and D3). At v257's default, "proxy", an engine's
-    # output, a refused start's reason and a crash's cause included, reaches only an in-memory buffer that every restart
-    # wipes. "both" is v257's value for the proxy's lines and the engines' together: the enum in its embedded
-    # config-schema.json (proxy, upstream, both, none), which its config.example.yaml repeats.
-    assert yaml.safe_load(files["llama-swap.yaml"])["logToStdout"] == "both"
+def test_llama_swap_keeps_the_engines_output_out_of_the_journal(files):
+    # Dan's decision (2026-09-28, at Phase 1's close), reversing the same day's "both" before it was deployed:
+    # whisper-server v1.9.4 logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which
+    # the journal would keep. So llama-swap stays at v257's default, "proxy": an engine's output, a refused start's
+    # reason included, reaches only an in-memory buffer that every restart wipes. Pinned, so a change is deliberate;
+    # Phase 2 revisits it with a check that covers speech.
+    assert yaml.safe_load(files["llama-swap.yaml"])["logToStdout"] == "proxy"
 
 
 LOGGING = [  # (the model, an engine option that would log what a model is sent), each refused by the allowlist
@@ -102,8 +103,8 @@ LOGGING = [  # (the model, an engine option that would log what a model is sent)
 
 @pytest.mark.parametrize("model, flag", LOGGING)
 def test_args_may_not_turn_up_an_engines_logging(tmp_path, model, flag):
-    # With logToStdout "both", what an engine logs goes to the journal, which keeps it. At default verbosity the engines
-    # log no prompt text (checked 2026-09-28); these options would change that.
+    # These options would make an engine log what a model is sent, to llama-swap's buffer now and to the journal if
+    # llama-swap's logging ever moves there; the allowlist refuses them either way.
     path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend([flag, "5"]))
     with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set {re.escape(flag)}: {UNLISTED}"):
         rendered(path)

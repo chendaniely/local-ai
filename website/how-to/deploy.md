@@ -259,16 +259,15 @@ make logs s=llama-swap
 account is told the brake's state is unknown to it.
 
 `make status` shows only the last refusal, and the next load that starts clears it. llama-swap's
-journal keeps them all: llama-swap sends the engines' output there with its own
-(`logToStdout: both`, from Phase 1's council, 2026-09-28), so `make logs s=llama-swap` also shows
-`spark launch`'s `spark: not starting <model>: <reason>` line, and the error an engine prints when
-it crashes.
-Before that change the journal had only llama-swap's `starting <model> failed: upstream command
-exited prematurely`. `make logs` shows the last 100 lines. To list every refusal the journal
-holds, **on the Spark**:
+journal has only its own line for one, `starting <model> failed: upstream command exited
+prematurely`: the engines' output, `spark launch`'s `spark: not starting <model>: <reason>` line
+and an engine's crash included, stays in llama-swap's in-memory buffer, which every restart of
+llama-swap wipes (Dan's decision, 2026-09-28: whisper-server logs each upload's file name and its
+metadata, which the journal would keep). To read the refusals the buffer still holds,
+**on the Spark**:
 
 ```bash
-journalctl -u local-ai-llama-swap.service -g 'not starting' --no-pager
+curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization: Bearer $SPARK_API_KEY" | grep -a 'not starting'
 ```
 
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,

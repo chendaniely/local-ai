@@ -42,7 +42,8 @@ date: 2026-09-23
 > close: its council reviewed the branch, and its fixes and Dan's decisions are committed; the
 > forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
 > **Now:** Dan deploys the fixes (`make apply`, `make install-units`, `make apply-now`), the Spark
-> session checks and records them, and then the switch to the Mac for **Task 18 [Mac]**.
+> session runs Task 17 Step 2's checks after it and records them, Dan files Step 3's private
+> findings in the vault, and then the switch to the Mac for **Task 18 [Mac]**.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7191,7 +7192,9 @@ above the hog's (`python3`), so the kernel and earlyoom would pick an engine bef
 the figures. The last line says whether memory went to swap. The box has a 16 GiB swap file, and
 earlyoom ignores swap (`-s 100,100`). Whether anonymous memory swaps out before `MemAvailable` reaches
 the brake is not yet known. Record the line; Task 17's forward look sets swap size and swappiness
-from it (plan.md, *To verify on the box*).
+from it (plan.md, *To verify on the box*). *(Decided 2026-09-28, at Task 17 (Dan): swap barely
+moved down to 45 GiB available, so swap and swappiness are measured at the real thresholds in
+Phase 2 first.)*
 
 - [x] **Step 4 [Spark, then Dan]: A fresh clone reproduces the deploy** — first, the Spark session
   runs leak-guards.md's [*Before every push*](../how-to/leak-guards.md#before-every-push) with
@@ -7339,7 +7342,8 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   26-token task call matched the chat's slot. llama-server gives a new prompt the slot whose cached
   start matches more than 10% of it (`--slot-prompt-similarity`, 0.10), and every Gemma prompt
   opens with the same few template tokens. So a very short new chat can take a long chat's slot,
-  as it could before this change. Task 17 weighs a higher threshold.)* *(Added 2026-09-28, from
+  as it could before this change. Task 17 weighs a higher threshold; it went to Phase 2's line,
+  to weigh with real traffic.)* *(Added 2026-09-28, from
   Phase 1's council: Step 1's `make doctor` went unrecorded here. It passed 15 of 15 on the
   deployed commit that evening, at 18:48.)*
 - [x] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
@@ -7354,7 +7358,8 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   list both chat models at 262,144 tokens. Dan's phone wasn't with him, so he checked S09's labels
   in the web UI in the Mac's browser, and found `max_tokens`, *Reasoning Effort* and
   *Context Compaction*. He keeps compaction off. The phone's own view waits for Task 17 Step 1,
-  which dates S09 from it.)*
+  which dates S09 from it. Decided at Task 17 (Dan): S09 is dated from Task 14's phone pass, and
+  the page keeps its "not yet checked on the phone" marker on these settings.)*
 - [x] **Step 4 [Spark]: Changelog, README; commit** — a `docs(machine)` commit records the
   readings in `changelog.md` and `README.md`.
 
@@ -7374,7 +7379,9 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   (the dates from Task 14). *(Corrected 2026-09-28: S09 has since gained the context change's
   claims about what the phone can change, which Task 14 didn't check. S09's date is that of the
   context change's phone check, below Task 16, and the page's "not yet checked on the phone" marker
-  comes out only once that check passes.)* S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
+  comes out only once that check passes. Superseded the same day by Dan's decision: S09 is dated
+  from Task 14's phone pass, and its marker stays on the settings checked only in the Mac's
+  browser.)* S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
   models first and that the idle-first order and notifications arrive in Phase 2. S23:
   `status: built`, with the date Task 16 Step 5's routine upgrade and reboot passed. It becomes
   `verified`, with that day's date, only once `make upgrade-gpu` has moved the set on a real
@@ -7387,7 +7394,14 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   session recorded; README §Contents still describes the `Makefile`, `spark/` and `stack/` rows as
   they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
   (`uv run --frozen --project spark spark docs stack --check`). The site render, `make docs`, is
-  Task 18's, on the Mac.
+  Task 18's, on the Mac. *(Added 2026-09-28: the council's fixes change the box once deployed, so
+  this step follows Dan's `make apply`, `make install-units` and `make apply-now`. **On the
+  Spark**, the session then checks that `make doctor` passes 15 of 15, its `stack units` line
+  covering the brake's start check; that `make status` shows the check passed; that `ps -o
+  pid=,user=,oomadj=,comm= -C llama-server,whisper-server` shows 900 for the residents and 1000 for
+  the coder once it loads; and that an engine no longer answers `/slots`. **[Dan, on the Spark]**
+  reruns Task 13 Step 5's earlyoom dry run, which should now pick the coder. Then `changelog.md`
+  and README §Current state record it.)*
 - [ ] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
   go to the vault's `zettelkasten/local-ai/` note, never to the repo. The session lists them in the
   chat, never in a file in the repo, and Dan files them in the vault.
@@ -7551,6 +7565,13 @@ not pre-commit. So leak-guards.md's
 `phase-1`, and `agent`'s pulls stop bringing anything new. **On the Spark**, as you and then **as
 `agent`**, each clone moves to `main`: `git switch main && git pull`. README's `agent` bullet,
 which says its clone is of `phase-1`, changes with it.)*
+
+- [ ] **Step 7 [Mac]: Dependabot's PRs** — *(added 2026-09-28, Dan's decision at Task 17)* once
+  `main` has Phase 1, merge Dependabot's PRs #1–#3 on github.com, one at a time, each only once its
+  CI is green: they change `.github/workflows/`, which is why they're the Mac's, and they are
+  merged or rebased, never squashed ([Updates](../how-to/updates.md)). Two are major versions of
+  GitHub Actions (setup-uv and checkout); #3 raises a floor in `spark/pyproject.toml`. Then **on
+  the Spark**, `git pull`.
 
 ***
 

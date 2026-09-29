@@ -11,6 +11,10 @@ upgrade day, and a package of the set you have just installed, until `make hold-
 ([Installing something new](#any-time-apt)). Everything that needs care waits for **upgrade day, on
 Saturdays**. Skipping one is fine; the next one catches up.
 
+A version set by hand in `stack/versions.yaml`, whatever its row below, moves only to a release at
+least seven days old, unless an urgent fix needs it sooner, and the commit then says so (Dan's
+decision, 2026-09-28; `CLAUDE.md`, *Building it*).
+
 | What | Comes from | When and how it updates |
 |---|---|---|
 | Everything else from apt | apt | Any time: `sudo apt update && sudo apt upgrade` |
@@ -421,7 +425,8 @@ wait, so one for a release younger than a week fails to lock until then.
 ## Upgrade day: gitleaks
 
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its
-[releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version:
+[releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version at least
+seven days old (the rule above the table):
 
 1. **On the Mac**, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
    `.github/workflows/ci.yml`, the URL in the "download gitleaks" step and the `linux_x64` checksum
