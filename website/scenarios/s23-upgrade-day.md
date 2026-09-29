@@ -22,11 +22,12 @@ GRUB will boot that kernel: its menu's first entry is that kernel, and nothing p
 does by default, but that is not yet checked on this box. *(Checked 2026-09-27, in Phase 1's Task
 12: it does. Installing a kernel rebuilds the menu, so every upgrade day still checks.)* After the
 reboot the stack comes back by itself, and `make doctor` confirms it: the GPU on the new driver, the
-running kernel's modules held, a model loaded end to end. Doctor never loads whisper-server, which was built on the box against the
-system's CUDA, so I also check that it still finds its libraries (Updates, step 7; added
-2026-09-27, from Phase 1's Task 11). Dependabot's PRs are merged or rebased, never squashed. (Corrected
-2026-09-25: this said `make upgrade-gpu` runs all but the GRUB check, which I would run myself
-before it and again before the reboot. Dan decided that it runs the check itself.)
+running kernel's modules held, a model loaded end to end. Doctor never loads whisper-server, which
+was built on the box against the system's CUDA, so I also check that it still finds its libraries
+(Updates, step 7; added 2026-09-27, from Phase 1's Task 11). Dependabot's PRs are merged or rebased,
+never squashed. (Corrected 2026-09-25: this said `make upgrade-gpu` runs all but the GRUB check,
+which I would run myself before it and again before the reboot. Dan decided that it runs the check
+itself.)
 
 *(Added 2026-09-28, from Phase 1's council:* a routine upgrade that moves Docker stops its
 containers, and the web services may not come back by themselves, which `make doctor`'s

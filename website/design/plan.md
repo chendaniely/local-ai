@@ -111,7 +111,7 @@ In order of how much they constrain the design:
 | **`stack/versions.yaml`** | repo | every pin (image digest; tag + sha256) plus docs URL, context7 ID, changelog and advisory feed → generates the site's Stack page and the doc pointers in `CLAUDE.md`. |
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
-| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
+| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
 | **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
@@ -634,7 +634,11 @@ Each item gets its own design pass when its turn comes.
   unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
   time (read in its source), so a fast fall — about 2 GiB/s with a 6 s stop, 1 GiB/s with a 10 s
   one, in the reviews' simulations — reaches earlyoom's 12 GiB line before the brake has freed
-  enough. →
+  enough. (Added 2026-09-28, from Phase 1's council: measured cold loads fall faster than those
+  simulations. In Task 13, Gemma took 17.6 GiB in 9 s and the coder 26.4 GiB in 10 s, about 2.0
+  and 2.6 GiB/s; at full context Gemma took 24.7 GiB in about 5 s, timed to the whole second. So
+  the 8 GiB between the brake and earlyoom can go in about 1.6 to 4 s, which Phase 2's rate-of-fall
+  design starts from.) →
   earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
   `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
   `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
@@ -702,7 +706,15 @@ Each item gets its own design pass when its turn comes.
   llama.cpp). Phase 1's pull left 43 GiB of page cache on this box, with 75 GiB free (`free -g`,
   2026-09-27). At the registry's estimates, Phase 1's four models fit in the free part, so its
   loads are unlikely to test it. Still to decide, once a load on a full cache has been watched: nothing, E.1's drop-caches
-  loop during a load, or a check against `MemFree` plus what can be dropped.
+  loop during a load, or a check against `MemFree` plus what can be dropped. (Added 2026-09-28,
+  from Phase 1's council: a new reading, with Gemma, the embedding model and the coder loaded,
+  shows `MemFree` at 14.1 GiB and `MemAvailable` at 53.2, 38.2 GiB of it inactive file pages, most
+  likely the model files, which the engines read through the page cache. The loads recorded so
+  far started with more free memory than they took, Task 13's with 70 GiB free, so E.1's slow
+  reclaim is still untested here. Three more options: `--load-mode dio`, which keeps the model
+  files out of the page cache at the cost of slower reloads; `spark launch` noting on stderr when
+  a footprint exceeds `MemFree`, so the first load that needs reclaim is on record; and a Phase 2
+  drill that fills the page cache with a large file, then loads the coder.)
 - **To verify on the box:** ~~`121` vs `121a-real`~~ (resolved 2026-09-28: `121a-real` builds
   native `sm_121a` code that runs here; no `121` build was made; see Revisions); ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
   as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
@@ -1133,6 +1145,9 @@ Each item gets its own design pass when its turn comes.
   undone. It also corrects what Dependabot's uv PRs change: `spark/pyproject.toml` as well as the
   lock, so a PR could widen the `huggingface_hub<2` cap. *Weekly upgrade day* gains the correction.
   A test that ties the code's version-specific assumptions to `stack/versions.yaml` waits.
+- **2026-09-28** — From Phase 1's council (reliability, goal-fit), doc truth only. *Page cache and
+  the launch check* gains a new reading and three options; *The minimal brake's reach* gains the
+  measured rates of fall; the llama-swap row says Phase 1's apply refuses rather than waits.
 
 ## Sources
 

@@ -3,6 +3,13 @@ title: "A scratch model to tinker with"
 description: "Temporary: build llama.cpp in your home folder, serve one model, and use it from the Mac through an SSH tunnel — until Phase 1's stack replaces it."
 ---
 
+*(Added 2026-09-28, from Phase 1's council: Phase 1's stack now serves models, so this page's
+premise is gone. A scratch model loads around the launch check, which nothing may do while the
+stack's models share the memory. Until Phase 2's `spark try` replaces it, use it only with
+llama-swap stopped, **on the Spark** `systemctl stop local-ai-llama-swap`, which stops every
+model. The brake can't unload a scratch model: if memory falls below its line, it holds the
+stack's loads until `make brake-release`, and earlyoom stays the only net.)*
+
 This is **not the stack**. It is a model you run by hand to tinker with while Phase 1 is being
 built. It lives in `~/scratch`, runs as you, and needs no sudo and no new packages. Delete it when
 Phase 1 serves models ([Clean up](#clean-up)).

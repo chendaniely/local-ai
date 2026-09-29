@@ -34,8 +34,10 @@ date: 2026-09-23
 > for `agent`, whose Claude Code got the secrets guard before its key. Task 16 ran the drills:
 > the brake held and unloaded the coder, a load that didn't fit was refused, a fresh clone matched
 > the deploy, and the stack kept serving through a routine upgrade and came back by itself after
-> a reboot. **Next:** Dan's decision of 2026-09-28, every model at its maximum context, with
-> Gemma's two slots sharing one pool; then **Task 17 [Spark],** Phase 1's close.
+> a reboot. Then Dan's decision of 2026-09-28, every model at its maximum context, with Gemma's
+> two slots sharing one pool, was built, deployed and checked, below Task 16. **Now: Task 17
+> [Spark],** Phase 1's close, is under way: its council has reviewed the branch, and the fixes that
+> need no decision of Dan's are going in.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7327,7 +7329,9 @@ curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization:
   26-token task call matched the chat's slot. llama-server gives a new prompt the slot whose cached
   start matches more than 10% of it (`--slot-prompt-similarity`, 0.10), and every Gemma prompt
   opens with the same few template tokens. So a very short new chat can take a long chat's slot,
-  as it could before this change. Task 17 weighs a higher threshold.)*
+  as it could before this change. Task 17 weighs a higher threshold.)* *(Added 2026-09-28, from
+  Phase 1's council: Step 1's `make doctor` went unrecorded here. It passed 15 of 15 on the
+  deployed commit that evening, at 18:48.)*
 - [x] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
   the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so
@@ -7526,6 +7530,11 @@ not pre-commit. So leak-guards.md's
 [*Before every push*](../how-to/leak-guards.md#before-every-push) comes next, with `main` as
 `<branch>`. Then **Dan OKs** `git push origin main`. The merge brings Step 2's workflow change into
 `main`, which is why it is the Mac's; Step 5 saw CI green with it first.
+
+*(Added 2026-09-28, from Phase 1's council:* after the merge, the clones on the Spark still track
+`phase-1`, and `agent`'s pulls stop bringing anything new. **On the Spark**, as you and then **as
+`agent`**, each clone moves to `main`: `git switch main && git pull`. README's `agent` bullet,
+which says its clone is of `phase-1`, changes with it.)*
 
 ***
 
