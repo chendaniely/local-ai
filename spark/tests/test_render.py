@@ -236,9 +236,66 @@ def test_args_may_not_set_a_flag_render_owns(tmp_path, model, args):
     assert value not in str(err.value)
 
 
-def test_a_flag_that_only_starts_like_an_owned_one_is_left_alone(tmp_path):
-    path = registry_with(tmp_path, lambda d: d["models"]["vision-chat"]["args"].append("--mmproj-offload"))
-    assert "--mmproj-offload" in yaml.safe_load(rendered(path)["llama-swap.yaml"])["models"]["vision-chat"]["cmd"]
+# Dan's decision (2026-09-28, from Phase 1's council, security D1): a registry's args may set only the engine options on
+# render's list. Before it, render refused only what it knew to refuse, and a flag that only started like an owned one,
+# such as --mmproj-offload, went through.
+
+UNLISTED = "render allows only the engine options on its list"
+
+
+@pytest.mark.parametrize("model, args", [
+    pytest.param("vision-chat", ["--mmproj-offload"], id="only starts like an owned flag"),
+    pytest.param("coder", ["--path", "/etc/local-ai/secrets"], id="--path"),  # serves a folder, unkeyed
+    pytest.param("coder", ["--agent"], id="--agent"),  # every built-in tool, a shell command's included
+    pytest.param("coder", ["--media-path", "/var/lib/local-ai"], id="--media-path"),  # reads files from a folder
+    pytest.param("coder", ["--path=/etc/local-ai/secrets"], id="--path=value"),
+    pytest.param("stt", ["--public", "/etc/local-ai/secrets"], id="whisper.cpp --public"),
+    pytest.param("stt", ["--load-mode", "none"], id="a llama.cpp option, given to whisper.cpp"),
+])
+def test_args_may_set_only_a_listed_option(tmp_path, model, args):
+    # Refused, naming the flag as written and never its value, and saying how a flag gets on the list.
+    path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend(args))
+    flag = args[0].split("=")[0]
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set {re.escape(flag)}: "
+                                          f"{UNLISTED}.*check what it does") as err:
+        rendered(path)
+    assert "secrets" not in str(err.value) and "/var/lib" not in str(err.value)
+
+
+@pytest.mark.parametrize("model, flag, reason", [
+    ("coder", "--host", "binds every engine to 127.0.0.1"), ("coder", "--api-key", "an engine takes no key"),
+    ("coder", "--hf-repo", "pinned revision"), ("coder", "--ctx-size", "render sets it"),
+    ("vision-chat", "--kv-unified-per-slot", "share its whole context"), ("stt", "--port", "binds every engine"),
+])
+def test_a_refused_flag_keeps_its_own_reason(tmp_path, model, flag, reason):
+    # The refusals are checked before the list, so a flag that is refused for a reason says that reason.
+    path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend([flag, "1"]))
+    with pytest.raises(RenderError, match=f"^{re.escape(model)}: args may not set {re.escape(flag)}: ") as err:
+        rendered(path)
+    assert reason in str(err.value) and UNLISTED not in str(err.value)
+
+
+def test_every_spelling_of_a_listed_option_is_taken(tmp_path):
+    # Each spelling b11146's and v1.9.4's --help give, on a model of that engine.
+    for engine, model in (("llama.cpp", "coder"), ("whisper.cpp", "stt")):
+        for group in spark.render.ALLOWED[engine]:
+            for spelling in group:
+                path = registry_with(tmp_path, lambda d: d["models"][model]["args"].extend([spelling, "1"]))
+                cmd = yaml.safe_load(rendered(path)["llama-swap.yaml"])["models"][model]["cmd"].split()
+                assert cmd[-2:] == [spelling, "1"], (engine, spelling)
+
+
+@pytest.mark.parametrize("path", [FIX / "models.yaml", ROOT / "stack/models.yaml"], ids=["fixture", "real"])
+def test_every_option_the_registry_sets_is_on_the_list(path):
+    # So adding a flag to a registry fails here, as well as in render, until the flag is on the list.
+    registry = load_registry(path)
+    listed = {engine: {spelling for group in groups for spelling in group}
+              for engine, groups in spark.render.ALLOWED.items()}
+    for name, model in registry.models.items():
+        engine = "whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"
+        for word in model.args:
+            if word.startswith("-"):
+                assert word.split("=", 1)[0] in listed[engine], (name, word)
 
 
 DOWNLOADS = [  # every option llama-server b11146 takes that fetches weights at start (common/arg.cpp), all spellings
@@ -307,7 +364,7 @@ def test_args_may_not_cap_a_slots_share_of_the_pool(tmp_path, model):
 FILLED_IN = [  # (the edit, the model it lands in, what llama-swap would fill in). The registry refuses one in a source
     # file (test_registry.py), so the engines' paths carry it here. registry_with writes models in name order, so coder
     # is the first llama.cpp model.
-    pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--alias", "${env.LLAMASWAP_KEY_SPARK}"]),
+    pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--spec-type", "${env.LLAMASWAP_KEY_SPARK}"]),
                  "coder", "${env.LLAMASWAP_KEY_SPARK}", id="an arg"),
     pytest.param(lambda d: d["engines"].update({"llama.cpp": "/opt/${env.LLAMASWAP_KEY_AGENT}/llama-server"}),
                  "coder", "${env.LLAMASWAP_KEY_AGENT}", id="llama.cpp's path"),
@@ -332,8 +389,8 @@ def test_a_role_is_never_filled_in(tmp_path):
 
 SPLIT = [  # (the edit, the model it lands in): each word would reach the engine as other words. The registry refuses
     # these in a source file or projector (test_registry.py), so the engines' paths carry them here.
-    pytest.param(lambda d: d["models"]["coder"]["args"].extend(["--ho\\st", "0.0.0.0"]), "coder",
-                 id="a backslash"),  # --ho\st is --host once llama-swap unescapes it
+    pytest.param(lambda d: d["models"]["stt"]["args"].extend(["\\--host", "0.0.0.0"]), "stt",
+                 id="a backslash"),  # \--host is --host once llama-swap unescapes it: a flag the lists read as a value
     pytest.param(lambda d: d["engines"].update({"whisper.cpp": "/opt/local-ai/bin/whisper-server --host 0.0.0.0"}),
                  "stt", id="whitespace"),
     pytest.param(lambda d: d["engines"].update({"llama.cpp": '/opt/local-ai/bin/"llama-server"'}), "coder",

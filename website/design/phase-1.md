@@ -107,7 +107,9 @@ Tailscale serve · pi 0.85.1.
   one (Task 2). (Corrected 2026-09-26: this said no engine holds a key at all. Engines run as
   `spark`, as llama-swap does, so a compromised one can still read the keys, from `llama-swap.env`
   and from llama-swap's own `/proc` environment. Task 17's security review decides whether engines
-  get a user of their own: Dan's decision, 2026-09-26.)
+  get a user of their own: Dan's decision, 2026-09-26.) (Decided 2026-09-28, from Phase 1's
+  council: that user is Phase 2's, with the gate. Meanwhile render allows a registry's `args` only
+  the engine options on its list: plan.md, *Engines share llama-swap's user*.)
 - llama-swap silently ignores unknown config keys — every config change is followed by a start and
   `GET /running`, not just `-validate`.
 - **On the Spark, a key never goes on a command line.** Every user can read `/proc/*/cmdline`, and

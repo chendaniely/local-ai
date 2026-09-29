@@ -25,10 +25,11 @@ UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-comp
 # installs the rendered units and Compose project there, and `spark apply` only stages them.
 UNIT_DIR = "/etc/systemd/system"
 COMPOSE_DIR = "/etc/local-ai/compose"
-# Flags a registry's args may not set: an engine takes the last value a flag is given, and args come after render's
-# own. That is every flag render passes a model (read from the command engine_cmd builds, so the list can't drift)
-# and every flag in REFUSED, each in all its spellings. Keys stay out of commands because llama-swap shows each whole
-# at GET /running, and the process list shows an engine's argv.
+# A registry's args may set only the options in ALLOWED, below; any other is refused. Some are refused with a reason
+# of their own, checked first: an engine takes the last value a flag is given, and args come after render's own, so
+# args may not set a flag render passes a model (read from the command engine_cmd builds, so the list can't drift),
+# nor one in REFUSED, each in all its spellings. Keys stay out of commands because llama-swap shows each whole at
+# GET /running, and the process list shows an engine's argv.
 # Each engine's spellings of a flag, from its own option table: llama.cpp b11146's common/arg.cpp (the options
 # llama-server takes) and whisper.cpp v1.9.4's examples/server/server.cpp. Every flag render passes has an entry,
 # even with one spelling, so a test fails until a flag it starts passing is looked up there; any other flag needs an
@@ -66,6 +67,22 @@ REFUSED = {
     },
     "whisper.cpp": {"--host": _BIND, "--port": _BIND, "--model": _FILES},
 }
+# The engine options a registry's args may set, each in every spelling its engine's --help gives (llama-server b11146,
+# whisper-server v1.9.4): what the registry and the test fixture set on 2026-09-28. Any other is refused, naming it
+# (Dan's decision, 2026-09-28, from Phase 1's council). A list of what to refuse can't keep up with the engines:
+# llama-server alone can serve a folder unkeyed (--path, --media-path), run built-in tools that include a shell
+# command (--agent, --tools), read any file its user can (--chat-template-file) and log at full verbosity (--verbose),
+# which can take in what it's sent; whisper-server can serve a folder (--public). A flag goes on this list only once
+# what it does is checked.
+ALLOWED = {
+    "llama.cpp": (
+        ("-lm", "--load-mode"), ("-ub", "--ubatch-size"), ("--image-max-tokens",),
+        ("-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"), ("--pooling",), ("--spec-type",), ("--spec-draft-n-max",),
+    ),
+    "whisper.cpp": (("-l", "--language"), ("--convert",), ("--tmp-dir",), ("-t", "--threads")),
+}
+_UNLISTED = ("render allows only the engine options on its list (ALLOWED, in spark/src/spark/render.py): check what "
+             "it does before adding it there")
 # llama-swap splits a command as a POSIX shell does, so a word with one of these reaches the engine as other words:
 # `--ho\st` as --host, `a.bin --host 0.0.0.0` as three.
 _SPLITS = re.compile(r"[\s'\"\\]")
@@ -97,10 +114,14 @@ def _flag(arg: str) -> str:
     return flag.replace("_", "-") if flag.startswith("--") else flag
 
 
+def _engine(model: Model) -> str:
+    return "whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"
+
+
 def _refused(model: Model, own: list[str]) -> dict[str, str]:
     """Every spelling of each flag `model`'s args may not set, with the reason: each flag in `own`, the words render
     itself passes the engine, and each flag in REFUSED."""
-    engine = "whisper.cpp" if model.engine == "whisper.cpp" else "llama.cpp"
+    engine = _engine(model)
     reasons = dict.fromkeys((word for word in own[1:] if word.startswith("-")), _SET)
     reasons.update(REFUSED[engine])
     spellings = {flag: group for group in SPELLINGS[engine] for flag in group}
@@ -137,10 +158,14 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
         if model.capability == "embeddings":
             cmd += ["--embedding"]
     refused = _refused(model, cmd)
+    allowed = {spelling for group in ALLOWED[_engine(model)] for spelling in group}
     for arg in model.args:
+        if not arg.startswith("-"):
+            continue  # a value; a flag hidden in one by an escape is refused later, as a word llama-swap would unescape
         flag = _flag(arg)
-        if flag in refused:  # named as written, without an =value: that could be a key
-            raise RenderError(f"{model.name}: args may not set {arg.split('=', 1)[0]}: {refused[flag]}")
+        why = refused.get(flag) or (None if flag in allowed else _UNLISTED)
+        if why:  # named as written, without an =value: that could be a key
+            raise RenderError(f"{model.name}: args may not set {arg.split('=', 1)[0]}: {why}")
     return cmd + list(model.args)
 
 

@@ -603,7 +603,15 @@ Each item gets its own design pass when its turn comes.
   llama-server's `--chat-template-file`, `--path` and `--media-path`, and whisper-server's
   `--public` and its `POST /load` (Task 6's review, 2026-09-26; `spark render`'s denylist doesn't
   cover them). → Phase 1's Task 17 security review decides whether engines get a user of their own
-  (Dan's decision, 2026-09-26), and whether render allows only listed engine options. The same
+  (Dan's decision, 2026-09-26), and whether render allows only listed engine options. (Decided
+  2026-09-28, Dan's decision from Phase 1's council: render allows only listed engine options. A
+  registry's `args` may set only the options on its list, `ALLOWED` in `spark/src/spark/render.py`,
+  in every spelling each engine's `--help` gives, and it refuses anything else, naming the flag and
+  saying to check what it does before adding it. The list holds what the registry and the test
+  fixture set that day, so `--chat-template-file`, `--path`, `--media-path`, `--agent`, `--tools`,
+  the logging options and whisper-server's `--public` are all refused; the refusals render had keep
+  their own reasons. whisper-server's `POST /load` is a request, not an option, and the list doesn't
+  reach it. A user of their own for the engines and the pull is Phase 2's, with the gate.) The same
   reach belongs to `spark models pull`, which runs as `spark` with network egress by design: its
   Python dependencies, huggingface_hub and the packages it brings, run with it (found 2026-09-26, in
   Phase 1 Task 8's review). → Task 17 decides the same for the pull. The pull's journal lines never
@@ -1166,6 +1174,11 @@ Each item gets its own design pass when its turn comes.
   on-demand one 1000, since a model's GPU memory isn't in its engine's RSS, and says on stderr when
   it can't set it. *To verify* notes the order, untested on the box until the next deploy's
   earlyoom dry run.
+- **2026-09-28** — From Phase 1's council (security), Dan's decision: render allows only listed
+  engine options. A registry's `args` may set only what the registry and the test fixture set that
+  day, in every spelling each engine's `--help` gives, and anything else is refused, naming the
+  flag, after the refusals render already had, which keep their reasons. *Engines share
+  llama-swap's user* gains the decision, and a user of their own for the engines moves to Phase 2.
 
 ## Sources
 

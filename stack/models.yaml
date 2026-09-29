@@ -1,5 +1,8 @@
 # The one file to edit to add, swap or retire a model. `spark render` refuses anything invalid,
 # including a model set that doesn't fit allocatable − reserve.
+# A model's `args` may set only the engine options on render's list, ALLOWED in
+# spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
+# An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).
 budget:
   allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
   reserve_gib: 24        # a load must leave this much MemAvailable free
