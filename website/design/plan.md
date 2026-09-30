@@ -533,7 +533,7 @@ beyond the repo's own code)
   skip flag, and telemetry is off; the doctor check, seen failing once, passes; the Spark is
   unchanged apart from the repo's own code and docs (`agent`'s home has no `.orca-remote`, checked
   read-only as `agent`).
-- *Shape:* a short plan of its own, `phase-1b.md`, and one reviewer at the close rather than a
+- *Shape:* a short plan of its own, [`phase-1b.md`](phase-1b.md), and one reviewer at the close rather than a
   council (Dan's decision, 2026-09-28). Its decisions went into this plan on 2026-09-30, from a Mac
   session in a separate worktree, at Dan's request.
 
