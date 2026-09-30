@@ -42,8 +42,9 @@ date: 2026-09-23
 > close: its council reviewed the branch, and its fixes and Dan's decisions are committed; the
 > forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
 > Dan deployed the fixes, and Task 17 Step 2's checks passed; Step 3's private findings went to Dan
-> in the chat, to file in the vault. **Now: the switch point, then Task 18 [Mac]:** CI's render
-> step, the Mac check, the site render, and the merge into `main` with Dan's OK.
+> in the chat, to file in the vault. On 2026-09-29 the Mac took over at the switch point, and Task
+> 18 Steps 1–4 are done: CI's render step, the Mac check and the site render. **Now: Task 18
+> Step 5 onward:** CI on the branch, the merge into `main` with Dan's OK, and Dependabot's PRs.
 > `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
 > still shows Phase 0, and the site shows whatever Dan last published by hand.
 
@@ -7471,10 +7472,11 @@ git commit -m "docs(plan): 🤖 close Phase 1: scenario statuses and the forward
 
 ## ⇄ Switch point — Spark → Mac
 
-- [ ] The Spark session runs leak-guards.md's
+- [x] The Spark session runs leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
   then **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
-  `git switch phase-1 && git pull`.
+  `git switch phase-1 && git pull`. *(Done 2026-09-29: the Spark pushed `b0a6b52`, CI green, and
+  the Mac pulled it.)*
 
 ***
 
@@ -7490,11 +7492,12 @@ Mac also runs, the Makefile's shared targets and the leak hooks, on bash 3.2 and
 - Modify: `.github/workflows/ci.yml` (CI renders the real registry); `README.md` (the MacBook's
   tools, under §Current state)
 
-- [ ] **Step 1: The Mac's tools** — README §Current state, *The MacBook — `heartsbane`*: the *The
+- [x] **Step 1: The Mac's tools** — README §Current state, *The MacBook — `heartsbane`*: the *The
   repo's tools* bullet gains Homebrew's coreutils, at the version `brew list --versions coreutils`
   prints (`brew install coreutils` first if it prints nothing), with the day you checked it: the
   bullet's "(all as of 2026-09-24)" dates only the tools it already lists. The install-units tests
-  run coreutils' `timeout`, and fail on a Mac without it.
+  run coreutils' `timeout`, and fail on a Mac without it. *(Done 2026-09-29: coreutils 9.12, already
+  installed.)*
 
 ```bash
 git add README.md
@@ -7502,7 +7505,7 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 2: CI renders the real registry** — add to `.github/workflows/ci.yml`'s `tests` job,
+- [x] **Step 2: CI renders the real registry** — add to `.github/workflows/ci.yml`'s `tests` job,
   after its `spark docs check-scenarios` step, the step Task 6 was written with:
 
 ```yaml
@@ -7510,9 +7513,9 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
 ```
 
   Run it as CI will, into a fresh folder: `uv run --frozen --project spark spark render --out
-  "$(mktemp -d)"` prints `render: 8 files → …`.
+  "$(mktemp -d)"` prints `render: 8 files → …`. *(Done 2026-09-29: it did, on the Mac.)*
 
-- [ ] **Step 3: The Mac check and the site** — `make test lint docs`. Expected: all pass, on bash
+- [x] **Step 3: The Mac check and the site** — `make test lint docs`. Expected: all pass, on bash
   3.2 and GNU make 3.81, and `make docs` renders with no warnings: the How-to listing shows
   deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). *(Added 2026-09-28, from
   Phase 1's council: and pi.md as step 8, since its section on `agent`'s secrets guard comes before
@@ -7535,7 +7538,11 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
   that version may read differently: `FAKE_DPKG_QUERY`'s `${format//"$abbrev"/"$st "}` relies on
   quote removal in a pattern substitution's replacement.)*
 
-- [ ] **Step 4: Commit**
+  *(Done 2026-09-29, on bash 3.2.57 and GNU make 3.81: 906 passed, none skipped; lint clean; the
+  site rendered with no warnings, the How-to listing shows deploy.md and pi.md, and* In order
+  *lists them as steps 7 and 8. No Mac difference turned up, so nothing here changed.)*
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
