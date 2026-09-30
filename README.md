@@ -9,12 +9,14 @@ Started 2026-09-23, on arrival of the Spark. The design was settled the same day
 first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
 2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
 on the Mac and as `agent`, behind a minimal brake and launch check.
-[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits.
+[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. Phase 1b, Orca
+and the web UI on the Mac, comes before it.
 
 ## Design in one line
 
 **Claude stays untouched** — Claude Code and Claude Desktop talk directly to Anthropic on my
-subscription, with nothing in the path. The Spark is a *second* mode: a model server for my own
+subscription, with nothing in the path. (Hooks that only report to apps on my own machines, such as
+Orca's, are allowed; [the plan](website/design/plan.md) words it.) The Spark is a *second* mode: a model server for my own
 pipelines, for coding harnesses (pi, OpenCode) on the Mac and on the Spark itself, and for a web UI —
 it loads a model only when it fits, and says why when it doesn't. (Hermes, in the original version of
 this line, was parked on 2026-09-23.)

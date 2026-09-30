@@ -4,7 +4,8 @@ title: "local-ai"
 
 A single NVIDIA DGX Spark — `brightroar`, a GIGABYTE AI TOP ATOM — serving open models to my own
 pipelines, my coding harnesses and my homelab, with a web UI on top. Claude Code and Claude Desktop
-stay exactly as they are; this is a separate mode.
+stay as they are, talking straight to Anthropic, with only hooks that report to apps on my own
+machines added; this is a separate mode.
 
 - **[The plan](design/plan.md)** — goals, constraints, decisions, design and phases. Start here.
 - **[Scenarios](scenarios/index.qmd)** — what happens in the situations that matter, and whether

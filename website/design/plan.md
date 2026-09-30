@@ -28,7 +28,9 @@ Behaviour is written down as **scenarios** on the docs site and kept current as 
 In order of how much they constrain the design:
 
 1. **Claude stays exactly as it is.** Claude Code and Claude Desktop talk straight to Anthropic on
-   the subscription — no performance loss, no added latency, no plumbing changes.
+   the subscription — no performance loss, no added latency, no plumbing changes. *(Refined
+   2026-09-28, with Orca: hooks that only report to apps on Dan's own machines are allowed; the
+   *Claude is untouched* constraint below words it.)*
 2. **The Spark is a model server.** Endpoints for Dan's own pipelines, his coding harnesses and his
    homelab apps, plus a web UI. In Dan's words: *"I just need the endpoints"* — pipelines are his own
    code, written by Claude Code against the endpoint docs.
@@ -43,7 +45,7 @@ In order of how much they constrain the design:
 
 | Constraint | Consequence |
 |---|---|
-| **Claude is untouched** | No gateway, proxy, `ANTHROPIC_BASE_URL` or globally-installed MCP servers. Claude Code on the Spark talking to Anthropic is just a client. Pointing any Claude Code at a local model would be a separate, deliberate command (`claude-dgx`, parked). |
+| **Claude is untouched** | No gateway, proxy, `ANTHROPIC_BASE_URL` or globally-installed MCP servers. Claude Code on the Spark talking to Anthropic is just a client. Guard hooks that only block, like the secrets guard, are unchanged. Reporting hooks may copy a session's events — prompts and tool inputs included — to an app on Dan's own machines (Orca, over loopback on the Mac; from Phase 2, the gate and ntfy), as long as they return no decision, never change a tool's input or Claude's endpoint, login, model, permissions or flags, and send nothing to a third party. Every Claude that Orca starts runs without `--dangerously-skip-permissions` (Dan's decisions, 2026-09-28). Pointing any Claude Code at a local model would be a separate, deliberate command, outside this repo (Ollama on the Mac). *(Corrected 2026-09-28: this said `claude-dgx`, parked; Dan dropped it, since he doesn't need it here.)* |
 | **One GB10, ~121 GiB unified memory** | Weights, KV cache, the OS and data-science jobs share one pool. Overcommitting it can hard-freeze the box without an OOM kill (reported; open NVIDIA driver issue #1358). |
 | **1 TB of NVMe** | Weights, the Hugging Face cache and container images share it — single-digit large models on disk. |
 | **Secrets by reference only** | Names in the repo, values outside it; nothing printed. See `CLAUDE.md`. |
@@ -64,7 +66,8 @@ In order of how much they constrain the design:
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
-| Web UI | Open WebUI, Dan only (others later). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. |
+| Web UI | Open WebUI, Dan only (others later). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28, Phase 1b). |
+| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. |
@@ -73,7 +76,7 @@ In order of how much they constrain the design:
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
 | Build | **The Spark by default, one session at a time** (2026-09-25): a Claude Code session on the Spark (as Dan, in tmux) writes and tests the code, config and docs and runs everything touching the GPU, memory, systemd or Docker; the Mac session keeps the Mac clients, CI workflow changes and, until Quarto is on the Spark, the site render; Dan runs sudo, logins, secrets and the Synology's settings. (Until 2026-09-25 the Mac session wrote the code, tests and docs.) |
-| Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · `claude-dgx` · other users · the web UI banner. |
+| Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · ~~`claude-dgx`~~ (dropped 2026-09-28; see *Claude is untouched*) · other users · the web UI banner · Orca on the Spark, and on the phone (2026-09-28; Backlog). |
 
 ## Design
 
@@ -99,6 +102,9 @@ In order of how much they constrain the design:
   can read the brake's state, and on the menu bar and ntfy (Phase 2).
 - **Phase 3 onward:** LiteLLM sits in front. Its hook makes refusals inline (`error.code`,
   `retry_after_s`), adds `x-spark-model: <name>@<revision>`, and applies per-key `wait_for_fit_s`.
+- **Orca (from Phase 1b)** is a client on the Mac, not a hop: pi started from it reaches llama-swap
+  over the same tunnel as pi in a terminal, and Claude Code started from it talks straight to
+  Anthropic.
 - **Why not Ollama:** Dan has hit Hugging Face models that won't load there. Here each model runs on
   the engine that suits it, with the engine version pinnable per model, and start failures are
   explained.
@@ -122,6 +128,7 @@ In order of how much they constrain the design:
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
 | **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
+| **Orca** (Phase 1b) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts gets its no-prompt flag (`--dangerously-skip-permissions` for Claude); telemetry off. Its status hooks in Dan's `~/.claude/settings.json` and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own, rewritten at each start. Recorded in `README.md` §Current state, not pinned in `stack/versions.yaml`: Dan takes its updates as they come, and `website/how-to/orca.md`'s checks follow each one. |
 
 ### Admission and memory rules
 
@@ -234,6 +241,9 @@ In order of how much they constrain the design:
   done / needs input / failed; high — brake, gate or Spark down, backup failed. Quiet hours apply to
   low and default.
 - **Harness hooks** register agent sessions with the gate and post their outcomes to ntfy.
+- **Orca (Phase 1b)** shows each agent it started on the Mac — working, waiting for input, done —
+  through its own status hooks. It adds to ntfy rather than replacing it: agents in tmux on the
+  Spark don't run in Orca.
 - **Real model on every reply:** clients use real model names until Phase 3; from then on the
   `x-spark-model` header carries it.
 
@@ -269,7 +279,8 @@ In order of how much they constrain the design:
   down · **S17** changing models mid-task · **S18** rebuild after a factory reset · **S19** Claude Code
   building a pipeline elsewhere · **S20** web search from the phone · **S21** Pixeltable over datasets
   (backlog) · **S22** on another tailnet via WireGuard (pi and the API work; the web UI waits).
-  Added since: **S23** upgrade day (2026-09-25).
+  Added since: **S23** upgrade day (2026-09-25); **S24** pi in Orca on the Mac and **S25** chat from
+  the Mac (2026-09-28, Phase 1b).
 
 ### Repo layout
 
@@ -501,6 +512,22 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
 - *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
   from this plan and why, what the reviews found, and what Phase 2 inherits.
 
+**Phase 1b — Orca and the web UI on the Mac** (designed 2026-09-28; nothing changes on the Spark)
+
+- [Dan] Orca → Agent Permissions → Manual, and telemetry off · Open WebUI as a Safari web app.
+- [Spark] the scenario check accepts `phase: 1b` · a `make doctor` check that Orca never installed
+  its relay in Dan's Spark home (`~/.orca-remote`), since `brightroar` is never an Orca target.
+- [Mac] `website/how-to/orca.md`: Orca's settings and how to check them; pi in Orca over
+  `make tunnel`, and over WireGuard with `SPARK_SSH_HOST=brightroar-lan make tunnel`; what Orca has
+  changed on the Mac and how to remove it; never the Spark as a target; the checks after each Orca
+  update; what never goes in the repo · the Mac in `deploy.md`'s *The web UI* · `pi.md` notes Orca
+  · `README.md` §Current state records Orca on the Mac.
+- *Done when:* S24 and S25 are verified; Orca starts Claude with no skip flag and telemetry is off;
+  the doctor check holds; the Spark is unchanged apart from the repo's own code and docs.
+- *Shape:* a short plan of its own, `phase-1b.md`, and one reviewer at the close rather than a
+  council (Dan's decision, 2026-09-28). Its decisions went into this plan on 2026-09-30, from a Mac
+  session in a separate worktree, at Dan's request.
+
 **Phase 2 — Fit check, brake, visibility**
 
 - [Spark] the gate + `spark-launch` + sockets (absorbing the minimal brake) · residents move under the
@@ -523,6 +550,9 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   request timeout; systemd sandboxing for the stack's units, and `cap_drop` for the web
   containers; the engines' output to the journal, once a check that covers speech shows what it
   would keep. The retrospective lists the rest.
+- *From Phase 1b (2026-09-28):* harness hooks on the Mac live beside Orca's status hooks, which
+  Orca rewrites at each start; a pi session started from Orca counts as an active agent session
+  and keeps its model until its pi process exits (Dan's decision); SwiftBar lists those sessions.
 - *Done when:* S01, S02, S03, S05, S06, S11, S12, S13, S14 and S17 are verified.
 
 **Phase 3 — App API + speech** (Dan's audio pipeline is the first app with its own key)
@@ -631,7 +661,27 @@ Each item gets its own design pass when its turn comes.
   behind a chat); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
   caches (1 GiB for Gemma, 2 for the coder); a context below the maximum where a model never needs
   it; and fewer image tokens (`--image-max-tokens`, less detail).
-- **Parked:** Hermes · `claude-dgx` · a MacBook MLX fallback · other users.
+- **Orca on the Spark, and on the phone** (Dan, 2026-09-28: *"i want a way for the spark to act as
+  the main orca server so i can also use orca on my phone"*; parked the same day to wait for the
+  upstream fixes below). Two routes, each with its costs, from that day's research and council on
+  Orca 1.4.216:
+  - *SSH mode*, where Orca on the Mac drives agents on the Spark as `agent`. Orca installs a relay
+    in `agent`'s home and builds it from public npm with install scripts on (`node-pty`,
+    `@parcel/watcher`, no lockfile). It rewrites `agent`'s `~/.claude/settings.json` on every
+    connect; that version kept the secrets guard, but **root-owned managed settings for `agent`'s
+    guard come first** (Dan, 2026-09-28). Updating Orca strands the relay's running agents
+    (stablyai/orca #13852). The `orca` command in a remote pane proxies back to the Mac's Orca, so a
+    test that it can't reach the Mac's own panes comes before any agent runs there. It doesn't
+    reach the phone.
+  - *Server mode*, `orca serve` on the Spark, the phone's route: the whole Electron app run
+    headless, with Xvfb and about 25 Chromium libraries; no bind option, so it listens beyond
+    loopback, on 6768; a unit running as `agent`, a tailnet rule for 6768, a needrestart exception
+    (it ignores SIGTERM, #18186) and a measured footprint. The Android app (0.0.50, a sideloaded
+    beta) waits on #21808 (its APK is reported signed with a public debug key), #16086 (headless
+    pairing), #20706 (no push from a headless server) and #20844 (connections dropping on an arm64
+    host).
+- **Parked:** Hermes · ~~`claude-dgx`~~ (dropped 2026-09-28: pointing Claude Code at a local model,
+  if ever wanted, is Ollama on the Mac, outside this repo) · a MacBook MLX fallback · other users.
 
 ## Open items and risks
 
@@ -810,9 +860,17 @@ Each item gets its own design pass when its turn comes.
   coder's are capped at 8; their recurrent state is about 63 MiB each by arithmetic, and the MTP
   draft's share isn't estimated, so their size is the first thing a soak at full context
   measures).
+- **Orca on the Mac** (2026-09-28). Its status hooks copy whole Claude events, prompts and tool
+  inputs included, to Orca over loopback, and a failed send is spooled to disk for up to 7 days;
+  its scrollback and session data sit on the Mac's disk too, so a leaked value would sit there as
+  well. Its pi extensions load in every pi session on the Mac, in Orca or not. It gives every agent
+  a no-prompt flag by default (`--dangerously-skip-permissions` for Claude), so Manual, and
+  telemetry off, are checked again after each Orca update. And it moves fast: about a release a
+  day, with around 7,000 open issues. Its hooks went into `~/.claude/settings.json` on 2026-09-24
+  and its pi extensions on 2026-09-28, before this repo recorded either.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
-  reach over WireGuard.
+  reach over WireGuard; agents started from Orca stop when the Mac does (Dan, 2026-09-28).
 
 ## Revisions
 
@@ -1284,6 +1342,15 @@ Each item gets its own design pass when its turn comes.
   step, merging `phase-1` into `main`, follows this line. [The retrospective](phase-1-retro.md)
   records what it built, where it departed from this plan and why, what the reviews found, and
   what Phase 2 inherits.
+- **2026-09-30** — Phase 1b, Orca and the web UI on the Mac, goes in ahead of Phase 2. A Mac
+  session designed it on 2026-09-28 and 2026-09-29, from research on Orca, a four-lens council,
+  Dan's answers to scenario questions and a test of pi in Orca over the tunnel, and Dan approved it
+  on 2026-09-29. Orca stays on the Mac, in its local mode; goal 1 allows reporting hooks, worded
+  under *Claude is untouched*, and no Claude that Orca starts skips permissions; `claude-dgx` is
+  dropped; the Spark as Orca's server, and the phone, go to the Backlog with their costs; Phase 2
+  gains a line. The design first ran agents on the Spark through Orca's SSH mode, as `agent`, and
+  was cut back when Dan deferred the phone and asked why it was so complicated; SSH mode's findings
+  are in the Backlog item.
 
 ## Sources
 

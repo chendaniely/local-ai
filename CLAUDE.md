@@ -7,7 +7,8 @@ check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and
 its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
 its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
 Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
-inherits; the plan's Phase 2 line says what comes next.
+inherits. Next comes Phase 1b, Orca and the web UI on the Mac, then Phase 2; the plan's line for
+each says what it holds.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -28,7 +29,11 @@ on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`
 - **Claude Code and Claude Desktop stay untouched.** No gateway, proxy, `ANTHROPIC_BASE_URL`, or
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
   coding harnesses (pi, OpenCode), my own pipelines and apps, and a web UI. Violating this defeats
-  the repo's primary goal.
+  the repo's primary goal. Hooks that only report — copying a session's events to an app on my own
+  machines, as Orca's status hooks do — are allowed, as long as they return no decision and change
+  nothing about Claude's endpoint, login, model, permissions or flags; and no Claude that Orca
+  starts runs with `--dangerously-skip-permissions` (2026-09-28; the plan's *Claude is untouched*
+  constraint has the full wording).
 - **One Spark, not two.** The reference repo is a 2-node cluster. Do **not** apply its RoCE, NCCL,
   Ray, or `TP=2` material here — none of it can affect a single node. `cosmicbboy-local-ai.md` §H
   lists exactly what's excluded and why.
