@@ -45,7 +45,7 @@ In order of how much they constrain the design:
 
 | Constraint | Consequence |
 |---|---|
-| **Claude is untouched** | No gateway, proxy, `ANTHROPIC_BASE_URL` or globally-installed MCP servers. Claude Code on the Spark talking to Anthropic is just a client. Guard hooks that only block, like the secrets guard, are unchanged. Reporting hooks may copy a session's events — prompts and tool inputs included — to an app on Dan's own machines (Orca, over loopback on the Mac; from Phase 2, the gate and ntfy), as long as they return no decision, never change a tool's input or Claude's endpoint, login, model, permissions or flags, and send nothing to a third party. Every Claude that Orca starts runs without `--dangerously-skip-permissions` (Dan's decisions, 2026-09-28). Pointing any Claude Code at a local model would be a separate, deliberate command, outside this repo (Ollama on the Mac). *(Corrected 2026-09-28: this said `claude-dgx`, parked; Dan dropped it, since he doesn't need it here.)* |
+| **Claude is untouched** | No gateway, proxy, `ANTHROPIC_BASE_URL` or globally-installed MCP servers. Claude Code on the Spark talking to Anthropic is just a client. Guard hooks that only block, like the secrets guard, are unchanged. Reporting hooks may copy a session's events — prompts and tool inputs included — to an app on Dan's own machines that passes none of them on (Orca, over loopback on the Mac, with its telemetry off; from Phase 2, the gate, and ntfy messages that carry status, never prompt or tool text), as long as they exit 0 and print nothing or `{}` — no decision, no added context or message, no stopped session, no changed tool input — and change nothing about Claude's endpoint, login, model, permissions or flags. An app that installs such hooks adds only its own hook entries to `~/.claude/settings.json`; any other key it adds or changes breaks this rule. Every Claude that Orca starts or resumes runs as it would from a terminal: no `--dangerously-skip-permissions` or other bypass, and nothing in Orca's per-agent environment setting for Claude; Orca's own `ORCA_*` variables, which only tell its hooks where to report, are the exception. (Dan's decisions, 2026-09-28; worded tighter on 2026-09-30, from the spec's review.) Pointing any Claude Code at a local model would be a separate, deliberate command, outside this repo (Ollama on the Mac). *(Corrected 2026-09-28: this said `claude-dgx`, parked; Dan dropped it, since he doesn't need it here.)* |
 | **One GB10, ~121 GiB unified memory** | Weights, KV cache, the OS and data-science jobs share one pool. Overcommitting it can hard-freeze the box without an OOM kill (reported; open NVIDIA driver issue #1358). |
 | **1 TB of NVMe** | Weights, the Hugging Face cache and container images share it — single-digit large models on disk. |
 | **Secrets by reference only** | Names in the repo, values outside it; nothing printed. See `CLAUDE.md`. |
@@ -128,7 +128,7 @@ In order of how much they constrain the design:
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
 | **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
-| **Orca** (Phase 1b) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts gets its no-prompt flag (`--dangerously-skip-permissions` for Claude); telemetry off. Its status hooks in Dan's `~/.claude/settings.json` and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own, rewritten at each start. Recorded in `README.md` §Current state, not pinned in `stack/versions.yaml`: Dan takes its updates as they come, and `website/how-to/orca.md`'s checks follow each one. |
+| **Orca** (Phase 1b) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state from Phase 1b, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
 ### Admission and memory rules
 
@@ -512,18 +512,27 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
 - *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
   from this plan and why, what the reviews found, and what Phase 2 inherits.
 
-**Phase 1b — Orca and the web UI on the Mac** (designed 2026-09-28; nothing changes on the Spark)
+**Phase 1b — Orca and the web UI on the Mac** (designed 2026-09-28; nothing changes on the box
+beyond the repo's own code)
 
 - [Dan] Orca → Agent Permissions → Manual, and telemetry off · Open WebUI as a Safari web app.
-- [Spark] the scenario check accepts `phase: 1b` · a `make doctor` check that Orca never installed
-  its relay in Dan's Spark home (`~/.orca-remote`), since `brightroar` is never an Orca target.
-- [Mac] `website/how-to/orca.md`: Orca's settings and how to check them; pi in Orca over
-  `make tunnel`, and over WireGuard with `SPARK_SSH_HOST=brightroar-lan make tunnel`; what Orca has
-  changed on the Mac and how to remove it; never the Spark as a target; the checks after each Orca
-  update; what never goes in the repo · the Mac in `deploy.md`'s *The web UI* · `pi.md` notes Orca
-  · `README.md` §Current state records Orca on the Mac.
-- *Done when:* S24 and S25 are verified; Orca starts Claude with no skip flag and telemetry is off;
-  the doctor check holds; the Spark is unchanged apart from the repo's own code and docs.
+- [Spark] the scenario check accepts `phase: 1b` · the S24 and S25 pages (`phase: 1b`,
+  `status: planned`), each saying it has no `spark doctor` check because it runs on the Mac · a
+  `make doctor` check that Orca never installed its relay in Dan's Spark home (`~/.orca-remote`),
+  since `brightroar` is never an Orca target; it reads the real home directory, counts "can't
+  tell" as a failure, and is seen failing once against a planted folder.
+- [Mac], because they document and check the Mac's own clients: `website/how-to/orca.md` — Orca's
+  settings and how to check them; pi in Orca over `make tunnel`, and from the home LAN with
+  `SPARK_SSH_HOST=brightroar-lan make tunnel` (the same over WireGuard once S22 is set up, not yet
+  tested); what Orca has changed on the Mac and how to remove it; never the Spark as a target; the
+  checks after each Orca update (Manual and telemetry still set, Orca's environment for Claude
+  still empty, `~/.claude/settings.json` unchanged outside `hooks`, the hook script still printing
+  only `{}`); what never goes in the repo · the Mac in `deploy.md`'s *The web UI* · `pi.md` notes
+  Orca · `README.md` §Current state records Orca on the Mac.
+- *Done when:* S24 and S25 are verified; a Claude that Orca starts, and one it resumes, carry no
+  skip flag, and telemetry is off; the doctor check, seen failing once, passes; the Spark is
+  unchanged apart from the repo's own code and docs (`agent`'s home has no `.orca-remote`, checked
+  read-only as `agent`).
 - *Shape:* a short plan of its own, `phase-1b.md`, and one reviewer at the close rather than a
   council (Dan's decision, 2026-09-28). Its decisions went into this plan on 2026-09-30, from a Mac
   session in a separate worktree, at Dan's request.
@@ -674,12 +683,13 @@ Each item gets its own design pass when its turn comes.
     test that it can't reach the Mac's own panes comes before any agent runs there. It doesn't
     reach the phone.
   - *Server mode*, `orca serve` on the Spark, the phone's route: the whole Electron app run
-    headless, with Xvfb and about 25 Chromium libraries; no bind option, so it listens beyond
+    headless, with Xvfb and about 20 Chromium runtime libraries (Orca's headless Linux server
+    guide lists them); no bind option, so it listens beyond
     loopback, on 6768; a unit running as `agent`, a tailnet rule for 6768, a needrestart exception
     (it ignores SIGTERM, #18186) and a measured footprint. The Android app (0.0.50, a sideloaded
     beta) waits on #21808 (its APK is reported signed with a public debug key), #16086 (headless
-    pairing), #20706 (no push from a headless server) and #20844 (connections dropping on an arm64
-    host).
+    pairing), #20706 (no push from a headless server) and #20673 (connections dropping on an arm64
+    host; a fix is proposed in #20844).
 - **Parked:** Hermes · ~~`claude-dgx`~~ (dropped 2026-09-28: pointing Claude Code at a local model,
   if ever wanted, is Ollama on the Mac, outside this repo) · a MacBook MLX fallback · other users.
 
@@ -861,9 +871,11 @@ Each item gets its own design pass when its turn comes.
   draft's share isn't estimated, so their size is the first thing a soak at full context
   measures).
 - **Orca on the Mac** (2026-09-28). Its status hooks copy whole Claude events, prompts and tool
-  inputs included, to Orca over loopback, and a failed send is spooled to disk for up to 7 days;
-  its scrollback and session data sit on the Mac's disk too, so a leaked value would sit there as
-  well. Its pi extensions load in every pi session on the Mac, in Orca or not. It gives every agent
+  inputs included, to Orca over loopback. A failed send of an event other than a tool call's,
+  prompts included, is appended to a spool file for its Orca pane, up to 5 MiB, which is emptied
+  only after 7 days with no new failure, so it can hold prompts indefinitely (corrected
+  2026-09-30, from the spec's review: this said "for up to 7 days"). Its scrollback and session
+  data sit on the Mac's disk too, so a leaked value would sit there as well. Its pi extensions load in every pi session on the Mac, in Orca or not. It gives every agent
   a no-prompt flag by default (`--dangerously-skip-permissions` for Claude), so Manual, and
   telemetry off, are checked again after each Orca update. And it moves fast: about a release a
   day, with around 7,000 open issues. Its hooks went into `~/.claude/settings.json` on 2026-09-24
@@ -1350,7 +1362,11 @@ Each item gets its own design pass when its turn comes.
   dropped; the Spark as Orca's server, and the phone, go to the Backlog with their costs; Phase 2
   gains a line. The design first ran agents on the Spark through Orca's SSH mode, as `agent`, and
   was cut back when Dan deferred the phone and asked why it was so complicated; SSH mode's findings
-  are in the Backlog item.
+  are in the Backlog item. The spec's own review the same day (three reviewers: faithfulness,
+  rule wording and security, accuracy) tightened the hook wording — exit 0 and print nothing or
+  `{}`, only hook entries in Claude's settings file, apps that pass nothing on, resumed sessions
+  and Orca's environment setting covered — corrected the spool's retention, and gave Phase 1b its
+  scenario pages and a done-when that covers `agent` and can't pass on an unexpanded path.
 
 ## Sources
 

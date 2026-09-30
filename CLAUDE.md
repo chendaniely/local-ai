@@ -30,10 +30,12 @@ on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
   coding harnesses (pi, OpenCode), my own pipelines and apps, and a web UI. Violating this defeats
   the repo's primary goal. Hooks that only report — copying a session's events to an app on my own
-  machines, as Orca's status hooks do — are allowed, as long as they return no decision and change
-  nothing about Claude's endpoint, login, model, permissions or flags; and no Claude that Orca
-  starts runs with `--dangerously-skip-permissions` (2026-09-28; the plan's *Claude is untouched*
-  constraint has the full wording).
+  machines that passes none of them on, as Orca's status hooks do — are allowed, as long as they
+  exit 0 and print nothing or `{}` (no decision, no added context, no changed tool input) and
+  change nothing about Claude's endpoint, login, model, permissions or flags. Such an app adds
+  only its own hook entries to `~/.claude/settings.json`, and no Claude that Orca starts or resumes
+  runs with `--dangerously-skip-permissions` or any other bypass (2026-09-28; the plan's *Claude
+  is untouched* constraint has the full wording).
 - **One Spark, not two.** The reference repo is a 2-node cluster. Do **not** apply its RoCE, NCCL,
   Ray, or `TP=2` material here — none of it can affect a single node. `cosmicbboy-local-ai.md` §H
   lists exactly what's excluded and why.
