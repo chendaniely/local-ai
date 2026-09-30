@@ -102,6 +102,15 @@ every file here feeds the next.
 If a change makes a sentence untrue, correcting that sentence is part of the change, and the
 change is not done until it is.
 
+**The architecture diagrams are kept true first** (Dan's rule, 2026-09-30). The diagrams on
+[`website/architecture.qmd`](website/architecture.qmd) are the quickest way for a person to see
+what is running and how a request gets through — for Dan, easier than any page of prose — so a
+wrong one misleads more than any wrong sentence. A change that adds, moves or removes a part or a
+path (a service, a port, an account, a link between machines), or builds a planned part (dashed
+turns solid), updates the diagrams and the page's scenario table in the same commit; the change
+isn't done until they match. When unsure whether a change touches them, open the page and check.
+Diagrams live only there: other pages link to them rather than drawing their own copy.
+
 These files are not independent. Known sync obligations:
 
 | When this changes | This must change with it |

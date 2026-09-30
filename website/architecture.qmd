@@ -44,6 +44,7 @@ flowchart TB
     gate["spark-gate<br/>Phase 2"]:::planned
     brake["memory brake<br/>as spark"]
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder"]
+    vllm["vLLM, only if a coder needs it<br/>Phase 5"]:::planned
   end
 
   subgraph nas["Synology"]
@@ -66,6 +67,7 @@ flowchart TB
   apps -.-> litellm
   litellm -.-> swap
   swap -- "spark launch" --> engines
+  swap -.-> vllm
   brake -- "unloads through llama-swap" --> engines
   gate -.-> engines
   gate -.-> ntfy
@@ -130,7 +132,7 @@ flowchart TD
   fits -- yes --> load["the engine loads"] --> answer
   low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, on-demand ones first"]
   brake --> held
-  gate["Phase 2, the gate: a live fit check, a wait per key,<br/>idle unload, session pins, make-room, notifications"]:::planned
+  gate["Phase 2, the gate: a live fit check, one load at a time,<br/>idle unload, session pins, make-room, notifications"]:::planned
   gate -.-> launch
 ```
 
@@ -144,7 +146,7 @@ reserve stays free, because overcommitting a GB10 can freeze it without an out-o
 flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  app["an app or pipeline<br/>with its own key"]:::planned --> litellm["LiteLLM: limits per key,<br/>refusals inline, the real model named"]:::planned
+  app["an app or pipeline<br/>with its own key"]:::planned --> litellm["LiteLLM: limits and a wait per key,<br/>refusals inline, the real model named"]:::planned
   litellm -.-> pg[("Postgres<br/>keys and usage")]:::planned
   litellm -.-> swap["llama-swap"]
   swap --> chat["chat and embeddings"]

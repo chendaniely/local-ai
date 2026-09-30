@@ -82,19 +82,11 @@ In order of how much they constrain the design:
 
 ### Request flow
 
-```
- Mac (pi, OpenCode, apps) · Spark tmux (agent) · Open WebUI (+SearXNG, via tailscale serve)
-                      │  API key
-                      ▼
-      LiteLLM — Phase 3+: per-app keys, allow-lists, concurrency, usage (never content)
-                      │                  ╲  hook: refusal text · x-spark-model · wait_for_fit
-                      ▼                   ╲
-      llama-swap (127.0.0.1, apiKeys)      ▶ spark-gate (Unix sockets): fit check · load lock ·
-                      │ cmd = spark-launch ─▶  brake · idle policy · session pins · status · ntfy
-                      ▼
-  llama.cpp (chat, VLM, embed) · vLLM (NGC, only if a coder needs it) ·
-  whisper.cpp ×2 (interactive, batch) · diarization (pyannote wrapper, diarized_json)
-```
+The diagrams live on the [Architecture](../architecture.qmd) page: where everything sits, and the
+paths a request takes — reaching the Spark, loading a model, apps and speech — with built parts
+solid and planned ones dashed, labelled with their phase. *(Replaced 2026-09-30: a text drawing of
+the finished design stood here, with nothing marking what was built. Its parts are all on the
+Architecture page now, and git history keeps the drawing.)*
 
 - **Phases 1–2:** Open WebUI and pi reach llama-swap directly with llama-swap keys — pi on the Mac
   through an SSH tunnel, so nothing listens on the LAN yet. A refused load is a plain error in the
@@ -452,8 +444,9 @@ Docker.
 
 ## Phases
 
-Every phase ends by updating scenario statuses, the docs site, `changelog.md` and `README.md`
-§Current state. Tasks are labelled by where they run.
+Every phase ends by updating scenario statuses, the architecture diagrams (its built parts turn
+solid), the docs site, `changelog.md` and `README.md` §Current state. Tasks are labelled by where
+they run.
 
 **Phase 0 — Guardrails, prep, docs scaffold** — done, 2026-09-25
 
@@ -1351,6 +1344,12 @@ Each item gets its own design pass when its turn comes.
   check for Orca's relay folder, a closing review); Dan dropped that the same day, since pi in Orca
   and the web UI already worked, and kept the decisions, a runbook and the notes. The plan was
   never pushed.
+- **2026-09-30** — The site gains an [Architecture](../architecture.qmd) page: where everything
+  sits, the three paths a request takes, and every scenario's path, with built parts solid and
+  planned ones dashed. The text drawing under *Request flow* gives way to it, so the diagrams live
+  in one place, and every phase now ends by updating them. Dan's rule: the architecture diagrams
+  are kept true first, since they are the quickest way for him to see what is happening
+  (`CLAUDE.md`, *Docs must be true*).
 
 ## Sources
 
