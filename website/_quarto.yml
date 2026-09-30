@@ -12,6 +12,8 @@ website:
     left:
       - text: Plan
         href: design/plan.md
+      - text: Architecture
+        href: architecture.qmd
       - text: Scenarios
         href: scenarios/index.qmd
       - text: How-to
