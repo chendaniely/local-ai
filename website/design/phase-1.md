@@ -6,12 +6,46 @@ date: 2026-09-23
 
 # Phase 1 — First milestone: web UI + pi — Implementation Plan
 
+> **Retrospective:** [Phase 1 — retrospective](phase-1-retro.md) records what this plan built, where
+> the build departed from it and why, what the reviews found, and what Phase 2 inherits.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
-> checkbox (`- [ ]`) syntax. Every task is labelled **[Mac]**, **[Spark]** or **[Dan]**; ⇄ marks a
+> checkbox (`- [ ]`) syntax. Every task is labelled **[Spark]**, **[Mac]** or **[Dan]**; ⇄ marks a
 > machine switch (one session at a time). Phase 0 must be done first. This plan is revised after
 > Phase 0's review if anything learned there changes it (see the plan's Revisions). Revised
 > 2026-09-25 with Phase 0's lessons: Task 10 is new, and each task after it is numbered one higher.
+> Revised again 2026-09-25, before Task 1, with Dan's two decisions: root runs root-owned copies of
+> the units and the Compose project, which `make install-units` installs (Tasks 6, 7, 9, 10, 12,
+> 16), and `make upgrade-gpu` runs the GRUB check itself (Task 10). Every listing in Tasks 1–10 was
+> run first, in a scratch copy, on the Mac and in an `ubuntu:24.04` container. The same day, the
+> pre-flight's review and a scan across the tasks found more, fixed here and run again the same way
+> (plan.md's Revisions, 2026-09-25). Revised once more that day for Dan's rule that work runs on the
+> Spark by default (CLAUDE.md): Tasks 1–10 and 17 moved from [Mac] to [Spark], the Mac → Spark
+> switch point is now ahead of Task 1, and a last [Mac] task, Task 18, does what only the Mac can:
+> CI's render step, the site render and the merge. Revised on the Spark, before Task 1, for Dan's
+> rule that every command in the docs says where it runs, which Tasks 9 and 10's runbooks follow.
+
+> **Progress (2026-09-28).** The switch point and Tasks 1–16 are done, each reviewed and ticked
+> below. Tasks 1–10 built the code, tests and runbooks. Task 11 installed the three engines on the
+> box, at their pins. Task 12 re-ran bootstrap, installed root's copies of the units and the
+> Compose project, deployed the config and the app, and pulled the five model files. Task 13
+> started the stack: four models serve through llama-swap, Open WebUI has Dan's admin account,
+> `make doctor` passes 15 of 15, and Open WebUI's task calls run without thinking (Dan's
+> decision). Task 14 served Open WebUI to the tailnet over HTTPS: S09 and S20 passed on Dan's
+> phone, once a fix stopped photos from aborting Gemma's engine. Task 15 set up pi on the Mac and
+> for `agent`, whose Claude Code got the secrets guard before its key. Task 16 ran the drills:
+> the brake held and unloaded the coder, a load that didn't fit was refused, a fresh clone matched
+> the deploy, and the stack kept serving through a routine upgrade and came back by itself after
+> a reboot. Then Dan's decision of 2026-09-28, every model at its maximum context, with Gemma's
+> two slots sharing one pool, was built, deployed and checked, below Task 16. Task 17, Phase 1's
+> close: its council reviewed the branch, and its fixes and Dan's decisions are committed; the
+> forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
+> Dan deployed the fixes, and Task 17 Step 2's checks passed; Step 3's private findings went to Dan
+> in the chat, to file in the vault. On 2026-09-29 the Mac took over at the switch point, and Task
+> 18 Steps 1–5 are done: CI's render step, the Mac check, the site render, and CI green on the
+> branch. **Now: Task 18 Step 6 onward:** the merge into `main` with Dan's OK, the Spark's clones
+> moving to `main`, and Dependabot's PRs. The site shows whatever Dan last published by hand.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -25,10 +59,14 @@ a llama-swap config, systemd units and a Compose file, validates them, and deplo
 engine through `spark launch`, which refuses a load when the brake holds or the model doesn't fit,
 and marks the engine as the first thing the kernel or earlyoom should kill. `spark brake` watches
 `MemAvailable` and unloads models before the box reaches the freeze band. Open WebUI and SearXNG run
-under Compose (host networking, bound to 127.0.0.1) from a root-owned unit. Updates don't take it
-down: bootstrap tells needrestart to leave the `local-ai-*` units alone, `make upgrade-gpu` moves the
-GPU set on upgrade day through bootstrap's hold, and `make doctor` checks Phase 0's guardrails and
-the stack in one pass.
+under Compose (host networking, bound to 127.0.0.1) from a root-owned unit. What root runs is root's
+own: `spark apply` only stages the units and the Compose project, and `make install-units` (sudo)
+shows them and installs root's copies, so nothing running as Dan changes what root runs without
+Dan's sudo. plan.md's *Users, access and security* names the paths that stay open (2026-09-25).
+Updates don't take it down: bootstrap tells needrestart to leave the `local-ai-*` units
+alone, `make upgrade-gpu` moves the GPU set on upgrade day through bootstrap's hold, checking that
+GRUB boots the newest kernel before it releases the set and again before it asks for the reboot,
+and `make doctor` checks Phase 0's guardrails and the stack in one pass.
 
 **Tech Stack:** Python ≥3.12 via uv · PyYAML · huggingface_hub (downloads only) · stdlib `urllib` ·
 pytest · llama-swap v257 · llama.cpp b11146 (v0.5.0, prebuilt arm64 + CUDA 13.4) · whisper.cpp
@@ -46,20 +84,38 @@ Tailscale serve · pi 0.85.1.
 - **Ports, all bound to 127.0.0.1:** llama-swap `9100` · Open WebUI `3000` · SearXNG `8888` · engines
   from `5800` (llama-swap's `${PORT}`). Every one is set explicitly — Open WebUI, SearXNG and
   llama-server all default to 8080. `tailscale serve` maps HTTPS 443 → 127.0.0.1:3000.
-- **Paths:** `/opt/local-ai/{app,bin,etc,python}` · `/etc/local-ai/secrets/*.env` ·
+- **Paths:** `/opt/local-ai/{app,bin,etc,python}` (`etc/` holds llama-swap's config and the
+  registry, and stages what root runs) · root's copies in `/etc/systemd/system/local-ai-*.service`
+  and `/etc/local-ai/compose/` · `/etc/local-ai/secrets/*.env` ·
   `/var/lib/local-ai/{hf,open-webui,searxng,brake,cache,cuda-cache}` · `HF_HOME=/var/lib/local-ai/hf`.
   `/var/lib/local-ai` is `spark`'s home but root's (since Phase 0's review), and `spark` writes only
-  inside its children. So nothing may cache under `$HOME`: a unit that runs engines or pulls models
+  inside its children. (On the box, once Task 12 Step 1 re-runs bootstrap: until then it is still
+  `spark`'s, as bootstrap's first run left it — README §Current state, *A bootstrap re-run*; checked
+  2026-09-26.) So nothing may cache under `$HOME`: a unit that runs engines or pulls models
   sets `XDG_CACHE_HOME=/var/lib/local-ai/cache` and `CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache`,
   two folders bootstrap gives `spark` (Task 6).
+- **What root runs is root's own** (Dan's decision, 2026-09-25). The four units are root's copies in
+  `/etc/systemd/system/local-ai-*.service`, and the Compose project is root's copy in
+  `/etc/local-ai/compose/` (`compose.yaml`, `searxng/settings.yml`): regular files owned by root, not
+  writable by group or others, in folders only root can write. `spark apply` only stages them in
+  `/opt/local-ai/etc`, which Dan can write, and never writes root's copies. `make install-units`
+  (Dan, sudo) reads what is staged as Dan, shows what would change and asks, then installs root's
+  copies, and ends by dropping sudo's cached credential (Task 9). The polkit rule lets `spark-admin`
+  start, stop and restart the four units by exact name, nothing more.
 - **Budget (from `stack/models.yaml`):** allocatable 102 GiB (reported; measured later) · reserve
   24 GiB · warn 28 GiB · brake 20 GiB · poll 250 ms. The static model set must fit
   `allocatable − reserve`.
 - **Never put a secret in a llama-swap `cmd`** — `GET /running` shows commands unredacted. Keys reach
   llama-swap only as `${env.LLAMASWAP_KEY_*}` from `/etc/local-ai/secrets/llama-swap.env`. Never name a
   key variable `LLAMA_API_KEY` (llama-server reads it). No `--api-key` on engines (llama-swap forwards
-  the client's header), and no engine holds a key at all: every engine would inherit llama-swap's
-  environment, so `spark launch` drops each `LLAMASWAP_KEY_*` variable before it starts one (Task 2).
+  the client's header), and no engine's environment holds a key: every engine would inherit
+  llama-swap's environment, so `spark launch` drops each `LLAMASWAP_KEY_*` variable before it starts
+  one (Task 2). (Corrected 2026-09-26: this said no engine holds a key at all. Engines run as
+  `spark`, as llama-swap does, so a compromised one can still read the keys, from `llama-swap.env`
+  and from llama-swap's own `/proc` environment. Task 17's security review decides whether engines
+  get a user of their own: Dan's decision, 2026-09-26.) (Decided 2026-09-28, from Phase 1's
+  council: that user is Phase 2's, with the gate. Meanwhile render allows a registry's `args` only
+  the engine options on its list: plan.md, *Engines share llama-swap's user*.)
 - llama-swap silently ignores unknown config keys — every config change is followed by a start and
   `GET /running`, not just `-validate`.
 - **On the Spark, a key never goes on a command line.** Every user can read `/proc/*/cmdline`, and
@@ -73,7 +129,10 @@ Tailscale serve · pi 0.85.1.
   llama-swap and a key. Nothing in this phase may rely on 127.0.0.1 to keep `agent` out. The gate
   (Phase 2) doesn't change this: it decides loads, not who reaches an engine. Phase 3's per-key
   allow-lists and concurrency limits don't hold against a direct call either, so that phase decides
-  how to close it (plan.md, *Open items and risks*).
+  how to close it (plan.md, *Open items and risks*). (Corrected 2026-09-28, from Phase 1's council:
+  each llama-server also served `/slots`, every slot's in-flight request, and its own web UI, both
+  without a key, so the direct route showed another account's requests too. Render now passes
+  `--no-slots` and `--no-webui`; `GET /props`, the engine's read-only settings, still answers.)
 - **Root never writes, `chown`s or `chmod`s through a path `agent` or `spark` can change.** A link
   planted there turns a root write into a write to any file on the box. To give `agent` a file,
   root reads only what it needs and `agent` writes the file (`runuser -u agent -- …`). A download
@@ -92,21 +151,38 @@ Tailscale serve · pi 0.85.1.
    watching memory; it never crashes. *(Task 4.)*
 4. **A registry edit that breaks the budget, reuses an alias or loses a revision pin** — expected:
    `spark render` refuses with the reason. *(Tasks 1 and 6.)*
-5. **`spark apply` while models are loaded** — expected: it shows the diff and refuses to restart
-   llama-swap unless `--now`. *(Task 7.)*
+5. **`spark apply` while models are loaded** — expected: it lists what changes (`make install-units`
+   is what shows root's files as diffs) and refuses to restart llama-swap unless `--now`, whether
+   the restart is for a new config or for a new definition that `make install-units` just installed.
+   It refuses the same way when llama-swap's unit runs but llama-swap doesn't answer. *(Task 7.)*
 6. **A routine `apt upgrade` replaces a library the engines use while models are loaded, then the
    box reboots** — expected: needrestart restarts no `local-ai-*` unit, the models stay loaded, the
    stack comes back by itself after the reboot, and `make doctor` passes. *(Tasks 10 and 16.)*
 7. **Upgrade day's apt plan would leave a kernel without its NVIDIA module or change the driver
-   branch, Dan answers no, or apt fails partway** — expected: `make upgrade-gpu` refuses before
-   anything moves, or stops. Every way out runs the hold, and the hold after apt's move is tried
+   branch, Dan answers no, apt fails partway, or GRUB won't boot the newest kernel** — expected:
+   `make upgrade-gpu` refuses before anything moves, or stops. It runs the GRUB check itself: when
+   GRUB won't boot the newest kernel before the release, it refuses with the set still held and
+   nothing moved; after the move, it says `DON'T REBOOT — GRUB boots <X>, not <Y>` (or why it can't
+   tell) and sends Dan to *If it goes wrong*, never to a reboot or a restart of the stack. Nothing it
+   prints carries a GRUB id, a UUID or a whole `linux` line. Every way out runs the hold, and the hold after apt's move is tried
    again if a signal cuts it off. When a hold stops, or a signal cuts off a hold the way out runs,
    the retry included, the set stays released, and it says to run `make hold-gpu`. A signal there
    after apt ran also brings a warning not to reboot before step 5's checks; a hold that stopped
    gets the way out's usual verdict instead. Whether anything moved is judged without the hold
    letter, so answering no counts as nothing moved. It suggests starting the stack only when
    nothing moved and the newest kernel still has its module, even when a hold then stopped, and
-   never a reboot after a partial move. *(Task 10.)*
+   never a reboot after a partial move. *(Task 10.)* *(Corrected 2026-09-26, from Task 10's
+   review: "every way out runs the hold" means every way out after the release — a GRUB refusal
+   before the release releases and holds nothing — and a signal that kills only the way out's hold
+   now also ends in "run `make hold-gpu`", with no start hint; commit ecd2264.)*
+8. **Something running as Dan edits a unit or the Compose project, or plants a link where
+   `spark apply` stages them** — expected: root runs none of it. `spark apply` stages the change and
+   stops; `make install-units` shows it as a diff and asks before root installs it. It refuses, with
+   nothing installed and nothing shown, a staged link, a file Dan can't read, a file holding a
+   control character that could hide a line of the diff (one of ASCII's other than tab and newline,
+   or a C1 control in UTF-8), and one too big or too slow to read. Until then no unit restarts to
+   pick it up, and `make doctor` fails if root's copies aren't root's own regular files. *(Tasks 7,
+   9 and 10.)*
 
 ***
 
@@ -115,7 +191,7 @@ Tailscale serve · pi 0.85.1.
 | Path | Responsibility |
 |---|---|
 | `stack/models.yaml` | Budget, brake thresholds, engine paths, the four models |
-| `stack/templates/*.service`, `stack/templates/compose.yaml`, `stack/templates/searxng-settings.yml` | Rendered by `spark render` |
+| `stack/templates/*.service`, `stack/templates/compose.yaml`, `stack/templates/searxng-settings.yml` | Rendered by `spark render`, staged by `spark apply`, installed as root's copies by `make install-units` |
 | `spark/src/spark/paths.py` | Default paths and URLs (env-overridable) |
 | `spark/src/spark/registry.py` | Load and validate `stack/models.yaml` |
 | `spark/src/spark/memory.py` | `/proc/meminfo` → `MemInfo` |
@@ -126,17 +202,61 @@ Tailscale serve · pi 0.85.1.
 | `spark/src/spark/brake.py` | `plan_brake()` and the `spark brake` loop |
 | `spark/src/spark/status.py` | `spark status` |
 | `spark/src/spark/render.py` | `spark render` |
-| `spark/src/spark/apply.py` | `spark apply` |
+| `spark/src/spark/apply.py` | `spark apply`: deploys what isn't root's, and stages what is |
 | `spark/src/spark/models.py` | `spark models pull` |
 | `spark/src/spark/clients.py` | `spark clients pi` |
 | `spark/src/spark/doctor.py` | `spark doctor` (`make doctor`) v0: Phase 0's guardrails and the stack |
-| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the needrestart step and the `--upgrade-gpu` mode (Task 10) |
+| `stack/host/bootstrap.sh` (Phase 0's) | Gains the cache folders (Task 6), the `--install-units` mode (Task 9), the needrestart step, and the `--upgrade-gpu` mode with its GRUB check (Task 10) |
+| `stack/host/50-local-ai.rules` (Phase 0's) | The polkit rule: `spark-admin` starts, stops and restarts the four units by exact name, nothing more (Task 9) |
 | `stack/host/needrestart.conf` | needrestart leaves the `local-ai-*` units alone |
 | `website/how-to/pi.md`, `website/how-to/deploy.md` | Runbooks |
 
 ***
 
-### Task 1 [Mac]: the model registry
+## ⇄ Switch point — Mac → Spark
+
+- [x] **The Mac session hands over** (2026-09-25, before Task 1): `make test lint docs` is clean on
+  the Mac. (The check that every `<paste>` in `stack/models.yaml` is a real 40-hex revision is Task
+  6's now, where `load_registry` refuses anything else.)
+- [x] **Scan what goes out, then Dan OKs the push.** First leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push), with `main` as `<branch>`,
+  since `phase-1` isn't on GitHub yet: `outgoing: exit=0`, `tracked: exit=0`, and gitleaks'
+  `no leaks found`. Then **Dan OKs** `git push -u origin phase-1`. `gh run watch` — CI is green.
+- [x] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
+  any **[Spark]** task. That runbook's *Before the first session* steps 2 and 3 (the global rules
+  file and the secrets guard) arrived after the Spark's Phase 0 sessions, and nothing records them
+  on the box. If the Spark's `~/.claude` lacks either, do them now. Then start the session and check
+  the guard first: `/hooks` lists the hook, `/permissions` the deny rules, and the session must be
+  refused `test -e ~/.secrets && echo present || echo absent`. Don't go on until it is: Task 13
+  Step 1 puts a key in every shell of yours, the session's included.
+- [x] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
+  security review asked: keys-only SSH ([SSH from the Mac](../how-to/ssh.md#keys-only), with its
+  public IPv6 check) and the Spark's GitHub token for this repository only
+  ([The Spark session](../how-to/spark-session.md#github-a-token-for-this-repository-only)). Unless
+  `changelog.md` records them, check both, and do whichever is missing now:
+  - Keys only: from the Mac,
+    `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive brightroar true`
+    ends in `Permission denied (publickey).`, as in ssh.md's own check.
+  - The token: on the Spark, `gh auth status` names your account with the token masked. On
+    github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
+    old *GitHub CLI* authorization is revoked. *(2026-09-27: both steps done on 2026-09-25, as
+    README §Current state records; the old authorization's revocation is Dan's recollection, not
+    yet checked on github.com.)*
+
+  The Spark session records each one newly done in `changelog.md` and README §Current state, and
+  commits that before Task 1, whose own commit stages only its registry files:
+
+  ```bash
+  git add changelog.md README.md
+  git commit -m "docs(machine): 🤖 record Phase 0's box steps done before Phase 1" \
+    -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+  ```
+
+  Task 14 serves the web UI on the tailnet only after both.
+
+***
+
+### Task 1 [Spark]: the model registry
 
 **Files:**
 
@@ -157,9 +277,10 @@ Tailscale serve · pi 0.85.1.
     `static_total_gib() -> float`
   - `load_registry(path: Path) -> Registry`
 
-- [ ] **Step 1: Branch and fixture**
+- [x] **Step 1: Branch and fixture**
 
-`git switch main && git pull && git switch -c phase-1`
+On the Spark, from the clone: `cd ~/git/hub/local-ai && git fetch && git switch phase-1 && git pull`.
+The Mac session created `phase-1` and pushed it at the switch point above.
 
 `spark/tests/fixtures/models.yaml` (fake repos and revisions — never real ones in fixtures):
 
@@ -220,7 +341,7 @@ models:
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `spark/tests/test_registry.py`:
 
@@ -281,12 +402,17 @@ def test_args_may_not_contain_whitespace_or_quotes(tmp_path):
         load_registry(path)
 ```
 
-- [ ] **Step 3: Run them and watch them fail**
+*Superseded 2026-09-26 — the tests now go further; see commits f0f44c7 (a missing or malformed
+field, a single value for a list), 828bee5 (a boolean in `args`) and 69cc076 (unknown and repeated
+keys, flags that aren't booleans, empty strings, non-finite numbers, budget and brake values not
+above 0). The six tests here are unchanged.*
+
+- [x] **Step 3: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_registry.py`
 Expected: FAIL — `ModuleNotFoundError: spark.registry`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `spark/src/spark/registry.py`:
 
@@ -412,12 +538,22 @@ def load_registry(path: Path) -> Registry:
     return Registry(budget, brake, engines, models)
 ```
 
-- [ ] **Step 5: Run the tests — they pass**
+*Superseded 2026-09-26 — the code now differs; see commits f0f44c7 (a missing or malformed field,
+or a single value where a list goes, is a `RegistryError` naming the model or section and the
+field), 828bee5 (a boolean in `args` is refused) and 69cc076 (unknown and repeated keys and a
+null in `args` are refused; flags must be booleans, strings non-empty and numbers finite; budget
+and brake values must be above 0). Task 1's review asked for them. The interfaces and the
+messages here are unchanged, except that the name message now quotes the name with `!r`. Later,
+from Task 6's reviews: commit 1e7e022 refuses a role that is another model's name, and a0a8612
+keeps `source.file` and `source.mmproj` inside the pinned snapshot, requires `source.repo` to be
+`org/name`, and makes the name, revision and pin patterns match whole strings.*
+
+- [x] **Step 5: Run the tests — they pass**
 
 Run: `uv run --frozen --project spark pytest spark/tests`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add spark/src/spark/registry.py spark/tests/test_registry.py spark/tests/fixtures/models.yaml
@@ -427,13 +563,13 @@ git commit -m "feat(spark): 🤖 add the model registry" \
 
 ***
 
-### Task 2 [Mac]: memory, the brake's hold file, and the launch check
+### Task 2 [Spark]: memory, the brake's hold file, and the launch check
 
 **Files:**
 
 - Create: `spark/src/spark/paths.py`, `spark/src/spark/memory.py`, `spark/src/spark/hold.py`,
   `spark/src/spark/admission.py`, `spark/src/spark/launch.py`, `spark/tests/test_launch.py`
-- Modify: `spark/src/spark/cli.py` (register `launch`)
+- Modify: `spark/src/spark/cli.py` (register `launch`), `README.md` (§Contents' `spark/` row)
 
 **Interfaces:**
 
@@ -445,7 +581,9 @@ git commit -m "feat(spark): 🤖 add the model registry" \
     `read_meminfo(path=Path("/proc/meminfo")) -> MemInfo`
   - `Hold(since: str, reason: str, unloaded: tuple[str, ...])`; `read_hold(state_dir) -> Hold | None`;
     `write_hold(state_dir, hold) -> None` (atomic); `release_hold(state_dir) -> bool`
-  - `Decision(ok: bool, reason: str)`; `admit(model, mem, budget, hold) -> Decision`
+  - `Decision(ok: bool, reason: str)`; `admit(model, mem, budget, hold) -> Decision`, which counts
+    `MemAvailable` capped at the budget's `allocatable_gib` (plan.md's *Admission and memory rules*,
+    rule 1)
   - CLI `spark launch <model> -- <engine cmd…>`: exec on success; exit 3 refused, 2 usage error
   - `engine_env(env) -> dict[str, str]` (in `launch.py`): the environment the engine gets —
     llama-swap's, without any `LLAMASWAP_KEY_*` variable
@@ -454,11 +592,12 @@ git commit -m "feat(spark): 🤖 add the model registry" \
     `{"at", "model", "reason"}` in `last-refusal.json` for `spark status` — the client itself only sees
     a failed start — and the next successful start clears it
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_launch.py`:
 
 ```python
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -494,6 +633,17 @@ def test_admit_refuses_when_it_would_eat_the_reserve():
     decision = admit(reg.models["coder"], MemInfo(121.7, 40.0), reg.budget, None)
     assert not decision.ok
     assert decision.reason == "needs ~28 GiB, 40 GiB available (24 GiB reserve kept)"
+
+
+def test_admit_counts_no_more_memory_than_the_gpu_can_allocate():
+    # MemAvailable can be above what CUDA can allocate (reported near 102 GiB), and overcommitting can
+    # hard-freeze a GB10: the fit uses the lower of the two.
+    reg = load_registry(FIXTURE)
+    big = replace(reg.models["coder"], footprint_gib=90)
+    decision = admit(big, MemInfo(121.7, 118.0), reg.budget, None)
+    assert not decision.ok  # 118 − 24 = 94 would fit; 102 − 24 = 78 doesn't
+    assert decision.reason == ("needs ~90 GiB, 102 GiB available, capped at what the GPU can allocate "
+                               "(24 GiB reserve kept)")
 
 
 def test_admit_refuses_while_the_brake_holds():
@@ -559,12 +709,17 @@ def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monke
     assert launch.read_refusal(tmp_path) is None
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+*Superseded 2026-09-26 — the tests now differ; see commits e575700 (a refusal's numbers show its
+shortfall and never read as a fit; the exact boundary; the hold fsynced before and after its rename)
+and 548ab5c (a damaged hold or a registry that won't load refused and recorded, not a crash; usage
+errors; a hold file on disk; a missing `MemTotal`). Task 2's review asked for them.*
+
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_launch.py`
 Expected: FAIL — `ImportError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/paths.py`:
 
@@ -660,10 +815,16 @@ def release_hold(state_dir: Path) -> bool:
     return False
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits e575700 (the hold is written, flushed
+and fsynced, renamed, and its folder fsynced, so a freeze can't leave it empty) and 548ab5c (a hold
+file that exists but can't be read or parsed reads as a hold naming the file, failing closed, and
+`read_hold` and `release_hold` act without checking `exists()` first).*
+
 `spark/src/spark/admission.py`:
 
 ```python
-"""The Phase 1 launch check: the brake's hold, then a static fit against MemAvailable − reserve."""
+"""The Phase 1 launch check: the brake's hold, then a static fit against MemAvailable − reserve, with
+MemAvailable capped at what the GPU can allocate."""
 
 from __future__ import annotations
 
@@ -687,14 +848,22 @@ def admit(model: Model, mem: MemInfo, budget: Budget, hold: Hold | None) -> Deci
             f"the memory brake has held new loads since {hold.since} ({hold.reason}); "
             "run `spark brake --release` once memory is back",
         )
-    if model.footprint_gib > mem.available_gib - budget.reserve_gib:
+    available = min(mem.available_gib, budget.allocatable_gib)  # overcommitting can hard-freeze a GB10
+    if model.footprint_gib > available - budget.reserve_gib:
+        capped = ", capped at what the GPU can allocate" if available < mem.available_gib else ""
         return Decision(
             False,
-            f"needs ~{model.footprint_gib:.0f} GiB, {mem.available_gib:.0f} GiB available "
+            f"needs ~{model.footprint_gib:.0f} GiB, {available:.0f} GiB available{capped} "
             f"({budget.reserve_gib:.0f} GiB reserve kept)",
         )
     return Decision(True, "fits")
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commit e575700: the fit is decided on exact
+decimals, and a refusal rounds the need up and what's available down, so its numbers never read as
+a fit: "needs 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short". A refusal under
+the brake's hold says to run `make brake-release` (commit d3481ab, Task 9), since `spark` isn't on
+Dan's PATH.*
 
 `spark/src/spark/launch.py`:
 
@@ -759,7 +928,7 @@ def clear_refusal(state: Path) -> None:
     try:
         (Path(state) / REFUSAL).unlink(missing_ok=True)
     except OSError:
-        pass
+        pass  # a stale reason only misleads `spark status`; it must never stop the engine's start
 
 
 def main_launch(argv: list[str], *, registry: Path = paths.REGISTRY, state: Path = paths.STATE) -> int:
@@ -789,24 +958,35 @@ def register(subparsers) -> None:
     p.set_defaults(func=lambda args: main_launch(args.rest))
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commit 548ab5c: a registry that won't load is
+refused (exit 3) naming its path and the error, and recorded; `record_refusal` writes a temporary
+file and renames it over the record. And commit 36ed81d, from Task 5's review: `read_refusal`
+returns only a whole record (a dict whose `at`, `model` and `reason` are strings), through a new
+`check_refusal` that says when the record isn't one.*
+
 Register in `cli.py` beside the others: `from spark import launch` / `launch.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass**
+- [x] **Step 4: Run the tests — they pass**
 
 Run: `uv run --frozen --project spark pytest spark/tests`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: README §Contents** — its `spark/` row says the CLI has "the leak check and the docs
+  tools so far", which `spark launch` makes untrue. The row becomes: "The `spark` CLI, a uv project
+  with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help`
+  lists them)." The commands later tasks add fall under it.
+
+- [x] **Step 6: Commit**
 
 ```bash
-git add spark/src/spark/{paths,memory,hold,admission,launch,cli}.py spark/tests/test_launch.py
+git add spark/src/spark/{paths,memory,hold,admission,launch,cli}.py spark/tests/test_launch.py README.md
 git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake hold" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ***
 
-### Task 3 [Mac]: the llama-swap client
+### Task 3 [Spark]: the llama-swap client
 
 **Files:**
 
@@ -815,13 +995,19 @@ git commit -m "feat(spark): 🤖 add the launch check, memory reader and brake h
 **Interfaces:**
 
 - Produces: `Running(model: str, state: str)`; `LlamaSwapError(RuntimeError)`;
-  `LlamaSwapUnreachable(LlamaSwapError)` (nothing answered — as opposed to an HTTP error such as a
-  wrong key, which says nothing about what is loaded);
+  `LlamaSwapUnreachable(LlamaSwapError)` (nothing answered in time: llama-swap is stopped, or hung
+  with its engines still running, and only its unit's state tells which — as opposed to an HTTP
+  error such as a wrong key, which says nothing about what is loaded, or an answer the client can't
+  read, cut short or not the JSON v257 sends, which are `LlamaSwapError` too);
   `LlamaSwap(base_url: str, api_key: str | None, timeout: float = 10.0)` with
   `running() -> list[Running]` (`GET /running`) and `unload(model: str) -> None`
   (`POST /api/models/unload/{model}`); `key_from_env(name: str) -> str | None`.
+  *Added 2026-09-26, from Task 7's reviews (commit 81b8124):* `LlamaSwapAnswered(LlamaSwapError)`,
+  for an answer that is an error or can't be read, so a caller can tell "llama-swap answered" from
+  "nothing answered" (`LlamaSwapUnreachable`) and from a request never sent (a plain
+  `LlamaSwapError`).
 
-- [ ] **Step 1: Write the failing tests** (a real local HTTP server, no mocks of urllib)
+- [x] **Step 1: Write the failing tests** (a real local HTTP server, no mocks of urllib)
 
 `spark/tests/test_llamaswap.py`:
 
@@ -835,6 +1021,7 @@ import pytest
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
 
 SEEN: list[tuple[str, str, str | None]] = []
+ANSWER: dict = {}  # a test sets what GET /running answers with the good key: a body, or "short"
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -851,7 +1038,13 @@ class Fake(BaseHTTPRequestHandler):
         SEEN.append(("GET", self.path, self.headers.get("Authorization")))
         if self.headers.get("Authorization") != "Bearer good":
             return self._reply(401, {"error": {"message": "unauthorized: invalid or missing API key"}})
-        self._reply(200, {"running": [{"model": "coder", "state": "ready", "cmd": "x", "proxy": "y", "ttl": 0}]})
+        if ANSWER.get("short"):  # promises 100 bytes, sends 13, and the connection closes
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            return self.wfile.write(b'{"running": [')
+        self._reply(200, ANSWER.get("body", {"running": [{"model": "coder", "state": "ready", "cmd": "x",
+                                                          "proxy": "y", "ttl": 0}]}))
 
     def do_POST(self):
         SEEN.append(("POST", self.path, self.headers.get("Authorization")))
@@ -865,6 +1058,7 @@ def server():
     httpd = HTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     SEEN.clear()
+    ANSWER.clear()
     yield f"http://127.0.0.1:{httpd.server_port}"
     httpd.shutdown()
 
@@ -898,14 +1092,34 @@ def test_a_wrong_key_is_not_mistaken_for_unreachable(server):
     with pytest.raises(LlamaSwapError) as caught:
         LlamaSwap(server, "bad").running()
     assert not isinstance(caught.value, LlamaSwapUnreachable)
+
+
+
+@pytest.mark.parametrize("answer", [{"body": "<html>busy</html>"}, {"body": "[1, 2]"}, {"body": {"running": "coder"}},
+                                    {"body": {"running": [{"name": "coder"}]}}, {"short": True}],
+                         ids=["not-json", "a-list", "a-string", "no-model", "cut-short"])
+def test_an_answer_it_cant_read_is_an_error_not_a_crash(server, answer):
+    # Not what v257 sends: an error that says so, which apply and the brake handle like a wrong key.
+    ANSWER.update(answer)
+    with pytest.raises(LlamaSwapError) as caught:
+        LlamaSwap(server, "good").running()
+    assert not isinstance(caught.value, LlamaSwapUnreachable)
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+*Superseded 2026-09-26 — the tests now go further; see commit 828fb3e: every `/running` shape that
+isn't v257's, a key that isn't printable ASCII (never sent, never shown), a proxy that must not see
+the key, an invalid URL, `api_key=None`, `key_from_env`, the trailing slash and the quoting; the
+fake records each request exactly as sent, and the fixture closes its server. Commit 81b8124, from
+Task 7's reviews, adds `LlamaSwapAnswered`'s cases: a 401, an answer not in v257's shape, one that
+isn't JSON and one cut short raise it; a closed port, a bad URL and a key a header can't carry
+don't.*
+
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `uv run --frozen --project spark pytest spark/tests/test_llamaswap.py`
 Expected: FAIL — `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `spark/src/spark/llamaswap.py`:
 
@@ -914,6 +1128,7 @@ Expected: FAIL — `ModuleNotFoundError`.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -927,7 +1142,8 @@ class LlamaSwapError(RuntimeError):
 
 
 class LlamaSwapUnreachable(LlamaSwapError):
-    """Nothing answered: llama-swap is stopped (or hung), so none of its engines is serving."""
+    """Nothing answered in time: llama-swap is stopped, or hung with its engines still running. Only its
+    unit's state tells which (`spark apply` asks systemd)."""
 
 
 @dataclass(frozen=True)
@@ -957,18 +1173,32 @@ class LlamaSwap:
             raise LlamaSwapError(f"llama-swap {method} {path}: HTTP {err.code}") from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
             raise LlamaSwapUnreachable(f"llama-swap unreachable at {self.base_url}: {err}") from None
+        except http.client.HTTPException as err:  # it answered, but the answer broke off or wasn't HTTP
+            raise LlamaSwapError(f"llama-swap {method} {path}: a broken answer ({type(err).__name__})") from None
 
     def running(self) -> list[Running]:
-        data = json.loads(self._call("GET", "/running"))
-        return [Running(r["model"], r["state"]) for r in data.get("running", [])]
+        body = self._call("GET", "/running")
+        try:
+            return [Running(r["model"], r["state"]) for r in json.loads(body).get("running", [])]
+        except (ValueError, KeyError, TypeError, AttributeError) as err:  # not the JSON v257 sends
+            raise LlamaSwapError(f"llama-swap GET /running: an answer it can't read ({type(err).__name__})") from None
 
     def unload(self, model: str) -> None:
         self._call("POST", "/api/models/unload/" + urllib.parse.quote(model, safe=""))
 ```
 
-- [ ] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
+*Superseded 2026-09-26 — the code now differs; see commit 828fb3e. `running()` reads v257's shape
+strictly — `{"running": [...]}` of objects with string `model` and `state` (v257's `handleRunning`
+always sends it, `[]` when idle) — and anything else is a `LlamaSwapError`, so a stray answer can't
+read as "nothing loaded". A key that isn't printable ASCII is refused before anything is sent, and
+no error carries it. Requests go through a proxy-free opener, so `http_proxy` never sees the key.
+Task 3's review asked for them. Commit 81b8124, from Task 7's reviews, adds `LlamaSwapAnswered`, the
+`LlamaSwapError` for an answer that is an error or can't be read, so apply can tell an answer from
+none.*
 
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run the tests — they pass.** Run: `uv run --frozen --project spark pytest spark/tests`
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add spark/src/spark/llamaswap.py spark/tests/test_llamaswap.py
@@ -977,7 +1207,7 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
 ```
 
 ***
-### Task 4 [Mac]: the minimal brake
+### Task 4 [Spark]: the minimal brake
 
 **Files:**
 
@@ -992,16 +1222,19 @@ git commit -m "feat(spark): 🤖 add a minimal llama-swap client" \
 - Produces: `Action(kind: str, model: str | None = None)` with kind `warn | hold | unload`;
   `plan_brake(mem, thresholds, registry, running: list[str]) -> list[Action]`;
   `run_brake(registry, client, state_dir, *, read_mem, sleep, log, now, once=False) -> None`;
-  CLI `spark brake [--once] [--release] [--key-env NAME]` (default key env `SPARK_API_KEY`).
+  CLI `spark brake [--once] [--release] [--key-env NAME]` (default key env `SPARK_API_KEY`), whose
+  llama-swap client waits 2 s at most, not the client's default 10: a tick acts on memory it has
+  just read.
 
 Phase 1's order is *on-demand models first, then residents, largest first* — one unload per tick,
 then re-measure. The idle-first order arrives with the gate in Phase 2 (it needs in-flight data).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_brake.py`:
 
 ```python
+import argparse
 from pathlib import Path
 
 from spark import brake
@@ -1071,11 +1304,26 @@ def test_release(tmp_path, capsys):
     write_hold(tmp_path, Hold("t", "r", ()))
     assert brake.release(tmp_path) == 0
     assert read_hold(tmp_path) is None and "released" in capsys.readouterr().out
+
+
+def test_the_brake_waits_for_llama_swap_2_s_at_most(monkeypatch):
+    # Each tick acts on memory it has just read; a hung llama-swap must not hold it for the default 10 s.
+    seen = {}
+    monkeypatch.setattr(brake, "load_registry", lambda path: REG)
+    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(client=client))
+    assert brake.run(argparse.Namespace(release=False, once=True, key_env="SPARK_API_KEY")) == 0
+    assert seen["client"].timeout == 2
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_brake.py` → FAIL (`ModuleNotFoundError`).
+*Superseded 2026-09-26 — the tests now go much further; see commits c249ce7 and ebd3ad1:
+multi-tick loops with a counted sleep, a failing unload, a failing hold write, a release mid-tick,
+`--key-env` naming another variable, an on-demand model smaller than a resident, `stopping` and
+unanswered unloads, `MemAvailable` noise, a registry that won't load, and a state folder the brake
+can't search. Each rule is pinned by a mutant that fails a test. Task 4's reviews asked for them.*
 
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_brake.py` → FAIL (`ModuleNotFoundError`).
+
+- [x] **Step 3: Implement**
 
 `spark/src/spark/brake.py`:
 
@@ -1172,20 +1420,33 @@ def run(args: argparse.Namespace) -> int:
     if args.release:
         return release(paths.STATE)
     registry = load_registry(paths.REGISTRY)
-    client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env))
+    # 2 s, not the default 10: a hung llama-swap must not hold a tick that acts on memory it just read.
+    client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=2)
     run_brake(registry, client, paths.STATE, log=lambda m: print(m, flush=True), once=args.once)
     return 0
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits c249ce7 (a failing hold write is logged
+and the unload still goes out; a release mid-tick, an unreadable `/proc/meminfo` and a registry
+that won't load no longer crash it — without a registry it brakes on the plan's thresholds; it asks
+llama-swap only when memory is low; a model whose unload failed is skipped for the episode, and
+each is recorded once) and ebd3ad1 (memory on its way back counts before another unload: an engine
+`stopping`, or an unload with no answer in 2 s, for up to `GRACE_S` = 15 s, ended early by a fall of
+more than `FLOOR_TOLERANCE_GIB` = 0.5 GiB; both are unmeasured on this box). llama-swap v257 answers
+an unload only after the engine exits and runs unloads one at a time (read in its source). And
+commit 88f98aa, from Task 5's review: `spark brake --release` says who can release when this
+account can't write the state folder, and exits 1, instead of a traceback. The hold's log line
+reads "brake: holding new loads until `make brake-release`" (commit d3481ab, Task 9).*
+
 Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/brake.py spark/src/spark/cli.py spark/tests/test_brake.py && git commit -m "feat(spark): 🤖 add the minimal memory brake" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/brake.py spark/src/spark/cli.py spark/tests/test_brake.py && git commit -m "feat(spark): 🤖 add the minimal memory brake" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
-### Task 5 [Mac]: `spark status`
+### Task 5 [Spark]: `spark status`
 
 **Files:**
 
@@ -1200,7 +1461,7 @@ Register in `cli.py`: `from spark import brake` / `brake.register(subparsers)`.
   `format_text(status: dict) -> str`; CLI `spark status [--json] [--key-env NAME]` (exit 0 always —
   it reports problems, it doesn't fail on them).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_status.py`:
 
@@ -1247,9 +1508,16 @@ def test_the_last_refused_load_is_explained():
     assert "refused  coder at t1: needs ~28 GiB, 40 GiB available (24 GiB reserve kept)" in text
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_status.py` → FAIL.
+*Superseded 2026-09-26 — the tests now go much further; see commit db4aece: they drive
+`spark status` through the CLI, text and `--json`, against a registry that won't load, unreadable
+memory, llama-swap down or answering 401 or a shape that isn't v257's, a state folder the caller
+can't read, a model the registry doesn't list, a damaged refusal record, rounding at the brake line
+and control characters. The stored reason above keeps an older wording; launch now writes "needs
+28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short".*
 
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_status.py` → FAIL.
+
+- [x] **Step 3: Implement**
 
 `spark/src/spark/status.py`:
 
@@ -1343,20 +1611,33 @@ def run(args: argparse.Namespace) -> int:
     return 0
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commit db4aece: `spark status` exits 0 whatever
+it meets and says what's wrong; a registry that won't load is reported, with the brake line taken
+from the plan's defaults; "unreachable" means nothing answered, and any other llama-swap error shows
+its own key-free text; an account that can't read the brake's state folder is told the state is
+unknown to it, not HOLDING, and the release is offered only to an account that can write it; a model
+the registry doesn't list is shown as such; numbers round so they never read past or short of the
+brake line wrongly; control characters are escaped; `--json` adds `problems`, `registry_loaded`
+and `brake.state`. The brake reads "no hold", not "off". Task 5's review asked for them. A hold
+this account can release says "`make brake-release` to clear" (commit d3481ab, Task 9).*
+
 Register in `cli.py`: `from spark import status` / `status.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/status.py spark/src/spark/cli.py spark/tests/test_status.py && git commit -m "feat(spark): 🤖 add spark status" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
-### Task 6 [Mac]: `spark render` — the real registry, templates, and the rendered config
+### Task 6 [Spark]: `spark render` — the real registry, templates, and the rendered config
 
-**Before this task: Dan's decision on the unit-file model** (plan.md, *Open items and risks*). This
-plan builds option 1, the accepted model: `make apply` writes the units and the Compose file as Dan,
-and `make install-units` links them. Option 2, root-owned copies, changes this task's Compose unit,
-Task 7's handling of a changed unit and Task 9's `make install-units`; if Dan picks it, revise those
-three first.
+**Dan's decision on the unit-file model, 2026-09-25: root-owned copies** (plan.md, *Open items and
+risks*, option 2). The units and the Compose project that root runs are root's own copies, which
+`make install-units` installs with sudo, so nothing running as Dan changes what root runs. This task
+renders them and says where root's copies live (`installed_path`), and the Compose unit runs in
+root's copy of the project, `/etc/local-ai/compose`. Task 7 stages them, Task 9 installs them, and
+Task 10's `make doctor` checks that they are root's own. (Until the decision this paragraph said the
+plan built option 1, with `make install-units` linking the units `make apply` writes as Dan, and
+stopped here for the choice.)
 
 **Files:**
 
@@ -1366,8 +1647,11 @@ three first.
   `stack/templates/searxng-settings.yml`, `spark/src/spark/render.py`, `spark/tests/test_render.py`,
   `spark/tests/fixtures/versions.yaml`
 - Modify: `spark/src/spark/versions.py` (optional `image` field, commit pins, a required version),
-  `spark/tests/test_versions.py`, `stack/versions.yaml`, `spark/src/spark/cli.py`,
-  `stack/host/bootstrap.sh` (two cache folders for `spark`), `spark/tests/test_bootstrap.py`
+  `spark/tests/test_versions.py`, `stack/versions.yaml`, `website/reference/stack.md` (regenerated),
+  `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (two cache folders for `spark`),
+  `spark/tests/test_bootstrap.py`, `README.md` (§Contents' `stack/` row). CI's step that runs
+  `spark render` on the real registry is Task 18's, on the Mac: the Spark's token can't push a
+  workflow change.
 
 **Interfaces:**
 
@@ -1375,20 +1659,23 @@ three first.
 - Produces: `RenderError(ValueError)`; `model_path(source, file) -> str`;
   `engine_cmd(model, registry) -> list[str]`; `llama_swap_config(registry) -> dict`;
   `render(registry, versions, registry_text: str, templates: Path = TEMPLATES) -> dict[str, str]`
-  (relative path → content); CLI `spark render --out DIR [--registry P] [--versions P]`.
+  (relative path → content); `write_tree(files, out) -> None` (writes each file under `out`,
+  making its folders; since 2026-09-26, through `write_atomic(path, data)`, which writes a
+  temporary file in the same folder and renames it over the target — Task 7's reviews, commit
+  4e639d0); CLI `spark render --out DIR [--registry P] [--versions P]`.
   Constants: `DEPLOY="/opt/local-ai"`, `HF_HOME="/var/lib/local-ai/hf"`,
   `SPARK_BIN="/opt/local-ai/app/.venv/bin/spark"`,
-  `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`.
+  `KEY_ENVS=("LLAMASWAP_KEY_DAN_MAC","LLAMASWAP_KEY_AGENT","LLAMASWAP_KEY_OPENWEBUI","LLAMASWAP_KEY_SPARK")`,
+  `UNITS` (the four unit files), `UNIT_DIR="/etc/systemd/system"`, `COMPOSE_DIR="/etc/local-ai/compose"`;
+  `installed_path(rel) -> str | None`: where root's copy of a rendered file lives
+  (`systemd/<unit>` → `UNIT_DIR/<unit>`, `compose/<file>` → `COMPOSE_DIR/<file>`), None for a file
+  `spark apply` deploys itself.
   Bootstrap gives `spark` two more folders, `/var/lib/local-ai/cache` and
   `/var/lib/local-ai/cuda-cache`, which the llama-swap and pull units name as `XDG_CACHE_HOME` and
   `CUDA_CACHE_PATH`.
 
-- [ ] **Step 1: `versions.py` gains an optional image name, commit pins and a required version** — add
-  `image: str | None = None` as the last field of `Component` and `image=raw.get("image")` in
-  `load_versions`. A source build (whisper.cpp) is pinned by the commit it was built from, so widen
-  the pin pattern to `PIN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")`, with the error
-  text `pin must be sha256:<64 hex>, git:<40 hex>, or null`, and the header comment of
-  `stack/versions.yaml` gains `# git:<40 hex> — the commit a source build was built from.` Add to
+- [x] **Step 1: `versions.py` gains an optional image name, commit pins and a required version** —
+  tests first. A source build (whisper.cpp) is pinned by the commit it was built from. Add to
   `spark/tests/test_versions.py`:
 
 ```python
@@ -1399,14 +1686,8 @@ def test_a_source_build_is_pinned_by_its_commit(tmp_path):
 
   Every entry must also have a version. Phase 0's review found that an entry without `version:`
   makes `load_versions` fail with a bare `KeyError` from `raw["version"]`, not a `VersionsError`
-  naming the component. Put this at the top of the loop in `load_versions`:
-
-```python
-        if raw.get("version") in (None, ""):
-            raise VersionsError(f"{name}: version is required")
-```
-
-  and add to `spark/tests/test_versions.py` a test that removes llama-swap's `version:` line:
+  naming the component. Add to `spark/tests/test_versions.py` a test that removes llama-swap's
+  `version:` line:
 
 ```python
 def test_rejects_a_component_without_a_version(tmp_path):
@@ -1414,7 +1695,23 @@ def test_rejects_a_component_without_a_version(tmp_path):
         load_versions(write(tmp_path, GOOD.replace("    version: v257\n", "", 1)))
 ```
 
-  Update `stack/versions.yaml`:
+  Run `uv run --frozen --project spark pytest spark/tests/test_versions.py` and watch both fail: the
+  first with `VersionsError: llama-swap: pin must look like sha256:<64 hex> or be null`, the second
+  with a bare `KeyError: 'version'`.
+
+  Then the code. Add `image: str | None = None` as the last field of `Component` and
+  `image=raw.get("image")` in `load_versions`. Widen the pin pattern to
+  `PIN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")`, with the error text
+  `pin must be sha256:<64 hex>, git:<40 hex>, or null`, and the header comment of
+  `stack/versions.yaml` gains `# git:<40 hex> — the commit a source build was built from.` For the
+  version, put this at the top of the loop in `load_versions`:
+
+```python
+        if raw.get("version") in (None, ""):
+            raise VersionsError(f"{name}: version is required")
+```
+
+  The same run passes. Then update `stack/versions.yaml`:
   `llama.cpp` → `version: b11146` (v0.5.0's build; release assets are named by build); `open-webui` →
   add `image: ghcr.io/open-webui/open-webui` and
   `pin: sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f` (the standard v0.11.4
@@ -1437,9 +1734,15 @@ def test_rejects_a_component_without_a_version(tmp_path):
 
   Run `uv run --frozen --project spark spark docs stack --write` so the Stack page follows.
 
-- [ ] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
-  context memory) until Phase 2 measures them. Resolve each repo's current commit on the Mac (public
-  API, no token needed) and paste the 40-hex values:
+  *Superseded 2026-09-26 — `versions.py` now differs; see commit a0a8612: a version or image
+  holding whitespace, a control character or anything outside a plain-text charset is refused, so
+  none can add a line or an option to the unit or the Compose file root runs; a version must be
+  YAML text (`version: 1.10` reads as 1.1); the pin pattern matches whole strings. Task 6's review
+  asked for them.*
+
+- [x] **Step 2: The real registry** — `stack/models.yaml`. Footprints are estimates (file sizes plus
+  context memory) until Phase 2 measures them. Resolve each repo's current commit on the Spark
+  (public API, no token needed; bootstrap installed `jq`) and paste the 40-hex values:
 
 ```bash
 for r in google/gemma-4-26B-A4B-it-qat-q4_0-gguf Qwen/Qwen3-Embedding-0.6B-GGUF \
@@ -1527,9 +1830,11 @@ models:
 
   (`--parallel 1` for the coder: MTP doesn't yet support more slots or a projector. `ctx: 1` is a
   placeholder the whisper engine ignores.) Every `<paste>` must be replaced before committing —
-  `load_registry` rejects anything that isn't 40 hex.
+  `load_registry` rejects anything that isn't 40 hex. *(Superseded since: Tasks 13–14 raised the
+  footprints and gave Gemma its image flags, and the context change, below Task 16 (2026-09-28),
+  raised every `ctx` to its model's maximum. `stack/models.yaml` is the current registry.)*
 
-- [ ] **Step 3: Templates** (`str.format` placeholders in braces; a literal brace is doubled, `{{ }}`)
+- [x] **Step 3: Templates** (`str.format` placeholders in braces; a literal brace is doubled, `{{ }}`)
 
 `stack/templates/local-ai-llama-swap.service`:
 
@@ -1560,6 +1865,10 @@ TimeoutStopSec=60
 WantedBy=multi-user.target
 ```
 
+*Superseded 2026-09-26 — this unit and the brake's below now carry `Type=exec` (commit 4e639d0,
+from Task 7's reviews), so `systemctl restart` fails when the binary can't start, instead of
+succeeding as soon as systemd forks.*
+
 `stack/templates/local-ai-brake.service`:
 
 ```ini
@@ -1583,7 +1892,14 @@ OOMScoreAdjust=-900
 WantedBy=multi-user.target
 ```
 
-`stack/templates/local-ai-compose.service` (runs as root — the `spark` user is not in `docker`):
+*Added 2026-09-26, from Task 5's review:* neither this unit nor llama-swap's sets a `UMask`, so
+systemd's default (0022) applies, and the hold the brake writes and the refusal record `spark
+launch` writes stay readable by `spark-admin`, which `spark status` needs. A `UMask` tighter than
+0027 on either unit would hide them.
+
+`stack/templates/local-ai-compose.service` (runs as root — the `spark` user is not in `docker`).
+Compose reads everything in its project folder, a `.env` and a `compose.override.yaml` included, so
+root runs it in root's own copy of the project, never in the staging folder Dan can write:
 
 ```ini
 # Rendered by `spark render` — edit stack/templates/, not this file.
@@ -1595,7 +1911,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/local-ai/etc/compose
+WorkingDirectory=/etc/local-ai/compose
 ExecStart=/usr/bin/docker compose up -d --remove-orphans
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=900
@@ -1625,6 +1941,11 @@ Environment=HF_HUB_DISABLE_PROGRESS_BARS=1
 Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
 ExecStart=/opt/local-ai/app/.venv/bin/spark models pull
 ```
+
+*Superseded 2026-09-26 — this unit now also sets `HF_HUB_DISABLE_TELEMETRY=1` (commit e40372d,
+from Task 8's review): without it, huggingface_hub asks the Hub, at most once a day and before its
+cache check, for a list of AI agents to name in its user agent, and writes `.agent_harnesses.json`
+under `HF_HOME`. A render test pins the unit's settings.*
 
 `stack/templates/compose.yaml`:
 
@@ -1689,12 +2010,38 @@ search:
     - json
 ```
 
-- [ ] **Step 4: Write the failing tests**
+- [x] **Step 4: Write the failing tests**
 
-`spark/tests/fixtures/versions.yaml` — like `stack/versions.yaml` but with only `llama-swap`
-(`version: v257`, `deployed: true`, `pin: null`), `open-webui` and `searxng` (each with its `image`,
-`deployed: true` and `pin: "sha256:"` followed by 64 zeros), plus the required `where`, `docs`,
-`changelog` fields.
+`spark/tests/fixtures/versions.yaml`, like `stack/versions.yaml` but with only the three components
+render reads, each with every required field (`version` included); llama-swap is unpinned and the
+two images carry a made-up digest:
+
+```yaml
+components:
+  llama-swap:
+    version: v257
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://github.com/mostlygeek/llama-swap
+    changelog: https://github.com/mostlygeek/llama-swap/releases
+  open-webui:
+    version: v0.11.4
+    image: ghcr.io/open-webui/open-webui
+    where: [spark]
+    pin: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    deployed: true
+    docs: https://docs.openwebui.com/
+    changelog: https://github.com/open-webui/open-webui/releases
+  searxng:
+    version: 2026.9.23-3cd69d30e
+    image: docker.io/searxng/searxng
+    where: [spark]
+    pin: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    deployed: true
+    docs: https://docs.searxng.org/
+    changelog: https://github.com/searxng/searxng/commits/master
+```
 
 `spark/tests/test_render.py`:
 
@@ -1705,7 +2052,7 @@ import pytest
 import yaml
 
 from spark.registry import load_registry
-from spark.render import SPARK_BIN, RenderError, render
+from spark.render import COMPOSE_DIR, SPARK_BIN, UNIT_DIR, RenderError, installed_path, render
 from spark.versions import load_versions
 
 FIX = Path(__file__).parent / "fixtures"
@@ -1763,6 +2110,30 @@ def test_engines_and_downloads_cache_in_folders_bootstrap_gives_spark():
         assert "Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache" in text, unit
 
 
+def test_what_root_runs_has_a_root_owned_copy_and_the_rest_has_none():
+    # Dan's decision (2026-09-25): the units and the Compose project that root runs are root's own
+    # copies, which `make install-units` installs. `spark apply` deploys the rest itself.
+    copies = {rel: installed_path(rel) for rel in rendered()}
+    assert copies == {
+        "llama-swap.yaml": None,
+        "models.yaml": None,
+        "compose/compose.yaml": "/etc/local-ai/compose/compose.yaml",
+        "compose/searxng/settings.yml": "/etc/local-ai/compose/searxng/settings.yml",
+        "systemd/local-ai-llama-swap.service": "/etc/systemd/system/local-ai-llama-swap.service",
+        "systemd/local-ai-brake.service": "/etc/systemd/system/local-ai-brake.service",
+        "systemd/local-ai-compose.service": "/etc/systemd/system/local-ai-compose.service",
+        "systemd/local-ai-pull.service": "/etc/systemd/system/local-ai-pull.service",
+    }
+    assert (UNIT_DIR, COMPOSE_DIR) == ("/etc/systemd/system", "/etc/local-ai/compose")
+
+
+def test_root_runs_compose_in_its_own_copy_of_the_project():
+    # Compose reads every file in its project folder, a .env and an override file included, so root
+    # runs it in root's copy, never in /opt/local-ai/etc, which Dan can write.
+    unit = rendered()["systemd/local-ai-compose.service"]
+    assert f"\nWorkingDirectory={COMPOSE_DIR}\n" in unit and "/opt/local-ai" not in unit
+
+
 def test_a_set_that_breaks_the_budget_is_refused(tmp_path):
     data = yaml.safe_load((FIX / "models.yaml").read_text())
     data["models"]["coder"]["footprint_gib"] = 70
@@ -1773,9 +2144,21 @@ def test_a_set_that_breaks_the_budget_is_refused(tmp_path):
 
 
 def test_the_real_registry_renders():
-    render(load_registry(ROOT / "stack/models.yaml"), load_versions(ROOT / "stack/versions.yaml"),
-           (ROOT / "stack/models.yaml").read_text(), templates=ROOT / "stack/templates")
+    registry = load_registry(ROOT / "stack/models.yaml")
+    files = render(registry, load_versions(ROOT / "stack/versions.yaml"), (ROOT / "stack/models.yaml").read_text(),
+                   templates=ROOT / "stack/templates")
+    assert set(files) == set(rendered())  # the same eight files as the fixture renders
+    assert set(yaml.safe_load(files["llama-swap.yaml"])["models"]) == set(registry.models)
 ```
+
+*Superseded 2026-09-26 — the tests now go much further; see commits f2ffd3b, 1e7e022, b26c6e5,
+a0a8612 and 98f5f56: the Compose test parses the YAML and pins each service's exact bind; every
+engine command, the real registry's included, is checked for a 127.0.0.1 bind, no key and no
+`${` but `${PORT}`; and registry edits that rebind an engine, carry a key, download at start,
+override a flag render sets, or step outside the pinned snapshot are refused. Task 6's reviews
+asked for them. Commit 4e639d0, from Task 7's reviews, adds `write_atomic`'s tests (a file replaced
+whole, a planted link replaced rather than written through) and pins `Type=exec` on the llama-swap
+and brake units.*
 
 Add to `spark/tests/test_bootstrap.py` (Phase 0's), after
 `test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in_it`:
@@ -1789,18 +2172,37 @@ def test_spark_gets_its_cache_folders_from_root():
         assert "-o spark -g spark -m 0750" in install_d_line(path)
 ```
 
-- [ ] **Step 5: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_render.py spark/tests/test_bootstrap.py`
+- [x] **Step 5: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_render.py spark/tests/test_bootstrap.py`
   → FAIL: `render.py` doesn't exist yet, and the dry run has no `install -d` line for either cache
   folder.
 
-- [ ] **Step 6: Implement**
+- [x] **Step 6: Implement**
 
-In `stack/host/bootstrap.sh`'s `directories()`, the line that creates `spark`'s folders gains the
-two cache folders, next to `hf`, so root makes them directly under its own `/var/lib/local-ai`:
+In `stack/host/bootstrap.sh`, `directories()` becomes this. The line that creates `spark`'s folders
+gains the two cache folders, next to `hf`, so root makes them directly under its own
+`/var/lib/local-ai`. The first comment stops saying that root runs the units and the Compose file in
+`etc/`: from now on `etc/` only stages them, and root runs its own copies.
 
 ```bash
+directories() {
+  say "directories"
+  # Code and config are root-owned and group-writable by spark-admin. spark only reads them: it runs
+  # the engines. What root runs isn't here: etc/ only stages the units and the Compose project, and
+  # `make install-units` installs root's own copies of them.
+  run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
+  run install -d -o root -g spark-admin -m 0750 /etc/local-ai
+  run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
+  # State. The parent is root's and spark writes only inside its children: `install -d` follows a
+  # symlink, so a spark-owned parent would let spark swap a child for a link that the next re-run
+  # hands to it. It is also spark's home, so a cache under $HOME needs a spark-owned child here
+  # and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
+  run install -d -o root -g root -m 0755 /var/lib/local-ai
   run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng \
     /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
+  run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
+  # Nothing inside agent's home: agent controls it, so root never writes there. agent makes its
+  # own ~/work.
+}
 ```
 
 `spark/src/spark/render.py`:
@@ -1824,10 +2226,23 @@ HF_HOME = "/var/lib/local-ai/hf"
 SPARK_BIN = f"{DEPLOY}/app/.venv/bin/spark"
 KEY_ENVS = ("LLAMASWAP_KEY_DAN_MAC", "LLAMASWAP_KEY_AGENT", "LLAMASWAP_KEY_OPENWEBUI", "LLAMASWAP_KEY_SPARK")
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service")
+# What root runs is root's own copy, in folders only root can write: `make install-units` (sudo)
+# installs the rendered units and Compose project there, and `spark apply` only stages them.
+UNIT_DIR = "/etc/systemd/system"
+COMPOSE_DIR = "/etc/local-ai/compose"
 
 
 class RenderError(ValueError):
     pass
+
+
+def installed_path(rel: str) -> str | None:
+    """Where root's copy of a rendered file lives; None for a file `spark apply` deploys itself."""
+    if rel.startswith("systemd/"):
+        return f"{UNIT_DIR}/{rel.removeprefix('systemd/')}"
+    if rel.startswith("compose/"):
+        return f"{COMPOSE_DIR}/{rel.removeprefix('compose/')}"
+    return None
 
 
 def model_path(source: Source, file: str) -> str:
@@ -1940,17 +2355,45 @@ def run(args: argparse.Namespace) -> int:
     return 0
 ```
 
-Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
-Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --project spark spark render --out /tmp/rendered`.
+*Superseded 2026-09-26 — the code now differs; see commits f2ffd3b, 1e7e022, b26c6e5, a0a8612 and
+98f5f56. Render refuses, naming the model and the arg, an arg that sets a flag it owns (the bind,
+the port, the model, the projector, a key), downloads at start, or re-sets a flag it emits from a
+registry field, in every spelling (read from llama.cpp b11146's option table); any `${` but
+`${PORT}`; and a command word the engine wouldn't get as written. llama-server always runs
+`--offline`. An image pin must be a `sha256:` digest; a missing component and a file that won't
+load are named; the budget refusal's numbers can't read as a fit. `spark` commands print
+`spark <command>: <reason>` for a refusal instead of a traceback. Task 6's reviews asked for them.
+Commit 4e639d0, from Task 7's reviews, adds `write_atomic`: `write_tree` writes each file to a
+temporary file in its folder and renames it over the target, so nothing reads a half-written file.*
 
-- [ ] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
+Register in `cli.py`: `from spark import render as render_cmd` / `render_cmd.register(subparsers)`.
+From here on CI's tests render the real registry (`test_the_real_registry_renders`). A step that
+runs the CLI itself, `spark render --out`, is Task 18's, on the Mac, since the Spark's
+repository-only token can't push a change under `.github/workflows/`.
+
+- [x] **Step 7: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`, and
   `make lint` (bootstrap changed).
 
-- [ ] **Step 8: Commit** — `git add stack spark .github website/reference/stack.md && git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config from the registry" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 8: README §Contents** — its `stack/` row names only the pinned versions and the host
+  setup. It becomes: "The model registry (`models.yaml`), pinned versions (`versions.yaml`), the
+  templates `spark render` fills (`templates/`) and the host setup (`host/`: bootstrap, earlyoom's
+  config, the polkit rule)."
+
+- [x] **Step 9: Commit** — every file this task changed, by name; `git status --short` then lists
+  nothing of it:
+
+```bash
+git add stack/models.yaml stack/versions.yaml stack/templates/local-ai-{llama-swap,brake,compose,pull}.service \
+  stack/templates/compose.yaml stack/templates/searxng-settings.yml stack/host/bootstrap.sh \
+  spark/src/spark/{render,versions,cli}.py spark/tests/{test_render,test_versions,test_bootstrap}.py \
+  spark/tests/fixtures/versions.yaml website/reference/stack.md README.md
+git commit -m "feat(spark): 🤖 render llama-swap, systemd and compose config from the registry" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
 
 ***
 
-### Task 7 [Mac]: `spark apply` — show what changes, never stop loaded models silently
+### Task 7 [Spark]: `spark apply` — show what changes, never stop loaded models silently
 
 **Files:**
 
@@ -1959,36 +2402,136 @@ Add to `.github/workflows/ci.yml`'s `tests` job: `- run: uv run --frozen --proje
 
 **Interfaces:**
 
-- Consumes: `render`, `write_tree`, `DEPLOY`, `KEY_ENVS` (Task 6); `LlamaSwap`, `LlamaSwapError`,
-  `LlamaSwapUnreachable`, `key_from_env` (Task 3); `load_versions`, `unpinned` (Phase 0).
+- Consumes: `load_registry` (Task 1); `paths` (Task 2); `render`, `write_tree`, `installed_path`,
+  `DEPLOY`, `KEY_ENVS` (Task 6); `LlamaSwap`, `LlamaSwapError`, `LlamaSwapUnreachable`,
+  `key_from_env` (Task 3); `load_versions`, `unpinned` (Phase 0).
 - Produces: `diff_tree(files, etc) -> list[str]`; `app_diff(src, app) -> list[str]`;
-  `units_to_restart(changed, app_changed=False) -> list[str]`;
-  `apply_files(files, etc, *, app_changes, running, now_ok, dry_run, sync_app, installed, run_cmd, log) -> int`
-  — 0 applied (or nothing to do), 1 refused; `running=None` means llama-swap answered but wouldn't
-  say what is loaded. CLI `spark apply [--dry-run] [--now] [--key-env NAME]`, run from the repo root.
+  `not_installed(files, installed) -> list[str]`; `unit_of(rel) -> str | None`;
+  `outdated_units(started, changed_at) -> list[str]`;
+  `units_to_restart(changed, app_changed=False) -> list[str]`; `started_at(show) -> float | None`
+  (None when the unit isn't running; ValueError when it runs and its time doesn't read);
+  `start_times(units, show, log=print) -> dict[str, float | None]`, which gives such a unit
+  `UNKNOWN_START` and says so; `models_loaded(client, unit_active, log=print) -> list[str] | None`;
+  `read_copies(files, where=installed_path) -> (texts, times, unreadable)`;
+  `validation_env(env) -> dict[str, str]`;
+  `apply_files(files, etc, *, installed, unreadable, outdated, active, app_changes, running, now_ok, dry_run, sync_app, run_cmd, log) -> int`
+  — 0 applied, nothing to do, or root's files staged for `make install-units`; 1 refused, or a
+  restart failed after the files were deployed. `installed` maps each of root's files (the units
+  and the Compose project) to the text of root's copy, None when there is none or it can't be read;
+  `unreadable` names the copies that exist but can't be read from Dan's account; `outdated` lists
+  the running units whose start began before their copy was installed; `active(unit)` says whether
+  a unit runs; `running=None` means apply can't tell what is loaded. CLI
+  `spark apply [--dry-run] [--now] [--key-env NAME]`, run from the repo root.
+- *Added 2026-09-26, from Task 7's reviews (commits 4e639d0, 5641842, be4c3c3, 81b8124):* apply
+  also consumes render's `_load` and `write_atomic`, and `LlamaSwapAnswered` (Task 3).
+  `apply_files` gains `recheck=None` and `came_up=None`, and its exit 1 also covers a failed sync, a
+  llama-swap restart put off, and a llama-swap that doesn't answer after its restart. New:
+  `wait_for_running`, `deployed_times`, `SyncError`, `SYNC_STAMP`, `APP`, `DEPLOYED`,
+  `READY_SECONDS`. `unit_of` also maps the files apply deploys; `app_diff` also lists files removed
+  from `spark/`, and counts every file until a sync finishes; `validation_env` returns `PATH` and
+  the placeholders only.
 
-What each change restarts:
+What apply does with each change:
 
-| Changed | Restarted |
+| Changed | What apply does |
 |---|---|
-| `llama-swap.yaml` or its unit | llama-swap. That stops every model, so it is refused while any is loaded, or while apply can't tell, unless `--now` |
-| `models.yaml` or the brake's unit | the brake (`spark launch` reads the registry fresh on every start) |
-| the app (`/opt/local-ai/app`, a copy of the repo's `spark/`) | the brake, the one long-running process that imports it |
-| `compose/*` or its unit | the web services |
-| any unit file | `systemctl daemon-reload`, first |
+| a unit, or the Compose project (root's files) | stages it in `/opt/local-ai/etc`, where `make install-units` (Task 9) reads it, says so, and stops: nothing else is deployed or restarted until root's copies match |
+| root's copy, installed by `make install-units` | restarts each running unit whose start began before its copy was installed, since it still runs the old definition |
+| `llama-swap.yaml` | restarts llama-swap |
+| `models.yaml` | restarts the brake (`spark launch` reads the registry fresh on every start) |
+| the app (`/opt/local-ai/app`, a copy of the repo's `spark/`) | restarts the brake, the one long-running process that imports it |
 
-A unit that isn't installed yet (the first deploy, before `make install-units`) is skipped with a
-hint. A refusal changes nothing at all — not the files, not the app.
+Restarting llama-swap stops every model, so it is refused while any is loaded, or while apply can't
+tell, unless `--now`, whatever the restart is for. apply can't tell when llama-swap answers
+`/running` with an error, such as a wrong key, or when its unit runs and it doesn't answer within
+3 s: only a llama-swap whose unit isn't running counts as having nothing loaded. llama-swap v257
+answers `/running` during a load: its handler reads each model's state without waiting for the
+load (`RunningModels` in `internal/router/base.go`; read in v257's source, not yet seen on this
+box). So no answer means it is hung, or the box is struggling, and its engines may still be
+serving. apply restarts only units that run; a stopped
+unit starts with the new config, and apply starts nothing. It never writes root's copies and never
+reloads systemd: `make install-units` does both, with sudo. Root's files come first, so no unit
+restarts onto a definition root doesn't have yet, and llama-swap never runs a new config under an
+old unit. A copy of root's that exists but that Dan's account can't read is named as such, not as
+missing. A refusal changes nothing at all — not the files, not the app. `--dry-run` shows all of
+it, and lists as restarts only the ones the real run would make. apply writes the files before it
+restarts anything, so a restart that fails (a unit that won't start, or a session without
+`spark-admin`) leaves them deployed, and the next apply finds nothing to change. So apply names the
+unit, points at `make logs s=<name>`, says to run `systemctl restart <unit>` once it's fixed, and
+exits 1.
 
-- [ ] **Step 1: Write the failing tests**
+*Corrected 2026-09-26, from Task 7's reviews:* a dry run that the real run would refuse says
+"would refuse; with --now it would restart …" and exits 1, so `make apply-dry-run` then ends in
+make's error line. The next apply now finishes what a partial run left: a failed `uv sync` is
+retried, since the app counts as changed until a sync finishes, and a running unit that started
+before the files apply deploys were written counts as outdated (below). So "the next apply finds
+nothing to change" now holds only for a unit that couldn't start again: it is stopped, and apply
+starts nothing. A unit whose restart systemd refused, as for a session without `spark-admin`,
+still runs its older files, and the next apply restarts it. The llama-swap and brake units run as
+`Type=exec`, so a binary that can't start fails the restart and apply hears of it. After
+restarting llama-swap, apply waits up to 30 s for `/running` to answer in v257's shape; an answer
+that is an error, such as a 401 for a wrong key, ends the wait at once. Unless it gets that
+answer, apply says what it saw and exits 1.
+
+A unit is outdated when its last start began (systemd's `InactiveExitTimestamp`, read with
+`systemctl show --timestamp=us+utc`, to the microsecond) before one of root's copies of its files
+was installed (that file's modification time). When the start began counts, not when it ended
+(`ActiveEnterTimestamp`): the compose unit's start can take up to 900 s, and a copy installed
+during it may come after the start read the old one. The comparison is strict: a copy is newer
+only when its modification time is later than the start's time, which systemd gives to the
+microsecond. The property names and the `Fri 2026-09-25 23:19:46.826238 UTC` format come
+from systemd v255's source (`src/systemctl/systemctl-show.c`, `src/basic/time-util.c`) and ran
+under systemd 255.4 in a container, a slow start included. They are not yet run on this box: the
+first `make apply` after `make install-units` changes a running unit is their first use there, and
+`make apply-dry-run` shows what it would restart. If a running unit's time comes in another form
+there, apply doesn't guess: it names the unit, says it can't tell whether the unit runs root's
+latest copy, and gives the command to restart it by hand (for llama-swap, once no model is loaded,
+since restarting it stops them all), and it counts the unit as running and current, so a changed
+config still restarts it and a new copy of its unit doesn't. What the rule
+can still miss: a clock stepped backwards between a start and an install; and a start that began
+after an install but before systemd reloaded it — a restart during `make install-units`, or after
+a run of it that was cut off before its reload (the next run reloads) — which runs the old
+definition while counting as current. Either way, `systemctl restart <unit>` fixes it.
+
+*Added 2026-09-26, from Task 7's reviews:* a unit is also outdated when its start began before a
+file apply deploys itself was written, or before the app's last sync finished (`deployed_times`):
+llama-swap runs on `etc/llama-swap.yaml`, and the brake on `etc/models.yaml` and the app. A unit
+whose time can't be read counts as current for these too, so its message names both reasons it may
+be behind: `make install-units`, or an apply that didn't restart it.
+
+One more known limit, not designed away in Phase 1: apply reads what llama-swap has loaded before
+it syncs the app and writes the files, and restarts llama-swap after them. A model whose load
+starts in between, because a request arrived, is stopped by that restart: the request fails, and
+sent again it loads the model under the new config. To leave no window, run apply while nothing is
+sending requests, and check `make status` after it.
+
+*Corrected 2026-09-26, from Task 7's reviews:* apply now restarts llama-swap first, and asks
+`/running` again just before. A model loaded by then, or no answer that says what is loaded, puts
+the restart off: the files stay deployed, apply says so and exits 1, and the next `make apply`
+makes the restart once the models are idle. So the window is only between that second look and
+`systemctl restart`.
+
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_apply.py`:
 
 ```python
-from spark.apply import app_diff, apply_files, diff_tree, units_to_restart
+import socket
+import subprocess
+from datetime import datetime, timezone
 
+import pytest
+
+from spark.apply import (UNKNOWN_START, app_diff, apply_files, diff_tree, models_loaded, not_installed,
+                         outdated_units, read_copies, start_times, started_at, units_to_restart, validation_env)
+from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
+from spark.render import KEY_ENVS
+
+LLAMA, BRAKE, COMPOSE = "local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service"
 FILES = {"llama-swap.yaml": "a", "models.yaml": "m", "compose/compose.yaml": "c",
          "systemd/local-ai-llama-swap.service": "u"}
+# Root's copies of the units and the Compose project, as `make install-units` installed them.
+ROOTS = {"compose/compose.yaml": "c", "systemd/local-ai-llama-swap.service": "u"}
 
 
 def seeded(etc):
@@ -1998,12 +2541,19 @@ def seeded(etc):
     return etc
 
 
-def run_apply(etc, files, *, app_changes=(), running=(), now_ok=False, dry_run=False, installed=True):
+def run_apply(etc, files, *, installed=ROOTS, unreadable=(), outdated=(), active=(LLAMA, BRAKE, COMPOSE),
+              app_changes=(), running=(), now_ok=False, dry_run=False, fails=()):
     ran, logs, synced = [], [], []
-    code = apply_files(files, etc, app_changes=list(app_changes),
-                       running=None if running is None else list(running), now_ok=now_ok,
-                       dry_run=dry_run, sync_app=lambda: synced.append(True),
-                       installed=lambda unit: installed, run_cmd=ran.append, log=logs.append)
+
+    def run_cmd(cmd):  # systemctl, as a stand-in: a unit in `fails` doesn't restart
+        if cmd[-1] in fails:
+            raise subprocess.CalledProcessError(1, cmd)
+        ran.append(cmd)
+
+    code = apply_files(files, etc, installed=dict(installed), unreadable=set(unreadable), outdated=list(outdated),
+                       active=lambda unit: unit in active, app_changes=list(app_changes),
+                       running=None if running is None else list(running), now_ok=now_ok, dry_run=dry_run,
+                       sync_app=lambda: synced.append(True), run_cmd=run_cmd, log=logs.append)
     return code, ran, logs, synced
 
 
@@ -2012,10 +2562,10 @@ def test_nothing_changed_does_nothing(tmp_path):
     assert (code, ran, logs) == (0, [], ["apply: nothing to change"])
 
 
-def test_compose_change_restarts_only_the_web_services(tmp_path):
-    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"})
-    assert code == 0 and ran == [["systemctl", "restart", "local-ai-compose.service"]]
-    assert (tmp_path / "compose/compose.yaml").read_text() == "c2"
+def test_a_llama_swap_config_change_restarts_it_when_no_model_is_loaded(tmp_path):
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"})
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
+    assert (tmp_path / "llama-swap.yaml").read_text() == "b"
 
 
 def test_llama_swap_change_is_refused_while_models_are_loaded(tmp_path):
@@ -2037,36 +2587,213 @@ def test_now_restarts_llama_swap_anyway(tmp_path):
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
 
 
-def test_unit_change_reloads_systemd_first(tmp_path):
-    _, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"systemd/local-ai-llama-swap.service": "u2"})
-    assert ran == [["systemctl", "daemon-reload"], ["systemctl", "restart", "local-ai-llama-swap.service"]]
-
-
 def test_an_app_change_is_synced_and_restarts_the_brake(tmp_path):
     code, ran, _, synced = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/brake.py"])
     assert code == 0 and synced == [True]
     assert ran == [["systemctl", "restart", "local-ai-brake.service"]]
 
 
-def test_the_first_deploy_skips_units_not_yet_installed(tmp_path):
-    code, ran, logs, _ = run_apply(tmp_path, FILES, installed=False)
-    assert code == 0 and ran == [["systemctl", "daemon-reload"]]
+def test_a_changed_unit_is_staged_for_root_and_nothing_else_moves(tmp_path):
+    # Root runs only root's copy. apply stages the new unit where `make install-units` reads it, and
+    # deploys and restarts nothing until root has it: not llama-swap for its new config, which the
+    # new unit may need, not the brake for the app, not the web services for their older copy.
+    new = FILES | {"systemd/local-ai-llama-swap.service": "u2", "llama-swap.yaml": "b"}
+    code, ran, logs, synced = run_apply(seeded(tmp_path), new, app_changes=["src/spark/brake.py"],
+                                        outdated=[COMPOSE])
+    assert code == 0 and ran == [] and synced == []
+    assert (tmp_path / "systemd/local-ai-llama-swap.service").read_text() == "u2"
     assert (tmp_path / "llama-swap.yaml").read_text() == "a"
-    assert any("make install-units" in line for line in logs)
+    assert "systemd/local-ai-llama-swap.service differs from root's copy" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
+
+
+def test_the_first_deploy_stages_roots_files_before_anything_else(tmp_path):
+    code, ran, logs, synced = run_apply(tmp_path, FILES, installed={}, active=(), app_changes=["pyproject.toml"])
+    assert code == 0 and ran == [] and synced == []
+    staged = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file())
+    assert staged == sorted(ROOTS)
+    assert "root has no copy of compose/compose.yaml yet" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
+
+
+def test_a_running_unit_is_restarted_once_its_new_definition_is_installed(tmp_path):
+    # `make install-units` installed a new Compose project; the web services still run the old one.
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[COMPOSE])
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-compose.service"]]
+
+
+def test_llama_swap_waits_for_idle_models_to_run_its_new_definition(tmp_path):
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"])
+    assert code == 1 and ran == [] and "--now" in logs[-1]
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"], now_ok=True)
+    assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
+
+
+def test_a_unit_that_isnt_running_is_never_started(tmp_path):
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, active=())
+    assert code == 0 and ran == [] and (tmp_path / "llama-swap.yaml").read_text() == "b"
+    assert logs[-1] == "apply: local-ai-llama-swap.service isn't running; it starts with the new config"
+
+
+def test_a_dry_run_lists_only_the_restarts_the_real_run_makes(tmp_path):
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                   active=(BRAKE,), dry_run=True)
+    assert code == 0 and ran == []
+    assert "apply: dry run — would restart local-ai-brake.service" in logs
+    assert "apply: dry run — local-ai-llama-swap.service isn't running; it starts with the new config" in logs
+
+
+def test_a_restart_that_fails_says_the_files_are_deployed_and_how_to_finish(tmp_path):
+    # The next apply finds nothing to change, so this is the one time to say which unit still needs it.
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                   fails=(BRAKE,))
+    assert code == 1
+    assert ran == [["systemctl", "restart", LLAMA]]  # the other restarts still happen
+    assert (tmp_path / "models.yaml").read_text() == "m2"
+    assert logs[-1] == ("apply: restarting local-ai-brake.service failed, and its new files are deployed: see "
+                        "`make logs s=brake`, and once it's fixed, `systemctl restart local-ai-brake.service`")
+
+
+def test_a_copy_apply_cant_read_is_not_called_missing(tmp_path):
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES, installed={"systemd/local-ai-llama-swap.service": "u"},
+                                 unreadable={"compose/compose.yaml"})
+    text = "\n".join(logs)
+    assert code == 0 and "can't read root's copy of compose/compose.yaml" in text
+    assert "root has no copy of compose/compose.yaml" not in text
 
 
 def test_dry_run_changes_nothing(tmp_path):
-    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"},
-                                        app_changes=["pyproject.toml"], dry_run=True)
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"models.yaml": "m2"},
+                                        app_changes=["pyproject.toml"], outdated=[COMPOSE], dry_run=True)
+    assert code == 0 and ran == [] and synced == []
+    assert (tmp_path / "models.yaml").read_text() == "m"
+    assert logs[-1] == "apply: dry run — would restart local-ai-brake.service, local-ai-compose.service"
+
+
+def test_a_dry_run_shows_what_it_would_stage_and_changes_nothing(tmp_path):
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"compose/compose.yaml": "c2"}, dry_run=True)
     assert code == 0 and ran == [] and synced == []
     assert (tmp_path / "compose/compose.yaml").read_text() == "c"
-    assert "local-ai-compose.service" in logs[-1]
+    assert "compose/compose.yaml differs from root's copy" in "\n".join(logs)
+    assert "make install-units" in logs[-1]
 
 
 def test_restart_mapping():
     assert units_to_restart(["models.yaml"]) == ["local-ai-brake.service"]
-    assert units_to_restart(["compose/searxng/settings.yml"]) == ["local-ai-compose.service"]
+    assert units_to_restart(["llama-swap.yaml"]) == ["local-ai-llama-swap.service"]
     assert units_to_restart([], app_changed=True) == ["local-ai-brake.service"]
+    # Root's files restart nothing by themselves: a unit restarts once root's copy is installed.
+    assert units_to_restart(["compose/searxng/settings.yml", "systemd/local-ai-brake.service"]) == []
+
+
+def test_roots_files_wait_for_make_install_units_until_roots_copies_match():
+    installed = {"compose/compose.yaml": "c", "systemd/local-ai-llama-swap.service": "old"}
+    files = FILES | {"systemd/local-ai-brake.service": "b"}
+    assert not_installed(files, installed) == ["systemd/local-ai-brake.service", "systemd/local-ai-llama-swap.service"]
+
+
+def test_a_running_unit_that_started_before_its_copy_was_installed_is_outdated():
+    started = {LLAMA: 100.0, BRAKE: 100.0, COMPOSE: 100.0}
+    changed_at = {
+        "systemd/local-ai-llama-swap.service": 100.25,  # installed a quarter second after llama-swap started
+        "systemd/local-ai-brake.service": 100.0,        # installed as the brake started: not after
+        "compose/searxng/settings.yml": 150.0,         # the Compose project is the web services' definition
+        "systemd/local-ai-pull.service": 200.0,         # the pull unit runs only when asked
+    }
+    assert outdated_units(started, changed_at) == ["local-ai-compose.service", "local-ai-llama-swap.service"]
+    # A unit that isn't running starts with its new definition.
+    assert outdated_units({LLAMA: None}, {"systemd/local-ai-llama-swap.service": 200.0}) == []
+
+
+def test_started_at_reads_when_the_last_start_began():
+    # InactiveExitTimestamp is when the start began, ActiveEnterTimestamp when it ended: for the compose
+    # unit, whose start runs `docker compose up` for up to 15 minutes, a copy installed meanwhile is
+    # newer than the start's beginning, and would look older than its end.
+    show = ("ActiveState=active\n"
+            "InactiveExitTimestamp=Fri 2026-09-25 23:19:46.826238 UTC\n"
+            "ActiveEnterTimestamp=Fri 2026-09-25 23:34:46.000000 UTC\n")
+    assert started_at(show) == datetime(2026, 9, 25, 23, 19, 46, 826238, tzinfo=timezone.utc).timestamp()
+    # A stopped unit keeps the time it last started: only its state says it isn't running.
+    assert started_at(show.replace("ActiveState=active", "ActiveState=inactive")) is None
+    assert started_at("") is None
+    for stamp in ("", "@1790371186"):  # a running unit's time that isn't the us+utc form: see start_times
+        with pytest.raises(ValueError, match="InactiveExitTimestamp="):
+            started_at(f"ActiveState=active\nInactiveExitTimestamp={stamp}\n")
+
+
+def test_a_running_unit_whose_start_cant_be_read_is_named_not_skipped():
+    shows = {LLAMA: "ActiveState=active\nInactiveExitTimestamp=Fri 2026-09-25 23:19:46.826238 UTC\n",
+             BRAKE: "ActiveState=active\nInactiveExitTimestamp=@1790371186\n",
+             COMPOSE: "ActiveState=inactive\nInactiveExitTimestamp=\n"}
+    logs = []
+    started = start_times([LLAMA, BRAKE, COMPOSE], shows.get, log=logs.append)
+    assert started[COMPOSE] is None and started[BRAKE] == UNKNOWN_START and started[LLAMA] < UNKNOWN_START
+    assert logs == [f"apply: can't read when {BRAKE} started (InactiveExitTimestamp='@1790371186'), so it can't "
+                    f"tell whether {BRAKE} runs root's latest copy: if `make install-units` changed its files, "
+                    f"run `systemctl restart {BRAKE}`"]
+    # Still running, so a changed config restarts it; but no copy, however new, counts as newer.
+    assert outdated_units(started, {"systemd/local-ai-brake.service": 9e9}) == []
+    # Restarting llama-swap by hand stops every loaded model, so its line says when to.
+    logs.clear()
+    start_times([LLAMA], {LLAMA: shows[BRAKE]}.get, log=logs.append)
+    assert logs == [f"apply: can't read when {LLAMA} started (InactiveExitTimestamp='@1790371186'), so it can't "
+                    f"tell whether {LLAMA} runs root's latest copy: if `make install-units` changed its files, "
+                    f"run `systemctl restart {LLAMA}` once no model is loaded (restarting it stops them all)"]
+
+
+class Client:
+    """Stands in for LlamaSwap: `running()` returns or raises what it was given."""
+
+    def __init__(self, answer):
+        self.answer = answer
+
+    def running(self):
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+def test_what_llama_swap_has_loaded_is_unknown_while_its_unit_runs_and_it_doesnt_answer():
+    logs = []
+    assert models_loaded(Client([Running("coder", "ready")]), unit_active=True, log=logs.append) == ["coder"]
+    # Its unit isn't running: nothing is loaded, and restarting it stops nothing.
+    assert models_loaded(Client(LlamaSwapUnreachable("down")), unit_active=False, log=logs.append) == []
+    # Its unit runs and nothing answered in time: models may be loaded. Can't tell.
+    assert models_loaded(Client(LlamaSwapUnreachable("hung")), unit_active=True, log=logs.append) is None
+    # It answered but wouldn't say, a wrong key say.
+    assert models_loaded(Client(LlamaSwapError("HTTP 401")), unit_active=True, log=logs.append) is None
+    assert len(logs) == 2
+
+
+def test_a_llama_swap_that_takes_the_call_and_never_answers_counts_as_cant_tell():
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)  # the kernel completes the connection; nothing ever reads the request
+    try:
+        client = LlamaSwap(f"http://127.0.0.1:{listener.getsockname()[1]}", "key", timeout=0.5)
+        with pytest.raises(LlamaSwapUnreachable):
+            client.running()
+        assert models_loaded(client, unit_active=True, log=lambda line: None) is None
+    finally:
+        listener.close()
+
+
+def test_validate_gives_each_key_its_own_placeholder():
+    env = validation_env({"PATH": "/usr/bin", "LLAMASWAP_KEY_AGENT": "real"})
+    assert env["PATH"] == "/usr/bin"
+    values = [env[name] for name in KEY_ENVS]
+    assert len(set(values)) == len(KEY_ENVS) and "real" not in values
+
+
+@pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root reads any file")
+def test_read_copies_tells_a_missing_copy_from_one_it_cant_read(tmp_path):
+    (tmp_path / "a").write_text("x")
+    (tmp_path / "b").write_text("y")
+    (tmp_path / "b").chmod(0)
+    where = {"systemd/a": tmp_path / "a", "systemd/b": tmp_path / "b", "systemd/c": tmp_path / "c"}
+    texts, times, unreadable = read_copies({**dict.fromkeys(where, ""), "models.yaml": ""}, where.get)
+    assert texts == {"systemd/a": "x", "systemd/b": None, "systemd/c": None} and unreadable == {"systemd/b"}
+    assert set(times) == {"systemd/a"} and isinstance(times["systemd/a"], float)
 
 
 def test_a_missing_file_counts_as_changed(tmp_path):
@@ -2081,35 +2808,53 @@ def test_app_diff_skips_the_venv_and_caches(tmp_path):
     assert app_diff(src, tmp_path / "app") == ["pyproject.toml", "src/spark/cli.py"]
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_apply.py` → FAIL (`ModuleNotFoundError`).
+*Superseded 2026-09-26 — the tests now go much further; see commits 4e639d0, 5641842, 2801644,
+be4c3c3 and 81b8124: a harness drives `spark apply` through the CLI with every side effect faked —
+`--now`, a hung llama-swap, stopped units, the staging stop, a failed sync, a failed copy, a run
+cut off before its restarts, the second look before llama-swap's restart, the wait after it, the
+dry run and a failing unit. Every test now runs in an environment it built itself
+(`spark/tests/conftest.py`, pinned by `test_environment.py`), so no failing test can print a value
+from the shell's. Task 7's reviews asked for them.*
 
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_apply.py` → FAIL (`ModuleNotFoundError`).
+
+- [x] **Step 3: Implement**
 
 `spark/src/spark/apply.py`:
 
 ```python
-"""`spark apply` — render, validate, show what changes, deploy under /opt/local-ai, and restart only
-what changed. It never restarts llama-swap, which stops every model, while models are loaded —
-unless told to with --now."""
+"""`spark apply` — render, validate, list what changes, deploy under /opt/local-ai, and restart only
+what changed. It never restarts llama-swap, which stops every model, while models are loaded, or
+while it can't tell — unless told to with --now.
+
+The units and the Compose project that root runs are root's own copies, which only
+`make install-units` (sudo) installs: apply stages them in /opt/local-ai/etc and never writes
+root's copies. While the staged ones differ from root's, apply stages them and stops, and deploys
+and restarts nothing else until root has them."""
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 
 from spark import paths
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.registry import load_registry
-from spark.render import DEPLOY, KEY_ENVS, render, write_tree
+from spark.render import DEPLOY, KEY_ENVS, installed_path, render, write_tree
 from spark.versions import load_versions, unpinned
 
 LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
 BRAKE_UNIT = "local-ai-brake.service"
 COMPOSE_UNIT = "local-ai-compose.service"
+RUNNING_UNITS = (LLAMA_SWAP_UNIT, BRAKE_UNIT, COMPOSE_UNIT)  # the pull unit runs only when asked
+UNKNOWN_START = math.inf  # a running unit whose start time can't be read: later than any copy
 NOT_APP = {".venv", "__pycache__", ".pytest_cache"}
 
 
@@ -2132,35 +2877,102 @@ def app_diff(src: Path, app: Path) -> list[str]:
     return changed
 
 
-def units_to_restart(changed: list[str], app_changed: bool = False) -> list[str]:
-    units = {BRAKE_UNIT} if app_changed else set()  # the one long-running process that imports the app
-    for rel in changed:
-        if rel in ("llama-swap.yaml", f"systemd/{LLAMA_SWAP_UNIT}"):
-            units.add(LLAMA_SWAP_UNIT)
-        if rel in ("models.yaml", f"systemd/{BRAKE_UNIT}"):
-            units.add(BRAKE_UNIT)
-        if rel.startswith("compose/") or rel == f"systemd/{COMPOSE_UNIT}":
-            units.add(COMPOSE_UNIT)
+def not_installed(files: dict[str, str], installed: dict[str, str | None]) -> list[str]:
+    """Root's files, the units and the Compose project, whose installed copy is missing or differs."""
+    return sorted(rel for rel, content in files.items()
+                  if installed_path(rel) is not None and installed.get(rel) != content)
+
+
+def unit_of(rel: str) -> str | None:
+    """The long-running unit a file of root's defines; the Compose project is the compose unit's."""
+    if rel.startswith("compose/"):
+        return COMPOSE_UNIT
+    unit = rel.removeprefix("systemd/")
+    return unit if unit in RUNNING_UNITS else None
+
+
+def outdated_units(started: dict[str, float | None], changed_at: dict[str, float]) -> list[str]:
+    """Running units whose start began before a file of theirs was installed, so they still run the
+    older definition. `started`: when each unit's start began (None when it isn't running);
+    `changed_at`: when each of root's copies was installed (its modification time)."""
+    units = set()
+    for rel, when in changed_at.items():
+        unit = unit_of(rel)
+        if unit is not None and started.get(unit) is not None and when > started[unit]:
+            units.add(unit)
     return sorted(units)
 
 
-def apply_files(files: dict[str, str], etc: Path, *, app_changes: list[str], running: list[str] | None,
-                now_ok: bool, dry_run: bool, sync_app, installed, run_cmd, log) -> int:
+def units_to_restart(changed: list[str], app_changed: bool = False) -> list[str]:
+    """The units that read a file apply deploys itself. Root's files restart nothing here: a unit
+    picks up a new definition once `make install-units` installed it (outdated_units)."""
+    units = {BRAKE_UNIT} if app_changed else set()  # the one long-running process that imports the app
+    for rel in changed:
+        if rel == "llama-swap.yaml":
+            units.add(LLAMA_SWAP_UNIT)
+        if rel == "models.yaml":
+            units.add(BRAKE_UNIT)
+    return sorted(units)
+
+
+def models_loaded(client, unit_active: bool, log=print) -> list[str] | None:
+    """What llama-swap has loaded, for the decision to restart it: [] when its unit isn't running, so
+    a restart stops nothing; None when it runs and doesn't say — no answer in time (llama-swap v257
+    answers /running during a load, so it hangs, or the box is struggling), or an error such as a
+    wrong key. None counts as loaded."""
+    try:
+        return [r.model for r in client.running()]
+    except LlamaSwapUnreachable as err:
+        if not unit_active:
+            return []
+        log(f"apply: {err}, and its unit runs, so models may be loaded")
+        return None
+    except LlamaSwapError as err:
+        log(f"apply: {err}")
+        return None
+
+
+def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | None], unreadable: set[str],
+                outdated: list[str], active, app_changes: list[str], running: list[str] | None, now_ok: bool,
+                dry_run: bool, sync_app, run_cmd, log) -> int:
     changed = diff_tree(files, etc)
-    if not changed and not app_changes:
+    pending = not_installed(files, installed)
+    restart = sorted(set(units_to_restart(changed, bool(app_changes))) | set(outdated))
+    if not (changed or app_changes or pending or restart):
         log("apply: nothing to change")
         return 0
     for rel in changed:
         log(f"apply: changes etc/{rel}")
     if app_changes:
         log(f"apply: changes the app ({len(app_changes)} files)")
-    restart = units_to_restart(changed, bool(app_changes))
+    for unit in outdated:
+        log(f"apply: {unit} still runs an older definition than root's copy")
+    if pending:
+        # Root's files first: until root has them, deploy and restart nothing else.
+        for rel in pending:
+            if rel in unreadable:
+                log(f"apply: can't read root's copy of {rel} ({installed_path(rel)}) from your account: "
+                    "`id -nG` should list spark-admin")
+            elif installed.get(rel) is None:
+                log(f"apply: root has no copy of {rel} yet ({installed_path(rel)})")
+            else:
+                log(f"apply: {rel} differs from root's copy ({installed_path(rel)})")
+        if dry_run:
+            log(f"apply: dry run — would stage them in {etc} and stop until `make install-units` installs them")
+            return 0
+        write_tree({rel: files[rel] for rel in changed if installed_path(rel) is not None}, etc)
+        log(f"apply: staged in {etc}; nothing else is deployed or restarted until `make install-units` (sudo) "
+            "installs root's copies — then run `make apply` again")
+        return 0
     refusal = None
     if LLAMA_SWAP_UNIT in restart and not now_ok and running != []:
         loaded = "can't tell which models are loaded" if running is None else f"models are loaded ({', '.join(running)})"
         refusal = f"apply: {loaded}, and restarting llama-swap stops every model; re-run when idle, or with --now"
     if dry_run:
-        log("apply: dry run — would restart " + (", ".join(restart) or "nothing"))
+        log("apply: dry run — would restart " + (", ".join(unit for unit in restart if active(unit)) or "nothing"))
+        for unit in restart:
+            if not active(unit):
+                log(f"apply: dry run — {unit} isn't running; it starts with the new config")
         if refusal:
             log(refusal)
         return 0
@@ -2170,26 +2982,97 @@ def apply_files(files: dict[str, str], etc: Path, *, app_changes: list[str], run
     if app_changes:
         sync_app()
     write_tree({rel: files[rel] for rel in changed}, etc)
-    if any(rel.startswith("systemd/") for rel in changed):
-        run_cmd(["systemctl", "daemon-reload"])
+    failed = False
     for unit in restart:
-        if installed(unit):
+        if not active(unit):
+            log(f"apply: {unit} isn't running; it starts with the new config")
+            continue
+        try:
             run_cmd(["systemctl", "restart", unit])
-        else:
-            log(f"apply: {unit} isn't installed yet — run `make install-units` once")
-    return 0
+        except (subprocess.CalledProcessError, OSError):
+            # The files are deployed, so the next apply sees nothing to change: say it now.
+            failed = True
+            name = unit.removeprefix("local-ai-").removesuffix(".service")
+            log(f"apply: restarting {unit} failed, and its new files are deployed: see `make logs s={name}`, "
+                f"and once it's fixed, `systemctl restart {unit}`")
+    return 1 if failed else 0
+
+
+def started_at(show: str) -> float | None:
+    """When a unit's last start began, from `systemctl show --timestamp=us+utc`'s ActiveState and
+    InactiveExitTimestamp (`Fri 2026-09-25 23:19:46.826238 UTC`); None when it isn't running. A running
+    unit whose time isn't in that form raises ValueError, naming what systemd said."""
+    props = dict(line.split("=", 1) for line in show.splitlines() if "=" in line)
+    if props.get("ActiveState") != "active":
+        return None
+    stamp = props.get("InactiveExitTimestamp", "")
+    try:
+        when = datetime.strptime(stamp.partition(" ")[2], "%Y-%m-%d %H:%M:%S.%f UTC")  # the weekday goes first
+    except ValueError:
+        raise ValueError(f"InactiveExitTimestamp={stamp!r}") from None
+    return when.replace(tzinfo=timezone.utc).timestamp()
+
+
+def start_times(units, show, log=print) -> dict[str, float | None]:
+    """When each unit's start began (None when it isn't running), from `show(unit)`, `systemctl show`'s
+    output. A running unit whose time can't be read counts as started after every copy, so apply
+    never restarts it for one: it says so, and what to run by hand."""
+    started: dict[str, float | None] = {}
+    for unit in units:
+        try:
+            started[unit] = started_at(show(unit))
+        except ValueError as err:
+            started[unit] = UNKNOWN_START
+            when = " once no model is loaded (restarting it stops them all)" if unit == LLAMA_SWAP_UNIT else ""
+            log(f"apply: can't read when {unit} started ({err}), so it can't tell whether {unit} runs root's "
+                f"latest copy: if `make install-units` changed its files, run `systemctl restart {unit}`{when}")
+    return started
+
+
+def _show(unit: str) -> str:
+    return subprocess.run(["systemctl", "show", "--property=ActiveState", "--property=InactiveExitTimestamp",
+                           "--timestamp=us+utc", unit], capture_output=True, text=True).stdout
+
+
+def read_copies(files: dict[str, str],
+                where=installed_path) -> tuple[dict[str, str | None], dict[str, float], set[str]]:
+    """Root's copies of the rendered units and Compose project: each one's text (None when there is
+    none, or it can't be read), when it was installed (its modification time), and which exist but
+    can't be read from this account."""
+    texts: dict[str, str | None] = {}
+    times: dict[str, float] = {}
+    unreadable: set[str] = set()
+    for rel in files:
+        path = where(rel)
+        if path is None:
+            continue
+        try:
+            texts[rel] = Path(path).read_text()
+            times[rel] = Path(path).stat().st_mtime
+        except FileNotFoundError:
+            texts[rel] = None
+        except OSError:
+            texts[rel] = None
+            unreadable.add(rel)
+    return texts, times, unreadable
+
+
+def validation_env(env: Mapping[str, str]) -> dict[str, str]:
+    """llama-swap's environment for -validate: a placeholder for each key, each its own, since the real
+    ones are in a file Dan can't read."""
+    return dict(env) | {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
 
 
 def _validate_llama_swap(config: str, binary: Path) -> bool:
-    """llama-swap's own check, with placeholder keys — the real ones are in a file Dan can't read."""
+    """llama-swap's own check, with placeholder keys."""
     if not binary.exists():
         print(f"apply: {binary} isn't installed yet — skipping llama-swap -validate")
         return True
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "llama-swap.yaml"
         cfg.write_text(config)
-        env = os.environ | {name: "validate-only" for name in KEY_ENVS}
-        return subprocess.run([str(binary), "-config", str(cfg), "-validate"], env=env).returncode == 0
+        run = subprocess.run([str(binary), "-config", str(cfg), "-validate"], env=validation_env(os.environ))
+        return run.returncode == 0
 
 
 def _sync_app(src: Path, app: Path) -> None:
@@ -2202,12 +3085,6 @@ def _sync_app(src: Path, app: Path) -> None:
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
     env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy"}
     subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--project", str(app)], check=True, env=env)
-
-
-def _installed(unit: str) -> bool:
-    state = subprocess.run(["systemctl", "show", "--property=LoadState", "--value", unit],
-                           capture_output=True, text=True).stdout.strip()
-    return state == "loaded"
 
 
 def register(subparsers) -> None:
@@ -2236,28 +3113,34 @@ def run(args: argparse.Namespace) -> int:
     if not _validate_llama_swap(files["llama-swap.yaml"], binary):
         print("apply: llama-swap rejected the rendered config; nothing was changed")
         return 1
-    try:
-        running = [r.model for r in LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=3).running()]
-    except LlamaSwapUnreachable:
-        running = []  # llama-swap is stopped, so restarting it stops nothing
-    except LlamaSwapError as err:
-        print(f"apply: {err}")
-        running = None  # it answered but wouldn't say what is loaded, so assume something is
+    started = start_times(RUNNING_UNITS, _show)
+    client = LlamaSwap(paths.LLAMASWAP_URL, key_from_env(args.key_env), timeout=3)
+    running = models_loaded(client, unit_active=started[LLAMA_SWAP_UNIT] is not None)
+    installed, changed_at, unreadable = read_copies(files)
     src, app = repo / "spark", Path(f"{DEPLOY}/app")
-    return apply_files(files, Path(f"{DEPLOY}/etc"), app_changes=app_diff(src, app), running=running,
-                       now_ok=args.now, dry_run=args.dry_run, sync_app=lambda: _sync_app(src, app),
-                       installed=_installed, run_cmd=lambda cmd: subprocess.run(cmd, check=True), log=print)
+    return apply_files(files, Path(f"{DEPLOY}/etc"), installed=installed, unreadable=unreadable,
+                       outdated=outdated_units(started, changed_at), active=lambda unit: started.get(unit) is not None,
+                       app_changes=app_diff(src, app), running=running, now_ok=args.now, dry_run=args.dry_run,
+                       sync_app=lambda: _sync_app(src, app), run_cmd=lambda cmd: subprocess.run(cmd, check=True),
+                       log=print)
 ```
+
+*Superseded 2026-09-26 — the code now differs; see commits 4e639d0, 5641842, 2801644 and 81b8124,
+from Task 7's reviews. The prose above, with its dated corrections, says what it does now: a sync
+stamp written only after `uv sync` succeeds; running units outdated against the files apply
+deploys too; llama-swap restarted first, after a second look, and waited for after; a truthful dry
+run; files written whole through `write_atomic`; loads through render's `_load`; `-validate` given
+a minimal environment.*
 
 Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 5: Commit** — `git add spark/src/spark/apply.py spark/src/spark/cli.py spark/tests/test_apply.py && git commit -m "feat(spark): 🤖 add spark apply" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Commit** — `git add spark/src/spark/apply.py spark/src/spark/cli.py spark/tests/test_apply.py && git commit -m "feat(spark): 🤖 add spark apply" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
-### Task 8 [Mac]: `spark models pull`
+### Task 8 [Spark]: `spark models pull`
 
 **Files:**
 
@@ -2272,8 +3155,16 @@ Register in `cli.py`: `from spark import apply` / `apply.register(subparsers)`.
   failed); CLI `spark models pull`, run as the `spark` user by `local-ai-pull.service` (`make pull`).
   Each file lands at `{HF_HOME}/hub/models--{org}--{name}/snapshots/{revision}/{file}` — the path
   Task 6's `model_path` gives the engines.
+- *Added 2026-09-26, from Task 8's reviews (commits 32deab1, ae9708f):* it also consumes render's
+  `_load`, and huggingface_hub's `get_token`. `pull` gains `redact=None`, the token its lines
+  replace with a marker; new are `sanitise(text, token)`, `check_token(token)`, `PullError` (a
+  `ValueError`), `TOKEN` and `URL_QUERY`. `run_pull` refuses, before any download, a token that a
+  header or an error message would carry altered, never showing it; and for the whole run it passes
+  the library's own log lines through `sanitise` and keeps out those of its token module, which
+  can quote a token file's content, printing instead one line that names the folder those files
+  are in (`HF_HOME`). The unit's `HF_TOKEN`, from `hf.env`, never reads those files.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_models.py`:
 
@@ -2312,11 +3203,27 @@ def test_a_failed_file_is_reported_and_the_rest_still_download(tmp_path):
 
     assert pull(REG, download=flaky, hf_home=str(tmp_path), log=logs.append) == 1
     assert len(tried) == 5 and any("embed.gguf: FAILED" in line for line in logs)
+
+
+def test_the_download_library_comes_from_the_lock():
+    # `spark models pull` imports it only when it runs, and the Spark's venv holds exactly what uv.lock
+    # holds. CI's venv is new each run, so a dependency missing from the lock fails here, not there.
+    from huggingface_hub import hf_hub_download
+
+    assert callable(hf_hub_download)
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_models.py` → FAIL.
+*Superseded 2026-09-26 — the tests now go much further; see commits cf21a82, 32deab1 and ae9708f,
+from Task 8's reviews: all five calls pinned from the fixture's values; each FAILED line's reason;
+the command's path through `cli.main`; a malformed token refused, and shown nowhere; a failure's
+text with the token, a URL's query and a newline logged as one clean line; a
+broken token file kept out of the output; a registry that won't load named; and pyproject.toml's
+dependencies checked against the ones `uv.lock` was made for, which `--frozen` never compares.*
 
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_models.py` → FAIL
+  (`ModuleNotFoundError`: no `spark.models` yet).
+
+- [x] **Step 3: Implement**
 
 `spark/src/spark/models.py`:
 
@@ -2361,39 +3268,101 @@ def run_pull(args: argparse.Namespace) -> int:
     return pull(load_registry(paths.REGISTRY), download=hf_hub_download, log=lambda m: print(m, flush=True))
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits 32deab1 and ae9708f, from Task 8's
+reviews. A token with a control character printed whole in every FAILED line, into a journal Dan's
+sessions read; the Interfaces' dated note says what `run_pull` does now. The registry loads through
+render's `_load`, so a file that won't load is named, not a traceback, and a bare `spark models`
+names its missing subcommand.*
+
 Register in `cli.py`: `from spark import models` / `models.register(subparsers)`.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 4: The download library comes from the lock** — run
+  `uv run --frozen --exact --project spark pytest spark/tests/test_models.py`. The two pull tests
+  pass, and `test_the_download_library_comes_from_the_lock` fails with
+  `ModuleNotFoundError: No module named 'huggingface_hub'`: the import is lazy, so nothing else
+  fails, and `--frozen` installs only what `uv.lock` holds. (`--exact` also removes what the lock
+  doesn't hold, so a package left in the venv can't hide the gap.) Then add the dependency, so
+  `spark/pyproject.toml` reads `dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34"]` (since
+  2026-09-26, `"huggingface_hub>=0.34,<2"`, commit cf21a82, from Task 8's review: the lock had taken
+  2.0.0, a new major on a new HTTP stack uploaded two days before; it now holds 1.33.0 — and since
+  2026-09-27, 1.32.0, the lock taking only releases at least seven days old: Dan's decision,
+  recorded in plan.md), and run
+  `uv lock --project spark`. The same run passes.
 
-- [ ] **Step 5: Commit** — `git add spark/pyproject.toml spark/uv.lock spark/src/spark/models.py spark/src/spark/cli.py spark/tests/test_models.py && git commit -m "feat(spark): 🤖 add spark models pull" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
+- [x] **Step 5: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+
+- [x] **Step 6: Commit** — `git add spark/pyproject.toml spark/uv.lock spark/src/spark/models.py spark/src/spark/cli.py spark/tests/test_models.py && git commit -m "feat(spark): 🤖 add spark models pull" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"`
 
 ***
 
-### Task 9 [Mac]: pi's provider, the deploy targets, two runbooks
+### Task 9 [Spark]: pi's provider, the deploy targets with root's copies of the units, two runbooks
 
 **Files:**
 
-- Create: `spark/src/spark/clients.py`, `spark/tests/test_clients.py`, `website/how-to/deploy.md`,
-  `website/how-to/pi.md` (the How-to listing picks both up)
-- Modify: `spark/src/spark/cli.py`, `Makefile`, `stack/versions.yaml`, `website/reference/stack.md`
-  (regenerated)
+- Create: `spark/src/spark/clients.py`, `spark/tests/test_clients.py`, `spark/tests/test_polkit.py`,
+  `website/how-to/deploy.md`, `website/how-to/pi.md` (the How-to listing picks both up)
+- Modify: `spark/src/spark/cli.py`, `stack/host/bootstrap.sh` (the `--install-units` mode),
+  `stack/host/50-local-ai.rules`, `spark/tests/test_bootstrap.py`, `Makefile`, `stack/versions.yaml`,
+  `website/reference/stack.md` (regenerated), `website/how-to/index.qmd` (*In order*), `README.md`
+  (§Contents' `Makefile` row)
 
 **Interfaces:**
 
-- Consumes: `load_registry`, `Registry` (Task 1).
-- Produces: `pi_provider(registry, base_url, key_env) -> dict`; `merge_pi(path, provider) -> Path`
-  (returns the backup's path); CLI `spark clients pi [--write] [--base-url URL] [--key-env NAME]
-  [--registry P]` (defaults `http://127.0.0.1:9100/v1`, `SPARK_API_KEY`, `stack/models.yaml`; without
-  `--write` it prints the provider).
+- Consumes: `load_registry`, `Registry` (Task 1); `render`, `installed_path` and Task 6's templates
+  and fixtures, through the tests; Phase 0's `spark/tests/test_bootstrap.py` (`ROOT`, `SCRIPT`,
+  `script`, `NO_PACKAGES`).
+- Produces:
+  - `pi_provider(registry, base_url, key_env) -> dict`; `merge_pi(path, provider) -> Path | None`
+    (returns the backup's path, or None when there was no file to back up); CLI
+    `spark clients pi [--write] [--base-url URL] [--key-env NAME]
+    [--registry P]` (defaults `http://127.0.0.1:9100/v1`, `SPARK_API_KEY`, `stack/models.yaml`;
+    without `--write` it prints the provider).
+  - `bash stack/host/bootstrap.sh --install-units [--dry-run]` (`make install-units`,
+    `make install-units-dry-run`): root's own copies of what `spark apply` staged for root (Task 7),
+    the four units in `/etc/systemd/system` and the Compose project in `/etc/local-ai/compose`,
+    each `root:root 0644` in folders `root:root 0755`. It reads each staged file as the admin who
+    ran sudo (`runuser -u "$SUDO_USER"`) and refuses one that isn't a regular file, with nothing
+    installed. The read gets 10 s (`timeout`) and 64 KiB (`head -c`) per file, and a file that hits
+    either limit is refused, so a file swapped for a FIFO or a link to `/dev/zero` after the check
+    can't hang root or fill its temporary folder. So is a staged copy holding any byte but tab,
+    newline, printable ASCII and 0x80–0xFF, or, among those, the UTF-8 encoding of a C1 control
+    (C2 80 to C2 9F): a carriage return, an escape sequence or a C1 control such as CSI could make
+    the terminal hide a line of the diff, and a NUL makes diff show none. Other UTF-8 passes, the
+    templates' em dashes included. A known limit (2026-09-25): bytes 0x80–0xFF that aren't valid
+    UTF-8, a lone byte or an overlong form such as C0 9B (which would be ESC), pass too. A terminal
+    that decodes UTF-8 strictly doesn't act on them: tmux 3.4, Ubuntu 24.04's, drops them (checked
+    in a container: neither a lone 9B nor C0 9B before `[2K` erased the line), and other strict
+    terminals are reported to show a replacement character. A UTF-8 validity check would refuse
+    them; Phase 1 doesn't build one, and Task 17's security review has it. Each refusal comes before
+    anything is shown, installs nothing, and names the file, never its content. It shows what would
+    change as a diff, installed against staged, and asks before it installs anything; it counts a
+    copy that is a link, or isn't root's own (owned by root, not writable by group or others), as
+    changed. Then it reloads systemd and enables the three long-running units; the pull unit runs
+    only when asked. Run again with nothing changed, it installs, reloads and enables nothing.
+    Stand-ins, for the tests: `BOOTSTRAP_STAGED`, `BOOTSTRAP_UNIT_DIR`, `BOOTSTRAP_COMPOSE_DIR`,
+    `BOOTSTRAP_ROOT_USER` (the owner root's copies must have) and `BOOTSTRAP_READ_TIMEOUT`.
+  - `make install-units` ends by running `sudo -k`, however the install ends, a Ctrl-C at the
+    password or the question included (a shell trap on EXIT, INT, TERM and HUP), so the
+    `make apply` Dan runs next in the same terminal can't ride sudo's cached credential.
+  - `stack/host/50-local-ai.rules`: `spark-admin` may `start`, `stop` and `restart` the four units,
+    by exact name, and nothing else: no other unit or verb, no `reload-daemon` (nothing without sudo
+    needs it now: `spark apply` restarts but never reloads), no `manage-unit-files`. systemd v255
+    passes polkit the unit's full name as `unit` and the job as `verb`
+    (`src/core/dbus-unit.c`, `bus_unit_method_start_generic`). polkit on Ubuntu 24.04 runs rules in
+    Duktape, an ES5 engine, so the rule uses `var` and `indexOf`. `restart` on the pull unit adds
+    nothing that `stop` and `start` don't already allow.
+  - `spark/tests/test_bootstrap.py`: `calls(tmp_path)`, which Task 10's tests use too.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `spark/tests/test_clients.py`:
 
 ```python
+import argparse
 import json
 from pathlib import Path
 
+from spark import clients
 from spark.clients import merge_pi, pi_provider
 from spark.registry import load_registry
 
@@ -2418,11 +3387,29 @@ def test_merge_keeps_other_providers_and_backs_up(tmp_path):
     data = json.loads(path.read_text())
     assert data["providers"]["other"] == {"x": 1} and data["providers"]["spark"] == {"baseUrl": "u"}
     assert json.loads(backup.read_text()) == {"providers": {"other": {"x": 1}}}
+
+
+def test_a_first_write_backs_up_nothing_and_says_so(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "models.json"
+    (tmp_path / "models.json.bak").write_text("{}")  # left by an earlier run: not a backup of this one
+    assert merge_pi(path, {"baseUrl": "u"}) is None
+    assert json.loads(path.read_text()) == {"providers": {"spark": {"baseUrl": "u"}}}
+    monkeypatch.setattr(clients, "PI_MODELS", tmp_path / "fresh" / "models.json")
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    assert clients.run_pi(argparse.Namespace(registry=registry, base_url="u", key_env="K", write=True)) == 0
+    assert "(there was no previous file)" in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
+*Superseded 2026-09-26 — the tests now go further; see commits 562ede4, d62e225 and f479129, from
+Task 9's pre-dispatch scan: the backup keeps the original's mode; a `models.json` that won't load,
+or whose top level isn't an object, is refused naming the file, with no error chained that would
+carry its text; and `run_pi` finds the file under the HOME it runs with. Superseded again
+2026-09-28 (the context change, below Task 16): a model's window is now its whole `ctx`, 32,768
+for the fixture's two-slot model, since its slots share one pool.*
 
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_clients.py` → FAIL.
+
+- [x] **Step 3: Implement**
 
 `spark/src/spark/clients.py`:
 
@@ -2456,13 +3443,16 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
             "compat": dict(COMPAT), "models": models}
 
 
-def merge_pi(path: Path, provider: dict) -> Path:
-    """Put `provider` under providers.spark, keep every other provider, and back up the old file."""
+def merge_pi(path: Path, provider: dict) -> Path | None:
+    """Put `provider` under providers.spark, keep every other provider, and back up the old file.
+    Returns the backup, or None when there was no file to back up."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = json.loads(path.read_text()) if path.exists() else {}
+    if not path.exists():
+        path.write_text(json.dumps({"providers": {"spark": provider}}, indent=2) + "\n")
+        return None
+    data = json.loads(path.read_text())
     backup = path.with_suffix(".json.bak")
-    if path.exists():
-        shutil.copyfile(path, backup)
+    shutil.copyfile(path, backup)
     data.setdefault("providers", {})["spark"] = provider
     path.write_text(json.dumps(data, indent=2) + "\n")
     return backup
@@ -2485,13 +3475,22 @@ def run_pi(args: argparse.Namespace) -> int:
         print(json.dumps(provider, indent=2))
         return 0
     backup = merge_pi(PI_MODELS, provider)
-    print(f"clients: wrote the 'spark' provider to {PI_MODELS} (the previous file is {backup})")
+    kept = f"the previous file is {backup}" if backup else "there was no previous file"
+    print(f"clients: wrote the 'spark' provider to {PI_MODELS} ({kept})")
     return 0
 ```
 
+*Superseded 2026-09-26 — the code now differs; see commits 562ede4, d62e225 and f479129, from Task
+9's pre-dispatch scan. `models.json` can hold other providers' keys, so `merge_pi` backs up with
+`shutil.copy2`, keeping the original's mode; a file that won't load, or whose top level isn't a
+JSON object, is refused naming the file, and raised unchained, since json's error holds the whole
+text. `PI_MODELS` is found when `run_pi` runs, not at import, so a test can't write Dan's real
+`~/.pi`. Superseded again 2026-09-28 (the context change, below Task 16): `window = m.ctx`, since
+render gives a model's slots one shared pool.*
+
 Register in `cli.py`: `from spark import clients` / `clients.register(subparsers)`.
 
-- [ ] **Step 4: Pin pi in `stack/versions.yaml`**, then `uv run --frozen --project spark spark docs stack --write`:
+- [x] **Step 4: Pin pi in `stack/versions.yaml`**, then `uv run --frozen --project spark spark docs stack --write`:
 
 ```yaml
   pi:
@@ -2505,8 +3504,770 @@ Register in `cli.py`: `from spark import clients` / `clients.register(subparsers
     advisories: null
 ```
 
-- [ ] **Step 5: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
-  install-units pull status logs tunnel clients`); recipe lines start with a tab:
+- [x] **Step 5: Write the failing tests for root's copies and the polkit rule**
+
+Add at the end of `spark/tests/test_bootstrap.py` (Phase 0's): stand-ins for `runuser`, GNU
+`install` and `systemctl` that log what they are asked and change only files under the test's
+folder, the way the real ones change the box, then the tests. `calls` is new here, and Task 10's
+tests use it too.
+
+```python
+# make install-units: root's own copies of what `spark apply` stages for root, the four units and
+# the Compose project as `spark render` writes them (Task 6), read as the admin from that folder.
+FAKE_RUNUSER = """#!/usr/bin/env bash
+# Stands in for runuser -u USER -- COMMAND...: logs the call in $CALLS, then runs the command as
+# whoever runs the tests, since only root can switch users. $SWAP_ON_READ, "PATH|fifo" or
+# "PATH|zero", swaps the file the command reads for a FIFO or a link to /dev/zero first, as
+# something racing bootstrap between its check and its read could.
+echo "runuser $*" >> "$CALLS"
+while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+shift
+for last; do :; done
+if [[ -n "${SWAP_ON_READ:-}" && "$last" == "${SWAP_ON_READ%|*}" ]]; then
+  rm -f "$last"
+  if [[ "${SWAP_ON_READ#*|}" == fifo ]]; then mkfifo "$last"; else ln -s /dev/zero "$last"; fi
+fi
+exec "$@"
+"""
+
+FAKE_INSTALL = """#!/usr/bin/env bash
+# Stands in for GNU install, and logs each call in $CALLS. `install -d [-o U] [-g G] [-m MODE] DIR...`
+# makes each folder with MODE; `install [-o U] [-g G] [-m MODE] SRC DEST` replaces DEST with a copy
+# of SRC, a link at DEST included and never followed, as GNU install does. Only root can set an
+# owner, so the owner and group are left as they are.
+echo "install $*" >> "$CALLS"
+dirs=0 mode=0755
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d) dirs=1; shift ;;
+    -o|-g) shift 2 ;;
+    -m) mode="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+if (( dirs )); then
+  for dir in "$@"; do mkdir -p "$dir"; chmod "$mode" "$dir"; done
+else
+  rm -f "$2"
+  cp "$1" "$2"
+  chmod "$mode" "$2"
+fi
+"""
+
+FAKE_SYSTEMD = """#!/usr/bin/env bash
+# Stands in for systemctl as make install-units uses it. daemon-reload and enable are logged in $CALLS
+# and change $SYSTEMD_STATE: a reload leaves its time there, and enable records each unit, which
+# is-enabled then reads. `show --property=NeedDaemonReload --value UNIT...` says yes for a unit
+# whose file in $BOOTSTRAP_UNIT_DIR is newer than the last reload, as systemd does for a loaded unit.
+state="$SYSTEMD_STATE"
+case "$1" in
+  daemon-reload) echo "systemctl $*" >> "$CALLS"; touch "$state/reloaded" ;;
+  enable) echo "systemctl $*" >> "$CALLS"; shift; printf '%s\\n' "$@" >> "$state/enabled" ;;
+  is-enabled) for unit; do :; done; [[ -f "$state/enabled" ]] && grep -qxF "$unit" "$state/enabled" ;;
+  show)
+    shift
+    for unit; do
+      case "$unit" in --*) continue ;; esac
+      if [[ -f "$state/reloaded" && "$BOOTSTRAP_UNIT_DIR/$unit" -nt "$state/reloaded" ]]; then echo yes; else echo no; fi
+    done
+    ;;
+  *) echo "fake systemctl: unexpected: $*" >&2; exit 1 ;;
+esac
+"""
+
+ROOT_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+              "local-ai-pull.service"]
+# The order install-units reads and installs them in: the units, then the Compose project.
+ROOT_FILES = [f"systemd/{unit}" for unit in ROOT_UNITS] + ["compose/compose.yaml", "compose/searxng/settings.yml"]
+
+
+def rendered_roots() -> dict[str, str]:
+    """What `spark apply` stages for root: the four units and the Compose project, as `spark render`
+    writes them (Task 6)."""
+    from spark.registry import load_registry
+    from spark.render import installed_path, render
+    from spark.versions import load_versions
+
+    fixtures = Path(__file__).parent / "fixtures"
+    files = render(load_registry(fixtures / "models.yaml"), load_versions(fixtures / "versions.yaml"),
+                   (fixtures / "models.yaml").read_text(), templates=ROOT / "stack/templates")
+    return {rel: text for rel, text in files.items() if installed_path(rel) is not None}
+
+
+def install_env(tmp_path: Path) -> dict[str, str]:
+    """Stand-ins for make install-units: the staging folder `spark apply` writes, holding what it
+    stages for root; root's two folders; and runuser, install and systemctl, which log to
+    tmp_path/calls and change nothing outside tmp_path."""
+    for folder in ("bin", "units", "systemd"):
+        (tmp_path / folder).mkdir()
+    for rel, text in rendered_roots().items():
+        (tmp_path / "stage" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "stage" / rel).write_text(text)
+    for name, text in (("runuser", FAKE_RUNUSER), ("install", FAKE_INSTALL), ("systemctl", FAKE_SYSTEMD)):
+        (tmp_path / "bin" / name).write_text(text)
+        (tmp_path / "bin" / name).chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "SYSTEMD_STATE": str(tmp_path / "systemd"),
+        "BOOTSTRAP_STAGED": str(tmp_path / "stage"),
+        "BOOTSTRAP_UNIT_DIR": str(tmp_path / "units"),
+        "BOOTSTRAP_COMPOSE_DIR": str(tmp_path / "compose"),
+        # Root's copies must be root's own. Here whoever runs the tests stands in for root.
+        "BOOTSTRAP_ROOT_USER": pwd.getpwuid(os.getuid()).pw_name,
+        "SUDO_USER": "alice",
+    }
+
+
+def install_units(env: dict[str, str], answer: str = "") -> subprocess.CompletedProcess[str]:
+    """make install-units for real, not its dry run, against install_env's stand-ins, with `answer`
+    typed at its question (see real_hold)."""
+    return subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && install_units', "bash", str(SCRIPT)],
+        input=answer,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def copy_path(tmp_path: Path, rel: str) -> Path:
+    """Where the stand-ins keep root's copy of a staged file."""
+    top, _, rest = rel.partition("/")
+    return tmp_path / ("units" if top == "systemd" else "compose") / rest
+
+
+def installed(tmp_path: Path) -> dict[str, str]:
+    """Root's copies, as the stand-ins hold them, keyed as `spark apply` stages them."""
+    return {rel: copy_path(tmp_path, rel).read_text() for rel in ROOT_FILES if copy_path(tmp_path, rel).exists()}
+
+
+def calls(tmp_path: Path) -> list[str]:
+    path = tmp_path / "calls"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def changes(tmp_path: Path) -> list[str]:
+    """What the stand-ins were asked to change: everything logged but runuser's reads."""
+    return [line for line in calls(tmp_path) if not line.startswith("runuser ")]
+
+
+def test_install_units_shows_what_root_will_run_then_asks_and_installs_it(tmp_path):
+    result = install_units(install_env(tmp_path), "y\n")
+    assert result.returncode == 0, result.stderr
+    # Nothing is installed yet, so it shows the whole of every file before it asks.
+    for rel in ROOT_FILES:
+        assert f"--- installed: {copy_path(tmp_path, rel)}" in result.stdout
+        assert f"+++ staged: {tmp_path}/stage/{rel}" in result.stdout
+    assert installed(tmp_path) == rendered_roots()  # every file staged for root, nothing else
+    for rel in ROOT_FILES:
+        assert copy_path(tmp_path, rel).stat().st_mode & 0o777 == 0o644
+    for folder in ("compose", "compose/searxng"):
+        assert (tmp_path / folder).stat().st_mode & 0o777 == 0o755
+    assert changes(tmp_path)[0] == f"install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng"
+    copies = [line for line in changes(tmp_path)[1:-2]]
+    assert [line.split()[-1] for line in copies] == [str(copy_path(tmp_path, rel)) for rel in ROOT_FILES]
+    assert all(line.startswith("install -o root -g root -m 0644 ") for line in copies)
+    assert changes(tmp_path)[-2:] == [
+        "systemctl daemon-reload",
+        "systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]  # the pull unit runs only when asked
+    assert "make apply" in result.stdout.splitlines()[-1]
+
+
+def test_install_units_reads_each_staged_file_as_the_admin_never_as_root(tmp_path):
+    install_units(install_env(tmp_path), "y\n")
+    reads = [line for line in calls(tmp_path) if line.startswith("runuser ")]
+    assert reads == [f"runuser -u alice -- timeout 10 head -c 65537 -- {tmp_path}/stage/{rel}"
+                     for rel in ROOT_FILES]  # within 10 s and one byte past the 64 KiB cap
+
+
+@pytest.mark.parametrize("answer", ["n\n", "\n", ""], ids=["no", "enter", "end-of-input"])
+def test_anything_but_yes_installs_nothing(tmp_path, answer):
+    result = install_units(install_env(tmp_path), answer)
+    assert result.returncode == 1 and "nothing was installed" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("planted", ["link", "folder", "missing"])
+def test_a_staged_file_that_isnt_a_regular_file_is_refused(tmp_path, planted):
+    # The staging folder is the admin's, so anything running as the admin can plant a link there. A
+    # link to a file only root can read must never become a copy root installs, or shows.
+    env = install_env(tmp_path)
+    secret = tmp_path / "shadow"
+    secret.write_text("root's own secret\n")
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.unlink()
+    if planted == "link":
+        brake.symlink_to(secret)
+    elif planted == "folder":
+        brake.mkdir()
+    result = install_units(env, "y\n")
+    assert result.returncode == 1
+    assert f"{brake} is missing or isn't a regular file" in result.stderr
+    assert "root's own secret" not in result.stdout + result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_a_staged_file_the_admin_cant_read_is_refused(tmp_path):
+    env = install_env(tmp_path)
+    (tmp_path / "stage/systemd/local-ai-brake.service").chmod(0)
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "alice can't read" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+@pytest.mark.parametrize("sudo_user", [None, "root"], ids=["no-sudo-user", "root"])
+def test_install_units_needs_sudo_from_the_admins_own_account(tmp_path, sudo_user):
+    env = install_env(tmp_path)
+    if sudo_user is None:
+        del env["SUDO_USER"]
+    else:
+        env["SUDO_USER"] = sudo_user
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and "with sudo from your own account" in result.stderr
+    assert calls(tmp_path) == []  # it read nothing and installed nothing
+
+
+def test_run_again_with_nothing_changed_it_changes_nothing(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units(env)  # no answer: it must not ask
+    assert result.returncode == 0, result.stderr
+    assert "nothing to install" in result.stdout and "--- installed" not in result.stdout
+    assert changes(tmp_path) == []  # no install, no reload, no enable
+
+
+def test_only_what_changed_is_shown_and_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# a new line\n")
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert "+# a new line" in result.stdout and "local-ai-llama-swap.service" not in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        str(tmp_path / "units/local-ai-brake.service")]
+    assert "systemctl daemon-reload" in changes(tmp_path)
+    assert not any(line.startswith("systemctl enable") for line in changes(tmp_path))  # enabled already
+
+
+def test_a_copy_that_isnt_roots_own_regular_file_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    (tmp_path / "units/local-ai-brake.service").chmod(0o664)  # group-writable
+    pull = tmp_path / "units/local-ai-pull.service"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text(pull.read_text())
+    pull.unlink()
+    pull.symlink_to(elsewhere)  # the same text, through a link
+    (tmp_path / "compose").chmod(0o775)
+    result = install_units(env, "y\n")
+    assert result.returncode == 0, result.stderr
+    assert f"{tmp_path}/units/local-ai-brake.service: the same text, but not root's own regular file" in result.stdout
+    assert f"{pull}: a link, which root's own regular file replaces" in result.stdout
+    assert [line.split()[-1] for line in changes(tmp_path) if line.startswith("install ")] == [
+        f"{tmp_path}/compose/searxng", str(tmp_path / "units/local-ai-brake.service"), str(pull)]
+    assert not pull.is_symlink() and elsewhere.read_text() == pull.read_text()
+    assert (tmp_path / "units/local-ai-brake.service").stat().st_mode & 0o777 == 0o644
+    assert (tmp_path / "compose").stat().st_mode & 0o777 == 0o755
+
+
+def test_a_copy_that_another_user_owns_is_installed_again(tmp_path):
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    result = install_units({**env, "BOOTSTRAP_ROOT_USER": "nobody"}, "y\n")  # not whoever owns them
+    assert result.returncode == 0, result.stderr
+    assert len([line for line in changes(tmp_path) if line.startswith("install -o")]) == len(ROOT_FILES)
+
+
+def test_run_again_after_a_run_cut_off_before_its_reload_it_reloads(tmp_path):
+    # The earlier run installed a new unit and stopped before telling systemd, so systemd still
+    # runs the old definition. The files match now, and systemd says it needs a reload.
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    (tmp_path / "calls").unlink()
+    reloaded = (tmp_path / "systemd/reloaded").stat().st_mtime
+    os.utime(tmp_path / "units/local-ai-brake.service", (reloaded + 5, reloaded + 5))
+    result = install_units(env)
+    assert result.returncode == 0 and "nothing to install" in result.stdout
+    assert changes(tmp_path) == ["systemctl daemon-reload"]
+
+
+def test_install_units_dry_run_shows_the_changes_and_changes_nothing(tmp_path):
+    result = script("--install-units", "--dry-run", env=install_env(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert f"+++ staged: {tmp_path}/stage/systemd/local-ai-brake.service" in result.stdout
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f"+ install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng",
+        *(f"+ install -o root -g root -m 0644 {tmp_path}/stage/{rel} {copy_path(tmp_path, rel)}" for rel in ROOT_FILES),
+        "+ systemctl daemon-reload",
+        "+ systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+    ]
+    assert calls(tmp_path) == [] and installed(tmp_path) == {}  # a dry run reads as whoever runs it
+
+
+def test_make_install_units_runs_the_install_mode_under_sudo():
+    # -s: GNU make 4 prints "Entering directory" lines under -C otherwise.
+    recipe = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units"],
+                            capture_output=True, text=True, check=True)
+    assert recipe.stdout.splitlines() == [
+        "trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --install-units"]
+    preview = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "install-units-dry-run"],
+                             capture_output=True, text=True, check=True)
+    assert preview.stdout.splitlines() == ["bash stack/host/bootstrap.sh --install-units --dry-run"]
+    phony = next(line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith(".PHONY:"))
+    assert {"install-units", "install-units-dry-run"} <= set(phony.split()[1:])
+
+
+def test_install_units_is_a_mode_of_its_own():
+    # --dry-run first, so a broken guard would only print a plan.
+    result = script("--dry-run", "--hold-gpu", "--install-units", env=NO_PACKAGES)
+    assert result.returncode == 2 and result.stdout == ""
+    assert "separate modes" in result.stderr  # not the unknown option it is before this task
+
+
+def test_install_units_lists_the_units_render_writes():
+    # bootstrap names the units by hand; this keeps its lists and render's the same.
+    from spark.render import UNITS
+
+    text = SCRIPT.read_text()
+    listed = {name: re.search(rf"^{name}=\((.*)\)", text, re.MULTILINE).group(1).split()
+              for name in ("ROOT_UNITS", "ENABLED_UNITS")}
+    assert listed["ROOT_UNITS"] == list(UNITS)
+    roots = rendered_roots()
+    assert listed["ENABLED_UNITS"] == [unit for unit in UNITS if "\n[Install]\n" in roots[f"systemd/{unit}"]]
+
+
+# A carriage return, an escape sequence and a C1 control such as CSI (U+009B, C2 9B in UTF-8) can
+# make a terminal hide a line of the diff; a NUL makes diff print only "Binary files … differ".
+# Built at run time, never written in the repo.
+HIDDEN = "ExecStartPre=+/bin/sh -c 'touch /tmp/planted'"
+CONTROL = {"cr-and-escape": HIDDEN + chr(13) + chr(27) + "[2K# nothing to see\n", "nul": HIDDEN + chr(0) + "\n",
+           "c1-csi": HIDDEN + chr(0x9B) + "2K# nothing to see\n",
+           "c1-first": HIDDEN + chr(0x80) + "\n", "c1-last": HIDDEN + chr(0x9F) + "\n"}
+
+
+@pytest.mark.parametrize("mode", ["real", "dry-run"])
+@pytest.mark.parametrize("payload", sorted(CONTROL))
+def test_a_staged_file_with_control_characters_is_refused_before_anything_shows(tmp_path, mode, payload):
+    env = install_env(tmp_path)
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + CONTROL[payload])
+    result = install_units(env, "y\n") if mode == "real" else script("--install-units", "--dry-run", env=env)
+    assert result.returncode == 1
+    assert f"{brake} holds control characters" in result.stderr
+    assert "planted" not in result.stdout + result.stderr  # no line of it, no diff
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_printable_text_beyond_ascii_is_no_control(tmp_path):
+    # The templates' own em dashes (E2 80 94) pass, and so do C2 A0 to C2 BF, printable: only C2 80
+    # to C2 9F encode C1 controls.
+    env = install_env(tmp_path)
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    brake.write_text(brake.read_text() + "# " + chr(0xA0) + chr(0xB7) + " caf" + chr(0xE9) + "\n")
+    assert install_units(env, "y\n").returncode == 0
+    assert installed(tmp_path)["systemd/local-ai-brake.service"] == brake.read_text()
+
+
+def test_a_staged_file_swapped_for_a_fifo_after_the_check_times_out(tmp_path):
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    env = {**install_env(tmp_path), "SWAP_ON_READ": f"{brake}|fifo", "BOOTSTRAP_READ_TIMEOUT": "1"}
+    result = install_units(env, "y\n")
+    assert result.returncode == 1 and f"alice can't read {brake}, or not within 1 s" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_a_staged_file_swapped_for_an_endless_device_is_cut_off_at_the_cap(tmp_path):
+    brake = tmp_path / "stage/systemd/local-ai-brake.service"
+    result = install_units({**install_env(tmp_path), "SWAP_ON_READ": f"{brake}|zero"}, "y\n")
+    assert result.returncode == 1 and f"{brake} is over 65536 bytes" in result.stderr
+    assert installed(tmp_path) == {} and changes(tmp_path) == []
+
+
+def test_make_install_units_drops_sudos_cached_credential_whatever_happens(tmp_path):
+    # Otherwise the `make apply` Dan runs next, in the same terminal, would run with sudo's cache warm.
+    # "int" is a Ctrl-C at the password or the question, which reaches the terminal's whole foreground
+    # job: here make gets a session of its own, and the stand-in sends SIGINT to all of it.
+    import time
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text('#!/usr/bin/env bash\necho "sudo $*" >> "$CALLS"\n[[ "$1" == -k ]] && exit 0\n'
+                                 'if [[ "$SUDO_DOES" == int ]]; then kill -INT 0; sleep 5; fi\nexit "$SUDO_DOES"\n')
+    (bindir / "sudo").chmod(0o755)
+    for does in ("0", "1", "int"):
+        calls_file = tmp_path / f"calls-{does}"
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CALLS": str(calls_file), "SUDO_DOES": does}
+        result = subprocess.run(["make", "-s", "-C", str(ROOT), "install-units"], capture_output=True, text=True,
+                                env=env, start_new_session=True)
+        assert (result.returncode == 0) == (does == "0"), does  # the install's own outcome
+        for _ in range(50):  # make can end before its shell's trap has run
+            calls = calls_file.read_text().splitlines()
+            if len(calls) > 1:
+                break
+            time.sleep(0.1)
+        assert calls[0] == "sudo bash stack/host/bootstrap.sh --install-units", does
+        assert calls[1:] and set(calls[1:]) == {"sudo -k"}, does
+```
+
+*Superseded 2026-09-26 — the tests now differ; see commits 43995ee and 25617b8, from Task 9's scan
+and review: `install_env` and the `sudo -k` test build their environment, as `gpu_env` does, rather
+than copying the shell's; and `make bootstrap` and `make hold-gpu` are held to the same `sudo -k`.*
+
+`spark/tests/test_polkit.py` runs the rule in Node with polkit, the action and the subject stubbed,
+and skips without a JavaScript engine on PATH, as the needrestart test skips without perl:
+
+```python
+"""The polkit rule, run in a JavaScript engine with polkit, the action and the subject stubbed."""
+
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+RULES = ROOT / "stack/host/50-local-ai.rules"
+MANAGE = "org.freedesktop.systemd1.manage-units"
+UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service"]
+
+# Loads the rules file as polkitd does, with polkit's Result values (NOT_HANDLED is null), then asks
+# every rule each case in turn, as polkitd asks them, until one answers. Prints one answer a case.
+HARNESS = r"""
+var fs = require("fs");
+var rules = [];
+var polkit = {
+  Result: {NO: "no", YES: "yes", AUTH_SELF: "auth_self", AUTH_SELF_KEEP: "auth_self_keep",
+           AUTH_ADMIN: "auth_admin", AUTH_ADMIN_KEEP: "auth_admin_keep", NOT_HANDLED: null},
+  addRule: function (rule) { rules.push(rule); },
+  log: function () {}
+};
+new Function("polkit", fs.readFileSync(process.argv[1], "utf8"))(polkit);
+JSON.parse(process.argv[2]).forEach(function (c) {
+  var action = {id: c.id, lookup: function (key) { return c.details[key]; }};
+  var subject = {user: "someone", isInGroup: function (group) { return c.groups.indexOf(group) >= 0; }};
+  var answer = null;
+  for (var i = 0; i < rules.length && answer === null; i++) {
+    var result = rules[i](action, subject);
+    answer = result === undefined ? null : result;
+  }
+  console.log(answer === null ? "not handled" : answer);
+});
+"""
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="no JavaScript engine (node) on PATH")
+
+
+def case(action: str, groups=("spark-admin",), **details) -> dict:
+    return {"id": action, "details": details, "groups": list(groups)}
+
+
+def ask(cases: list[dict]) -> list[str]:
+    out = subprocess.run(["node", "-e", HARNESS, str(RULES), json.dumps(cases)],
+                         capture_output=True, text=True, check=True)
+    return out.stdout.splitlines()
+
+
+@needs_node
+def test_spark_admin_starts_stops_and_restarts_the_four_units():
+    cases = [case(MANAGE, unit=unit, verb=verb) for unit in UNITS for verb in ("start", "stop", "restart")]
+    assert ask(cases) == ["yes"] * len(cases)
+
+
+@needs_node
+def test_every_other_verb_unit_or_action_is_left_to_polkits_default():
+    # Not handled means polkit's default for the action: Dan's password (auth_admin).
+    cases = [case(MANAGE, unit="local-ai-brake.service", verb=verb)
+             for verb in ("reload", "try-restart", "reload-or-restart", "kill", "reset-failed", "set-property",
+                          "freeze", "clean")]
+    # systemd passes a unit's full name, so only the exact four match: no prefix, no transient unit.
+    cases += [case(MANAGE, unit=unit, verb="start")
+              for unit in ("ssh.service", "docker.service", "local-ai-probe.service", "local-ai-brake.service.d",
+                           "xlocal-ai-brake.service", "local-ai-brake")]
+    cases += [
+        case(MANAGE, unit="local-ai-brake.service"),  # no verb
+        case(MANAGE, verb="start"),  # no unit
+        case("org.freedesktop.systemd1.manage-unit-files", unit="local-ai-brake.service", verb="start"),
+        case("org.freedesktop.systemd1.reload-daemon"),
+        case(MANAGE, groups=("spark-users",), unit="local-ai-brake.service", verb="start"),  # agent and spark
+        case(MANAGE, groups=(), unit="local-ai-brake.service", verb="restart"),
+    ]
+    assert ask(cases) == ["not handled"] * len(cases)
+
+
+def test_the_rule_names_exactly_the_units_render_writes():
+    # The rule lists the units by hand, in JavaScript; a unit added to render must be added here too.
+    from spark.render import UNITS as RENDERED
+
+    listed = re.search(r"var units = \[(.*?)\];", RULES.read_text(), re.DOTALL).group(1)
+    assert re.findall(r'"([^"]+)"', listed) == list(RENDERED) == UNITS
+```
+
+*Superseded 2026-09-26 — `needs_node` now skips only outside CI (commit 9d07e3e, from Task 9's
+scan): in CI, where `CI` is set, a missing Node fails the two tests instead of skipping them, so a
+green run means the rule's tests ran.*
+
+- [x] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py spark/tests/test_polkit.py`
+  → FAIL: `install_units: command not found` (exit 127); `--install-units` is an unknown option
+  (exit 2), so the mode test finds no "separate modes"; `make` has no `install-units` or
+  `install-units-dry-run` target; bootstrap has no `ROOT_UNITS` or `ENABLED_UNITS`. Phase 0's
+  bootstrap tests still pass. In `test_polkit.py`, the test of the rule's unit list runs and fails:
+  Phase 0's rule has no `units` list. Its two tests that run the rule in Node skip here: no Node is
+  recorded on the Spark until Task 15 installs it, which this plan doesn't move earlier. Their red
+  run is the pre-flight's, on a Mac with Node: Phase 0's rule allows every verb on every
+  `local-ai-*` name, and `reload-daemon`, so the not-handled test failed, while
+  `test_spark_admin_starts_stops_and_restarts_the_four_units` passed, by design: Phase 0's rule
+  allowed that too, and the test pins what the new rule must keep. The pre-flight also took
+  `restart` out of the new rule's `verbs`, then emptied the list, and that test failed both times.
+  Their green is CI's `tests` job, on the push after Task 10.
+
+- [x] **Step 7: Implement root's copies**
+
+In `stack/host/bootstrap.sh`, the header's usage lines gain, after the `--hold-gpu` lines:
+
+```bash
+#   Install root's copies:      make install-units   (of the units and the Compose project that
+#                               make apply staged; it runs this script with --install-units, and
+#                               make install-units-dry-run previews it)
+```
+
+The globals gain, below `HOLD_ONLY=0`:
+
+```bash
+INSTALL_UNITS=0
+```
+
+`parse_args` takes the new mode, names it in the unknown-option message, and refuses it with
+`--hold-gpu`:
+
+```bash
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) DRY_RUN=1 ;;
+      --hold-gpu) HOLD_ONLY=1 ;;
+      --install-units) INSTALL_UNITS=1 ;;
+      # A mistyped --dry-run under sudo must not turn into a real run.
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu and --install-units)" >&2; exit 2 ;;
+    esac
+  done
+  if (( HOLD_ONLY && INSTALL_UNITS )); then
+    echo "bootstrap: --hold-gpu and --install-units are separate modes; pick one" >&2
+    exit 2
+  fi
+}
+```
+
+`polkit_rule` says what the rule now allows:
+
+```bash
+polkit_rule() {
+  say "polkit: spark-admin starts, stops and restarts the four local-ai units without sudo, and nothing more"
+  run install -m 0644 "$HERE/50-local-ai.rules" /etc/polkit-1/rules.d/50-local-ai.rules
+}
+```
+
+After `polkit_rule`, the install mode:
+
+```bash
+# Root's own copies of the units and the Compose project that root runs (make install-units). They
+# are regular files owned by root and not writable by group or others, in folders only root can
+# write, so nothing running as the admin changes what root runs without sudo. `spark apply` stages
+# them in STAGED, which the admin can write: each staged file must be a regular file, and root
+# reads it as the admin who ran sudo, so a link planted there can't make root copy, or show, a
+# file the admin can't read. The read has a time limit and a size cap, so a file swapped after the
+# check can't hang root or fill /tmp. A copy holding a control character, one of ASCII's other than
+# tab and newline or a C1 control in UTF-8, is refused, so none can make the terminal hide a line of
+# the diff. It shows what would change, and asks, before it installs anything; run again with
+# nothing changed, it changes nothing. Tests point these five at stand-ins.
+STAGED="${BOOTSTRAP_STAGED:-/opt/local-ai/etc}"
+UNIT_DIR="${BOOTSTRAP_UNIT_DIR:-/etc/systemd/system}"
+COMPOSE_DIR="${BOOTSTRAP_COMPOSE_DIR:-/etc/local-ai/compose}"
+ROOT_USER="${BOOTSTRAP_ROOT_USER:-root}"
+READ_TIMEOUT="${BOOTSTRAP_READ_TIMEOUT:-10}"  # seconds for each staged file; reading one takes milliseconds
+READ_LIMIT=65536  # bytes: each unit is about 1 KB and compose.yaml about 2 KB, so this leaves room to grow
+ROOT_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service local-ai-pull.service)
+ENABLED_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service)  # pull runs when asked
+COMPOSE_FILES=(compose.yaml searxng/settings.yml)
+STAGED_COPY=""  # install-units: root's private copy of what it read, removed on the way out
+
+# The files root runs, one "staged|installed" pair a line.
+root_files() {
+  local unit file
+  for unit in "${ROOT_UNITS[@]}"; do printf '%s|%s\n' "$STAGED/systemd/$unit" "$UNIT_DIR/$unit"; done
+  for file in "${COMPOSE_FILES[@]}"; do printf '%s|%s\n' "$STAGED/compose/$file" "$COMPOSE_DIR/$file"; done
+}
+
+# Whether a path is root's own: there, not a link, owned by ROOT_USER, not writable by group or others.
+roots_own() {
+  [[ -e "$1" && ! -L "$1" && -z "$(find "$1" -prune \( ! -user "$ROOT_USER" -o -perm -020 -o -perm -002 \) -print)" ]]
+}
+
+install_units() {
+  say "root's own copies of the units and the Compose project that root runs"
+  local reader="" staged installed n=0 folders=0 folder answer from unit entry
+  local -a changed=() enable=() read_cmd=()
+  # A real run is root's, and so is a dry run under sudo: either reads as the admin who ran sudo.
+  if (( ! DRY_RUN || EUID == 0 )); then
+    if [[ -z "${SUDO_USER:-}" || "$SUDO_USER" == root ]]; then
+      echo "bootstrap: run it with sudo from your own account (make install-units): root reads what make apply staged as you" >&2
+      exit 1
+    fi
+    reader="$SUDO_USER"
+  fi
+  STAGED_COPY="$(mktemp -d)"
+  trap 'rm -rf "$STAGED_COPY"' EXIT
+  while IFS='|' read -r staged installed; do
+    n=$((n + 1))
+    if [[ -L "$staged" || ! -f "$staged" ]]; then
+      echo "bootstrap: $staged is missing or isn't a regular file, so nothing was installed — run make apply, then this again" >&2
+      exit 1
+    fi
+    read_cmd=(timeout "$READ_TIMEOUT" head -c "$((READ_LIMIT + 1))" -- "$staged")
+    if [[ -n "$reader" ]]; then read_cmd=(runuser -u "$reader" -- "${read_cmd[@]}"); fi
+    if ! "${read_cmd[@]}" > "$STAGED_COPY/$n"; then
+      echo "bootstrap: ${reader:-your account} can't read $staged, or not within $READ_TIMEOUT s, so nothing was installed" >&2
+      exit 1
+    fi
+    if (( $(wc -c < "$STAGED_COPY/$n") > READ_LIMIT )); then
+      echo "bootstrap: $staged is over $READ_LIMIT bytes, far more than a unit or a Compose file, so nothing was installed" >&2
+      exit 1
+    fi
+    # Only tab, newline, printable ASCII and bytes 0x80 to 0xFF, and among those no C1 control in
+    # UTF-8 (C2 80 to C2 9F): a carriage return, an escape sequence or a C1 control such as CSI can
+    # make a terminal hide a line of the diff, and a NUL makes diff show no lines at all.
+    if (( $(LC_ALL=C tr -d '\011\012\040-\176\200-\377' < "$STAGED_COPY/$n" | wc -c) > 0 )) ||
+      LC_ALL=C grep -aq $'\xc2[\x80-\x9f]' "$STAGED_COPY/$n"; then
+      echo "bootstrap: $staged holds control characters, which could hide a line of the diff below, so nothing was installed" >&2
+      exit 1
+    fi
+    if [[ ! -f "$installed" ]] || ! roots_own "$installed" || ! cmp -s "$STAGED_COPY/$n" "$installed"; then
+      changed+=("$n|$staged|$installed")
+    fi
+  done < <(root_files)
+  for folder in "$COMPOSE_DIR" "$COMPOSE_DIR/searxng"; do
+    if [[ ! -d "$folder" ]] || ! roots_own "$folder"; then folders=1; fi
+  done
+  # What root will run, before root runs it: every change, and every copy that isn't root's own,
+  # indented so a diff's + lines can't be taken for the commands below.
+  if (( folders )); then
+    echo "    $COMPOSE_DIR and its searxng folder: missing, or not root's own"
+  fi
+  if (( ${#changed[@]} )); then
+    for entry in "${changed[@]}"; do
+      IFS='|' read -r n staged installed <<<"$entry"
+      from="$installed"
+      if [[ -L "$installed" ]]; then echo "    $installed: a link, which root's own regular file replaces"; fi
+      if [[ -L "$installed" || ! -f "$installed" ]]; then from=/dev/null; fi
+      if [[ "$from" != /dev/null ]] && cmp -s "$from" "$STAGED_COPY/$n"; then
+        echo "    $installed: the same text, but not root's own regular file"
+      else
+        { diff -u --label "installed: $installed" --label "staged: $staged" "$from" "$STAGED_COPY/$n" || true; } |
+          sed 's/^/    /'
+      fi
+    done
+  fi
+  if (( ! folders && ${#changed[@]} == 0 )); then
+    say "root's copies match what make apply staged: nothing to install"
+  else
+    if (( ! DRY_RUN )); then
+      read -r -p "install these as root? [y/N] " answer || answer=""
+      case "$answer" in
+        [yY] | [yY][eE][sS]) ;;
+        *) echo "bootstrap: nothing was installed" >&2; exit 1 ;;
+      esac
+    fi
+    if (( folders )); then run install -d -o root -g root -m 0755 "$COMPOSE_DIR" "$COMPOSE_DIR/searxng"; fi
+    if (( ${#changed[@]} )); then
+      for entry in "${changed[@]}"; do
+        IFS='|' read -r n staged installed <<<"$entry"
+        from="$STAGED_COPY/$n"
+        if (( DRY_RUN )); then from="$staged"; fi
+        run install -o root -g root -m 0644 "$from" "$installed"
+      done
+    fi
+  fi
+  # systemd reads a unit file when told to: after this run installs one, or when a run that
+  # installed one was cut off before it told systemd.
+  if (( ${#changed[@]} )) || [[ "$(systemctl show --property=NeedDaemonReload --value "${ROOT_UNITS[@]}" 2>/dev/null || true)" == *yes* ]]; then
+    run systemctl daemon-reload
+  fi
+  for unit in "${ENABLED_UNITS[@]}"; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || enable+=("$unit")
+  done
+  if (( ${#enable[@]} )); then run systemctl enable "${enable[@]}"; fi
+  if (( ! DRY_RUN && (folders || ${#changed[@]}) )); then
+    say "installed. make apply restarts each unit that runs an older definition, llama-swap only while no model is loaded (or make apply-now)"
+  fi
+}
+```
+
+In `main`, the install mode runs alone, like `--hold-gpu`:
+
+```bash
+main() {
+  parse_args "$@"
+  preflight
+  if (( HOLD_ONLY )); then
+    # Upgrade day: re-hold the set and nothing else — no desktop stop, no earlyoom restart, no
+    # owner and mode resets.
+    hold_gpu_stack
+    return 0
+  fi
+  if (( INSTALL_UNITS )); then
+    # Root's copies of what make apply staged, and nothing else.
+    install_units
+    return 0
+  fi
+  packages
+  hold_gpu_stack
+  users_and_groups
+  directories
+  headless
+  earlyoom_config
+  firewall
+  polkit_rule
+  say "done — continue with website/how-to/bootstrap.md, 'After bootstrap'"
+}
+```
+
+`stack/host/50-local-ai.rules`, whole:
+
+```javascript
+// Installed by stack/host/bootstrap.sh. Lets members of spark-admin start, stop and restart the
+// stack's four units without sudo, and nothing more: no other unit or verb, no daemon-reload, no
+// enabling or linking unit files. What the units run is root's own copy, which only
+// `make install-units` (sudo) installs, so this gives no say over what root runs.
+// systemd (v255, src/core/dbus-unit.c, bus_unit_method_start_generic) passes manage-units the
+// unit's full name as "unit" and the job as "verb". polkit runs this in Duktape: ES5, so var.
+polkit.addRule(function (action, subject) {
+  var units = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+               "local-ai-pull.service"];
+  var verbs = ["start", "stop", "restart"];
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || !subject.isInGroup("spark-admin")) {
+    return polkit.Result.NOT_HANDLED;
+  }
+  if (units.indexOf(action.lookup("unit")) >= 0 && verbs.indexOf(action.lookup("verb")) >= 0) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});
+```
+
+- [x] **Step 8: Makefile targets** — add each to `.PHONY` (`apply apply-dry-run apply-now
+  install-units install-units-dry-run pull status logs tunnel clients`); recipe lines start with a
+  tab:
 
 ```make
 apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
@@ -2518,9 +4279,11 @@ apply-dry-run: ## On the Spark: show what apply would change
 apply-now: ## On the Spark: apply even if restarting llama-swap stops loaded models
 	$(SPARK) apply --now
 
-install-units: ## On the Spark, once (sudo): link and enable the local-ai units
-	sudo systemctl link /opt/local-ai/etc/systemd/local-ai-llama-swap.service /opt/local-ai/etc/systemd/local-ai-brake.service /opt/local-ai/etc/systemd/local-ai-compose.service /opt/local-ai/etc/systemd/local-ai-pull.service
-	sudo systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service
+install-units-dry-run: ## On the Spark: show what make install-units would install as root; changes nothing
+	bash stack/host/bootstrap.sh --install-units --dry-run
+
+install-units: ## On the Spark (Dan; sudo): install root's copies of the units and Compose project that make apply staged
+	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --install-units
 
 pull: ## On the Spark: download the model files at their pinned revisions (as the spark user)
 	systemctl start local-ai-pull.service
@@ -2539,8 +4302,28 @@ clients: ## Add the Spark provider to pi on this machine
 	$(SPARK) clients pi --write
 ```
 
-- [ ] **Step 6: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
-  `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`):
+*Added 2026-09-26, from Task 5's review:* `spark launch`, the brake and `spark status` tell Dan to
+run `spark brake --release`, but `spark` isn't on his PATH: the Makefile reaches it through uv. So
+this step also adds a target, to the block and to `.PHONY` (dry-run with `make -n` on 2026-09-26),
+and the three messages and their tests name `make brake-release`, run in the clone, instead:
+
+```make
+brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory is back
+	$(SPARK) brake --release
+```
+
+*Superseded 2026-09-26 — the targets now differ; see commits 77aba16, c0f1146, 323b262 and
+25617b8, from Task 9's scan and review. `make pull` takes the time, starts the unit, then shows the
+pull's journal since that time whether or not it failed, and exits with the start's status; `help`
+pads to 22 characters; `make logs` without `s=` says how to ask; and `make bootstrap` and
+`make hold-gpu` end with `sudo -k`, as `make install-units` does. The three messages name
+`make brake-release` (commit d3481ab).*
+
+- [x] **Step 9: `website/how-to/pi.md`** (front matter `title: "pi, the coding agent"`,
+  `description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark."`). Its
+  commands go in blocks, each with the machine in bold in the paragraph right above it (CLAUDE.md,
+  *Conventions*: Dan's rule, 2026-09-25): **On the Mac** for the second section's, and
+  **On the Spark, as `agent`** for the third's. The sections:
   - **The version.** pi is pinned to 0.85.1: 0.86.0 through 0.87.1 are reported to crash
     llama-server, most likely a llama.cpp bug that their longer prompt triggers. Move up only to a
     release outside that range, and change `stack/versions.yaml` in the same commit.
@@ -2548,10 +4331,10 @@ clients: ## Add the Spark provider to pi on this machine
     `pi --version` → `0.85.1`. `SPARK_API_KEY` must be exported by your shell (the secrets runbook put
     it in `~/.secrets`); check without showing it:
     `python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"` → `True`. `make clients`
-    adds the `spark` provider to `~/.pi/agent/models.json`, keeping the previous file as
-    `models.json.bak`. Run `make tunnel` in a spare terminal: nothing on the Spark listens on the LAN
-    in Phase 1, so pi reaches it only through the tunnel. In pi, `/model` → a Spark model; the footer
-    names the model that answers.
+    adds the `spark` provider to `~/.pi/agent/models.json`, keeping the previous file, if there was
+    one, as `models.json.bak`. Run `make tunnel` in a spare terminal: nothing on the Spark listens
+    on the LAN in Phase 1, so pi reaches it only through the tunnel. In pi, `/model` → a Spark
+    model; the footer names the model that answers.
   - **On the Spark, as `agent`.** Node 22.19 or later (Dan installs it once).
     `npm install -g --prefix ~/.local --ignore-scripts @earendil-works/pi-coding-agent@0.85.1`. The
     agent's own key sits in its `~/.secrets`. Dan runs one command for it: root reads the key from
@@ -2560,22 +4343,51 @@ clients: ## Add the Spark provider to pi on this machine
     `uv run --frozen --project spark spark clients pi --write`. Work inside tmux: `tmux new -As work`,
     then `pi`; `Ctrl-b d` detaches, and `tmux attach -t work` picks it up after logging back in.
 
-- [ ] **Step 7: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
+  *Superseded 2026-09-26 — pi.md now differs from this outline (commit bc7dbdf, from Task 9's
+  scan): its third section runs as the two people who run it — the Node install and the agent's
+  key, from Task 15 Step 3, **on the Spark, with sudo**; then Task 15 Step 4's setup **as
+  `agent`**, cloning the default branch, since the runbook outlives the phase branch. "Nothing on
+  the Spark listens on the LAN" became "none of the stack's ports listens beyond 127.0.0.1", and no
+  block that runs on the Mac holds a `#` comment.*
+
+- [x] **Step 10: `website/how-to/deploy.md`** (front matter `title: "Deploy the stack"`,
   `description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."`).
   Each bullet below is one section of the runbook. Its bold words are the section's heading, and
   the rest is what the section says. Write it in the runbook's own words, and copy the commands
-  exactly as they are here:
+  exactly as they are here. Each command block has the machine in bold in the paragraph right
+  above it (CLAUDE.md, *Conventions*: Dan's rule, 2026-09-25). Everything runs **on the Spark**,
+  except in *The web UI's first account*, where the tunnel and the browser are **on the Mac**:
   - **Before the first deploy.** Phase 0 is done (bootstrap, secrets), the engines are installed
     (the Phase 1 plan, Task 11), and `id -nG` lists `spark-admin` and `adm`. If it doesn't, the
     session predates bootstrap: log out, `tmux kill-server`, log back in. `make bootstrap` has run
     from the clone you deploy from since `stack/host/` last changed: re-run it whenever that folder
     changes. It stops a running desktop and restarts earlyoom, so run it over SSH with nothing open
     on the desktop.
-  - **First deploy.** `make apply` renders into `/opt/local-ai/etc`, syncs the app into
-    `/opt/local-ai/app`, and reports that the units aren't installed yet. Once: `make install-units`
-    (sudo). Then `make pull` (the model files, downloaded by the `spark` user; `make logs s=pull` in
-    another pane shows progress), `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose`
-    (no sudo: the polkit rule covers `local-ai-*`), and `make status`.
+  - **First deploy.** Root runs its own copies of the units and the Compose project, never the
+    files `make apply` writes. `make apply` renders into `/opt/local-ai/etc` and stops there on the
+    first deploy: it stages the units and the Compose project, says root has no copy of them yet,
+    and deploys nothing else. Then `make install-units` (sudo): it shows each file it would install
+    as root, in full the first time, asks, installs root's copies in `/etc/systemd/system` and
+    `/etc/local-ai/compose`, and enables llama-swap, the brake and the web services.
+    `make install-units-dry-run` shows the same and changes nothing. Read what it shows before you
+    answer: it is every staged file root would install, and nothing else. It isn't all that root
+    runs: sudo also runs this clone's own `Makefile` and `stack/host/bootstrap.sh`, which no diff
+    shows and anything running as you can change (plan.md's *Users, access and security*).
+    `git status --short -- Makefile stack/host` printing nothing says both are as committed. It
+    refuses, installing nothing, a staged file holding a control character (one of ASCII's other
+    than tab and newline, or a C1 control in UTF-8), which could hide a line of what it shows, and
+    one over 64 KiB or that takes over 10 s to read. However it ends, even with a
+    Ctrl-C, it runs `sudo -k`, which forgets sudo's cached credential in this terminal, so nothing
+    you run next there, `make apply` included, can use it: your next `sudo` asks for your password
+    again.
+    Then `make apply` again: it syncs the app into
+    `/opt/local-ai/app` and deploys llama-swap's config and the registry, and since nothing runs yet
+    it restarts nothing. Then `make pull` (the model files, downloaded by the `spark` user;
+    `make logs s=pull` in another pane shows progress; corrected 2026-09-26, from Task 8's review:
+    `make logs` is a snapshot, and the pull logs one line per file as each finishes, so
+    `journalctl -fu local-ai-pull` in another pane is what follows it),
+    `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose` (no sudo: the polkit rule
+    lets you start, stop and restart the four units, nothing more), and `make status`.
   - **The web UI's first account, straight after the first start.** From the Mac, open a tunnel in a
     spare terminal, `ssh -N -L 3000:127.0.0.1:3000 brightroar`, then open `http://127.0.0.1:3000`
     and create your account: the first one becomes the admin, and signup is otherwise closed.
@@ -2614,27 +4426,70 @@ clients: ## Add the Spark provider to pi on this machine
     names your tailnet, so read it privately. Log in with the account you made. To undo:
     `sudo tailscale serve reset`, then serve again.
   - **Every later change.** `git pull`; if it changed `stack/host/`, `make bootstrap` first. Then
-    `make apply-dry-run`, `make apply`. If the llama-swap config changed while models are loaded,
-    apply changes nothing and says so; run it again when they're idle, or `make apply-now` to restart
-    llama-swap anyway.
+    `make apply-dry-run`, `make apply`. If a unit or the Compose project changed, apply stages it and
+    deploys nothing else: run `make install-units`, read what it shows (every staged file root would
+    install; not the clone's own scripts, which sudo runs too), and answer, then `make apply` again.
+    That second apply restarts each unit still running its
+    older definition. If llama-swap would restart, for its config or for its unit, while models are
+    loaded, apply changes nothing and says so; run it again when they're idle, or `make apply-now` to
+    restart llama-swap anyway. (Added 2026-09-26, from Task 7's reviews: if a model starts loading
+    after apply's first look, apply deploys the files, puts llama-swap's restart off, says so and
+    exits 1, and the next `make apply` makes the restart once the models are idle; and a restarted
+    llama-swap that doesn't answer within 30 s, or answers with an error such as a wrong key, gets a
+    line saying so and exit 1. A run cut off part-way is finished by the next `make apply`, except
+    for a unit whose start time it can't read, which it names with the command to restart it.)
   - **When something is wrong.** `make status`, then `make logs s=llama-swap` (or `brake`, `pull`,
     `compose`, `open-webui`, `searxng`). A refused load appears in `make status` as a `refused` line
-    with its reason.
+    with its reason, for an account in `spark-admin`; any other account is told the brake's state is
+    unknown to it. If `make apply` keeps saying a file differs from root's copy,
+    `make install-units-dry-run` shows the difference, and `make install-units` installs it.
 
-- [ ] **Step 8: Tests pass; the site builds; commit**
+  *Superseded 2026-09-26 — deploy.md now says more than this outline; see commits 354c995,
+  8172764, facd839 and 914d6d4, from Task 9's scan and review. *Before the first deploy* sets up
+  Dan's own `SPARK_API_KEY` on the Spark (Task 13 Step 1's commands), without which `make status`
+  answers 401 and every later `make apply` that would restart llama-swap refuses; the key's send is
+  the page's second step on the Mac, and the Spark's copy is recorded in the vault, by name only.
+  A refused dry run exits 1 and ends in make's error line, which is its answer, not a fault.
+  `journalctl -fu local-ai-pull` follows the pull. Each block in *The web UI's first account* names
+  its machine, and the two `sudo bash -c` blocks are run a line at a time. *Every later change*
+  repeats the `git status` check before `make bootstrap` and `make install-units`. *When something
+  is wrong* adds a 401 (no key in this shell), `make brake-release`, and the pull's `FAILED` lines:
+  a repo, file name or revision that doesn't exist is fixed in `stack/models.yaml`, then
+  `make apply` and `make pull`; a gated repo needs a token in `hf.env`; for the rest, fix the cause
+  and `make pull` again.*
 
-Run: `uv run --frozen --project spark pytest spark/tests && make lint docs`
-Expected: all pass; the How-to listing shows the two new runbooks.
+- [x] **Step 11: The How-to index and README**
+  - `website/how-to/index.qmd`: the *In order* list gains `7. [Deploy the stack](deploy.md)` after
+    secret files. The *Updates* line stays last, as ongoing, and pi stays in the listing only: it
+    sets up a client, not the box.
+  - README §Contents' `Makefile` row lists the targets "tests, lint, docs, the leak-guard hooks,
+    bootstrap and the GPU-set hold", which this task makes untrue. It becomes: "The front door:
+    `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the
+    GPU-set hold, and deploying the stack (`apply`, `install-units`, `pull`, `status`, `logs`,
+    `tunnel`, `clients`)."
+  - The install-units tests run coreutils' `timeout`, which Ubuntu has, and a Mac only from
+    Homebrew: Task 18, on the Mac, records it among the MacBook's tools.
+
+- [x] **Step 12: Tests pass; the site builds; commit**
+
+Run: `uv run --frozen --project spark pytest spark/tests && make lint`
+Expected: all pass, with `test_polkit.py`'s two Node tests skipped: CI's `tests` job runs them on
+the push after Task 10, and Task 12 Step 1 installs the new rule only once that run is green. The
+site isn't rendered here, since Quarto isn't on the Spark: CI's `site` job renders it on that push,
+and Task 18's `make docs`, on the Mac, shows the two new runbooks in the How-to listing and
+deploy.md as step 7 of *In order*.
 
 ```bash
-git add spark Makefile stack/versions.yaml website/reference/stack.md website/how-to
-git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets and runbooks" \
+git add spark/src/spark/{clients,cli}.py spark/tests/{test_clients,test_polkit,test_bootstrap}.py \
+  stack/host/bootstrap.sh stack/host/50-local-ai.rules Makefile stack/versions.yaml website/reference/stack.md \
+  website/how-to/{deploy,pi}.md website/how-to/index.qmd README.md
+git commit -m "feat(spark): 🤖 add pi's provider config, deploy targets with root's copies of the units, and runbooks" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ***
 
-### Task 10 [Mac]: updates never take the stack down — needrestart, `make upgrade-gpu`, `make doctor`
+### Task 10 [Spark]: updates never take the stack down — needrestart, `make upgrade-gpu`, `make doctor`
 
 plan.md's Phase 1 promises that updates never take the stack down for good. Three pieces make that
 true, and Tasks 12, 13 and 16 run them on the box:
@@ -2645,8 +4500,8 @@ true, and Tasks 12, 13 and 16 run them on the box:
   upgrade would stop every loaded model. Bootstrap installs a drop-in that leaves the `local-ai-*`
   units alone, as DGX OS does for its own dashboard.
 - **`make upgrade-gpu`.** Upgrade day's GPU-set steps from `website/how-to/updates.md`, as one
-  command, built on Phase 0's hold (`hold_gpu_stack` and the `--hold-gpu` mode in
-  `stack/host/bootstrap.sh`).
+  command, step 5's GRUB check included, built on Phase 0's hold (`hold_gpu_stack` and the
+  `--hold-gpu` mode in `stack/host/bootstrap.sh`).
 - **`make doctor` v0.** Phase 0's guardrails and the stack's smoke checks in one pass, for after any
   update, a reboot or upgrade day. `spark doctor` proper, one check per scenario, stays in Phase 2.
 
@@ -2654,17 +4509,19 @@ true, and Tasks 12, 13 and 16 run them on the box:
 
 - Create: `stack/host/needrestart.conf`, `spark/src/spark/doctor.py`, `spark/tests/test_doctor.py`
 - Modify: `stack/host/bootstrap.sh` (the needrestart step and the `--upgrade-gpu` mode),
-  `spark/tests/test_bootstrap.py`, `spark/src/spark/cli.py` (register `doctor`), `Makefile`,
+  `spark/tests/test_bootstrap.py`, `spark/src/spark/cli.py` (register `doctor`),
+  `spark/tests/test_cli.py` (the commands the units and the Makefile run), `Makefile`,
   `website/how-to/updates.md`, `website/how-to/deploy.md`, `README.md` §Contents
 
 **Interfaces:**
 
 - Consumes: Phase 0's `stack/host/bootstrap.sh` (`gpu_hold_patterns`, `hold_gpu_stack`, `run`,
   `say`, the `--hold-gpu` mode) and `spark/tests/test_bootstrap.py` (`INSTALLED`, `GPU_SET`,
-  `gpu_env`, `script`, `held`, `dry_run`, `install_d_line`, `NO_PACKAGES`); `load_registry`,
-  `Registry` (Task 1) and Task 1's `spark/tests/fixtures/models.yaml`, whose embeddings model the
-  doctor tests expect to be named `embed`; `paths.LLAMASWAP_URL`, `paths.REGISTRY` (Task 2);
-  `key_from_env` (Task 3).
+  `gpu_env`, `script`, `held`, `dry_run`, `NO_PACKAGES`); Task 9's
+  `--install-units` mode and `calls`; `load_registry`, `Registry` (Task 1) and Task 1's
+  `spark/tests/fixtures/models.yaml`, whose embeddings model the doctor tests expect to be named
+  `embed`; `paths.LLAMASWAP_URL`, `paths.REGISTRY` (Task 2); `key_from_env` (Task 3); `render`,
+  `installed_path`, `UNITS`, `UNIT_DIR`, `COMPOSE_DIR` (Task 6).
 - Produces:
   - `/etc/needrestart/conf.d/local-ai.conf`, which bootstrap installs: needrestart never restarts
     a `local-ai-*` unit.
@@ -2672,12 +4529,16 @@ true, and Tasks 12, 13 and 16 run them on the box:
 
     | Status | When |
     |---|---|
-    | 0 | apt's move is done and the newest kernel has an NVIDIA module |
-    | 1 | it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
+    | 0 | apt's move is done, the newest kernel has an NVIDIA module, and GRUB boots it |
+    | 1 | GRUB won't boot the newest kernel (before the release, or after the move), it refused apt's plan, Dan answered no, the hold stopped, or the newest kernel has no module |
     | apt's own (100) | an apt step failed, and the hold on the way out then worked |
     | 130 | a signal cut off a hold the way out runs (its first, or the retry), whatever the signal |
     | 129, 130, 143 | HUP, INT or TERM anywhere else, and the hold on the way out then worked |
     | 2 | a usage error |
+
+    *Corrected 2026-09-26, from Task 10's review:* a dry run releases nothing and sets no way out,
+    so a signal ends it as it would end any command (commit 0a342a1); and the 130 row also covers a
+    signal that killed only the way out's hold, which now says to run `make hold-gpu` (ecd2264).
 
     Every way out after the release runs the hold. The hold that follows apt's move is the only
     one tried twice: cut off by a signal, the way out runs it again. The set stays released in
@@ -2700,49 +4561,74 @@ true, and Tasks 12, 13 and 16 run them on the box:
     The newest kernel is the one the next boot starts only while GRUB boots it: entry 0 in
     `grub.cfg` is that kernel, GRUB starts entry 0, and no `next_entry` with a value picks another.
     `/etc/default/grub` alone can't show that: `GRUB_FLAVOUR_ORDER`, `GRUB_TOP_LEVEL` and indented
-    or exported settings all change it. So updates.md's GRUB check reads what GRUB will do: entry
-    0's first `linux` line in `grub.cfg`, its `set default=` lines, and `grub-editenv list`. The
-    script reads none of them. Dan runs that check before `make upgrade-gpu` and again before
-    `sudo reboot`, and Task 12 Step 1 runs it on this box. See the open item below.
+    or exported settings all change it. So the script runs updates.md's GRUB check itself
+    (`grub_boots`), reading what GRUB will do: entry 0's first `linux` line in `grub.cfg`, its
+    `default=` lines, and `grub-editenv list`. It runs it twice. Before the release, on the newest
+    installed kernel: a failure refuses, with the set still held and nothing moved. After the move
+    and the module check, on the new newest kernel: a failure prints
+    `DON'T REBOOT — GRUB boots <X>, not <Y>`, or why it can't tell, exits 1, and sends Dan to
+    *If it goes wrong*, never to a reboot or a restart of the stack. It names kernels by version
+    only: nothing it prints carries a GRUB id, a UUID or PARTUUID, or a whole `linux` line, which
+    carry the root filesystem's UUID. The paths are `BOOTSTRAP_GRUB_CFG` and `BOOTSTRAP_GRUBENV`,
+    for the tests' stand-ins. A missing or unreadable grubenv fails the check: as root,
+    `grub-editenv list` would create a missing one and pass. Task 12 Step 1 runs updates.md's check
+    by hand on this box, before the first upgrade day relies on this one.
 
     Make targets: `upgrade-gpu` (refuses outside tmux, then runs it under sudo) and
-    `upgrade-gpu-dry-run`.
-  - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable` and `http`;
-    `judge_gpu_set(code, out, err) -> Check`; `earlyoom_args(text) -> list[str]`;
-    `checks(probe, key, registry) -> list[Check]`; `report(results) -> str`; CLI
-    `spark doctor [--key-env NAME]`: exit 0 when every check passes, 1 when any fails, 2 when it
-    isn't run from the repo root. Make target `doctor`.
+    `upgrade-gpu-dry-run`. (Since 2026-09-26, from Task 10's scan: `upgrade-gpu` ends with
+    `sudo -k`, as `install-units`, `bootstrap` and `hold-gpu` do; commit 4122330.)
+  - `Check(name, ok, detail)`; `Probe(repo)` with `run`, `read`, `owner`, `listable`, `entry` and
+    `http` (`entry(path)`: owner, group, permission bits and kind, `file`, `folder`, `link` or
+    `other`, read without following a link); `judge_gpu_set(code, out, err) -> Check`;
+    `earlyoom_args(text) -> list[str]`; `ROOT_FOLDERS`, `ROOT_FILES` (root's copies);
+    `load_deployed_registry(path) -> (Registry | None, str | None)`: the registry, or None and why
+    it doesn't load, a missing, unreadable or malformed file included;
+    `checks(probe, key, registry, problem=None) -> list[Check]`, twelve of them, a registry that
+    didn't load being the end-to-end check's FAIL, with `problem` as its reason;
+    `report(results) -> str`; CLI `spark doctor [--key-env NAME]`: exit 0 when every check passes,
+    1 when any fails, 2 when it isn't run from the repo root. Make target `doctor`. (Since
+    2026-09-26, from Task 10's scan and review: `Probe` also has `exists(path)` — True, False, or
+    None when it can't tell — and `checks` takes `key_env="SPARK_API_KEY"`, the variable its
+    messages name. There are fifteen checks: spark's folders, the engines' config files and the
+    needrestart override joined.)
+  - `spark/tests/test_cli.py`: a test that every command the units and the Makefile run parses,
+    `launch`'s `--` passed through to it untouched.
 
 What `make upgrade-gpu` does, in order:
 
 | Step | What it does | If it refuses or fails |
 |---|---|---|
+| check GRUB | `grub_boots` on the newest installed kernel: entry 0's first `linux` line in `grub.cfg` names it, the `default=` lines are the stock two, and grubenv holds no `next_entry` or `prev_entry` with a value, nor a `saved_entry` other than 0 when the default is `"${saved_entry}"` | nothing released, nothing moved: the set is still held. It says why, and to run updates.md step 5's check and bring what it prints to the Claude session working on the repo |
 | release | `apt-mark unhold` the GPU set's held members, found with the hold's own patterns, so a package held for another reason stays held | — |
 | finish, refresh | `dpkg --configure -a`, `apt-get update` | it holds the set again |
 | read the plan | `apt-get -s dist-upgrade` (apt-get's name for `full-upgrade`): refused if it removes a `linux-modules-nvidia-*-nvidia-hwe-*` metapackage, or installs a `linux-image-<version>` with no `linux-modules-nvidia-*` ending in `<version>`. A metapackage swapped for another driver branch's (580 for 590, say) is refused too: that move is planned and made by hand | nothing has moved; it holds the set again |
 | stop the GPU's users | `systemctl stop` llama-swap and the brake, if they run; the reboot starts them | — |
 | move | `apt-get dist-upgrade`: Dan reads apt's plan and answers | it holds the set again, then compares the set with how it stood before apt ran: each package's state and version, without the hold letter, which the release and the hold flip between `i` and `h`. It also checks the newest kernel for its module, since apt may have installed one outside the set. Nothing changed and the module is there (Dan answered no, or apt failed first, even if the hold then stopped): it says how to start the stack. Otherwise, even for one version: it sends Dan to *If it goes wrong* in `updates.md`, with no reboot hint |
 | hold | the hold and nothing else (`hold_gpu_stack`); this hold, after apt's move, is tried once more on the way out if a signal cuts it off | it says what the hold said, and the set stays released until `make hold-gpu`. A signal during the way out's own hold, or during the retry, also leaves it released: it says so, and after apt ran, not to reboot before step 5's checks pass |
-| check | `modinfo -k` on the newest kernel, which the next boot starts only if GRUB boots it. It doesn't check that: updates.md's GRUB check, run before `make upgrade-gpu` and again before the reboot, does (the open item below) | `DON'T REBOOT`, and *If it goes wrong* in `updates.md` |
-| end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>`, then `now: sudo reboot, then make doctor` | — |
+| check | `modinfo -k` on the newest kernel, then `grub_boots` on it: the next boot starts it only if GRUB boots it | `DON'T REBOOT` (`— GRUB boots <X>, not <Y>`, or why it can't tell, when GRUB is the reason), and *If it goes wrong* in `updates.md`; the way out never suggests starting the stack |
+| end | `ready: <kernel>, the newest kernel, has NVIDIA driver <version>, and GRUB boots it`, then `now: sudo reboot, then make doctor` | — |
 
 Two things it relies on are not yet checked on this box, and Task 12 Step 1 lists both. One is
 the name `linux-image-<version>`, with a digit first, for a new kernel. If DGX OS names its kernels
 otherwise, the plan check misses a new kernel, and only the newest-kernel check before the reboot
-catches it. The other is GRUB booting the newest kernel: entry 0 in `grub.cfg` is that kernel, and
-GRUB starts entry 0.
+catches it. The other is that GRUB boots the newest kernel on this box: entry 0 in `grub.cfg` is
+that kernel, and GRUB starts entry 0, as Ubuntu sets it up. `make upgrade-gpu` checks it each time
+and refuses when it doesn't hold, but whether brightroar's setup passes is not yet known.
 
-**Open item, 2026-09-25: decide before Task 10 is built.** For Phase 1's pre-flight, recommended
-by the Task 12 polish review: `make upgrade-gpu` should run the GRUB check itself, after the move
-and before it prints `now: sudo reboot`. It would read grubenv's `next_entry`, `prev_entry` and
-`saved_entry`, their non-empty values only; `grub.cfg`'s `default=` lines, expecting the stock two;
-and entry 0's first `linux` line, against `newest_kernel`. On a mismatch it prints
-`DON'T REBOOT — GRUB boots X, not Y` and exits 1.
-Stand-in paths that an environment variable overrides make it testable. This plan doesn't build it
-yet. Until the decision lands, Dan re-runs updates.md's GRUB check after `make upgrade-gpu` and
-before `sudo reboot`.
+~~**Open item, 2026-09-25: decide before Task 10 is built.**~~ **Resolved 2026-09-25: Dan decided
+that `make upgrade-gpu` runs the GRUB check itself, and this task builds it** (`grub_boots`, above).
+It runs twice, not only after the move as the item proposed: updates.md step 2 runs the same check
+before anything moves, and one command replaces both runs by hand. It fails a missing grubenv too.
+The item as it stood: for Phase 1's pre-flight, recommended by the Task 12 polish review:
+`make upgrade-gpu` should run the GRUB check itself, after the move and before it prints
+`now: sudo reboot`. It would read grubenv's `next_entry`, `prev_entry` and `saved_entry`, their
+non-empty values only; `grub.cfg`'s `default=` lines, expecting the stock two; and entry 0's first
+`linux` line, against `newest_kernel`. On a mismatch it prints `DON'T REBOOT — GRUB boots X, not Y`
+and exits 1. Stand-in paths that an environment variable overrides make it testable. This plan
+doesn't build it yet. Until the decision lands, Dan re-runs updates.md's GRUB check after
+`make upgrade-gpu` and before `sudo reboot`.
 
-- [ ] **Step 1: Write the failing tests for bootstrap**
+- [x] **Step 1: Write the failing tests for bootstrap**
 
 In `spark/tests/test_bootstrap.py`, the stand-ins behave more like the real tools.
 
@@ -2894,8 +4780,11 @@ Remv nvidia-driver-580-open [580.178-0ubuntu1]
 
 FAKE_APT_GET = """#!/usr/bin/env bash
 # Stands in for apt-get: `-s dist-upgrade` prints $APT_PLAN. The real `dist-upgrade` answers as
-# $APT_ANSWER says: yes, and the installed packages become $DPKG_AFTER; no, and it aborts, changing
-# nothing; partial, and it fails after the packages became $DPKG_AFTER. Every call is logged.
+# $APT_ANSWER says: yes, and it moves the set; no, and it aborts, changing nothing; partial, and it
+# fails after moving it. A move makes the installed packages $DPKG_AFTER and the installed kernels
+# $KERNELS_AFTER, and grub.cfg $GRUB_AFTER, since installing a kernel runs update-grub. Every call
+# is logged.
+moved() { cp "$DPKG_AFTER" "$DPKG_FIXTURE"; cp "$KERNELS_AFTER" "$KERNELS"; cp "$GRUB_AFTER" "$BOOTSTRAP_GRUB_CFG"; }
 echo "apt-get $*" >> "$CALLS"
 case "$*" in
   update) ;;
@@ -2903,8 +4792,8 @@ case "$*" in
   dist-upgrade)
     case "$APT_ANSWER" in
       no) echo "Abort."; exit 1 ;;
-      partial) cp "$DPKG_AFTER" "$DPKG_FIXTURE"; echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" >&2; exit 100 ;;
-      *) cp "$DPKG_AFTER" "$DPKG_FIXTURE" ;;
+      partial) moved; echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" >&2; exit 100 ;;
+      *) moved ;;
     esac
     ;;
   *) echo "fake apt-get: unexpected: $*" >&2; exit 1 ;;
@@ -2925,10 +4814,10 @@ esac
 """
 
 FAKE_LINUX_VERSION = """#!/usr/bin/env bash
-# Stands in for linux-version: `list` prints $KERNELS, and `sort --reverse` puts the newest first
-# (the test kernels sort by name).
+# Stands in for linux-version: `list` prints the kernels in the file $KERNELS, and `sort --reverse`
+# puts the newest first (the test kernels sort by name).
 case "$1" in
-  list) printf '%s\\n' $KERNELS ;;
+  list) cat "$KERNELS" ;;
   sort) sort -r ;;
 esac
 """
@@ -2938,39 +4827,128 @@ FAKE_MODINFO = """#!/usr/bin/env bash
 if [[ " $MODULE_KERNELS " == *" $2 "* ]]; then echo 580.200; else echo "modinfo: ERROR: Module nvidia not found." >&2; exit 1; fi
 """
 
+FAKE_GRUB_EDITENV = """#!/usr/bin/env bash
+# Stands in for `grub-editenv FILE list` as root runs it: prints FILE's name=value lines. Like the
+# real one, it creates a missing FILE as an empty block, and fails on one that isn't a GRUB
+# environment block.
+[[ "$2" == list ]] || { echo "fake grub-editenv: unexpected: $*" >&2; exit 1; }
+[[ -e "$1" ]] || printf '# GRUB Environment Block\\n' > "$1"
+head -1 "$1" | grep -qx '# GRUB Environment Block' || { echo "grub-editenv: error: invalid environment block." >&2; exit 1; }
+grep -v '^#' "$1" || true  # an empty block lists nothing, and that is no error
+"""
+
+# The root filesystem's UUID is in grub.cfg's linux lines and entry ids, and can be in grubenv. This
+# one is made at run time, so no UUID, not even a made-up one, is written in the repo. Nothing the
+# GRUB check prints may carry it.
+ROOT_FS_UUID = "-".join(os.urandom(n).hex() for n in (4, 2, 2, 2, 6))
+PREVIOUS = "7.0.0-1018-nvidia"  # a kernel older than OLD
+
+# grub.cfg as Ubuntu's grub-mkconfig (GRUB 2.12) writes it, cut down to what the check reads and what
+# carries the UUID: 00_header's default= lines, then 10_linux's entry 0 and its submenu.
+GRUB_CFG = """### BEGIN /etc/grub.d/00_header ###
+if [ -s $prefix/grubenv ]; then
+  set have_grubenv=true
+  load_env
+fi
+if [ "${initrdfail}" = 1 ]; then
+   set next_entry="${prev_entry}"
+   set prev_entry=
+   save_env prev_entry
+fi
+if [ "${next_entry}" ] ; then
+   set default="${next_entry}"
+   set next_entry=
+   save_env next_entry
+   set boot_once=true
+else
+   set default=@DEFAULT@
+fi
+@EXTRA@
+### BEGIN /etc/grub.d/10_linux ###
+menuentry 'Ubuntu' --class ubuntu $menuentry_id_option 'gnulinux-simple-@UUID@' {
+	search --no-floppy --fs-uuid --set=root @UUID@
+	linux	/boot/vmlinuz-@ENTRY0@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+	initrd	/boot/initrd.img-@ENTRY0@
+}
+submenu 'Advanced options for Ubuntu' $menuentry_id_option 'gnulinux-advanced-@UUID@' {
+@SUBMENU@}
+"""
+SUBMENU_ENTRY = """	menuentry 'Ubuntu, with Linux @KERNEL@' --class ubuntu $menuentry_id_option 'gnulinux-@KERNEL@-advanced-@UUID@' {
+		search --no-floppy --fs-uuid --set=root @UUID@
+		linux	/boot/vmlinuz-@KERNEL@ root=UUID=@UUID@ ro  quiet splash $vt_handoff
+		initrd	/boot/initrd.img-@KERNEL@
+	}
+"""
+# What 00_header adds when the default is a bare title nested in the submenu: a third default= line.
+TITLE_REWRITE = ('if [ "${default}" = "Ubuntu, with Linux @KERNEL@" ]; then '
+                 'default="Advanced options for Ubuntu>Ubuntu, with Linux @KERNEL@"; fi')
+
+
+def grub_cfg(*kernels: str, default: str = '"0"', extra: str = "", bare: bool = False) -> str:
+    """grub.cfg for `kernels` in menu order, entry 0 first, GRUB starting `default`. `extra` is
+    another line after the default= lines; `bare` drops `set` from the else branch's default=."""
+    submenu = "".join(SUBMENU_ENTRY.replace("@KERNEL@", kernel) for kernel in kernels)
+    text = GRUB_CFG.replace("@SUBMENU@", submenu).replace("@ENTRY0@", kernels[0])
+    text = text.replace("@DEFAULT@", default).replace("@EXTRA@", extra.replace("@KERNEL@", kernels[-1]))
+    if bare:
+        text = text.replace("   set default=" + default, "   default=" + default)
+    return text.replace("@UUID@", ROOT_FS_UUID)
+
+
+def grubenv(**entries: str) -> str:
+    """A GRUB environment block as grub-editenv writes it: its header, name=value lines, then # to
+    1024 bytes."""
+    text = "# GRUB Environment Block\n" + "".join(f"{name}={value}\n" for name, value in entries.items())
+    return text + "#" * (1024 - len(text))
+
+
+def entry_id(kernel: str) -> str:
+    """The submenu entry's id for `kernel`, as a default or a grubenv entry names it: it carries the UUID."""
+    return f"gnulinux-advanced-{ROOT_FS_UUID}>gnulinux-{kernel}-advanced-{ROOT_FS_UUID}"
+
 
 def upgrade_env(tmp_path: Path, plan: str, *, answer: str = "yes", after: dict[str, str] = AFTER,
                 after_versions: dict[str, str] | None = None, module_kernels: str = f"{OLD} {NEW}",
-                cut_holds: int = 0) -> dict[str, str]:
+                cut_holds: int = 0, kernels_after: tuple[str, ...] = (OLD, NEW),
+                grub_before: str | None = None, grub_after: str | None = None,
+                env_block: str | None = None) -> dict[str, str]:
     """gpu_env, plus stand-ins for everything upgrade day runs. Nothing touches this machine: the
-    fakes only log to tmp_path/calls."""
+    fakes only log to tmp_path/calls. Before the move OLD is the newest kernel and GRUB boots it;
+    the move installs `kernels_after`, and update-grub leaves `grub_after`, NEW first unless given."""
     env = gpu_env(tmp_path, HELD_BEFORE)
     for name, text in (("apt-get", FAKE_APT_GET), ("dpkg", FAKE_DPKG), ("systemctl", FAKE_SYSTEMCTL),
-                       ("linux-version", FAKE_LINUX_VERSION), ("modinfo", FAKE_MODINFO)):
+                       ("linux-version", FAKE_LINUX_VERSION), ("modinfo", FAKE_MODINFO),
+                       ("grub-editenv", FAKE_GRUB_EDITENV)):
         (tmp_path / "bin" / name).write_text(text)
         (tmp_path / "bin" / name).chmod(0o755)
     (tmp_path / "plan").write_text(plan)
     (tmp_path / "after.tsv").write_text(dpkg_lines(after, after_versions))
     (tmp_path / "cut").write_text(str(cut_holds))
+    (tmp_path / "kernels").write_text(f"{PREVIOUS}\n{OLD}\n")
+    (tmp_path / "kernels.after").write_text("".join(f"{kernel}\n" for kernel in (PREVIOUS, *kernels_after)))
+    (tmp_path / "grub.cfg").write_text(grub_before or grub_cfg(OLD, PREVIOUS))
+    (tmp_path / "grub.cfg.after").write_text(grub_after or grub_cfg(NEW, OLD, PREVIOUS))
+    (tmp_path / "grubenv").write_text(env_block or grubenv(saved_entry="", next_entry=""))
     return {**env, "CALLS": str(tmp_path / "calls"), "APT_PLAN": str(tmp_path / "plan"),
             "DPKG_AFTER": str(tmp_path / "after.tsv"), "APT_ANSWER": answer,
             "ACTIVE_UNITS": "local-ai-llama-swap.service local-ai-brake.service",
-            "KERNELS": f"{OLD} {NEW}", "MODULE_KERNELS": module_kernels, "APT_MARK_CUT": str(tmp_path / "cut")}
+            "KERNELS": str(tmp_path / "kernels"), "KERNELS_AFTER": str(tmp_path / "kernels.after"),
+            "MODULE_KERNELS": module_kernels, "APT_MARK_CUT": str(tmp_path / "cut"),
+            "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "GRUB_AFTER": str(tmp_path / "grub.cfg.after"),
+            "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")}
 
 
 def real_upgrade(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Upgrade day for real, not its dry run, against upgrade_env's fakes (see real_hold)."""
-    return subprocess.run(
+    """Upgrade day for real, not its dry run, against upgrade_env's fakes (see real_hold). Whatever
+    happens, nothing it prints carries the root filesystem's UUID."""
+    result = subprocess.run(
         ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && upgrade_gpu', "bash", str(SCRIPT)],
         capture_output=True,
         text=True,
         env=env,
     )
-
-
-def calls(tmp_path: Path) -> list[str]:
-    path = tmp_path / "calls"
-    return path.read_text().splitlines() if path.exists() else []
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
 
 
 def sorted_set(packages: set[str]) -> str:
@@ -2995,7 +4973,8 @@ def test_upgrade_day_moves_the_set_and_holds_it_again(tmp_path):
         f"apt-mark hold {sorted_set(NEW_SET)}",
     ]
     assert held(tmp_path) == NEW_SET
-    assert f"==> ready: {NEW}, the newest kernel, has NVIDIA driver 580.200" in result.stdout
+    assert f"==> GRUB boots {OLD}, the newest kernel" in result.stdout  # before anything moved
+    assert f"==> ready: {NEW}, the newest kernel, has NVIDIA driver 580.200, and GRUB boots it" in result.stdout
     assert "sudo reboot, then make doctor" in result.stdout
 
 
@@ -3116,11 +5095,109 @@ def test_a_signal_during_the_way_outs_own_hold_leaves_the_set_released(tmp_path)
     assert held(tmp_path) == set()
 
 
+def test_a_grub_that_wont_boot_the_newest_kernel_refuses_before_anything_is_released(tmp_path):
+    # Someone ran grub-reboot, so the next boot starts another entry. Found before the release, it
+    # leaves the set held and nothing moved, as updates.md step 2 says.
+    env = upgrade_env(tmp_path, GOOD_PLAN, env_block=grubenv(saved_entry="", next_entry=entry_id(PREVIOUS)))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "not moving the GPU set: grubenv's next_entry picks another entry for the next boot" in result.stderr
+    assert "Nothing was released or moved" in result.stderr
+    assert calls(tmp_path) == []  # no release, no dpkg, no apt
+    assert (tmp_path / "installed.tsv").read_text() == dpkg_lines(HELD_BEFORE)  # still held
+
+
+def test_a_grub_that_wont_boot_the_new_kernel_after_the_move_says_dont_reboot(tmp_path):
+    # update-grub put the old kernel first after the move (GRUB_FLAVOUR_ORDER can): the next boot
+    # would start OLD, whatever the new kernel has.
+    result = real_upgrade(upgrade_env(tmp_path, GOOD_PLAN, grub_after=grub_cfg(OLD, NEW, PREVIOUS)))
+    assert result.returncode == 1
+    assert f"DON'T REBOOT — GRUB boots {OLD}, not {NEW}" in result.stderr and RECOVERY in result.stderr
+    assert held(tmp_path) == NEW_SET  # held before the checks
+    assert "sudo reboot" not in result.stdout and "systemctl start" not in result.stderr
+
+
+def test_a_grub_refusal_after_a_move_that_moved_nothing_still_starts_nothing(tmp_path):
+    # apt moved nothing in the set, but GRUB's default changed meanwhile: no hint to start the stack
+    # or reboot, only the way to the recovery.
+    env = upgrade_env(tmp_path, GOOD_PLAN, after=RELEASED, kernels_after=(OLD,),
+                      grub_after=grub_cfg(OLD, PREVIOUS, default='"1"'))
+    result = real_upgrade(env)
+    assert result.returncode == 1
+    assert "DON'T REBOOT — grub.cfg's default isn't entry 0" in result.stderr
+    assert "GRUB may not boot the newest kernel. Don't reboot or start the stack yet" in result.stderr
+    assert "systemctl start" not in result.stderr
+
+
+def grub_check(tmp_path: Path, kernel: str, cfg: str | None, env_block: str | None) -> subprocess.CompletedProcess[str]:
+    """grub_boots KERNEL against a stand-in grub.cfg and grubenv; None leaves that file out. Nothing
+    it prints may carry the root filesystem's UUID."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/grub-editenv").write_text(FAKE_GRUB_EDITENV)
+    (tmp_path / "bin/grub-editenv").chmod(0o755)
+    for name, text in (("grub.cfg", cfg), ("grubenv", env_block)):
+        if text is not None:
+            (tmp_path / name).write_text(text)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && grub_boots "$2"', "bash", str(SCRIPT), kernel],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+             "BOOTSTRAP_GRUB_CFG": str(tmp_path / "grub.cfg"), "BOOTSTRAP_GRUBENV": str(tmp_path / "grubenv")},
+    )
+    assert ROOT_FS_UUID not in result.stdout + result.stderr
+    return result
+
+
+@pytest.mark.parametrize("default, env_block", [
+    ('"0"', grubenv(saved_entry="", next_entry="")),
+    ('"0"', grubenv(saved_entry=entry_id(OLD))),  # "0" never reads saved_entry
+    ('"${saved_entry}"', grubenv()),
+    ('"${saved_entry}"', grubenv(saved_entry="0")),
+    ('"${saved_entry}"', grubenv(saved_entry="", next_entry="", prev_entry="")),  # as grub-reboot leaves them
+], ids=["0", "0-with-saved-entry", "saved-none", "saved-0", "saved-empty"])
+def test_the_stock_grub_boots_the_newest_kernel(tmp_path, default, env_block):
+    result = grub_check(tmp_path, NEW, grub_cfg(NEW, OLD, default=default), env_block)
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("cfg, env_block, reason", [
+    (grub_cfg(OLD, NEW), grubenv(), f"GRUB boots {OLD}, not {NEW}"),
+    (grub_cfg(NEW, OLD, extra=TITLE_REWRITE), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, bare=True), grubenv(), "grub.cfg's default= lines aren't the stock two"),
+    (grub_cfg(NEW, OLD, default=f'"{entry_id(OLD)}"'), grubenv(), "grub.cfg's default isn't entry 0"),
+    (grub_cfg(NEW, OLD), grubenv(next_entry=entry_id(OLD)), "grubenv's next_entry picks another entry"),
+    (grub_cfg(NEW, OLD), grubenv(prev_entry=entry_id(OLD)), "grubenv's prev_entry picks another entry"),
+    (grub_cfg(NEW, OLD, default='"${saved_entry}"'), grubenv(saved_entry=entry_id(OLD)),
+     "grubenv's saved_entry picks another entry than 0"),
+    (None, grubenv(), "can't read"),
+    (grub_cfg(NEW, OLD), None, "can't read GRUB's environment block"),
+    (grub_cfg(NEW, OLD), "saved_entry=0\n", "can't read GRUB's environment block"),  # grub-editenv refuses it
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", "vmlinuz"), grubenv(), "entry 0 starts no vmlinuz-<version> kernel"),
+    # Only a name that is a kernel version is ever printed, whatever grub.cfg holds.
+    (grub_cfg(NEW, OLD).replace(f"vmlinuz-{NEW}", f"vmlinuz-{ROOT_FS_UUID}"), grubenv(),
+     "entry 0 starts no vmlinuz-<version> kernel"),
+], ids=["entry-0-an-older-kernel", "a-third-default-line", "a-bare-default", "an-id-as-the-default",
+        "next-entry", "prev-entry", "saved-entry-not-0", "no-grub-cfg", "no-grubenv", "grubenv-read-fails",
+        "entry-0-unnamed", "entry-0-not-a-version"])
+def test_anything_else_says_why_and_never_what_it_read(tmp_path, cfg, env_block, reason):
+    result = grub_check(tmp_path, NEW, cfg, env_block)
+    assert result.returncode == 1 and reason in result.stdout, result
+    # A check only reads: root's grub-editenv would create a missing grubenv, and pass on it.
+    assert (tmp_path / "grubenv").exists() == (env_block is not None)
+
+
+def test_no_newest_kernel_is_not_a_kernel_grub_boots(tmp_path):
+    result = grub_check(tmp_path, "", grub_cfg(NEW, OLD), grubenv())
+    assert result.returncode == 1 and "linux-version found no kernel" in result.stdout
+
+
 def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
     result = script("--upgrade-gpu", "--dry-run", env=upgrade_env(tmp_path, GOOD_PLAN))
     assert result.returncode == 0, result.stderr
     commands = [line.split("   (")[0] for line in result.stdout.splitlines() if line.startswith("+ ")]
     assert commands == [
+        "+ grub_boots <the newest kernel>",
         f"+ apt-mark unhold {sorted_set(GPU_SET)}",
         "+ dpkg --configure -a",
         "+ apt-get update",
@@ -3130,6 +5207,7 @@ def test_upgrade_gpu_dry_run_only_prints_the_steps(tmp_path):
         "+ apt-get dist-upgrade",
         f"+ apt-mark hold {sorted_set(GPU_SET)}",
         "+ modinfo -k <the newest kernel> -F version nvidia",
+        "+ grub_boots <the newest kernel>",
     ]
     assert calls(tmp_path) == []  # no stand-in was asked to change anything
 
@@ -3153,10 +5231,12 @@ def test_make_upgrade_gpu_refuses_to_start_outside_tmux(tmp_path):
     assert {"upgrade-gpu", "upgrade-gpu-dry-run"} <= set(phony.split()[1:])
 
 
-def test_hold_gpu_and_upgrade_gpu_are_separate_modes():
+@pytest.mark.parametrize("mode", ["--hold-gpu", "--install-units"])
+def test_upgrade_gpu_is_a_mode_of_its_own(mode):
     # --dry-run first, so a broken guard would only print a plan.
-    result = script("--dry-run", "--hold-gpu", "--upgrade-gpu", env=NO_PACKAGES)
+    result = script("--dry-run", mode, "--upgrade-gpu", env=NO_PACKAGES)
     assert result.returncode == 2 and result.stdout == ""
+    assert "separate modes" in result.stderr  # not the unknown option it is before this task
 
 
 def test_bootstrap_installs_the_needrestart_override():
@@ -3198,12 +5278,22 @@ def test_needrestart_never_restarts_a_local_ai_unit():
     ]
 ```
 
-- [ ] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
-  → FAIL: `--upgrade-gpu` is an unknown option (exit 2), `upgrade_gpu` isn't defined, the dry run has
-  no needrestart line, `stack/host/needrestart.conf` doesn't exist, and `make` has no `upgrade-gpu`
-  target. Phase 0's bootstrap tests still pass.
+*Superseded 2026-09-26 — the tests now differ; see commits 748a093, 9fe819c, 4122330, e34fff1,
+ecd2264, 0a342a1 and b98255e, from Task 10's scan and review. `gpu_env` stays as be4c3c3 built it
+(the listing's copied the shell's environment at import); `grub_check`'s and the tmux test's
+environments are built too; the apt-mark stand-in's `unhold` has the `hold` branch's guard, and its
+comment says when its cut is right. New tests: a dry run never says the set is still released;
+`make upgrade-gpu` ends with `sudo -k`; a signal that kills only the way out's hold ends in "run
+`make hold-gpu`" with no start hint; and a dry run cut off by a signal says nothing of a hold. So
+Step 2's RED is 40 failed, and the passing count grew with Task 9's tests.*
 
-- [ ] **Step 3: Implement the override and the upgrade mode**
+- [x] **Step 2: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_bootstrap.py`
+  → FAIL: `--upgrade-gpu` is an unknown option (exit 2, so the mode test finds no "separate
+  modes"), `upgrade_gpu` and `grub_boots` aren't defined, the dry run has no needrestart line,
+  `stack/host/needrestart.conf` doesn't exist, and `make` has no `upgrade-gpu` target. Phase 0's and
+  Task 9's bootstrap tests still pass.
+
+- [x] **Step 3: Implement the override and the upgrade mode**
 
 `stack/host/needrestart.conf`:
 
@@ -3216,14 +5306,15 @@ def test_needrestart_never_restarts_a_local_ai_unit():
 $nrconf{override_rc}->{qr(^local-ai-)} = 0;
 ```
 
-In `stack/host/bootstrap.sh`, the header's usage lines gain:
+In `stack/host/bootstrap.sh`, the header's usage lines gain, after Task 9's `--install-units`
+lines:
 
 ```bash
 #   Move the GPU set:           make upgrade-gpu   (upgrade day, in tmux; it runs this script with
 #                               --upgrade-gpu, and make upgrade-gpu-dry-run previews it)
 ```
 
-The globals, below `HOLD_ONLY=0`:
+The globals, below `INSTALL_UNITS=0` (Task 9's):
 
 ```bash
 UPGRADE=0
@@ -3231,10 +5322,11 @@ REHELD=1     # upgrade day: 0 from the moment the GPU set is released until it i
 STOPPED=""   # upgrade day: the stack's units it stopped
 MOVING=0     # upgrade day: 1 from the moment apt starts moving the set
 MOVE_FROM="" # upgrade day: the set's contents just before that (gpu_set_contents)
+GRUB_FAILED=0 # upgrade day: 1 when GRUB may not boot the newest kernel after the move
 ```
 
-`parse_args` takes the new mode, names it in the unknown-option message, and refuses both modes at
-once:
+`parse_args` takes the new mode, names it in the unknown-option message, and refuses any two of the
+three modes at once:
 
 ```bash
 parse_args() {
@@ -3243,13 +5335,14 @@ parse_args() {
     case "$arg" in
       --dry-run) DRY_RUN=1 ;;
       --hold-gpu) HOLD_ONLY=1 ;;
+      --install-units) INSTALL_UNITS=1 ;;
       --upgrade-gpu) UPGRADE=1 ;;
       # A mistyped --dry-run under sudo must not turn into a real run.
-      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu and --upgrade-gpu)" >&2; exit 2 ;;
+      *) echo "bootstrap: unknown option '$arg' (the options are --dry-run, --hold-gpu, --install-units and --upgrade-gpu)" >&2; exit 2 ;;
     esac
   done
-  if (( HOLD_ONLY && UPGRADE )); then
-    echo "bootstrap: --hold-gpu and --upgrade-gpu are separate modes; pick one" >&2
+  if (( HOLD_ONLY + INSTALL_UNITS + UPGRADE > 1 )); then
+    echo "bootstrap: --hold-gpu, --install-units and --upgrade-gpu are separate modes; pick one" >&2
     exit 2
   fi
 }
@@ -3265,18 +5358,22 @@ After `hold_gpu_stack`, the upgrade mode.
   that didn't take, no kernel, nothing matching) can't end the script before it says so. The hold
   after apt's move, if a signal cuts it off, is tried once more on the way out. A signal during a
   hold the way out runs, the retry included, says what is left to do.
-- The way out suggests starting the stack only when nothing in the set moved and the newest kernel
-  still has its NVIDIA module (`newest_kernel`, `module_version`, the same check the gate makes);
-  otherwise it sends Dan to the recovery, never to a reboot.
+- `grub_boots` is updates.md step 5's GRUB check. It reads `grub.cfg` and `grub-editenv list`,
+  prints only why GRUB won't boot the kernel, and names kernels only by a version it has checked.
+  `upgrade_gpu` runs it before anything is released, and again after the module check, where a
+  failure sets `GRUB_FAILED`.
+- The way out suggests starting the stack only when nothing in the set moved, the newest kernel
+  still has its NVIDIA module (`newest_kernel`, `module_version`, the same check the gate makes),
+  and GRUB didn't fail after the move; otherwise it sends Dan to the recovery, never to a reboot.
 
 ```bash
 # Upgrade day, as one command (make upgrade-gpu, in tmux). It releases the GPU set, reads apt's plan
 # and refuses one that would leave a kernel without its NVIDIA module or change the driver branch,
 # moves the set, holds it again with the hold and nothing else, and checks the newest kernel for its
-# NVIDIA module before it asks for the reboot. That assumes GRUB boots the newest kernel, which
-# this doesn't check: updates.md's GRUB check, which Dan runs before this and again before the
-# reboot, reads grub.cfg's entry 0 and default, and grubenv. Every way out after the release holds
-# the set again. website/how-to/updates.md has the same steps by hand, and the recovery.
+# NVIDIA module before it asks for the reboot. It runs updates.md's GRUB check itself (grub_boots),
+# before it releases the set and again before it asks for the reboot: the next boot starts the
+# newest kernel only while GRUB boots it. Every way out after the release holds the set again.
+# website/how-to/updates.md has the same steps by hand, and the recovery.
 
 # The GPU set as dpkg has it now: each package's status letters, name and version, found with the
 # hold's own patterns.
@@ -3301,14 +5398,65 @@ gpu_set_contents() {
   gpu_set_state | cut -c2- | LC_ALL=C sort
 }
 
-# The newest kernel, which the next boot starts only while GRUB's entry 0 is that kernel and GRUB
-# starts entry 0 (updates.md's GRUB check), and the version of the NVIDIA module built for a
-# kernel: nothing when it has none.
+# The newest kernel, which the next boot starts only while GRUB boots it (grub_boots), and the
+# version of the NVIDIA module built for a kernel: nothing when it has none.
 newest_kernel() {
   linux-version list | linux-version sort --reverse | head -1
 }
 module_version() {
   modinfo -k "$1" -F version nvidia 2>/dev/null || true
+}
+
+# Where GRUB keeps its menu and its environment block. Tests point these at stand-ins.
+GRUB_CFG="${BOOTSTRAP_GRUB_CFG:-/boot/grub/grub.cfg}"
+GRUBENV="${BOOTSTRAP_GRUBENV:-/boot/grub/grubenv}"
+
+# Whether the next boot starts KERNEL, read from what GRUB will do, as updates.md step 5's GRUB
+# check reads it: entry 0's first linux line in grub.cfg names vmlinuz-KERNEL; the default= lines
+# are exactly the stock two, set default="${next_entry}" and set default="0", or
+# "${saved_entry}" while grubenv's saved_entry is empty or 0; and grubenv holds no next_entry or
+# prev_entry with a value. Otherwise, or when a read fails, it prints why and fails. It never
+# prints what it read: grub.cfg's linux lines and entry ids, and grubenv's entries, carry the root
+# filesystem's UUID. A kernel is named only by a version it has checked is one.
+grub_boots() {
+  local want="$1" linux entry0 defaults other env saved
+  local version='^[0-9]+\.[0-9]+[0-9A-Za-z.+~-]*$'
+  # shellcheck disable=SC2016  # GRUB's own ${...}, matched as written
+  local next='set default="${next_entry}"' saved_default='set default="${saved_entry}"'
+  if [[ -z "$want" ]]; then echo "linux-version found no kernel"; return 1; fi
+  if [[ ! -r "$GRUB_CFG" ]]; then echo "can't read $GRUB_CFG"; return 1; fi
+  linux="$(grep -m1 -E '^[[:space:]]*linux[[:space:]]' "$GRUB_CFG" || true)"
+  entry0="$(awk '{print $2}' <<<"$linux")"
+  entry0="${entry0##*/}"
+  if [[ "$entry0" != vmlinuz-* || ! "${entry0#vmlinuz-}" =~ $version ]]; then
+    echo "grub.cfg's entry 0 starts no vmlinuz-<version> kernel"
+    return 1
+  fi
+  entry0="${entry0#vmlinuz-}"
+  if [[ "$entry0" != "$want" ]]; then echo "GRUB boots $entry0, not $want"; return 1; fi
+  defaults="$(grep 'default=' "$GRUB_CFG" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+  other="$(grep -vxF "$next" <<<"$defaults" || true)"
+  if [[ "$(grep -cxF "$next" <<<"$defaults" || true)" != 1 || "$(grep -c . <<<"$other" || true)" != 1 ||
+        "$other" != 'set default='* ]]; then
+    echo "grub.cfg's default= lines aren't the stock two"
+    return 1
+  fi
+  if [[ "$other" != 'set default="0"' && "$other" != "$saved_default" ]]; then
+    echo "grub.cfg's default isn't entry 0"
+    return 1
+  fi
+  if [[ ! -r "$GRUBENV" ]] || ! env="$(grub-editenv "$GRUBENV" list 2>/dev/null)"; then
+    echo "can't read GRUB's environment block, $GRUBENV"
+    return 1
+  fi
+  if grep -q '^next_entry=.' <<<"$env"; then echo "grubenv's next_entry picks another entry for the next boot"; return 1; fi
+  if grep -q '^prev_entry=.' <<<"$env"; then echo "grubenv's prev_entry picks another entry after a failed boot"; return 1; fi
+  saved="$(sed -n 's/^saved_entry=//p' <<<"$env")"
+  if [[ "$other" == "$saved_default" && -n "$saved" && "$saved" != 0 ]]; then
+    echo "grubenv's saved_entry picks another entry than 0"
+    return 1
+  fi
+  return 0
 }
 
 # Reads `apt-get -s dist-upgrade` on stdin and prints why the plan must not run. It would remove the
@@ -3375,6 +5523,8 @@ on_upgrade_exit() {
         unsafe="the GPU set moved before this stopped"
       elif [[ -z "$(module_version "$(newest_kernel)")" ]]; then
         unsafe="the newest kernel has no NVIDIA module"
+      elif (( GRUB_FAILED )); then
+        unsafe="GRUB may not boot the newest kernel"
       fi
     fi
     if [[ -n "$unsafe" ]]; then
@@ -3388,8 +5538,23 @@ on_upgrade_exit() {
 
 upgrade_gpu() {
   say "upgrade day: move the GPU set as one — website/how-to/updates.md"
-  local pkgs refusal unit kernel version
+  local pkgs refusal unit kernel version grub
   local -a stack_units=(local-ai-llama-swap.service local-ai-brake.service)
+  # GRUB must boot the newest kernel before anything moves (updates.md step 2), so that after the
+  # move the same check can only find what the move changed.
+  if (( DRY_RUN )); then
+    printf '+ grub_boots <the newest kernel>   (a real run stops here, before anything is released, unless GRUB boots it)\n'
+  else
+    kernel="$(newest_kernel)"
+    if ! grub="$(grub_boots "$kernel")"; then
+      {
+        echo "bootstrap: not moving the GPU set: $grub."
+        echo "Nothing was released or moved. Run step 5's GRUB check in website/how-to/updates.md, and bring what it prints to the Claude session working on the repo"
+      } >&2
+      exit 1
+    fi
+    say "GRUB boots $kernel, the newest kernel"
+  fi
   pkgs="$(held_gpu_set)"
   REHELD=0
   trap on_upgrade_exit EXIT
@@ -3439,6 +5604,7 @@ upgrade_gpu() {
   rehold || exit 1
   if (( DRY_RUN )); then
     printf '+ modinfo -k <the newest kernel> -F version nvidia\n'
+    printf "+ grub_boots <the newest kernel>   (a real run says DON'T REBOOT unless GRUB boots it)\n"
     return 0
   fi
   kernel="$(newest_kernel)"
@@ -3447,7 +5613,12 @@ upgrade_gpu() {
     echo "bootstrap: DON'T REBOOT — $kernel, the newest kernel, has no NVIDIA module. See 'If it goes wrong' in website/how-to/updates.md" >&2
     exit 1
   fi
-  say "ready: $kernel, the newest kernel, has NVIDIA driver $version — record both, and CUDA's version, in changelog.md"
+  if ! grub="$(grub_boots "$kernel")"; then
+    GRUB_FAILED=1
+    echo "bootstrap: DON'T REBOOT — $grub. See 'If it goes wrong' in website/how-to/updates.md" >&2
+    exit 1
+  fi
+  say "ready: $kernel, the newest kernel, has NVIDIA driver $version, and GRUB boots it — record both, and CUDA's version, in changelog.md"
   say "now: sudo reboot, then make doctor"
 }
 ```
@@ -3472,6 +5643,11 @@ main() {
     # Upgrade day: re-hold the set and nothing else — no desktop stop, no earlyoom restart, no
     # owner and mode resets.
     hold_gpu_stack
+    return 0
+  fi
+  if (( INSTALL_UNITS )); then
+    # Root's copies of what make apply staged, and nothing else.
+    install_units
     return 0
   fi
   if (( UPGRADE )); then
@@ -3505,11 +5681,27 @@ upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sud
 
 The tmux check sits in the Makefile because `sudo` drops `$TMUX` from the environment.
 
-- [ ] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
-  then `make lint`. `make upgrade-gpu-dry-run` on the Mac prints the steps, and its hold step says
-  `a real run stops here`: no DGX kernel is installed here.
+*Superseded 2026-09-26 — the code now differs; see commits 9fe819c, 4122330, ecd2264 and 0a342a1,
+from Task 10's scan and review. `upgrade-gpu`'s sudo line is `trap 'sudo -k' EXIT INT TERM HUP;
+sudo bash stack/host/bootstrap.sh --upgrade-gpu`. `rehold` says the set is still released only in
+a real run. `on_upgrade_exit` installs its signal trap before it clears the EXIT trap, and when the
+way out's hold was killed by a signal, it says to run `make hold-gpu` and gives no start hint. A dry
+run sets no way out and no traps.*
 
-- [ ] **Step 5: Write the failing tests for `spark doctor`**
+- [x] **Step 4: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`,
+  then `make lint`. Then `make upgrade-gpu-dry-run`: it prints the steps, the GRUB check before the
+  release and after the move among them. Its GRUB and plan lines always say where a real run would
+  stop (`unless GRUB boots it`, `if the plan would leave …`). Its hold lines report what this box
+  holds: on a box whose GPU set is cleanly installed and includes a kernel, `GPU set: N packages, M
+  already held` and `+ apt-mark hold` with the set, the packages `make hold-gpu-dry-run` lists
+  (Task 12 Step 1 checks that hold list against this dry run's `+ apt-mark unhold` list). A hold
+  line that ends `(a real run stops here: …)` instead means the real run would stop there, for the
+  reason it gives: nothing installed matches the patterns, or the set has no kernel. And a GPU-set
+  package dpkg didn't finish stops the dry run itself, with exit 1: it names the package and says
+  to finish dpkg first. Read what it prints before an upgrade day relies on this command; this
+  plan doesn't assume which of these this box prints.
+
+- [x] **Step 5: Write the failing tests for `spark doctor`**
 
 `spark/tests/test_doctor.py`:
 
@@ -3520,8 +5712,10 @@ import subprocess
 from pathlib import Path
 
 from spark import doctor
-from spark.doctor import SECRETS, UFW_CONF, UNITS, checks, earlyoom_args, report
+from spark.doctor import SECRETS, UFW_CONF, UNITS, Probe, checks, earlyoom_args, report
 from spark.registry import load_registry
+from spark.render import COMPOSE_DIR, installed_path, render
+from spark.versions import load_versions
 
 ROOT = Path(__file__).resolve().parents[2]
 REG = load_registry(Path(__file__).parent / "fixtures" / "models.yaml")
@@ -3556,6 +5750,9 @@ class FakeProbe:
             UFW_CONF: "# /etc/ufw/ufw.conf\nENABLED=yes\nLOGLEVEL=low\n",
         }
         self.owners = {SECRETS: ("root", "spark", 0o750)}
+        # Root's own copies of the units and the Compose project, as `make install-units` leaves them.
+        self.entries = {path: ("root", "root", 0o755, "folder") for path in doctor.ROOT_FOLDERS}
+        self.entries |= {path: ("root", "root", 0o644, "file") for path in doctor.ROOT_FILES}
         self.open_folders = set()
         self.pages = {f"{URL}/health": 200, "http://127.0.0.1:3000/": 200, "http://127.0.0.1:8888/": 200}
         self.keys_sent = []
@@ -3571,6 +5768,9 @@ class FakeProbe:
 
     def listable(self, path):
         return Path(path) in self.open_folders
+
+    def entry(self, path):
+        return self.entries.get(Path(path))
 
     def http(self, url, *, key=None, body=None, timeout=10.0):
         self.keys_sent.append(key)
@@ -3590,7 +5790,7 @@ def failures(probe, key=KEY):
 
 def test_a_healthy_spark_passes_every_check():
     results = checks(FakeProbe(), KEY, REG)
-    assert len(results) == 11 and [c.name for c in results if not c.ok] == []
+    assert len(results) == 12 and [c.name for c in results if not c.ok] == []
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -3663,6 +5863,53 @@ def test_the_secrets_folder_must_stay_closed_to_you():
     assert failures(probe)["secrets folder"].endswith("root:spark 755, not root:spark 750")
 
 
+def test_what_root_runs_must_be_roots_own_files():
+    # Dan's decision (2026-09-25): root runs only root's own copies, which `make install-units`
+    # installs, so nothing running as Dan changes what root runs.
+    unit = Path("/etc/systemd/system/local-ai-llama-swap.service")
+    probe = FakeProbe()
+    probe.entries[unit] = ("chendaniely", "spark-admin", 0o644, "file")
+    assert failures(probe) == {"root's copies": f"{unit} is chendaniely:spark-admin 644: run `make install-units`"}
+    probe.entries[unit] = ("root", "root", 0o664, "file")
+    assert failures(probe)["root's copies"].startswith(f"{unit} is root:root 664")
+    probe.entries[unit] = ("root", "root", 0o777, "link")
+    assert failures(probe)["root's copies"].startswith(f"{unit} is a link, not a file")
+    del probe.entries[unit]
+    assert failures(probe)["root's copies"].startswith(f"{unit} is missing")
+    probe = FakeProbe()
+    probe.entries[Path(COMPOSE_DIR)] = ("root", "root", 0o775, "folder")
+    assert failures(probe) == {"root's copies": f"{COMPOSE_DIR} is root:root 775: run `make install-units`"}
+
+
+def test_doctor_checks_every_copy_that_apply_stages_for_root():
+    fixtures = Path(__file__).parent / "fixtures"
+    files = render(REG, load_versions(fixtures / "versions.yaml"), (fixtures / "models.yaml").read_text(),
+                   templates=ROOT / "stack/templates")
+    assert set(doctor.ROOT_FILES) == {Path(installed_path(rel)) for rel in files if installed_path(rel)}
+    assert set(doctor.ROOT_FOLDERS) == {Path(COMPOSE_DIR), Path(COMPOSE_DIR, "searxng")}
+
+
+def test_the_probe_reads_a_link_as_a_link(tmp_path):
+    (tmp_path / "file").write_text("x")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "file")
+    probe = Probe(ROOT)
+    assert [probe.entry(tmp_path / name)[3] for name in ("file", "folder", "link")] == ["file", "folder", "link"]
+    assert probe.entry(tmp_path / "missing") is None
+
+
+def test_a_deployed_registry_that_wont_load_is_a_fail_line_not_a_traceback(tmp_path):
+    for text, kind in (("budget: [unclosed\n", "doesn't load: "), (None, "is missing")):
+        path = tmp_path / "models.yaml"
+        path.unlink(missing_ok=True)
+        if text:
+            path.write_text(text)
+        registry, problem = doctor.load_deployed_registry(path)
+        assert registry is None and kind in problem
+        detail = {c.name: c.detail for c in checks(FakeProbe(), KEY, None, problem) if not c.ok}
+        assert detail == {"a model, end to end": f"can't load the deployed registry: {problem} — `make apply`"}
+
+
 def test_a_unit_that_is_down_is_named():
     probe = FakeProbe()
     probe.commands[("systemctl", "is-active", *UNITS)] = (3, "active\ninactive\nactive\n", "")
@@ -3695,7 +5942,7 @@ def test_the_report_shows_every_check_and_never_the_key():
     text = report(checks(probe, KEY, REG))
     assert KEY in probe.keys_sent and KEY not in text
     assert text.splitlines()[0] == "ok    leak hooks: on in this clone"
-    assert text.splitlines()[-1] == "doctor: 11 of 11 checks pass"
+    assert text.splitlines()[-1] == "doctor: 12 of 12 checks pass"
 
 
 def test_doctor_runs_only_from_the_repo_root(tmp_path, monkeypatch, capsys):
@@ -3732,10 +5979,42 @@ def test_doctor_reads_the_holds_dry_run_as_it_is_printed(tmp_path):
         assert check.ok is ok and words in check.detail, (name, check)
 ```
 
-- [ ] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_doctor.py spark/tests/test_bootstrap.py`
-  → FAIL: `ModuleNotFoundError: spark.doctor`.
+*Superseded 2026-09-26 — the tests now go much further; see commits 92bcc9c to 357aeb6 and
+f6cdc27 to b98255e, from Task 10's scan and review: `FakeProbe` has `exists`; the healthy run
+counts 15 of 15; each FAIL's remedy is pinned; a proxy, a redirect and keys with a CR, an LF or a
+non-ASCII letter never carry or show the key; an invalid `SPARK_LLAMASWAP_URL` gets no key; a byte
+that isn't UTF-8 can't end the report; and the new checks each pass and fail.*
 
-- [ ] **Step 7: Implement `spark doctor`**
+`doctor` is the last command Phase 1 adds, so this task also adds one test, at the end of
+`spark/tests/test_cli.py` (Phase 0's), that parses every command the units and the Makefile run.
+Removing a registration from `cli.py` breaks no other test, and llama-swap's `cmd` depends on
+argparse passing `launch`'s `--` through untouched:
+
+```python
+def test_the_commands_the_units_and_the_makefile_run_are_registered():
+    parser = cli.build_parser()
+    # llama-swap starts every engine as `spark launch <model> -- <engine command…>`: the -- stays.
+    args = parser.parse_args(["launch", "m", "--", "/bin/x", "--port", "1"])
+    assert args.rest == ["m", "--", "/bin/x", "--port", "1"]
+    for argv in (["brake", "--key-env", "LLAMASWAP_KEY_SPARK"], ["models", "pull"], ["status"], ["apply"],
+                 ["apply", "--dry-run"], ["apply", "--now"], ["render", "--out", "rendered"],
+                 ["clients", "pi", "--write"], ["doctor"]):
+        assert callable(parser.parse_args(argv).func), argv
+```
+
+*Superseded 2026-09-26 — this test now differs (commit 29b9430, from Task 10's scan): its list also
+holds `brake --release` (what `make brake-release` runs) and the Makefile's Phase 0 commands,
+`leakcheck --message /dev/null`, `docs stack --write` and `docs check-scenarios`. The sentence
+above it, that removing a registration breaks no other test, was already untrue: the status,
+apply, brake, models and clients tests all call `cli.main`.*
+
+- [x] **Step 6: Run them and watch them fail** — `uv run --frozen --project spark pytest spark/tests/test_doctor.py spark/tests/test_bootstrap.py`
+  → FAIL: collecting `test_doctor.py` stops the run, `ImportError: cannot import name 'doctor'
+  from 'spark'`. Then the CLI test on its own,
+  `uv run --frozen --project spark pytest spark/tests/test_cli.py` → FAIL at `["doctor"]`, with
+  argparse's `invalid choice: 'doctor'`: every other command is registered already.
+
+- [x] **Step 7: Implement `spark doctor`**
 
 `spark/src/spark/doctor.py`:
 
@@ -3755,18 +6034,24 @@ import json
 import os
 import pwd
 import re
+import stat
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from spark import paths
+from spark import paths, render
 from spark.llamaswap import key_from_env
 from spark.registry import Registry, load_registry
 
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service")
 SECRETS = Path("/etc/local-ai/secrets")
+# Root's own copies of the units and the Compose project: what root runs, installed by
+# `make install-units` from what `spark apply` staged.
+ROOT_FOLDERS = (Path(render.COMPOSE_DIR), Path(render.COMPOSE_DIR, "searxng"))
+ROOT_FILES = (*(Path(render.UNIT_DIR, unit) for unit in render.UNITS),
+              Path(render.COMPOSE_DIR, "compose.yaml"), Path(render.COMPOSE_DIR, "searxng/settings.yml"))
 UFW_CONF = Path("/etc/ufw/ufw.conf")
 EARLYOOM_DEFAULT = Path("stack/host/earlyoom.default")
 # Each should answer 200 on / (urllib follows redirects). Not yet seen on the box: the first
@@ -3782,6 +6067,11 @@ class Check:
     name: str
     ok: bool
     detail: str
+
+
+def _who(st: os.stat_result) -> tuple[str, str, int]:
+    """Who owns a file, by name, and its permission bits."""
+    return pwd.getpwuid(st.st_uid).pw_name, grp.getgrgid(st.st_gid).gr_name, st.st_mode & 0o7777
 
 
 class Probe:
@@ -3806,8 +6096,7 @@ class Probe:
 
     def owner(self, path: Path) -> tuple[str, str, int] | None:
         try:
-            st = Path(path).stat()
-            return pwd.getpwuid(st.st_uid).pw_name, grp.getgrgid(st.st_gid).gr_name, st.st_mode & 0o7777
+            return _who(Path(path).stat())
         except (OSError, KeyError):
             return None
 
@@ -3817,6 +6106,17 @@ class Probe:
         except OSError:
             return False
         return True
+
+    def entry(self, path: Path) -> tuple[str, str, int, str] | None:
+        """A path's owner, group, permission bits and kind ("file", "folder", "link" or "other"), read
+        without following a link; None when it's missing or out of this account's reach."""
+        try:
+            st = os.lstat(path)
+            owner = _who(st)
+        except (OSError, KeyError):
+            return None
+        kinds = ((stat.S_ISLNK, "link"), (stat.S_ISDIR, "folder"), (stat.S_ISREG, "file"))
+        return *owner, next((kind for test, kind in kinds if test(st.st_mode)), "other")
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
              timeout: float = 10.0) -> tuple[int, str]:
@@ -3936,6 +6236,26 @@ def secrets_folder(probe: Probe) -> Check:
 # The stack
 
 
+def root_copies(probe: Probe) -> Check:
+    """What root runs is root's own: each copy a folder or a regular file, never a link, owned by
+    root and not writable by group or others."""
+    wrong = []
+    for path in (*ROOT_FOLDERS, *ROOT_FILES):
+        want = "folder" if path in ROOT_FOLDERS else "file"
+        entry = probe.entry(path)
+        if entry is None:
+            wrong.append(f"{path} is missing, or out of your account's reach")
+            continue
+        user, group, mode, kind = entry
+        if kind != want:
+            wrong.append(f"{path} is a {kind}, not a {want}")
+        elif user != "root" or mode & 0o022:
+            wrong.append(f"{path} is {user}:{group} {mode:o}")
+    if wrong:
+        return Check("root's copies", False, "; ".join(wrong) + ": run `make install-units`")
+    return Check("root's copies", True, "the units and the Compose project that root runs are root's own files")
+
+
 def units(probe: Probe) -> Check:
     _, out, _ = probe.run(["systemctl", "is-active", *UNITS])
     states = out.split()
@@ -3972,11 +6292,21 @@ def web(probe: Probe) -> Check:
     return Check("web services", True, "Open WebUI and SearXNG answer")
 
 
-def model(probe: Probe, key: str | None, registry: Registry | None) -> Check:
+def load_deployed_registry(path: Path) -> tuple[Registry | None, str | None]:
+    """The deployed registry, or None and why it doesn't load."""
+    try:
+        return load_registry(path), None
+    except FileNotFoundError:
+        return None, f"{path} is missing"
+    except Exception as err:  # unreadable, malformed or invalid: a FAIL line says so, never a traceback
+        return None, f"{path} doesn't load: " + " ".join(f"{type(err).__name__}: {err}".split())
+
+
+def model(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None) -> Check:
     """One request through llama-swap to the embeddings model: loaded if it isn't, on the GPU."""
     name = "a model, end to end"
     if registry is None:
-        return Check(name, False, f"no deployed registry at {paths.REGISTRY}: `make apply`")
+        return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     models = [m.name for m in registry.models.values() if m.capability == "embeddings"]
     if not models:
         return Check(name, False, "the registry has no embeddings model")
@@ -3994,11 +6324,11 @@ def model(probe: Probe, key: str | None, registry: Registry | None) -> Check:
                               "was refused")
 
 
-def checks(probe: Probe, key: str | None, registry: Registry | None) -> list[Check]:
+def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None) -> list[Check]:
     return [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe),
         firewall(probe), secrets_folder(probe),
-        units(probe), llama_swap(probe, key), web(probe), model(probe, key, registry),
+        root_copies(probe), units(probe), llama_swap(probe, key), web(probe), model(probe, key, registry, problem),
     ]
 
 
@@ -4019,14 +6349,29 @@ def run(args: argparse.Namespace) -> int:
     if not (repo / "stack/host/bootstrap.sh").exists():
         print("doctor: run it from the repo root (make doctor)")
         return 2
-    try:
-        registry = load_registry(paths.REGISTRY)
-    except OSError:
-        registry = None
-    results = checks(Probe(repo), key_from_env(args.key_env), registry)
+    registry, problem = load_deployed_registry(paths.REGISTRY)
+    results = checks(Probe(repo), key_from_env(args.key_env), registry, problem)
     print(report(results))
     return 0 if all(c.ok for c in results) else 1
 ```
+
+*Added 2026-09-26, from Task 3's review: `Probe.http` above has the two leaks Task 3's client closed
+(commit 828fb3e). `urlopen` honours `http_proxy`, so the key could go to a proxy; and a key holding
+a CR, an LF or anything else that isn't printable ASCII escapes as a `ValueError` whose message is
+the header, key included, which `make doctor` would print. So Task 10 builds `http` on a
+proxy-free opener (`urllib.request.build_opener(urllib.request.ProxyHandler({}))`), and refuses such
+a key without sending anything, with a check line that names the problem and never the key. Its
+tests cover both, first failing against the listing as it stands.*
+
+*Superseded 2026-09-26 — the code now differs; see commits 92bcc9c, 8b7e416, 5d050c3, d11351a,
+2d38442, 4a6ab28, 357aeb6, f6cdc27 and a99ea4f, from Task 10's scan and review. The note above is
+done, and more: the key goes only to llama-swap, never through a proxy or a redirect, and a key
+that isn't printable ASCII is refused unsent and unshown; a URL in `SPARK_LLAMASWAP_URL` that isn't
+http(s) fails the llama-swap and model lines and gets no key; a byte that isn't UTF-8 can't end the
+report; messages name the key variable actually read; every FAIL says what to do; three checks
+joined (spark's folders, the engines' config files, the needrestart override); and doctor no longer
+says it changes nothing: its end-to-end check loads the embeddings model if it isn't loaded, which
+also clears the last refusal record, so `make status` comes first.*
 
 Register in `cli.py`: `from spark import doctor` / `doctor.register(subparsers)`. In the `Makefile`,
 `.PHONY` gains `doctor`, and:
@@ -4036,9 +6381,12 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor
 ```
 
-- [ ] **Step 8: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
+- [x] **Step 8: Run the tests — they pass.** `uv run --frozen --project spark pytest spark/tests`
 
-- [ ] **Step 9: The runbooks say what now exists**
+- [x] **Step 9: The runbooks say what now exists.** Since 2026-09-25 each command block in the
+  runbooks has the machine in bold in the paragraph right above it (CLAUDE.md, *Conventions*: Dan's
+  rule), and each block these edits add gets one too; here, all of them run **on the Spark**. A new
+  paragraph goes above a block's labelled paragraph, never between that paragraph and its block.
   - `website/how-to/updates.md`, *Any time: apt*: in the needrestart bullet, "From Phase 1 it
     leaves the stack alone too" becomes "Bootstrap installs `/etc/needrestart/conf.d/local-ai.conf`,
     so it leaves the stack's `local-ai-*` units alone too", keeping the rest of the bullet.
@@ -4046,38 +6394,48 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
     steps. Run `make doctor` on the Spark, from the clone. It checks Phase 0's guardrails: the leak
     hooks, the GPU set held (the running kernel's modules package included), the driver's kernel
     module agreeing with `nvidia-smi`, earlyoom running with the repo's arguments, ufw on, and the
-    secrets folder closed to you. It checks the stack too: its three units active, llama-swap
-    answering and refusing a call without a key, Open WebUI and SearXNG answering, and the
-    embeddings model answering through llama-swap, loaded first if it wasn't. Each line is `ok` or
+    secrets folder closed to you. It checks the stack too: root's own copies of the units and the
+    Compose project (each root's regular file or folder, not a link, and not writable by group or
+    others), its three units active, llama-swap answering and refusing a call without a key, Open
+    WebUI and SearXNG answering, and the embeddings model answering through llama-swap, loaded
+    first if it wasn't. Each line is `ok` or
     `FAIL`, and a `FAIL` says what to do. It only reads, needs no sudo, and uses your
     `SPARK_API_KEY`. Then say what brings the stack back by itself: the units are enabled, so a
     reboot starts them; llama-swap and the brake restart if they crash; the containers' restart
     policy brings them back after a Docker upgrade; needrestart leaves the units alone. llama-swap
     preloads nothing, so after a reboot each model loads on its first request.
   - `updates.md`, *Upgrade day: the GPU set*. The edits:
-    - **Before the tmux block, a new paragraph.** `make upgrade-gpu` runs steps 1 to 5 as one
-      command, in tmux, from the clone; it refuses to start outside tmux. It runs all of them but
-      step 5's GRUB check, since it doesn't read GRUB: run that check first, as step 2 says, and
-      start `make upgrade-gpu` only once it passes. Run it again once `make upgrade-gpu` says to
-      reboot, and reboot only if it passes then too. It releases the set, reads apt's plan
-      and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the
-      brake, and moves the set (you read apt's plan and answer). Then it holds the set again with
-      `make hold-gpu`'s hold, runs step 5's module check, and says whether to reboot. Every way out
-      after the release runs the hold, and only the hold after apt's move is tried again. The set
-      can still stay released: when the hold stops (a package dpkg didn't finish, a hold that didn't
-      take, no kernel or nothing matching), or when a signal cuts off a hold the way out runs, the
-      retry included. In each case it says to run `make hold-gpu`. It judges whether apt moved
-      anything by each package's state and version, not the hold letter, and it checks that the
-      newest kernel still has its module. If apt moved even part of the set, or left the newest
-      kernel without a module, it sends you to *If it goes wrong* rather than to a reboot or a
-      restart of the stack. Only when neither happened does it say how to start the stack again.
+    - **Before the tmux block, a new paragraph**, above the one that introduces the block
+      ("**On the Spark**, work in tmux, from the clone. …"), which stays right above it.
+      `make upgrade-gpu` runs steps 1 to 5 as one
+      command, in tmux, from the clone; it refuses to start outside tmux. Step 5's GRUB check
+      included, it runs all of them. First the GRUB check, as step 2 says: if GRUB won't boot the
+      newest kernel, it stops there, with the set still held and nothing moved, and says why. Then
+      it releases the set, reads apt's plan and refuses it before anything moves if it breaks step
+      3's rule, stops llama-swap and the brake, and moves the set (you read apt's plan and answer).
+      Then it holds the set again with `make hold-gpu`'s hold, runs step 5's two checks on the new
+      newest kernel, the module and then GRUB, and says whether to reboot: `DON'T REBOOT` names the
+      reason, and never a GRUB id or UUID. Every way out after the release runs the hold, and only
+      the hold after apt's move is tried again. The set can still stay released: when the hold
+      stops (a package dpkg didn't finish, a hold that didn't take, no kernel or nothing matching),
+      or when a signal cuts off a hold the way out runs, the retry included. In each case it says to
+      run `make hold-gpu`. It judges whether apt moved anything by each package's state and version,
+      not the hold letter, and it checks that the newest kernel still has its module. If apt moved
+      even part of the set, left the newest kernel without a module, or GRUB failed after the move,
+      it sends you to *If it goes wrong* rather than to a reboot or a restart of the stack. Only
+      when none of these happened does it say how to start the stack again.
       `make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what
-      it runs, to read along with, and to do by hand if it can't. The second GRUB check stays in
-      this paragraph until this task's open item on the GRUB check is decided.
+      it runs, to read along with, and to do by hand if it can't; step 5's GRUB check by hand is for
+      those steps.
     - **Step 1** becomes "Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake`
-      (the reboot starts them again), and your own GPU jobs and `agent`'s."
+      (the reboot starts them again), and your own GPU jobs and `agent`'s." Its dated note,
+      "(Corrected 2026-09-25: this said it would run all but the GRUB check, …)", corrects the
+      sentence on what `make upgrade-gpu` runs, which now opens the new paragraph above: the note
+      moves, word for word, to the end of that paragraph.
     - **Step 2's opening**, which runs step 5's GRUB check before anything moves, went in on
-      2026-09-25, before the first upgrade day. Leave it as it is: it covers `make upgrade-gpu` too.
+      2026-09-25, before the first upgrade day. Keep it for the steps by hand, and add one sentence
+      after it: "`make upgrade-gpu` runs this check itself, before it releases the set." (Until
+      Dan's decision on 2026-09-25, this bullet said the opening covered `make upgrade-gpu` too.)
     - **Step 3's answer-no rule** already has its three cases. They went in on 2026-09-25, before
       the first upgrade day, and the first names a removed metapackage with no other in its place.
       Add one sentence after the paragraph that follows them: "`make upgrade-gpu` refuses all three
@@ -4088,64 +6446,72 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
       else, or any command failing, is "don't reboot yet". It says how to read the menu to find
       the kernel GRUB would start, and to write "an id" for every UUID and PARTUUID it printed. The
       routine-upgrade reboot waits for step 5's checks too. It all went in on 2026-09-25, before
-      the first upgrade day, so leave it as it is.
+      the first upgrade day, so leave it as it is, and add one sentence after its pass conditions:
+      "`make upgrade-gpu` runs this same check itself after the move, before it says to reboot."
     - **Step 7's last sentence** becomes "Then `make doctor`: every line `ok`."
     - The *Not yet performed on this box* markers stay: they cover `make upgrade-gpu` too.
   - `updates.md`, *If it goes wrong*: the first paragraph adds that `make upgrade-gpu` runs the hold
     again by itself on its way out, so `make hold-gpu` by hand is for the manual steps, or for when
-    its own hold stopped or was cut off. The second paragraph's bold opening adds "or
-    `make upgrade-gpu` said `DON'T REBOOT`, or that apt may have moved the set". Both ways back to a
-    reboot already repeat step 5, the GRUB check included (2026-09-25): leave that as it is.
+    its own hold stopped or was cut off. Its last sentence, on a GRUB check that fails alone, adds
+    that a `make upgrade-gpu` `DON'T REBOOT` that names GRUB, `grub.cfg` or `grubenv`, or says it
+    can't read one of them, is that case. The second paragraph's bold
+    opening adds "or `make upgrade-gpu` said `DON'T REBOOT` because the newest kernel has no NVIDIA
+    module, or that apt may have moved the set". Both ways back to a reboot already repeat step 5,
+    the GRUB check included (2026-09-25): leave that as it is.
   - `website/how-to/deploy.md`: *Every later change* ends with `make doctor`, and *When something is
     wrong* starts with it: Phase 0's guardrails and the stack in one pass, and each `FAIL` says what
-    to do.
-  - `README.md` §Contents, brought up to date for everything Phase 1 adds before the switch to the
-    Spark:
-    - the `Makefile` row: the deploy targets (Task 9), `make upgrade-gpu` and `make doctor`;
-    - the `spark/` row: Phase 1's commands (`launch`, `brake`, `status`, `render`, `apply`,
-      `models pull`, `clients`, `doctor`);
-    - the `stack/` row: `models.yaml`, `templates/`, and `host/needrestart.conf` beside bootstrap,
-      earlyoom's config and the polkit rule.
+    to do. Its `root's copies` line fails when something root runs isn't root's own file, and says
+    to run `make install-units`.
+  - `README.md` §Contents, for what this task adds; Tasks 2, 6 and 9 updated the rest:
+    - the `Makefile` row becomes "The front door: `make help` lists the targets — tests, lint,
+      docs, the leak-guard hooks, bootstrap, the GPU-set hold and upgrade day's move
+      (`upgrade-gpu`), deploying the stack (`apply`, `install-units`, `pull`, `status`, `logs`,
+      `tunnel`, `clients`), and `doctor`, which checks the guardrails and the stack.";
+    - the `stack/` row's host setup becomes "(`host/`: bootstrap, earlyoom's and needrestart's
+      config, the polkit rule)";
+    - the `spark/` row stays as Task 2 left it: `spark --help` lists `doctor` too.
 
-- [ ] **Step 10: Check and commit**
+  *Superseded 2026-09-26 — the runbooks now say more than this outline; see commits 4a6ab28,
+  1cea890, c932868, 482643b and 1e5152b, from Task 10's scan and review. `make doctor` isn't
+  read-only: its end-to-end check loads the embeddings model if it isn't loaded, which also clears
+  the last refusal record, so deploy.md's *When something is wrong* starts with `make status`, then
+  `make doctor`. A Docker upgrade that stops Docker and starts it again leaves the web services
+  stopped (their unit requires Docker and stops them with `docker compose down`) until
+  `systemctl start local-ai-compose`; not yet tried on this box. The list of doctor's checks has the
+  three new ones. The upgrade-day paragraph runs the `git status` check before `make upgrade-gpu`,
+  and says `make upgrade-gpu` runs steps 1 to 5, llama-swap and the brake being step 1's part. The
+  README's `Makefile` row keeps `brake-release`, and *A bootstrap re-run* names the needrestart
+  override, Task 9's polkit rule, and the doctor lines that fail until it runs: spark's folders,
+  needrestart and earlyoom.*
 
-Run: `make test lint docs`
-Expected: all pass; `make docs` has no warnings.
+- [x] **Step 10: Check and commit**
+
+Run: `make test lint`
+Expected: all pass. `make docs`, the site render with no warnings, is Task 18's, on the Mac, until
+Quarto is on the Spark; CI's `site` job renders the site on the push that follows this task.
 
 ```bash
-git add stack/host spark Makefile website/how-to/updates.md website/how-to/deploy.md README.md
+git add stack/host/needrestart.conf stack/host/bootstrap.sh spark/src/spark/{doctor,cli}.py \
+  spark/tests/{test_doctor,test_bootstrap,test_cli}.py Makefile website/how-to/{updates,deploy}.md README.md
 git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needrestart override" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ***
 
-## ⇄ Switch point — Mac → Spark
+## ⇄ Push point — Tasks 1–10 go to GitHub
 
-- [ ] `make test lint docs` is clean on the Mac, and every `<paste>` in `stack/models.yaml` is a real
-  40-hex revision.
-- [ ] **Dan OKs the push:** `git push -u origin phase-1`. `gh run watch` — CI is green.
-- [ ] **Dan starts the Spark session** with [The Spark session](../how-to/spark-session.md), before
-  any **[Spark]** task. That runbook's *Before the first session* steps 2 and 3 (the global rules
-  file and the secrets guard) arrived after the Spark's Phase 0 sessions, and nothing records them
-  on the box. If the Spark's `~/.claude` lacks either, do them now. Then start the session and check
-  the guard first: `/hooks` lists the hook, `/permissions` the deny rules, and the session must be
-  refused `test -e ~/.secrets && echo present || echo absent`. Don't go on until it is: Task 13
-  Step 1 puts a key in every shell of yours, the session's included.
-- [ ] **Two of Phase 0's box steps come before anything here faces the network**, as Phase 0's
-  security review asked: keys-only SSH ([SSH from the Mac](../how-to/ssh.md#keys-only), with its
-  public IPv6 check) and the Spark's GitHub token for this repository only
-  ([The Spark session](../how-to/spark-session.md#github-a-token-for-this-repository-only)). Unless
-  `changelog.md` records them, check both, and do whichever is missing now:
-  - Keys only: from the Mac,
-    `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive brightroar true`
-    ends in `Permission denied (publickey).`, as in ssh.md's own check.
-  - The token: on the Spark, `gh auth status` names your account with the token masked. On
-    github.com, the Spark's token is the fine-grained one for `chendaniely/local-ai` only, and the
-    old *GitHub CLI* authorization is revoked.
+The Mac needs Tasks 1–10's code before Task 15 (pi's provider and `make tunnel`), and CI has to run
+the two of Task 9's polkit tests that skip on the Spark without Node. The Spark session keeps the
+branch: only the push happens here.
 
-  The Spark session records each one newly done in `changelog.md` and README §Current state, in its
-  next commit. Task 14 serves the web UI on the tailnet only after both.
+- [x] The Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
+  then **Dan OKs the push** (`git push`). `gh run watch`: CI is green. The run's page, or
+  `gh run view <id> --log`, shows its `tests` job ending `… passed, 2 skipped`: those two are the
+  gitleaks-hook tests that job always skips, having no gitleaks, and `4 skipped` would mean the two
+  polkit tests that need Node didn't run there either. Task 12 Step 1 installs the new rule only
+  after this run.
 
 ***
 
@@ -4156,7 +6522,16 @@ git commit -m "feat(stack): 🤖 add make upgrade-gpu, make doctor and the needr
 - Modify: `stack/versions.yaml` (the llama.cpp and whisper.cpp pins), `website/reference/stack.md`
   (regenerated), `changelog.md`, `README.md` §Current state
 
-- [ ] **Step 1: The branch, this session's groups, the driver**
+*Added 2026-09-26, from Task 6's review:* each engine's path lives in the registry
+(`stack/models.yaml`'s `engines:`, such as `/opt/local-ai/bin/llama.cpp/b11146/llama-server`) and
+its version in `stack/versions.yaml`, and `spark render` cross-checks neither. When this task pins
+and installs the engines, check that each path names the version pinned, or add that check to
+render, with its test, as a plan revision. *(Done 2026-09-27: checked by hand, and both paths name
+the pinned version; `changelog.md` records it. Render still doesn't cross-check them, which Task
+17's review can take up.)* *(Taken up 2026-09-28, from Phase 1's council: a test on the repo's
+registry checks that each engine's path names its pinned version. Render itself still doesn't.)*
+
+- [x] **Step 1: The branch, this session's groups, the driver**
 
 ```bash
 cd ~/git/hub/local-ai && git fetch && git switch phase-1 && git pull
@@ -4168,10 +6543,13 @@ nvidia-smi --query-gpu=driver_version --format=csv,noheader   # 580 or later, fo
 Expected: as commented. (`nvidia-smi` is fine for the driver version; it's the memory figures it
 can't report on GB10.) If `id -nG` lacks `spark-admin`, this session started before bootstrap: Dan
 logs out, runs `tmux kill-server`, logs back in and restarts the session — the tmux server keeps the
-groups it started with. If the driver is older than 580, stop and tell Dan: the prebuilt llama.cpp
-needs it, and driver upgrades are held on purpose.
+groups it started with. *(Corrected 2026-09-27, from the labels audit: in that order,
+`tmux kill-server` would run on the Mac, after the logout. Dan, on the Spark, ends tmux
+(`tmux kill-server`), logs out, logs back in from the Mac (`ssh brightroar`) and restarts the
+session.)* If the driver is older than 580, stop and tell Dan: the prebuilt llama.cpp needs it, and
+driver upgrades are held on purpose.
 
-- [ ] **Step 2: llama-swap v257** — its checksum is already in `stack/versions.yaml`:
+- [x] **Step 2: llama-swap v257** — its checksum is already in `stack/versions.yaml`:
 
 ```bash
 tmp=$(mktemp -d)
@@ -4185,7 +6563,7 @@ install -D -m 0755 "$tmp/llama-swap" /opt/local-ai/bin/llama-swap/v257/llama-swa
 
 Expected: `OK` from `sha256sum`; a version line naming 257.
 
-- [ ] **Step 3: llama.cpp b11146 — the prebuilt arm64 + CUDA 13.4 build**
+- [x] **Step 3: llama.cpp b11146 — the prebuilt arm64 + CUDA 13.4 build**
 
 ```bash
 b=b11146; d=/opt/local-ai/bin/llama.cpp/$b; tmp=$(mktemp -d)
@@ -4210,11 +6588,12 @@ ldd "$d/llama-server" | grep 'not found' || echo "all libraries found"
 Expected: both files `OK`; all libraries found; a version line naming b11146; the GB10 as a CUDA
 device; `sm_121a` in the list — native code for this GPU, so a first load doesn't compile PTX. (No
 `libggml-cuda.so`? Run `cuobjdump` on `llama-server` itself.) If there's no `sm_121`, note it in
-the changelog: Phase 5's bake-off compares a source build. **[Dan]** checks that `agent` reaches the
-GPU without docker: `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`
-lists the same device.
+the changelog: Phase 5's bake-off compares a source build. **[Dan, on the Spark]** checks that
+`agent` reaches the GPU without docker:
+`sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices` lists the same
+device.
 
-- [ ] **Step 4: whisper.cpp v1.9.4, built for this GPU** (there's no CUDA prebuilt)
+- [x] **Step 4: whisper.cpp v1.9.4, built for this GPU** (there's no CUDA prebuilt)
 
 ```bash
 v=v1.9.4; src=~/src/whisper.cpp; d=/opt/local-ai/bin/whisper.cpp/$v
@@ -4226,18 +6605,31 @@ cmake --build "$src/build" -j --config Release --target whisper-server
 install -D -m 0755 "$src/build/bin/whisper-server" "$d/whisper-server"
 ldd "$d/whisper-server" | grep 'not found' || echo "all libraries found"
 "$d/whisper-server" --help | head -3
+/usr/local/cuda/bin/cuobjdump --list-elf "$d/whisper-server" 2>/dev/null | grep -o 'sm_[0-9]*[a-z]*' | sort -u
 ```
 
 Expected: the build finishes with no warning about an unsupported architecture; all libraries
-found. Keep the clone: `samples/jfk.wav` is Task 13's speech test.
+found; `sm_121a` in the list. `121a-real` asks for native code for this GPU and no PTX, and the
+list shows what the binary holds: with static libraries, the CUDA code is linked into
+`whisper-server` itself. Keep the clone: `samples/jfk.wav` is Task 13's speech test.
 
-- [ ] **Step 5: Pins, changelog, README; commit**
+- [x] **Step 5: Pins, changelog, README; commit**
 
 In `stack/versions.yaml`: `llama.cpp` → `pin: sha256:<digest of llama-b11146-bin-ubuntu-cuda-13.4-arm64.tar.gz>`;
 `whisper.cpp` → `pin: git:<the commit from step 4>`. Run
 `uv run --frozen --project spark spark docs stack --write`. Add a dated `changelog.md` entry (the three
-engines and where they live, checksums verified, the driver version, the `sm_` list) and a line to
-`README.md` §Current state.
+engines and where they live, checksums verified, the driver version, both `sm_` lists) and a line to
+`README.md` §Current state. For whisper.cpp the entry says which target the build used, `121a-real`,
+and how that was checked: `cuobjdump --list-elf` on `whisper-server`, and what it listed.
+
+That is half of a question CLAUDE.md's `sm_121` gotcha leaves to Phase 1: whether `121` or NVIDIA's
+`121a-real` is right for a source build. The other half is Task 13 Step 4, where this build
+transcribes on the GPU. Once it has, Task 13 Step 7 records the answer: in CLAUDE.md's gotcha, with
+the date and how it was checked, and in plan.md, where *To verify on the box* marks `121` vs
+`121a-real` resolved and a Revisions line records it. The answer is what was checked and no more:
+no `121` build is made, so it says `121a-real` builds native code that runs here, not that `121`
+fails. `cosmicbboy-local-ai.md` changes only if the check measured one of its claims, from
+`[adapted]` to `[verified]`, and never without that measurement.
 
 ```bash
 git add stack/versions.yaml website/reference/stack.md changelog.md README.md
@@ -4249,18 +6641,22 @@ git commit -m "build(stack): 🤖 install and pin the engines on brightroar" \
 
 ### Task 12 [Spark + Dan]: deploy the config, pull the models
 
-- [ ] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`.
+- [x] **Step 1 [Dan, then Spark]: the host, at this branch** — before anything runs as `spark`, and
+  only once CI is green on the push after Task 10: its `tests` job runs the two of Task 9's polkit
+  tests that skip on the Spark, and this step installs that rule.
   Phase 0's review changed bootstrap after it last ran on the box: `/var/lib/local-ai` is now root's
   (a `spark`-owned parent let a re-run hand `spark` a directory of its choosing), and earlyoom avoids
-  `sshd.*`. This phase adds `spark`'s two cache folders and the needrestart override. From the clone
-  on `phase-1`, over SSH with nothing open on the desktop (bootstrap stops a running desktop and
-  restarts earlyoom), Dan runs `make bootstrap-dry-run`, reads it, then runs `make bootstrap`. Then
-  the Spark session checks:
+  `sshd.*`. This phase adds `spark`'s two cache folders, the needrestart override, and the polkit
+  rule that lets `spark-admin` start, stop and restart the four units and nothing more. From the
+  clone on `phase-1`, over SSH with nothing open on the desktop (bootstrap stops a running desktop and
+  restarts earlyoom), Dan runs, on the Spark, `make bootstrap-dry-run`, reads it, then runs
+  `make bootstrap`. Then the Spark session checks:
 
 ```bash
 stat -c '%U:%G %a %n' /var/lib/local-ai /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
 cmp stack/host/needrestart.conf /etc/needrestart/conf.d/local-ai.conf && echo "needrestart: same"
 cmp stack/host/earlyoom.default /etc/default/earlyoom && echo "earlyoom: same"
+pkcheck --action-id org.freedesktop.systemd1.reload-daemon --process $$ >/dev/null 2>&1; echo "reload-daemon without a password: $?"
 diff <(make -s hold-gpu-dry-run | sed -n 's/^+ apt-mark hold //p' | tr ' ' '\n') \
      <(make -s upgrade-gpu-dry-run | sed -n 's/^+ apt-mark unhold //p' | tr ' ' '\n') && echo "release = hold"
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'linux-image-[0-9]*'   # the kernels' package names
@@ -4268,55 +6664,92 @@ uname -r
 ```
 
 Expected: `root:root 755 /var/lib/local-ai`, then `spark:spark 750` for each cache folder; both
-files the same as the repo's; and `release = hold`: upgrade day releases exactly the packages the
-hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is, `agent`'s own;
-bootstrap no longer touches it.
+files the same as the repo's; `reload-daemon without a password: 2`, which says the new polkit rule
+is live: Phase 0's let `spark-admin` reload systemd, and `pkcheck` answered 0. (The session can't
+compare the rule file itself: Ubuntu 24.04's polkit keeps its rules folder `root:polkitd 750`, as a
+container showed; not yet checked on this box. And polkit takes a unit and a verb to check only
+from root.) `release = hold`: upgrade day releases exactly the
+packages the hold holds, nothing else. `/home/agent/work` from the first bootstrap stays as it is,
+`agent`'s own; bootstrap no longer touches it.
 
-Then Dan runs the GRUB check from `website/how-to/updates.md` step 5, whose `grep`s of `grub.cfg`
-run with sudo, and tells the Spark session what it printed, with "an id" in place of every UUID and
-PARTUUID: in `root=` and in each entry id (`gnulinux-…-<UUID>`), a default, `saved_entry` or
-`next_entry` that is an id included. None of them goes into the repo. With the last two lines
-above, it checks two things `make upgrade-gpu` assumes (Task 10) and nothing has checked yet:
+*Added 2026-09-26, from Task 10's review:* then `make doctor`. Its *spark's folders*, *needrestart*
+and *earlyoom* lines, which fail until this re-run (README §Current state, *A bootstrap re-run*),
+now say `ok`. The stack's lines and the end-to-end check still fail: nothing is deployed yet.
 
-- GRUB boots the newest kernel, the one its pre-reboot check reads: the GRUB check passes. Entry
-  0's first `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and neither
-  `next_entry` nor `prev_entry` has a value. If it doesn't pass, the newest kernel may not be what
-  GRUB boots.
+Then Dan runs, on the Spark, the GRUB check from `website/how-to/updates.md` step 5, whose
+`grep`s of `grub.cfg` run with sudo, and tells the Spark session what it printed, with "an id" in
+place of every UUID and PARTUUID: in `root=` and in each entry id (`gnulinux-…-<UUID>`), a
+default, `saved_entry` or `next_entry` that is an id included. None of them goes into the repo.
+With the last two lines above, it checks two things `make upgrade-gpu` relies on (Task 10) and
+nothing has checked yet on this box:
+
+- GRUB boots the newest kernel, the one its checks read: the GRUB check passes. Entry 0's first
+  `linux` line in `grub.cfg` is the newest kernel, GRUB starts entry 0, and neither `next_entry`
+  nor `prev_entry` has a value. If it doesn't pass, the newest kernel may not be what GRUB boots.
+  `make upgrade-gpu` runs this same check itself, before the release and again after the move, and
+  would refuse; running it now finds out before the first upgrade day whether this box's setup
+  passes.
   `/etc/default/grub` and `/etc/default/grub.d/*.cfg` alone can't show this: `GRUB_FLAVOUR_ORDER`,
   `GRUB_TOP_LEVEL` and indented or exported settings all change what GRUB boots, and `grub.cfg`
   shows the result.
 - The installed kernels are named `linux-image-<version>`, with a digit first and the same
   `<version>` as `uname -r` prints for the running one. That is the name its plan check reads.
 
-If either differs, stop and tell the Mac session: that check must change before an upgrade day
-relies on it. Task 13 Step 7 records the re-run and both results in the changelog.
+If either differs, stop. That check must change, in the repo (this session, with its test, as a plan
+revision), or the box's GRUB setup must (Dan), before an upgrade day relies on it. Task 13 Step 7
+records the re-run and both results in the changelog.
 
-- [ ] **Step 2 [Spark]: render and deploy** — `make apply-dry-run`, then `make apply`.
-  Expected: every file under `/opt/local-ai/etc` and the app are listed as new; `llama-swap -validate`
-  prints `config is valid: 4 model(s)`; `uv sync` builds `/opt/local-ai/app/.venv`; each unit is
-  reported as not installed yet.
+- [x] **Step 2 [Spark]: render, and stage what root runs** — `make apply-dry-run`, then `make apply`.
+  Expected: every file under `/opt/local-ai/etc` and the app are listed as new (corrected
+  2026-09-26, from Task 7's reviews: apply lists only root's six files, each as "root has no copy
+  of … yet", since until root has them it lists nothing else);
+  `llama-swap -validate` prints `config is valid: 4 model(s)`; root has no copy yet of the four
+  units, `compose/compose.yaml` or `compose/searxng/settings.yml`; and apply stages them and stops,
+  naming `make install-units`. Nothing else is deployed yet: no app, no `llama-swap.yaml`.
 
-- [ ] **Step 3 [Dan]: install the units** — `make install-units` (asks for sudo once). Check:
-  `systemctl list-unit-files 'local-ai-*'` shows llama-swap, brake and compose `enabled`, and pull
-  `linked`.
+- [x] **Step 3 [Dan, on the Spark]: install root's copies** — `make install-units` (sudo asks for
+  your password once, and the `sudo -k` it ends with forgets it). It shows each of the six files in
+  full, since root has none yet: read them, because they are the files root will run. They aren't
+  all that runs as root: sudo also runs this clone's own `Makefile` and `bootstrap.sh`, which it
+  doesn't show. Answer `y`. Check:
 
-- [ ] **Step 4 [Spark]: pull the model files** — `make pull`. About 40 GB, downloaded by the `spark`
-  user; it prints nothing until it finishes, so follow it with `journalctl -fu local-ai-pull` in
-  another tmux pane.
+```bash
+systemctl list-unit-files 'local-ai-*'
+stat -c '%U:%G %a %F %n' /etc/systemd/system/local-ai-*.service /etc/local-ai/compose \
+  /etc/local-ai/compose/compose.yaml /etc/local-ai/compose/searxng /etc/local-ai/compose/searxng/settings.yml
+make install-units-dry-run
+```
+
+  Expected: llama-swap, brake and compose `enabled`, and pull `static` (it has no `[Install]`: it
+  runs only when asked); `root:root 644 regular file` for each file and `root:root 755 directory` for
+  the two folders; and the dry run says `nothing to install`.
+
+- [x] **Step 4 [Spark]: deploy the rest, pull the model files** — `make apply`. Expected: it deploys
+  `llama-swap.yaml` and `models.yaml`, syncs the app (`uv sync` builds `/opt/local-ai/app/.venv`),
+  and restarts nothing: no unit runs yet, so each starts with the new config. Then `make pull`.
+  About 40 GB, downloaded by the `spark` user; it prints nothing until it finishes, so follow it with
+  `journalctl -fu local-ai-pull` in another tmux pane.
   Expected: five `pull: … → /var/lib/local-ai/hf/hub/models--…/snapshots/<revision>/<file>` lines
   and exit 0. Each path is the one the rendered config hands its engine — compare with
   `grep -o '/var/lib/local-ai/hf/hub/[^ ]*' /opt/local-ai/etc/llama-swap.yaml`. A `FAILED` line means
   a wrong file name or revision: fix `stack/models.yaml`, commit, `make apply`, `make pull` again.
   Then `df -h /`, and note the space left for the changelog.
+  *(Corrected 2026-09-26, from Task 8's review: a `FAILED` line has other causes too — a missing or
+  gated repo, a bad or refused token, the network or a server error, a full or unwritable disk —
+  and its reason says which. Only a wrong file name or revision is fixed in `stack/models.yaml`;
+  for the rest, fix the cause and `make pull` again.)* *(Corrected again the same day, from Task 9's
+  review: a repo that doesn't exist, mistyped or renamed, is fixed in `stack/models.yaml` too, and
+  each fix there is followed by `make apply` before `make pull`, since the pull reads the deployed
+  registry. A gated repo needs a token in `hf.env`, then `make pull`.)*
 
 ***
 
 ### Task 13 [Spark + Dan]: start the stack, smoke-test it, first footprint readings
 
-- [ ] **Step 1 [Dan]: your key on the Spark** — the checks below use `SPARK_API_KEY`, with the same
+- [x] **Step 1 [Dan]: your key on the Spark** — the checks below use `SPARK_API_KEY`, with the same
   value as on the Mac (one key per person, not per machine). From here on it is in every shell of
   yours, the Spark session's included, so the session's secrets guard must already hold (the Mac →
-  Spark switch point). From the Mac, without displaying it:
+  Spark switch point). From the Mac, send it to the Spark's `~/.secrets` without displaying it:
   `( . ~/.secrets; printf 'export SPARK_API_KEY=%s\n' "$SPARK_API_KEY" ) | ssh brightroar 'umask 077; cat >> ~/.secrets'`.
   On the Spark, once, load it in every shell — as the first line of `~/.bashrc`, above Ubuntu's early
   return for non-interactive shells:
@@ -4324,8 +6757,8 @@ relies on it. Task 13 Step 7 records the re-run and both results in the changelo
   Restart the Spark session. Check: `python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"`
   → `True`.
 
-- [ ] **Step 2: Start it** (the key goes to curl on stdin, never on its command line — see Global
-  Constraints)
+- [x] **Step 2 [Spark]: Start it** (the key goes to curl on stdin, never on its command line — see
+  Global Constraints)
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
@@ -4341,7 +6774,7 @@ make status
 Expected: as commented. Nothing is loaded yet — Phase 1 has no preload, so each model loads on its
 first request and stays (ttl 0). Open WebUI takes a minute on its first start (`make logs s=open-webui`).
 
-- [ ] **Step 3 [Dan]: Open WebUI's first account, now** — before anything else. From the Mac, in a
+- [x] **Step 3 [Dan]: Open WebUI's first account, now** — before anything else. From the Mac, in a
   spare terminal, `ssh -N -L 3000:127.0.0.1:3000 brightroar`; open `http://127.0.0.1:3000` and
   create your account. Phase 0's research found that the first account can sign up even with
   `ENABLE_SIGNUP` false, and becomes the admin; after it, signup is closed. That is not yet tried on
@@ -4371,17 +6804,17 @@ systemctl restart local-ai-compose
   with a single quote or any backslash, writes nothing and prints neither value; choose a password
   without them.
 
-  Log in through the tunnel with that email and password. Then remove both lines, and restart once
-  more so the container no longer holds them:
+  Log in through the tunnel, on the Mac, with that email and password. Then, on the Spark, remove
+  both lines, and restart once more so the container no longer holds them:
 
 ```bash
 sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
 systemctl restart local-ai-compose
 ```
 
-- [ ] **Step 4: One request per model, with memory readings** — from nothing loaded, one at a time.
-  `reading` prints how long the request took and MemAvailable before it, the lowest while it ran
-  (sampled ten times a second) and after it:
+- [x] **Step 4 [Spark]: One request per model, with memory readings** — from nothing loaded, one
+  at a time. `reading` prints how long the request took and MemAvailable before it, the lowest
+  while it ran (sampled ten times a second) and after it:
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
@@ -4413,7 +6846,19 @@ Expected: four readings; each chat reply names the model that was asked for (the
 tokens thinking — then `.choices[0].message.reasoning_content` holds them); a 1024-dimension
 embedding; the JFK sample's text, and a word count above zero (`verbose_json` carries word timings).
 
-- [ ] **Step 5: What runs, as whom, and what the OOM killers would pick**
+*Added 2026-09-27, from Task 12's forward review:* before the first reading, run `free -g` and record
+its `free` and `buff/cache` columns with the readings. The pull fills the page cache (43 GiB on
+2026-09-27), which the launch check counts as available: plan.md, *Page cache and the launch
+check*.
+
+*(Corrected 2026-09-28, from the run: two of the expectations above didn't hold, and neither is an
+engine fault. Each reply's `model` is the GGUF file's path, since llama-server names a model by
+its file unless given `--alias`, which render doesn't pass. And Gemma thinks too, not only the
+coder, so both chat replies spent all 512 tokens in `reasoning_content` and came back with empty
+`content`. Given room, both answered; with thinking off, in 7 or 8 tokens. The changelog has the
+readings, and the thinking led to Dan's decision below.)*
+
+- [x] **Step 5 [Spark]: What runs, as whom, and what the OOM killers would pick**
 
 ```bash
 make status
@@ -4426,30 +6871,52 @@ make doctor
 `oomadj` and `oom` are procps-ng's names for `oom_score_adj` and `oom_score`. Ubuntu 24.04's `ps`
 (procps-ng 4.0.4) rejects `oom_score_adj=` as a format.
 
-Expected: four models loaded (three resident, the coder on demand), the brake off, and the headroom
-before the brake; every engine runs as `spark` with `1000` in the `oomadj` column. `spark launch`
-set that, so the engines are the first processes the kernel or earlyoom would kill. The journal count is `0`:
+Expected: four models loaded (three resident, the coder on demand), `brake    no hold`, and the
+headroom before the brake; every engine runs as `spark` with `1000` in the `oomadj` column.
+`spark launch` set that, so the engines are the first processes the kernel or earlyoom would kill.
+The journal count is `0`:
 as far as the logs show, no engine or download was refused a write in `spark`'s home, which is
-root's now. If it isn't, the lines name the path: record it for the Mac session, which points that
-tool's cache at `/var/lib/local-ai/cache` in the unit template (Task 6's). `make doctor` ends
-`doctor: 11 of 11 checks pass`. If its firewall line says it can't read `/etc/ufw/ufw.conf`, record
-the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`) for the Mac session, which then changes
-that check. Step 3's browser already loaded Open WebUI's page. What is not yet seen on this box is
-doctor's own expectation: `200` from `/` on both Open WebUI and SearXNG. This first `make doctor`
-is that check. If its web line fails, look at the pages in a browser. Step 3's tunnel forwards only
-Open WebUI's port 3000; to see SearXNG, open a second one,
-`ssh -N -L 8888:127.0.0.1:8888 brightroar`, and load `http://127.0.0.1:8888`. If they work there,
-record what doctor says each answered for the Mac session.
+root's now. If it isn't, the lines name the path: point that tool's cache at
+`/var/lib/local-ai/cache` in the unit template (Task 6's), in the repo, with its test, as a plan
+revision. `make doctor` ends `doctor: 12 of 12 checks pass` (corrected 2026-09-26, from Task 10:
+`15 of 15`, with spark's folders, the engines' config files and the needrestart override, the first
+and last of which pass only after Task 12 Step 1's bootstrap re-run). If its firewall line says it
+can't read `/etc/ufw/ufw.conf`, record the file's mode (`stat -c '%a %U:%G' /etc/ufw/ufw.conf`)
+and change that check to match, in the repo, with its test, as a plan revision. Step 3's browser
+already loaded Open WebUI's page. What is not yet seen on this box is doctor's own expectation:
+`200` from `/` on both Open WebUI and SearXNG. This first `make doctor` is that check. If its web
+line fails, Dan looks at the pages in a browser, on the Mac. Step 3's tunnel forwards only
+Open WebUI's port 3000; to see SearXNG, he opens a second one there,
+`ssh -N -L 8888:127.0.0.1:8888 brightroar`, and loads `http://127.0.0.1:8888`. If they work there,
+change doctor's expectation to what each answered, in the repo, with its test, as a plan revision.
+
+*Added 2026-09-26, from Task 6's review:* SearXNG's image sets no `USER`, and with
+`FORCE_OWNERSHIP: "false"` its entrypoint only warns when `/var/lib/local-ai/searxng`
+(`spark:spark 0750`) isn't its own. So check here that it can write its folder: a search works
+(Dan, on the Mac, through the SearXNG tunnel above), and, on the Spark, `make logs s=searxng` shows
+no ownership warning. If it can't, fix the folder's owner in bootstrap, with its test, as a plan
+revision. *(Corrected 2026-09-27, from Task 12's forward review: the ownership warning appears at
+every start, so it can't be the test. The image sets no `USER`, and its entrypoint at the pinned
+commit (`container/entrypoint.sh` at `3cd69d30e`) never drops to its `searxng` user (uid 977), so
+SearXNG runs as root in its container. With `FORCE_OWNERSHIP` false, the entrypoint prints a
+`!!! WARNING` block, "not owned by searxng:searxng", for each mount 977 doesn't own:
+`/etc/searxng`, from root's `compose/searxng`, and `/var/cache/searxng`, `spark`'s (uid 996). Root
+in the container writes the folder whoever owns it. So expect those two blocks, and check instead
+that a search works and that `make logs s=searxng` shows no `Permission denied` and no
+`Read-only file system`. Bootstrap changes only if one of those appears.)*
 
 Record each engine's `rss` and `oom` columns beside `nvidia-smi`'s per-process memory (GB10 may
 print `[N/A]` there; record what it prints). Whether a model's memory counts toward its engine's
 RSS on GB10 is not yet known. If it doesn't (an engine's `rss` far below its model's size),
 earlyoom's choice among engines is arbitrary. Task 17's forward look then decides whether
 `spark launch` should give resident models a lower `oom_score_adj` than on-demand ones, for example
-900 against 1000, so earlyoom agrees with the brake's order.
+900 against 1000, so earlyoom agrees with the brake's order. *(Decided 2026-09-28, from Phase 1's
+council: 900 for a resident, 1000 for an on-demand engine. From the deploy that brings it, the
+`oomadj` column above reads 900 for the three residents.)*
 
-Then **[Dan]** checks earlyoom's victim with the engines loaded, without killing anything: Phase 0's
-Task 11 Step 2 check, with the repo's current regexes, for about five seconds, then Ctrl-C:
+Then **[Dan, on the Spark]** checks earlyoom's victim with the engines loaded, without killing
+anything: Phase 0's Task 11 Step 2 check, with the repo's current regexes, for about five seconds,
+then Ctrl-C:
 
 ```bash
 sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
@@ -4459,23 +6926,45 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 Expected: the process it would kill is an engine; note which one.
 
-- [ ] **Step 6: Footprints** — a model's footprint is about *before − lowest*. Where a reading is
-  above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's `footprint_gib` to the
-  reading, rounded up, and leave `footprint_measured: false` — Phase 2 measures at full context
-  after a soak. Then `make apply`: only `models.yaml` changed, so only the brake restarts.
+- [x] **Step 6 [Spark]: Footprints** — a model's footprint is about *before − lowest*. Where a
+  reading is above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's
+  `footprint_gib` to the reading, rounded up, and leave `footprint_measured: false` — Phase 2
+  measures at full context after a soak. Then `make apply`: only `models.yaml` changed, so only the
+  brake restarts.
 
-- [ ] **Step 7: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's bootstrap re-run
+*Added 2026-09-28, Dan's decision (plan.md's Revisions): Open WebUI's task calls run without
+thinking.* Step 4 found that both chat models think by default, and Gemma is the task model, so
+`stack/templates/compose.yaml` gains `TASK_MODEL_PARAMS`, which a render test pins. Root's copy of
+the Compose file changes with it, so Step 6's `make apply` first stages `compose/compose.yaml` and
+stops, as its dry run showed. **[Dan, on the Spark]** runs `make install-units`, reads the change
+and answers `y`. Then `make apply` again deploys `models.yaml` and restarts what the change needs.
+To check it, **[Dan, on the Mac]** starts a new chat with Gemma in Open WebUI, through Step 3's
+tunnel, and sends a message. **On the Spark**, `journalctl -u local-ai-llama-swap` then shows the
+title request, a non-streamed `POST /v1/chat/completions` from Open WebUI's `aiohttp`, answered in
+a second or two with a small body, not the half a minute a title takes with thinking on. Step 7
+records it.
+
+- [x] **Step 7 [Spark]: Changelog, README; commit** — `changelog.md`: Task 12 Step 1's
+  bootstrap re-run
   (`/var/lib/local-ai` root's, the two cache folders, earlyoom avoiding `sshd.*`, the needrestart
-  override), with the GRUB check's result and the kernels' package names; units installed and
-  running, the model files pulled and the disk space left, the four readings and load times, the
-  engines' `oomadj`, `oom` and `rss` beside `nvidia-smi`'s figures, and earlyoom's dry-run victim.
+  override, and the narrowed polkit rule: `spark-admin` starts, stops and restarts the four units by
+  exact name and nothing more, no `reload-daemon`, which `pkcheck` confirmed by answering `2`), with
+  the GRUB check's result and the kernels' package names; root's own copies of the units and the
+  Compose project, which Task 12 Step 3 installed (`/etc/systemd/system/local-ai-*.service` and
+  `/etc/local-ai/compose`, `root:root`, three units enabled and pull `static`); the units running,
+  the model files pulled and the disk space left, the four readings and load times, the engines'
+  `oomadj`, `oom` and `rss` beside `nvidia-smi`'s figures, and earlyoom's dry-run victim.
   For GRUB, record whether it passed and the default it uses: `0`, `saved` or a number, never an id
   or a `root=` line, which carry the root filesystem's UUID.
-  `README.md` §Current state: the new host layout, what runs, on which ports (127.0.0.1 only), which
-  models.
+  `README.md` §Current state: the new host layout, root's own copies of what root runs, what runs,
+  on which ports (127.0.0.1 only), which models. Its *Bootstrapped* bullet says "The polkit rule
+  lets `spark-admin` manage `local-ai-*` units but not start transient ones", which Task 12 Step 1
+  made untrue: it becomes the narrowed rule, dated, saying what it allowed until then. And now that
+  Step 4 has transcribed with the whisper build, its `121a-real` answer goes into CLAUDE.md's
+  `sm_121` gotcha and into plan.md, as Task 11 Step 5 says.
 
 ```bash
-git add stack/models.yaml changelog.md README.md
+git add stack/models.yaml changelog.md README.md CLAUDE.md website/design/plan.md
 git commit -m "docs(machine): 🤖 record the first deploy and footprint readings on brightroar" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -4484,55 +6973,87 @@ git commit -m "docs(machine): 🤖 record the first deploy and footprint reading
 
 ### Task 14 [Dan]: the web UI on the phone (S09, S20)
 
-- [ ] **Step 1: Serve it on the tailnet** — the phase's first web exposure, so only once Task 13
+- [x] **Step 1: Serve it on the tailnet** — the phase's first web exposure, so only once Task 13
   Step 3 made the admin account, and keys-only SSH and the Spark's repo-only GitHub token are done
-  (the Mac → Spark switch point): `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`, then
-  `tailscale serve status`. Read the output privately: the HTTPS address names the tailnet.
-- [ ] **Step 2: Log in** — on the phone with Tailscale on, open the address and log in with the
+  (the Mac → Spark switch point). **On the Spark:**
+  `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`, then `tailscale serve status`.
+  Read the output privately: the HTTPS address names the tailnet.
+- [x] **Step 2: Log in** — on the phone with Tailscale on, open the address and log in with the
   account from Task 13 Step 3. In a private tab, confirm that a second signup is refused.
   Optional: Admin Panel → Settings → Models, and hide `qwen3-embedding-0.6b` and
   `whisper-large-v3-turbo` from the chat picker (they're listed because llama-swap lists every model).
-- [ ] **Step 3: S09, the phone away from home** — on mobile data, Tailscale on: add the page to the
+  *(Corrected 2026-09-28, from the run: once the admin exists, the page offers no sign-up at all,
+  so there is no refusal to see there. The API refuses one: on the Spark, a sign-up request to
+  `/api/v1/auths/signup` got `403`. Open WebUI v0.11.4 checks that before anything else once an
+  account exists and sign-up is off.)*
+- [x] **Step 3: S09, the phone away from home** — on mobile data, Tailscale on: add the page to the
   home screen; ask about a photo; dictate a message with the microphone. Each answer is labelled
   `gemma-4-26b-a4b`.
-- [ ] **Step 4: S20, web search from the phone** — turn on web search in a chat and ask about
+  *(Corrected 2026-09-28, from the run: a photo aborted Gemma's engine, big or small, and every
+  later message in that chat did too, since each resends the photo. llama.cpp decodes an image's
+  tokens in one micro-batch, and an image with more tokens than `--ubatch-size`, 512 by default,
+  trips an assertion that kills the engine, not just the request. b11146 gives a Gemma 4 image up
+  to 1120 tokens, about 2.6 MP. The registry now gives Gemma `--ubatch-size 2048` and
+  `--image-max-tokens 1120`, and a test holds every vision model to a micro-batch that fits its
+  image budget. **[Dan, on the Spark]** deploys it with `make apply-now`: llama-swap restarts, so
+  all four models stop and load again on their next request. Then ask about a photo again, in a
+  new chat.)*
+- [x] **Step 4: S20, web search from the phone** — turn on web search in a chat and ask about
   something from this week; the answer cites its sources.
-- [ ] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on
+- [x] **Step 5:** give the Spark session the date each one passed; it goes in the changelog now and on
   the scenario pages at the close.
 
 ***
 
 ### Task 15 [Dan + Spark]: pi on the Mac, and as `agent` in tmux
 
-- [ ] **Step 1 [Dan, on the Mac]: pi through the tunnel**
+- [x] **Step 1 [Dan, on the Mac]: pi through the tunnel** — first the branch as the push after Task 10
+  left it (the Mac commits nothing while the Spark session owns the branch):
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1   # down from 0.86.1, inside the crash range
-pi --version                                                               # 0.85.1
-python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"      # True
-cd ~/git/hub/local-ai && make clients                                      # the spark provider, old file backed up
-make tunnel                                                                # in a spare terminal; leave it open
+cd ~/git/hub/local-ai && git switch phase-1 && git pull
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+pi --version
+python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"
+cd ~/git/hub/local-ai && make clients
 ```
+
+Then, in a spare terminal on the Mac, from the clone, `make tunnel`, and leave it open.
+*(Corrected 2026-09-26: the block's comments moved into this paragraph, and `make tunnel` out of
+the block, since the Mac's zsh passes a trailing `#` to the command — CLAUDE.md's labels rule.)*
+The pull brings Tasks 1–10, pushed after Task 10; npm moves pi down from 0.86.1, inside the crash
+range; `pi --version` prints `0.85.1`; the Python line prints `True`; and `make clients` adds the
+spark provider, keeping the old file as a backup. *(Corrected 2026-09-28, from the run: the pull
+brought Tasks 1–14, since Tasks 11–14 were pushed before it.)*
 
 In pi: `/model` → `qwen3.6-35b-a3b`, and a small real task in a scratch repo. Expected: it finishes,
 and the footer names `qwen3.6-35b-a3b`.
 
-- [ ] **Step 2 [Dan]: `agent`'s Claude Code gets the secrets guard, before `agent` holds a key** —
+*Added 2026-09-26, from Task 9:* `make clients` writes the key into `models.json` as
+`"${SPARK_API_KEY}"`, for pi to expand. pi's current docs say it does, but 0.85.1's behaviour is
+unchecked. If pi's first request is refused with a 401, 0.85.1 doesn't expand it: record that here
+and stop. Don't put the key's value in `models.json` to get past it; how pi gets the key is then a
+decision for Task 17. *(Checked 2026-09-28: it expands it. pi 0.85.1's requests came back `200`
+through the tunnel from the Mac, and on the Spark as `agent`, with only `"${SPARK_API_KEY}"` in
+`models.json`.)*
+
+- [x] **Step 2 [Dan]: `agent`'s Claude Code gets the secrets guard, before `agent` holds a key** —
   Step 3 puts a key in `agent`'s `~/.secrets`, and `agent`'s Claude Code (Phase 0) runs in its
   shells. Give it the guard the Spark session got in [The Spark session](../how-to/spark-session.md)'s
   steps 2 and 3, written through `agent`'s own login from the Mac, never as root:
   - `ssh brightroar-agent 'mkdir -p ~/.claude'`, then copy the script the hook runs to the same
     place under `agent`'s `~/.claude` (`scp … brightroar-agent:.claude/…`).
-  - `ssh brightroar-agent`, and add the same `PreToolUse` hook and deny rules to `agent`'s
-    `~/.claude/settings.json`, with every `/Users/dan` in a path changed to `/home/agent`.
+  - `ssh brightroar-agent`, and there, on the Spark as `agent`, add the same `PreToolUse` hook and
+    deny rules to `agent`'s `~/.claude/settings.json`, with every `/Users/dan` in a path changed to
+    `/home/agent`.
   - A `~/.claude/CLAUDE.md` for `agent` that holds only your global file's secrets rule, not the
     rest of that file: `agent` works on untrusted input, and the rest is yours. Put the section in a
     file on the Mac, then `scp` it to `brightroar-agent:.claude/CLAUDE.md`.
-  - Check it as the Spark session's first action does: in `agent`'s `claude`, `/hooks` lists the
-    hook, `/permissions` the deny rules, and `test -e ~/.secrets && echo present || echo absent` is
-    refused.
+  - Check it as the Spark session's first action does: on the Spark, in `agent`'s `claude`, `/hooks`
+    lists the hook, `/permissions` the deny rules, and
+    `test -e ~/.secrets && echo present || echo absent` is refused.
 
-- [ ] **Step 3 [Dan, on the Spark]: Node, and the agent's key**
+- [x] **Step 3 [Dan, on the Spark]: Node, and the agent's key**
 
 ```bash
 d=$(mktemp -d) && curl -fsSL https://deb.nodesource.com/setup_22.x -o "$d/nodesource_setup.sh" && less "$d/nodesource_setup.sh"
@@ -4551,7 +7072,7 @@ Constraints). `printf` is a builtin, so the value never reaches a command line. 
 missing, the line refuses and writes nothing, as `secret-files.md` step 5 does. Run again, it
 rewrites the file with the same line.
 
-- [ ] **Step 4 [Dan, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
+- [x] **Step 4 [Dan, on the Spark, as `agent`]: pi and uv for the agent** — `sudo -iu agent`, then:
 
 ```bash
 grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
@@ -4561,8 +7082,9 @@ git clone --branch phase-1 https://github.com/chendaniely/local-ai ~/work/local-
 exit
 ```
 
-`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. Then, in a
-fresh login as `agent` (`ssh brightroar-agent` from the Mac), so the key and `~/.local/bin` load:
+`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. Then, from
+the Mac, log in afresh as `agent` (`ssh brightroar-agent`), so the key and `~/.local/bin` load, and
+in that session, on the Spark as `agent`:
 
 ```bash
 python3 -c "import os; print(bool(os.environ.get('SPARK_API_KEY')))"   # True
@@ -4577,7 +7099,7 @@ tmux window, `claude` starts already logged in (Phase 0); it talks to Anthropic,
 Expected: pi finishes the task; its footer names `qwen3.6-35b-a3b`; reattaching works. The agent's
 clone is only for `spark clients` — the agent never commits to this repo.
 
-- [ ] **Step 5 [Spark]: Changelog, README; commit** — record Node 22 from NodeSource, pi 0.85.1 and uv
+- [x] **Step 5 [Spark]: Changelog, README; commit** — record Node 22 from NodeSource, pi 0.85.1 and uv
   for `agent`, the agent's key (by reference) and its Claude Code secrets guard, the Mac's pi pinned
   to 0.85.1, and the S09 and S20 dates from Task 14.
 
@@ -4591,9 +7113,9 @@ git commit -m "docs(machine): 🤖 record pi for agent and the web UI on the tai
 
 ### Task 16 [Spark + Dan]: drills — the brake, a load that doesn't fit, a fresh clone, an upgrade and a reboot
 
-- [ ] **Step 1: The brake at raised thresholds (S05)** — load the coder, then run one brake tick
-  against a copy of the registry whose thresholds sit just above what's available now, so the brake
-  fires while the box still has plenty of memory:
+- [x] **Step 1 [Spark]: The brake at raised thresholds (S05)** — load the coder, then run one
+  brake tick against a copy of the registry whose thresholds sit just above what's available now,
+  so the brake fires while the box still has plenty of memory:
 
 ```bash
 coder() { curl -s -o /dev/null -w '%{http_code}\n' -H @- -H 'Content-Type: application/json' \
@@ -4610,9 +7132,24 @@ make status
 
 Expected: `brake: holding new loads until `spark brake --release`` and
 `brake: unloaded qwen3.6-35b-a3b at … GiB available` — the on-demand model goes first and the
-residents stay; `make status` shows HOLDING with the coder unloaded.
+residents stay; `make status` shows HOLDING with the coder unloaded. *(Corrected 2026-09-26, from
+Task 9: the first line now ends `until `make brake-release``, and `make status` says
+`make brake-release` to clear, since `spark` isn't on Dan's PATH; Step 2's
+`uv run --frozen --project spark spark brake --release` is what that target runs.)*
 
-- [ ] **Step 2: While the hold stands, the coder can't come back**
+*Added 2026-09-26, from Task 4's reviews:* if the coder takes more than 2 s to stop, the second line
+reads `brake: no answer in 2 s; counting qwen3.6-35b-a3b as on its way (…)` instead: llama-swap v257
+answers an unload only once the engine has exited. Either way the coder goes and the residents stay.
+This drill is also where three of the brake's numbers get measured, and each result goes in
+`cosmicbboy-local-ai.md` and the brake's comments: how long the coder takes to stop after its
+unload is sent (sets `GRACE_S`, 15 s); how much `MemAvailable` moves poll to poll while memory is
+held (sets `FLOOR_TOLERANCE_GIB`, 0.5 GiB); and what v257 does when asked to unload an engine that
+is still `starting`. The commands for them are written and run when this task runs, not before.
+*(Checked 2026-09-28: the coder's process was gone 0.6 s after the tick began, so the second line
+read `unloaded`. The three measurements are in `cosmicbboy-local-ai.md` §I and the brake's
+comments; whether `GRACE_S` and `FLOOR_TOLERANCE_GIB` change is Task 17's call.)*
+
+- [x] **Step 2 [Spark]: While the hold stands, the coder can't come back**
 
 ```bash
 coder() { curl -s -o /dev/null -w '%{http_code}\n' -H @- -H 'Content-Type: application/json' \
@@ -4627,7 +7164,8 @@ coder                                                      # 200 again
 
 Expected: as commented. The refused start leaves nothing running, so there's no reload thrash.
 
-- [ ] **Step 3: A load that doesn't fit is refused, and nothing is unloaded (S03, previewed)** —
+- [x] **Step 3 [Spark]: A load that doesn't fit is refused, and nothing is unloaded (S03,
+  previewed)** —
   unload the coder, then hold memory with a throwaway process until about 45 GiB is left: above the
   brake's warn line (28), below what the coder needs (29 plus the 24 GiB reserve). This is the one
   drill that really fills memory, so it also records swap, and what the OOM killers would pick:
@@ -4641,9 +7179,9 @@ curl -fsS -X POST -H @- http://127.0.0.1:9100/api/models/unload/qwen3.6-35b-a3b 
 log=$(mktemp); vmstat -n 1 > "$log" & vm=$!   # swap in (si) and out (so), once a second
 a=$(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo)
 python3 -c "import time; x = b'\x01' * ($((a - 45)) << 30); time.sleep(900)" > /dev/null 2>&1 & hog=$!
-sleep 30; make status          # ~45 GiB available; three residents loaded; brake off
+sleep 30; make status          # ~45 GiB available; three residents loaded; no hold
 coder                          # not 200
-make status                    # refused  qwen3.6-35b-a3b at …: needs ~29 GiB, 45 GiB available (24 GiB reserve kept)
+make status                    # refused  qwen3.6-35b-a3b at …: needs 29.0 GiB, 45.0 GiB available, 24 GiB reserve kept: 8.0 GiB short
 for p in $(ps -o pid= -C llama-server,whisper-server) "$hog"; do echo "$(cat "/proc/$p/comm") oom_score $(cat "/proc/$p/oom_score")"; done
 kill "$hog"; sleep 5; coder    # 200 once the memory is back
 kill "$vm"; awk 'NR > 3 {si += $7; so += $8; if ($3 > most) most = $3} END {print "swap used at most", most + 0, "KiB; swapped in", si + 0, "KiB, out", so + 0, "KiB"}' "$log"
@@ -4654,37 +7192,48 @@ above the hog's (`python3`), so the kernel and earlyoom would pick an engine bef
 the figures. The last line says whether memory went to swap. The box has a 16 GiB swap file, and
 earlyoom ignores swap (`-s 100,100`). Whether anonymous memory swaps out before `MemAvailable` reaches
 the brake is not yet known. Record the line; Task 17's forward look sets swap size and swappiness
-from it (plan.md, *To verify on the box*).
+from it (plan.md, *To verify on the box*). *(Decided 2026-09-28, at Task 17 (Dan): swap barely
+moved down to 45 GiB available, so swap and swappiness are measured at the real thresholds in
+Phase 2 first.)*
 
-- [ ] **Step 4: A fresh clone reproduces the deploy** — first, **Dan OKs pushing** the Spark's
-  commits (`git push`), so the clone has everything. The bootstrap here is a real re-run: it stops a
-  running desktop and restarts earlyoom, so Dan runs it over SSH with nothing open on the desktop, or
-  from the console. Then:
+- [x] **Step 4 [Spark, then Dan]: A fresh clone reproduces the deploy** — first, the Spark session
+  runs leak-guards.md's [*Before every push*](../how-to/leak-guards.md#before-every-push) with
+  `phase-1` as `<branch>`, and **Dan OKs pushing** the Spark's commits (`git push`), so the clone
+  has everything. The bootstrap here is a real re-run: it stops a running desktop and restarts
+  earlyoom, so Dan runs it over SSH with nothing open on the desktop, or from the console.
+  *(Corrected 2026-09-27, from the labels audit: the block gave `make bootstrap` the comment
+  `# [Dan], in this directory: sudo; every step is already in place`, as if the session ran the
+  rest. The block is one shell's, `$fresh` and the `cd` included, and the session can't type Dan's
+  password, so Dan runs all of it, on the Spark, in his own terminal. He types `make bootstrap` as
+  shown, never under `sudo`: it asks for his password itself. Every step is already in place.)*
+  Then:
 
 ```bash
 fresh=$(mktemp -d) && git clone --branch phase-1 https://github.com/chendaniely/local-ai "$fresh/local-ai"
 cd "$fresh/local-ai"
-make bootstrap           # [Dan], in this directory: sudo; every step is already in place
-make apply               # apply: nothing to change
+make bootstrap
+make apply                  # apply: nothing to change
+make install-units-dry-run  # nothing to install: root's copies match what this clone renders
 cd ~ && rm -rf "$fresh"
 ```
 
-Expected: bootstrap finishes without error, and apply prints `apply: nothing to change` — the
-running stack is exactly what the repo describes.
+Expected: bootstrap finishes without error, apply prints `apply: nothing to change`, and the install
+dry run says `nothing to install` — the running stack, root's copies included, is exactly what the
+repo describes.
 
-- [ ] **Step 5 [Dan + Spark]: a routine `apt upgrade`, then a reboot (S23)** — after each, the stack
+- [x] **Step 5 [Dan + Spark]: a routine `apt upgrade`, then a reboot (S23)** — after each, the stack
   must serve again with no hand on it. With the residents loaded, the Spark session notes what runs
   and since when:
 
 ```bash
 api() { curl -fsS -H @- "$@" <<<"Authorization: Bearer $SPARK_API_KEY"; }
-make doctor                                                                # doctor: 11 of 11 checks pass
+make doctor                                                                # doctor: 12 of 12 checks pass
 api http://127.0.0.1:9100/running | jq -r '.running[].model'               # the models loaded now
 systemctl show -p ActiveEnterTimestamp local-ai-llama-swap local-ai-brake  # when each unit started
 ```
 
-**[Dan]** runs `sudo apt update && sudo apt upgrade` as on any day, and answers as usual. Then the
-session runs the same three commands again, plus:
+**[Dan, on the Spark]** runs `sudo apt update && sudo apt upgrade` as on any day, and answers as
+usual. Then the session runs the same three commands again, plus:
 
 ```bash
 grep -A4 '^Start-Date' /var/log/apt/history.log | tail -8   # what this upgrade moved
@@ -4695,22 +7244,39 @@ and `make doctor` passing. If apt moved nothing the engines use (no `libc6` or `
 list), this half proves less. Say so in the changelog, and repeat it after the next upgrade that
 moves one.
 
-Then **[Dan]** runs `sudo reboot`. The reboot ends the Spark session: Dan starts it again
-([The Spark session](../how-to/spark-session.md), *Start the session*), and starts no unit by hand.
-Then:
+Then **[Dan, on the Spark]** runs `sudo reboot`. The reboot ends the Spark session: Dan starts it
+again ([The Spark session](../how-to/spark-session.md), *Start the session*), and starts no unit by
+hand. Then:
 
 ```bash
 systemctl is-active local-ai-llama-swap local-ai-brake local-ai-compose   # active, three times: started at boot
-make doctor                                                                # 11 of 11; it loads the embeddings model
+make doctor                                                                # 12 of 12; it loads the embeddings model
 make status
 ```
 
 Expected: as commented, and the web UI loads and answers on the phone: `tailscale serve` survives
 the reboot. llama-swap preloads nothing, so each model loads on its first request.
 
-- [ ] **Step 6: Changelog; commit** — the drills, with dates and what each showed: the brake and the
-  refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh clone, and the
-  routine upgrade (what apt moved, and whether it touched a library the engines use) and the reboot.
+*Corrected 2026-09-26, from Task 10:* `make doctor` now runs 15 checks, not 12 (spark's folders,
+the engines' config files and the needrestart override joined), so both lines above expect
+`15 of 15`. Run `make status` before `make doctor` wherever both appear: doctor's end-to-end check
+loads the embeddings model, and that clears the last refusal record `make status` would show. And
+if this upgrade moved Docker (`docker-ce` or `containerd.io` in apt's list), check the web services
+too: `systemctl is-active local-ai-compose`. An upgrade that restarts Docker restarts them; one that
+stops it and starts it again leaves them stopped (plan.md's corrected Phase 1 line). Record which
+this one did in the changelog, and in `updates.md` if it stopped them; then
+`systemctl start local-ai-compose`. If apt didn't move Docker, the drill waits for an upgrade that
+does, as the `libc6` half does.
+
+*Checked 2026-09-28:* both halves passed. The upgrade moved 21 packages, but none of `libc6`,
+`libstdc++6` or Docker, so it proves less, and both checks wait for an upgrade that moves them
+(changelog). After the reboot, the three units were active with no hand on them,
+`make doctor` passed 15 of 15, and the web UI answered on Dan's phone.
+
+- [x] **Step 6 [Spark]: Changelog; commit** — the drills, with dates and what each showed: the
+  brake and the refused loads, the engines' and the hog's `oom_score`, the swap line, the fresh
+  clone, and the routine upgrade (what apt moved, and whether it touched a library the engines use)
+  and the reboot.
 
 ```bash
 git add changelog.md
@@ -4718,47 +7284,304 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-## ⇄ Switch point — Spark → Mac
+*Added 2026-09-28, Dan's decision (plan.md's Revisions): every model at its full context.* Gemma
+took 16,384 tokens per request, its 32,768 split over two slots, and the coder 131,072.
+`stack/models.yaml` raises each `ctx` to its GGUF's own maximum: 262,144 for Gemma and the coder,
+and 32,768 for the embedding model. Render passes `--kv-unified` to a model with more than one
+slot, so Gemma's slots share one pool and one request can use all of it, and `spark clients` tells
+pi a model's whole `ctx`. Tests hold each model to its header's maximum and pin the flag and pi's
+window. *(Revised the same day, after the change's review, before it was deployed:* the embedding
+model's micro-batch stays at what actually runs, 2048: it pools its last token, so llama-server
+splits a long input, and the batch size caps the micro-batch, so the first version's 32,768 would
+have changed nothing. With a shared pool, llama-server b11146 clears idle slots whenever a task
+starts, which would cost a long chat its cache at each of Open WebUI's task calls, so render also
+passes `--no-cache-idle-slots`. And Gemma keeps at most 4 context checkpoints per slot, 8 in all,
+about 0.6 GiB each in host memory, where the default 32 per slot could hold about 19 GiB in one
+long chat, at any context.)* The footprints
+rise to estimates, 31, 7 and 32 GiB: 73 GiB for all four, within the 78 the budget allows.
+*(Corrected 2026-09-28, from Phase 1's council: they left out most of what grows after admission,
+so they are now 32, 8 and 33 GiB, the coder's checkpoints capped at 8, 76 in all; plan.md's
+Revisions.)* No
+`spark doctor` check comes with it: the render tests pin the flags and pi's window, and Step 1
+reads the engines' own settings once (a ruling, 2026-09-28; Task 17 can weigh a check that reads
+each engine's `/props`).
 
-- [ ] **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
-  `git switch phase-1 && git pull`.
+- [x] **Step 1 [Dan, then Spark]: Deploy, and check each model at full context** — llama-swap's
+  config changes, and restarting llama-swap stops every engine, so **[Dan, on the Spark]** runs
+  `make apply-now` (or `make apply` with nothing loaded). Then the session loads each model cold and
+  reads what its engine started with. **On the Spark**, llama-swap keeps each engine's output, and
+  this prints the line each llama-server logs at start:
+
+```bash
+curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization: Bearer $SPARK_API_KEY" | grep -a 'n_ctx_slot'
+```
+
+  Expected: `n_slots = 2, n_ctx_slot = 262144, kv_unified = 'true'` for Gemma, `n_ctx_slot = 262144`
+  for the coder and `n_ctx_slot = 32768` for the embedding model. Gemma and the coder each answer a
+  prompt of about 100,000 tokens, and the embedding model embeds an input of about 30,000. Each
+  footprint, *before − lowest* as in Task 13 Step 6, goes into the registry wherever the reading is
+  above the estimate, with `footprint_measured: false`. Gemma's reading is compared with 26 GiB, its
+  estimate without the checkpoints' 5, which a cold load doesn't allocate and Step 2 measures; if
+  it's higher, the registry gets the reading plus 5.
+  `make doctor` passes 15 of 15.
+- [x] **Step 2 [Spark]: A long chat keeps its cache, and its checkpoints stay capped** — send Gemma
+  a first turn of about 100,000 tokens, then a short, unrelated request, as Open WebUI's task calls
+  are, then a second turn that repeats the first with the reply and a new question. The second
+  turn's `timings.prompt_n`, in its response, should be a few thousand tokens at most, not the
+  whole conversation. Over several more turns, `MemAvailable` should fall by no more than about
+  3.5 GiB beyond the cold load's reading: this chat's 4 checkpoints of about 0.6 GiB, plus up to
+  1 GiB for the prompt cache and the short request's own small checkpoints. The commands are
+  written and run when this step runs, as Step 1's measurements were.
+  *(Checked 2026-09-28, Steps 1 and 2. Dan deployed at 17:23. Each engine logged what Step 1
+  expects. Cold loads took 24.7, 6.3 and 29.8 GiB for Gemma, the embedding model and the coder,
+  all under the estimates, so the registry stays as it is. Gemma read a 125,951-token prompt in
+  66 s, the coder a 116,302-token one in 72 s, and the embedding model embedded 26,710 tokens. In a
+  126,000-token Gemma chat, each later turn re-read 38 to 48 tokens in about 0.27 s, including
+  after an Open WebUI-sized task call of 249 tokens, which went to the other slot. `MemAvailable`
+  fell about 0.9 GiB over seven turns. One turn missed its cache, and that was the test's doing: a
+  26-token task call matched the chat's slot. llama-server gives a new prompt the slot whose cached
+  start matches more than 10% of it (`--slot-prompt-similarity`, 0.10), and every Gemma prompt
+  opens with the same few template tokens. So a very short new chat can take a long chat's slot,
+  as it could before this change. Task 17 weighs a higher threshold; it went to Phase 2's line,
+  to weigh with real traffic.)* *(Added 2026-09-28, from
+  Phase 1's council: Step 1's `make doctor` went unrecorded here. It passed 15 of 15 on the
+  deployed commit that evening, at 18:48.)*
+- [x] **Step 3 [Spark, then Dan]: pi and the phone** — the Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) and **Dan OKs the push**, since
+  the Mac and `agent` pull from GitHub. **[Dan, on the Mac]** then pulls and runs `make clients`, so
+  pi's windows match what the Spark now serves; **as `agent`, on the Spark**, its clone pulls and
+  `spark clients pi --write` runs again (`pi.md`, *The context window*). **[Dan, on the phone]**
+  checks S09's new claims: a chat's *Controls → Advanced Params* offers `max_tokens` and
+  *Reasoning Effort*, and *Admin Panel → Settings → Interface* has *Context Compaction*. S09's
+  "not yet checked on the phone" marker comes out once that passes.
+  *(Checked 2026-09-28: pushed with Dan's OK after a clean scan. The Mac's pi and `agent`'s now
+  list both chat models at 262,144 tokens. Dan's phone wasn't with him, so he checked S09's labels
+  in the web UI in the Mac's browser, and found `max_tokens`, *Reasoning Effort* and
+  *Context Compaction*. He keeps compaction off. The phone's own view waits for Task 17 Step 1,
+  which dates S09 from it. Decided at Task 17 (Dan): S09 is dated from Task 14's phone pass, and
+  the page keeps its "not yet checked on the phone" marker on these settings.)*
+- [x] **Step 4 [Spark]: Changelog, README; commit** — a `docs(machine)` commit records the
+  readings in `changelog.md` and `README.md`.
 
 ***
 
-### Task 17 [Mac]: close Phase 1
+### Task 17 [Spark]: close Phase 1
 
 **Files:**
 
 - Modify: `website/scenarios/s05-memory-critically-low.md`, `website/scenarios/s09-phone-away.md`,
-  `website/scenarios/s20-web-search.md`, `website/scenarios/s23-upgrade-day.md`;
-  `website/design/plan.md` and `changelog.md` if the forward look changes anything
+  `website/scenarios/s12-long-agent-run.md`, `website/scenarios/s20-web-search.md`,
+  `website/scenarios/s23-upgrade-day.md`; `website/design/plan.md` and `changelog.md` if the
+  forward look changes anything; `README.md` if Step 2 finds it untrue *(S12 added 2026-09-28, from
+  Phase 1's council: it is a Phase 1 page too)*
 
-- [ ] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
-  (the dates from Task 14). S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
+- [x] **Step 1: Scenario statuses** — S09 and S20: `status: verified` and `verified: YYYY-MM-DD`
+  (the dates from Task 14). *(Corrected 2026-09-28: S09 has since gained the context change's
+  claims about what the phone can change, which Task 14 didn't check. S09's date is that of the
+  context change's phone check, below Task 16, and the page's "not yet checked on the phone" marker
+  comes out only once that check passes. Superseded the same day by Dan's decision: S09 is dated
+  from Task 14's phone pass, and its marker stays on the settings checked only in the Mac's
+  browser.)* S05: `status: built`, with a line saying Phase 1's brake unloads on-demand
   models first and that the idle-first order and notifications arrive in Phase 2. S23:
   `status: built`, with the date Task 16 Step 5's routine upgrade and reboot passed. It becomes
   `verified`, with that day's date, only once `make upgrade-gpu` has moved the set on a real
-  upgrade day, whether in Phase 1 or later. Then
-  `uv run --frozen --project spark spark docs check-scenarios` passes.
-- [ ] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
+  upgrade day, whether in Phase 1 or later. *(Added 2026-09-28, from Phase 1's council: S12 has
+  `phase: 1` and was left out. It is `status: built`, with a line saying Phase 1's half, a run in
+  tmux as `agent` kept through a detach, a logout and a reattach, was checked on 2026-09-28 in
+  Task 15, and that the hooks and notifications arrive in Phase 2. The council's fix batch made that
+  change.)* Then `uv run --frozen --project spark spark docs check-scenarios` passes.
+- [x] **Step 2: The docs are true** — README §Current state and `changelog.md` match what the Spark
   session recorded; README §Contents still describes the `Makefile`, `spark/` and `stack/` rows as
-  they are (Task 10 brought them up to date); `make docs` is clean (the Stack page is current).
-- [ ] **Step 3: Private findings** — load times, readings in context, anything tailnet-specific go to
-  the vault's `zettelkasten/local-ai/` note, never to the repo.
-- [ ] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
-  and scenarios; reliability; security and simplicity; toolstack. Fix what they find, one commit per
-  fix.
-- [ ] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
+  they are (Tasks 2, 6, 9 and 10 kept them up to date); the Stack page is current
+  (`uv run --frozen --project spark spark docs stack --check`). The site render, `make docs`, is
+  Task 18's, on the Mac. *(Added 2026-09-28: the council's fixes change the box once deployed, so
+  this step follows Dan's `make apply`, `make install-units` and `make apply-now`. **On the
+  Spark**, the session then checks that `make doctor` passes 15 of 15, its `stack units` line
+  covering the brake's start check; that `make status` shows the check passed; that `ps -o
+  pid=,user=,oomadj=,comm= -C llama-server,whisper-server` shows 900 for the residents and 1000 for
+  the coder once it loads; and that an engine no longer answers `/slots`. **[Dan, on the Spark]**
+  reruns Task 13 Step 5's earlyoom dry run, which should now pick the coder. Then `changelog.md`
+  and README §Current state record it. Checked 2026-09-28, after Dan's deploy at 21:19: all of it
+  held, and the dry run picked the coder.)*
+- [x] **Step 3 [Dan]: Private findings** — load times, readings in context, anything tailnet-specific
+  go to the vault's `zettelkasten/local-ai/` note, never to the repo. The session lists them in the
+  chat, never in a file in the repo, and Dan files them in the vault.
+- [x] **Step 4: Council review** — four reviewers against `plan.md`'s Phase 1 and this plan: goal-fit
+  and scenarios; reliability; security and simplicity; toolstack. The security reviewer starts
+  from the paths `plan.md`'s *Users, access and security* names as still open (2026-09-25): sudo
+  running the clone's own scripts, sudo's cached credential after bootstrap, `make hold-gpu` and
+  `make upgrade-gpu`, Open WebUI's Functions as the container's root over `spark`-owned data, and
+  Dan's account reaching `spark` through `/opt/local-ai`, and `make install-units`' byte check,
+  which passes bytes that aren't valid UTF-8 (Task 9's known limit). Fix what they find, one commit
+  per fix. *(Added 2026-09-26, from Tasks 2, 3, 6 and 8's reviews: the security reviewer also takes
+  the open risks `plan.md` sends to this review, for Dan to decide — Engines share llama-swap's
+  user (whether the engines and `spark models pull` get a user of their own, and whether render
+  allows only listed engine options), and Anyone on the box can take 127.0.0.1:9100 (a port below
+  1024, refusing redirects, a cap on what the client reads).)* *(Added 2026-09-26, from Task 9's
+  review: also three smaller items for it. `make install-units`' screen passes bidi controls
+  (U+202A–U+202E, U+2066–U+2069) and zero-width characters as ordinary UTF-8, and a terminal that
+  handles bidi text can reorder how a `+` line reads. When root's compose folder is missing or isn't
+  root's own, install-units still reads the copies in it by path, where a swapped link could make it
+  show a file only root can read; counting both as changed and diffing them against `/dev/null`
+  closes it. And the `git status` check before a sudo target guards only against accidents: anything
+  running as Dan can hide a change from it (`git update-index --skip-worktree`) or answer
+  install-units' question through `tmux send-keys`. Of the paths above, sudo's cached credential
+  after bootstrap is closed since: `make bootstrap` and `make hold-gpu` end with `sudo -k` (Task 9's
+  review), as `make upgrade-gpu` does from Task 10; the reviewer confirms it.)*
+  *(Done 2026-09-28: four Opus reviewers; 0 Critical, 15 Important, 37 Minor across them. The
+  fixes went in as two batches, each re-reviewed; Dan decided the rest. The reports stay in the
+  session's workspace; [the retrospective](phase-1-retro.md) carries what they found and what is
+  deferred.)*
+- [x] **Step 5: Forward look** — what did Phase 1 teach that changes Phase 2 onward? Readings against
   the budget, load times, whether llama-swap's log carries a refused start's reason, any llama-swap
-  v257 surprise. Two decisions wait on this phase's readings. Whether `spark launch` gives resident
+  v257 surprise, and whether Phase 1 builds `make deploy` from the Mac (plan.md's *Deploy workflow*
+  left it here, 2026-09-25): decide it, and record the decision in plan.md with a Revisions line.
+  Two decisions wait on this phase's readings. Whether `spark launch` gives resident
   models a lower `oom_score_adj` than on-demand ones depends on whether the engines' RSS counts
   their models (the `rss` and `oom` columns in Task 13 Step 5). Swap size and swappiness depend on
-  the swap line (Task 16 Step 3).
+  the swap line (Task 16 Step 3). *(Added 2026-09-28, from Task 16's review:* two more wait on
+  Task 16 Step 1's readings, recorded in `cosmicbboy-local-ai.md` §I and the brake's comments:
+  whether the brake's `GRACE_S` stays 15 s, when only an idle engine's stop was measured, and
+  whether `FLOOR_TOLERANCE_GIB` stays 0.5 GiB, when the one larger step was probably a Gemma
+  context checkpoint rather than noise. Also weigh the context change's readings, below Task 16:
+  the footprints at full context and the checkpoints' memory over a long conversation. And weigh a
+  higher `--slot-prompt-similarity` for Gemma, since at 0.10 a very short new prompt can take a
+  long chat's slot and its cache.)*
   Update `plan.md` (with a Revisions line), the scenario pages and `changelog.md` before
-  Phase 2 starts.
-- [ ] **Step 6: Merge** — `make test lint docs`, then
-  `git switch main && git merge --no-ff phase-1 -m "chore(repo): 🤖 merge phase 1"`. **Dan OKs**
-  `git push origin main`.
+  Phase 2 starts. *(Added 2026-09-27, Dan's decision:* also look back at the lock's seven-day
+  window — did it hold back a fix the stack needed, did Dependabot's uv PRs and a hand-run
+  `uv lock` behave as `updates.md` says, and was a per-package exception needed — and record in
+  plan.md whether it stays.)*
+  *(Done 2026-09-28: plan.md's Revisions has the forward look, its Phase 2 line what Phase 2
+  inherits, and its Backlog the model settings Dan will revisit when more models are fitted.)*
+- [x] **Step 6: Commit** — what Steps 1, 2 and 5 changed, staged by name (a file that didn't
+  change adds nothing):
+
+```bash
+git add website/scenarios/s05-memory-critically-low.md website/scenarios/s09-phone-away.md \
+  website/scenarios/s12-long-agent-run.md website/scenarios/s20-web-search.md \
+  website/scenarios/s23-upgrade-day.md website/design/plan.md changelog.md README.md
+git commit -m "docs(plan): 🤖 close Phase 1: scenario statuses and the forward look" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+*(S12 added to the `git add` 2026-09-28, from Phase 1's council.)*
+
+***
+
+## ⇄ Switch point — Spark → Mac
+
+- [x] The Spark session runs leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`;
+  then **Dan OKs the push** of the Spark's commits (`git push`). On the Mac:
+  `git switch phase-1 && git pull`. *(Done 2026-09-29: the Spark pushed `b0a6b52`, CI green, and
+  the Mac pulled it.)*
+
+***
+
+### Task 18 [Mac]: CI renders the registry, the site builds, the merge
+
+The Mac does what only it can (CLAUDE.md, *Work runs on the Spark by default*): a change under
+`.github/workflows/`, which the Spark's repository-only token can't push, the merge that brings it
+into `main` included; the site render, until Quarto is on the Spark; and the Mac check of what the
+Mac also runs, the Makefile's shared targets and the leak hooks, on bash 3.2 and GNU make 3.81.
+
+**Files:**
+
+- Modify: `.github/workflows/ci.yml` (CI renders the real registry); `README.md` (the MacBook's
+  tools, under §Current state)
+
+- [x] **Step 1: The Mac's tools** — README §Current state, *The MacBook — `heartsbane`*: the *The
+  repo's tools* bullet gains Homebrew's coreutils, at the version `brew list --versions coreutils`
+  prints (`brew install coreutils` first if it prints nothing), with the day you checked it: the
+  bullet's "(all as of 2026-09-24)" dates only the tools it already lists. The install-units tests
+  run coreutils' `timeout`, and fail on a Mac without it. *(Done 2026-09-29: coreutils 9.12, already
+  installed.)*
+
+```bash
+git add README.md
+git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-units tests run" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [x] **Step 2: CI renders the real registry** — add to `.github/workflows/ci.yml`'s `tests` job,
+  after its `spark docs check-scenarios` step, the step Task 6 was written with:
+
+```yaml
+      - run: uv run --frozen --project spark spark render --out /tmp/rendered
+```
+
+  Run it as CI will, into a fresh folder: `uv run --frozen --project spark spark render --out
+  "$(mktemp -d)"` prints `render: 8 files → …`. *(Done 2026-09-29: it did, on the Mac.)*
+
+- [x] **Step 3: The Mac check and the site** — `make test lint docs`. Expected: all pass, on bash
+  3.2 and GNU make 3.81, and `make docs` renders with no warnings: the How-to listing shows
+  deploy.md and pi.md, and *In order* lists deploy.md as step 7 (Task 9). *(Added 2026-09-28, from
+  Phase 1's council: and pi.md as step 8, since its section on `agent`'s secrets guard comes before
+  `agent`'s key.)* A failure here that the Spark didn't see is a Mac difference: fix it here, with
+  its test, and in this plan's listing.
+
+  *Added 2026-09-26, from Tasks 2 and 7's reviews:* this is the first run of Phase 1's whole suite
+  on the Mac; until now it ran only on the Spark and in ubuntu:24.04. Four things there have never
+  run on a Mac. Every test runs in an environment it builds (`spark/tests/conftest.py`): the
+  shell's `PATH`, its `LANG` if it has one, and a new, empty `HOME`, so no `TMPDIR`, and a
+  temporary folder can land under `/tmp`, which macOS links to `/private/tmp`. The tests that run
+  git and uv do so with that empty `HOME`, and the Mac's `/usr/bin/git` is Xcode's shim. The tests
+  that run `make hooks` and bootstrap passed on the Mac in Phase 0, but now run in that
+  environment, on bash 3.2 and GNU make 3.81. And `write_hold` flushes its folder after the rename
+  (`os.fsync` on the folder), which is unverified on APFS. *(Added 2026-09-26, from Tasks 9 and
+  10: so do the tests of what those tasks added to the Makefile and bootstrap — the `sudo -k` traps,
+  `make pull`'s one-line recipe, `make logs`' refusal, the doctor recipe's check of its output and
+  the tmux test's `make -s -n -C`, which make 3.81 answers with directory lines — and bootstrap's
+  `--install-units` and `--upgrade-gpu` modes, on bash 3.2, whose stand-ins lean on shell details
+  that version may read differently: `FAKE_DPKG_QUERY`'s `${format//"$abbrev"/"$st "}` relies on
+  quote removal in a pattern substitution's replacement.)*
+
+  *(Done 2026-09-29, on bash 3.2.57 and GNU make 3.81: 906 passed, none skipped; lint clean; the
+  site rendered with no warnings, the How-to listing shows deploy.md and pi.md, and* In order
+  *lists them as steps 7 and 8. No Mac difference turned up, so nothing here changed.)*
+
+- [x] **Step 4: Commit**
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci(repo): 🤖 render the real registry in CI" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [x] **Step 5: CI sees it on the branch first** — leak-guards.md's
+  [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`; then
+  **Dan OKs the push** (`git push`). `gh run watch`: CI is green, the new render step included. Only
+  then the merge, so the step's first run isn't on `main`. *(Done 2026-09-29. GitHub refused the
+  first push: the Mac's gh login, which git pushes through, lacked the `workflow` scope that a
+  change under `.github/workflows/` needs. Dan ran `gh auth refresh -h github.com -s workflow`, and
+  the push went through; CI was green, its render step printing `render: 8 files`.)*
+
+- [ ] **Step 6: Merge and push** — `make test lint docs` passed in Step 3; then:
+
+```bash
+git switch main && git pull
+git merge --no-ff phase-1 -m "chore(repo): 🤖 merge phase 1" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+git runs `pre-merge-commit` for a merge it completes by itself, which `.githooks` doesn't define,
+not pre-commit. So leak-guards.md's
+[*Before every push*](../how-to/leak-guards.md#before-every-push) comes next, with `main` as
+`<branch>`. Then **Dan OKs** `git push origin main`. The merge brings Step 2's workflow change into
+`main`, which is why it is the Mac's; Step 5 saw CI green with it first.
+
+*(Added 2026-09-28, from Phase 1's council:* after the merge, the clones on the Spark still track
+`phase-1`, and `agent`'s pulls stop bringing anything new. **On the Spark**, as you and then **as
+`agent`**, each clone moves to `main`: `git switch main && git pull`. README's `agent` bullet,
+which says its clone is of `phase-1`, changes with it.)*
+
+- [ ] **Step 7 [Mac]: Dependabot's PRs** — *(added 2026-09-28, Dan's decision at Task 17)* once
+  `main` has Phase 1, merge Dependabot's PRs #1–#3 on github.com, one at a time, each only once its
+  CI is green: they change `.github/workflows/`, which is why they're the Mac's, and they are
+  merged or rebased, never squashed ([Updates](../how-to/updates.md)). Two are major versions of
+  GitHub Actions (setup-uv and checkout); #3 raises a floor in `spark/pyproject.toml`. Then **on
+  the Spark**, `git pull`.
 
 ***
 
@@ -4771,9 +7594,12 @@ git commit -m "docs(machine): 🤖 record the Phase 1 drills" \
   held reload was refused, `spark status` said why, and `--release` let it load again.
 - [ ] A load that didn't fit was refused with needed vs available, `spark status` said why, and
   nothing was unloaded.
-- [ ] A fresh clone plus `make bootstrap` and `make apply` changed nothing.
+- [ ] A fresh clone plus `make bootstrap` and `make apply` changed nothing, and
+  `make install-units-dry-run` found nothing to install: root runs only root's own copies of what
+  the repo describes.
 - [ ] After a routine `apt upgrade` and after a reboot, the stack served again without a hand on it,
   and `make doctor` passed (S23).
-- [ ] `make test lint docs` is clean and CI is green; README §Current state and the changelog are
-  true; the council review is done and the forward look applied; `phase-1` is merged to `main` with
-  Dan's OK.
+- [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac (Task 18), and CI
+  is green, its render step included; README §Current state and the changelog are true; the council
+  review is done and the forward look applied; `phase-1` is merged to `main` with Dan's OK
+  (Task 18).

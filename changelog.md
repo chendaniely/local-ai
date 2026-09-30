@@ -8,6 +8,334 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-09-28 — Phase 1's council fixes deployed (Phase 1, Task 17)
+
+**Deployed** by Dan, **on the Spark**, at 21:19: `make apply` staged the new config and the two
+units (comment-only changes), `make install-units` installed root's copies, and `make apply-now`
+restarted llama-swap and the brake. What changed: the engines run with `--no-slots` and
+`--no-webui`; a registry's `args` may set only listed engine options; `spark launch` gives the
+resident engines `oom_score_adj` 900 and on-demand ones 1000; the coder keeps at most 8 context
+checkpoints; the footprints are now 32, 8, 3 and 33 GiB (76 of 78); the brake's floor tolerance is
+1.0 GiB; and the brake checks at start, in a thread of its own, that llama-swap takes its key.
+llama-swap stays at its default logging (Dan's decision that evening, before the deploy).
+
+**Checked.** `make status`: "llama-swap took its key at 2026-09-28T21:19:22", the first time the
+brake unit's own key was seen to work. `make doctor`: 15 of 15, its `stack units` line covering
+that check. `ps`: the coder at `oom_score_adj` 1000 (`oom_score` 1354), the two residents loaded at
+900 (1286 and 1270), so the kernel would pick the coder first. Each engine now answers `/slots`
+with `501` and its web root with `404`. Dan's earlyoom dry run picked the coder's engine
+(`oom_score_adj` 1000, badness 1650) over the two residents, as the brake would.
+
+## 2026-09-28 — Every model at its full context (Dan's decision)
+
+**Deployed** by Dan, **on the Spark**, at 17:23: `make apply-now` restarted llama-swap and the
+brake. Every model now runs at its GGUF's own maximum context: 262,144 tokens for Gemma and the
+coder, and 32,768 for the embedding model. Gemma's two slots share one KV pool
+(`--kv-unified`) and keep their cache while idle (`--no-cache-idle-slots`). Each keeps at most 4
+context checkpoints (`--ctx-checkpoints 4`).
+
+**Checked the same evening.** Each engine logged its new context: Gemma `n_slots = 2,
+n_ctx_slot = 262144, kv_unified = 'true'`, the coder 262144 and the embedding model 32768.
+Cold loads took 24.7 GiB for Gemma, 6.3 for the embedding model and 29.8 for the coder. All were
+under the estimates (26 for Gemma before its checkpoints' 5, then 7 and 32), so the registry
+stays as it is. Gemma read a 125,951-token prompt in 66 s, about 1,900 tokens a second, and the
+coder a 116,302-token one in 72 s, about 1,600. The embedding model embedded 26,710 tokens,
+splitting them across micro-batches.
+
+**A long chat keeps its cache.** In a 126,000-token Gemma chat, each later turn re-read only its
+38 to 48 new tokens, in about 0.27 s against 66 s for the whole. That held after an Open
+WebUI-sized task call of 249 tokens, which went to Gemma's other slot. `MemAvailable` fell about
+0.9 GiB over seven turns. One turn missed its cache, because of the test: its 26-token task call
+matched the chat's slot. llama-server gives a new prompt the slot whose cached start matches more
+than 10% of it, and every Gemma prompt opens with the same few template tokens. So a very short
+new chat can take a long chat's slot, as it could before; Task 17 weighs a higher threshold.
+
+**The clients.** Pushed, then Dan ran `make clients` on the Mac, and `spark clients pi --write`
+ran as `agent`. Both pi configs now list Gemma and the coder at 262,144 tokens. In the web UI,
+checked in the Mac's browser, a chat's *Advanced Params* offer `max_tokens` and
+*Reasoning Effort*, and the admin's *Interface* settings have *Context Compaction*, which Dan
+keeps off.
+
+## 2026-09-28 — The Phase 1 drills (Phase 1, Task 16)
+
+**The brake, at raised thresholds (S05).** The Spark session loaded the coder and ran one brake
+tick against a copy of the registry whose thresholds sat just above the memory available: 65 GiB,
+against a warn line of 75, a brake line of 70 and a reserve of 71. The brake held new loads and
+unloaded the coder, the only on-demand model, at 65.3 GiB available. The two residents then
+loaded, Gemma and whisper, stayed (the embedding model wasn't loaded until Step 3), and
+`make status` read HOLDING. While the hold stood, the coder's start was refused with a `500`
+and `make status` named the hold. `make brake-release` released it, and the coder answered again.
+
+**Measured along the way** (`cosmicbboy-local-ai.md` §I, `brake.py`'s comments). The idle
+coder's process was gone 0.6 s after the tick began; the brake waits up to 15 s. While the brake
+held, with 93 GiB available, `MemAvailable` moved within ±0.02 GiB poll to poll for the first 15 s,
+while nothing generated. Then a Gemma session generated, and it fell in steps up to 0.58 GiB: 1 poll
+in 239 moved more than the 0.5 GiB tolerance. That step matches one of Gemma's context checkpoints
+by arithmetic (about 0.59 GiB), so it was probably an allocation, not noise; not verified. And
+v257 stops an engine that is still starting as soon as it's asked, failing the request that
+started it. Whether the 15 s and the 0.5 GiB stay is for Task 17 to decide.
+
+**A load that doesn't fit is refused, and nothing is unloaded (S03, previewed).** The three
+residents were loaded, and a throwaway process held memory down to about 45 GiB available: above
+the brake's warn line, so no hold. The coder's load was refused, and `make status` said why: it
+needs 29.0 GiB, 45.5 GiB was available, and the 24 GiB reserve left it 7.5 GiB short. Nothing was
+unloaded. The engines' `oom_score` were Gemma 1370, the embedding model 1336 and whisper 1334,
+against the hog's 860: the kernel and earlyoom would pick an engine first. Swap barely moved: at
+most 312 KiB used, 312 KiB swapped out, none in. Once the hog was killed, the coder loaded.
+
+**A fresh clone reproduces the deploy.** Dan, on the Spark: a fresh clone of `phase-1` in a
+temporary folder, then `make bootstrap`, which finished and restarted none of the stack's units.
+`make apply` printed `apply: nothing to change` and `make install-units-dry-run` found nothing to
+install: the running stack, root's copies included, is what the repo describes.
+
+**A routine upgrade.** Dan, on the Spark: `sudo apt update && sudo apt upgrade` at 13:16. apt moved
+21 packages, among them apparmor, libexpat1, libevent, python3-requests, gnome-shell, FreeRDP's
+libraries and linux-firmware-amd-graphics. needrestart restarted avahi-daemon, cups, cups-browsed,
+lldpd and polkit, deferred dbus, and left the `local-ai-*` units alone, as the repo's override
+tells it to. llama-swap, the brake and the web services kept their start times, all four models
+stayed loaded, and `make doctor` passed 15 of 15. **This half proves less than it could:** apt
+moved none of `libc6`, `libstdc++6`, `libgcc-s1` or `libgomp1`, and neither the engines nor
+llama-swap links a library it did move (`ldd`). It is repeated after the next upgrade that moves
+`libc6` or `libstdc++6`. Docker didn't move either, so the check that an upgrade leaves the web
+services running waits for an upgrade that moves `docker-ce` or `containerd.io`.
+
+**A reboot (S23).** Dan: `sudo reboot`. The box was back at 13:21. llama-swap and the brake went
+active at 13:21:51 and the web services at 13:21:53, with no unit started by hand. `make status`
+showed nothing loaded, since llama-swap preloads nothing, and no hold. `make doctor` passed 15 of
+15, loading the embedding model on the way. `tailscale serve` survived: the web UI loaded and
+answered on Dan's phone over the tailnet.
+
+## 2026-09-28 — pi on the Mac and for `agent` (Phase 1, Task 15)
+
+**The Mac's pi** was installed at 0.85.1 (`website/how-to/pi.md`), with `make clients` and
+`make tunnel`. Through the tunnel, the coder, `qwen3.6-35b-a3b`, served a real pi task. pi 0.85.1
+expands `"${SPARK_API_KEY}"` in its `models.json`, so no key's value sits in either machine's
+pi config. Homebrew's pi, 0.87.1, has since taken over the Mac's `pi` command, and it stays:
+Dan's decision (plan.md's Revisions).
+
+**`agent`'s Claude Code got the secrets guard first,** before `agent` held any key: the same hook
+script and 35 deny rules as Dan's Spark session, paths moved to `/home/agent`, and a `CLAUDE.md`
+holding only Dan's secrets rule. Checked: `agent`'s `claude` refused an existence check on its
+secrets file.
+
+**Node 22,** by Dan, **on the Spark**: he read NodeSource's `setup_22.x` script, then ran it with
+sudo and installed `nodejs` 22.23.3-1nodesource1, with npm 10.9.9. The repository is in
+`/etc/apt/sources.list.d/nodesource.sources`, so apt updates it. Ubuntu's own `nodejs` is 18.19,
+and pi 0.85.1 needs Node 22.19 or later.
+
+**`agent`'s key and tools.** Root read only `agent`'s llama-swap key from the service secrets and
+wrote it, as `agent` and never displayed, into `agent`'s `~/.secrets` as `SPARK_API_KEY`;
+`agent`'s `~/.bashrc` loads it first. As `agent`: uv 0.12.19, from its installer, which takes the
+latest (the repo records 0.12.18), and pi 0.85.1, both in `~/.local/bin`, and a clone of `phase-1`
+in `~/work/local-ai`, used only for `spark clients`. uv built that clone's environment on its own
+CPython 3.12.14, and `spark clients pi --write` wrote pi's `spark` provider. Checked: after a new
+login, the key loads; pi, in tmux, ran a task on the coder (requests at 12:40–12:43, all `200`);
+the session survived a detach, a logout and a reattach; and `claude` starts logged in in a second
+window.
+
+**An update took pi to 0.87.1,** the newest release and the last in the range reported to crash
+llama-server. `agent`'s pi went back to 0.85.1, and `pi.md` now says to check the version after any
+update. The Mac's stays on Homebrew's 0.87.1. Its requests at 12:17–12:18 crashed no engine; its
+four `400`s were a 45,822-token conversation sent to Gemma, whose requests top out at 16,384
+tokens.
+
+## 2026-09-28 — The web UI on the phone (Phase 1, Task 14)
+
+**Served on the tailnet.** Dan, **on the Spark**:
+`sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`. Open WebUI answers over HTTPS on the
+Spark's tailnet name, on Dan's phone at home and on mobile data; the address stays out of this
+repo. Dan logged in with his admin account. A private tab offers no sign-up at all, and the API
+refuses one: a sign-up request to `/api/v1/auths/signup` on the Spark got `403`. The embedding
+and speech-to-text models are hidden from the chat picker.
+
+**S09 and S20 passed on 2026-09-28**, on the phone: chat, dictation and voice mode (about 0.25 s
+per transcription), a photo question once the fix below was in, and web search answered with its
+sources.
+
+**A photo aborted Gemma's engine,** big or small, and so did every later message in that chat,
+since each resends the photo. The engine died on `GGML_ASSERT` "non-causal attention requires
+n_ubatch >= n_tokens" in `llama-context.cpp`, reached from `mtmd_helper_decode_image_chunk`.
+llama.cpp b11146 gives a Gemma 4 image up to 1120 tokens, about 2.6 MP, scaling bigger images
+down to that, and decodes an image in one micro-batch, which was the default 512. The registry now
+gives Gemma `--ubatch-size 2048` and `--image-max-tokens 1120`. Dan deployed it with
+`make apply-now` at 02:30: llama-swap restarted, so every model stopped and loaded again on its
+next request. A 3000×2000 test image then came to 1,105 prompt tokens and was described in 4 s.
+
+**Gemma's footprint,** measured again: 18.7 GiB on a cold load, against 17.6 at a micro-batch of
+512, and about 1.2 GiB more once it has read its first image. So the registry's estimate rose from
+19 to 20 GiB. It reaches the box with the next `make apply`, which restarts only the brake.
+
+## 2026-09-28 — The stack runs (Phase 1, Task 13)
+
+**On the Spark**, in a new Claude session. Dan had logged out and back in, so the session had his
+llama-swap key: he sent it from the Mac, and `~/.bashrc` loads it. The session started llama-swap
+and the brake at 01:17. It started the web services at 01:20, once Dan's tunnel from the Mac was
+open, because the first account made in Open WebUI becomes its admin. Dan made his account at
+once, and Open WebUI now reports sign-up closed. Everything listens on 127.0.0.1: llama-swap on
+9100 (`/health` answers without a key, `/running` refuses a call without one), the engines on
+5800–5803, Open WebUI on 3000, SearXNG on 8888.
+
+**First loads,** one request per model from nothing loaded. `MemAvailable` is given before each
+request and at its lowest while it ran. Beforehand, `free -g` showed 70 GiB free and 48 GiB of
+page cache, left by the pull.
+
+| Model | Load and answer | Before → lowest (GiB) | Footprint (GiB) | Registry estimate |
+|---|---|---|---|---|
+| `gemma-4-26b-a4b` | 9 s | 117.8 → 100.2 | 17.6 | 19 |
+| `qwen3-embedding-0.6b` | 2 s | 100.2 → 96.9 | 3.3 | 1.5, raised to 4 |
+| `whisper-large-v3-turbo` | 2 s | 96.9 → 94.4 | 2.5 | 3 |
+| `qwen3.6-35b-a3b` | 10 s | 94.4 → 68.0 | 26.4 | 29 |
+
+The embedding had 1024 dimensions. Whisper transcribed the JFK sample on the GPU, with word
+timings. Both chat models think by default, with no limit. On the test's 512-token cap each spent
+every token thinking and returned no text; given room, Gemma answered after about 2,200 tokens.
+They generated at 78 tokens/s (Gemma) and 93 (the coder). Each reply names its model by the GGUF
+file's path, which is what llama-server does without `--alias`.
+
+**What runs, as whom.** Each engine runs as `spark`, with `oom_score_adj` 1000. Their RSS was 1.6,
+0.6, 0.4 and 2.1 GiB (Gemma, embeddings, whisper, coder). `nvidia-smi`, which does report
+per-process memory here, gave 16.3, 2.8, 2.0 and 24.5 GiB. Their `oom_score`s were 1340, 1336, 1334
+and 1343. So a model's GPU memory doesn't count toward its engine's RSS. Dan's earlyoom dry run
+would kill Gemma's engine. That's an engine, as intended, but a resident model ahead of the
+on-demand coder, the opposite of the brake's order. By then Gemma's RSS had grown to 5.7 GiB.
+`make doctor`: 15 of 15. llama-swap's and the pull's journals hold no permission error. SearXNG
+searches: 26 results, then 35 once warm; duckduckgo times out, taking 2.7 s from here against a
+3 s limit. Its log holds no permission error, and its two ownership warnings are expected.
+
+**Two changes at 01:51.** Dan ran `make apply`, `make install-units` and `make apply` again. The
+embedding model's `footprint_gib` rose from 1.5 to 4. And Open WebUI's task calls now run without
+thinking: `TASK_MODEL_PARAMS` in root's Compose file, Dan's decision (plan.md's Revisions). The
+brake and the web services restarted; llama-swap and the loaded models didn't. A new chat's title
+then came back in 1.2 s, 997 bytes, while the chat itself streamed 7.4 s of thinking and answer.
+
+## 2026-09-27 — Deployed, and the models pulled (Phase 1, Task 12)
+
+**Bootstrap re-run,** by Dan, **on the Spark**, from the clone on `phase-1`:
+`make bootstrap-dry-run`, then `make bootstrap`. `/var/lib/local-ai` is now root's
+(`root:root 755`), and `spark` has two cache folders, `/var/lib/local-ai/cache` and
+`/var/lib/local-ai/cuda-cache` (`spark:spark 750`). earlyoom avoids `sshd.*`:
+`/etc/default/earlyoom` matches the repo's. needrestart's override is in
+`/etc/needrestart/conf.d/local-ai.conf`. The polkit rule is the narrowed one: `spark-admin` starts,
+stops and restarts the four `local-ai-*` units, by exact name, and nothing more. It has no
+`reload-daemon`, which `pkcheck` confirmed by answering `2`. The GPU set stayed held, 151 packages
+of 151, and upgrade day's release list is exactly the hold list. `make doctor`: 10 of 15, its three
+bootstrap lines now passing; the other five waited for the deploy.
+
+**The GRUB check,** Dan's, with sudo (`updates.md` step 5): passed. The newest kernel is
+`7.0.0-1019-nvidia`, and entry 0's `linux` line boots it. The `default=` lines are the stock two,
+so GRUB starts entry 0, and `grub-editenv list` is empty. The installed kernels are
+`linux-image-6.11.0-1016-nvidia` and `linux-image-7.0.0-1019-nvidia`, each named with the version
+`uname -r` prints.
+
+**Root's own copies.** Dan ran `make apply`, which staged them, and `make install-units`. The four
+units are in `/etc/systemd/system/local-ai-*.service` and the Compose project in
+`/etc/local-ai/compose`, `root:root`, files 644 and folders 755. llama-swap, the brake and the web
+services are enabled; the pull unit is `static`. A second `make apply` deployed `llama-swap.yaml`,
+`models.yaml` and the app in `/opt/local-ai/app`, and started nothing.
+
+**The models.** `make pull` ran 11 min 38 s as `spark` and downloaded five files, about 36 GiB,
+into `/var/lib/local-ai/hf`. Each is at its pinned revision and at the path the config gives its
+engine, and none of the repos is gated. 752 GiB of disk is left. The pull's cgroup peaked at
+39.9 GiB, which is page cache: `free -g` then showed 43 GiB of it (plan.md, *Page cache and the
+launch check*).
+
+## 2026-09-27 — The engines, at their pins (Phase 1, Task 11)
+
+Installed **on the Spark**, as Dan, following Task 11 of
+[the Phase 1 plan](website/design/phase-1.md). Nothing runs them yet; Task 12 deploys the config
+and starts the stack. The driver was **580.178.04** and `nvcc` **13.0**, the GPU set as bootstrap
+held it.
+
+- **llama-swap v257** → `/opt/local-ai/bin/llama-swap/v257/llama-swap`. The release tarball
+  matched the checksum already pinned in `stack/versions.yaml`; `-version` reports `v257 (f00d375)`.
+- **llama.cpp b11146**, the prebuilt `ubuntu-cuda-13.4-arm64` build and its `cudart-` companion,
+  → `/opt/local-ai/bin/llama.cpp/b11146/`. *(Added 2026-09-28, from Phase 1's council: b11146 is
+  the build that llama.cpp's formal release v0.5.0, of 2026-09-23, names in its `nightly-tag.txt`.
+  GitHub marks every bNNNNN build a prerelease.)* Both tarballs matched the sha256 digests GitHub
+  publishes for the release's assets; the binaries' tarball is the pin
+  (`sha256:4e00496a…`, in full in `stack/versions.yaml`). `--version` reports build 11146, commit
+  `7fe450e19`; `--list-devices` shows the GB10 as `CUDA0`. `libggml-cuda.so` loads the CUDA
+  runtime (it reports 13.4) and cuBLAS copied beside it; of its CUDA libraries, only the driver's
+  `libcuda.so.1` comes from the system. Dan then checked that `agent` reaches the GPU without
+  docker: `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices` lists the
+  same `CUDA0`, the GB10.
+  `cuobjdump --list-elf libggml-cuda.so` lists `sm_86`, `sm_89`, `sm_120a` and **`sm_121a`** —
+  native code for this GPU, so a first load needn't compile PTX.
+- **whisper.cpp v1.9.4**, built from source (there's no CUDA prebuilt) at commit `927cfce3…`
+  (the pin, in full in `stack/versions.yaml`), → `/opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server`.
+  CMake ran with `-DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=121a-real -DBUILD_SHARED_LIBS=OFF`
+  and reported `Using CMAKE_CUDA_ARCHITECTURES=121a-real`, with no warning about an unsupported
+  architecture (its three warnings were no ccache, `-mcpu=native`, and no NCCL, which matters
+  only with several GPUs). Checked with `cuobjdump --list-elf` on `whisper-server`: it lists
+  **`sm_121a`** alone, and `--list-ptx` lists nothing. That it *runs* on the GPU is Task 13's
+  check. Unlike llama.cpp it uses the **system's CUDA 13.0 runtime**
+  (`/usr/local/cuda-13.0`, found through `ld.so.conf` and the binary's runpath), so it moves with
+  the held GPU set: `updates.md`'s upgrade-day check (step 7) now checks that it still finds its
+  libraries, and says to rebuild it if not.
+  The clone stays in `~/src/whisper.cpp`; its `samples/jfk.wav` is Task 13's speech test.
+
+Each engine's path in `stack/models.yaml` names the version pinned in `stack/versions.yaml`
+(checked by hand; `spark render` doesn't cross-check them). *(Since 2026-09-28, from Phase 1's
+council, a test on the repo's registry checks it: `spark/tests/test_stack_registry.py`.)*
+
+## 2026-09-26 — `spark/`'s environment on uv's own Python
+
+The clone's `spark/.venv` had been built on Ubuntu's Python 3.12.3. `spark/pyproject.toml` now
+sets `python-preference = "only-managed"`, so uv uses only its own interpreters. uv installed
+CPython 3.12.14 for Dan, which also linked `python3.12` in `~/.local/bin`, and the environment was
+rebuilt on it. **On the Spark**, in the clone:
+
+```bash
+uv python install 3.12
+rm -rf spark/.venv && uv sync --frozen --project spark
+```
+
+The tests, lint and the leak check then passed on it.
+
+## 2026-09-25 — Before Phase 1: keys-only SSH, a GitHub token for this repo, the session's guard
+
+Phase 0 left these for the box
+([its retrospective](website/design/phase-0-retro.md#carried-to-phase-1)), and Phase 1's switch
+point wants them before anything faces the network.
+
+**Keys-only SSH**, following [SSH from the Mac](website/how-to/ssh.md#keys-only), steps 1 to 5.
+The drop-in `/etc/ssh/sshd_config.d/10-local-ai.conf` matches the runbook's byte for byte. sshd
+accepts keys only, and `agent`'s sessions never get a forwarded SSH agent. Step 4's checks passed
+from the Mac: the three aliases logged in with keys, over the tailnet and the LAN, and a login
+without a key ended in `Permission denied (publickey).` The one-time public IPv6 check is done
+too; its result goes in the vault.
+
+**GitHub: a token for this repository only**, following
+[The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only).
+`gh` holds a fine-grained token for `chendaniely/local-ai` alone. But the clone's `origin` was
+SSH, and the Spark's SSH key (`~/.ssh/id_ed25519`) was on Dan's GitHub account, so `git push`
+went around the token and could reach every repository Dan can. `origin` moved to https, where
+`gh` hands git the token. **On the Spark:**
+
+```bash
+git -C ~/git/hub/local-ai remote set-url origin https://github.com/chendaniely/local-ai.git && gh auth setup-git
+```
+
+Checked on the Spark after the switch: a dry-run push to this repository passes, and one to
+another of Dan's repositories is refused with a 403. Dan then removed the Spark's key from Dan's
+GitHub account, on github.com, and `ssh -T git@github.com` from the Spark now ends in
+`Permission denied (publickey).`
+
+**The Spark's Claude session** has the Mac's global rules and secrets guard
+([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3):
+`~/.claude/CLAUDE.md` and `~/.claude/hooks/block-secret-access.sh` match the Mac's copies by
+SHA-256, `~/.claude/settings.json` carries the hook and 35 deny rules, and the session is refused
+`test -e ~/.secrets && echo present || echo absent`.
+
+**Recorded:** Tailscale **1.102.4**, the kernel's release string `7.0.0-1019-nvidia`, and
+OpenSSH **1:9.6p1-3ubuntu13.19** (Ubuntu's `openssh-server`). **On the Spark:**
+
+```bash
+tailscale version
+uname -r
+dpkg-query -W openssh-server
+```
+
 ## 2026-09-24 — Phase 0 bootstrap: headless, users, firewall, tailnet, secrets
 
 **Wired NIC on `.201`**, bounced from a session on the Wi-Fi address:

@@ -1,0 +1,54 @@
+budget: {allocatable_gib: 102, reserve_gib: 24}
+brake: {warn_gib: 28, brake_gib: 20, poll_ms: 250}
+engines:
+  llama.cpp: /opt/local-ai/bin/llama.cpp/b11146/llama-server
+  whisper.cpp: /opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server
+models:
+  vision-chat:
+    capability: chat
+    roles: [small, vision]
+    resident: true
+    engine: llama.cpp
+    source: {repo: example-org/vision-GGUF, revision: "1111111111111111111111111111111111111111", file: vision.gguf, mmproj: vision-mmproj.gguf}
+    ctx: 32768
+    parallel: 2
+    cache_ram_mib: 1024
+    footprint_gib: 18
+    footprint_measured: false
+    args: [--load-mode, none]
+  embed:
+    capability: embeddings
+    roles: [embed]
+    resident: true
+    engine: llama.cpp
+    source: {repo: example-org/embed-GGUF, revision: "2222222222222222222222222222222222222222", file: embed.gguf}
+    ctx: 8192
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 1.5
+    footprint_measured: false
+    args: [--pooling, last, --ubatch-size, "8192"]
+  stt:
+    capability: transcription
+    roles: [stt]
+    resident: true
+    engine: whisper.cpp
+    source: {repo: example-org/whisper, revision: "3333333333333333333333333333333333333333", file: whisper.bin}
+    ctx: 1
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 2.5
+    footprint_measured: false
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp]
+  coder:
+    capability: chat
+    roles: [coder]
+    resident: false
+    engine: llama.cpp
+    source: {repo: example-org/coder-GGUF, revision: "4444444444444444444444444444444444444444", file: coder.gguf}
+    ctx: 131072
+    parallel: 1
+    cache_ram_mib: 2048
+    footprint_gib: 28
+    footprint_measured: false
+    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]

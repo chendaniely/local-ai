@@ -5,15 +5,16 @@ description: "Install, MagicDNS and HTTPS, the ACL grants that act as the firewa
 
 ## Install and join
 
-On the Spark:
+**On the Spark:**
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
 
-Then, in the admin console: **Machines** → the Spark → **Disable key expiry**. A headless server
-whose key expires silently drops off the tailnet.
+It prints a login URL: open it in a browser on the Mac and log in. Then, in the admin console:
+**Machines** → the Spark → **Disable key expiry**. A headless server whose key expires silently
+drops off the tailnet.
 
 ## Turn on MagicDNS and HTTPS
 
@@ -56,7 +57,7 @@ restricts anything. Replace it with the grants below, which keep today's access 
    ["*"]}`. `autogroup:member` doesn't include people you've shared devices with; give them their
    own grant if they need one. LiteLLM's port joins the Spark's grant in Phase 3.
 3. **Save.** The editor refuses a policy with a syntax error.
-4. **Tag the Spark**, on the Spark:
+4. **Tag the Spark, on the Spark:**
 
    ```bash
    sudo tailscale up --advertise-tags=tag:spark
@@ -82,7 +83,7 @@ the LAN.
 **When a device like that is needed from away**, add a subnet route for that device's address only,
 not the whole LAN, so nothing else on the home network becomes reachable through the tailnet:
 
-1. On one always-on home Linux machine that runs Tailscale (not the Spark, which stays
+1. **On that home Linux machine** (always-on, running Tailscale — not the Spark, which stays
    single-purpose), allow forwarding and advertise the one address:
 
    ```bash

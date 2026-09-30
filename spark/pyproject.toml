@@ -3,7 +3,7 @@ name = "spark"
 version = "0.1.0"
 description = "Control tool for the brightroar model-serving stack"
 requires-python = ">=3.12"
-dependencies = ["pyyaml>=6.0.2"]
+dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34,<2"]
 
 [project.scripts]
 spark = "spark.cli:main"
@@ -20,6 +20,12 @@ packages = ["src/spark"]
 
 [tool.uv]
 required-version = ">=0.12.18"
+# uv's own Pythons only, never the system's, so every machine runs the same interpreter build.
+python-preference = "only-managed"
+# A release gets locked only once it is seven days old, a rolling window (Dan's decision,
+# 2026-09-27): a bad or compromised upload is most often caught in its first days, and the pull
+# runs these packages as `spark`, with network access. .github/dependabot.yml waits as long.
+exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

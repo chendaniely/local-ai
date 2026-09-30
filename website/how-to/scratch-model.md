@@ -3,6 +3,13 @@ title: "A scratch model to tinker with"
 description: "Temporary: build llama.cpp in your home folder, serve one model, and use it from the Mac through an SSH tunnel — until Phase 1's stack replaces it."
 ---
 
+*(Added 2026-09-28, from Phase 1's council: Phase 1's stack now serves models, so this page's
+premise is gone. A scratch model loads around the launch check, which nothing may do while the
+stack's models share the memory. Until Phase 2's `spark try` replaces it, use it only with
+llama-swap stopped, **on the Spark** `systemctl stop local-ai-llama-swap`, which stops every
+model. The brake can't unload a scratch model: if memory falls below its line, it holds the
+stack's loads until `make brake-release`, and earlyoom stays the only net.)*
+
 This is **not the stack**. It is a model you run by hand to tinker with while Phase 1 is being
 built. It lives in `~/scratch`, runs as you, and needs no sudo and no new packages. Delete it when
 Phase 1 serves models ([Clean up](#clean-up)).
@@ -26,6 +33,8 @@ Two ways to serve, and one at a time, never both:
   whose FP8/NVFP4 version only vLLM serves well. It needs `sudo docker`.
 
 ## 1. Build llama.cpp
+
+**On the Spark:**
 
 ```bash
 mkdir -p ~/scratch && cd ~/scratch
@@ -52,6 +61,8 @@ Hugging Face's CLI runs through uv, so nothing gets installed. Pick one:
 | Qwen3-8B | `Qwen3-8B-Q4_K_M.gguf` from `Qwen/Qwen3-8B-GGUF` | ~5 GB | a quick first try |
 | Gemma 4 26B-A4B | `gemma-4-26B-A4B-it-Q4_0.gguf` from `ggml-org/gemma-4-26B-A4B-it-GGUF` | ~14 GB | one of Phase 1's real models |
 
+**On the Spark:**
+
 ```bash
 mkdir -p ~/scratch/models
 uvx --from huggingface_hub hf download Qwen/Qwen3-8B-GGUF Qwen3-8B-Q4_K_M.gguf --local-dir ~/scratch/models
@@ -63,6 +74,8 @@ Neither repository is gated, so no token is needed. Your Hugging Face token stay
 secret file.
 
 ## 3. Serve it
+
+**On the Spark:**
 
 ```bash
 ~/scratch/llama.cpp/build/bin/llama-server \
@@ -77,7 +90,8 @@ secret file.
 - `--alias` is the model name clients see and send. Without it, the name is the file's full path.
 - `--jinja` uses the model's own chat template, which tool-calling clients such as pi need.
 
-Leave it running in its tmux window (detach with Ctrl-b d). To check it from a second window:
+**On the Spark**, leave it running in its tmux window (detach with Ctrl-b d). To check it from a
+second window:
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/models | jq -r '.data[].id'   # qwen3-8b, the alias
@@ -118,14 +132,14 @@ its arm64 build were checked on 2026-09-25.
 
 Stop any llama.cpp server first, so the two never share memory.
 
-**B1. Pull the image** (about 11 GB compressed, public, no NGC login needed):
+**B1. On the Spark, pull the image** (about 11 GB compressed, public, no NGC login needed):
 
 ```bash
 sudo docker pull nvcr.io/nvidia/vllm:26.08-py3
 ```
 
-**B2. Save the compose file.** vLLM uses a model's original Hugging Face repo (safetensors), not
-GGUF. Everything you're likely to change is in `x-settings` at the top:
+**B2. On the Spark, save the compose file.** vLLM uses a model's original Hugging Face repo
+(safetensors), not GGUF. Everything you're likely to change is in `x-settings` at the top:
 
 ```bash
 mkdir -p ~/scratch/vllm && nano ~/scratch/vllm/compose.yaml
@@ -186,7 +200,7 @@ services:
 
 `sudo docker compose config` (in that folder) checks the file without starting anything.
 
-**B3. Serve it:**
+**B3. On the Spark, serve it:**
 
 ```bash
 cd ~/scratch/vllm
@@ -195,7 +209,7 @@ sudo docker compose up            # stays in the foreground; Ctrl-C stops it
 ```
 
 Startup takes a few minutes: download, load, then compile. It is ready when the log says
-`Application startup complete`. Check it from another window:
+`Application startup complete`. **On the Spark**, check it from another window:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/models | jq -r '.data[].id'   # qwen3-8b
@@ -208,7 +222,8 @@ To switch models, edit `x-settings` and run `sudo docker compose up` again.
 `ssh -N -L 8000:127.0.0.1:8000 brightroar`, then base URL `http://localhost:8000/v1`. vLLM has no chat
 page, so use a client.
 
-**B5. Stop it:** Ctrl-C, or `sudo docker compose down` in `~/scratch/vllm`.
+**B5. On the Spark, stop it:** Ctrl-C where `sudo docker compose up` runs, or
+`sudo docker compose down` in `~/scratch/vllm`. **On the Mac**, Ctrl-C closes B4's tunnel.
 
 ## What you can run
 
@@ -223,8 +238,8 @@ with. To switch, restart it with another file ([Switch models](#switch-models)).
   DeepSeek, GLM, Phi. A brand-new one may need a newer llama.cpp. If loading fails with "unknown
   architecture", run `git pull` in `~/scratch/llama.cpp` and repeat step 1's two `cmake` lines.
 - **Gated models** (some Llama, Gemma and Mistral repos) need their license accepted on the
-  model's page, and your token for the download. Give the token for that one command only, rather
-  than `hf auth login`, which saves it in a file:
+  model's page, and your token for the download. **On the Spark**, give the token for that one
+  command only, rather than `hf auth login`, which saves it in a file:
 
   ```bash
   read -rsp "HF token: " HF_TOKEN; echo; export HF_TOKEN
@@ -278,7 +293,7 @@ model at a time.
 Do this when Phase 1's stack serves models, or any time you're done with scratch. Each step says
 where it runs.
 
-**1. Stop the server (Spark).** Press Ctrl-C in its tmux window. If you've lost track of it:
+**1. On the Spark, stop the server.** Press Ctrl-C in its tmux window. If you've lost track of it:
 
 ```bash
 pkill -u "$USER" -x llama-server
@@ -286,7 +301,7 @@ pgrep -a llama-server || echo "no server running"
 tmux kill-session -t scratch 2>/dev/null
 ```
 
-**2. Check that the memory came back (Spark):**
+**2. On the Spark, check that the memory came back:**
 
 ```bash
 free -g                                                               # available back near 118
@@ -297,14 +312,15 @@ nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader   # print
 or `pkill -f 'ssh -N -L 8080'`. Remove the custom `http://localhost:8080/v1` provider from any app
 you added it to.
 
-**4. Delete the build and the models (Spark):**
+**4. On the Spark, delete the build and the models:**
 
 ```bash
 du -sh ~/scratch    # how much this frees
 rm -rf ~/scratch
 ```
 
-**5. Delete what the downloads cached (Spark).** Both are download caches, so deleting them is safe:
+**5. On the Spark, delete what the downloads cached.** Both are download caches, so deleting them
+is safe:
 
 ```bash
 rm -rf ~/.cache/huggingface/xet      # Hugging Face's chunk cache from the downloads
@@ -316,7 +332,8 @@ Leave the rest of `~/.cache/huggingface/hub` unless you know what's in it. Other
 the ones you no longer want. If you gave a token with `HF_TOKEN` (see gated models), it was never
 saved, so there's nothing to remove.
 
-**If you used Option B (Spark):** its downloads are owned by root, and the image stays until removed:
+**If you used Option B, on the Spark:** its downloads are owned by root, and the image stays until
+removed:
 
 ```bash
 (cd ~/scratch/vllm && sudo docker compose down)     # if still running

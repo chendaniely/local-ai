@@ -60,7 +60,7 @@ In order of how much they constrain the design:
 | Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI. PDF chat later. |
 | Speech | *"Optimize for English, but make room for other languages or be able to swap."* Vocabulary prompts, word timestamps, ~170 MB uploads (90 minutes of WAV). Works whether Dan's audio pipeline runs on the Mac or the Spark (decided later). |
 | Loading | *"If it fits just load it. If it doesn't, tell me what's happening so I can decide. Don't just auto-load a small model where it might seem like you are talking from a large model."* The same rule applies to unattended requests. Doesn't fit → **wait (per key), then refuse** with a reason. |
-| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. |
+| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* |
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
@@ -72,7 +72,7 @@ In order of how much they constrain the design:
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
-| Build | **Split by machine, one session at a time:** the Mac session writes code, tests, docs and Mac clients; a Claude Code session on the Spark (as Dan, in tmux) builds and tests everything touching the GPU, memory, systemd or Docker; Dan runs sudo, logins, secrets and the Synology's settings. |
+| Build | **The Spark by default, one session at a time** (2026-09-25): a Claude Code session on the Spark (as Dan, in tmux) writes and tests the code, config and docs and runs everything touching the GPU, memory, systemd or Docker; the Mac session keeps the Mac clients, CI workflow changes and, until Quarto is on the Spark, the site render; Dan runs sudo, logins, secrets and the Synology's settings. (Until 2026-09-25 the Mac session wrote the code, tests and docs.) |
 | Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · `claude-dgx` · other users · the web UI banner. |
 
 ## Design
@@ -95,7 +95,8 @@ In order of how much they constrain the design:
 
 - **Phases 1–2:** Open WebUI and pi reach llama-swap directly with llama-swap keys — pi on the Mac
   through an SSH tunnel, so nothing listens on the LAN yet. A refused load is a plain error in the
-  client; the explanation is in `spark status` (Phase 1) and on the menu bar and ntfy (Phase 2).
+  client; the explanation is in `spark status` (Phase 1), for an account in `spark-admin`, which
+  can read the brake's state, and on the menu bar and ntfy (Phase 2).
 - **Phase 3 onward:** LiteLLM sits in front. Its hook makes refusals inline (`error.code`,
   `retry_after_s`), adds `x-spark-model: <name>@<revision>`, and applies per-key `wait_for_fit_s`.
 - **Why not Ollama:** Dan has hit Hugging Face models that won't load there. Here each model runs on
@@ -110,17 +111,17 @@ In order of how much they constrain the design:
 | **`stack/versions.yaml`** | repo | every pin (image digest; tag + sha256) plus docs URL, context7 ID, changelog and advisory feed → generates the site's Stack page and the doc pointers in `CLAUDE.md`. |
 | **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. |
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
-| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
-| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
+| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; `logToStdout: proxy`, v257's default, pinned: the engines' output, a refused start's reason and an engine's crash included, stays in an in-memory buffer that every restart wipes, and only llama-swap's own lines reach the journal (Dan's decision, 2026-09-28, reversing that day's `both` before it was deployed: whisper-server logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which the journal would keep; Phase 2 revisits it with a check that covers speech); every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
+| **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
-| **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
+| **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model, with thinking off for task calls (`TASK_MODEL_PARAMS`; Dan's decision, 2026-09-28), while chats keep it; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
-| **Mac and agent clients** | `clients/` | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range, OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. |
 
 ### Admission and memory rules
 
@@ -153,10 +154,35 @@ In order of how much they constrain the design:
   then hardcoded as `/home/dan`.) `spark` — the service user that
   runs the gate and llama-swap (so every model engine), and owns the models, the Hugging Face cache
   and state. It is deliberately **not** in the `docker` group, because Docker access is
-  root-equivalent; containers start from root-owned units instead. Dan's own account is effectively
-  root-capable (sudo, and `spark-admin` can change what the `local-ai-*` units run), so the
-  isolation boundary on this box is between Dan and `agent`. `agent` — tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
+  root-equivalent; containers start from root-owned units instead. Dan's own account is
+  root-capable through sudo, so the isolation boundary on this box is between Dan and `agent`. From
+  Phase 1, what root runs is root's own: the `local-ai-*` units and the Compose project are
+  root-owned copies that `make install-units` installs with sudo, after showing what changed, so
+  nothing running as Dan — the Spark session, Positron's packages, a build — changes what root runs
+  without Dan's sudo. The polkit rule lets `spark-admin` start, stop and restart the four units
+  by exact name, and nothing more. (Corrected 2026-09-25: this said Dan's account is effectively
+  root-capable through sudo and through `spark-admin`, which could change what the `local-ai-*`
+  units run without a password; Dan's decision on the unit-file model, under *Open items and
+  risks*, closed the second path. Corrected again 2026-09-25, after Phase 1's pre-flight review:
+  this said "without Dan's password", and named none of the paths the next bullet lists.) `agent` —
+  tmux agents: the status and session socket only; no sudo, no docker; 0700 homes;
   writes its repos and the NAS work folders; its own key; no GitHub credentials.
+- **Paths that stay open** (2026-09-25, from Phase 1's pre-flight review; Phase 1's council, in its
+  Task 17, takes them up). Root's own copies close one way from Dan's account to root, not all:
+  - `make install-units`, like `make bootstrap`, `make hold-gpu` and `make upgrade-gpu`, runs as
+    root whatever the clone's own `Makefile` and `stack/host/bootstrap.sh` say. Dan's account can
+    write both, and no diff shows them: `make install-units` shows only the staged files.
+  - sudo caches Dan's credential for about 15 minutes in each terminal, and anything running as
+    Dan in that terminal meanwhile can use sudo without a password. `make install-units` ends with
+    `sudo -k`, so the `make apply` that follows can't use it; `make bootstrap`, `make hold-gpu` and
+    `make upgrade-gpu` keep the cache. (Corrected 2026-09-26, from Phase 1 Task 9's review:
+    `make bootstrap` and `make hold-gpu` now end with `sudo -k` too, and Task 10 gives
+    `make upgrade-gpu` the same, so no sudo target leaves the cache for the clone's code that runs
+    next.)
+  - Root's containers read `spark`-owned data: Open WebUI's Functions, kept under
+    `/var/lib/local-ai/open-webui`, run as the container's root with host networking.
+  - Dan's account can make `spark` run anything, through `/opt/local-ai`'s `app`, `bin`, `etc` and
+    `python` folders, which `spark-admin` writes, and `spark` holds all four llama-swap keys.
 - **Secrets.** Never `EnvironmentFile=~/.secrets` — systemd ignores `export` lines and has been
   reported logging them with their values. Dan writes one `KEY=value` file per service, 0640
   root:spark, in `/etc/local-ai/secrets/`, a folder his own account can't list, outside any agent
@@ -258,6 +284,10 @@ website/    Quarto docs site (_quarto.yml, scenarios/, how-to/, reference/, desi
 The root keeps `README.md`, `CLAUDE.md`, `LICENSE`, `changelog.md` and `cosmicbboy-local-ai.md`,
 plus a `Makefile` — the front door.
 
+(2026-09-25: Phase 1 keeps the Compose file and the units as templates in `stack/templates/`, which
+`spark render` fills; there is no `stack/compose.yaml` or `stack/systemd/`. There is no `clients/`
+yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's provider.)
+
 ### Deploy workflow (Mac ⇄ GitHub ⇄ Spark)
 
 - **Edit on either machine** (as Dan, never as `agent`). Pushes happen only with Dan's explicit OK.
@@ -270,22 +300,35 @@ plus a `Makefile` — the front door.
   in the order `website/how-to/index.qmd` lists them, where `make bootstrap` (sudo once: users,
   directories including the secrets folder, the GPU-set hold, earlyoom, the firewall) comes before
   Dan creates the private files (per-service secrets, in the folder bootstrap made; private values
-  such as the NAS and LAN addresses) → from Phase 1, `make install-units` (sudo once) links the
-  systemd units, Compose's included. (Corrected 2026-09-25: this put the private files before
-  bootstrap, which creates their folder, and had bootstrap install the units and Compose, which
-  Phase 1's `make install-units` does.)
+  such as the NAS and LAN addresses) → from Phase 1, `make apply` stages the systemd units and the
+  Compose project, and `make install-units` (sudo) installs root's own copies of them, again
+  whenever they change. (Corrected 2026-09-25: this put the private files before bootstrap, which
+  creates their folder, and had bootstrap install the units and Compose, which Phase 1's
+  `make install-units` does. Corrected again 2026-09-25: it said `make install-units` links the
+  units, with sudo once; Dan chose root-owned copies, reinstalled with sudo when they change.)
 - **After any change:** `make apply` on the Spark, or `make deploy` from the Mac (SSH, then
   `git pull && make apply`). `spark apply` renders (registry + pins + private values → concrete
   configs in a deploy directory outside the repo), validates with each tool's own checker, shows the
   diff, restarts only what changed (llama-swap waits for idle models or asks), then runs a quick
-  `spark doctor`. It warns about uncommitted changes.
+  `spark doctor`. It warns about uncommitted changes. It never writes what root runs: when the units
+  or the Compose project change, it stages them and stops, `make install-units` (sudo) shows the
+  staged files root will run and installs them, and the next `make apply` restarts each unit still
+  running the older definition, llama-swap only when idle. (2026-09-25: Phase 1 builds less than
+  this, for now. Its `spark apply` lists the files that change, not their diff:
+  `make install-units` is what shows root's files as diffs. It runs no `spark doctor` itself, so
+  `make doctor` follows it. While models are loaded it refuses a llama-swap restart, unless
+  `--now`, rather than waiting. And there is no `make deploy` from the Mac yet: whether Phase 1
+  builds it is left for its close, Task 17. S17, a Phase 2 scenario, still expects the diff and
+  the wait. *Decided 2026-09-28, at that close (Dan):* no `make deploy`. Work runs on the Spark by
+  default, so `make apply` there is the path.)
 - **Hybrid runtime:** Compose for Open WebUI and SearXNG (later LiteLLM and Postgres); systemd for
   llama-swap and the gate; engines are pinned binaries or on-demand containers; host setup happens in
   bootstrap; ntfy and the watchdog run under Compose on the Synology; the Mac pieces install with
   `make clients`.
 - **The Makefile is the front door.** `make help` lists `bootstrap, apply, deploy, status,
   logs s=<name>, doctor, test, docs, clients`; the logic lives in the Python CLI. It stays portable to
-  macOS's older GNU make.
+  macOS's older GNU make. (2026-09-25: after Phase 1, every target here exists but `deploy`; see
+  *After any change*. Decided 2026-09-28, at Phase 1's close: there is no `deploy` target.)
 - **Python via uv everywhere** (uv is installed on both machines — on the Spark as a per-user install
   in `~/.local/bin`). `spark/` is a uv project (`pyproject.toml` + `uv.lock`; uv's `required-version`
   pinned in `versions.yaml`); the Makefile calls `uv run --frozen spark …`; standalone helper scripts
@@ -298,19 +341,27 @@ plus a `Makefile` — the front door.
 
 ### Where work runs
 
-- **Mac session:** repo code (CLI, gate, launcher) with unit tests, config templates and render tests,
-  the Makefile, leak hooks, CI, the docs site, and the Mac clients (SwiftBar, pi and OpenCode configs,
-  harness hooks).
-- **Spark session** (Claude Code as Dan, in tmux on `brightroar`): anything touching the GPU, memory,
-  systemd or Docker — engine builds, llama-swap, the gate, the brake, `spark doctor`, measurements and
-  comparisons, bootstrap dry-runs.
+Work runs on the Spark by default (Dan, 2026-09-25). Before that, the Mac session wrote the repo's
+code, tests, CI and docs, and the Spark session ran only what touched the GPU, memory, systemd or
+Docker.
+
+- **Spark session** (Claude Code as Dan, in tmux on `brightroar`): everything that doesn't need the
+  Mac — repo code (CLI, gate, launcher) with unit tests, config templates and render tests, the
+  Makefile, bootstrap, the leak hooks, the docs, and anything touching the GPU, memory, systemd or
+  Docker (engine builds, llama-swap, the gate, the brake, `spark doctor`, measurements and
+  comparisons).
+- **Mac session:** only what needs the Mac — the Mac clients and their config (SwiftBar, pi and
+  OpenCode configs, harness hooks on the Mac); changes under `.github/workflows/`, which the Spark's
+  repository-only token can't push (a merge that brings one in included, into `main` or from `main`
+  into a branch after a Dependabot Actions bump); the site render until Quarto is on the Spark; and
+  the Mac check of what the Mac also runs.
 - **Dan:** sudo (`make bootstrap`), interactive logins (Tailscale, GitHub on the Spark, Claude Code
   for `agent`, the Hugging Face token), secret values, the Synology's settings, and approving every
   push.
 - **Handoff, one session at a time:** the active session owns the phase branch; at a switch it
   commits, the branch is pushed with Dan's OK, and the other machine pulls. Both sessions read this
-  plan and the implementation plans from `website/design/`; every task is labelled **[Mac]**,
-  **[Spark]** or **[Dan]**. From the Mac, read-only checks on the Spark over SSH happen only with
+  plan and the implementation plans from `website/design/`; every task is labelled **[Spark]**,
+  **[Mac]** or **[Dan]**. From the Mac, read-only checks on the Spark over SSH happen only with
   Dan's OK.
 
 ### Testing
@@ -318,6 +369,9 @@ plus a `Makefile` — the front door.
 - **Unit tests (TDD):** admission decisions, brake ordering, idle policy, refusal text — pure
   functions with fixtures. They run anywhere: the Mac, the Spark, CI.
 - **Render tests:** golden files plus each tool's own validator; CI runs `spark render --check`.
+  (2026-09-25: Phase 1's CI runs `spark render --out`, which fails on anything render refuses; there
+  is no `--check` yet. Its render tests assert what matters in each rendered file rather than
+  comparing golden files, and `spark apply` runs llama-swap's own `-validate`.)
 - **`spark doctor`** runs only on the Spark, after any change: one check per scenario, plus — a second
   load evicts nothing; refusals through real clients on chat, streaming, `/v1/responses`, embeddings
   and transcription; direct llama-swap calls need a key; allow-lists hold; idle unload fires; the
@@ -341,11 +395,16 @@ plus a `Makefile` — the front door.
   until it is known how it treats apt holds (an open item).
 - **Weekly upgrade day, on Saturdays** (monthly until 2026-09-24). Skipping one is fine; the next
   one catches up. Automated PRs collect version bumps: Dependabot proposes GitHub Actions and
-  `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI
-  scans every commit message). `stack/versions.yaml`'s pins, the workflows' `version:` inputs,
-  uv's `required-version` and the gitleaks pin still move by hand (Backlog). Bumps are applied one
-  component at a time → render → validate → back up databases → deploy → `spark doctor` →
-  changelog entry.
+  `spark/uv.lock` updates on Fridays, against `main`, merged or rebased but never squashed (CI scans
+  every commit message). (Corrected 2026-09-28, from Phase 1's council: its uv PRs can change
+  `spark/pyproject.toml` too, as PR #3 raised a floor there, and could widen the `huggingface_hub<2`
+  cap; `updates.md` says to read that diff.) The lock takes only releases at least seven days old, a
+  rolling window (`exclude-newer = "7 days"` in `spark/pyproject.toml`), and Dependabot's uv PRs
+  wait as long (`cooldown` in `.github/dependabot.yml`); an urgent fix gets a per-package exception
+  (Dan's decision, 2026-09-27; `updates.md` has the steps). `stack/versions.yaml`'s pins, the
+  workflows' `version:` inputs, uv's `required-version` and the gitleaks pin still move by hand
+  (Backlog). Bumps are applied one component at a time → render → validate → back up databases →
+  deploy → `spark doctor` → changelog entry.
 - **Everyday updates:** `sudo apt update && sudo apt upgrade` any time, and snaps refresh
   themselves; neither can move the GPU stack while every member of the set is held.
   `website/how-to/updates.md` says when that stops being true: midway through upgrade day, and for a
@@ -368,12 +427,18 @@ plus a `Makefile` — the front door.
   3. Re-hold with `make hold-gpu` (bootstrap's `--hold-gpu` mode, the hold and nothing else).
   4. Check that the kernel GRUB boots has an NVIDIA module: the newest kernel's, and that GRUB
      will boot it, read from `grub.cfg`'s entry 0 and default and from `grub-editenv`. That GRUB
-     boots the newest kernel is not yet checked on this box.
+     boots the newest kernel is not yet checked on this box. (Checked 2026-09-27, in Phase 1's
+     Task 12: entry 0 boots the newest kernel, the `default=` lines are the stock two, and
+     `grub-editenv list` is empty. Installing a kernel rebuilds the menu, so every upgrade day
+     still runs the check.)
   5. Reboot.
   6. Check the GPU and that the running kernel's modules are held, then `spark doctor`.
 
-  Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it forward. Runbook:
-  `website/how-to/updates.md`.
+  From Phase 1, `make upgrade-gpu` runs steps 1 to 4 as one command, and runs the GRUB check itself
+  (Dan's decision, 2026-09-25): before it releases the set, where a failure refuses with nothing
+  moved, and again after the move, where a failure says not to reboot. It names kernels by version,
+  never a GRUB id or UUID. Kernel and NVIDIA driver security fixes wait for upgrade day, or bring it
+  forward. Runbook: `website/how-to/updates.md`.
 
 ## Phases
 
@@ -407,26 +472,57 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   Qwen3-Embedding-0.6B, whisper.cpp large-v3-turbo (interactive), and the starter coder
   Qwen3.6-35B-A3B — whose combined footprint `spark render` checks · the **minimal brake** · Open WebUI
   + SearXNG via `tailscale serve` · pi and Claude Code in tmux as `agent` · a basic `spark status`
-  · `make upgrade-gpu` (upgrade day's GPU-set steps as one command) · updates never take the stack
+  · `make upgrade-gpu` (upgrade day's GPU-set steps as one command, its GRUB check included) ·
+  updates never take the stack
   down for good: a needrestart override keeps a routine `apt upgrade` from restarting `local-ai-*`
   units (DGX OS does the same for its dashboard); after a Docker upgrade, a reboot or upgrade day the
   stack comes back by itself, and `make doctor` v0 confirms it. v0 checks Phase 0's guardrails (the
   leak hooks, the GPU set held, earlyoom, ufw, the secrets folder closed) and the stack's smoke
   checks: weekly upgrade day needs that before Phase 2, where `spark doctor` proper, one check per
-  scenario, arrives. `website/how-to/updates.md` gains the recovery steps.
-- [Mac] pi config + SSH tunnel.
+  scenario, arrives. `website/how-to/updates.md` gains the recovery steps. (Corrected 2026-09-26,
+  from Phase 1 Task 10's scan: after a Docker upgrade the web services don't always come back by
+  themselves. Their unit requires Docker and stops them with `docker compose down`, so a restart of
+  Docker restarts them, but an upgrade that stops Docker and starts it again leaves them stopped
+  until `systemctl start local-ai-compose`, which `make doctor`'s stack-units check catches. Which
+  one DGX OS's Docker upgrade does is not yet tried on this box; Task 16's drills find out.
+  *Corrected 2026-09-28:* they couldn't. The routine upgrade Task 16 ran moved no Docker package,
+  so this waits for an upgrade that does, under *To verify on the box*.)
+- [Mac] pi config + SSH tunnel · CI's render step, the site render and the merge that brings it
+  into `main`.
 - *Done when:* S09 and S20 work on the phone; pi completes a task from the Mac and from tmux;
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
   `make apply` reproduces it; after a routine `apt upgrade` and after a reboot, the stack is serving
   again without a hand on it.
+- *Status:* done, 2026-09-29. Tasks 1–17 ran on the Spark from 2026-09-25 to 2026-09-28, and
+  every done-when criterion above holds, with the routine upgrade's weaker evidence (Dan's
+  decision: *To verify on the box* keeps the upgrades still to come). Task 18 ran on the Mac on
+  2026-09-29: CI renders the real registry, and the Mac check and the site render passed. The last
+  step, merging `phase-1` into `main`, follows this note; Dependabot's PRs #1–#3 merge after it.
+- *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
+  from this plan and why, what the reviews found, and what Phase 2 inherits.
 
 **Phase 2 — Fit check, brake, visibility**
 
 - [Spark] the gate + `spark-launch` + sockets (absorbing the minimal brake) · residents move under the
   gate (preloaded one at a time) · idle policy, pins, sessions, scheduled preload · make-room ·
-  `spark try` with the lab instance · `spark doctor` v1.
-- [Mac] SwiftBar plugin · harness hooks (on the Mac and for `agent`).
+  `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent`.
+- [Mac] SwiftBar plugin · harness hooks on the Mac.
 - [Dan] ntfy + watchdog in Container Manager on the Synology.
+- *From Phase 1's close (2026-09-28; its forward look is in Revisions):* llama-swap moves behind
+  a Unix socket with the gate, since anyone on the box can take 127.0.0.1:9100 while it restarts;
+  the engines and `spark models pull` get a user of their own, with render's allowlist of engine
+  options standing meanwhile; the drill measures a busy engine's stop and how long an unloaded
+  engine's memory takes to show in `MemAvailable` (for `GRACE_S` and `FLOOR_TOLERANCE_GIB`), swap
+  and swappiness at the real thresholds, and earlyoom's order; `agent`'s GPU jobs get an OOM score
+  before `agent` runs GPU work, and the gate finds the top GPU holder from `nvidia-smi`'s
+  per-process list; a soak at full context measures every footprint, checkpoints and prompt
+  caches included (rule 6); pi 0.87.1 for `agent` after a deliberate test; a higher
+  `--slot-prompt-similarity` for Gemma, weighed; each deployed component's upgrade runbook,
+  written with its first bump, and a test that ties the code's version assumptions to
+  `stack/versions.yaml`; `--alias`, so a reply names its model rather than its file; SearXNG's
+  request timeout; systemd sandboxing for the stack's units, and `cap_drop` for the web
+  containers; the engines' output to the journal, once a check that covers speech shows what it
+  would keep. The retrospective lists the rest.
 - *Done when:* S01, S02, S03, S05, S06, S11, S12, S13, S14 and S17 are verified.
 
 **Phase 3 — App API + speech** (Dan's audio pipeline is the first app with its own key)
@@ -436,8 +532,8 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   (ufw + ACL) · batch whisper.cpp · the diarization endpoint · the **speech comparison** on Dan's
   51.6-minute lecture against the Mac baseline: Whisper large-v3-turbo vs Parakeet TDT v3 GGUF vs
   NeMo Parakeet with boosting, plus non-English, language-switching and two-speaker samples; pyannote
-  community-1.
-- [Mac] the endpoint reference page (chat + speech).
+  community-1 · the endpoint reference page (chat + speech; the site render stays on the Mac until
+  Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
 
@@ -455,9 +551,31 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   26B-A4B (policy-safe) vs Qwen3.6-35B-A3B. Embeddings: Qwen3-Embedding-0.6B vs Granite embedding r2
   (policy-safe); TEI only if llama.cpp falls short. Metrics: footprint (peak, steady), cold start,
   TTFT, prefill at 4K/32K/64K, decode at 1/2/4/8 streams, tool-call reliability, Dan's 3–5 real tasks
-  via pi, memory left free.
-- [Mac] client configs rendered for the picks (pi pinned outside its crash range, OpenCode 1.18.x) ·
-  the `spark-endpoints` skill for chendaniely/skills (Dan pushes).
+  via pi, memory left free · client configs for the picks, rendered by the `spark` CLI (pi pinned
+  outside its crash range, OpenCode 1.18.x).
+- *Qwen3.8-27B on SGLang (notes added 2026-09-28, from
+  [MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark),
+  read at its 2026-09-12 state; its numbers, not measured here):* on one GB10 it serves the NVFP4
+  checkpoint (~24 GB, dense BF16 `lm_head`) at native 262K context with an FP8 KV cache (~32.8 KB
+  per token), and reports code decode at about 51–55 tokens a second with DSpark or DFlash2
+  against 24–35 with MTP. What this stack must account for before the bake-off runs it:
+  - **A container engine under llama-swap.** SGLang runs in Docker, and llama-swap runs as
+    `spark`, which is kept out of the `docker` group; starting an engine container needs a design
+    that keeps root's containers root-started (like the web services' unit), for vLLM too.
+  - **Its memory claim.** `--mem-fraction-static` takes a fraction of the whole pool (its 0.90
+    here is ~109 GiB, and its KV pool alone measured ~81 GB), so it would overrun the residents
+    and the reserve. Set it from the registry's footprint and budget it like any engine; its own
+    history includes hard reboots at 0.95, and earlyoom killing its scheduler.
+  - **Its speculative decoders.** DSpark and DFlash2 are SGLang's, not llama.cpp's. DFlash2 needs a
+    dev image (no released tag had it), pinned by digest under the seven-day rule, and two of its
+    upstream issues were open: cross-request context bleed under concurrency (sglang #36548),
+    which matters with more than one key, and output diverging with thinking on (#38009).
+  - **Smaller things:** its default port, 8888, is SearXNG's here; it pins to the ten Cortex-X5
+    cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
+    `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
+    would need an SGLang engine with its own option allowlist.
+- [Mac] those client configs installed on the Mac · the `spark-endpoints` skill for
+  chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
   are in the vault; the docs are updated.
 
@@ -492,15 +610,27 @@ Each item gets its own design pass when its turn comes.
 - **Dev and learning:** FIM autocomplete · a private eval suite (growing from the bake-off tasks) ·
   LoRA fine-tuning and serving · overnight batch inference · speculative-decoding tuning · a class mode.
 - **Ops:** a usage and utilization dashboard · weights on the Synology (measure NAS read throughput
-  first) · HTTPS on the LAN (which would also bring the web UI to WireGuard) · the web UI banner (if
-  Open WebUI gains a status API) · automatic restarts from the watchdog · Home Assistant with remote
-  power (check the UEFI "restore on AC power loss" setting) · a GPU clock cap (only if needed) · a pi
+  first; and a model's `models--…` folder doesn't hold its bytes — huggingface_hub 1.32 and 1.33
+  keep Xet-stored files in a store shared across repos, under `hf/hub/blobs`, unless
+  `HF_HUB_DISABLE_SHARED_BLOBS` is set, and the repo's files are links into it, so moving one
+  folder, or `du` on one, misleads; Phase 1 Task 8's review, 2026-09-26) · HTTPS on the LAN (which
+  would also bring the web UI to WireGuard) · the web UI banner (if Open WebUI gains a status API)
+  · automatic restarts from the watchdog · Home Assistant with remote power (check the UEFI
+  "restore on AC power loss" setting) · a GPU clock cap (only if needed) · a pi
   footer extension · suggest a pre-start admission hook upstream (llama-swap #1127) · automated
   update proposals for what Dependabot can't read — `stack/versions.yaml`'s pins, the workflows'
   `version:` inputs, uv's `required-version`, the gitleaks pin (Renovate's regex manager, or a
   `spark` check against each changelog) · tag the tailnet's always-on devices that aren't Dan's
   own (the NAS, if it runs Tailscale as Dan), so `autogroup:member`, which the ACL's grants to the
   Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway.
+- **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
+  context for now, and these are the levers to look at when memory gets tight; each saving is an
+  estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
+  (`--cache-type-k`/`-v q8_0` about halves it: roughly 2.5 GiB for Gemma and 2.8 for the coder at
+  full context, at a quality cost to measure); Gemma on one slot (its task calls would then queue
+  behind a chat); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
+  caches (1 GiB for Gemma, 2 for the coder); a context below the maximum where a model never needs
+  it; and fewer image tokens (`--image-max-tokens`, less detail).
 - **Parked:** Hermes · `claude-dgx` · a MacBook MLX fallback · other users.
 
 ## Open items and risks
@@ -515,8 +645,101 @@ Each item gets its own design pass when its turn comes.
 - **Open WebUI churn** → a pinned minor version, env-only config, a database dump before upgrades.
 - **vLLM** start can abort when free memory rises during profiling (#56830), and NGC lags upstream →
   llama.cpp first.
+- **Engines share llama-swap's user** (found 2026-09-26, in Phase 1 Task 2's review). Every engine
+  runs as `spark`, so a compromised one can read every llama-swap key — from `llama-swap.env`, which
+  group `spark` can read although only root needs to (systemd's `EnvironmentFile=` and root's
+  Compose read the secret files), and from llama-swap's `/proc/<pid>/environ`, which any process of
+  the same user can read (checked on the box) — and can delete the brake's hold, since `spark` owns
+  the hold folder. In Phase 1 the keys gate only llama-swap on 127.0.0.1. A registry edit can also
+  point an engine at files `spark` can read without compromising it, the secret files included:
+  llama-server's `--chat-template-file`, `--path` and `--media-path`, and whisper-server's
+  `--public` and its `POST /load` (Task 6's review, 2026-09-26; `spark render`'s denylist doesn't
+  cover them). → Phase 1's Task 17 security review decides whether engines get a user of their own
+  (Dan's decision, 2026-09-26), and whether render allows only listed engine options. (Decided
+  2026-09-28, Dan's decision from Phase 1's council: render allows only listed engine options. A
+  registry's `args` may set only the options on its list, `ALLOWED` in `spark/src/spark/render.py`,
+  in every spelling each engine's `--help` gives, and it refuses anything else, naming the flag and
+  saying to check what it does before adding it. The list holds what the registry and the test
+  fixture set that day, so `--chat-template-file`, `--path`, `--media-path`, `--agent`, `--tools`,
+  the logging options and whisper-server's `--public` are all refused; the refusals render had keep
+  their own reasons. whisper-server's `POST /load` is a request, not an option, and the list doesn't
+  reach it. A user of their own for the engines and the pull is Phase 2's, with the gate.) The same
+  reach belongs to `spark models pull`, which runs as `spark` with network egress by design: its
+  Python dependencies, huggingface_hub and the packages it brings, run with it (found 2026-09-26, in
+  Phase 1 Task 8's review). → Task 17 decides the same for the pull (decided 2026-09-28, at Phase 1's
+  close: the pull, like the engines, gets a user of its own in Phase 2). The pull's journal lines never
+  carry a token (Task 8), but hf_xet keeps a log of its own per run under
+  `/var/lib/local-ai/hf/xet/logs`, which that redaction doesn't reach. Against a stand-in Hub it
+  wrote the authorization header as `[REDACTED]`; what a real download records is unmeasured.
+  Phase 1 sets no token (its repos aren't gated); before one is set, for a gated model, those logs
+  get checked.
+- **Phase 1's launch check is a static fit** (2026-09-26). It has no pending term and doesn't
+  serialize loads, so two engines started close together can both pass while memory outside the
+  stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
+  open the gap. → The brake is the backstop until the gate adds both in Phase 2 (*Admission and
+  memory rules*, rule 1).
+- **Anyone on the box can take 127.0.0.1:9100** (found 2026-09-26, in Phase 1 Task 3's review).
+  Ports from 1024 up are open to every user (checked on the box), so while llama-swap isn't holding
+  9100 — after a crash, or in `spark apply`'s restart window — any local user, `agent` included, can
+  listen there and receive the key the brake sends every 250 ms, and the keys `spark status` and
+  `spark apply` send. The client also follows redirects with the key. → Task 17's security review
+  decides; the options include a port below 1024 with `CAP_NET_BIND_SERVICE` for llama-swap's unit,
+  refusing redirects, and a cap on what the client reads. (Added 2026-09-26, from Phase 1 Task 10's
+  scan: `make doctor` sends Dan's key too, once an unkeyed `/health` answers, which a squatter can
+  make it do; it follows no redirect.) (Corrected 2026-09-28, from Phase 1's council: the client
+  that the brake, `spark status` and `spark apply` use now refuses a redirect when it sends a key,
+  as doctor's probe does, so a squatter can't send the key on. The port itself stays open to any
+  user, for Dan to decide.) *Decided 2026-09-28, at Phase 1's close (Dan):* the port stays for
+  Phase 1, with the redirect refused; in Phase 2, llama-swap moves behind a Unix socket with the
+  gate.
+- **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
+  llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
+  unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
+  time (read in its source), so a fast fall — about 2 GiB/s with a 6 s stop, 1 GiB/s with a 10 s
+  one, in the reviews' simulations — reaches earlyoom's 12 GiB line before the brake has freed
+  enough. (Added 2026-09-28, from Phase 1's council: measured cold loads fall faster than those
+  simulations. In Task 13, Gemma took 17.6 GiB in 9 s and the coder 26.4 GiB in 10 s, about 2.0
+  and 2.6 GiB/s; at full context Gemma took 24.7 GiB in about 5 s, timed to the whole second. So
+  the 8 GiB between the brake and earlyoom can go in about 1.6 to 4 s, which Phase 2's rate-of-fall
+  design starts from.) →
+  earlyoom (12/9 GiB) stays the backstop; Phase 1's brake drill (Task 16) measures stop times and
+  `MemAvailable`'s noise, which set the brake's unmeasured `GRACE_S` (15 s) and
+  `FLOOR_TOLERANCE_GIB` (0.5 GiB); the gate's rate-of-fall watch (Phase 2) is the fuller answer.
+  (Decided 2026-09-28, at Phase 1's close, from its council: `GRACE_S` stays 15 s, and
+  `FLOOR_TOLERANCE_GIB` goes to 1.0 GiB, so one Gemma context checkpoint, about 0.59 GiB, allocated
+  during a slow stop no longer unloads a second model; it is still 1/8 of the 8 GiB between the
+  brake and earlyoom. Two things stay unmeasured, for Phase 2's drill: a busy engine's stop, and how
+  long after an engine leaves `/running` its memory shows in `MemAvailable`. The brake stops
+  counting that memory the moment the engine leaves, so a lag would unload a second model.)
+  (Added 2026-09-28, from Phase 1's council: the brake asks llama-swap nothing above the warn line,
+  so a key llama-swap refused would first show in an emergency, as unloads that fail. At start it
+  now asks once, with its own key, what runs, logs the answer, and records it in its state folder.
+  `make status` shows the result on its `brake` line, `make doctor`'s `stack units` line fails
+  unless it passed, and `spark apply` checks that the brake is still running 3 s after it restarts
+  it.)
+- ~~**Fresh releases in the lock — Dan's decision**~~ **Resolved 2026-09-27: a rolling seven-day
+  window.** Dan chose it while the stack is still early, to see how it works in practice: uv
+  0.12.18 takes `exclude-newer = "7 days"` and records the span in the lock (`exclude-newer-span =
+  "P7D"`), so no date moves by hand, and Dependabot's uv PRs get `cooldown: default-days: 7`. The
+  lock now holds huggingface_hub 1.32.0 and filelock 4.0.1; *Weekly upgrade day*, above, has the
+  decision, and `updates.md` the steps, a per-package exception for an urgent fix included. Phase
+  1's Task 17 looks back at how it went. What was open (found 2026-09-26, in Phase 1 Task 8's
+  reviews):
+  `uv lock` takes the newest release that fits, even one uploaded that day: Task 8's lock holds
+  huggingface_hub 1.33.0 and filelock 4.0.4, both uploaded that week, and the pull runs them as
+  `spark`, with network egress. A release's first days are when a bad or compromised upload is most
+  likely still undetected. `[tool.uv] exclude-newer`, set to a date a week back, would make the
+  lock take only releases at least that old (a dry run picked huggingface_hub 1.32.0 and filelock
+  4.0.0), at the cost of moving that date whenever a dependency moves. → Dan decides at the push
+  after Phase 1's Task 10.
 - **Two machines, one branch** → one session at a time; handoff by push and pull with Dan's OK.
-- **The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**
+- ~~**The unit-file model — Dan's decision, before Phase 1's Task 6 writes the unit templates.**~~
+  **Resolved 2026-09-25: option 2, root-owned copies.** Dan chose it, and Phase 1's pre-flight built
+  it into `website/design/phase-1.md` (Tasks 6, 7, 9 and 10): `make install-units` reads what
+  `make apply` staged as Dan, shows what would change, asks, and installs root's copies; the polkit
+  rule allows `start`, `stop` and `restart` on the four units by exact name, and no longer
+  `reload-daemon`; `make doctor` checks that root's copies are root's own. *Users, access and
+  security* and *Deploy workflow* record it. The item as it stood:
   `make apply` renders the `local-ai-*` units and the Compose file as Dan, so Dan owns them;
   `make install-units` links them, and the polkit rule lets Dan reload systemd and restart the units.
   So from Phase 1, anything running as Dan — the Spark session, Positron's packages, a build — can
@@ -532,24 +755,61 @@ Each item gets its own design pass when its turn comes.
      folder), Task 7 (a changed unit needs `sudo make install-units`, not a restart) and Task 9
      (`make install-units`).
 
-  `website/design/phase-1.md` builds option 1 and stops at Task 6 for this decision.
+  `website/design/phase-1.md` builds option 1 and stops at Task 6 for this decision. (Superseded
+  2026-09-25: it builds option 2.)
 - **127.0.0.1 is not a boundary against `agent`** → llama-swap checks keys, but the engines it
   starts listen on 5800 and up with none, so any local user, `agent` included, can call a loaded
   model directly, around llama-swap's keys. In Phases 1–2 that costs nothing: `agent` has a key of
   its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
   not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
-  a direct call, so that phase decides how to close it.
-- **To verify on the box:** `121` vs `121a-real`; `agent`'s CUDA access; Parakeet quality on
-  whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
+  a direct call, so that phase decides how to close it. (Corrected 2026-09-28, from Phase 1's
+  council: a direct call reached more than a model. Each llama-server also served `/slots`, every
+  slot's in-flight request with its prompt's size, its sampling settings and the token it last
+  sampled, and its own web UI, both without a key. Render now passes `--no-slots` and `--no-webui`.
+  `GET /props`, the engine's read-only settings, still answers.)
+- **Page cache and the launch check** (added 2026-09-27, from Phase 1's Task 12) → the launch check
+  admits against `MemAvailable`, which counts reclaimable page cache as available. On GB10 the
+  driver has been seen to reclaim page cache too slowly while a model loads: loading a large
+  safetensors checkpoint stalled for about 20 minutes with `MemFree` pinned at 8 GB
+  (`cosmicbboy-local-ai.md` §E.1, `[verified]` on his Sparks; not yet seen here, or with
+  llama.cpp). Phase 1's pull left 43 GiB of page cache on this box, with 75 GiB free (`free -g`,
+  2026-09-27). At the registry's estimates, Phase 1's four models fit in the free part, so its
+  loads are unlikely to test it. Still to decide, once a load on a full cache has been watched: nothing, E.1's drop-caches
+  loop during a load, or a check against `MemFree` plus what can be dropped. (Added 2026-09-28,
+  from Phase 1's council: a new reading, with Gemma, the embedding model and the coder loaded,
+  shows `MemFree` at 14.1 GiB and `MemAvailable` at 53.2, 38.2 GiB of it inactive file pages, most
+  likely the model files, which the engines read through the page cache. The loads recorded so
+  far started with more free memory than they took, Task 13's with 70 GiB free, so E.1's slow
+  reclaim is still untested here. Three more options: `--load-mode dio`, which keeps the model
+  files out of the page cache at the cost of slower reloads; `spark launch` noting on stderr when
+  a footprint exceeds `MemFree`, so the first load that needs reclaim is on record; and a Phase 2
+  drill that fills the page cache with a large file, then loads the coder.)
+- **To verify on the box:** ~~`121` vs `121a-real`~~ (resolved 2026-09-28: `121a-real` builds
+  native `sm_121a` code that runs here; no `121` build was made; see Revisions); ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
+  as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
+  Parakeet quality on whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
   Revisions); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling; how NVIDIA's
-  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); that GRUB
-  boots the newest kernel, which the move's check before the reboot relies on; whether GIGABYTE
-  ships this box's firmware through fwupd; whether a model's GPU memory counts toward its engine's
+  web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); ~~that GRUB
+  boots the newest kernel, which the move's check before the reboot relies on~~ (resolved
+  2026-09-27: Phase 1's Task 12 ran the check, and it passed; see Revisions); whether GIGABYTE
+  ships this box's firmware through fwupd; ~~whether a model's GPU memory counts toward its engine's
   RSS and `oom_score`, which decides whether earlyoom's choice among engines follows the
-  brake's order (Phase 1 measures it); whether memory swaps out before `MemAvailable` reaches the
-  brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness.
+  brake's order (Phase 1 measures it)~~ (resolved 2026-09-28: it doesn't, and earlyoom's pick
+  didn't follow the brake's order; Phase 1's Task 17 takes it up; see Revisions; since Phase 1's
+  council, 2026-09-28, residents start at `oom_score_adj` 900 and on-demand engines at 1000, an
+  order earlyoom's dry run confirmed after that day's deploy); whether memory swaps out before `MemAvailable` reaches the
+  brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness; that
+  the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
+  one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
+  to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
+  memory context checkpoints take over a long conversation (estimated at about 0.6 GiB each for
+  Gemma, 4 at most per slot; the coder's, its recurrent state plus its MTP draft's, not yet
+  estimated, 32 at most; added 2026-09-28. Corrected the same day, from Phase 1's council: the
+  coder's are capped at 8; their recurrent state is about 63 MiB each by arithmetic, and the MTP
+  draft's share isn't estimated, so their size is the first thing a soak at full context
+  measures).
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
   reach over WireGuard.
@@ -637,6 +897,393 @@ Each item gets its own design pass when its turn comes.
 - **2026-09-25** — *To verify on the box* gains that GRUB boots the newest kernel. The move's step 4
   already marked it unchecked, but the list, which the retrospective points to for what is still
   unverified, left it out.
+- **2026-09-25** — Dan's decision on the unit-file model: root-owned copies (the open item's option
+  2, now resolved). The `local-ai-*` units and the Compose project that root runs are root's own
+  files, in `/etc/systemd/system` and `/etc/local-ai/compose`, and nothing running as Dan changes
+  them without his sudo. `spark apply` only stages them; `make install-units` (a bootstrap mode)
+  reads what is staged as Dan, refuses a link or a file he can't read, shows the diff and asks
+  before it installs, and changes nothing when nothing changed. After an install, `spark apply`
+  restarts each unit still running its older definition, llama-swap only when no model is loaded.
+  The polkit rule narrows to `start`, `stop` and `restart` on the four units, and `make doctor`
+  gains a check that root's copies are root's own. *Users, access and security* and *Deploy
+  workflow* say so; `website/design/phase-1.md` builds it (Tasks 6, 7, 9, 10, 12 and 16), with every
+  Task 1–10 listing run first on the Mac and in an `ubuntu:24.04` container.
+- **2026-09-25** — Dan's decision: `make upgrade-gpu` runs the GRUB check itself (Phase 1's Task 10
+  open item, now resolved), the one `updates.md` step 5 describes: entry 0's first `linux` line
+  names the newest kernel, the `default=` lines are the stock two, and grubenv picks no other
+  entry. It runs twice, before the release and after the move, since step 2 runs the same check
+  before anything moves: a failure before the release refuses with the set still held, and one
+  after the move says `DON'T REBOOT` and sends Dan to *If it goes wrong*, never to a reboot or a
+  restart of the stack. It prints kernel versions only, never a GRUB id or UUID, and fails a missing
+  grubenv, which `grub-editenv` run as root would create. The manual GRUB check stays for the steps
+  by hand, and that GRUB boots the newest kernel on this box is still unchecked (Task 12 Step 1).
+  `updates.md` step 1 and S23 no longer say the check is left to Dan.
+- **2026-09-25** — Phase 1's pre-flight review and a scan across its tasks, fixed in
+  `website/design/phase-1.md` before Task 1, with every Task 1–10 listing run again on the Mac and
+  in an `ubuntu:24.04` container. `make install-units` refuses a staged file holding one of ASCII's
+  control characters other than tab and newline, which could hide a line of the diff it shows, and
+  gives each read 10 s and 64 KiB; it ends with `sudo -k`. (Corrected 2026-09-25: this said it
+  refuses "control characters"; UTF-8's C1 controls passed until the re-review, next line.)
+  `spark apply` counts a llama-swap whose unit runs but that doesn't answer as
+  having models loaded, judges a unit outdated by when its start began, to the microsecond, lists
+  as restarts only those it makes, and says how to finish when a restart fails after its files are
+  deployed. `admit()` caps `MemAvailable` at the allocatable ceiling, as *Admission and memory
+  rules* says, and the brake waits 2 s at most for llama-swap. *Users, access and security* names
+  the paths that stay open, for Phase 1's council, and no longer says "without Dan's password".
+  Dated notes in *Components*, *Repo layout*, *Deploy workflow* and *Testing* say what Phase 1
+  builds where this plan says more. Every push in the phase plan starts with the pre-push scan, and
+  README §Contents changes with each task that makes it untrue.
+- **2026-09-25** — The re-review of those fixes, its minors closed in `website/design/phase-1.md`.
+  `make install-units` also refuses the UTF-8 encoding of a C1 control (C2 80 to C2 9F), such as
+  CSI; other UTF-8 passes. `spark apply` names a running unit whose start time it can't read, with
+  the command to restart it by hand, instead of skipping it silently, and Task 7 names a model that
+  starts loading between apply's check and its llama-swap restart as a known limit. llama-swap's
+  client turns an answer it can't read into an error, not a crash. Task 17's forward look decides
+  whether Phase 1 builds `make deploy`.
+- **2026-09-25** — Work runs on the Spark by default (Dan's rule). The Mac keeps its own clients and
+  their config, changes under `.github/workflows/` (the Spark's repository-only token can't push
+  them, a merge bringing one into `main` included) and the site render until Quarto is on the
+  Spark. *Requirements* (Build), *Where work runs* and the phases' labels follow; CLAUDE.md and
+  README §Conventions changed with it. Phase 1's plan relabels Tasks 1–10 and 17 `[Spark]`, moves
+  the Mac → Spark switch point ahead of Task 1, and ends with Task 18, a `[Mac]` task: CI's render
+  step, the site render and the merge.
+- **2026-09-25** — Before the push, the final review's fixes. Phase 1's plan pushes after Task 10,
+  so the Mac has the code for Task 15 and CI runs the two of Task 9's polkit tests that skip on the
+  Spark without Node; Task 12 installs the rule only after that run is green. Task 18 pushes its CI
+  change and sees CI green before the merge. Task 17's private findings go to the vault through
+  Dan. The rule, here and in CLAUDE.md, also names a merge of `main` into a branch after a
+  Dependabot Actions bump, which the Spark's token can't push either.
+- **2026-09-25** — On the Spark, before Task 1: Dan's rule that every command in the docs says
+  where it runs, in bold in the paragraph right above its block, never as a `#` comment inside
+  it, which the Mac's zsh tries to run as a command (CLAUDE.md, *Conventions*; README
+  §Conventions). The runbooks were relabelled the same day. Phase 1's plan: Task 9's two new
+  runbooks and Task 10's runbook edits follow the rule, and Task 10's new paragraph in
+  `updates.md` goes above the tmux block's labelled paragraph, not between it and the block.
+- **2026-09-26** — Phase 1, Task 1's review: the registry loader refuses more than the plan's
+  listing did. A missing, misspelled, repeated or wrongly typed field, a single value where a list
+  goes, a boolean or null in `args`, a number that isn't finite, and a budget or brake value that
+  isn't above 0 are each a `RegistryError` naming the model or section and the field, where the
+  listing crashed with another exception or loaded them silently (commits f0f44c7, 828bee5,
+  69cc076). Task 1's listing is marked *Superseded*. Since unknown keys are refused, the phase that
+  adds the registry fields *Components* lists beyond Phase 1's (a footprint's peak, steady and
+  config hash, cold start, idle policy, key access groups) extends the loader in the same change.
+- **2026-09-26** — Phase 1, Task 2's review. The launch check decides the fit on exact decimals,
+  and a refusal's numbers show its shortfall and never read as a fit ("needs 28.0 GiB, 51.6 GiB
+  available, 24 GiB reserve kept: 0.4 GiB short"); the hold is fsynced so a freeze can't empty it;
+  a damaged hold or a registry that won't load is a recorded refusal, not a crash (commits e575700,
+  548ab5c; Task 2's listing is marked *Superseded*). Two open risks are new, *Engines share
+  llama-swap's user* and *Phase 1's launch check is a static fit*: engines can read llama-swap's
+  keys and delete the brake's hold, so the 2026-09-23 line's hold folder "writable by `spark-admin`
+  only" keeps `agent` out, not engines, and Phase 1's plan now says "no engine's environment holds
+  a key". Dan's decision: Task 17's security review decides whether engines get their own user.
+- **2026-09-26** — Phase 1, Task 3's review. The llama-swap client reads `/running` strictly in
+  v257's shape (read in v257's source: `handleRunning` always sends `{"running": [...]}`, `[]` when
+  idle), so a stray answer can't read as "nothing loaded" and let `spark apply` restart llama-swap
+  over loaded models. It refuses a key that isn't printable ASCII without sending or showing it,
+  and never uses a proxy (commit 828fb3e; Task 3's listing is marked *Superseded*). Task 10's
+  `Probe.http` gets the same two fixes (a dated note on its listing). One new open risk, *Anyone on
+  the box can take 127.0.0.1:9100*, goes to Task 17's security review.
+- **2026-09-26** — Phase 1, Task 4's reviews (two fix rounds). The brake never crashes on a failing
+  hold write, a release mid-tick, an unreadable `/proc/meminfo` or a registry that won't load (it
+  then brakes on the plan's thresholds), and it still unloads when it can't write the hold. It asks
+  llama-swap only when memory is low. It counts memory on its way back — an engine `stopping`, or an
+  unload with no answer in 2 s — before unloading another, so a slow stop no longer costs every
+  model; its grace (15 s) and noise tolerance (0.5 GiB) are unmeasured (commits c249ce7, ebd3ad1;
+  Task 4's listing is marked *Superseded*). Read in llama-swap v257's source: an unload is answered
+  after the engine exits, and unloads run one at a time. A new open risk, *The minimal brake's
+  reach*, and Task 16's brake drill now measures the brake's numbers.
+- **2026-09-26** — Phase 1, Task 5's review. `spark status` exits 0 whatever it meets and says
+  only true things to whoever runs it: an account outside `spark-admin`, such as `agent`, is told
+  the brake's state is unknown to it rather than HOLDING, and "unreachable" means nothing answered,
+  so a wrong key no longer invites a restart that stops every model. Refusal records are read only
+  whole, and a release says who can run it (commits 36ed81d, 88f98aa, db4aece; the listings of
+  Tasks 2, 4 and 5 note them). *Components*' Phase 1–2 line now says the refusal's explanation is
+  for `spark-admin`. Phase 1's plan: Task 9's Makefile adds `make brake-release`, since the advice
+  `spark brake --release` names a command that isn't on Dan's PATH; the brake's and llama-swap's
+  units keep systemd's default `UMask`, so `spark-admin` can read the hold and refusal records.
+- **2026-09-26** — Phase 1, Task 6's reviews (two fix rounds). The real registry pins the four
+  models' current Hugging Face commits, resolved on the box. `spark render` now refuses, with the
+  reason, a registry edit that would rebind an engine off 127.0.0.1, put a key in its command,
+  download a model at start, override a setting render derives from the registry, or load a file
+  outside the pinned snapshot; llama-server always runs `--offline`; a version or image can't add a
+  line to what root runs; the Compose test pins each service's exact bind (commits f2ffd3b, 1e7e022,
+  ed6195a, b26c6e5, a0a8612, 98f5f56; Task 6's and Task 1's listings note them). Refusals print
+  `spark <command>: <reason>`. The open risk *Engines share llama-swap's user* adds the engine
+  options that read or serve files, and Task 17 also decides an allowlist of engine options.
+  Phase 1's plan:
+  Task 11 checks each engine's path against its pinned version, and Task 13 checks that SearXNG can
+  write its folder.
+- **2026-09-26** — Phase 1, Task 7's reviews (two fix rounds). `spark apply` now finishes what a
+  partial run left: a failed `uv sync` is retried, since the app counts as changed until a sync
+  finishes, and a unit that started before apply wrote its files counts as outdated. It restarts
+  llama-swap first, after a second look at `/running`, and puts that restart off if a model loaded
+  meanwhile; after it, it waits up to 30 s for llama-swap to answer. The llama-swap and brake units
+  run as `Type=exec`, so a restart whose binary can't start fails. Deployed files are written whole,
+  and the dry run says what the real run would do, a refusal included (commits 4e639d0, 5641842,
+  2801644, 81b8124; Tasks 3, 6 and 7's listings note them). Every test now runs in an environment
+  it builds, so a failing test can't print a value from Dan's shell (be4c3c3). S17, a Phase 2
+  scenario, notes what Phase 1's apply does until then. Phase 1's plan: Task 9's deploy.md gains
+  the put-off restart and the wait, Task 12's staging stop lists only root's files, and Task 18's
+  Mac check names what in the suite has never run on a Mac.
+- **2026-09-26** — Phase 1, Task 8's reviews (two fix rounds). `spark models pull` refuses, before
+  any download and without showing it, a Hugging Face token that a header or an error message would
+  carry altered — one with a control character had printed whole in every FAILED line, into the
+  journal — and every line it and the library log goes through one sanitiser: the token becomes a
+  marker, a URL's query (a presigned URL's signature) is dropped, and the text stays on one line.
+  The registry loads through render's `_load`. huggingface_hub is held below 2, since the lock had
+  taken 2.0.0, a new major on a new HTTP stack two days old; the pull unit sets
+  `HF_HUB_DISABLE_TELEMETRY=1` (commits cf21a82, 32deab1, e40372d, ae9708f; Tasks 6 and 8's
+  listings note them). New open item: *Fresh releases in the lock*, Dan's decision. The open risk
+  *Engines share llama-swap's user* adds the pull and hf_xet's own logs, and the Ops backlog's
+  weights-on-the-Synology item notes the shared blob store. Phase 1's plan: Task 12 Step 4's FAILED
+  line gets its other causes, the planned deploy.md's pull line says what follows it, the Global
+  Constraints say when `/var/lib/local-ai` becomes root's on the box, and Task 17's security review
+  names the open risks it decides.
+- **2026-09-26** — Phase 1, Task 9's pre-dispatch scan and review (one fix round). Task 9 built
+  pi's provider, `make install-units` with root's copies, the polkit rule, the deploy targets and
+  two runbooks. Its fixes: the brake's advice names `make brake-release`, since `spark` isn't on
+  Dan's PATH; `make bootstrap` and `make hold-gpu` end with `sudo -k`, as `make install-units`
+  does — *Paths that stay open* is corrected, and Task 10 does the same for `make upgrade-gpu`; in
+  CI a missing Node fails the polkit rule's tests instead of skipping them; `spark clients` keeps a
+  backup's mode and names a file it can't read; `make pull` shows only its own run's journal; and
+  deploy.md sets up Dan's own key on the Spark before the first deploy (commits 414ddaf to 914d6d4;
+  Tasks 2, 4, 5 and 9's listings note them). A separate commit (432dfb3) keeps `#` comments out of
+  shell blocks that run on the Mac, whose zsh passes them to the command; CLAUDE.md's labels rule
+  says so. Phase 1's plan: Task 12 Step 4's `FAILED` line is corrected again (a repo that doesn't
+  exist is fixed in the registry, and `make apply` comes before `make pull`), Task 15 checks
+  whether pi 0.85.1 expands `${SPARK_API_KEY}` and its Mac block loses its comments, Task 16's
+  brake drill expects `make brake-release`, and Task 17's security review gains three smaller
+  items.
+- **2026-09-26** — Phase 1, Task 10's pre-dispatch scan and review (one fix round). Task 10 built
+  the needrestart override, `make upgrade-gpu` and `make doctor`. Its fixes: doctor sends Dan's key
+  only to llama-swap — never through a proxy or a redirect, never shown, never to a URL that isn't
+  one — and every FAIL says what to do; three checks joined (spark's folders, the engines' config
+  files, the needrestart override: fifteen in all); doctor isn't read-only, since its end-to-end
+  check loads the embeddings model and so clears the last refusal record, so `make status` comes
+  first; `make upgrade-gpu` ends with `sudo -k`; and a signal that kills only the way out's hold
+  now says to run `make hold-gpu` instead of suggesting the stack be started while the GPU set
+  stays released (commits 748a093 to 1e5152b; Task 10's listings note them). The Phase 1 line above
+  is corrected: a Docker upgrade that stops Docker and starts it again leaves the web services
+  stopped, which Task 16's drill checks. The open risk *Anyone on the box can take 127.0.0.1:9100*
+  adds `make doctor` as a sender. Phase 1's plan: Task 12 Step 1 expects doctor's three
+  bootstrap-related lines to pass after the re-run, Tasks 13 and 16 expect 15 of 15 checks with
+  `make status` first, and Task 18's Mac run gains the new Makefile and bootstrap code.
+- **2026-09-27** — Dan's decision on *Fresh releases in the lock*, now resolved: `spark/uv.lock`
+  takes only releases at least seven days old, a rolling window (`exclude-newer = "7 days"`; uv
+  records the span in the lock, so no date moves by hand), and Dependabot's uv PRs wait as long.
+  The lock moved to huggingface_hub 1.32.0 and filelock 4.0.1; 1.32.0's source has the token
+  reader, the telemetry switch and the shared blob store Task 8's work relies on, and the suite
+  passes. *Weekly upgrade day* records it, `updates.md` gains the steps
+  and a per-package exception for an urgent fix, CLAUDE.md's uv rule and README's summary say so,
+  and Phase 1's Task 17 looks back at how it went. The same day, Dan made the no-`#`-in-Mac-blocks
+  rule (432dfb3) his own.
+- **2026-09-27** — Phase 1's Task 11 installed the engines on the box, at their pins. Resolved from
+  *To verify on the box*: `agent`'s CUDA access. Dan ran
+  `sudo -u agent /opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`, and it listed the
+  GB10 as `CUDA0`, with `agent` outside the docker group. Learned: whisper.cpp, built on the box,
+  loads the system's CUDA 13.0 runtime, which moves with the held GPU set, while the prebuilt
+  llama.cpp carries its own 13.4. `make doctor` never loads whisper-server, so `updates.md`'s
+  upgrade-day check (step 7) now also checks that it finds its libraries, and says to rebuild it if
+  not. Both engines' registry paths name their pinned versions, checked by hand. `spark render`
+  still doesn't cross-check them.
+- **2026-09-27** — Phase 1's Task 12 deployed the config and pulled the models, and its forward
+  look changed two things. A new open risk, *Page cache and the launch check*: the pull left
+  43 GiB of page cache, which `MemAvailable` counts as available, and GB10 has been seen to reclaim
+  it too slowly while a model loads. Task 13 Step 4 now records `free -g` before its first reading.
+  And Task 13 Step 5's SearXNG check is corrected: the image's entrypoint runs SearXNG as root in
+  its container and warns at every start about each mount its own user doesn't own, so the
+  warning is expected. A working search and no permission error in its log are the check.
+- **2026-09-28** — Dan's decision: Open WebUI's task calls run without thinking, and chats keep
+  it. Phase 1's Task 13 found that both chat models think by default, with no limit: Gemma took
+  about 2,200 tokens, some 28 seconds, before a five-word reply. Gemma is the task model, so
+  titles, tags and search queries would be slow, or empty once a cap ran out. Dan keeps thinking
+  at its highest in chats and turns it down there by hand. So Open WebUI gets
+  `TASK_MODEL_PARAMS`, whose keys v0.11.4 adds to every task request:
+  `chat_template_kwargs` with `enable_thinking` false, and a 1000-token cap, since setting it
+  replaces the title task's own. Per request, that switch took both models from thousands of
+  tokens to 7 or 8. A render test pins the setting; `make doctor` can't see task calls, which need
+  an Open WebUI login, so Task 13 checks one on the box. S20, web search, records the behaviour.
+- **2026-09-28** — Phase 1's Task 13 started the stack on the box and settled three items from
+  *To verify on the box*. **`121` vs `121a-real`:** the whisper.cpp build for `121a-real`
+  (Task 11) holds only `sm_121a` code, and it transcribed on the GPU, where whisper-server held
+  about 2 GiB. ggml's own CMake turns a detected `121-real` into `121a-real`. So `121a-real` builds
+  native code that runs here; no `121` build was made, so nothing says `121` fails. CLAUDE.md's
+  `sm_121` gotcha records it. **GRUB boots the newest kernel:** Task 12's check passed on
+  2026-09-27. Entry 0 boots the newest kernel, the `default=` lines are the stock two (GRUB starts
+  entry 0), and GRUB's saved environment is empty. **A model's GPU memory and its engine's RSS:**
+  the engines' RSS was 0.4–2.1 GiB, against 2–25 GiB each on the GPU (`nvidia-smi`), and
+  their `oom_score`s sat within 9 of each other (1334–1343). earlyoom's dry run picked Gemma,
+  which is resident, over the on-demand coder, the opposite of the brake's order. Task 17 decides
+  whether resident models get a lower `oom_score_adj`.
+- **2026-09-28** — Phase 1's Task 14 found that any photo aborted Gemma's engine. llama.cpp
+  decodes an image's tokens in one micro-batch, and an image with more tokens than
+  `--ubatch-size`, 512 by default, trips an assertion (`llama-context.cpp`) that kills the whole
+  engine, not just the request. llama.cpp b11146 gives a Gemma 4 image up to 1120 tokens, about
+  2.6 MP (`set_limit_image_tokens(70, 1120)` in `clip.cpp`), and scales bigger ones down to that.
+  So every photo over about 1.2 MP failed, and every later message in its chat too, since each
+  resends it. The registry now gives Gemma `--ubatch-size 2048` and `--image-max-tokens 1120`,
+  Gemma 4's own maximum, and a test on the repo's registry holds every vision model to a
+  micro-batch that fits its image budget. The engine's footprint is measured again once deployed.
+  Measured the same day: 18.7 GiB on a cold load, against 17.6 at a micro-batch of 512, and about
+  1.2 GiB more once it has read its first image, so the registry's estimate rose from 19 to 20 GiB.
+- **2026-09-28** — Dan's decision: the Mac's pi comes from Homebrew and follows it, unpinned. It
+  was 0.87.1 that day, inside the range reported to crash llama-server, and holding a Homebrew
+  install at one version is more trouble than that risk. The pin, 0.85.1, stays for `agent`'s pi on
+  the Spark: `stack/versions.yaml` now lists pi for the Spark only, and `pi.md` says so. So far,
+  0.87.1's requests from the Mac have crashed no engine. Its only errors were four `400`s, from a
+  45,822-token conversation sent to Gemma, whose requests top out at 16,384 tokens (32,768 of
+  context over 2 slots). *To verify on the box* keeps pi's crash range open; Task 17 decides
+  whether a deliberate test comes before the pin moves.
+- **2026-09-28** — Dan's decision: every model runs at its native maximum context, which the
+  pinned GGUF headers give as 262,144 tokens for Gemma 4 26B and Qwen3.6-35B-A3B and 32,768 for
+  Qwen3-Embedding-0.6B. Whisper has no context window. Gemma's two slots now share one KV pool
+  (`--kv-unified`, which render passes to any model with more than one slot), so one request can
+  use all 262,144 tokens. Giving each slot a full window instead would cost twice the KV memory. Two
+  long requests at once can exhaust the shared pool, which a single user rarely does. pi's
+  `contextWindow` is now the model's whole `ctx`, not `ctx` over the slots. Only 5 of Gemma's 30
+  layers keep a full-length cache, and 10 of the coder's 40 main layers plus its MTP block, so the
+  longer caches cost little. Revised the same day, after the change's review and before it was
+  deployed, from llama.cpp b11146's source:
+  - The embedding model's micro-batch stays at the 2048 that actually runs. It pools its last
+    token, so llama-server splits a long input, and `--batch-size` (2048 by default) caps
+    `--ubatch-size`, so the 8192 it had, and the 32,768 the first version gave it, changed
+    nothing.
+  - With a shared pool, llama-server saves idle slots to the prompt cache and clears them whenever
+    a task starts. A long chat outgrows Gemma's 1 GiB prompt cache, so each of Open WebUI's task
+    calls, the search queries, follow-ups and tags it asks for around each turn, would have cost it
+    a full re-read. Render also passes `--no-cache-idle-slots`: an idle slot keeps its cache until
+    the pool runs short.
+  - Context checkpoints, which llama-server keeps in host memory, are added a few per chat turn,
+    about 0.6 GiB each for Gemma, and a slot's are thinned only once it holds the cap, 32 by
+    default. So a dozen turns can fill a slot, about 19 GiB, at any context: the risk predates this
+    change. Task 16's 0.58 GiB steps, taken while a pi session was using Gemma, probably were
+    checkpoints; not verified. The full context only keeps the slot near the cap once it's
+    full. A continuing chat restores its latest checkpoint, and an edit further back falls back to
+    re-reading the whole prompt, so Gemma keeps at most 4 per slot (`--ctx-checkpoints 4`, a
+    per-slot cap), 8 in all, counted in its footprint.
+  The footprints rise to estimates, from 20, 4 and 29 GiB to 31, 7 and 32: 73 GiB for all four,
+  within the 78 the budget allows, measured once deployed. (Corrected 2026-09-28, from Phase 1's
+  council: once deployed, the cold loads took 24.7, 6.3 and 29.8 GiB, under those estimates, but a
+  cold load leaves out what grows after admission. The footprints are now 32, 8 and 33, with the
+  coder's checkpoints capped at 8: 76 of the 78; see the Revisions line below.) The phone can't
+  change the context, since Open WebUI's `num_ctx` is for Ollama. `pi.md` and S09 say what each
+  client can change.
+- **2026-09-28** — From the review of Task 16's record. The routine upgrade moved neither `libc6`
+  nor `libstdc++6` nor Docker, so Phase 1's Docker line, which said Task 16 would find out what a
+  Docker upgrade does to the web services, gains a dated correction, and *To verify on the box*
+  gains an upgrade that moves the C libraries and one that moves Docker. It also gains the memory
+  that context checkpoints take over a long conversation. Task 17's forward look gains the brake's
+  two numbers that Task 16 measured, `GRACE_S` and `FLOOR_TOLERANCE_GIB`: only an idle engine's
+  stop was measured, and the one step above 0.5 GiB was probably a Gemma checkpoint, not noise.
+- **2026-09-28** — From Phase 1's council (security). Each llama-server served `/slots`, every
+  slot's in-flight request, and its own web UI to any account on the box, since an engine takes no
+  key. Render now passes `--no-slots` and `--no-webui` to every llama-server, and a registry's
+  `args` can't turn either back on. The llama.cpp row and *127.0.0.1 is not a boundary against
+  `agent`* say so.
+- **2026-09-28** — From Phase 1's council (security). The llama-swap client that the brake,
+  `spark status` and `spark apply` use followed a redirect with the key, to wherever it pointed. It
+  now refuses one, with the handler doctor's probe already used. *Anyone on the box can take
+  127.0.0.1:9100* gains the correction; the port stays open to any user, for Dan to decide.
+- **2026-09-28** — From Phase 1's council (reliability). The deployed brake had never sent its key:
+  it asks llama-swap only below the warn line, so a key llama-swap refused would have shown first
+  in an emergency. At start the brake now checks that llama-swap takes its key, logs the answer, and
+  records it where `make status` shows it and `make doctor`'s `stack units` line reads it (still 15
+  checks). `spark apply` checks that the brake is still running 3 s after restarting it, since
+  `Type=exec` counts a brake that stops once it runs as started. *The minimal brake's reach* says
+  so.
+- **2026-09-28** — From Phase 1's council (reliability). Rule 6 counts a model's steady state after
+  a soak at maximum context, and the footprints counted the load and the longer KV cache, plus
+  Gemma's checkpoints and its first image's buffer (its old 20 GiB was the cold load with one image
+  read), but not the rest of what grows after admission: the prompt caches, the coder's
+  checkpoints and the embedding model's long-input buffer. At the
+  admission edge, that growth could put a load on the brake line, and the hold would then block
+  every load. The registry's comments now say what each estimate counts, from the cold loads
+  measured that day (24.7, 6.3 and 29.8 GiB): Gemma 32, the embedding model 8, and the coder 33 with
+  `--ctx-checkpoints 8`, since its default, 32, wasn't counted in its footprint. The set sums to 76
+  of the 78 allowed, all still `footprint_measured: false`. The coder's checkpoints in *To verify*
+  are capped now; their size is the first thing a soak measures.
+- **2026-09-28** — From Phase 1's council (goal-fit). Step 4 of upgrade day, in *Backups, recovery
+  and upgrades*, still said that GRUB booting the newest kernel was not yet checked on this box,
+  though Task 12 checked it on 2026-09-27 and *To verify* had marked it resolved. It gains the
+  dated result, as do S23 and `updates.md`; the check itself stays, since installing a kernel
+  rebuilds the menu.
+- **2026-09-28** — From Phase 1's council (goal-fit). The Requirements' *Always loaded* row says
+  ~20–30 GB, and at full context the residents measured 33.5 GiB cold and are budgeted at 43. The
+  row gains a dated note, not a new figure, since the requirement is Dan's: the static budget has
+  2 GiB left for later phases' additions, such as Phase 3's batch whisper and speaker labels.
+- **2026-09-28** — From Phase 1's council (toolstack, goal-fit). `updates.md` gains a row for each
+  of the stack's own pinned components, llama.cpp, llama-swap, whisper.cpp, Open WebUI and SearXNG,
+  which move by hand on upgrade day, one at a time; each one's runbook is written with its first
+  bump, and Open WebUI's data is copied before any upgrade, since its database migrations can't be
+  undone. It also corrects what Dependabot's uv PRs change: `spark/pyproject.toml` as well as the
+  lock, so a PR could widen the `huggingface_hub<2` cap. *Weekly upgrade day* gains the correction.
+  A test that ties the code's version-specific assumptions to `stack/versions.yaml` waits.
+- **2026-09-28** — From Phase 1's council (reliability, goal-fit), doc truth only. *Page cache and
+  the launch check* gains a new reading and three options; *The minimal brake's reach* gains the
+  measured rates of fall; the llama-swap row says Phase 1's apply refuses rather than waits.
+- **2026-09-28** — From Phase 1's council (reliability), decided at Phase 1's close: the brake's
+  `GRACE_S` stays 15 s and `FLOOR_TOLERANCE_GIB` goes from 0.5 to 1.0 GiB, since at 0.5 one Gemma
+  checkpoint during a slow stop would unload a resident too. *The minimal brake's reach* says so,
+  and leaves a busy engine's stop, and how long an unloaded engine's memory takes to show in
+  `MemAvailable`, to Phase 2's drill.
+- **2026-09-28** — From Phase 1's council (reliability), decided at Phase 1's close: earlyoom
+  follows the brake's order. `spark launch` gives a resident engine `oom_score_adj` 900 and an
+  on-demand one 1000, since a model's GPU memory isn't in its engine's RSS, and says on stderr when
+  it can't set it. *To verify* notes the order, untested on the box until the next deploy's
+  earlyoom dry run. (Checked after that deploy, 2026-09-28: the dry run picked the coder.)
+- **2026-09-28** — From Phase 1's council (security), Dan's decision: render allows only listed
+  engine options. A registry's `args` may set only what the registry and the test fixture set that
+  day, in every spelling each engine's `--help` gives, and anything else is refused, naming the
+  flag, after the refusals render already had, which keep their reasons. *Engines share
+  llama-swap's user* gains the decision, and a user of their own for the engines moves to Phase 2.
+- **2026-09-28** — From Phase 1's council (toolstack), Dan's decision: llama-swap logs the engines
+  to the journal. Render sets `logToStdout: both`, v257's value for its own lines and the engines'
+  together, so a refused start's reason and an engine's crash outlive the in-memory buffer every
+  restart wiped. That evening's check found no prompt text in the engines' output at default
+  verbosity, and the allowlist keeps logging options out. The llama-swap row says so.
+- **2026-09-28** — Reversed the same evening, before it was deployed (Dan's decision): llama-swap
+  stays at v257's default, `logToStdout: proxy`, pinned by a render test. The check behind `both`
+  had read only the chat engines' output: whisper wasn't loaded. whisper-server v1.9.4 logs each
+  upload's file name, and its ffmpeg conversion reports the file's metadata tags, which the journal
+  would keep; the transcript itself isn't logged. A refused start's reason stays in `make status`
+  (the last one) and llama-swap's in-memory buffer. Phase 2 revisits the journal with a check that
+  covers speech. The allowlist still refuses the engines' logging options.
+- **2026-09-28** — Phase 1's forward look (Task 17 Step 5), after its council. *Readings against
+  the budget:* at full context the cold loads took 24.7 GiB (Gemma), 6.3 (embeddings) and 29.8
+  (the coder), and whisper 2.5 (Task 13); the footprints, which now count what grows after
+  admission, sum to 76 of the 78 allowed. Loads took 5 s, 1 s and 21 s, and prefill ran at about
+  1,900 tokens a second on Gemma and 1,600 on the coder (the context change's checks); decode ran
+  at 78 and 93 (Task 13). The CUDA-allocatable ceiling is still unmeasured. *A refused start's
+  reason* doesn't reach llama-swap's journal at v257's default logging, which stays (the reversal
+  above). *v257's surprises:* an unload is answered only once the engine has exited, one at a time;
+  unloading a starting engine answers at once and fails the request that started it; `${env.…}`
+  is filled in anywhere in the config, and `cmd` is split as a shell would; `-validate` ignores
+  keys it doesn't know; a 404 is logged without its model; the binary embeds a Tailscale-protocol
+  peer server, off unless configured; and its embedded guide shows a `logToStdout` value its own
+  schema rejects. *Dan's decisions:* no `make deploy` from the Mac (*Deploy workflow*); render
+  allows only listed engine options, and the engines and the pull get a user of their own in
+  Phase 2; llama-swap's port stays for Phase 1, with the redirect refused, and moves behind a Unix
+  socket with Phase 2's gate; llama-swap's logging stays at its default (reversed from `both`);
+  swap and swappiness wait for Phase 2's measurement; `agent`'s GPU jobs get an OOM score before
+  `agent` runs GPU work; pi 0.87.1 for `agent` after a deliberate test in Phase 2; systemd
+  sandboxing for the stack's units and `cap_drop` for the web containers in Phase 2; the seven-day
+  window stays and now also covers pins set by hand (`CLAUDE.md`); Dependabot's PRs #1–#3 merge on
+  the Mac after Phase 1's merge; Phase 1 closes on the routine upgrade's weaker evidence; S09 is
+  verified on Task 14's phone pass, its newer settings checked in the Mac's browser; every model
+  keeps its full context, with the settings that would save memory in the Backlog. *Rulings at
+  the close, from the council, which Dan didn't decide himself:* residents at `oom_score_adj` 900
+  and on-demand models at 1000, so earlyoom follows the brake; `GRACE_S` stays 15 s and
+  `FLOOR_TOLERANCE_GIB` becomes 1.0 GiB; the brake checks at start that llama-swap takes its key.
+  Phase 2's line lists what it inherits, and [the retrospective](phase-1-retro.md) holds the
+  deferred minors.
+- **2026-09-28** — Phase 5 gains notes for serving Qwen3.8-27B with SGLang, from
+  MiaAI-Lab's DGX Spark repo (Dan's pointer): the engine, the speculative decoders DSpark and
+  DFlash2, and what this stack must account for to run it, above all a container engine under
+  llama-swap and SGLang's memory claim. The README's Reference section lists the repo.
+- **2026-09-29** — Phase 1 is done: its tasks ran from 2026-09-25 to 2026-09-29, and the last
+  step, merging `phase-1` into `main`, follows this line. [The retrospective](phase-1-retro.md)
+  records what it built, where it departed from this plan and why, what the reviews found, and
+  what Phase 2 inherits.
 
 ## Sources
 

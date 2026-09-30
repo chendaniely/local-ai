@@ -1,0 +1,28 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: llama-swap, the model supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# exec: `systemctl restart` waits until the binary is running, so one that can't be run at all fails the
+# restart. A llama-swap that stops once it runs, on a config it rejects, passes it: `spark apply` waits for it
+# to answer GET /running afterwards.
+Type=exec
+User=spark
+Group=spark
+EnvironmentFile=/etc/local-ai/secrets/llama-swap.env
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
+Environment=SPARK_STATE=/var/lib/local-ai/brake
+Environment=HF_HOME=/var/lib/local-ai/hf
+# spark's home, /var/lib/local-ai, is root's: caches go to folders bootstrap gives spark.
+Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache
+Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache
+ExecStart=/opt/local-ai/bin/llama-swap/{llama_swap_version}/llama-swap -config /opt/local-ai/etc/llama-swap.yaml -listen 127.0.0.1:9100
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

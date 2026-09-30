@@ -3,25 +3,38 @@ title: "Updates"
 description: "What you can run any time, what updates by itself, what waits for upgrade day, and how to check everything is back afterwards."
 ---
 
+Everything here runs **on the Spark**, as you, unless a step says otherwise.
+
 `sudo apt update && sudo apt upgrade` is safe to run any time, as often as habit says: it can't
 move the GPU stack while the set is held. The set is held except in two cases: midway through
 upgrade day, and a package of the set you have just installed, until `make hold-gpu` holds it too
 ([Installing something new](#any-time-apt)). Everything that needs care waits for **upgrade day, on
 Saturdays**. Skipping one is fine; the next one catches up.
 
+A version set by hand in `stack/versions.yaml`, whatever its row below, moves only to a release at
+least seven days old, unless an urgent fix needs it sooner, and the commit then says so (Dan's
+decision, 2026-09-28; `CLAUDE.md`, *Building it*).
+
 | What | Comes from | When and how it updates |
 |---|---|---|
 | Everything else from apt | apt | Any time: `sudo apt update && sudo apt upgrade` |
 | The GPU set: kernel, NVIDIA modules, driver, CUDA | apt, held | Upgrade day — [the GPU set](#upgrade-day-the-gpu-set) |
-| GitHub Actions and `spark/uv.lock` | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
+| GitHub Actions and `spark/`'s Python dependencies, in `uv.lock` and `pyproject.toml` *(this said `spark/uv.lock` alone until 2026-09-28)* | Dependabot's PRs against `main`, opened on Fridays | Upgrade day — [the automated PRs](#upgrade-day-the-automated-prs) |
 | gitleaks | a direct install in `/usr/local/bin` | Upgrade day — [gitleaks](#upgrade-day-gitleaks); no package manager sees it |
-| uv | your `~/.local/bin` | Upgrade day: `uv self update <version>`, the version `stack/versions.yaml` pins |
+| uv | the Spark: your `~/.local/bin`; the Mac: as installed there | Upgrade day, **on the Spark**: `uv self update <version>`, the version `stack/versions.yaml` pins; the Mac's uv, which the hooks also run, moves to the same version on the Mac. *(Added 2026-09-28: `agent`'s uv, in its `~/.local/bin`, came from uv's installer at its newest, 0.12.19, not the pin; `stack/versions.yaml` records it.)* |
 | Python for `spark/` | `spark/.python-version` pins 3.12 | Only deliberately, on upgrade day: change the pin, and each machine rebuilds `spark/.venv` on its next `uv run` |
+| llama.cpp (`llama-server`) | its release's prebuilt arm64 CUDA binaries, in `/opt/local-ai/bin/llama.cpp/<version>/`; `stack/versions.yaml` pins it | By hand, on upgrade day, one component at a time (the plan's *Weekly upgrade day*). Its runbook is written with its first bump |
+| llama-swap | its release binary, in `/opt/local-ai/bin/llama-swap/<version>/`; pinned | By hand, on upgrade day. Its runbook is written with its first bump |
+| whisper.cpp (`whisper-server`) | built on the Spark from its release, in `/opt/local-ai/bin/whisper.cpp/<version>/`; pinned by commit | By hand, on upgrade day. Its runbook is written with its first bump. A rebuild after the GPU set moves is [the GPU set](#upgrade-day-the-gpu-set)'s step 7 |
+| Open WebUI | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump. Before any upgrade, copy its data folder, `/var/lib/local-ai/open-webui`: Open WebUI migrates its database when it starts, and a migration can't be undone |
+| SearXNG | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump |
 | The desktop's snaps (browser, mail, Snap Store, firmware updater) and their runtimes | snap | By themselves, about four times a day |
 | Claude Code | your `~/.local/bin` | By itself |
 | Firmware | fwupd | Not automatically. Whether GIGABYTE publishes this box's firmware there is not yet checked |
 
 ## Any time: apt
+
+**On the Spark:**
 
 ```bash
 sudo apt update && sudo apt upgrade
@@ -43,18 +56,20 @@ What a routine upgrade can restart by itself:
 
 - **Services on replaced libraries.** After every apt run, needrestart restarts the services still
   using a library the upgrade replaced. It leaves Docker, the login services and DGX OS's own
-  dashboard alone. From Phase 1 it leaves the stack alone too, so a habitual upgrade never restarts
-  a model mid-use. `sudo needrestart -r l` lists what is still waiting for a restart.
+  dashboard alone. Bootstrap installs `/etc/needrestart/conf.d/local-ai.conf`, so it leaves the
+  stack's `local-ai-*` units alone too, and a habitual upgrade never restarts a model mid-use.
+  `sudo needrestart -r l` lists what is still waiting for a restart.
 - **Containers, when Docker itself upgrades.** Docker comes from NVIDIA's repository here. An
   upgrade stops every running container, and only those with a restart policy come back by
-  themselves.
+  themselves. The stack's web services may not, whatever their policy:
+  [After any update](#after-any-update-is-everything-back) says why.
 - **Nothing that needs a reboot, until you reboot.** If `/var/run/reboot-required` exists afterwards,
   `cat /var/run/reboot-required.pkgs` names the package that asked. Reboot when nothing is running,
   and only once [upgrade day's step 5](#upgrade-day-the-gpu-set) checks pass: a routine upgrade can
   rebuild GRUB's menu too.
 
-apt keeps its own record of every run, so routine updates need no notes. To see when updates ran
-and what changed:
+apt keeps its own record of every run, so routine updates need no notes. **On the Spark**, to see
+when updates ran and what changed:
 
 ```bash
 grep -A4 '^Start-Date' /var/log/apt/history.log | tail -40
@@ -69,7 +84,8 @@ The snaps here are the desktop's own; none is part of the stack. snapd refreshes
 times a day (`snap refresh --time` shows when), so there is nothing to run. `sudo snap refresh`
 updates them now.
 
-If something the stack depends on ever comes as a snap, hold it so it moves on upgrade day:
+If something the stack depends on ever comes as a snap, **on the Spark**, hold it so it moves on
+upgrade day:
 
 ```bash
 sudo snap refresh --hold <name>   # stops its automatic refreshes and a plain `snap refresh`
@@ -80,10 +96,40 @@ gitleaks has no snap (checked 2026-09-24), which is why it is a direct install.
 
 ## After any update: is everything back?
 
-Nothing on the box serves anything yet, so today there is nothing to bring back. Phase 1 adds the
-stack, and with it the steps for this section. The plan requires that the stack comes back by
-itself after a routine upgrade, a Docker upgrade, a reboot or an upgrade day, and that `make doctor`
-confirms it.
+**On the Spark**, from the clone, check Phase 0's guardrails and the stack in one pass:
+
+```bash
+make doctor
+```
+
+It checks Phase 0's guardrails: the leak hooks, the GPU set held (the running kernel's modules
+package included), the driver's kernel module agreeing with `nvidia-smi`, earlyoom running with the
+repo's arguments, ufw on, the secrets folder closed to you, and spark's folders as bootstrap sets
+them (`/var/lib/local-ai` root's, the brake's folder spark's, shared with `spark-admin`). It checks
+the stack too: root's own copies of the units and the Compose project (each root's regular file or
+folder, not a link, and not writable by group or others), needrestart's override installed as the
+repo has it, no folder that llama-server could read a `config.ini` from (`/etc/llama.cpp` or
+`/var/lib/local-ai/.config`), its three units active, llama-swap answering and refusing a call
+without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
+llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
+changes nothing but this: it loads the embeddings model if it isn't loaded, which also clears the
+last refusal record that `make status` shows. It needs no sudo, and uses your `SPARK_API_KEY`,
+which [Deploy the stack](deploy.md#before-the-first-deploy) puts in the Spark's `~/.secrets`.
+
+What brings the stack back by itself:
+
+- the units are enabled, so a reboot starts them;
+- llama-swap and the brake restart if they crash;
+- needrestart leaves the units alone.
+
+A Docker upgrade may not. The web services' unit requires Docker, so a restart of Docker restarts
+it too. An upgrade that stops Docker and starts it again leaves the web services stopped, whatever
+their containers' restart policy: the unit's stop removes the containers (`docker compose down`),
+and nothing starts the unit again until `systemctl start local-ai-compose`. Which of the two a
+Docker upgrade does is not yet tried on this box. `make doctor` shows which: its `stack units` line
+names the web services' unit when it is stopped, with the command that starts it.
+
+llama-swap preloads nothing, so after a reboot each model loads on its first request.
 
 ## Upgrade day: the GPU set
 
@@ -103,21 +149,60 @@ Saturday; that wait is the cost of holding the set.
 *Not yet performed on this box.* Every step below, the recovery included, is untried until the
 first upgrade day.
 
-Work in tmux, from the clone. A dropped SSH session in the middle of `full-upgrade` is the likeliest
-way to leave the set half-moved; in tmux the upgrade carries on, and `tmux attach -t upgrade` brings
-you back:
+`make upgrade-gpu` runs steps 1 to 5, llama-swap and the brake being step 1's part, as one command,
+in tmux, from the clone; it refuses to start outside tmux. Step 5's GRUB check included, it runs all
+of them. First the GRUB check, as step 2 says: if GRUB won't boot the newest kernel, it stops there,
+with the set still held and nothing moved, and says why. Then it releases the set, reads apt's plan
+and refuses it before anything moves if it breaks step 3's rule, stops llama-swap and the brake, and
+moves the set (you read apt's plan and answer). Then it holds the set again with `make hold-gpu`'s
+hold, runs step 5's two checks on the new newest kernel, the module and then GRUB, and says whether
+to reboot: `DON'T REBOOT` names the reason, and never a GRUB id or UUID. Every way out after the
+release runs the hold, and only the hold after apt's move is tried again. The set can still stay
+released: when the hold stops (a package dpkg didn't finish, a hold that didn't take, no kernel or
+nothing matching), or when a signal cuts off a hold the way out runs, the retry included. In each
+case it says to run `make hold-gpu`. It judges whether apt moved anything by each package's state
+and version, not the hold letter, and it checks that the newest kernel still has its module. If apt
+moved even part of the set, left the newest kernel without a module, or GRUB failed after the move,
+it sends you to [If it goes wrong](#if-it-goes-wrong) rather than to a reboot or a restart of the
+stack. Only when none of these happened does it say how to start the stack again.
+`make upgrade-gpu-dry-run` prints the steps without running them. The numbered steps are what it
+runs, to read along with, and to do by hand if it can't; step 5's GRUB check by hand is for those
+steps. (Corrected 2026-09-25: this said it would run all but the GRUB check, which you would run
+before it and again before the reboot. Dan decided that it runs the check itself.)
+
+**On the Spark**, work in tmux, from the clone. A dropped SSH session in the middle of
+`full-upgrade` is the likeliest way to leave the set half-moved; in tmux the upgrade carries on,
+and `tmux attach -t upgrade` brings you back:
 
 ```bash
 tmux new -As upgrade
 cd ~/git/hub/local-ai
 ```
 
-1. Stop anything using the GPU. Nothing does yet; from Phase 1, `make upgrade-gpu` will run these
-   steps as one command, all but step 5's GRUB check, which you run before it and again before the
-   reboot.
+**On the Spark**, in that session, check before `make upgrade-gpu` that the clone's `Makefile` and
+`stack/host/bootstrap.sh` are as committed: its sudo runs both, as step 4's `make hold-gpu` does.
+This prints nothing when they are:
+
+```bash
+git status --short -- Makefile stack/host
+```
+
+Stop your own GPU jobs first, and `agent`'s as `agent` (`sudo -iu agent`, or its own session):
+`make upgrade-gpu` stops only llama-swap and the brake. Then, **on the Spark**, run it, or do the
+numbered steps below by hand:
+
+```bash
+make upgrade-gpu
+```
+
+1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts
+   them again), your own GPU jobs, and `agent`'s as `agent`.
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
-   the Mac session to work out why. Then release the set:
+   the Claude session working on the repo (the Spark's, by default) to work out why.
+   `make upgrade-gpu` runs this check itself, before it releases the set. Then release the set:
+
+   **On the Spark:**
 
    ```bash
    apt-mark showhold | xargs -r sudo apt-mark unhold
@@ -126,7 +211,7 @@ cd ~/git/hub/local-ai
    Only bootstrap holds packages on this box, so this releases just the set. With nothing held it
    does nothing, so it is safe to run again. **From here until step 4, the set is free to move. If
    anything below fails, or you answer no, run `make hold-gpu` before anything else.**
-3. Move the set as one:
+3. **On the Spark**, move the set as one:
 
    ```bash
    sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
@@ -149,14 +234,15 @@ cd ~/git/hub/local-ai
    In the first two cases the new kernel would boot without a GPU. Answering no installs and
    removes nothing, so re-hold with `make hold-gpu` and try again next upgrade day. The third is a
    new driver branch: answer no and re-hold. Moving to a new branch is not a routine upgrade day.
-   You plan that move for a day you choose, and make it by hand.
+   You plan that move for a day you choose, and make it by hand. `make upgrade-gpu` refuses all
+   three too.
 4. Hold the new set: `make hold-gpu`. It prints `GPU set: N packages, M already held`, then
    `GPU set held: N packages`. It stops instead, naming the packages, if one isn't cleanly
    installed (it says how to finish it) or if a hold didn't take. Do what it says, then run it
    again.
-5. Before you reboot, check that the kernel GRUB boots has an NVIDIA module. "GPU set held" proves
-   the holds took, not that the set is complete. It takes two checks. First the module check, on
-   the newest kernel:
+5. **On the Spark**, before you reboot, check that the kernel GRUB boots has an NVIDIA module.
+   "GPU set held" proves the holds took, not that the set is complete. It takes two checks. First
+   the module check, on the newest kernel:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1)   # the newest kernel
@@ -166,12 +252,13 @@ cd ~/git/hub/local-ai
    If `modinfo` says `Module nvidia not found`, or any other error, **don't reboot**: go to
    [If it goes wrong](#if-it-goes-wrong).
 
-   Then the GRUB check: that GRUB will boot that same kernel. It does by default, as Ubuntu sets it
-   up, but that is not yet checked on this box, and more settings can change it than
-   `/etc/default/grub` shows: some put another kernel first on the menu, others pick another entry.
-   So read what GRUB will actually do, from the menu it boots from, which installing a kernel
-   rebuilds, and from what it keeps between boots. `grub-editenv` runs without `sudo`, so nothing
-   here can change anything:
+   **On the Spark**, then the GRUB check: that GRUB will boot that same kernel. It does by default,
+   as Ubuntu sets it up, but that is not yet checked on this box *(checked 2026-09-27, in Phase 1's
+   Task 12: entry 0 booted the newest kernel, with the stock `default=` lines and an empty
+   `grub-editenv list`)*, and more settings can change it than `/etc/default/grub` shows: some put
+   another kernel first on the menu, others pick another entry. So read what GRUB will actually do,
+   from the menu it boots from, which installing a kernel rebuilds, and from what it keeps between
+   boots. `grub-editenv` runs without `sudo`, so nothing here can change anything:
 
    ```bash
    k=$(linux-version list | linux-version sort --reverse | head -1); echo "$k"   # the newest kernel
@@ -192,13 +279,16 @@ cd ~/git/hub/local-ai
      `prev_entry` becomes the next entry when `initrdfail=1`: unlikely on a box that booted, but
      cheap to rule out.
 
+   `make upgrade-gpu` runs this same check itself after the move, before it says to reboot.
+
    Anything else, or any of these commands failing: **don't reboot yet**, and bring what they
-   printed to the Mac session. Much of it carries the root filesystem's UUID: `root=UUID=…`, or
+   printed to the Claude session working on the repo (the Spark's, by default). Much of it carries
+   the root filesystem's UUID: `root=UUID=…`, or
    `root=PARTUUID=…`, in the `linux` lines, and every entry id (`gnulinux-simple-…`,
    `gnulinux-advanced-…`, `gnulinux-<version>-advanced-…`), a default, `saved_entry` or
    `next_entry` that is an id included. Write "an id" in place of each UUID and PARTUUID when you
-   bring it over, and never paste one into the repo. To see which kernel GRUB would start instead,
-   list the menu, each entry followed by its `linux` line:
+   bring it over, and never paste one into the repo. **On the Spark**, to see which kernel GRUB
+   would start instead, list the menu, each entry followed by its `linux` line:
 
    ```bash
    sudo grep -E '^[[:space:]]*(menuentry|submenu|linux)[[:space:]]' /boot/grub/grub.cfg
@@ -212,8 +302,9 @@ cd ~/git/hub/local-ai
    (`gnulinux-advanced-…>gnulinux-<version>-advanced-…`). `10_linux` adds the submenu to a bare
    title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0.
    Reboot only when both checks pass.
-6. Reboot: `sudo reboot`.
-7. Check, once you are back in:
+6. Reboot: `sudo reboot`. It asks for your password again: `make upgrade-gpu` and `make hold-gpu`
+   end with `sudo -k`, which forgets sudo's cached credential in that terminal.
+7. **On the Spark**, check, once you are back in:
 
    ```bash
    uname -r                                                            # the new kernel
@@ -223,23 +314,38 @@ cd ~/git/hub/local-ai
    ```
 
    If the last line prints nothing, the running kernel's modules aren't held: run `make hold-gpu`
-   and check again. From Phase 1, run `make doctor` too; it loads a model end to end.
+   and check again. Then check whisper-server, which `make doctor` never loads. It was built on
+   this box against the system's CUDA (Phase 1, Task 11), while llama.cpp carries its own CUDA
+   runtime, so a CUDA move can leave whisper-server without a library:
+
+   ```bash
+   ldd /opt/local-ai/bin/whisper.cpp/*/whisper-server | grep 'not found' || echo "all libraries found"
+   ```
+
+   Expected: `all libraries found`. A `not found` line means rebuild it the way
+   [Phase 1's plan](../design/phase-1.md), Task 11 Step 4, built it, into the same folder. Then
+   `make doctor`: every line `ok`.
 8. Record the new kernel, driver and CUDA versions in `changelog.md`, and bring the GPU set's line
    in `README.md` §Current state up to date.
 
 ### If it goes wrong
 
 **You answered no, or a step failed before the reboot.** Re-hold first: `make hold-gpu`. If it
-stops on a package that isn't cleanly installed, do what it says, then run it again. If step 3
-changed anything before it stopped, run step 5 before any reboot, both its checks. Once both pass,
-carry on at step 6. If the module is missing, go to the next paragraph; if only the GRUB check
-fails, don't reboot yet, as step 5 says.
+stops on a package that isn't cleanly installed, do what it says, then run it again.
+`make upgrade-gpu` runs the hold again by itself on its way out, so `make hold-gpu` by hand is for
+the manual steps, or for when its own hold stopped or was cut off. If step 3 changed anything
+before it stopped, run step 5 before any reboot, both its checks. Once both pass, carry on at
+step 6. If the module is missing, go to the next paragraph; if only the GRUB check fails, don't
+reboot yet, as step 5 says: a `DON'T REBOOT` from `make upgrade-gpu` that names GRUB, `grub.cfg`
+or `grubenv`, or says it can't read one of them, is that case.
 
-**Step 5's module check failed, or `nvidia-smi` fails after the reboot.** The likeliest cause is
-a kernel with no NVIDIA module, from a set that didn't finish moving. The box still boots and SSH
-still works: nothing on the network path needs the GPU. Every command here is safe to run again:
+**Step 5's module check failed, `nvidia-smi` fails after the reboot, or `make upgrade-gpu` said
+`DON'T REBOOT` because the newest kernel has no NVIDIA module, or that apt may have moved the
+set.** The likeliest cause is a kernel with no NVIDIA module, from a set that didn't finish moving.
+The box still boots and SSH still works: nothing on the network path needs the GPU. Every command
+here is safe to run again:
 
-1. Release the set and finish the move, answering as step 3 says:
+1. **On the Spark**, release the set and finish the move, answering as step 3 says:
 
    ```bash
    cd ~/git/hub/local-ai
@@ -247,9 +353,9 @@ still works: nothing on the network path needs the GPU. Every command here is sa
    sudo dpkg --configure -a && sudo apt update && sudo apt full-upgrade
    ```
 
-2. If the modules metapackage was removed, put it back. apt's log names it; take the name from
-   there, never from memory. If it prints more than one, take the one that matches your driver
-   (`dpkg -l 'nvidia-driver-*'`):
+2. **On the Spark**, if the modules metapackage was removed, put it back. apt's log names it;
+   take the name from there, never from memory. If it prints more than one, take the one that
+   matches your driver (`dpkg -l 'nvidia-driver-*'`):
 
    ```bash
    grep -ho 'linux-modules-nvidia-[^ :,]*-nvidia-hwe-[^ :,]*' /var/log/apt/history.log | sort -u
@@ -259,8 +365,8 @@ still works: nothing on the network path needs the GPU. Every command here is sa
 3. Run step 5 again, both its checks. Once both pass: `make hold-gpu`, `sudo reboot`, then step 7's
    checks.
 
-**The quick way back, when the driver didn't move.** If only the kernel moved, the previous kernel
-still has its module:
+**The quick way back, when the driver didn't move, on the Spark.** If only the kernel moved, the
+previous kernel still has its module:
 
 ```bash
 p=$(linux-version list | linux-version sort --reverse | sed -n 2p)   # the previous kernel
@@ -279,28 +385,57 @@ modules), the previous kernel won't help.
 ## Upgrade day: the automated PRs
 
 Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
-and for `spark/uv.lock`. On upgrade day, for each one:
+and for `spark/`'s Python dependencies. On upgrade day, for each one:
 
-1. Read what it bumps and its release notes, and let CI finish green.
-2. Read the PR's commit message, then merge it with a merge commit or a rebase. Never squash it: a
-   squash can paste the release notes into the message, CI scans every commit message with the
-   repo's patterns, and once merged, a finding in history can't be taken back or marked allowed.
+1. **On github.com**, read what it bumps and its release notes, and let CI finish green.
+2. There, read the PR's commit message, then merge it with a merge commit or a rebase. Never squash
+   it: a squash can paste the release notes into the message, CI scans every commit message with
+   the repo's patterns, and once merged, a finding in history can't be taken back or marked
+   allowed.
 
 They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
 or the gitleaks pin; those still move by hand.
 
+*(Corrected 2026-09-28, from Phase 1's council: this said the uv PRs update `spark/uv.lock`.)* A
+uv PR can change `spark/pyproject.toml` as well as, or instead of, the lock: PR #3, on 2026-09-25,
+raised the `[build-system]` floor on hatchling there and left `uv.lock` alone. The same updater
+could widen `huggingface_hub>=0.34,<2`, the cap Task 8's review set when the lock had taken 2.0.0,
+a new major on a new HTTP stack, once a 2.x release is a week old. So read a uv PR's
+`pyproject.toml` diff too, and treat one that moves a cap as a decision of its own, not a routine
+merge.
+
+The uv PRs propose only releases at least seven days old. `spark/pyproject.toml`
+locks nothing newer (`exclude-newer = "7 days"`, a rolling window), and `.github/dependabot.yml`
+waits as long (Dan's decision, 2026-09-27): a bad or compromised upload is most often caught in its
+first days. Dependabot reads both from `main`, which gets them with Phase 1's merge, so no uv PR had
+run under the window by 2026-09-28. An update by hand follows the same window. **On the Spark**,
+in the clone (or on the Mac, when the Mac's session holds the branch), this takes the newest
+release of `<name>` that is a week old:
+
+```bash
+uv lock --project spark --upgrade-package <name>
+```
+
+A fix you need sooner, such as a security release, gets an exception for that one package: add
+`exclude-newer-package = { <name> = "<now, e.g. 2026-09-27T12:00:00Z>" }` under `[tool.uv]` in
+`spark/pyproject.toml`, run the same `uv lock`, and take the line out once that release is a week
+old; before then, a plain `uv lock` would move the package back. Dependabot's security PRs don't
+wait, so one for a release younger than a week fails to lock until then.
+
 ## Upgrade day: gitleaks
 
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its
-[releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version:
+[releases](https://github.com/gitleaks/gitleaks/releases). If there is a newer version at least
+seven days old (the rule above the table):
 
-1. On the Mac, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
+1. **On the Mac**, bump it everywhere it is pinned, in one commit: `stack/versions.yaml`; in
    `.github/workflows/ci.yml`, the URL in the "download gitleaks" step and the `linux_x64` checksum
    in the "check gitleaks against its pinned checksum" step (the checksum is in the release's
    `checksums.txt`); and the version in [Leak guards](leak-guards.md)' install block. Then
-   `brew upgrade gitleaks` for the Mac's own copy.
-2. On the Spark, install it over the old one. Set `v` to the new version; the checksum is checked
-   before anything is installed:
+   `brew upgrade gitleaks` for the Mac's own copy. Push it, after
+   [the scan before every push](leak-guards.md#before-every-push), and pull it on the Spark.
+2. **On the Spark**, install it over the old one. Set `v` to the new version; the checksum is
+   checked before anything is installed:
 
    ```bash
    v=8.30.1   # the new version, as stack/versions.yaml pins it
@@ -314,4 +449,6 @@ gitleaks is a direct install, so apt and snap never update it. On upgrade day, l
    gitleaks version   # the new version
    ```
 
-3. `make test` — the hook tests run the real gitleaks — and a `changelog.md` entry.
+3. **On the Spark**, `make test` — the hook tests run the real gitleaks — and a `changelog.md`
+   entry. Then **on the Mac**, in the clone, `make test` too: step 1 moved the Mac's own copy, and
+   its hooks use it.

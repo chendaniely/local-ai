@@ -1,0 +1,375 @@
+import json
+import os
+import re
+import stat
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from spark import launch
+from spark.admission import Decision, admit
+from spark.hold import Hold, read_hold, release_hold, write_hold
+from spark.memory import MemInfo, parse_meminfo
+from spark.registry import load_registry
+
+FIXTURE = Path(__file__).parent / "fixtures" / "models.yaml"
+MEMINFO = "MemTotal:       127622144 kB\nMemFree:  1024 kB\nMemAvailable:   73400320 kB\n"
+KIB_PER_GIB = 1024 * 1024
+SHOWN = re.compile(r"needs (\S+) GiB, (\S+) GiB available(?:, capped at what the GPU can allocate)?, "
+                   r"(\S+) GiB reserve kept: (\S+) GiB short")
+
+
+def test_parse_meminfo_in_gib():
+    mem = parse_meminfo(MEMINFO)
+    assert round(mem.total_gib, 1) == 121.7
+    assert mem.available_gib == 70.0
+
+
+def test_parse_meminfo_needs_both_fields():
+    with pytest.raises(ValueError, match="MemAvailable"):
+        parse_meminfo("MemTotal: 1 kB\n")
+    with pytest.raises(ValueError, match="MemTotal"):
+        parse_meminfo("MemAvailable: 1 kB\n")
+
+
+def test_admit_fits():
+    reg = load_registry(FIXTURE)
+    assert admit(reg.models["coder"], MemInfo(121.7, 70.0), reg.budget, None).ok
+
+
+def test_admit_refuses_when_it_would_eat_the_reserve():
+    reg = load_registry(FIXTURE)
+    decision = admit(reg.models["coder"], MemInfo(121.7, 40.0), reg.budget, None)
+    assert not decision.ok
+    assert decision.reason == "needs 28.0 GiB, 40.0 GiB available, 24 GiB reserve kept: 12.0 GiB short"
+
+
+def test_admit_counts_no_more_memory_than_the_gpu_can_allocate():
+    # MemAvailable can be above what CUDA can allocate (reported near 102 GiB), and overcommitting can
+    # hard-freeze a GB10: the fit uses the lower of the two.
+    reg = load_registry(FIXTURE)
+    big = replace(reg.models["coder"], footprint_gib=90)
+    decision = admit(big, MemInfo(121.7, 118.0), reg.budget, None)
+    assert not decision.ok  # 118 − 24 = 94 would fit; 102 − 24 = 78 doesn't
+    assert decision.reason == ("needs 90.0 GiB, 102.0 GiB available, capped at what the GPU can allocate, "
+                               "24 GiB reserve kept: 12.0 GiB short")
+
+
+@pytest.mark.parametrize("footprint, available", [(28, 52.0), (27.6, 51.6), (2.5, 26.5), (28.3, 52.3)])
+def test_admit_takes_a_model_that_fits_exactly(footprint, available):
+    # footprint == available − reserve fits. In binary floats 52.3 − 24 is 28.299999999999997, which
+    # would refuse the 28.3 GiB model by a rounding error.
+    reg = load_registry(FIXTURE)
+    model = replace(reg.models["coder"], footprint_gib=footprint)
+    assert admit(model, MemInfo(121.7, available), reg.budget, None) == Decision(True, "fits")
+
+
+@pytest.mark.parametrize("footprint, available, reason", [
+    (28.1, 52.0, "needs 28.1 GiB, 52.0 GiB available, 24 GiB reserve kept: 0.1 GiB short"),
+    (28, 51.6, "needs 28.0 GiB, 51.6 GiB available, 24 GiB reserve kept: 0.4 GiB short"),
+    (27.6, 51.5, "needs 27.6 GiB, 51.5 GiB available, 24 GiB reserve kept: 0.1 GiB short"),
+    (2.5, 26.4, "needs 2.5 GiB, 26.4 GiB available, 24 GiB reserve kept: 0.1 GiB short"),
+    # 1 KiB short: what's available rounds down, so the shortfall shows as 0.1, never as 0.0
+    (28, (52 * KIB_PER_GIB - 1) / KIB_PER_GIB,
+     "needs 28.0 GiB, 51.9 GiB available, 24 GiB reserve kept: 0.1 GiB short"),
+])
+def test_admit_refuses_a_model_just_over_and_shows_by_how_much(footprint, available, reason):
+    reg = load_registry(FIXTURE)
+    model = replace(reg.models["coder"], footprint_gib=footprint)
+    assert admit(model, MemInfo(121.7, available), reg.budget, None) == Decision(False, reason)
+
+
+def test_the_numbers_a_refusal_shows_never_add_up_to_a_fit():
+    # Probes each side of the edge in 0.01 GiB steps and in single KiB, and past what the GPU can
+    # allocate. Whatever the rounding, needed − (available − reserve) as shown is the shortfall shown.
+    reg = load_registry(FIXTURE)
+    for footprint in (0.1, 1.5, 2.5, 18, 27.6, 28, 28.04, 28.3, 90):
+        model = replace(reg.models["coder"], footprint_gib=footprint)
+        edge_kib = round((footprint + 24) * KIB_PER_GIB)
+        probes = [footprint + 24 + step / 100 for step in range(-30, 31)]
+        probes += [(edge_kib + kib) / KIB_PER_GIB for kib in (-1024, -1, 0, 1, 1024)]
+        verdicts = set()
+        for available in probes:
+            decision = admit(model, MemInfo(121.7, available), reg.budget, None)
+            verdicts.add(decision.ok)
+            if not decision.ok:
+                needed, free, reserve, short = map(Decimal, SHOWN.fullmatch(decision.reason).groups())
+                assert short > 0 and needed - (free - reserve) == short, decision.reason
+        assert verdicts == ({False} if footprint == 90 else {True, False}), footprint  # 90 is over the cap
+
+
+def test_admit_refuses_while_the_brake_holds():
+    reg = load_registry(FIXTURE)
+    hold = Hold(since="2026-09-23T10:00:00", reason="18.0 GiB available", unloaded=("coder",))
+    decision = admit(reg.models["embed"], MemInfo(121.7, 90.0), reg.budget, hold)
+    assert not decision.ok and "brake" in decision.reason and "make brake-release" in decision.reason
+
+
+def test_hold_round_trip(tmp_path):
+    assert read_hold(tmp_path) is None
+    write_hold(tmp_path, Hold("t", "why", ("a",)))
+    assert read_hold(tmp_path) == Hold("t", "why", ("a",))
+    assert release_hold(tmp_path) is True
+    assert read_hold(tmp_path) is None and release_hold(tmp_path) is False
+
+
+def test_a_hold_is_on_disk_before_it_takes_its_name_and_the_name_after(tmp_path, monkeypatch):
+    # The brake writes the hold as memory runs out, when a GB10 can hard-freeze and need a power cycle.
+    # A power cut soon after must not leave hold.json missing or empty: loads would resume unreleased.
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        info = os.fstat(fd)
+        events.append("fsync the folder" if stat.S_ISDIR(info.st_mode) else f"fsync {info.st_size} bytes")
+        real_fsync(fd)
+
+    def replace(src, dst):
+        events.append(f"rename to {Path(dst).name}")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    write_hold(tmp_path, Hold("t", "why", ("a",)))
+    whole = len(json.dumps({"since": "t", "reason": "why", "unloaded": ["a"]}))
+    assert events == [f"fsync {whole} bytes", "rename to hold.json", "fsync the folder"]
+    assert read_hold(tmp_path) == Hold("t", "why", ("a",))
+    assert [p.name for p in tmp_path.iterdir()] == ["hold.json"]
+
+
+DAMAGED_HOLDS = {
+    "empty": b"",
+    "not text": b"\xff\xfe garbage",
+    "cut off": b'{"since": "2026-09-23T10:00:00", "rea',
+    "not an object": b"[]",
+    "no reason": b'{"since": "t"}',
+    "since not text": b'{"since": 1, "reason": "r"}',
+    "unloaded not a list": b'{"since": "t", "reason": "r", "unloaded": "coder"}',
+    "nested too deep": b"[" * 100_000,  # json.loads raises RecursionError
+    "a folder": None,  # can't be read, even by root
+}
+
+
+@pytest.mark.parametrize("damage", DAMAGED_HOLDS.values(), ids=DAMAGED_HOLDS.keys())
+def test_a_hold_file_that_cant_be_read_still_holds(tmp_path, damage):
+    # Fail closed: a damaged hold must never read as no hold. The reason names the file.
+    hold_file = tmp_path / "hold.json"
+    if damage is None:
+        hold_file.mkdir()
+    else:
+        hold_file.write_bytes(damage)
+    hold = read_hold(tmp_path)
+    assert hold is not None and f"hold file {hold_file} can't be read: " in hold.reason
+
+
+def test_a_hold_that_goes_between_a_check_and_the_act_is_no_hold(tmp_path, monkeypatch):
+    # Two releases can race: a check followed by the unlink would crash the loser. So the file is read
+    # or unlinked directly, and only its absence means no hold.
+    monkeypatch.setattr(Path, "exists", lambda self: True)  # as if hold.json went just after a check
+    assert read_hold(tmp_path) is None
+    assert release_hold(tmp_path) is False
+
+
+def test_launch_execs_the_engine_when_it_fits(tmp_path, monkeypatch):
+    calls = {}
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: calls.setdefault("oom", args))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(file=f, argv=a))
+    code = launch.main_launch(["coder", "--", "/bin/engine", "--port", "5800"], registry=FIXTURE, state=tmp_path)
+    assert code == 0 and calls == {"oom": ("coder", False), "file": "/bin/engine",
+                                   "argv": ["/bin/engine", "--port", "5800"]}
+
+
+# Phase 1's council (reliability m5): earlyoom chooses among the engines by oom_score, and a model's GPU memory isn't in
+# its engine's RSS, so at one adjustment for all their scores sat within 9 of each other, and earlyoom's dry run picked
+# Gemma, a resident, before the on-demand coder. A resident engine starts at 900 and an on-demand one at 1000, so
+# earlyoom takes the on-demand coder first, as the brake does, and every engine still goes before a process at 0.
+
+@pytest.mark.parametrize("model, adj", [("coder", "1000"), ("vision-chat", "900"), ("embed", "900"), ("stt", "900")])
+def test_an_engine_is_marked_for_the_oom_killers_in_the_brakes_order(tmp_path, monkeypatch, model, adj):
+    oom = tmp_path / "oom_score_adj"
+    oom.write_text("0\n")
+    monkeypatch.setattr(launch, "OOM_SCORE_ADJ", oom)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: None)
+    assert launch.main_launch([model, "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 0
+    assert oom.read_text() == adj
+
+
+def test_an_engine_it_cant_mark_still_starts_and_says_so_in_one_line(tmp_path, monkeypatch, capsys):
+    # Not Linux, or a write the kernel refuses: the engine still starts, left at llama-swap's own 0, which scores below
+    # Dan's jobs. The line goes to stderr, which llama-swap keeps, before the exec that would lose a buffered one.
+    monkeypatch.setattr(launch, "OOM_SCORE_ADJ", tmp_path / "missing" / "oom_score_adj")
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    calls = {}
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(file=f, err=capsys.readouterr().err))
+    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 0
+    assert calls["file"] == "/bin/engine"
+    lines = calls["err"].splitlines()
+    assert len(lines) == 1 and lines[0].startswith("spark: coder starts without oom_score_adj 1000 (")
+    assert "No such file or directory" in lines[0] and "earlyoom" in lines[0]
+
+
+def test_the_engine_inherits_no_api_key(tmp_path, monkeypatch):
+    # llama-swap reads its keys from its environment, and every engine it starts inherits that
+    # environment. Engines parse third-party model files and need none of the keys.
+    calls = {}
+    monkeypatch.setenv("LLAMASWAP_KEY_AGENT", "x")
+    monkeypatch.setenv("LLAMASWAP_KEY_SPARK", "x")
+    monkeypatch.setenv("HF_HOME", "/var/lib/local-ai/hf")
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 70.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: None)
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: calls.update(env=env))
+    launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
+    assert [name for name in calls["env"] if name.startswith("LLAMASWAP_KEY_")] == []
+    assert calls["env"]["HF_HOME"] == "/var/lib/local-ai/hf"
+
+
+def test_launch_refuses_with_exit_3(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 30.0))
+    # the real one would raise pytest's own oom_score_adj
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    code = launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
+    assert code == 3
+    assert ("spark: not starting coder: needs 28.0 GiB, 30.0 GiB available, 24 GiB reserve kept: "
+            "22.0 GiB short\n") in capsys.readouterr().err
+
+
+def test_launch_unknown_model_is_a_usage_error(tmp_path):
+    assert launch.main_launch(["nope", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 2
+
+
+@pytest.mark.parametrize("argv", [
+    [], ["coder"], ["coder", "/bin/engine"], ["coder", "--"], ["--", "/bin/engine"],
+    ["coder", "x", "--", "/bin/engine"],
+], ids=["nothing", "no --", "no -- before the command", "no command", "no model", "-- not second"])
+def test_launch_usage_errors(tmp_path, monkeypatch, capsys, argv):
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(argv, registry=FIXTURE, state=tmp_path) == 2
+    assert capsys.readouterr().err == "usage: spark launch <model> -- <engine command…>\n"
+    assert launch.read_refusal(tmp_path) is None
+
+
+def test_launch_refuses_while_the_brakes_hold_file_stands(tmp_path, monkeypatch, capsys):
+    write_hold(tmp_path, Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",)))
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))  # plenty: only the hold refuses
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
+    assert capsys.readouterr().err == (
+        "spark: not starting embed: the memory brake has held new loads since 2026-09-23T10:00:00 "
+        "(18.0 GiB available); run `make brake-release` once memory is back\n"
+    )
+    assert launch.read_refusal(tmp_path)["model"] == "embed"
+
+
+@pytest.mark.parametrize("damage", [b"", b"\x00\xff{garbage"], ids=["empty", "garbage"])
+def test_launch_refuses_while_a_damaged_hold_file_stands(tmp_path, monkeypatch, capsys, damage):
+    launch.record_refusal(tmp_path, "vision-chat", "an older, unrelated reason")
+    (tmp_path / "hold.json").write_bytes(damage)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["embed", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path) == 3
+    err = capsys.readouterr().err
+    assert err.startswith("spark: not starting embed: ") and "make brake-release" in err
+    assert str(tmp_path / "hold.json") in err
+    refusal = launch.read_refusal(tmp_path)  # the older record is replaced, so `spark status` shows why
+    assert refusal["model"] == "embed" and str(tmp_path / "hold.json") in refusal["reason"]
+
+
+@pytest.mark.parametrize("setup, error", [
+    (None, "No such file or directory"),
+    ("a folder", "Is a directory"),
+    ("budget: [102, 24\n", "while parsing a flow sequence"),
+    ("budget: {allocatable_gib: 102}\n", "budget: reserve_gib is required"),
+], ids=["missing", "a folder", "not YAML", "invalid"])
+def test_launch_refuses_when_the_registry_wont_load(tmp_path, monkeypatch, capsys, setup, error):
+    registry, state = tmp_path / "models.yaml", tmp_path / "state"
+    state.mkdir()
+    if setup == "a folder":
+        registry.mkdir()
+    elif setup is not None:
+        registry.write_text(setup)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
+    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=state) == 3
+    err = capsys.readouterr().err
+    assert err.startswith(f"spark: not starting coder: the registry {registry} won't load: ") and error in err
+    refusal = launch.read_refusal(state)
+    assert refusal["model"] == "coder" and str(registry) in refusal["reason"] and error in refusal["reason"]
+
+
+def test_a_refusal_is_kept_for_spark_status_until_the_next_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: None)
+    monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: None)
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 30.0))
+    launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
+    refusal = launch.read_refusal(tmp_path)
+    assert refusal["model"] == "coder" and refusal["reason"].startswith("needs 28.0 GiB")
+    monkeypatch.setattr(launch, "read_meminfo", lambda: MemInfo(121.7, 90.0))
+    launch.main_launch(["coder", "--", "/bin/engine"], registry=FIXTURE, state=tmp_path)
+    assert launch.read_refusal(tmp_path) is None
+
+
+def test_a_refusal_record_is_swapped_in_whole(tmp_path, monkeypatch):
+    # `spark status` can read it at any moment: it must find the old record or the new one, never part
+    # of one, which it would report as no refusal at all.
+    renamed = []
+    real_replace = os.replace
+
+    def replace(src, dst):
+        renamed.append(Path(dst).name)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+    launch.record_refusal(tmp_path, "coder", "why")
+    assert renamed == ["last-refusal.json"]
+    refusal = launch.read_refusal(tmp_path)
+    assert refusal["model"] == "coder" and refusal["reason"] == "why"
+    assert [p.name for p in tmp_path.iterdir()] == ["last-refusal.json"]  # no temporary file left
+
+
+# Task 5's fix round 1: `spark status` shows the record, so the reader returns only a whole one, and says what's wrong
+# with a record that isn't (I5).
+
+DAMAGED_REFUSALS = {
+    "a list": b"[1]",
+    "a string": b'"s"',
+    "a number": b"5",
+    "none of its fields": b'{"x": 1}',
+    "at not text": b'{"at": 1, "model": "coder", "reason": "r"}',
+    "no reason": b'{"at": "t", "model": "coder"}',
+    "not JSON": b"{not json",
+    "empty": b"",
+    "not text": b"\xff\xfe garbage",
+    "nested too deep": b"[" * 100_000,  # json.loads raises RecursionError
+    "a folder": None,
+}
+
+
+@pytest.mark.parametrize("damage", DAMAGED_REFUSALS.values(), ids=DAMAGED_REFUSALS.keys())
+def test_a_refusal_record_that_isnt_one_reads_as_none_and_says_why(tmp_path, damage):
+    record = tmp_path / "last-refusal.json"
+    if damage is None:
+        record.mkdir()
+    else:
+        record.write_bytes(damage)
+    assert launch.read_refusal(tmp_path) is None
+    refusal, problem = launch.check_refusal(tmp_path)
+    assert refusal is None and problem.startswith(f"the refusal record {record} ")
+
+
+def test_a_whole_refusal_record_is_read_as_its_three_fields(tmp_path):
+    (tmp_path / "last-refusal.json").write_text(json.dumps({"at": "t1", "model": "coder", "reason": "why", "x": 1}))
+    assert launch.check_refusal(tmp_path) == ({"at": "t1", "model": "coder", "reason": "why"}, None)
+    assert launch.read_refusal(tmp_path) == {"at": "t1", "model": "coder", "reason": "why"}
+
+
+def test_no_refusal_record_is_no_refusal_and_no_problem(tmp_path):
+    assert launch.check_refusal(tmp_path) == (None, None)

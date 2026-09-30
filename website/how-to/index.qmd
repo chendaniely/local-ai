@@ -20,7 +20,7 @@ runbook says `brightroar` (for `ssh` or `scp`), and `brightroar-agent-lan` where
 `brightroar-agent`. If the Mac's config lacks those blocks, add them first; the keys can wait for
 step 4, and until then you log in with your password.
 
-**Before step 1**, on the Spark as yourself: install Claude Code and uv with their official
+**Before step 1, on the Spark**, as yourself: install Claude Code and uv with their official
 installers (the commands `changelog.md` records for the first setup), and tmux and gh, which step 1
 uses before bootstrap installs them. Then log out and back in, so `~/.local/bin` is on your `PATH`:
 
@@ -36,6 +36,8 @@ sudo apt install tmux gh
 4. [SSH from the Mac](ssh.md)
 5. [Join Tailscale](tailscale.md)
 6. [Secret files](secret-files.md)
+7. [Deploy the stack](deploy.md)
+8. [pi, the coding agent](pi.md) — `agent`'s Claude Code gets the secrets guard before its key.
 
 **After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
 IPv6 check, which need the tailnet name.

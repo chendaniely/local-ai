@@ -32,6 +32,17 @@ exit 0
 """
 
 
+def uv_dir(*args: str) -> str:
+    """One of uv's own folders, as uv names it (`uv python dir`, `uv cache dir`): a path, never a variable's value."""
+    return subprocess.run(["uv", *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+# `make hooks` runs uv, which finds its Pythons and its cache under HOME unless told where they are. make_hooks gives
+# make a HOME of its own, so it names them, as uv reports them from the shell pytest started in; without them uv would
+# download a whole Python into that HOME.
+UV_DIRS = {"UV_PYTHON_INSTALL_DIR": uv_dir("python", "dir"), "UV_CACHE_DIR": uv_dir("cache", "dir")}
+
+
 def gitleaks_has_git() -> bool:
     """Whether the gitleaks on PATH has the `git` command (8.19 or later), as the hooks require."""
     found = shutil.which("gitleaks")
@@ -64,12 +75,18 @@ def make_hooks(tmp_path: Path, gitleaks: str, denylist: str) -> tuple[subprocess
     (tmp_path / "denylist").write_text(denylist)
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    env = {k: v for k, v in os.environ.items() if not k.startswith("MAKE") and k != "MFLAGS"}
-    env.update(
-        PATH=f"{bindir}:{env['PATH']}",
-        GIT_DIR=str(repo / ".git"),
-        LOCAL_AI_DENYLIST=str(tmp_path / "denylist"),
-    )
+    # Built, not copied (Task 7's fix round 2: a launch that fails prints the environment it was given): PATH finds the
+    # stand-in first, then make, git and uv; HOME is a folder of this test's; uv's folders are named (UV_DIRS); and no
+    # MAKEFLAGS from an outer make reach this one.
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "HOME": str(home),
+        **UV_DIRS,
+        "GIT_DIR": str(repo / ".git"),
+        "LOCAL_AI_DENYLIST": str(tmp_path / "denylist"),
+    }
     result = subprocess.run(["make", "-C", str(ROOT), "hooks"], env=env, capture_output=True, text=True)
     hooks_path = subprocess.run(
         ["git", "config", "--get", "core.hooksPath"], cwd=repo, capture_output=True, text=True
@@ -79,6 +96,23 @@ def make_hooks(tmp_path: Path, gitleaks: str, denylist: str) -> tuple[subprocess
 
 def test_make_hooks_turns_the_hooks_on(tmp_path):
     result, hooks_path = make_hooks(tmp_path, NEW_GITLEAKS, "secret-project\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert hooks_path == ".githooks"
+
+
+# Stands in for gitleaks 8.19 or later, and refuses to run when a variable of the test's own environment reached it.
+# It says so without printing any value.
+SENTINEL_GITLEAKS = """#!/bin/sh
+if [ -n "${HOOKS_TEST_SENTINEL:-}" ]; then echo "gitleaks was given the test's own environment" >&2; exit 1; fi
+exit 0
+"""
+
+
+def test_make_hooks_passes_on_nothing_of_the_tests_environment(tmp_path, monkeypatch):
+    # Task 7's fix round 2: a launch that fails prints the environment it was given, so make_hooks builds make's
+    # environment itself: PATH, a HOME of its own, uv's folders and the stand-ins' settings, nothing else of the test's.
+    monkeypatch.setenv("HOOKS_TEST_SENTINEL", "a stand-in, not a secret")
+    result, hooks_path = make_hooks(tmp_path, SENTINEL_GITLEAKS, "secret-project\n")
     assert result.returncode == 0, result.stdout + result.stderr
     assert hooks_path == ".githooks"
 

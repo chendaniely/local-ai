@@ -4,7 +4,10 @@ Personal local-AI stack for a **single DGX Spark (GB10)**, reached from a MacBoo
 over Tailscale (the primary path), the home LAN, or WireGuard (for a device on another tailnet).
 Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the `spark` CLI's leak
 check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
-its runbooks and scenario pages. Nothing serves a model yet; that starts with Phase 1.
+its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
+its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
+Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
+inherits; the plan's Phase 2 line says what comes next.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -133,12 +136,18 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
   them casually.
 - **Never reload llama-swap while models are loaded** — in v257 a config reload stops every engine.
-  Changes go through `spark apply`, which waits for idle or asks.
+  Changes go through `make apply`, which refuses to restart llama-swap while models are loaded;
+  `make apply-now` restarts it anyway, when you choose to. (Corrected 2026-09-28, from Phase 1's
+  council: this said `spark apply` "waits for idle or asks", which it never did.)
 - **Tens of tok/s is the realistic band** on a large MoE. Don't promise more: the reference repo's
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
   `TORCH_CUDA_ARCH_LIST=12.1a`, or they silently target the wrong arch. NVIDIA's own llama.cpp
-  playbook uses `121a-real`; which is right gets verified in Phase 1.
+  playbook uses `121a-real`; which is right gets verified in Phase 1. *Checked 2026-09-28 (Phase 1,
+  Tasks 11 and 13):* whisper.cpp built with `CMAKE_CUDA_ARCHITECTURES=121a-real` holds only
+  `sm_121a` code (`cuobjdump --list-elf`), and it transcribes on this GPU. ggml's CMake itself turns
+  a detected `121-real` into `121a-real`. So `121a-real` builds native code that runs here. No `121`
+  build was made, so this says nothing about whether `121` fails.
 - **The GPU set moves as one, and only on upgrade day.** The kernel, the NVIDIA modules built for
   it, the driver and CUDA are held together (`apt-mark showhold` lists them). Never unhold or
   upgrade part of the set, while debugging or otherwise: a kernel with no matching NVIDIA module
@@ -157,15 +166,35 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **Markdown under `website/`: a mid-document horizontal rule is `***`, never `---`.** Pandoc can
   read a `---` line anywhere in a document, not only at the top, as the start of a YAML metadata
   block, and then the Quarto render fails. The front matter's own `---` lines are fine.
+- **Every command in the docs says where it runs** (Dan's rule, 2026-09-25). The paragraph right
+  above a command block names the machine in bold — **On the Mac:** or **On the Spark:**, or
+  github.com, the Tailscale console and so on — and a step that moves between machines says so at
+  each move. Never as a `# on the …` comment inside the block: pasted into the Mac's zsh, which
+  doesn't treat a `#` line as a comment, it prints `command not found: #` (seen 2026-09-25). In a
+  phase plan, the task's label (**[Spark]**, **[Mac]**, **[Dan]**) says where its steps run, and a
+  step that runs elsewhere names the machine. The same goes for any `#` in a shell block that runs
+  on the Mac, a trailing comment included (added 2026-09-26; Dan's rule since 2026-09-27): that zsh
+  passes the `#` and every word after it to the command, and a quote in them leaves the line open.
+  What a comment would say goes in the prose above the block. Dan's Spark shell is bash, where
+  comments work; a block holding a config file's text, not shell commands, keeps that file's own
+  comments.
 
 ## Building it
 
-- **Work runs where it belongs.** On `heartsbane` (the Mac): code with unit tests, config templates
-  and render tests, the Makefile, leak hooks, CI, the docs site, Mac clients. On `brightroar` (a
-  Claude Code session as Dan, in tmux): anything touching the GPU, memory, systemd or Docker,
-  including `spark doctor`. Dan: sudo, interactive logins, secret values, the Synology's settings.
-  Every task in an implementation plan is labelled **[Mac]**, **[Spark]** or **[Dan]**; from the Mac,
-  touch the Spark only with read-only SSH checks Dan has OK'd.
+- **Work runs on the Spark by default** (changed 2026-09-25). A Claude Code session as Dan, in tmux
+  on `brightroar`, does everything that doesn't need the Mac: code with its tests, config templates
+  and render tests, the Makefile, bootstrap, the leak hooks, the docs, and anything touching the GPU,
+  memory, systemd or Docker, including `spark doctor`. Only three kinds of work stay on `heartsbane`
+  (the Mac): the Mac-side clients and their config; changes under `.github/workflows/`, which the
+  Spark's repository-only GitHub token can't push (a merge that brings one in included, into `main`
+  or from `main` into a branch after a Dependabot Actions bump); and rendering the site
+  (`make docs`) until Quarto is installed on the Spark. What the Mac also runs — the Makefile's
+  shared targets and the leak hooks — gets its Mac check (bash 3.2, GNU make 3.81) at the next Mac
+  step, as the lessons below require. Dan: sudo, interactive logins, secret values, the Synology's
+  settings. Every task in an implementation plan is labelled **[Spark]**, **[Mac]** or **[Dan]**;
+  from the Mac, touch the Spark only with read-only SSH checks Dan has OK'd. (Until 2026-09-25 the
+  Mac wrote the code, tests, CI and docs, and the Spark ran only what touched its GPU, memory,
+  systemd or Docker.)
 - **One session at a time.** The active session owns the phase branch; at a switch it commits, the
   branch is pushed with Dan's OK, and the other machine pulls.
 - **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase
@@ -176,7 +205,16 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **Python through uv, the `Makefile` as the front door.** No system Python, no pip; the Makefile
   calls `uv run --frozen spark …`; standalone scripts carry PEP 723 inline metadata. One Python
   minor version everywhere, pinned in `spark/.python-version`: it has to live in `spark/`, because
-  uv looks for it only in the project directory.
+  uv looks for it only in the project directory. uv's own interpreters only: `spark/pyproject.toml`
+  sets `python-preference = "only-managed"`, so uv never builds the venv on a system Python (Dan's
+  decision, 2026-09-26, after the Spark's venv turned out to run Ubuntu's 3.12.3). The lock takes
+  only releases at least seven days old: `exclude-newer = "7 days"` there, a rolling window, and
+  Dependabot's uv PRs wait as long (Dan's decision, 2026-09-27). An urgent fix gets a per-package
+  exception, taken out once the release is a week old; `website/how-to/updates.md` has the steps.
+  The same seven days apply to every version set by hand in `stack/versions.yaml` — the engines,
+  llama-swap, the container images, the tools: pin a release only once it is a week old, unless an
+  urgent fix needs it sooner, and say so in the commit (Dan's decision, 2026-09-28, at Phase 1's
+  close: llama.cpp and llama-swap went in 4–5 days after release).
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
   and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets

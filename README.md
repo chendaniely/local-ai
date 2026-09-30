@@ -6,7 +6,10 @@ reached from a MacBook or other devices over Tailscale, WireGuard, or the home L
 
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
 [the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
-first tools, the host bootstrap and the docs site. Nothing serves a model until Phase 1.
+first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
+2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
+on the Mac and as `agent`, behind a minimal brake and launch check.
+[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits.
 
 ## Design in one line
 
@@ -23,11 +26,11 @@ this line, was parked on 2026-09-23.)
 | [`website/design/plan.md`](website/design/plan.md) | The plan: goals, constraints, decisions, design, phases, open items. Start here. It replaced `planning.md`, the initial plan, on 2026-09-23. |
 | [`changelog.md`](changelog.md) | Dated log of what changed on the machine, newest first. |
 | [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) | Notes on Niels Bantilan's stack (below) — GB10 hardware facts, gotchas, and what does and doesn't transfer to a single Spark. |
-| [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap and the GPU-set hold. |
+| [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap, the GPU-set hold and upgrade day's move (`upgrade-gpu`), deploying the stack (`apply`, `install-units`, `pull`, `status`, `brake-release`, `logs`, `tunnel`, `clients`), and `doctor`, which checks the guardrails and the stack. |
 | [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
-| [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check and the docs tools so far. |
-| [`stack/`](stack) | Pinned versions (`versions.yaml`) and the host setup (`host/`: bootstrap, earlyoom's config, the polkit rule). |
+| [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
+| [`stack/`](stack) | The model registry (`models.yaml`), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`) and the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule). |
 | [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
 ## Hosts
@@ -109,28 +112,46 @@ when that file was retired on 2026-09-23.
 - ⚠️ **A DHCP reservation only takes effect on a fresh request.** This bit twice — both times the
   box held an older pool lease and ignored a perfectly correct reservation until the interface was
   bounced or the machine rebooted. Assume a stale lease before assuming the router is wrong. Bounce
-  with `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`, run from the
-  *other* interface so it doesn't sever the session.
+  it on the Spark, from an SSH session over the *other* interface so it doesn't sever the session:
+  `sudo nmcli device disconnect <iface> && sudo nmcli device connect <iface>`.
 - **The wired NIC is on `.201`** (2026-09-24, after a bounce from the Wi-Fi side). It had been
   holding an older pool address until then.
 - **On the tailnet** (2026-09-24), tagged `tag:spark`, so its key never expires, with MagicDNS and
   HTTPS certificates on. The ACL policy replaced the allow-all default: Dan's devices reach each
   other, and reach the Spark on 22 and 443 only. There is no route home, by choice. Until then it
   was reachable only over the home LAN.
-- **Bootstrapped** (2026-09-24, and re-run cleanly). It boots to a console, and a desktop starts
+- **Bootstrapped** (2026-09-24, and re-run cleanly; re-run again on 2026-09-27 by Phase 1's Task 12,
+  for the changes listed under *Pending from Phase 0's close*). It boots to a console, and a desktop starts
   on demand. ufw is on with SSH only. earlyoom is the only out-of-memory killer (systemd-oomd is
   inactive). The GPU set (kernel, NVIDIA modules, driver, CUDA) is held, 151 packages. Three
   identities: Dan (`chendaniely`, in `spark-admin`), `spark` (runs the stack, no login, not in
   `docker`) and `agent` (tmux agents, with its own SSH key and Claude Code; no sudo, docker or
-  `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` manage
-  `local-ai-*` units but not start transient ones. No containers exist yet.
+  `spark-admin`, can't enter Dan's home, can use the GPU). The polkit rule lets `spark-admin` start,
+  stop and restart the four `local-ai-*` units, by exact name, and nothing more; `pkcheck` confirms
+  it can't reload systemd. *(Until the 2026-09-27 re-run, it let `spark-admin` manage any
+  `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
+  Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before): Open WebUI
+  **v0.11.4** and SearXNG **2026.9.23-3cd69d30e**, each at the digest `stack/versions.yaml` pins,
+  which root's Compose file names.
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
-  2026-09-24). The kernel's full release string is not yet recorded. The set moves only on upgrade
-  day, which updates this line.
+  2026-09-24). The kernel's full release string is `7.0.0-1019-nvidia` (recorded 2026-09-25). The
+  set moves only on upgrade day, which updates this line.
 - **Secret files** for Phase 1 are in `/etc/local-ai/secrets/` (`llama-swap.env`,
   `open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), recorded by name in the vault.
+- **SSH takes keys only** (2026-09-25): `/etc/ssh/sshd_config.d/10-local-ai.conf` turns password
+  and keyboard-interactive logins off, and `agent`'s sessions never get a forwarded SSH agent
+  ([SSH from the Mac](website/how-to/ssh.md#keys-only)). The one-time public IPv6 check is done;
+  its result goes in the vault.
+- **GitHub** (2026-09-25): `gh` holds a fine-grained token for this repository only, the clone's
+  `origin` is https, and `gh` is git's credential helper, so pushes go through that token. GitHub
+  refuses the Spark over SSH: the Spark's key came off Dan's account. Whether the first `gh`
+  login's *GitHub CLI* authorization was revoked on github.com is not yet recorded.
+- **The Claude session** has the Mac's global rules and secrets guard (checked 2026-09-25).
+- **The clone's `spark/` environment** runs uv's own CPython **3.12.14** (2026-09-26), the minor
+  version `spark/.python-version` pins. Until then uv had built it on Ubuntu's Python 3.12.3.
+  `uv python install` also linked `python3.12` in `~/.local/bin`; `python3` is still Ubuntu's.
 - **Installed:** Claude Code and **uv 0.12.18**, both in `~/.local/bin` (uv as a per-user
   install; Claude Code was 2.1.281 when installed and updates itself — 2.1.282 on 2026-09-24);
   Google Chrome, through the DGX Dashboard; **R 4.3.3** from Ubuntu's archive. **shellcheck 0.9.0**,
@@ -139,9 +160,49 @@ when that file was retired on 2026-09-23.
   and has been removed. **gh 2.45.0**, from Ubuntu's archive
   too, for pushing from Dan's account (never `agent`'s). Details in the changelog. **Docker 29.6.2**
   came with DGX OS, from NVIDIA's repository; **earlyoom 1.7-2** is Ubuntu's package, installed by
-  bootstrap; Tailscale came from its own install script (2026-09-24), and its version is not yet
-  recorded. Claude Code here talks straight to Anthropic — it is a client like any other, not a
-  change to the Claude path.
+  bootstrap; **Tailscale 1.102.4** came from its own install script (2026-09-24; its version
+  recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
+  2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
+  pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
+  talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
+- **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
+  **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
+  CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
+  and whisper.cpp **v1.9.4**, built here for `121a-real`, in `/opt/local-ai/bin/whisper.cpp/v1.9.4/`.
+  whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. `agent` runs
+  llama-server and sees the GPU without docker. Checksums, commits and GPU code in the changelog;
+  the pins in `stack/versions.yaml`.
+- **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
+  its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
+  in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
+  and the web services are enabled and running; the pull unit runs only when asked. Everything
+  listens on 127.0.0.1 only: llama-swap on 9100, keys required; the engines on 5800 and up;
+  Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
+  model, and Open WebUI's task model, whose task calls run without thinking),
+  `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
+  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`,
+  with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
+  `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
+  the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
+  with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
+  since a photo aborted its engine at the default. The stack comes back after a reboot with no hand
+  on it, and a routine `apt upgrade` left it running. Both were checked on 2026-09-28 (Task 16).
+  That upgrade moved no library the engines use. Since 2026-09-28 every model runs at its full
+  context: 262,144 tokens for Gemma and the coder, and 32,768 for the embedding model. Gemma's
+  two slots share one pool, keep their cache while idle, and keep at most 4 context checkpoints
+  each. Cold loads take about 25, 6 and 30 GiB for Gemma, the embedding model and the coder.
+  Since Phase 1's council (deployed 2026-09-28): the engines serve neither `/slots` nor a web UI
+  of their own; a registry may pass them only listed options; the resident engines run at
+  `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
+  footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
+  which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
+- **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
+  `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
+  `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
+  `spark clients`, which wrote pi's `spark` provider. Its Claude Code got the same secrets guard as
+  Dan's Spark session before the key arrived: the hook script, the 35 deny rules, and a `CLAUDE.md`
+  holding only the secrets rule. Its pi runs the coder through llama-swap, in tmux, and the session
+  survives a detach and a new login.
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
@@ -158,24 +219,35 @@ when that file was retired on 2026-09-23.
 - **Pending from Phase 0's close** (2026-09-25). Not yet applied on the box, or applied but not yet
   recorded here. A box change gets a dated `changelog.md` entry and a line here when it's done; the
   IPv6 check's result goes in the vault instead:
-  - **Pull before the next upgrade day.** Nothing after `96d0217` has been pushed, so the Spark's
-    clone has the `updates.md` from before Phase 0's council, whose re-hold runs all of
-    `make bootstrap` and whose recovery line can leave the box without a GPU. The current steps
-    need `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Once the merge is
-    pushed, pull it on the Spark before upgrade day, or skip that Saturday; the plan allows skipping
-    one.
-  - **A bootstrap re-run.** Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
-    becomes root's, and earlyoom avoids `sshd.*` (`3735420`). Until it runs again, the box keeps
-    the first run's owners and earlyoom arguments. Phase 1's Task 12, Step 1 re-runs it.
-  - **Keys-only SSH** ([SSH from the Mac](website/how-to/ssh.md#keys-only)), then its one-time
-    public IPv6 check, whose result goes in the vault.
-  - **A GitHub token for this repository only**, with the first `gh` login revoked
+  - ~~**Pull before the next upgrade day.**~~ **Done 2026-09-25:** Dan switched the Spark's clone
+    to `main` and pulled Phase 0's merge (`ebb32da`), so it has the reviewed `updates.md`,
+    `make hold-gpu` (`ed0e06a`) and bootstrap's `--hold-gpu` (`f77a144`). Until then the clone had
+    the `updates.md` from before Phase 0's council, whose re-hold ran all of `make bootstrap` and
+    whose recovery line could leave the box without a GPU.
+  - ~~**A bootstrap re-run.**~~ **Done 2026-09-27** by Phase 1's Task 12, Step 1: everything below
+    is on the box, and `make doctor`'s three lines pass. Bootstrap changed after its 2026-09-24 runs: `/var/lib/local-ai`
+    becomes root's, and earlyoom avoids `sshd.*` (`3735420`); `spark` gets two cache folders,
+    `/var/lib/local-ai/cache` and `/var/lib/local-ai/cuda-cache` (`7c6616a`); the polkit rule lets
+    `spark-admin` start, stop and restart the four `local-ai-*` units and nothing more (`414ddaf`);
+    and a new step installs needrestart's override, `/etc/needrestart/conf.d/local-ai.conf`, so that
+    needrestart never restarts a `local-ai-*` unit (`748a093`). Until it runs again, the box keeps
+    the first run's owners, earlyoom arguments and polkit rule, and has neither cache folder nor the
+    override, so `make doctor`'s *spark's folders*, *needrestart* and *earlyoom* lines fail. Checked
+    read-only: `/var/lib/local-ai` is `spark:spark 751` and the override isn't there (2026-09-26),
+    and the running earlyoom avoids `sshd`, not `sshd.*` (2026-09-27). Phase 1's Task 12, Step 1
+    re-runs it.
+  - ~~**Keys-only SSH**~~ **Done 2026-09-25**
+    ([SSH from the Mac](website/how-to/ssh.md#keys-only)), with its one-time public IPv6 check,
+    whose result goes in the vault.
+  - ~~**A GitHub token for this repository only**~~ **Done 2026-09-25**, and pushes go through it
     ([The Spark session](website/how-to/spark-session.md#github-a-token-for-this-repository-only)).
-  - **The secrets guard and the Mac's global rules** for the Spark's Claude session
+    That the first `gh` login was revoked is not yet recorded.
+  - ~~**The secrets guard and the Mac's global rules**~~ **Done**, checked 2026-09-25, for the
+    Spark's Claude session
     ([The Spark session](website/how-to/spark-session.md#before-the-first-session), steps 2 and 3).
-  - **Three facts to record:** Tailscale's version and the kernel's full release string, both noted
-    above as not yet recorded, and OpenSSH's version (the keys-only drop-in was tested only with
-    the Mac's).
+  - ~~**Three facts to record**~~ **Recorded 2026-09-25**, above: Tailscale 1.102.4, the kernel's
+    release string `7.0.0-1019-nvidia`, and OpenSSH 1:9.6p1-3ubuntu13.19, the version the
+    keys-only drop-in now runs on.
 
 ### The MacBook — `heartsbane`
 
@@ -185,14 +257,22 @@ when that file was retired on 2026-09-23.
   userland.
 - **The repo's tools:** gitleaks **8.30.1** and shellcheck **0.11.0**, from Homebrew; uv
   **0.12.18**; Quarto **1.10.3**, for `make docs`; gh **2.101.0** (all as of 2026-09-24).
+  Homebrew's coreutils **9.12** (2026-09-29): the install-units tests run its `timeout`, and fail
+  on a Mac without it. gh's login carries the `workflow` scope (2026-09-29), which a push that
+  changes `.github/workflows/` needs; without it GitHub refuses the push.
+- **pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
+  that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
+  each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
+  0.85.1, installed with npm; whether that copy is still installed is not recorded.
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
   `spark/.python-version` pins (2026-09-24).
 - **SSH to the Spark** goes through the `~/.ssh/config` aliases that
   [SSH from the Mac](website/how-to/ssh.md) names: `brightroar` and `brightroar-agent`, by the
-  tailnet's full MagicDNS name (2026-09-24). The runbook's LAN fallbacks, `brightroar-lan` and
-  `brightroar-agent-lan`, are not recorded as added here yet.
+  tailnet's full MagicDNS name (2026-09-24). Of the runbook's LAN fallbacks, `brightroar-lan`
+  works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
+  here yet.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
@@ -270,6 +350,12 @@ See [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) for the extracted single-
 each item labelled `[verified]` (measured on his hardware) or `[adapted]` (my translation to one
 node, untested).
 
+**[github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark)**
+— scripts that serve Qwen3.8-27B with SGLang in Docker on one DGX Spark, with three speculative
+decoders (MTP, DSpark and DFlash2), each measured on the box. The notes for Phase 5's coder
+bake-off (added 2026-09-28, read at its 2026-09-12 state); plan.md's Phase 5 line says what this
+stack must account for to run it. Its numbers are its own, not measured here.
+
 ## Conventions
 
 - **This repo is public, and git history is permanent.** Removing something in a later commit
@@ -285,6 +371,11 @@ node, untested).
   mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
   Correct rather than delete, and keep unverified things marked unverified. Full rule in
   [`CLAUDE.md`](CLAUDE.md).
+- **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
+  **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
+  zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,
+  since that zsh passes a trailing one to the command (Dan's rule, 2026-09-27). Full rule in
+  [`CLAUDE.md`](CLAUDE.md).
 - **`free -g`, never `nvidia-smi`**, for anything memory-related on GB10 — the GPU shares the
   CPU's LPDDR5X pool and `nvidia-smi` reports `[N/A]`.
 - **The GPU set moves as one, only on upgrade day.** Kernel, NVIDIA modules, driver and CUDA are
@@ -294,18 +385,23 @@ node, untested).
   mid-document `---` as a YAML block, and the render fails.
 - **Scenarios are living docs.** A change in the stack's behaviour updates its page under
   `website/scenarios/` and its `spark doctor` check in the same commit.
-- **Work runs where it belongs.** Code, tests, docs and Mac clients are written on `heartsbane`;
-  anything touching the Spark's GPU, memory, systemd or Docker is built and tested on `brightroar`;
-  sudo, logins and secrets are mine. One session at a time, a checkpoint commit per task, and pushes
-  only with my explicit OK. Sessions stage files by explicit path, and use my denylist only through
-  the leak check, never reading it.
+- **Work runs on the Spark by default** (since 2026-09-25). The Mac keeps only its own clients and
+  their config, changes under `.github/workflows/` (the Spark's repository-only token can't push
+  them) and rendering the site until Quarto is on the Spark; sudo, logins and secrets are mine. One
+  session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Sessions
+  stage files by explicit path, and use my denylist only through the leak check, never reading it.
 - **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
   run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well
   as the Mac, check box facts on the box, keep root out of paths `spark` and `agent` control, and
   review security in the task that changes it. The story is in the
   [Phase 0 retrospective](website/design/phase-0-retro.md).
 - **Python through uv, and the `Makefile` as the front door** — no system Python, no pip, and one
-  Python minor version, pinned in `spark/.python-version`.
+  Python minor version, pinned in `spark/.python-version`. uv uses only its own interpreters
+  (`python-preference = "only-managed"` in `spark/pyproject.toml`), and locks only releases at
+  least seven days old (`exclude-newer = "7 days"` there, a rolling window, with Dependabot's uv
+  PRs waiting as long; Dan's decision, 2026-09-27). The same week applies to every version pinned
+  by hand in `stack/versions.yaml` unless an urgent fix needs it sooner (Dan's decision,
+  2026-09-28).
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)

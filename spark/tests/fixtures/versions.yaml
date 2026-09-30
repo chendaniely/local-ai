@@ -1,0 +1,24 @@
+components:
+  llama-swap:
+    version: v257
+    where: [spark]
+    pin: null
+    deployed: true
+    docs: https://github.com/mostlygeek/llama-swap
+    changelog: https://github.com/mostlygeek/llama-swap/releases
+  open-webui:
+    version: v0.11.4
+    image: ghcr.io/open-webui/open-webui
+    where: [spark]
+    pin: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    deployed: true
+    docs: https://docs.openwebui.com/
+    changelog: https://github.com/open-webui/open-webui/releases
+  searxng:
+    version: 2026.9.23-3cd69d30e
+    image: docker.io/searxng/searxng
+    where: [spark]
+    pin: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    deployed: true
+    docs: https://docs.searxng.org/
+    changelog: https://github.com/searxng/searxng/commits/master

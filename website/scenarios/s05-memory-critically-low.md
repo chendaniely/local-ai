@@ -2,7 +2,7 @@
 title: "S05 · Memory critically low"
 scenario-id: S05
 phase: 1
-status: planned
+status: built
 ---
 
 **Situation.** A job keeps growing, and free memory falls toward the band where this box has
@@ -14,6 +14,24 @@ there. earlyoom is the last resort. Phase 1 ships a minimal brake that unloads t
 coder first, then the always-loaded models.
 
 **What I see.** A high-priority "brake" notification, and a hold shown in `spark status`.
+*(Added 2026-09-28: that line of `make status` also says whether llama-swap took the brake's own
+key when the brake started, and `make doctor`'s `stack units` line fails if it didn't. A brake
+whose key llama-swap refuses can unload nothing.)*
 
-**How to override.** `spark brake --release` once memory is back. Thresholds live in
-`stack/models.yaml`.
+*Until Phase 2 (added 2026-09-28, from Phase 1's council):* nothing notifies me. The warning at
+28 GiB is a line in the brake's journal (`make logs s=brake`), and the hold shows on `make status`'s
+`brake` line, on the Spark. earlyoom, the last resort, chooses among the engines by their RSS,
+which leaves out the models' GPU memory, and its dry run in Task 13, with every engine at the same
+`oom_score_adj`, picked Gemma, a resident, before the on-demand coder. *(Corrected 2026-09-28, from
+Phase 1's council: `spark launch` now gives a resident engine `oom_score_adj` 900 and an on-demand
+one 1000, so earlyoom picks the on-demand coder first, as the brake does. Checked after that day's
+deploy: earlyoom's dry run picked the coder's engine.)*
+
+**How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
+`make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't
+on my PATH, and the target runs it through uv.)*
+Thresholds live in `stack/models.yaml`.
+
+*Status: built, 2026-09-28 (Phase 1). Phase 1's minimal brake unloads the on-demand models first:
+Task 16's drill, at raised thresholds, held new loads and unloaded the coder while the residents
+stayed. The idle-first order and the notifications arrive in Phase 2.*
