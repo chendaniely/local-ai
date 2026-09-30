@@ -191,6 +191,10 @@ privately. Then, on the Mac or the phone, open that address and log in with the 
 To undo it, on the Spark, `sudo tailscale serve reset`; to serve it again after that, run the
 command above again.
 
+On the Mac, the web UI can run as an app of its own: open the address in Safari, then **File → Add
+to Dock**. The web app keeps a login of its own, apart from Safari's, so log in once inside it.
+Chrome's **Install page as app** works too.
+
 ## Every later change
 
 **On the Spark**, from the clone, get the change:

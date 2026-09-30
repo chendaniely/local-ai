@@ -9,8 +9,8 @@ Started 2026-09-23, on arrival of the Spark. The design was settled the same day
 first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
 2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
 on the Mac and as `agent`, behind a minimal brake and launch check.
-[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. Phase 1b, Orca
-and the web UI on the Mac, comes before it.
+[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. The Mac can also
+run pi and Claude Code in [Orca](website/how-to/orca.md), and the web UI as an app of its own.
 
 ## Design in one line
 
@@ -275,6 +275,13 @@ when that file was retired on 2026-09-23.
   tailnet's full MagicDNS name (2026-09-24). Of the runbook's LAN fallbacks, `brightroar-lan`
   works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
   here yet.
+- **Orca 1.4.217** (installed 2026-09-24; it updates itself), in its local mode
+  ([Orca on the Mac](website/how-to/orca.md)): it runs Claude Code and pi in its panes, and pi
+  reaches the Spark over `make tunnel` (checked 2026-09-29). Its status hooks sit on 13 events in
+  `~/.claude/settings.json` since 2026-09-24, and its three pi extensions in
+  `~/.pi/agent/extensions/` since 2026-09-28. As found on 2026-09-30, its settings were still its
+  defaults — telemetry on, and Claude started with `--dangerously-skip-permissions` — which the
+  runbook's *Settings* changes. It has never connected to the Spark.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU

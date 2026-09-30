@@ -7,8 +7,8 @@ check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and
 its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
 its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
 Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
-inherits. Next comes Phase 1b, Orca and the web UI on the Mac, then Phase 2; the plan's line for
-each says what it holds.
+inherits; the plan's Phase 2 line says what comes next. Orca and the web UI on the Mac came in
+between, as docs, not a phase (2026-09-30).
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
