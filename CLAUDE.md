@@ -4,10 +4,10 @@ Personal local-AI stack for a **single DGX Spark (GB10)**, reached from a MacBoo
 over Tailscale (the primary path), the home LAN, or WireGuard (for a device on another tailnet).
 Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the `spark` CLI's leak
 check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
-its runbooks and scenario pages. Phase 1 is under way on the `phase-1` branch: Tasks 1–10 built its
-code, tests and runbooks (2026-09-27), and since Task 13 (2026-09-28) the box serves its four models
-through llama-swap, with Open WebUI served to the tailnet over HTTPS (Task 14). The *Progress* note at the head of
-[its plan](website/design/phase-1.md) says where it stands and what comes next.
+its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
+its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
+Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
+inherits; the plan's Phase 2 line says what comes next.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this

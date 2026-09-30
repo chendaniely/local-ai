@@ -6,10 +6,10 @@ reached from a MacBook or other devices over Tailscale, WireGuard, or the home L
 
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
 [the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
-first tools, the host bootstrap and the docs site. Phase 1 is under way on the `phase-1` branch: its
-code, tests and runbooks are built (Tasks 1–10, 2026-09-27), and since Task 13 (2026-09-28) the box
-serves its four models — where it stands and what comes next heads
-[its plan](website/design/phase-1.md).
+first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
+2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
+on the Mac and as `agent`, behind a minimal brake and launch check.
+[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits.
 
 ## Design in one line
 
@@ -258,7 +258,8 @@ when that file was retired on 2026-09-23.
 - **The repo's tools:** gitleaks **8.30.1** and shellcheck **0.11.0**, from Homebrew; uv
   **0.12.18**; Quarto **1.10.3**, for `make docs`; gh **2.101.0** (all as of 2026-09-24).
   Homebrew's coreutils **9.12** (2026-09-29): the install-units tests run its `timeout`, and fail
-  on a Mac without it.
+  on a Mac without it. gh's login carries the `workflow` scope (2026-09-29), which a push that
+  changes `.github/workflows/` needs; without it GitHub refuses the push.
 - **pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,

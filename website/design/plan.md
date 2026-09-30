@@ -493,10 +493,11 @@ Every phase ends by updating scenario statuses, the docs site, `changelog.md` an
   reattaching works; the minimal brake fires at raised thresholds; a fresh clone + `make bootstrap` +
   `make apply` reproduces it; after a routine `apt upgrade` and after a reboot, the stack is serving
   again without a hand on it.
-- *Status:* closing, 2026-09-28. Tasks 1–17 ran on the Spark from 2026-09-25 to 2026-09-28, and
+- *Status:* done, 2026-09-29. Tasks 1–17 ran on the Spark from 2026-09-25 to 2026-09-28, and
   every done-when criterion above holds, with the routine upgrade's weaker evidence (Dan's
-  decision: *To verify on the box* keeps the upgrades still to come). Task 18, on the Mac, adds
-  CI's render step, renders the site and merges `phase-1` into `main`.
+  decision: *To verify on the box* keeps the upgrades still to come). Task 18 ran on the Mac on
+  2026-09-29: CI renders the real registry, and the Mac check and the site render passed. The last
+  step, merging `phase-1` into `main`, follows this note; Dependabot's PRs #1–#3 merge after it.
 - *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
   from this plan and why, what the reviews found, and what Phase 2 inherits.
 
@@ -1279,6 +1280,10 @@ Each item gets its own design pass when its turn comes.
   MiaAI-Lab's DGX Spark repo (Dan's pointer): the engine, the speculative decoders DSpark and
   DFlash2, and what this stack must account for to run it, above all a container engine under
   llama-swap and SGLang's memory claim. The README's Reference section lists the repo.
+- **2026-09-29** — Phase 1 is done: its tasks ran from 2026-09-25 to 2026-09-29, and the last
+  step, merging `phase-1` into `main`, follows this line. [The retrospective](phase-1-retro.md)
+  records what it built, where it departed from this plan and why, what the reviews found, and
+  what Phase 2 inherits.
 
 ## Sources
 

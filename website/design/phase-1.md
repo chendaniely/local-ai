@@ -43,10 +43,9 @@ date: 2026-09-23
 > forward look is in plan.md's Revisions, and [the retrospective](phase-1-retro.md) is written.
 > Dan deployed the fixes, and Task 17 Step 2's checks passed; Step 3's private findings went to Dan
 > in the chat, to file in the vault. On 2026-09-29 the Mac took over at the switch point, and Task
-> 18 Steps 1–4 are done: CI's render step, the Mac check and the site render. **Now: Task 18
-> Step 5 onward:** CI on the branch, the merge into `main` with Dan's OK, and Dependabot's PRs.
-> `phase-1` merges into `main` only at Task 18, after Task 17's review and Dan's OK, so `main`
-> still shows Phase 0, and the site shows whatever Dan last published by hand.
+> 18 Steps 1–5 are done: CI's render step, the Mac check, the site render, and CI green on the
+> branch. **Now: Task 18 Step 6 onward:** the merge into `main` with Dan's OK, the Spark's clones
+> moving to `main`, and Dependabot's PRs. The site shows whatever Dan last published by hand.
 
 **Goal:** Four models served on `brightroar` through llama-swap — a resident vision chat model,
 embeddings, speech-to-text and a starter coder — reachable from Open WebUI on Dan's phone (HTTPS via
@@ -7550,10 +7549,13 @@ git commit -m "ci(repo): 🤖 render the real registry in CI" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 5: CI sees it on the branch first** — leak-guards.md's
+- [x] **Step 5: CI sees it on the branch first** — leak-guards.md's
   [*Before every push*](../how-to/leak-guards.md#before-every-push) with `phase-1` as `<branch>`; then
   **Dan OKs the push** (`git push`). `gh run watch`: CI is green, the new render step included. Only
-  then the merge, so the step's first run isn't on `main`.
+  then the merge, so the step's first run isn't on `main`. *(Done 2026-09-29. GitHub refused the
+  first push: the Mac's gh login, which git pushes through, lacked the `workflow` scope that a
+  change under `.github/workflows/` needs. Dan ran `gh auth refresh -h github.com -s workflow`, and
+  the push went through; CI was green, its render step printing `render: 8 files`.)*
 
 - [ ] **Step 6: Merge and push** — `make test lint docs` passed in Step 3; then:
 

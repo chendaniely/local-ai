@@ -50,9 +50,12 @@ upgrade half is weak evidence: apt moved no library the engines use and no Docke
 | 2026-09-27 | Spark | The push point: Dan's seven-day window (`7170a52`); an audit of every command's label, 38 fixes; the first push, with CI green. Task 11, run by the session itself: the engines at their pins, and `agent` reaches the GPU. Task 12: Dan re-ran bootstrap and ran `make apply`, which Claude Code's auto-mode classifier refused the session, then `make install-units` and `make pull`. The GRUB check passed. `1e5152b..f31b84f`. |
 | 2026-09-28 | Spark, Dan | Tasks 13–15 (`f31b84f..fb96c8d`): the stack started, first footprints, task calls without thinking; the phone, where a photo aborted Gemma's engine until its micro-batch grew; pi on the Mac and as `agent`. Task 16's drills, then Dan's full-context decision, whose review found 7 Important and took two fix rounds against llama.cpp's source; deployed and checked (`fb96c8d..ce9df60`). |
 | 2026-09-28 | Spark | Task 17: a council of four read-only reviewers (0 Critical, 15 Important, 37 Minor, 17 decisions for Dan). Batch A fixed what needed no decision: `ce9df60..8c48549`, 17 commits, 873 tests. Dan decided the rest that evening. Batch B, the code for two of his decisions and two of the session's rulings, followed (`8c48549..9a03b15`), then a follow-up of five minor fixes and the close's own commits. Its logging change was reversed before the deploy, by Dan, once the final review found whisper's file names and metadata would reach the journal. |
+| 2026-09-29 | Mac | Task 18: the README records the Mac's coreutils, and CI renders the real registry. `make test lint docs` passed on bash 3.2 and GNU make 3.81, 906 tests with none skipped, and the site rendered with no warnings: no Mac difference turned up. The first push was refused, because the Mac's gh login lacked the `workflow` scope that a change under `.github/workflows/` needs, until Dan added it. CI went green on the branch, the render step included, and the merge followed: 4 commits after `b0a6b52`, then the merge. |
 
 Of the 144 commits, 57 are `fix`, 15 `feat`, 68 `docs` and 4 `build`. The ranges are git's `A..B`:
-the commits after `A`, up to and including `B`.
+the commits after `A`, up to and including `B`. *(Recounted 2026-09-29, at the merge: 144 was
+counted before the close's last commits. With them and Task 18's, the branch holds 158: 60 `fix`,
+16 `feat`, 77 `docs`, 4 `build` and 1 `ci`.)*
 
 ## Where the build departed from the plan, and why
 
