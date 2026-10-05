@@ -111,7 +111,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **spark-gate** | Python/FastAPI, system unit `User=spark` | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; `logToStdout: proxy`, v257's default, pinned: the engines' output, a refused start's reason and an engine's crash included, stays in an in-memory buffer that every restart wipes, and only llama-swap's own lines reach the journal (Dan's decision, 2026-09-28, reversing that day's `both` before it was deployed: whisper-server logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which the journal would keep; Phase 2 revisits it with a check that covers speech); every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*); validated with `-validate` and its schema. A separate lab instance serves `spark try`. |
 | **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
-| **vLLM** | NGC 26.08 container; upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
+| **vLLM** | NGC 26.08 container (26.09 was current on 2026-10-05; Phase 5 pins the newest one a week old); upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
 | **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model, with thinking off for task calls (`TASK_MODEL_PARAMS`; Dan's decision, 2026-09-28), while chats keep it; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
@@ -515,7 +515,8 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
 
 - [Spark] the gate + `spark-launch` + sockets (absorbing the minimal brake) · residents move under the
   gate (preloaded one at a time) · idle policy, pins, sessions, scheduled preload · make-room ·
-  `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent`.
+  `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent` · once `spark
+  try` works, Qwen3.8-27B's routes A and B on it (Phase 5's table; Dan, 2026-10-05).
 - [Mac] SwiftBar plugin · harness hooks on the Mac.
 - [Dan] ntfy + watchdog in Container Manager on the Synology.
 - *From Phase 1's close (2026-09-28; its forward look is in Revisions):* llama-swap moves behind
@@ -548,6 +549,10 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
   community-1 · the endpoint reference page (chat + speech; the site render stays on the Mac until
   Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
+- *Dan's audio host (decided 2026-10-05; designed at this phase, not before):* it succeeds the
+  audio pipeline, runs on the Mac, is built on Pixeltable, and has its design in a private repo of
+  its own. Until this phase it uses the Mac's own speech models; here it moves to the Spark's
+  endpoints, with its own key, by changing a base URL.
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
 
 **Phase 4 — NAS and backups**
@@ -559,13 +564,40 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
 
 **Phase 5 — Model bake-off, clients, Claude Code docs**
 
-- [Spark] coders: Qwen3.8-27B (GGUF + MTP; vLLM FP8/NVFP4 only if needed), Laguna-S-2.1, gpt-oss-120b
+- [Spark] coders: Qwen3.8-27B (its four routes, below; until 2026-10-05 this said "GGUF + MTP; vLLM
+  FP8/NVFP4 only if needed"), Laguna-S-2.1, gpt-oss-120b
   (policy-safe); lighter: Qwen3.6-35B-A3B, gpt-oss-20b (policy-safe). Resident vision model: Gemma 4
   26B-A4B (policy-safe) vs Qwen3.6-35B-A3B. Embeddings: Qwen3-Embedding-0.6B vs Granite embedding r2
   (policy-safe); TEI only if llama.cpp falls short. Metrics: footprint (peak, steady), cold start,
   TTFT, prefill at 4K/32K/64K, decode at 1/2/4/8 streams, tool-call reliability, Dan's 3–5 real tasks
   via pi, memory left free · client configs for the picks, rendered by the `spark` CLI (pi pinned
   outside its crash range, OpenCode 1.18.x).
+- *Optimizing Qwen3.8-27B (Dan, 2026-10-05: "that was the entire point of this process"). Its
+  numbers come from that day's research, reported by others on single Sparks, not measured here.*
+  Dan's order: **speed in pi** first — decode and time to first token on his real tasks — then
+  **quality per GB**, then **usable long context** (native 262K); its footprint doesn't matter.
+  Four routes, each run:
+
+  | Route | Engine | Checkpoint | Speculation | Reported decode | Needs first |
+  |---|---|---|---|---|---|
+  | A | llama.cpp b11146, as deployed | Unsloth Dynamic GGUF: UD-Q4/5/6_K_XL, Q8_0 (17.6–31.5 GB) | MTP, in the GGUF | 15–27 tok/s | nothing |
+  | B | llama.cpp b11146 | the same GGUF and a DFlash2 drafter (1–2 GB) | DFlash2 | 38–50 tok/s | nothing |
+  | C | vLLM, from NGC (*Components*), or upstream ≥ 0.30 | NVFP4: Unsloth's (best quality) or NVIDIA's (fastest) | MTP, DFlash2 | 18–39 tok/s | a container engine, a memory cap |
+  | D | SGLang ≥ v0.5.19 | NVFP4 (RadixArk's) | DFlash2, DSpark | 48–72 code, ~25 prose | as C, and its open issues |
+
+  - **Routes A and B need nothing new,** so they run early, on Phase 2's `spark try` lab instance
+    (Dan, 2026-10-05); C and D wait for this phase. TensorRT-LLM is out for now: it doesn't yet
+    load Qwen3.8-27B NVFP4 on this GPU (its issue #17723).
+  - **Measured in that order.** Speed: decode and time to first token in pi, and prefill — vLLM
+    and SGLang are reported 2–5× faster than llama.cpp at reading long prompts, which agent runs
+    are full of. Quality per GB: KLD against the BF16 original (55.6 GB, which fits as a
+    reference) and Dan's tasks. Long context: speed at 32K, 96K and 262K, with f16 against FP8
+    KV cache (one report found f16 20% faster at 96K).
+  - **Cautions for C and D.** vLLM's `--gpu-memory-utilization` is a fraction of the whole pool,
+    like SGLang's `--mem-fraction-static` below, so each is set from the registry's footprint.
+    vLLM with MTP hard-rebooted a Spark twice at 16K context with two requests, and SGLang run
+    outside a container froze one: each starts behind the gate, after a soak. vLLM on this GPU
+    has an open prefill regression (#55397) and runs FP8 KV cache only on `triton_attn`.
 - *Qwen3.8-27B on SGLang (notes added 2026-09-28, from
   [MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark),
   read at its 2026-09-12 state; its numbers, not measured here):* on one GB10 it serves the NVFP4
@@ -583,6 +615,10 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
     dev image (no released tag had it), pinned by digest under the seven-day rule, and two of its
     upstream issues were open: cross-request context bleed under concurrency (sglang #36548),
     which matters with more than one key, and output diverging with thinking on (#38009).
+    *(Corrected 2026-10-05, from that day's research: DFlash2 is llama.cpp's too — its PR #27816,
+    merged 2026-08-27, is in the b11146 release this stack runs — and SGLang's own releases carry
+    it from v0.5.19, 2026-09-05, though no report yet runs those releases on a Spark. Both issues
+    were still open.)*
   - **Smaller things:** its default port, 8888, is SearXNG's here; it pins to the ten Cortex-X5
     cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
     `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
@@ -1350,6 +1386,14 @@ Each item gets its own design pass when its turn comes.
   in one place, and every phase now ends by updating them. Dan's rule: the architecture diagrams
   are kept true first, since they are the quickest way for him to see what is happening
   (`CLAUDE.md`, *Docs must be true*).
+- **2026-10-05** — Phase 5 gains how Qwen3.8-27B gets optimized, which Dan called the point of the
+  whole exercise: four routes (Dynamic GGUF with MTP, the same with a DFlash2 drafter, NVFP4 on
+  vLLM, NVFP4 on SGLang), measured in his order — speed in pi, quality per GB, long context — with
+  the cautions for engines that claim memory up front. Routes A and B need nothing new, so Phase 2
+  runs them on `spark try` once it exists; the rest stays in Phase 5. The SGLang notes are
+  corrected: DFlash2 is in llama.cpp's b11146 and SGLang's releases from v0.5.19. Phase 3 records
+  Dan's audio host — on the Mac, built on Pixeltable, designed in a private repo of its own when
+  Phase 3 comes. The research behind the numbers was web-only; none of them is measured here.
 
 ## Sources
 
