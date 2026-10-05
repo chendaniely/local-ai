@@ -275,13 +275,15 @@ when that file was retired on 2026-09-23.
   tailnet's full MagicDNS name (2026-09-24). Of the runbook's LAN fallbacks, `brightroar-lan`
   works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
   here yet.
-- **Orca 1.4.217** (installed 2026-09-24; it updates itself), in its local mode
+- **Orca 1.4.220** on 2026-10-05 (installed 2026-09-24; it updates itself), in its local mode
   ([Orca on the Mac](website/how-to/orca.md)): it runs Claude Code and pi in its panes, and pi
   reaches the Spark over `make tunnel` (checked 2026-09-29). Its status hooks sit on 13 events in
   `~/.claude/settings.json` since 2026-09-24, and its three pi extensions in
-  `~/.pi/agent/extensions/` since 2026-09-28. As found on 2026-09-30, its settings were still its
-  defaults — telemetry on, and Claude started with `--dangerously-skip-permissions` — which the
-  runbook's *Settings* changes. It has never connected to the Spark.
+  `~/.pi/agent/extensions/` since 2026-09-28; after its updates to 1.4.220 its hook still only
+  reports, now with the agent's process number and start time. As found on 2026-10-05, its
+  settings were still its defaults — telemetry on, and Claude started with
+  `--dangerously-skip-permissions` — which the runbook's *Settings* changes. It has never connected
+  to the Spark.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
