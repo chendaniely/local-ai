@@ -501,6 +501,8 @@ they run.
   decision: *To verify on the box* keeps the upgrades still to come). Task 18 ran on the Mac on
   2026-09-29: CI renders the real registry, and the Mac check and the site render passed. The last
   step, merging `phase-1` into `main`, follows this note; Dependabot's PRs #1–#3 merge after it.
+  *(Both done 2026-09-29: the merge is `ff205f9`, and the three PRs were rebase-merged, each once
+  its CI was green.)*
 - *Retrospective:* [Phase 1 — retrospective](phase-1-retro.md): what was built, where it departed
   from this plan and why, what the reviews found, and what Phase 2 inherits.
 

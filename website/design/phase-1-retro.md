@@ -50,7 +50,7 @@ upgrade half is weak evidence: apt moved no library the engines use and no Docke
 | 2026-09-27 | Spark | The push point: Dan's seven-day window (`7170a52`); an audit of every command's label, 38 fixes; the first push, with CI green. Task 11, run by the session itself: the engines at their pins, and `agent` reaches the GPU. Task 12: Dan re-ran bootstrap and ran `make apply`, which Claude Code's auto-mode classifier refused the session, then `make install-units` and `make pull`. The GRUB check passed. `1e5152b..f31b84f`. |
 | 2026-09-28 | Spark, Dan | Tasks 13–15 (`f31b84f..fb96c8d`): the stack started, first footprints, task calls without thinking; the phone, where a photo aborted Gemma's engine until its micro-batch grew; pi on the Mac and as `agent`. Task 16's drills, then Dan's full-context decision, whose review found 7 Important and took two fix rounds against llama.cpp's source; deployed and checked (`fb96c8d..ce9df60`). |
 | 2026-09-28 | Spark | Task 17: a council of four read-only reviewers (0 Critical, 15 Important, 37 Minor, 17 decisions for Dan). Batch A fixed what needed no decision: `ce9df60..8c48549`, 17 commits, 873 tests. Dan decided the rest that evening. Batch B, the code for two of his decisions and two of the session's rulings, followed (`8c48549..9a03b15`), then a follow-up of five minor fixes and the close's own commits. Its logging change was reversed before the deploy, by Dan, once the final review found whisper's file names and metadata would reach the journal. |
-| 2026-09-29 | Mac | Task 18: the README records the Mac's coreutils, and CI renders the real registry. `make test lint docs` passed on bash 3.2 and GNU make 3.81, 906 tests with none skipped, and the site rendered with no warnings: no Mac difference turned up. The first push was refused, because the Mac's gh login lacked the `workflow` scope that a change under `.github/workflows/` needs, until Dan added it. CI went green on the branch, the render step included, and the merge followed: 4 commits after `b0a6b52`, then the merge. |
+| 2026-09-29 | Mac | Task 18: the README records the Mac's coreutils, and CI renders the real registry. `make test lint docs` passed on bash 3.2 and GNU make 3.81, 906 tests with none skipped, and the site rendered with no warnings: no Mac difference turned up. The first push was refused, because the Mac's gh login lacked the `workflow` scope that a change under `.github/workflows/` needs, until Dan added it. CI went green on the branch, the render step included, and the merge followed: 4 commits after `b0a6b52`, then the merge (`ff205f9`). Then Dependabot's PRs #1–#3, one at a time: Dependabot rebased each onto `main`, and each was rebase-merged once its CI was green, with `main` green after each (`12d6383`, `b33c22e`, `16efba8`). pi.md's jq and awk block for `agent`'s guard ran in the Mac's zsh for the first time, and built both files as expected. |
 
 Of the 144 commits, 57 are `fix`, 15 `feat`, 68 `docs` and 4 `build`. The ranges are git's `A..B`:
 the commits after `A`, up to and including `B`. *(Recounted 2026-09-29, at the merge: 144 was
@@ -180,7 +180,8 @@ forward look, 2026-09-28, records them with their reasons.
 - *Kept:* the seven-day window, which now covers pins set by hand as well.
 - *S09* is verified on Task 14's phone pass, with the context change's settings checked in the
   Mac's browser.
-- *Dependabot's* PRs #1–#3 merge on the Mac after Phase 1's merge (Task 18 Step 7).
+- *Dependabot's* PRs #1–#3 merge on the Mac after Phase 1's merge (Task 18 Step 7). *(Done
+  2026-09-29.)*
 - *Phase 1 closes* on the upgrade drill's weak evidence.
 - *Every model stays at its full context,* the embedding model's 32,768 included. The settings that
   would save memory are revisited when more models are fitted.
@@ -304,7 +305,7 @@ as of this writing.
 | | updates.md: "**On the Spark**, then the GRUB check" reads clunky, and one bold header ends with its machine | docs task | — |
 | | secret-files.md: steps 1–7 each repeat "**On the Spark:**" in a section that says so; step 8 folds it in | docs task | — |
 | | updates.md and scratch-model.md each have a step with no block beside bolded siblings | docs task | — |
-| | pi.md's two Mac blocks ran only under bash on the Spark, never zsh, BSD awk or the Mac's jq | batch A | — |
+| | pi.md's two Mac blocks ran only under bash on the Spark, never zsh, BSD awk or the Mac's jq *(2026-09-29, Task 18: the jq and awk block ran in zsh 5.9 with BSD awk and jq 1.7.1, its `scp` left out, and built both files as expected: 35 deny rules, none still naming Dan's home, the one hook, and only the secrets section. The `ssh` and `scp` block, which writes into `agent`'s home, didn't run again.)* | batch A | — |
 
 **Closed since.** Of the ledger's 57 deferred-minor lines, five are closed, checked against the
 code: a quoted `"false"` and a test that warn sits above brake (Task 1's redo, `69cc076`),

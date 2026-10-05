@@ -7587,19 +7587,19 @@ which says its clone is of `phase-1`, changes with it.)*
 
 ## Phase 1 is done when
 
-- [ ] S09 and S20 pass on the phone, and their pages read *verified* with the date.
-- [ ] pi finishes a real task from the Mac through the tunnel, and from tmux as `agent`; a detached
+- [x] S09 and S20 pass on the phone, and their pages read *verified* with the date.
+- [x] pi finishes a real task from the Mac through the tunnel, and from tmux as `agent`; a detached
   session survives logging out and reattaches.
-- [ ] The brake, at raised thresholds, held new loads and unloaded the on-demand model first; the
+- [x] The brake, at raised thresholds, held new loads and unloaded the on-demand model first; the
   held reload was refused, `spark status` said why, and `--release` let it load again.
-- [ ] A load that didn't fit was refused with needed vs available, `spark status` said why, and
+- [x] A load that didn't fit was refused with needed vs available, `spark status` said why, and
   nothing was unloaded.
-- [ ] A fresh clone plus `make bootstrap` and `make apply` changed nothing, and
+- [x] A fresh clone plus `make bootstrap` and `make apply` changed nothing, and
   `make install-units-dry-run` found nothing to install: root runs only root's own copies of what
   the repo describes.
-- [ ] After a routine `apt upgrade` and after a reboot, the stack served again without a hand on it,
+- [x] After a routine `apt upgrade` and after a reboot, the stack served again without a hand on it,
   and `make doctor` passed (S23).
-- [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac (Task 18), and CI
+- [x] `make test lint` is clean on the Spark and `make test lint docs` on the Mac (Task 18), and CI
   is green, its render step included; README §Current state and the changelog are true; the council
   review is done and the forward look applied; `phase-1` is merged to `main` with Dan's OK
   (Task 18).
