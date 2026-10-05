@@ -66,6 +66,10 @@ through the tunnel.
 
 In pi, `/model` → a Spark model. The footer names the model that answers.
 
+You can also start pi from Orca, in one of its panes: it's the same pi, with the same provider,
+over the same tunnel ([Orca on the Mac](orca.md)). Orca adds three extensions of its own to
+`~/.pi/agent/extensions/`, which load in every pi session, in Orca or not.
+
 ## On the Spark, as `agent`
 
 `agent` needs Node 22.19 or later, its own llama-swap key, uv, pi and a clone of this repo. Two

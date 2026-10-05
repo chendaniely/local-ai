@@ -9,12 +9,14 @@ Started 2026-09-23, on arrival of the Spark. The design was settled the same day
 first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
 2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
 on the Mac and as `agent`, behind a minimal brake and launch check.
-[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits.
+[Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. The Mac can also
+run pi and Claude Code in [Orca](website/how-to/orca.md), and the web UI as an app of its own.
 
 ## Design in one line
 
 **Claude stays untouched** — Claude Code and Claude Desktop talk directly to Anthropic on my
-subscription, with nothing in the path. The Spark is a *second* mode: a model server for my own
+subscription, with nothing in the path. (Hooks that only report to apps on my own machines, such as
+Orca's, are allowed; [the plan](website/design/plan.md) words it.) The Spark is a *second* mode: a model server for my own
 pipelines, for coding harnesses (pi, OpenCode) on the Mac and on the Spark itself, and for a web UI —
 it loads a model only when it fits, and says why when it doesn't. (Hermes, in the original version of
 this line, was parked on 2026-09-23.)
@@ -273,6 +275,15 @@ when that file was retired on 2026-09-23.
   tailnet's full MagicDNS name (2026-09-24). Of the runbook's LAN fallbacks, `brightroar-lan`
   works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
   here yet.
+- **Orca 1.4.220** on 2026-10-05 (installed 2026-09-24; it updates itself), in its local mode
+  ([Orca on the Mac](website/how-to/orca.md)): it runs Claude Code and pi in its panes, and pi
+  reaches the Spark over `make tunnel` (checked 2026-09-29). Its status hooks sit on 13 events in
+  `~/.claude/settings.json` since 2026-09-24, and its three pi extensions in
+  `~/.pi/agent/extensions/` since 2026-09-28; after its updates to 1.4.220 its hook still only
+  reports, now with the agent's process number and start time. As found on 2026-10-05, its
+  settings were still its defaults — telemetry on, and Claude started with
+  `--dangerously-skip-permissions` — which the runbook's *Settings* changes. It has never connected
+  to the Spark.
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU
@@ -371,6 +382,10 @@ stack must account for to run it. Its numbers are its own, not measured here.
   mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
   Correct rather than delete, and keep unverified things marked unverified. Full rule in
   [`CLAUDE.md`](CLAUDE.md).
+- **The architecture diagrams are kept true first.** [Architecture](website/architecture.qmd)'s
+  diagrams are the quickest way to see what runs and how a request gets through, so any change to a
+  part or a path, or a planned part built, updates them in the same commit. Diagrams live only
+  there. Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
   zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,

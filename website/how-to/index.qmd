@@ -44,4 +44,6 @@ IPv6 check, which need the tailnet name.
 
 Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
 
+On the Mac, if you use it: [Orca on the Mac](orca.md) — your Claude Code and pi in Orca's panes.
+
 ## Every runbook

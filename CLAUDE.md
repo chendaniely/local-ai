@@ -7,7 +7,8 @@ check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and
 its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
 its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
 Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
-inherits; the plan's Phase 2 line says what comes next.
+inherits; the plan's Phase 2 line says what comes next. Orca and the web UI on the Mac came in
+between, as docs, not a phase (2026-09-30).
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -28,7 +29,13 @@ on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`
 - **Claude Code and Claude Desktop stay untouched.** No gateway, proxy, `ANTHROPIC_BASE_URL`, or
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
   coding harnesses (pi, OpenCode), my own pipelines and apps, and a web UI. Violating this defeats
-  the repo's primary goal.
+  the repo's primary goal. Hooks that only report — copying a session's events to an app on my own
+  machines that passes none of them on, as Orca's status hooks do — are allowed, as long as they
+  exit 0 and print nothing or `{}` (no decision, no added context, no changed tool input) and
+  change nothing about Claude's endpoint, login, model, permissions or flags. Such an app adds
+  only its own hook entries to `~/.claude/settings.json`, and no Claude that Orca starts or resumes
+  runs with `--dangerously-skip-permissions` or any other bypass (2026-09-28; the plan's *Claude
+  is untouched* constraint has the full wording).
 - **One Spark, not two.** The reference repo is a 2-node cluster. Do **not** apply its RoCE, NCCL,
   Ray, or `TP=2` material here — none of it can affect a single node. `cosmicbboy-local-ai.md` §H
   lists exactly what's excluded and why.
@@ -95,6 +102,15 @@ every file here feeds the next.
 If a change makes a sentence untrue, correcting that sentence is part of the change, and the
 change is not done until it is.
 
+**The architecture diagrams are kept true first** (Dan's rule, 2026-09-30). The diagrams on
+[`website/architecture.qmd`](website/architecture.qmd) are the quickest way for a person to see
+what is running and how a request gets through — for Dan, easier than any page of prose — so a
+wrong one misleads more than any wrong sentence. A change that adds, moves or removes a part or a
+path (a service, a port, an account, a link between machines), or builds a planned part (dashed
+turns solid), updates the diagrams and the page's scenario table in the same commit; the change
+isn't done until they match. When unsure whether a change touches them, open the page and check.
+Diagrams live only there: other pages link to them rather than drawing their own copy.
+
 These files are not independent. Known sync obligations:
 
 | When this changes | This must change with it |
@@ -103,6 +119,7 @@ These files are not independent. Known sync obligations:
 | An open item gets settled | the plan's Requirements or Design gain the decision, its "Open items and risks" entry is marked resolved with the date, **and** a Revisions line records it |
 | A hardware fact is corrected | `README.md` §Hardware, plus any number in the plan derived from it |
 | The stack's behaviour changes | its page under `website/scenarios/` **and** its `spark doctor` check, in the same commit |
+| A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid) **and** its scenario table, in the same commit |
 | Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |

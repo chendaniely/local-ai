@@ -1,0 +1,195 @@
+---
+title: "Architecture"
+description: "Where everything sits — the Mac, the phone, the Spark and the Synology — and the paths a request takes. Built parts are solid; planned parts are dashed, with their phase."
+format:
+  html:
+    mermaid:
+      theme: neutral
+---
+
+One picture of where everything sits, then the three paths a request can take. Every scenario
+follows one of those paths, so the table at the end names the path for each, and each scenario's
+page says what happens along it. **Solid** parts are built and running; **dashed** parts are
+planned, labelled with the phase that brings them. [The plan](design/plan.md) holds the reasons.
+
+## Where everything sits
+
+```{mermaid}
+flowchart TB
+  classDef planned stroke-dasharray: 5 5
+
+  subgraph mac["heartsbane · the Mac"]
+    direction LR
+    orca["Orca"]
+    claude_mac["Claude Code,<br/>Claude Desktop"]
+    pi_mac["pi"]
+    webapp["web UI,<br/>Safari web app"]
+    term["terminal"]
+  end
+
+  subgraph phone["Android phone"]
+    pwa["web UI,<br/>home-screen app"]
+  end
+
+  anthropic(("Anthropic"))
+  apps["my pipelines and<br/>homelab apps · Phase 3"]:::planned
+
+  subgraph spark["brightroar · the Spark"]
+    tss["tailscale serve,<br/>HTTPS 443"]
+    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose"]
+    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose"]
+    agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
+    litellm["LiteLLM, a key per app<br/>Phase 3"]:::planned
+    swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys"]
+    gate["spark-gate<br/>Phase 2"]:::planned
+    brake["memory brake<br/>as spark"]
+    engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder"]
+    vllm["vLLM, only if a coder needs it<br/>Phase 5"]:::planned
+  end
+
+  subgraph nas["Synology"]
+    ntfy["ntfy and the watchdog<br/>Phase 2"]:::planned
+    shares["shares and backups<br/>Phase 4"]:::planned
+  end
+
+  orca -- starts --> claude_mac
+  orca -- starts --> pi_mac
+  claude_mac --> anthropic
+  webapp -- "HTTPS over Tailscale" --> tss
+  pwa -- "HTTPS over Tailscale" --> tss
+  pi_mac -- "SSH tunnel, make tunnel" --> swap
+  term -- "ssh brightroar-agent" --> agent_tmux
+  tss --> owui
+  owui --> searx
+  owui --> swap
+  agent_tmux --> swap
+  agent_tmux -- "its Claude Code" --> anthropic
+  apps -.-> litellm
+  litellm -.-> swap
+  swap -- "spark launch" --> engines
+  swap -.-> vllm
+  brake -- "unloads through llama-swap" --> engines
+  gate -.-> engines
+  gate -.-> ntfy
+  agent_tmux -.-> shares
+```
+
+- **Everything on the Spark listens on 127.0.0.1**, except SSH and `tailscale serve`'s port 443.
+  The tailnet's rules let my own devices reach the Spark on those two ports only, and ufw allows
+  SSH alone from the LAN.
+- **Three accounts on the Spark.** Mine, the admin; `spark`, which runs llama-swap, the engines and
+  the brake; and `agent`, for coding agents in tmux, with no sudo, no docker and keys of its own.
+  Root runs the web services from its own copies of their units.
+- **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
+  Anthropic, wherever they run; Orca only starts them. The Spark is a separate mode.
+
+## Reaching the Spark
+
+```{mermaid}
+flowchart LR
+  classDef planned stroke-dasharray: 5 5
+
+  piT["pi on the Mac<br/>in a terminal or Orca"]
+  ui["web UI<br/>on the Mac or the phone"]
+  piA["pi as agent<br/>in tmux on the Spark"]
+  cc["Claude Code<br/>anywhere"]
+  app["an app with its own key<br/>Phase 3"]:::planned
+
+  tunnel["SSH tunnel<br/>over Tailscale, or the LAN alias"]
+  serve["tailscale serve, 443<br/>Tailscale only"]
+  owui["Open WebUI"]
+  searx["SearXNG"]
+  swap["llama-swap, 127.0.0.1:9100<br/>a key on every request"]
+  litellm["LiteLLM on a LAN port<br/>Phase 3"]:::planned
+  anthropic(("Anthropic"))
+
+  piT --> tunnel --> swap
+  ui --> serve --> owui --> swap
+  owui --> searx
+  piA --> swap
+  cc --> anthropic
+  app -.-> litellm -.-> swap
+```
+
+pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
+beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
+alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
+Phase 3, apps reach the models through LiteLLM, each with a key of its own.
+
+## Loading a model
+
+```{mermaid}
+flowchart TD
+  classDef planned stroke-dasharray: 5 5
+
+  req["a request names a model"] --> loaded{"already loaded?"}
+  loaded -- yes --> answer["the engine answers"]
+  loaded -- no --> launch["llama-swap starts it<br/>through spark launch"]
+  launch --> held{"is the brake holding<br/>new loads?"}
+  held -- yes --> refuse["refused, with its reason<br/>make status shows it"]
+  held -- no --> fits{"does its footprint fit in<br/>free memory, less the reserve?"}
+  fits -- no --> refuse
+  fits -- yes --> load["the engine loads"] --> answer
+  low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, on-demand ones first"]
+  brake --> held
+  gate["Phase 2, the gate: a live fit check, one load at a time,<br/>idle unload, session pins, make-room, notifications"]:::planned
+  gate -.-> launch
+```
+
+A model loads only if it fits: nothing is evicted to make room, and nothing is swapped for a
+smaller model. Free memory is the smaller of `MemAvailable` and what the GPU can allocate, and the
+reserve stays free, because overcommitting a GB10 can freeze it without an out-of-memory kill.
+
+## Apps and speech (Phase 3, planned)
+
+```{mermaid}
+flowchart LR
+  classDef planned stroke-dasharray: 5 5
+
+  app["an app or pipeline<br/>with its own key"]:::planned --> litellm["LiteLLM: limits and a wait per key,<br/>refusals inline, the real model named"]:::planned
+  litellm -.-> pg[("Postgres<br/>keys and usage")]:::planned
+  litellm -.-> swap["llama-swap"]
+  swap --> chat["chat and embeddings"]
+  swap --> stt["whisper, interactive"]
+  swap -.-> batch["whisper, batch"]:::planned
+  swap -.-> diar["speaker labels"]:::planned
+```
+
+Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 3, my
+own pipelines and homelab apps come in through LiteLLM instead, each with a key of its own; it
+never logs what they send.
+
+## When something breaks, and upkeep
+
+These follow runbooks rather than a request path: a freeze while I'm away
+([S13](scenarios/s13-freeze-away.md)), the NAS down ([S15](scenarios/s15-nas-down.md)), a rebuild
+after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
+([S23](scenarios/s23-upgrade-day.md); [Updates](how-to/updates.md)).
+
+## Every scenario, and its path
+
+| Scenario | Path |
+|---|---|
+| [S01 · Morning start](scenarios/s01-morning-start.md) | Loading a model |
+| [S02 · Big job while an agent works](scenarios/s02-big-job.md) | Loading a model |
+| [S03 · Doesn't fit (interactive)](scenarios/s03-doesnt-fit-interactive.md) | Loading a model |
+| [S04 · Doesn't fit (unattended)](scenarios/s04-doesnt-fit-unattended.md) | Loading a model, through LiteLLM |
+| [S05 · Memory critically low](scenarios/s05-memory-critically-low.md) | Loading a model: the brake |
+| [S06 · An agent's long GPU step](scenarios/s06-agent-gpu-step.md) | Loading a model |
+| [S07 · Lecture → transcript with speakers](scenarios/s07-lecture-transcript.md) | Apps and speech |
+| [S08 · Batch versus interactive](scenarios/s08-batch-vs-interactive.md) | Apps and speech |
+| [S09 · Phone away from home](scenarios/s09-phone-away.md) | Reaching the Spark: the web UI |
+| [S10 · Homelab app at 3 am](scenarios/s10-homelab-3am.md) | Apps and speech |
+| [S11 · Trying a new model](scenarios/s11-new-model.md) | Loading a model |
+| [S12 · Long agent run, laptop closed](scenarios/s12-long-agent-run.md) | Reaching the Spark: `agent` in tmux |
+| [S13 · The Spark freezes while I'm away](scenarios/s13-freeze-away.md) | When something breaks |
+| [S14 · Gate down](scenarios/s14-gate-down.md) | Loading a model: the gate |
+| [S15 · NAS down](scenarios/s15-nas-down.md) | When something breaks |
+| [S16 · Postgres down](scenarios/s16-postgres-down.md) | Apps and speech |
+| [S17 · Changing models mid-task](scenarios/s17-changing-models.md) | Loading a model |
+| [S18 · Rebuild after a factory reset](scenarios/s18-rebuild.md) | When something breaks |
+| [S19 · Claude Code building a pipeline elsewhere](scenarios/s19-claude-code-pipeline.md) | Apps and speech |
+| [S20 · Web search from the phone](scenarios/s20-web-search.md) | Reaching the Spark: the web UI and SearXNG |
+| [S21 · Pixeltable over datasets](scenarios/s21-pixeltable.md) | Apps and speech |
+| [S22 · On another tailnet over WireGuard](scenarios/s22-another-tailnet.md) | Reaching the Spark: the LAN alias |
+| [S23 · Upgrade day](scenarios/s23-upgrade-day.md) | Upkeep |
