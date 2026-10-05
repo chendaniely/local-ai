@@ -44,7 +44,7 @@ flowchart TB
     gate["spark-gate<br/>Phase 2"]:::planned
     brake["memory brake<br/>as spark"]
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder"]
-    vllm["vLLM, only if a coder needs it<br/>Phase 5"]:::planned
+    vllm["vLLM or SGLang, for NVFP4<br/>Phase 5"]:::planned
   end
 
   subgraph nas["Synology"]
