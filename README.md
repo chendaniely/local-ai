@@ -280,10 +280,13 @@ when that file was retired on 2026-09-23.
   reaches the Spark over `make tunnel` (checked 2026-09-29). Its status hooks sit on 13 events in
   `~/.claude/settings.json` since 2026-09-24, and its three pi extensions in
   `~/.pi/agent/extensions/` since 2026-09-28; after its updates to 1.4.220 its hook still only
-  reports, now with the agent's process number and start time. As found on 2026-10-05, its
-  settings were still its defaults — telemetry on, and Claude started with
-  `--dangerously-skip-permissions` — which the runbook's *Settings* changes. It has never connected
-  to the Spark.
+  reports, now with the agent's process number and start time. Its settings: Agent Permissions
+  Manual and telemetry off since 2026-10-05, read from its settings database (until then, its
+  defaults: telemetry on, and Claude started with `--dangerously-skip-permissions`). It imported the
+  Mac's ten `~/.ssh/config` hosts as SSH targets on 2026-09-29, the Spark's five aliases among
+  them. It has never connected as `agent`: its home has no `~/.orca-remote` (checked 2026-10-05).
+  *(Corrected 2026-10-05: this said it had never connected to the Spark at all, which nobody had
+  checked for Dan's own account there.)*
 - Podman Desktop installed but with **no machine created**; it costs nothing as it stands.
 - **NVIDIA Sync** and **NVIDIA AI Workbench** installed here, not on the Spark. Workbench's prompt
   to set up a container runtime concerned its *local* context — which on macOS has no NVIDIA GPU

@@ -22,14 +22,17 @@ In Orca's Settings:
   or done.
 - Leave each agent's own environment setting empty.
 
-**On the Mac**, check them. This prints the telemetry setting, Claude's launch arguments, and the
-names, never the values, of any environment variables Orca sets for Claude:
+**On the Mac**, check them. This reads Orca's settings database without changing it, and prints
+the telemetry setting, Claude's launch arguments, and the names, never the values, of any
+environment variables Orca sets for Claude:
 
 ```bash
-jq -r '.settings | "telemetry: \(.telemetry.optedIn)", "claude args: [\(.agentDefaultArgs.claude // "")]", "claude env: \(.agentDefaultEnv.claude // {} | keys)"' "$HOME/Library/Application Support/orca/profiles/local-default/orca-data.json"
+sqlite3 -readonly "$HOME/Library/Application Support/orca/profiles/local-default/profile-state.db" "select payload from profile_state_documents where domain='settings';" | jq -r '"telemetry: \(.telemetry.optedIn)", "claude args: [\(.agentDefaultArgs.claude // "")]", "claude env: \(.agentDefaultEnv.claude // {} | keys)"'
 ```
 
-Expected: `telemetry: false`, `claude args: []`, `claude env: []`.
+Expected: `telemetry: false`, `claude args: []`, `claude env: []`. *(Corrected 2026-10-05: this
+read `orca-data.json`, beside the database. That file is an export Orca writes now and then, so it
+still showed the old settings after they were changed.)*
 
 ## pi in Orca
 
@@ -68,8 +71,9 @@ Every line should end in `skip-flag=0`, for a resumed session as well as a new o
 - **pi.** Since 2026-09-28, three extensions in `~/.pi/agent/extensions/`: `orca-agent-status.ts`,
   `orca-prefill.ts` and `orca-titlebar-spinner.ts`. They load in every pi session, in Orca or not,
   and report to Orca only when Orca started pi.
-- **Its own data**, in `~/Library/Application Support/orca/`: settings, scrollback and session
-  history. A value that ever showed in a pane sits there too.
+- **Its own data**, in `~/Library/Application Support/orca/`: settings (in
+  `profiles/local-default/profile-state.db`, with `orca-data.json` an occasional export of them),
+  scrollback and session history. A value that ever showed in a pane sits there too.
 - **A command-line link**, `/usr/local/bin/orca`, root's.
 
 The plan's *Claude is untouched* constraint allows these hooks only while they report and do
@@ -83,11 +87,21 @@ jq -r '.hooks // {} | to_entries[] | select(any(.value[].hooks[]?; .command | te
 
 ## Never the Spark as a target
 
-Orca offers every host in `~/.ssh/config` as an SSH target, `brightroar` and `brightroar-agent`
-among them. Add neither. `brightroar` is your own account there, with sudo and the GitHub token;
-`brightroar-agent` would let Orca build its relay from public npm in `agent`'s home and rewrite
-`agent`'s Claude settings, its secrets guard included. That route is in the plan's Backlog, with
-what has to come first.
+Orca imports every host in `~/.ssh/config` as an SSH target by itself — on this Mac it did on
+2026-09-29, the Spark's aliases among them — so they sit in its list without being added. Connect
+to none of the Spark's, and delete them from the list so a click can't. `brightroar` is your own
+account there, with sudo and the GitHub token; `brightroar-agent` would let Orca build its relay
+from public npm in `agent`'s home and rewrite `agent`'s Claude settings, its secrets guard
+included. That route is in the plan's Backlog, with what has to come first. *(Corrected
+2026-10-05: this said Orca "offers" the hosts, as if a target had to be added before it was
+listed.)*
+
+**On the Spark**, as either account, this shows whether Orca ever connected as it: Orca's relay
+folder is there only if it did.
+
+```bash
+test -e ~/.orca-remote && echo "Orca has connected as this account" || echo "never connected as this account"
+```
 
 ## Remove Orca
 
@@ -107,4 +121,4 @@ what has to come first.
 
 Orca shows details this public repo must never hold: the Spark's full tailnet name, in its SSH
 target form and its host-key prompts; access links and QR codes; and, in screenshots, hostnames.
-Its data files stay out too: `orca-data.json`, spool and scrollback files.
+Its data files stay out too: `profile-state.db`, `orca-data.json`, spool and scrollback files.
