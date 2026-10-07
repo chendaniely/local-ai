@@ -23,3 +23,13 @@ a request in flight: it waits for pi's current request to finish first. pi's nex
 waits up to its key's wait, 30 s from the Mac or 10 minutes as `agent`, and if there's still no
 room it gets a refusal in the client that says why. The headroom shows in `spark status` until the
 menu bar arrives in 2b.
+
+*Revised 2026-10-07, after the design's council:* `spark make-room 70G` frees enough that 70 GiB
+are available beyond the reserve and the growth the loaded models are still owed, so the job can
+take all of it without reaching the brake. It lists pinned models and those an agent's session
+holds too, marked, with each one's requests in flight and how long they've run. Then it **holds
+that room for me** until `spark make-room --done`, a duration I give, or the next boot: no reload,
+no waiting request (`agent`'s included), no boot preload and no brake release takes it, so pi's
+next request waits and is then refused with a reason that names the hold, never quietly loaded into
+my job's memory. When the hold ends, the always-loaded models reload one at a time, if they fit,
+and the coder waits for a request. `spark status` shows the hold, its size and when it ends.

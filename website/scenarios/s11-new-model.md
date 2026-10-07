@@ -14,3 +14,8 @@ vault. `spark promote` adopts it after the bake-off; `spark forget` removes it.
 **What I see.** The trial in `spark status`.
 
 **How to override.** None needed.
+
+*Noted 2026-10-07, from Phase 2a's design council:* the vault isn't reachable from the Spark, so
+the trial note is written on the Spark and shown in `spark status`, and I file it in the vault.
+Phase 2c also measures Qwen3.8-27B's route B here, and whether it becomes the coder is 2c's call,
+with its measurements.

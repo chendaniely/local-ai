@@ -33,3 +33,12 @@ a refusal that reads like a normal API error: the memory needed against what's f
 reserve, the top memory holders, my options (`spark make-room <size>`, or retry), a code such as
 `no_fit` or `held_by_brake`, and a retry-after. `spark status` keeps a history of recent refusals,
 not only the last, and ntfy sends a default-priority "refused".
+
+*Revised 2026-10-07, after the design's council:* the gate, not the front, keeps the request
+waiting, and my keys go ahead of `agent`'s. The 30 s cover waiting for memory and for the
+one-at-a-time load slot; a load that has started is always waited for. Free memory also holds back
+the growth the loaded models are still owed and any room make-room holds for me, and the refusal
+names both. It is a `503` with `Retry-After` and `x-should-retry: false`, so the client doesn't
+retry it by itself; how pi and Open WebUI show it is checked before 2a's plan is written. A start
+that fails is refused with `load_failed`, and its reason. The "refused" notification reaches my
+phone.

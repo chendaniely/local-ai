@@ -28,3 +28,17 @@ it shows what it's waiting on. Then it restarts llama-swap; the gate reloads the
 models one at a time, and on-demand ones reload on their next request. Ctrl-C leaves nothing
 changed, and `make apply-now` restarts at once, after asking me to confirm. A change that needs no
 llama-swap restart applies at once.
+
+*Revised 2026-10-07, after the design's council:*
+
+- **The front waits too.** A change to the front's own code restarts it only through the same
+  quiet moment, since its restart would cut off every request in flight; a change elsewhere in the
+  app doesn't restart it at all. The gate and the brake restart at once, which cuts nothing off.
+- **The wait has a deadline.** After 15 minutes without a quiet minute, apply offers "drain now",
+  which holds new requests and lets those in flight finish, and then `make apply-now`.
+- **Nothing is written until then,** so Ctrl-C leaves nothing changed.
+- **During the restart,** a request waits for its key's wait, and is refused with `restarting` if
+  llama-swap isn't back by then.
+- **The coder swap** runs apply, whose restart stops every engine, the old coder included; then the
+  pull of the new coder, during which a request for it is refused with `not_downloaded`; then
+  `make clients`.
