@@ -419,8 +419,10 @@ the box. Ruled the same day, from that check, Dan having left the UX to the sess
 comes after a wait — `no_fit`, `loading`, `held_by_brake`, `footprint_suspect` — is a `409`, with
 the same body and sentence, since pi's list holds "503" but not "409", so Dan's 30 s refusal
 would otherwise reach him after about 2¼ minutes; an outage — `gate_down`, `llama_swap_down`,
-`restarting`, `draining` — stays a `503`, where a retry makes sense, and so do `load_failed` and
-`not_downloaded`. Every `409` and `503` keeps `x-should-retry: false`, since OpenAI's SDKs retry
+`restarting`, `draining` — stays a `503`, where a retry makes sense; `load_failed` and
+`not_downloaded`, first left `503`s, are `409`s too (ruled again the same day: neither is transient,
+since a retry of `load_failed` repeats a full load and `not_downloaded` changes only with
+`make pull`). Every `409` and `503` keeps `x-should-retry: false`, since OpenAI's SDKs retry
 both by default, and `Retry-After` comes only with a code's retry-after.)*
 
 `agent`'s pi has to wait that long. pi 0.85.1, `agent`'s pinned version, gives up on a request that
@@ -586,7 +588,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    under *What you see in Phase 2a*. A refusal is a `503` with `Retry-After` and
    `x-should-retry: false`, but for the front's own `404`s and `429`. *(Corrected 2026-10-07, with
    the implementation plan: a refusal after a wait — `no_fit`, `loading`, `held_by_brake`,
-   `footprint_suspect` — is a `409`, so pi doesn't retry the wait; the outages stay `503`s;
+   `footprint_suspect` — is a `409`, so pi doesn't retry the wait, and so are `load_failed` and
+   `not_downloaded`, which no retry changes; only the outages stay `503`s;
    `x-should-retry: false` on both; `Retry-After` only with a code's retry-after. *The front and
    the gate* says why.)* Its text names the stack's
    models in full, and
@@ -882,8 +885,8 @@ carries its mark (rule 5).
 | `loading` | 409 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
 | `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
 | `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
-| `load_failed` | 503 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
-| `not_downloaded` | 503 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
+| `load_failed` | 409 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
+| `not_downloaded` | 409 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
 | `restarting` | 503 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
 | `llama_swap_down` | 503 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `draining` | 503 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
@@ -897,7 +900,9 @@ Every `503` carries `Retry-After` and `x-should-retry: false` (rule 7); the `429
 the four refusals that come after a wait, `no_fit`, `loading`, `held_by_brake` and
 `footprint_suspect`, are `409`s, as the table now gives them, where it gave `503`, because pi
 retries a `503` by itself, up to three times, and would hold Dan's 30 s refusal for about 2¼
-minutes; the outages stay `503`s, as do `load_failed` and `not_downloaded`. Every `409` and `503`
+minutes; `load_failed` and `not_downloaded` are `409`s too, as the table gives them, since no
+retry changes either; only the outages, `gate_down`, `llama_swap_down`, `restarting` and
+`draining`, stay `503`s. Every `409` and `503`
 carries `x-should-retry: false`; `Retry-After` comes only with a code's retry-after, 30 s for
 `no_fit`, `gate_down` and `llama_swap_down`, 60 for `restarting` and `draining`, 300 for
 `held_by_brake` and 10 for the `429`.)* A make-room hold is Dan's (rule 4): his keys may load
@@ -2746,6 +2751,10 @@ Each item gets its own design pass when its turn comes.
   about 40. The outages keep `503`, `x-should-retry: false` stays on both, and `Retry-After` comes
   only with a code's retry-after. *The front and the gate*, rule 7, *What you see in Phase 2a*, the
   Architecture page, S03, S04, the implementation plan and the Q&A page follow.
+- **2026-10-07** — `load_failed` and `not_downloaded` are `409`s too (the controller's ruling):
+  neither is transient, since a retry of `load_failed` repeats a full load and `not_downloaded`
+  changes only with `make pull`. A `503` is now only for `gate_down`, `llama_swap_down`,
+  `restarting` and `draining`.
 
 ## Sources
 

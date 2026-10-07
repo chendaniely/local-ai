@@ -69,6 +69,7 @@ it):* the refusal is a `409`, not a `503`. pi retries any error whose text holds
 up to three times, so my 30 s refusal would have reached me after about 2¼ minutes; a `409` it
 shows at once and doesn't retry, as `409: {"message":"The coder didn't load: …","code":"no_fit"}`,
 and the web UI shows the sentence alone. A refusal for an outage, `gate_down` say, stays a `503`,
-which pi does retry.
+which pi does retry. A load that fails, or a model not yet downloaded, is a `409` too, since a
+retry would change neither.
 
 *Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

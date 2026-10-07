@@ -212,10 +212,11 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   "`make apply` … then `make pull` … then `make clients`."
 - **Refusals** (the controller's ruling, 2026-10-07, from *Before Task 1*, correcting the design's
   "a `503` … and `x-should-retry: false`"): a refusal that comes after a wait is a **`409`** —
-  `no_fit` · `loading` · `held_by_brake` · `footprint_suspect` — so pi doesn't retry the wait; an
-  outage stays a **`503`**, where a retry makes sense — `gate_down` · `llama_swap_down` ·
-  `restarting` · `draining` — and so do `load_failed` and `not_downloaded`, which the ruling leaves
-  as they were. Every `409` and `503` carries `x-should-retry: false`, since OpenAI's SDKs retry
+  `no_fit` · `loading` · `held_by_brake` · `footprint_suspect` — so pi doesn't retry the wait, and
+  so are `load_failed` and `not_downloaded`, which no retry changes (a retry of `load_failed`
+  repeats a full load; `not_downloaded` changes only with `make pull`); only an outage stays a
+  **`503`**, where a retry makes sense — `gate_down` · `llama_swap_down` · `restarting` ·
+  `draining`. Every `409` and `503` carries `x-should-retry: false`, since OpenAI's SDKs retry
   both by default. The front's own: `model_not_found` (404); `too_many_requests` (429);
   `route_not_served` (404); llama-swap's own
   `429` `concurrency_limit` "the front passes … on, worded". Each message word for word as *What
@@ -290,8 +291,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 6. **A refusal in pi** — pi 0.85.1 (and 0.87.1) retries a failed turn by itself, up to three times,
    2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429" but
    not "409"; it reads neither `x-should-retry` nor `Retry-After` at that level (*Before Task 1*).
-   Expected: a refusal after a wait is a `409`, which pi shows at once, its sentence after the
-   status, and doesn't retry, so Dan's 30 s refusal arrives after 30 s, not about 2¼ minutes; an
+   Expected: a refusal after a wait, a failed load or a model not yet downloaded is a `409`, which
+   pi shows at once, its sentence after the status, and doesn't retry, so Dan's 30 s refusal arrives after 30 s, not about 2¼ minutes; an
    outage's `503` is retried, as is sensible there; the S03 drill confirms it on the box.
    *(Tasks 6, 20, 48.)*
 
@@ -411,9 +412,10 @@ at tag `v0.11.4` (`backend/open_webui/routers/openai.py`, `backend/open_webui/ut
   as first designed, a `503`, would be retried three times, 2, 4 and 8 s apart, each a new request
   with its own key's wait (`auto_retry_start`). The list holds neither "409" nor any word of the
   refusals' sentences (checked against plan.md's table), so the controller ruled, the same day,
-  that a refusal after a wait is a `409` (*Global Constraints*); an outage stays a `503`, which pi
-  retries. The OpenAI SDK retries a 409 too, unless `x-should-retry: false` says not to
-  (`openai` 6.40.0, `client.js`, `shouldRetry`), so every refusal keeps that header. The S03 drill
+  that a refusal after a wait is a `409` (*Global Constraints*), as are a failed load and a model
+  not yet downloaded, which no retry changes; only an outage stays a `503`, which pi retries. The
+  OpenAI SDK retries a 409 too, unless `x-should-retry: false` says not to (`openai` 6.40.0,
+  `client.js`, `shouldRetry`), so every refusal keeps that header. The S03 drill
   (Task 48) confirms it on the box.
 - **Open WebUI v0.11.4.** It passes the front's status and JSON body on unchanged, with no retry
   (`routers/openai.py`, the non-streaming branch, since a refusal isn't `text/event-stream`); its
@@ -869,9 +871,9 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
 
 **Interfaces:**
 
-- `CODES_409 = ("no_fit", "loading", "held_by_brake", "footprint_suspect")` — refusals after a
-  wait; `CODES_503 = ("gate_down", "load_failed", "not_downloaded", "restarting",
-  "llama_swap_down", "draining")` — outages, and the two the ruling left as they were;
+- `CODES_409 = ("no_fit", "loading", "held_by_brake", "footprint_suspect", "load_failed",
+  "not_downloaded")` — refusals after a wait, and the two no retry changes; `CODES_503 =
+  ("gate_down", "restarting", "llama_swap_down", "draining")` — outages;
   `FRONT_CODES = {"model_not_found": 404, "too_many_requests": 429, "route_not_served": 404}`;
   `CONCURRENCY_LIMIT = "concurrency_limit"`; `RETRY_AFTER_S = {"no_fit": 30, "held_by_brake": 300,
   "gate_down": 30, "restarting": 60, "draining": 60, "llama_swap_down": 30,
@@ -2190,7 +2192,7 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   key's wait`, nothing sent to the client meanwhile; the gate down → forwarded if loaded, else 503
   `gate_down`; the gate restarting → each held admission asked again with its original deadline;
   llama-swap's 500 `upstream command exited prematurely` → asked again once and forwarded again from
-  the held body, a second one reaching the client as 503 `load_failed`.
+  the held body, a second one reaching the client as 409 `load_failed`.
 - The drain, under one lock: on `drain`, the model is marked draining with its count checked, and
   `drained` is posted when the count reaches 0; its new requests wait as for a load, and get
   `draining` at their deadline; on `unloaded`, they go through admission; on `undrain`, they are
@@ -2220,7 +2222,7 @@ speaking Task 9's routes):
   received + 30`.
 - `test_exited_prematurely_is_asked_again_and_forwarded_from_the_held_body` — the coder thought
   ready, the stand-in answers 500 `upstream command exited prematurely` → an admit, then the same
-  body bytes sent again, the client getting that answer; twice in a row → 503 `load_failed`.
+  body bytes sent again, the client getting that answer; twice in a row → 409 `load_failed`.
 - `test_drain_marks_draining_and_answers_drained_at_zero_under_one_lock` — 1 in flight, `drain`:
   a new request waits; the one in flight ends → one `drained` posted; the count never below 0.
 - `test_a_request_for_a_draining_model_waits_then_gets_draining` — never unloaded, Dan's 30 s
