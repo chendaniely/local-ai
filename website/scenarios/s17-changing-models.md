@@ -53,3 +53,5 @@ loads on its next request.* During the swap, pi's request for the new coder read
 downloaded yet. On the Spark, `make pull` fetches it (16 GiB)*, and one for the old name reads
 *There's no model called qwen3.6-35b-a3b here …*, listing the models and saying `make clients`
 updates pi's list. The plan's *What you see in Phase 2a* has every message.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

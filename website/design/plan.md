@@ -1123,7 +1123,13 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
 - **Hybrid runtime:** Compose for Open WebUI and SearXNG (later LiteLLM and Postgres); systemd for
   llama-swap and the gate; engines are pinned binaries or on-demand containers; host setup happens in
   bootstrap; ntfy and the watchdog run under Compose on the Synology; the Mac pieces install with
-  `make clients`.
+  `make clients`. *Kept 2026-10-07 (Dan, asked whether the Spark should move to Docker):* bare metal
+  for the engines, llama-swap and 2a's front, gate and brake; Compose for apps that ship as images.
+  Docker's own processes held about 160 MiB that day, so memory isn't the reason; the GPU without a
+  toolkit in between, systemd's restarts and sandboxing, Docker access being root access, and 10–20
+  GB CUDA images on a shared 1 TB disk are. Full containerization gets revisited only if a needed
+  engine ships solely as a container or untrusted model code wants stronger isolation; the repo,
+  not an image, is what makes the box reproducible (S18). [The Q&A](phase-2a-qa.md) has the reasons.
 - **The Makefile is the front door.** `make help` lists `bootstrap, apply, deploy, status,
   logs s=<name>, doctor, test, docs, clients`; the logic lives in the Python CLI. It stays portable to
   macOS's older GNU make. (2026-09-25: after Phase 1, every target here exists but `deploy`; see
@@ -2713,6 +2719,9 @@ Each item gets its own design pass when its turn comes.
   ntfy item), and a questions-and-answers page, [`phase-2a-qa.md`](phase-2a-qa.md), records why
   the design is what it is. pi's and Open WebUI's handling of a refusal was checked from their
   source (*The front and the gate*): pi retries a refused turn by itself, up to three times.
+- **2026-10-07** — The Spark stays a hybrid (Dan): bare metal for the engines and the stack's own
+  services, Compose for apps that ship as images; Docker's own processes measured at about 160 MiB.
+  *Hybrid runtime* says why, and when it gets revisited.
 
 ## Sources
 

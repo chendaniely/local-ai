@@ -63,3 +63,5 @@ mine, so my own requests may load into it. `spark make-room 41G` unloads Gemma, 
 free for a load, 41 of it held for me; my retry loads the coder into it, and the hold shrinks to
 the 9 GiB left. `spark make-room --done` ends that, and Gemma comes back once there's room for it,
 after my python job. The phone's *refused* reads *needs 41 GiB, 18 free for a load*.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

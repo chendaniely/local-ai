@@ -23,3 +23,5 @@ Apps get it with Phase 3.
 5 minutes by default, half that wait, so `spark clients` sets it to about 15 minutes, and the
 refusal reaches it. A refusal is a `503` that the client doesn't retry by itself. Quiet hours are
 set on my phone, where only high-priority alerts get through Do Not Disturb.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

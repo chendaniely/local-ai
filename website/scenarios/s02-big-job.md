@@ -61,3 +61,5 @@ reloads. The plan's *What you see in Phase 2a* has every message.
   reads *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load, after the 24 GiB
   reserve and the 70 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the
   hold.* A request of mine would load the coder into the hold, shrinking it, which is my call.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

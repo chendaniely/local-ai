@@ -53,3 +53,5 @@ you see in Phase 2a* has every message. *(Corrected after the final re-review, t
 each of the four alerts ends with where to act, *On the Spark, `make doctor` shows what's wrong*;
 and *running again* waits until the unit has stayed up for a minute, the brake's included, so a
 crash loop doesn't alternate it with the alerts.)
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

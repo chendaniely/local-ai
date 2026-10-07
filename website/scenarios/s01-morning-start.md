@@ -41,3 +41,5 @@ the coder as *loads when asked*, the others as *always loaded*. The plan's *What
 *Ruled 2026-10-07, with 2a's plan (I had left it to the session):* the weekday preload isn't
 built in 2a. It waits in the plan's Backlog until I ask for it, so `spark load <coder>` and
 `spark pin <coder>` are 2a's way in the morning.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

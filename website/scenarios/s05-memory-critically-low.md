@@ -87,3 +87,5 @@ episode sends a short follow-up (*also unloaded Gemma and the embeddings, both i
 how Gemma and the embeddings came to be reloaded. If the brake sent its own alert while the gate
 was down, the gate doesn't send it again once it's back. A silent `memory_warning` marks the fall
 past 28 GiB available, before the brake.
+
+*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*
