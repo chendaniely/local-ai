@@ -66,7 +66,7 @@ In order of how much they constrain the design:
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
-| Web UI | Open WebUI, Dan only (others later). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
+| Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
 | Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
@@ -76,7 +76,7 @@ In order of how much they constrain the design:
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
 | Build | **The Spark by default, one session at a time** (2026-09-25): a Claude Code session on the Spark (as Dan, in tmux) writes and tests the code, config and docs and runs everything touching the GPU, memory, systemd or Docker; the Mac session keeps the Mac clients, CI workflow changes and, until Quarto is on the Spark, the site render; Dan runs sudo, logins, secrets and the Synology's settings. (Until 2026-09-25 the Mac session wrote the code, tests and docs.) |
-| Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · ~~`claude-dgx`~~ (dropped 2026-09-28; see *Claude is untouched*) · other users · the web UI banner · Orca on the Spark, and on the phone (2026-09-28; Backlog). |
+| Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · ~~`claude-dgx`~~ (dropped 2026-09-28; see *Claude is untouched*) · ~~other users~~ (Phase 6, since 2026-10-07) · the web UI banner · Orca on the Spark, and on the phone (2026-09-28; Backlog). |
 
 ## Design
 
@@ -192,7 +192,8 @@ Architecture page now, and git history keeps the drawing.)*
   (`docker inspect`, `docker compose config`, `/proc/*/environ`, `systemctl show-environment`).
 - **Network.** Tailscale ACL grants are the tailnet's firewall, because ufw does not filter
   `tailscale0` (Tailscale issue #11717). Everything binds 127.0.0.1 except SSH (and LiteLLM from
-  Phase 3); Open WebUI is reachable only through `tailscale serve`. The ACL policy lives in the vault.
+  Phase 3, and Phase 6's guest web UI during an event); Open WebUI is reachable only through
+  `tailscale serve`. The ACL policy lives in the vault.
   Clients reach the Spark by its tailnet name, at home and away: the SSH alias (and so pi's tunnel)
   and Open WebUI. The LAN address, from a private values file, serves the home LAN — homelab apps
   from Phase 3, devices on WireGuard, and SSH when Tailscale is down (`website/how-to/ssh.md`).
@@ -630,6 +631,40 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
   are in the vault; the docs are updated.
 
+**Phase 6 — Other people: family over Tailscale, guests at events** (designed 2026-10-07; needs
+Phases 2, 3 and 5)
+
+- *Family and friends, from anywhere (Dan's dad, say).* Tailscale node sharing puts only the Spark
+  into their own tailnet; the ACL grants shared-in users the web UI's port 443 and LiteLLM's port,
+  and nothing else — none of Dan's other devices, nor the home LAN. Each gets an Open WebUI account
+  Dan creates (sign-up stays off) and, if they want one, a key of their own (`spark keys create
+  <name>`) in a `family` access group with its own concurrency. To check when this phase is
+  designed: the ACL syntax for shared-in users, and what an Open WebUI admin can see of other
+  users' chats. ZeroTier is the alternative for someone who can't use Tailscale, built only then:
+  a second overlay and interface; ufw rules for it (ufw does see ZeroTier's interface, unlike
+  Tailscale's); no automatic HTTPS for the web UI (that needs HTTPS on the LAN, in the backlog, or
+  HTTP inside the ZeroTier network); and its network ID kept out of the repo, like the tailnet's
+  name.
+- *Guests at an event, on the venue's network only, never the tailnet.* An event mode, on for the
+  event and off after: ufw opens LiteLLM's port and a guest web UI's port to the venue's subnet
+  only, and closes SSH from that LAN for the duration (Dan reaches the box over Tailscale). The
+  address is given out on the day, never written in the repo. A key per guest, in an `event` access
+  group that reaches only the event menu, with low per-key concurrency, expiring when the event
+  ends, each revocable. The menu: models Dan picks beforehand, pulls, measures and fits like any
+  registry model, larger ones included; his residents can be unloaded to free memory; the gate
+  loads one at a time and explains every refusal. A request for an off-menu model: Dan tries it
+  with `spark try` on the lab instance, and adds it if it fits and behaves. A guest web UI: a
+  separate Open WebUI instance with its own data, port and accounts Dan creates, over HTTP on a
+  network he trusts, or HTTPS once LAN HTTPS exists; Dan's own web UI and chats never meet it.
+- *Throughout:* nothing anyone sends is logged, as for every key; their requests share the memory
+  pool under the same admission rule as Dan's.
+- *Done when (planned):* a family member chats and calls the API over a shared node, and reaches
+  nothing else; an event dry run on a spare LAN — a guest key loads a menu model, an off-menu
+  request goes through `spark try`, the guest web UI works — and event mode closes cleanly after.
+  Its scenario pages (a family member chatting from home; a guest loading a large menu model; a
+  guest asking for an off-menu one) come with its implementation plan, when the scenario check
+  learns `phase: 6`.
+
 ## Working practice
 
 - **Commit along the way:** a small checkpoint commit after each task, on a branch per phase, so every
@@ -703,7 +738,8 @@ Each item gets its own design pass when its turn comes.
     pairing), #20706 (no push from a headless server) and #20673 (connections dropping on an arm64
     host; a fix is proposed in #20844).
 - **Parked:** Hermes · ~~`claude-dgx`~~ (dropped 2026-09-28: pointing Claude Code at a local model,
-  if ever wanted, is Ollama on the Mac, outside this repo) · a MacBook MLX fallback · other users.
+  if ever wanted, is Ollama on the Mac, outside this repo) · a MacBook MLX fallback · ~~other
+  users~~ (Phase 6, since 2026-10-07).
 
 ## Open items and risks
 
@@ -1396,6 +1432,14 @@ Each item gets its own design pass when its turn comes.
   corrected: DFlash2 is in llama.cpp's b11146 and SGLang's releases from v0.5.19. Phase 3 records
   Dan's audio host — on the Mac, built on Pixeltable, designed in a private repo of its own when
   Phase 3 comes. The research behind the numbers was web-only; none of them is measured here.
+- **2026-10-07** — Phase 6, other people, joins the end of the plan: family and friends over a
+  shared Tailscale node (only the Spark visible to them; a web UI account Dan creates, and a key if
+  wanted), with ZeroTier recorded as the alternative for someone who can't use Tailscale; and
+  guests at an event on the venue's network only, by address, port and a key each, picking from a
+  menu of models Dan prepares, with off-menu requests going through `spark try`, and a guest web UI
+  of its own. "Other users", parked since 2026-09-23, now points here. Dan may take the Spark to a
+  data-science and AI retreat, a long way off, which is why. Written on the Mac as a pull request
+  while the Spark session worked on Phase 2.
 
 ## Sources
 
