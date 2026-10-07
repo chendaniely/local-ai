@@ -194,10 +194,10 @@ flowchart TD
 
   front["Phase 2a: the front, on 9100, checks the key and the route<br/>and counts the requests in flight"]:::planned
   gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down;<br/>at boot, nothing loads"]:::planned
-  ask{"the gate: brake clear, and the footprint fits free memory,<br/>less the reserve, the growth the loaded models are owed,<br/>any load starting and any make-room hold?<br/>one load at a time, my keys first"}:::planned
+  ask{"the gate: brake clear, and the footprint fits what's free for a load:<br/>available memory less the reserve, the growth the loaded models are owed,<br/>any load starting and any make-room hold that isn't mine?<br/>one load at a time, my keys first"}:::planned
   gload["the gate gives spark launch a ticket and loads it through llama-swap;<br/>spark launch keeps the hold check and a zero-wait fit check"]:::planned
   hold["the gate keeps the request waiting<br/>for its key's wait: 30 s for mine, 10 minutes for agent's"]:::planned
-  inline["refused inline, a 503 like any API error: memory needed against free,<br/>the top holders, make-room or retry, a code and a retry-after"]:::planned
+  inline["refused inline, a 503 like any API error: memory needed against what's free for a load,<br/>the top holders, one next step, a code and a retry-after"]:::planned
   release["Phase 2a: the gate lifts the hold after 5 minutes above 28 GiB, if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]:::planned
   idle["Phase 2a: the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]:::planned
 
@@ -221,8 +221,9 @@ reserve stays free, because overcommitting a GB10 can freeze it without an out-o
 
 From Phase 2a (planned, dashed), a request reaches the front first. A model that's loaded is
 forwarded at once; for one that isn't, the front asks the gate, which admits one load at a time,
-my keys ahead of `agent`'s. Free memory then also holds back the growth the loaded models are
-still owed, and any room make-room is holding for me. If the model doesn't fit, the request waits
+my keys ahead of `agent`'s. What's *free for a load* is then available memory less the reserve,
+the growth the loaded models are still owed, and any room make-room is holding for me, which my
+own requests may load into and `agent`'s may not. If the model doesn't fit, the request waits
 for its key's wait, then gets a refusal that says why, in the client itself. `spark launch` starts
 nothing without the gate's ticket, and keeps today's checks as backstops that never wait. The
 reserve stays 24 GiB: the design lowered it to 22, and it went back to 24 the same day.

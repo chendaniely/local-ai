@@ -78,3 +78,12 @@ found after a reboot, sends a high-priority *… new loads are still paused. On 
 the coder now: memory ran low at 03:12 …*, and `spark status` shows *paused*. `agent`'s requests
 for the coder afterwards get `footprint_suspect` and a notification naming `spark load coder`
 (my decision the same day). The plan's *What you see in Phase 2a* has every message.
+
+*Corrected after the design's final re-review, the same day:* the brake's numbers are *available*
+memory, the box's free memory, never "free", which the messages keep for *free for a load*: *19.6
+GiB available, under the 20 GiB line*, *after 5 min above 28 GiB available*, and *Brake released
+at 03:40, 64 GiB available*. `brake_fired` names every model it unloads: a later unload in the same
+episode sends a short follow-up (*also unloaded Gemma and the embeddings, both idle*), which is
+how Gemma and the embeddings came to be reloaded. If the brake sent its own alert while the gate
+was down, the gate doesn't send it again once it's back. A silent `memory_warning` marks the fall
+past 28 GiB available, before the brake.

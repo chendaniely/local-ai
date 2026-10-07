@@ -52,3 +52,14 @@ later.* The code, `no_fit`, is in the error's `code` field, not the sentence. My
 default-priority *Refused the coder for pi on the Mac: needs 41 GiB, 18 free*, and a burst of the
 same refusal collapses into one more, with a count. The plan's *What you see in Phase 2a* has the
 message for every code.
+
+*Corrected after the design's final re-review, the same day (the session's rulings):* the message
+now keeps two numbers apart, *available* (the box's free memory) and *free for a load* (after the
+reserve, the growth owed and any hold): *The coder didn't load: it needs 41 GiB, and 18 GiB is free
+for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still
+grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with
+`spark make-room 41G` on the Spark, then try again.* And that next step works: make-room's hold is
+mine, so my own requests may load into it. `spark make-room 41G` unloads Gemma, leaving 50 GiB
+free for a load, 41 of it held for me; my retry loads the coder into it, and the hold shrinks to
+the 9 GiB left. `spark make-room --done` ends that, and Gemma comes back once there's room for it,
+after my python job. The phone's *refused* reads *needs 41 GiB, 18 free for a load*.

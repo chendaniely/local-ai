@@ -47,3 +47,17 @@ coder didn't load: it needs 41 GiB, and 12 GiB is free after the 24 GiB reserve 
 for you by make-room. On the Spark, `spark make-room --done` ends the hold; or try again later.*
 When I end the hold, a default notification says *make-room's 70 GiB hold ended*, and Gemma
 reloads. The plan's *What you see in Phase 2a* has every message.
+
+*Corrected after the design's final re-review, the same day (the session's rulings):*
+
+- **"Available" and "free for a load" are two numbers.** *Available* is the box's free memory;
+  *free for a load* is what's left after the reserve, the growth the loaded models are still owed
+  and any hold. So `spark make-room 70G` frees until 70 GiB is free for a load (above it said
+  "available"), and its message reads *Unloaded the coder and Gemma. 82 GiB is free for a load, and
+  70 GiB of it is held for you until `spark make-room --done` or a reboot.*
+- **The hold is mine.** My own requests, from pi on the Mac or the web UI, may load into it, and
+  it shrinks by what they take from it; only `agent`'s requests and the automatic reloads are kept
+  out. So the request that gets refused here is the agent's: it waits its 10 minutes and then
+  reads *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load, after the 24 GiB
+  reserve and the 70 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the
+  hold.* A request of mine would load the coder into the hold, shrinking it, which is my call.

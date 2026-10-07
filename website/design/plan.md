@@ -390,7 +390,7 @@ refusal; the queue and its rechecks live in the gate alone. Requests from Dan's 
 `agent`'s, first come first served within each, and the gate admits **one load at a time**
 (rule 1), when the model fits by rule 9's formula: its footprint against `MemAvailable`, less the
 reserve, the growth the loaded models are still owed, the footprint of any model still starting
-and any make-room hold.
+and any make-room hold, which Dan's own keys may load into (rule 4).
 
 **The key's wait**, defined here once, and rule 7 points here. It is **30 s for Dan's keys** (pi on
 the Mac, the web UI) and **10 minutes for `agent`'s** (Dan, 2026-10-05), set in the registry's key
@@ -405,8 +405,8 @@ the queue and before any load is admitted for it; a load already started for it 
 model stays until its idle time. If the key's wait runs out first, the client gets a **refusal that
 reads like a normal API error**: a `503` with `Retry-After` and `x-should-retry: false`, which
 OpenAI's SDKs read, so a refusal isn't silently retried; one of rule 7's codes; and text that gives
-the memory needed against what's free after the reserve, the growth owed and any make-room hold,
-the top holders, and the options (`spark make-room <size>`, or retry). So S03's explanation shows
+the memory needed against what's free for a load, after the reserve, the growth owed and any
+make-room hold, the top holders, and the options (`spark make-room <size>`, or retry). So S03's explanation shows
 inline in the client from 2a, not from Phase 3. Each code's message, word for word, is under *What
 you see in Phase 2a*. pi's and Open WebUI's handling of the status, the
 retry and the text is checked before `website/design/phase-2a.md` fixes them.
@@ -485,7 +485,7 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    same day after the council, with Dan's decision on the hold:)*
    - **What it frees.** `spark make-room <size>` works out what must unload so that
      `MemAvailable`, less the reserve and the growth the loaded models are still owed (rule 9),
-     reaches `<size>`: Dan's job can then take all of it and leave the reserve free, above the
+     reaches `<size>`, that is, until `<size>` is *free for a load*: Dan's job can then take all of it and leave the reserve free, above the
      brake. It lists everything it could unload, pinned models and those an agent's session holds
      included, each marked, largest first, with each one's requests in flight and how long they
      have run. Asked for more than unloading everything can free, it says so and shows the most
@@ -498,7 +498,13 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      reserved in every admission (rule 9), so no reload, waiting request (`agent`'s included), boot
      preload or brake release takes it back (S02), and a refusal it causes says so. `spark status`
      shows the hold, its size and when it ends. It errs safe: once Dan's job has allocated, the
-     hold still counts, until he ends it.
+     hold still counts, until he ends it. *(Ruled the same day, after the final re-review, Dan
+     having left the UX to the session: the hold is Dan's. A request with one of his keys, or
+     `spark load`, may load into it, and the hold shrinks by the part of that load the room
+     outside it couldn't cover; `agent`'s requests and the gate's own reloads and preloads still
+     may not. So `no_fit`'s next step, "free space with `spark make-room 41G` on the Spark, then
+     try again", loads the model Dan wanted, which it couldn't while the hold barred his own
+     requests too. A hold his loads use up ends then, and `--done` ends whatever is left.)*
    - **When the hold ends,** the gate reloads the residents one at a time, if they fit; on-demand
      models wait for a request. `spark make-room --done` reaches the control socket's *release*,
      as `make brake-release` does for the brake's hold. A resident that doesn't fit then waits in
@@ -610,23 +616,31 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      show in the engine's RSS, while GPU allocations don't (Phase 1's Task 13 found the engines'
      RSS at 0.4–2.1 GiB against 2–25 GiB each on the GPU); growth that doesn't show in RSS stays in
      *owed*, which errs safe. 2a checks that attribution on the box, during the soak, against
-     `MemAvailable`'s fall, before the gate relies on it. The load's fall is capped at the model's
-     measured cold load plus a margin, once the soak has measured it, and a load during which
-     other memory moved is flagged, since an outside allocation would inflate the fall and shrink
-     *owed*. A footprint counts what a model holds at its most after admission, so without this
+     `MemAvailable`'s fall, before the gate relies on it. *(Made precise after the final
+     re-review: the growth read is the engine's anonymous RSS, `RssAnon` in `/proc/<pid>/status`,
+     not its total RSS. The embeddings engine runs without `--load-mode none`, so it maps its model
+     file, and file-backed RSS is page cache that `MemAvailable` still counts as available: a rise
+     in it would shrink *owed* with no memory taken. 2a's soak compares, for each engine, its
+     `RssAnon` growth with `MemAvailable`'s fall and with `nvidia-smi`'s per-process figure for it,
+     which Phase 1 read on this box, and records what each shows.)* The load's fall is capped at
+     the model's measured cold load plus a margin, once the soak has measured it, and a load
+     during which other memory moved is flagged, since an outside allocation would inflate the
+     fall and shrink *owed*. A footprint counts what a model holds at its most after admission, so without this
      term a load admitted against the `MemAvailable` of the moment could land below the brake
      once the others grow: the residents load cold at 33.5 GiB against footprints of 43, so
      9.5 GiB is still to come (the council's reliability review). *committed* is the loaded
      models' footprints; the ceiling term binds only if the measured ceiling comes in below idle
      `MemAvailable` less the reserve. *starting* is the footprint of any model `/running` shows
      starting: none, while the gate loads one at a time and no load is under way, but a model left
-     starting across a gate restart counts. *held* is make-room's hold (rule 4). Each loaded model
-     keeps the footprint of the registry that loaded it, never a newer one's, and `spark status`
-     shows *owed*.
+     starting across a gate restart counts. *held* is make-room's hold (rule 4), which a request
+     with Dan's keys doesn't count, since he may load into it. Each loaded model keeps the
+     footprint of the registry that loaded it, never a newer one's, and `spark status` shows
+     *owed*.
 
-     Growth that has happened leaves *owed* as it enters `MemAvailable`, so the two cancel: with
-     nothing outside the stack and no hold, `MemAvailable − owed` is idle `MemAvailable` less the
-     loaded models' footprints, however far they have grown, and the formula becomes
+     Growth that shows in an engine's anonymous RSS leaves *owed* as it enters `MemAvailable`, so
+     the two cancel: with nothing outside the stack and no hold, `MemAvailable − owed` is idle
+     `MemAvailable` less the loaded models' footprints, however far they have grown, and the
+     formula becomes
      `footprint ≤ idle MemAvailable − reserve − the loaded models' footprints`, which is render's
      check below. The coder beside the residents: 117 − 43 − 24 leaves 50, against its ~41, cold
      residents or grown. *(Corrected 2026-10-07, after the re-review: *owed* was first a model's
@@ -806,7 +820,10 @@ built yet.* Dan: user experience is really important, and there should be no con
 err on more notifications than something not being clear at the moment, and we can handle which
 types of notifications get turned on and off later."* He left the wording to the session's
 judgement. The principle: **whenever the gate acts, Dan can tell what happened, why, and what to do
-next, in the place he is already looking.** No code without words, no silent failure.
+next, in the place he is already looking.** No code without words, no silent failure. *(Revised
+the same day after the final re-review, with the session's rulings: make-room's hold is Dan's to
+load into (rule 4), so `no_fit`'s next step works; "available" and "free for a load" each name one
+number; and the examples now agree with their moments.)*
 
 | Where Dan looks | What it's for | In 2a |
 |---|---|---|
@@ -816,10 +833,18 @@ next, in the place he is already looking.** No code without words, no silent fai
 | The menu bar on the Mac | the picture without asking | Phase 2b |
 
 **Plain words everywhere Dan reads.** Models by role first, as he knows them: *the coder*, *Gemma*,
-*the embeddings*, *whisper*; file names only in `spark status`, in brackets. *Always loaded* and
-*loads when asked*, not resident and on-demand; *paused*, not held. Sizes in whole GiB, times in
-his local time on a 24-hour clock, never a stack trace. Every message and notification names
-where to act, *on the Spark* or *on your phone*, and the command.
+*the embeddings*, *whisper*; file names only in `spark status`, in brackets, and in
+`model_not_found`, which lists them so a client's list can be fixed. *Always loaded* and *loads
+when asked*, not resident and on-demand. *Paused* is the brake's word (new loads paused), and
+*held* is make-room's (room held for Dan). Sizes in whole GiB, times in his local time on a
+24-hour clock, never a stack trace. Every message and notification names where to act, *on the
+Spark* or *on your phone*, and the command.
+
+**Two numbers, two words, everywhere.** *Available* is always `MemAvailable`, the box's free
+memory: what the brake's lines (warn at 28 GiB, brake at 20) and the status header measure. *Free
+for a load* is always the admission figure: available, less the 24 GiB reserve, the growth the
+loaded models are still owed and any make-room hold that isn't the asker's (rule 9). No message,
+notification or status line says "free" alone.
 
 **Nothing is injected into a reply stream.** Gate text in a stream would read as the model's own
 words, so a request that waits shows in the client only as a slow reply, its usual "thinking", and
@@ -830,31 +855,37 @@ it. A cold load looks like a slow first token; 2b's menu bar will show *loading*
 **Refusals, in the client.** Each is one sentence a person reads, then the numbers, then one next
 step. The code stays in the error's `code` field, for programs; Dan never has to read it. The
 examples share one moment: the residents loaded, the coder not, and a 32 GiB python job of Dan's
-running, so 18 GiB is free for a load (117 − 43 − 24 − 32; rule 9).
+running, so 48 GiB is available and 18 GiB is free for a load (48 − 24 − 6 owed, or
+117 − 43 − 24 − 32; rule 9). The brake fired at 03:12 while the coder was loading, so the coder
+carries its mark (rule 5).
 
 | Code | HTTP | The message, as pi or the web UI shows it |
 |---|---|---|
-| `no_fit` | 503 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free after the 24 GiB reserve and the 6 GiB the loaded models may still grow into. Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. On the Spark, `spark make-room 41G` frees room; or try again later.* |
+| `no_fit` | 503 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* |
 | `loading` | 503 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
-| `held_by_brake` | 503 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB free), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB free, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
+| `held_by_brake` | 503 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
 | `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `load_failed` | 503 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
 | `not_downloaded` | 503 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
 | `restarting` | 503 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
 | `llama_swap_down` | 503 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
-| `draining` | 503 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute; it loads again if it fits.* |
-| `footprint_suspect` | 503 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only you can load it again. On the Spark, `spark load coder`; or ask for it from pi on the Mac or the web UI, which loads it if it fits.* |
+| `draining` | 503 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
+| `footprint_suspect` | 503 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
 | `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
 
 Every `503` carries `Retry-After` and `x-should-retry: false` (rule 7); the `429` carries
-`Retry-After` alone, and the `404`s neither. A make-room hold, when one stands, is named in
-`no_fit`'s numbers the same way as the growth owed, with `spark make-room --done` as the next step
-(S02). `loading` now means the key's wait ran out in the queue for the one-load slot; a request
-for a model that has started loading waits for it instead (*A request that needs a load*).
-`too_many_requests` and `route_not_served` are the front's per-key caps and its route list,
-worded. llama-swap's own `429`, `concurrency_limit`, can't arise under the front's lower caps.
+`Retry-After` alone, and the `404`s neither. A make-room hold is Dan's (rule 4): his keys may load
+into it, so his `no_fit` never counts it, while `agent`'s does and names it, with
+`spark make-room --done` as the next step (S02). For `agent`'s key a refusal names Dan's processes
+only as *a process of Dan's, 32 GiB*, as the status socket does. `loading` now means the key's
+wait ran out in the queue for the one-load slot; a request for a model that has started loading
+waits for it instead (*A request that needs a load*). `too_many_requests` and `route_not_served`
+are the front's per-key caps and its route list, worded. llama-swap's own `429`,
+`concurrency_limit`, can still arise when several keys' caps for one model add up past its 10; the
+front passes it on, worded: *Too many requests for the coder at once; try again in a moment.*
+*(Corrected after the final re-review: this said it couldn't arise.)*
 
 **Notifications, on the phone.** One list in the registry names every type and its priority,
 `high`, `default`, `low` or `off`, and **all are on by default**; turning one off, or changing its
@@ -871,25 +902,26 @@ notifications:
 
 | Type | Priority | When | Example |
 |---|---|---|---|
-| `brake_fired` | high | the brake fired; while the gate is down, the brake sends it itself | *Brake on brightroar at 03:12: 19.6 GiB free, under the 20 GiB line. Unloaded the coder, which was loading; new loads are paused. They resume by themselves after 5 min above 28 GiB free.* |
+| `brake_fired` | high | the brake fired: it names what it unloaded, and each further unload in the same episode sends a short follow-up; while the gate is down, the brake sends it itself, and the gate, once back, skips what the brake already sent | *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* |
 | `brake_needs_release` | high | a brake within the hour after an automatic release, or a hold found after a reboot | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* |
-| `gate_down` | high | the failure notifier: the gate stopped | *The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused until it's back.* |
-| `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off.* |
-| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused.* |
-| `brake_down` | high | the failure notifier: the brake stopped | *The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the backstop.* |
-| `back_up` | default | the gate, once it, the front or llama-swap runs again after a crash | *The gate on brightroar is running again, after 12 s down. New loads work again.* |
-| `refused` | default | a request was refused, whoever asked | *Refused the coder for agent: needs 41 GiB, 18 free; python3 (chendaniely) holds 32. On the Spark, `spark make-room 41G`.* |
+| `gate_down` | high | the failure notifier: the gate stopped | *The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused until it's back. On the Spark, `make doctor` shows what's wrong.* |
+| `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off. On the Spark, `make doctor` shows what's wrong.* |
+| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* |
+| `brake_down` | high | the failure notifier: the brake stopped | *The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the backstop. On the Spark, `make doctor` shows what's wrong.* |
+| `back_up` | default | the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop doesn't alternate it with the `*_down` alerts | *The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.* |
+| `refused` | default | a request was refused, whoever asked | *Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free space with `spark make-room 41G` on the Spark, then try again.* |
 | `footprint_suspect` | default | an `agent` request for the model that was loading when the brake fired | *Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load coder` allows it again; your own requests load it if it fits.* |
 | `load_failed` | default | a start failed or passed its deadline | *The coder failed to load: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* |
-| `brake_released` | default | the gate lifted the brake's hold | *Brake released at 03:40, 64 GiB free. Reloaded Gemma and the embeddings. The coder was loading when it fired, so it loads again only when you ask.* |
-| `room_hold_ended` | default | make-room's hold ended: `--done`, its time, or a reboot | *make-room's 40 GiB hold ended (`--done`). Reloading Gemma, the embeddings and whisper, one at a time.* |
-| `resident_waiting` | default | an always-loaded model didn't fit when a hold ended | *Gemma didn't fit after the hold ended: it needs 32 GiB, 20 free. It loads by itself once there's room.* |
+| `brake_released` | default | the gate lifted the brake's hold | *Brake released at 03:40, 64 GiB available. Reloaded Gemma and the embeddings. The coder was loading when it fired, so it loads again only when you ask.* |
+| `room_hold_ended` | default | make-room's hold ended: `--done`, its time, a reboot, or used up by Dan's own loads | *make-room's hold for you ended (`--done`), all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* |
+| `resident_waiting` | default | an always-loaded model didn't fit when a hold ended | *Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself once there's room.* |
 | `apply_restarted` | default | `make apply` restarted the model service | *make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads on its next request.* |
 | `load_started` | low | a cold load started | *Loading the coder for pi on the Mac (24 s last time)…* |
 | `loaded` | low | a load finished | *Loaded the coder in 24 s.* |
 | `unloaded` | low | an idle unload, make-room or `spark unload` | *Unloaded the coder after 60 min idle.* |
-| `waiting` | low | a request started waiting for memory, the brake or the load slot | *Waiting for memory: the coder for agent, up to 10 min. It needs 41 GiB, 18 free.* |
+| `waiting` | low | a request started waiting for memory, the brake, the load slot, or Dan (`footprint_suspect`) | *Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a load.* |
 | `pin_ended` | low | a pin's time ran out | *The pin on the coder ended at 18:00; it unloads after 60 min idle.* |
+| `memory_warning` | low | available memory fell under the warn line, 28 GiB (rule 5's warning), once per fall | *Memory is getting low on brightroar: 27.4 GiB available, under the 28 GiB warning line. The brake acts at 20.* |
 
 The failure notifier's four `*_down` types keep its rules (*The front and the gate*): it sends the
 unit, its result and the time, worded as above, never a journal line. 2b adds the watchdog's
@@ -897,8 +929,8 @@ unit, its result and the time, worded as above, never a journal line. 2b adds th
 
 **One notification per event.** The gate never repeats an alert for the same hold or the same
 outage. A burst of identical refusals (the same model, key and code) collapses: the first goes at
-once, and the repeats within 10 minutes go as one, with their count and the reason (*Refused the
-coder for agent 4 more times since 09:12: same reason.*). That is for clarity, not suppression:
+once, and the repeats within 10 minutes go as one, with their count and the reason (*Didn't load
+the coder for agent 4 more times since 09:12: same reason.*). That is for clarity, not suppression:
 `spark status`'s *recent* list keeps each one.
 
 **Quiet hours live on the phone** (*Visibility and notifications*, above): Android's Do Not
@@ -910,23 +942,26 @@ is waiting, what is paused or held, what happened, and whether everything is up.
 the refusal examples above, **on the Spark**, `spark status` shows:
 
 ```
-brightroar · 48 GiB available of 122 · 28 before the brake
-free for a load: 18 GiB, after the 24 GiB reserve and 6 GiB the loaded models may still grow into
+brightroar · 48 GiB available of 122 · 28 above the brake's 20 GiB line
+free for a load: 18 GiB (48 available, less the 24 GiB reserve and 6 GiB still owed)
 loaded      Gemma (gemma-4-26b-a4b)                up to 32 GiB  always loaded     answering 1
             the embeddings (qwen3-embedding-0.6b)  up to 8 GiB   always loaded
             whisper (whisper-large-v3-turbo)       up to 3 GiB   always loaded
 not loaded  the coder (qwen3.8-27b)                up to 41 GiB  loads when asked
-waiting     agent → the coder · 2 min of 10 · needs 41 GiB, 18 free
+            marked: it was loading when the brake fired at 03:12 (seen using 26 GiB);
+            only you can load it again
+waiting     agent → the coder · 2 min of 10 · waiting for you: spark load coder
 paused      no · the brake last fired at 03:12, released at 03:40
 held        nothing · pins none · sessions: agent's pi, since 08:40
-recent      09:12  refused the coder for pi on the Mac: needs 41 GiB, 18 free
+recent      09:12  refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load
             03:40  brake released; reloaded Gemma and the embeddings
 health      front ok · gate ok · brake ok (key checked 09:00) · ntfy ok
 ```
 
 *Up to* is each model's footprint. Through the status socket, which `agent` reads, the *recent*
 list holds only `agent`'s own refusals, and other processes go unnamed. `--json` carries the same,
-for 2b's menu bar.
+for 2b's menu bar. *(Corrected after the final re-review: the coder's brake mark and `agent`'s
+wait for Dan were missing from this moment, and its numbers now use the two words.)*
 
 **Each command says what it did, and how to undo it.** All run **on the Spark**, from Dan's
 account.
@@ -937,9 +972,9 @@ account.
 | `spark unload coder` | *Unloading the coder once its 1 request in flight finishes…*, then *Unloaded the coder.* | `spark load coder` |
 | `spark pin coder 8h` | *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* | `spark unpin coder` |
 | `spark unpin coder` | *The pin on the coder ended; it unloads after 60 min idle.* | `spark pin coder` |
-| `spark make-room 40G` | the list below, one confirmation, then *Unloaded the coder. 50 GiB free; 40 GiB held for you until `spark make-room --done` or a reboot.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
-| `spark make-room --all` | the full list, one confirmation, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot.* | `spark make-room --done` |
-| `spark make-room --done` | *Hold ended. Reloading Gemma, the embeddings and whisper, one at a time…* | `spark make-room` again |
+| `spark make-room 40G` | the list below, one confirmation, then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
+| `spark make-room --all` | the full list, one confirmation, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
+| `spark make-room --done` | *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* | `spark make-room` again |
 | `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* | none needed: the brake fires again if memory falls |
 | `make apply` | the diff, then *Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now.* After 15 minutes: *No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight finish? [y/N]* | revert the change, and `make apply` again |
 | `make apply-now` | *This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent). Continue? [y/N]* | as above |
@@ -948,13 +983,19 @@ make-room's list, with the residents and the coder loaded and nothing else runni
 a load, 117 − 84 − 24), **on the Spark**:
 
 ```
-To free 40 GiB (9 free now):
+To make 40 GiB free for a load (9 GiB now):
   1  the coder (qwen3.8-27b)      41 GiB  loads when asked · idle 12 min
   2  Gemma (gemma-4-26b-a4b)      32 GiB  always loaded · the web UI and photos use it
   3  the embeddings               8 GiB   always loaded
   4  whisper                      3 GiB   always loaded
-Unloading 1 frees 50 GiB. Unload 1? [y/N]
+Unloading 1 leaves 50 GiB free for a load. Unload 1? [y/N]
 ```
+
+And `no_fit`'s next step, from the refusal examples' moment (18 GiB free for a load, the coder
+not loaded): `spark make-room 41G` unloads Gemma, leaving 50 GiB free for a load, 41 of it held
+for Dan; his retry loads the coder into it, and the hold shrinks to the 9 GiB the coder didn't
+need from it. `--done` ends that, and Gemma, which needs 32 GiB with 9 free for a load, waits
+(`resident_waiting`) until the python job ends.
 
 ### Speech
 
@@ -1307,6 +1348,10 @@ only; git history keeps them.)
   the secret files `0600 root:root`. Then the client keys' digests, made with a sudo one-liner that
   shows no key. *(Added after the re-review:)* the existing Hugging Face cache moves to
   `spark-pull`, hf_xet's logs included, with a setgid group so that `spark` reads the model files.
+  *(Added after the final re-review:)* in the same task, whisper's `--tmp-dir`, today
+  `/var/lib/local-ai/hf/tmp` inside that cache, moves to a folder of `spark`'s outside it, so
+  whisper can still write its temporary files and the pull's user can't read uploaded audio;
+  llama-swap's `ReadWritePaths=` names the new folder.
 - [Spark] ntfy's records, in one commit: `stack/synology/compose.yaml` with the digest, a
   `stack/versions.yaml` row (`where: [synology]`), the Stack page generated again, an `updates.md`
   row, and a test that the compose file's digest is the pin. No address, token or hostname goes in.
@@ -1348,7 +1393,9 @@ only; git history keeps them.)
 - [Spark] **the budget** (rule 9): render's check corrected; the reserve stays 24 GiB (lowered to
   22 and put back, the same day); the CUDA-allocatable ceiling measured by rule 9's method, and the
   registry following the measurement; and, during the soak, a check that each engine's RSS growth
-  accounts for its growth in `MemAvailable`, which *owed* relies on (added after the re-review).
+  accounts for its growth in `MemAvailable`, which *owed* relies on (added after the re-review;
+  after the final re-review, its anonymous RSS, `RssAnon`, compared with `MemAvailable`'s fall and
+  with `nvidia-smi`'s per-process figure).
 - [Spark] **the coder** (Dan, 2026-10-07): Qwen3.8-27B replaces Qwen3.6-35B-A3B, by Phase 5's route
   A — llama.cpp b11146 as deployed, Unsloth's GGUF, MTP. The repo is `unsloth/Qwen3.8-27B-GGUF`, at
   revision `4ca720788d1e01f1bff70c033e0d0028fd02e502` (last modified 2026-08-20, so past the
@@ -1909,8 +1956,8 @@ Each item gets its own design pass when its turn comes.
   recovers (systemd 255's man page says so), that `NoNewPrivileges=` lets CUDA start from a cold
   boot, and that the engines bind ports below 1024 with the capability they inherit; and, added
   after the re-review, that 9100 stays held through a crash loop, that the gate's uvicorn
-  subclass passes it each caller's uid, and that an engine's RSS growth accounts for its growth in
-  `MemAvailable` (rule 9's *owed*); how NVIDIA's
+  subclass passes it each caller's uid, and that an engine's anonymous RSS growth (`RssAnon`)
+  accounts for its growth in `MemAvailable` (rule 9's *owed*); how NVIDIA's
   web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); ~~that GRUB
   boots the newest kernel, which the move's check before the reboot relies on~~ (resolved
   2026-09-27: Phase 1's Task 12 ran the check, and it passed; see Revisions); whether GIGABYTE
@@ -2618,6 +2665,23 @@ Each item gets its own design pass when its turn comes.
   nothing is injected into a reply stream. Dan's decision: `agent`'s requests for the model that
   was loading when the brake fired keep waiting, then `footprint_suspect`, with a notification
   naming `spark load <model>`. S01, S02, S03, S05, S14 and S17 gain dated notes.
+- **2026-10-07** — The design's final re-review, on the second fix pass and the UX pass, found 2
+  new Important findings and 14 Minor; Dan having left the UX to the session, these are its
+  rulings. **make-room's hold is Dan's:** his keys may load into it, and it shrinks by what they
+  take from it, while `agent`'s requests and the automatic reloads may not, so `no_fit`'s "free
+  space with `spark make-room 41G` on the Spark, then try again" loads the model he wanted (rule
+  4). **One word per number:** *available* is always `MemAvailable`, *free for a load* always the
+  admission figure, in every message, notification, status line and example. **Owed growth reads
+  anonymous RSS** (`RssAnon`), since the embeddings engine maps its model file, and 2a's soak
+  compares it with `MemAvailable`'s fall and `nvidia-smi`'s per-process figure. The minors, all
+  taken: whisper's tmp-dir leaves the Hugging Face cache before it moves to `spark-pull`; the
+  status example shows the coder's brake mark and `agent`'s wait for Dan; examples reload only
+  what was unloaded; `brake_fired` names every unload, with follow-ups, and isn't sent twice;
+  `back_up` covers the brake and waits a minute; the `*_down` alerts name where to act; a low
+  `memory_warning` joins the list; `agent`'s refusals don't name Dan's processes; "only Dan can
+  load it"; llama-swap's `429` is passed on, worded; "leaves 50 GiB free for a load"; and *paused*
+  is the brake's word, *held* make-room's, with `model_not_found`'s names an exception. S02, S03,
+  S05, S14 and the Architecture page follow.
 
 ## Sources
 
