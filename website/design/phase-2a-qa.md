@@ -185,6 +185,9 @@ which types get turned on and off later."* What that settled:
 - **Every notification type has a name and a priority in one list, all on**; turning one off later
   is a one-line change. Loads and waits get silent notifications too, so nothing happens unexplained.
 - **One notification per event**; a burst of the same refusal collapses into one, with a count.
+- **A refusal after a wait is a 409, not a 503** (the session's ruling, with the plan): pi retries a
+  503 by itself, up to three times, so a 30 s refusal would have arrived after about 2¼ minutes;
+  a 409 it shows at once. An outage stays a 503, where a retry makes sense.
 - **Nothing is written into a model's reply**: a wait shows as a slow reply, explained on the phone
   and in `spark status`.
 - **Plain words:** *always loaded*, *loads when asked*, *paused*, models by their role first.

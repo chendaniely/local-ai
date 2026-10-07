@@ -21,7 +21,10 @@ Apps get it with Phase 3.
 
 *Revised 2026-10-07, after the design's council:* `agent`'s pi gives up on a silent request after
 5 minutes by default, half that wait, so `spark clients` sets it to about 15 minutes, and the
-refusal reaches it. A refusal is a `503` that the client doesn't retry by itself. Quiet hours are
-set on my phone, where only high-priority alerts get through Do Not Disturb.
+refusal reaches it. A refusal is a `503` that the client doesn't retry by itself. *(Corrected
+2026-10-07, with 2a's implementation plan: a refusal after the wait is a `409`, which `agent`'s pi
+doesn't retry; it would have retried a `503` up to three times, each with a 10-minute wait of its
+own.)* Quiet hours are set on my phone, where only high-priority alerts get through Do Not
+Disturb.
 
 *Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

@@ -210,17 +210,21 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   "`--spec-type draft-mtp`"; a native context of 262,144 with an f16 KV cache; "estimated at
   ~41 GiB"; "sets `--ctx-checkpoints 8` and the 2 GiB prompt cache explicitly". Its swap:
   "`make apply` … then `make pull` … then `make clients`."
-- **Refusals:** "A refusal is a `503` … and `x-should-retry: false`, but for the front's own `404`s
-  and `429`": `no_fit` · `loading` · `held_by_brake` · `gate_down` · `load_failed` ·
-  `not_downloaded` · `restarting` · `llama_swap_down` · `draining` · `footprint_suspect` (503);
-  `model_not_found` (404); `too_many_requests` (429); `route_not_served` (404); llama-swap's own
+- **Refusals** (the controller's ruling, 2026-10-07, from *Before Task 1*, correcting the design's
+  "a `503` … and `x-should-retry: false`"): a refusal that comes after a wait is a **`409`** —
+  `no_fit` · `loading` · `held_by_brake` · `footprint_suspect` — so pi doesn't retry the wait; an
+  outage stays a **`503`**, where a retry makes sense — `gate_down` · `llama_swap_down` ·
+  `restarting` · `draining` — and so do `load_failed` and `not_downloaded`, which the ruling leaves
+  as they were. Every `409` and `503` carries `x-should-retry: false`, since OpenAI's SDKs retry
+  both by default. The front's own: `model_not_found` (404); `too_many_requests` (429);
+  `route_not_served` (404); llama-swap's own
   `429` `concurrency_limit` "the front passes … on, worded". Each message word for word as *What
   you see in Phase 2a* gives it. The body is OpenAI's error shape, `{"error": {"message": <the
   sentence>, "code": <the code>}, "retry_after_s": <n>}`, with no `detail` key (Task 6 says why).
 - **`retry_after_s`, and the `Retry-After` header with it** (the controller's ruling, 2026-10-07):
   `no_fit` 30 · `held_by_brake` 300 · `gate_down` 30 · `restarting` 60 · `draining` 60 ·
   `llama_swap_down` 30 · `too_many_requests` 10; none for the rest, which then carry no
-  `Retry-After` (a dated correction in plan.md, Task 6).
+  `Retry-After` (plan.md's dated correction, 2026-10-07).
 - **The front's `401`**, for a key it doesn't know (the controller's ruling): "That API key isn't
   one the Spark knows. Check SPARK_API_KEY on this machine."
 - **The values the spec left open** (the controller's ruling, 2026-10-07; recorded, changeable):
@@ -284,11 +288,12 @@ brainstorm's scenario questions and the council's decisions, as questions and an
    moves; the crash-loop check as `agent` shows 9100 never answers as anyone else, and binding it
    always fails; the notifier pages once per 5 minutes, not every 2 s. *(Tasks 23, 34, 47.)*
 6. **A refusal in pi** — pi 0.85.1 (and 0.87.1) retries a failed turn by itself, up to three times,
-   2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429"; it
-   reads neither `x-should-retry` nor `Retry-After` at that level (Task 6's source check). Expected:
-   each retry is a new request with a wait of its own, so Dan's refusal can take about 2¼ minutes
-   to settle and `agent`'s about 40, and pi shows the refusal's text at each retry; the S03 drill
-   confirms it on the box. *(Tasks 6, 18, 48.)*
+   2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429" but
+   not "409"; it reads neither `x-should-retry` nor `Retry-After` at that level (*Before Task 1*).
+   Expected: a refusal after a wait is a `409`, which pi shows at once, its sentence after the
+   status, and doesn't retry, so Dan's 30 s refusal arrives after 30 s, not about 2¼ minutes; an
+   outage's `503` is retried, as is sensible there; the S03 drill confirms it on the box.
+   *(Tasks 6, 20, 48.)*
 
 ***
 
@@ -395,7 +400,7 @@ at tag `v0.11.4` (`backend/open_webui/routers/openai.py`, `backend/open_webui/ut
 - **pi, the text.** The OpenAI SDK turns a non-2xx answer into an error whose message is
   `<status> <error.message>`, and keeps the body's `error` object (`openai` 6.40.0,
   `core/error.js`). pi-ai then shows `<status>: <that object as JSON>` (`utils/error-body.js`,
-  `formatProviderError`), so a refusal reads in pi as `503: {"message":"The coder didn't load: …",
+  `formatProviderError`), so a refusal reads in pi as `409: {"message":"The coder didn't load: …",
   "code":"no_fit"}`. The sentence is there, with the code beside it. A body with more keys in
   `error` shows them all, so it carries only `message` and `code`.
 - **pi, the retry.** pi-ai's own retry around the SDK honours `x-should-retry: false` and is off
@@ -403,9 +408,13 @@ at tag `v0.11.4` (`backend/open_webui/routers/openai.py`, `backend/open_webui/ut
   auto-retry is on by default (`retry.enabled` true, `maxRetries` 3, `baseDelayMs` 2000:
   `core/settings-manager.js`) and retries whenever the error text matches a list that holds "503",
   "429", "service unavailable" and "timeout" (`utils/retry.js`), whatever the headers. So a refusal
-  is retried three times, 2, 4 and 8 s apart, each a new request with its own key's wait, and pi
-  shows the refusal's text at each (`auto_retry_start`). The front changes nothing for it; Review
-  Focus 6 records the cost, and the S03 drill (Task 48) measures it.
+  as first designed, a `503`, would be retried three times, 2, 4 and 8 s apart, each a new request
+  with its own key's wait (`auto_retry_start`). The list holds neither "409" nor any word of the
+  refusals' sentences (checked against plan.md's table), so the controller ruled, the same day,
+  that a refusal after a wait is a `409` (*Global Constraints*); an outage stays a `503`, which pi
+  retries. The OpenAI SDK retries a 409 too, unless `x-should-retry: false` says not to
+  (`openai` 6.40.0, `client.js`, `shouldRetry`), so every refusal keeps that header. The S03 drill
+  (Task 48) confirms it on the box.
 - **Open WebUI v0.11.4.** It passes the front's status and JSON body on unchanged, with no retry
   (`routers/openai.py`, the non-streaming branch, since a refusal isn't `text/event-stream`); its
   chat handler takes the body's `error`, then its `detail` if it has one
@@ -860,8 +869,9 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
 
 **Interfaces:**
 
-- `CODES_503 = ("no_fit", "loading", "held_by_brake", "gate_down", "load_failed",
-  "not_downloaded", "restarting", "llama_swap_down", "draining", "footprint_suspect")`;
+- `CODES_409 = ("no_fit", "loading", "held_by_brake", "footprint_suspect")` — refusals after a
+  wait; `CODES_503 = ("gate_down", "load_failed", "not_downloaded", "restarting",
+  "llama_swap_down", "draining")` — outages, and the two the ruling left as they were;
   `FRONT_CODES = {"model_not_found": 404, "too_many_requests": 429, "route_not_served": 404}`;
   `CONCURRENCY_LIMIT = "concurrency_limit"`; `RETRY_AFTER_S = {"no_fit": 30, "held_by_brake": 300,
   "gate_down": 30, "restarting": 60, "draining": 60, "llama_swap_down": 30,
@@ -871,9 +881,12 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
   - `body() -> dict` — `{"error": {"message": message, "code": code}}`, plus `"retry_after_s": n`
     at the top level when there is one. No other key in `error`, and never `detail` (*Before
     Task 1*: pi shows every key, and Open WebUI shows `detail` in place of `message`).
-  - `headers() -> list[tuple[bytes, bytes]]` — `content-type: application/json`; for a 503,
-    `x-should-retry: false`, and `retry-after: <n>` when there is one; for the 429,
+  - `headers() -> list[tuple[bytes, bytes]]` — `content-type: application/json`; for a 409 or a
+    503, `x-should-retry: false`, and `retry-after: <n>` when there is one; for the 429,
     `retry-after: <n>`; for a 404, neither.
+- `PI_RETRY_PATTERNS: tuple[str, ...]` — in the test file, not the module: pi-ai 0.85.1's
+  `RETRYABLE_PROVIDER_ERROR_PATTERN` list from `utils/retry.js`, copied, with 0.87.1's additions
+  (`currently experiencing high demand`, `520`).
 - `Holder(name: str, gib: float, dans: bool)` — a memory holder as messages name it, defined
   here; Task 7's `procs.top_holders` builds them.
 - `Moment` — what a message needs: `needed_gib`, `available_gib`, `reserve_gib`, `owed_gib`,
@@ -945,12 +958,15 @@ the test's own time zone):
 
 - `test_each_refusal_reads_word_for_word` — parametrized over the table's fifteen rows and three
   extra: `refusal(code, moment).message` equals the expected text exactly.
-- `test_every_code_has_its_status` — each of `CODES_503` gives 503; `model_not_found` and
-  `route_not_served` 404; `too_many_requests` 429.
+- `test_every_code_has_its_status` — each of `CODES_409` gives 409, each of `CODES_503` 503;
+  `model_not_found` and `route_not_served` 404; `too_many_requests` 429.
+- `test_pi_wont_retry_a_refusal_after_a_wait` — for each of `CODES_409`, at each of the table's
+  inputs, the text pi would show, `"409: " + json.dumps(body["error"])`, matches none of
+  `PI_RETRY_PATTERNS` (case-insensitive); the same text with `503` matches, so the test can fail.
 - `test_retry_after_follows_the_ruling` — `retry_after_s` is `RETRY_AFTER_S.get(code)` for every
   code; `headers()` holds `retry-after` exactly when it is set.
-- `test_503s_say_dont_retry` — every 503's `headers()` holds `x-should-retry: false`; no 404 or
-  429 holds it.
+- `test_409s_and_503s_say_dont_retry` — every 409's and 503's `headers()` holds
+  `x-should-retry: false`; no 404 or 429 holds it.
 - `test_the_body_is_openais_error_shape_with_no_detail` — `body()` for `no_fit` is
   `{"error": {"message": <its sentence>, "code": "no_fit"}, "retry_after_s": 30}`; for `loading`,
   the same with no `retry_after_s`.
@@ -984,9 +1000,9 @@ the test's own time zone):
   `make test lint`.
 - [ ] **Step 3: Docs.** plan.md, *What you see in Phase 2a*, dated notes (2026-10-07, this plan's
   rulings): the generated table lives at `website/reference/notifications.md`, which is kept
-  current; a refusal's body carries only `message` and `code` in `error`; only the codes with a
-  retry-after carry `Retry-After` (the controller's values); pi's and Open WebUI's handling, as
-  *Before Task 1* found it. A Revisions line records them.
+  current; a refusal's body carries only `message` and `code` in `error`. (The statuses, the
+  retry-afters and pi's and Open WebUI's handling are already in plan.md, from 2026-10-07; check
+  them against what this task built.) A Revisions line records them.
 - [ ] **Step 4: Commit.** **On the Spark:**
 
 ```bash
@@ -2189,9 +2205,10 @@ speaking Task 9's routes):
   `ok` → forwarded after it; the admit carried the model, `dan-mac`, `deadline = received + 30`
   and a request id.
 - `test_a_refusal_reaches_the_client_as_its_status_with_its_words_and_headers` — the stand-in
-  answers `no_fit` (503, message M, `retry_after_s` 30) → the client's 503, body `{"error":
+  answers `no_fit` (409, message M, `retry_after_s` 30) → the client's 409, body `{"error":
   {"message": M, "code": "no_fit"}, "retry_after_s": 30}`, `x-should-retry: false`,
-  `retry-after: 30`.
+  `retry-after: 30`; `loading` (409, no retry-after) → a 409 without `retry-after`; `restarting`
+  (503, 60) → a 503 with `retry-after: 60`.
 - `test_the_gate_counts_as_down_only_after_5s_without_an_answer` — the events call drops at T and
   reconnects hang (the socket held, never accepted): a request at T + 3 for a model not loaded
   still waits; at T + 5 it gets `gate_down` (the interval injected small).
@@ -3785,10 +3802,13 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   sends `resident_waiting`.
 - [ ] **Step 3: S03, and the runtime check of *Before Task 1*.** A stand-in job of Dan's holding
   32 GiB: pi on the Mac shows only its usual thinking for 30 s, nothing added to the stream, then
-  the refusal, `503: {"message":"The coder didn't load: …","code":"no_fit"}`; pi's own retries (up
-  to three, 2, 4 and 8 s apart) are counted and timed; the web UI shows the sentence alone; the
-  phone gets `refused` once, and a burst collapses with its count. The make-room walk then loads
-  the coder. What pi did is recorded against *Before Task 1* and Review Focus 6.
+  the refusal, `409: {"message":"The coder didn't load: …","code":"no_fit"}`, at 30 s and without
+  retrying: `make logs s=front` shows one request from `dan-mac`, ending 409. The web UI, asked
+  the same, shows the sentence alone, with no retry. The phone gets `refused` once, and a burst
+  collapses with its count. Then, with the gate stopped for a moment, a request for the coder
+  reads `gate_down`'s words after pi's own retries, each a line in the front's log. The make-room
+  walk then loads the coder. What pi and the web UI did is recorded against *Before Task 1* and
+  Review Focus 6.
 - [ ] **Step 4: S17.** A registry edit with a request in flight: the diff; the quiet wait's words;
   Ctrl-C changes nothing; the 15-minute deadline (shortened for the drill and put back) offers
   "drain now"; `make apply-now` asks, naming the requests; a request during the restart reads

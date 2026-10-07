@@ -64,4 +64,11 @@ free for a load, 41 of it held for me; my retry loads the coder into it, and the
 the 9 GiB left. `spark make-room --done` ends that, and Gemma comes back once there's room for it,
 after my python job. The phone's *refused* reads *needs 41 GiB, 18 free for a load*.
 
+*Corrected 2026-10-07, with 2a's implementation plan (the session's ruling; I had left the UX to
+it):* the refusal is a `409`, not a `503`. pi retries any error whose text holds "503" by itself,
+up to three times, so my 30 s refusal would have reached me after about 2¼ minutes; a `409` it
+shows at once and doesn't retry, as `409: {"message":"The coder didn't load: …","code":"no_fit"}`,
+and the web UI shows the sentence alone. A refusal for an outage, `gate_down` say, stays a `503`,
+which pi does retry.
+
 *Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*

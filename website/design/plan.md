@@ -415,7 +415,13 @@ the JSON body on, with no retry, and shows the error's `message`, so the error c
 pi 0.85.1 and 0.87.1 show the error object as JSON after the status, so it carries only `message`
 and `code`, and pi's own auto-retry, on by default, retries a turn whose error text holds "503" up
 to three times, 2, 4 and 8 s apart, whatever `x-should-retry` says. The S03 drill confirms it on
-the box.)*
+the box. Ruled the same day, from that check, Dan having left the UX to the session: a refusal that
+comes after a wait — `no_fit`, `loading`, `held_by_brake`, `footprint_suspect` — is a `409`, with
+the same body and sentence, since pi's list holds "503" but not "409", so Dan's 30 s refusal
+would otherwise reach him after about 2¼ minutes; an outage — `gate_down`, `llama_swap_down`,
+`restarting`, `draining` — stays a `503`, where a retry makes sense, and so do `load_failed` and
+`not_downloaded`. Every `409` and `503` keeps `x-should-retry: false`, since OpenAI's SDKs retry
+both by default, and `Retry-After` comes only with a code's retry-after.)*
 
 `agent`'s pi has to wait that long. pi 0.85.1, `agent`'s pinned version, gives up on a request that
 has no response headers after `httpIdleTimeoutMs`, 300,000 by default, half `agent`'s wait (its
@@ -578,7 +584,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    out in the queue for the one-load slot, the front's own refusals gain codes too
    (`model_not_found`, `too_many_requests`, `route_not_served`), and every code's message is
    under *What you see in Phase 2a*. A refusal is a `503` with `Retry-After` and
-   `x-should-retry: false`, but for the front's own `404`s and `429`. Its text names the stack's
+   `x-should-retry: false`, but for the front's own `404`s and `429`. *(Corrected 2026-10-07, with
+   the implementation plan: a refusal after a wait — `no_fit`, `loading`, `held_by_brake`,
+   `footprint_suspect` — is a `409`, so pi doesn't retry the wait; the outages stay `503`s;
+   `x-should-retry: false` on both; `Retry-After` only with a code's retry-after. *The front and
+   the gate* says why.)* Its text names the stack's
    models in full, and
    any other process by its user and its short process name, never its command line. How long a
    request waits, a request for a model that is already loading included, is defined once, under
@@ -868,22 +878,29 @@ carries its mark (rule 5).
 
 | Code | HTTP | The message, as pi or the web UI shows it |
 |---|---|---|
-| `no_fit` | 503 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* |
-| `loading` | 503 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
-| `held_by_brake` | 503 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
+| `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* |
+| `loading` | 409 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
+| `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
 | `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `load_failed` | 503 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
 | `not_downloaded` | 503 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
 | `restarting` | 503 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
 | `llama_swap_down` | 503 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `draining` | 503 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
-| `footprint_suspect` | 503 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
+| `footprint_suspect` | 409 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
 | `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
 
 Every `503` carries `Retry-After` and `x-should-retry: false` (rule 7); the `429` carries
-`Retry-After` alone, and the `404`s neither. A make-room hold is Dan's (rule 4): his keys may load
+`Retry-After` alone, and the `404`s neither. *(Corrected 2026-10-07, with the implementation plan:
+the four refusals that come after a wait, `no_fit`, `loading`, `held_by_brake` and
+`footprint_suspect`, are `409`s, as the table now gives them, where it gave `503`, because pi
+retries a `503` by itself, up to three times, and would hold Dan's 30 s refusal for about 2¼
+minutes; the outages stay `503`s, as do `load_failed` and `not_downloaded`. Every `409` and `503`
+carries `x-should-retry: false`; `Retry-After` comes only with a code's retry-after, 30 s for
+`no_fit`, `gate_down` and `llama_swap_down`, 60 for `restarting` and `draining`, 300 for
+`held_by_brake` and 10 for the `429`.)* A make-room hold is Dan's (rule 4): his keys may load
 into it, so his `no_fit` never counts it, while `agent`'s does and names it, with
 `spark make-room --done` as the next step (S02). For `agent`'s key a refusal names Dan's processes
 only as *a process of Dan's, 32 GiB*, as the status socket does. `loading` now means the key's
@@ -2722,6 +2739,13 @@ Each item gets its own design pass when its turn comes.
 - **2026-10-07** — The Spark stays a hybrid (Dan): bare metal for the engines and the stack's own
   services, Compose for apps that ship as images; Docker's own processes measured at about 160 MiB.
   *Hybrid runtime* says why, and when it gets revisited.
+- **2026-10-07** — Refusals that come after a wait (`no_fit`, `loading`, `held_by_brake`,
+  `footprint_suspect`) are `409`s, not `503`s (the controller's ruling, Dan having left the UX to
+  the session): pi retries any error whose text holds "503" or "429" by itself, up to three
+  times, so Dan's 30 s refusal would have reached him after about 2¼ minutes, and `agent`'s after
+  about 40. The outages keep `503`, `x-should-retry: false` stays on both, and `Retry-After` comes
+  only with a code's retry-after. *The front and the gate*, rule 7, *What you see in Phase 2a*, the
+  Architecture page, S03, S04, the implementation plan and the Q&A page follow.
 
 ## Sources
 
