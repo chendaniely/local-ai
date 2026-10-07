@@ -281,8 +281,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
    inflates its fall, the coder's 41 GiB loads against a full page cache, a GPU job of `agent`'s.
    Expected: *owed* errs safe (the gate subtracts RSS growth only once the soak has shown it counts,
    a registry flag), a load's fall is capped and flagged when other memory moved, the page-cache
-   drill settles rule 1 before the coder becomes the default, and the brake and earlyoom stay the
-   backstops. *(Tasks 7, 14, 25, 37, 40, 42.)*
+   drill settles rule 1 while Qwen3.6's way back is still written down (Task 39), and the brake and
+   earlyoom stay the backstops. *(Tasks 7, 14, 25, 37, 40, 42.)*
 5. **The first deploy fails, or the front crash-loops at start** — PID 1 holds 9100 with nothing
    behind it, so every client hangs in the backlog. Expected: the rollback to Phase 1's layout
    (llama-swap on 9100 with the client keys) is written and its render checked before anything
@@ -292,8 +292,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
    2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429" but
    not "409"; it reads neither `x-should-retry` nor `Retry-After` at that level (*Before Task 1*).
    Expected: a refusal after a wait, a failed load or a model not yet downloaded is a `409`, which
-   pi shows at once, its sentence after the status, and doesn't retry, so Dan's 30 s refusal arrives after 30 s, not about 2¼ minutes; an
-   outage's `503` is retried, as is sensible there; the S03 drill confirms it on the box.
+   pi shows at once, its sentence after the status, and doesn't retry, so Dan's 30 s refusal
+   arrives after 30 s, not about 2¼ minutes; an outage's `503` is retried, as is sensible there;
+   the S03 drill confirms it on the box.
    *(Tasks 6, 20, 48.)*
 
 ***
@@ -320,7 +321,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `stack/host/local-ai-agent-oom`, `stack/host/agent-oom.conf` (new) | Root sets `agent`'s `oom_score_adj` at login, for sshd and its user manager |
 | `stack/host/bootstrap.sh` | 2a's users, root-only secrets, the new folders, the cache moved to `spark-pull`, the notifier's script, `agent`'s OOM hook, install-units' new units |
 | `stack/host/50-local-ai.rules` | The polkit rule: six services, no sockets, no notifier |
-| `stack/measure/cuda_ceiling.py` (new) | PEP 723, standard library: allocates and touches 1 GiB steps, stops at `MemAvailable` less the reserve |
+| `stack/measure/cuda_ceiling.py` (new) | PEP 723, standard library: allocates and touches 0.25 GiB steps at the hog's pace, each confirmed in `MemAvailable`, and stops at `MemAvailable` less the reserve |
+| `stack/measure/hog.py` (new) | PEP 723, standard library: the drills' one memory hog, sized from `MemAvailable` at the time (`--leave`), paced under the brake's rate watch, each step confirmed, never under its floor |
 | `stack/measure/sample_memory.py` (new) | PEP 723: `MemAvailable`, `MemFree`, `Cached`, each engine's `RssAnon` and `nvidia-smi`'s figure, 10×/s, to a CSV outside the repo |
 | `spark/pyproject.toml`, `spark/uv.lock` | uvicorn (exact), Starlette, httpx explicit; anyio in the dev group |
 | `spark/src/spark/paths.py` | The sockets, the gate's and launch's folders, whisper's tmp-dir, the values file, llama-swap's new URL |
@@ -337,7 +339,7 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `spark/src/spark/serve.py` (new) | Runs uvicorn servers on given sockets, with the watchdog and a bounded shutdown |
 | `spark/src/spark/gateproto.py` (new) | The gate's routes and message shapes, shared by the gate, the front and the CLI |
 | `spark/src/spark/gateclient.py` (new) | The CLI's client: `http.client` over a Unix socket |
-| `spark/src/spark/tickets.py` (new) | Admission tickets: issued by the gate, used up by `spark launch` |
+| `spark/src/spark/tickets.py` (new) | Admission tickets: issued by the gate, used up by `spark launch`, kept under `launch/started/` while the load runs, for the brake |
 | `spark/src/spark/launch.py` | Starts a model only with a ticket; keeps the hold check and a zero-wait fit check; `not_downloaded`; refusal records per model |
 | `spark/src/spark/admission.py` | Phase 1's static fit, kept as launch's zero-wait backstop |
 | `spark/src/spark/llamaswap.py` | `TESTED_AGAINST`; its default URL 127.0.0.1:900 |
@@ -345,7 +347,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `spark/src/spark/gate/` (new) | `state.py` (kept across restarts) · `notify.py` (ntfy, one per event) · `units.py` (the four units' restarts) · `admission.py` (the queue, one load at a time, tickets, refusals) · `policy.py` (drain, idle, pins, sessions) · `room.py` (make-room, release, load and unload, preload, the brake's release) · `app.py` (the two sockets' routes, and who may call each) · `main.py` (`spark gate`) |
 | `spark/src/spark/front/` (new) | `parse.py` (routes, keys, bodies, caps) · `app.py` (the ASGI app) · `upstream.py` (forwarding, counting) · `gatelink.py` (admission, drain, gate down) · `main.py` (`spark front`) |
 | `spark/src/spark/hold.py` | The hold gains the boot id, the episode and the model that was loading |
-| `spark/src/spark/brake.py` | Idle-first order from the gate's record, the rate-of-fall watch, its steps recorded for the gate, its own alert while the gate is down, its key by credential |
+| `spark/src/spark/brakeevents.py` (new) | The brake's steps for the gate, keyed by boot id and sequence number, so a reset file or a new boot never hides an event |
+| `spark/src/spark/brake.py` | Idle-first order from the gate's record, the rate-of-fall watch less the fall of admitted loads, its steps recorded for the gate, its own alert while the gate is down, its key by credential |
 | `spark/src/spark/schema.py` (new) | A small JSON-schema check of the rendered llama-swap config |
 | `spark/src/spark/render.py` | llama-swap at 900, engines from 800, 180 s, internal keys, `--alias`, the new units, the notifier's priorities |
 | `spark/src/spark/status.py` | `spark status` through the gate, in the plan's layout; `--json` |
@@ -379,6 +382,11 @@ Every **[Spark]** task that changes code follows the same steps, given in each t
 4. Run the task's tests again, then `make test lint`: everything passes.
 5. Change the docs the task names, in the same commit (`CLAUDE.md`, *Docs must be true*).
 6. Commit, staging each path by name, with the message the task gives and the trailer.
+
+From Task 9 on, the repo's `paths.LLAMASWAP_URL` is 127.0.0.1:900, so the clone's own `make status`
+and `make doctor` describe 2a's layout while the box still runs Phase 1's. Until the cutover (Task
+34), read the box with the deployed app: `/opt/local-ai/app/.venv/bin/spark status` and `…/spark
+doctor`.
 
 Tests run in the environment `spark/tests/conftest.py` builds (no secret, an empty `HOME`). Unix
 sockets in tests live under a short `mkdtemp(dir="/tmp")`, since macOS caps an `AF_UNIX` path at
@@ -650,8 +658,9 @@ git commit -m "docs(machine): 🤖 record ntfy on the Synology, the phone, and t
 - [ ] **Step 1:** the failing tests; run them: they fail (`tested_against_problems` and the
   constants missing; uvicorn not in `pyproject.toml`).
 - [ ] **Step 2:** the dependencies; **on the Spark**, `uv lock --project spark`. Expected: the lock
-  gains uvicorn 0.54.0 (uploaded 2026-09-25) and starlette 1.7.0 (2026-09-23), both outside the
-  seven-day window on 2026-10-07, and nothing else new. Read both packages' security advisories
+  gains uvicorn 0.54.0 (uploaded 2026-09-25) and a starlette 1.x at least seven days old (1.7.0,
+  uploaded 2026-09-23, on 2026-10-07; a newer 1.x by the day Task 3 runs is as good), and nothing
+  else new. Read both packages' security advisories
   and the changelogs of the locked versions, and say what they found in the task's report.
 - [ ] **Step 3:** `tested_against_problems` and the two constants; the tests pass; `make test lint`.
 - [ ] **Step 4: Docs.** `updates.md`: uvicorn is pinned exactly, since `protocols.py` subclasses
@@ -678,7 +687,8 @@ git commit -m "build(spark): 🤖 add uvicorn and Starlette, and tie version ass
 **Interfaces:**
 
 - `Model` gains `label: str` — the plain-words name messages use (*the coder*, *Gemma*, *the
-  embeddings*, *whisper*); required and non-empty.
+  embeddings*, *whisper*); required and non-empty. And `used_by: str | None` — what make-room's
+  list says uses a resident (Gemma: `the web UI and photos use it`); optional.
 - `Budget(allocatable_gib, reserve_gib, idle_available_gib: float, allocatable_measured: bool)` —
   `idle_available_gib` required; `allocatable_measured` defaults to false.
 - `ClientKey(name: str, group: str, label: str)` — `label` as messages name the asker (*pi on the
@@ -704,7 +714,8 @@ git commit -m "build(spark): 🤖 add uvicorn and Starlette, and tie version ass
   Mac}, open-webui: {group: dan, label: the web UI}, agent: {group: agent, label: agent}}`;
   `notifications:` the twenty types at the Global Constraints' priorities; `gate: {idle_unload_min:
   60, owed_reads_rss: false}`; each model's `label` (`Gemma`, `the embeddings`, `whisper`, `the
-  coder`). The file's head comment says what each new section is for.
+  coder`), and Gemma's `used_by: the web UI and photos use it`. The file's head comment says what
+  each new section is for.
 - The fixture gains the same sections, with labels `the vision model`, `the embeddings`,
   `whisper` and `the coder` for `vision-chat`, `embed`, `stt` and `coder`.
 
@@ -732,6 +743,7 @@ git commit -m "build(spark): 🤖 add uvicorn and Starlette, and tie version ass
   above.
 - `test_idle_available_must_exceed_the_reserve` — `idle_available_gib: 24` with `reserve_gib: 24`:
   refused.
+- `test_used_by_is_optional_text` — absent → None; `used_by: 3` → refused, naming `used_by`.
 - `test_a_new_section_may_not_be_missing` — each of `keys`, `key_groups`, `notifications`, `gate`
   removed in turn: refused, naming it.
 
@@ -796,8 +808,10 @@ git commit -m "feat(spark): 🤖 the registry gains labels, keys and their group
   every candidate.
 - `StaticCheck(errors: list[str], warnings: list[str])`; `check_set(registry) -> StaticCheck` —
   errors: Σ footprints > `allocatable_gib`; residents + reserve > `idle_available_gib`; an
-  on-demand model whose footprint exceeds `free_for_a_load(available=idle_available,
-  reserve=reserve, owed=0, ceiling=allocatable, committed=residents, starting=0, held=0)`. Warning:
+  on-demand model whose footprint exceeds `free_for_a_load(available=idle_available − residents,
+  reserve=reserve, owed=0, ceiling=allocatable, committed=residents, starting=0, held=0)` — the
+  gate's formula at idle with the residents loaded, `min(117 − 43 − 24, 102 − 43)`, 50 for the 2a
+  set. Warning:
   `idle_available − Σ footprints < brake.warn_gib`. Each line names its numbers to one decimal,
   the need rounded up and the room down.
 - `render.check_budget(registry) -> list[str]` raises `RenderError` on the first error and returns
@@ -835,8 +849,8 @@ git commit -m "feat(spark): 🤖 the registry gains labels, keys and their group
 - `test_render_warns_when_everything_loaded_sits_under_the_warn_line` — residents 43, the coder 41
   and a 10 GiB on-demand model → no error; one warning holding `23.0` and `28`.
 - `test_render_and_the_gate_share_one_formula` — `free_for_a_load` replaced with a spy:
-  `check_set` calls it once per on-demand model, with available = idle, owed 0, committed = the
-  residents' sum, starting 0, held 0.
+  `check_set` calls it once per on-demand model, with available = idle less the residents' sum,
+  owed 0, committed = the residents' sum, starting 0, held 0.
 - `test_the_numbers_add_up_exactly` — available 52.3, reserve 24, owed 0, ceiling 102, committed
   0, starting 0, held 0 → exactly `28.3`.
 - In `test_render.py`: Phase 1's budget tests rewritten to the new checks;
@@ -887,8 +901,18 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
     503, `x-should-retry: false`, and `retry-after: <n>` when there is one; for the 429,
     `retry-after: <n>`; for a 404, neither.
 - `PI_RETRY_PATTERNS: tuple[str, ...]` — in the test file, not the module: pi-ai 0.85.1's
-  `RETRYABLE_PROVIDER_ERROR_PATTERN` list from `utils/retry.js`, copied, with 0.87.1's additions
-  (`currently experiencing high demand`, `520`).
+  `RETRYABLE_PROVIDER_ERROR_PATTERN` list (`dist/utils/retry.js`, joined with `|`, matched
+  case-insensitively), word for word: `overloaded`, `rate.?limit`, `too many requests`, `429`,
+  `500`, `502`, `503`, `504`, `524`, `service.?unavailable`, `server.?error`, `internal.?error`,
+  `provider.?returned.?error`, `exceeded request buffer limit while retrying upstream`,
+  `network.?error`, `connection.?error`, `connection.?refused`, `connection.?lost`, `other side
+  closed`, `fetch failed`, `getaddrinfo`, `ENOTFOUND`, `EAI_AGAIN`, `upstream.?connect`, `reset
+  before headers`, `socket hang up`, `socket connection was closed`, `timed? out`, `timeout`,
+  `terminated`, `websocket.?closed`, `websocket.?error`, `ended without`, `stream ended before
+  message_stop`, `stream ended before a terminal response event`, `http2 request did not get a
+  response`, `retry delay`, `you can retry your request`, `try your request again`, `please retry
+  your request`, `ResourceExhausted`; and 0.87.1's two additions, `currently experiencing high
+  demand` and `520`.
 - `Holder(name: str, gib: float, dans: bool)` — a memory holder as messages name it, defined
   here; Task 7's `procs.top_holders` builds them.
 - `Moment` — what a message needs: `needed_gib`, `available_gib`, `reserve_gib`, `owed_gib`,
@@ -896,7 +920,8 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
   `model_command` (the name `spark load` takes: the model's first role, else its name),
   `key_label`, `for_agent: bool`, and per code: `loading_label`, `brake_at: datetime`,
   `brake_available_gib`, `release_waits_for_dan: bool`, `engine_said: str | None`,
-  `deadline_s`, `download_gib`, `inflight`, `drain_for: "make-room" | None`, `asked_name`,
+  `deadline_s`, `download_gib`, `inflight`, `drain_for: "make-room" | "unload" | "idle" |
+  "apply"`, `asked_name`,
   `models: list[tuple[label, name]]`.
 - `refusal(code: str, m: Moment) -> Refusal` — one sentence a person reads, then the numbers, then
   one next step. The rules every message keeps:
@@ -914,16 +939,29 @@ git commit -m "feat(spark): 🤖 rule 9: render checks the set against the ceili
     when it is counted, joined "A and B" or "A, B and C";
   - for `agent`'s key, a process of Dan's is named *a process of Dan's, <n> GiB*.
 - `Notification(type: str, priority: str, message: str)`; `notification(type: str, registry,
-  **fields) -> Notification | None` — None when the registry has the type `off`.
+  **fields) -> Notification | None` — None when the registry has the type `off`; its fields, by
+  type, are the table *The notifications' fields* below, and every gate module passes exactly
+  those.
+- `REFUSAL_NOTIFICATION = {"footprint_suspect": "footprint_suspect", "load_failed":
+  "load_failed"}`, every other refusal code → `refused`: each refusal sends exactly one
+  notification (plan.md, *What you see in Phase 2a*, 2026-10-07). The front's own refusals,
+  `model_not_found`, `too_many_requests`, `route_not_served` and `draining`, reach the gate through
+  `POST /v1/front/refused` (Task 9) and are sent the same way; a `401` and a `gate_down` aren't (the
+  front's journal has the first, the notifier's alert the second).
 - `NOTIFICATION_DOC: dict[str, tuple[str, str]]` — each type's *When* and *Example*, from plan.md's
   table.
-- Confirmations: `loaded(label, seconds, idle_min, command)`, `unloading(label, inflight)`,
-  `unloaded(label)`, `pinned(label, until, loaded_s)`, `unpinned(label, idle_min)`,
-  `room_list(target_gib, free_now_gib, plan)`, `room_done(...)`, `room_all()`,
-  `room_held(...)`, `room_too_much(target_gib, most_gib, python_job…)`, `brake_released_by_dan(reloading)`,
-  `apply_waiting(model_label, quiet_for_s, needed_s)`, `apply_no_quiet(inflight)`,
-  `apply_now_confirm(inflight: list[tuple[key_label, model_label]])` — each the plan's *Each command
-  says what it did, and how to undo it* row, word for word.
+- Confirmations, each the plan's *Each command says what it did, and how to undo it* row, word for
+  word: `loaded(label, seconds, idle_min, command)`, `unloading(label, inflight)`,
+  `unloaded(label)`, `pinned(label, until: datetime, loaded_s: float | None, command)`,
+  `unpinned(label, idle_min)`, `room_list(target_gib, free_now_gib, candidates: list[Candidate],
+  unload: list[str], free_after_gib)`, `room_held(unloaded: list[str], free_gib, held_gib, until:
+  datetime | None)`, `room_all()`, `room_too_much(target_gib, most_gib)`, `room_done(unused_gib,
+  total_gib, reloading: list[str], next_label: str | None)`, `brake_released_by_dan(reloading:
+  list[str])`, `apply_waiting(model_label, quiet_for_s, needed_s)`, `apply_no_quiet(inflight:
+  int)`, `apply_now_confirm(inflight: list[str])` (the askers' key labels). make-room's list: a
+  numbered row per candidate, its label, its name in brackets for a chat model only, its size, *always
+  loaded* or *loads when asked*, then ` · idle <n> min` for an idle on-demand model and ` · <used_by>`
+  for a resident that has one; the header and the last line as the plan's example.
 - `docs.render_notifications_page(registry) -> str` — front matter (`title: "Notifications"`), a
   line saying it is generated from `stack/models.yaml` by `spark docs notifications --write`, and
   a table *Type · Priority · When · Example*, one row per type in `NOTIFICATION_TYPES` order;
@@ -954,12 +992,36 @@ the test's own time zone):
 | `model_not_found` | asked `qwen3.6-35b-a3b`; models the coder (`qwen3.8-27b`), Gemma, the embeddings, whisper — on-demand first, then residents, each in registry order |
 | `too_many_requests` | key *agent* |
 | `route_not_served` | none |
+| `draining` (not make-room) | 1 in flight, for an unload, wait 30 s: *The coder is being unloaded once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute.* |
 | `concurrency_limit` | model the coder: *Too many requests for the coder at once; try again in a moment.* |
+
+**The notifications' fields.** What `notification` takes for each type; each test builds its
+plan.md example from these (local times in the test's zone):
+
+| Type | Fields |
+|---|---|
+| `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*) |
+| `brake_needs_release` | `fired_at`, `why: "reboot" \| "again"`, `released_at` (for `again`: *The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until you release them: on the Spark, `make brake-release`.*) |
+| `gate_down`, `front_down`, `llama_swap_down`, `brake_down` | `at`, `result_words` |
+| `back_up` | `unit`, `down_s`; its second sentence per unit: the gate *New loads work again.*, the front *Requests go through again.*, llama-swap *Models answer again.*, the brake *Memory is watched again.* |
+| `refused` | `model_label`, `key_label`, `needed_gib`, `free_gib`, `holders`, `next_step`; the burst: `count`, `since`, `code` |
+| `footprint_suspect` | `model_label`, `fired_at`, `command` |
+| `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s` |
+| `brake_released` | `at`, `available_gib`, `reloaded: list[label]`, `loading_label: str \| None` |
+| `room_hold_ended` | `why: "--done" \| "time" \| "reboot" \| "used"`, `unused_gib`, `total_gib`, `reloading: list[label]`, `next_label` |
+| `resident_waiting` | `label`, `needed_gib`, `free_gib` |
+| `apply_restarted` | `at`, `reloaded: list[label]`, `on_demand: list[label]` |
+| `load_started` | `label`, `key_label`, `last_s: float \| None` |
+| `loaded` | `label`, `seconds` |
+| `unloaded` | `label`, `why: "idle" \| "make-room" \| "unload"`, `idle_min` |
+| `waiting` | `label`, `key_label`, `why: "memory" \| "brake" \| "slot" \| "dan"`, `wait_s`, `needed_gib`, `free_gib` |
+| `pin_ended` | `label`, `at`, `idle_min` |
+| `memory_warning` | `available_gib`, `warn_gib`, `brake_gib` |
 
 **Tests** (`spark/tests/test_messages.py`, unless named):
 
-- `test_each_refusal_reads_word_for_word` — parametrized over the table's fifteen rows and three
-  extra: `refusal(code, moment).message` equals the expected text exactly.
+- `test_each_refusal_reads_word_for_word` — parametrized over the table's nineteen rows:
+  `refusal(code, moment).message` equals the expected text exactly.
 - `test_every_code_has_its_status` — each of `CODES_409` gives 409, each of `CODES_503` 503;
   `model_not_found` and `route_not_served` 404; `too_many_requests` 429.
 - `test_pi_wont_retry_a_refusal_after_a_wait` — for each of `CODES_409`, at each of the table's
@@ -985,6 +1047,10 @@ the test's own time zone):
   `brake_fired` and the `room_hold_ended` variant (*… Reloading Gemma.*) given in full there:
   `notification(type, registry, …).message` equals it.
 - `test_an_off_notification_sends_nothing` — the registry with `loaded: off` → `None`.
+- `test_each_refusal_sends_exactly_one_type` — `REFUSAL_NOTIFICATION.get(code, "refused")` for every
+  code: `footprint_suspect` and `load_failed` their own, the rest `refused`.
+- `test_the_make_room_list_follows_its_rule` — the plan's make-room example from its inputs → the
+  plan's block, word for word, the bracketed names on the coder and Gemma only.
 - `test_each_confirmation_reads_word_for_word` — parametrized over the plan's command table: each
   confirmation function's text equals its row's *What it says*.
 - `test_models_are_named_by_label` — no refusal or notification built in these tests holds a
@@ -1042,8 +1108,8 @@ git commit -m "feat(spark): 🤖 every refusal, notification and confirmation, i
 - `procs.top_holders` returns `messages.Holder`s (Task 6).
 - `procs.top_holders(loaded: dict[str, tuple[str, float]], nvidia: dict[int, float | None], *,
   engine_pids: set[int], dan_uids: set[int], proc: Path = Path("/proc"), limit: int = 3) ->
-  list[messages.Holder]` — each loaded model by its label at what it holds now; each other process holding
-  at least 1 GiB, by `<comm> (<user>)`, at the larger of its `nvidia-smi` figure and its
+  list[messages.Holder]` — each loaded model by its label at what it holds now; each other process
+  holding at least 1 GiB, by `<comm> (<user>)`, at the larger of its `nvidia-smi` figure and its
   `RssAnon`; the engines' own pids left out (they are the models); `dans` true for a process whose
   uid is in `dan_uids`; largest first, `limit` of them.
 
@@ -1102,13 +1168,15 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   upward, each made with `socket.socket(fileno=fd)`, so the family is the socket's own; it removes
   the three variables. `SocketsError` names what is missing or disagrees. Names in use: `front`;
   `status`, `control`.
-- `protocols.make_protocol(*, peer_cred: bool, header_timeout_s: float | None) -> type` — a
-  subclass of uvicorn's `H11Protocol` (`uvicorn.protocols.http.h11_impl`). With `peer_cred`, on
-  `connection_made` it reads `SO_PEERCRED` from an `AF_UNIX` transport's socket and wraps the app,
-  so each request's `scope["extensions"]["peer_cred"]` is `{"pid": int, "uid": int, "gid": int}`;
-  a TCP connection gets no such key. With `header_timeout_s`, a connection whose first request's
-  headers aren't complete in time is closed. `protocols.peer(scope) -> PeerCred | None`, where
-  `PeerCred(pid: int, uid: int, gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`.
+- `protocols.make_protocol(*, peer_cred: bool, header_timeout_s: float | None) -> type` — a subclass
+  of uvicorn's `H11Protocol` (`uvicorn.protocols.http.h11_impl`). With `peer_cred`, on
+  `connection_made` it reads `SO_PEERCRED` (Linux's; on any other system `make_protocol(peer_cred=
+  True)` raises at once, since the gate runs only on the Spark) from an `AF_UNIX` transport's socket
+  and wraps the app, so each request's `scope["extensions"]["peer_cred"]` is `{"pid": int, "uid":
+  int, "gid": int}`; a TCP connection gets no such key. With `header_timeout_s`, a connection whose
+  first request's headers aren't complete in time is closed; the body, once the headers are in, has
+  no such limit. `protocols.peer(scope) -> PeerCred | None`, where `PeerCred(pid: int, uid: int,
+  gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`.
 - `sdnotify.notify(message: str, env: Mapping[str, str] = os.environ) -> bool` — a datagram to
   `NOTIFY_SOCKET` (a path, or `@name` for an abstract one); False, quietly, when it is unset;
   `ready()`, `stopping()`; `watchdog_interval_s(env) -> float | None` — half `WATCHDOG_USEC`, only
@@ -1149,13 +1217,18 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
 
 `spark/tests/test_protocols.py` (a real uvicorn on a short `AF_UNIX` path, and on TCP):
 
-- `test_the_gate_receives_each_callers_uid` — an app that answers the scope's peer uid and pid:
-  over the Unix socket, from this process, it answers `os.getuid()` and `os.getpid()`.
+- `test_the_gate_receives_each_callers_uid` — skipped off Linux, with the reason *SO_PEERCRED is
+  Linux's, and the gate runs only on the Spark*: an app that answers the scope's peer uid and pid,
+  over the Unix socket, from this process, answers `os.getuid()` and `os.getpid()`.
+- `test_peer_cred_refuses_off_linux` — with `sys.platform` patched to `darwin`,
+  `make_protocol(peer_cred=True)` raises, naming `SO_PEERCRED`.
 - `test_a_tcp_request_carries_no_peer_cred` — the same app over TCP answers `none`.
 - `test_a_connection_that_never_sends_its_headers_is_closed` — `header_timeout_s=0.5`; a raw
   client sends `GET / HTTP/1.1\r\n` and nothing more: the server closes the connection within 2 s.
 - `test_a_request_that_sends_its_headers_in_time_is_served` — the same timeout, headers sent at
   once: 200.
+- `test_a_slow_body_after_timely_headers_is_served` — the same timeout, headers at once, then a
+  body trickled over 1.5 s (three times the timeout) → 200 with the whole body read.
 
 `spark/tests/test_sdnotify.py`:
 
@@ -1195,9 +1268,9 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the five modules missing).
-- [ ] **Step 2:** the five modules; the tests pass, also on the Mac's shorter socket paths (Task
-  50); `make test lint`, including Task 3's `TESTED_AGAINST` test, which now finds
-  `protocols.TESTED_AGAINST`.
+- [ ] **Step 2:** the five modules; the tests pass, also on the Mac's shorter socket paths, where
+  the uid test skips (Task 50); `make test lint`, including Task 3's `TESTED_AGAINST` test, which
+  now finds `protocols.TESTED_AGAINST`.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
@@ -1228,7 +1301,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `SPARK_LAUNCH`), `WHISPER_TMP` (`/var/lib/local-ai/whisper-tmp`), `VALUES`
   (`/etc/local-ai/values.env`), `FRONT_URL` (`http://127.0.0.1:9100`); `LLAMASWAP_URL`'s default
   becomes `http://127.0.0.1:900`.
-- `gateproto` — the gate's constants (the Global Constraints' values): `MAX_REQUEST_BYTES =
+- `gateproto` — the gate's constants (the Global Constraints' values, and this plan's
+  `GRACEFUL_S = 20` and `LLAMA_SWAP_HUNG_S = 10`): `MAX_REQUEST_BYTES =
   65536`, `REQUEST_TIMEOUT_S = 5.0`, `LOAD_CALL_TIMEOUT_S = 200.0`, `PING_EVERY_S = 1.0`,
   `GATE_DOWN_AFTER_S = 5.0`, `DRAIN_GRACE_S = 30.0`, `QUIET_S = 60`, `APPLY_DEADLINE_S = 900`,
   `ACTIVITY_EVERY_S = 1.0`, `ACTIVITY_STALE_S = 3.0`, `SESSIONS_PER_UID = 8`, `SESSION_TTL_S =
@@ -1241,21 +1315,24 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
 
   | Socket | Route | Callers | Request → answer |
   |---|---|---|---|
-  | status | `POST /v1/admit` | front | `{model, key, deadline, request_id}` → held until ready or refused; always `200`, `{ok: true, model}` or `{ok: false, code, status, message, retry_after_s}`; any other status is the gate's own failure |
-  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at}`, `{op: "state", ready, starting, draining}`, `{op: "drain", model, drain_id}`, `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "ping", at}` every second |
+  | status | `POST /v1/admit` | front | `{model, key, deadline, request_id}`, `deadline` in Unix seconds (`time.time()`), as every time in these messages → held until ready or refused; always `200`, `{ok: true, model}` or `{ok: false, code, status, message, retry_after_s}`; any other status is the gate's own failure |
+  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at}`, `{op: "state", ready, starting, draining}`, `{op: "drain", model, drain_id, why}` (`why` one of `make-room`, `unload`, `idle`), `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "hold_all"}` and `{op: "release_all"}` (apply's restart), `{op: "ping", at}` every second |
   | status | `POST /v1/front/inflight` | front | a whole snapshot, never a delta: `{seq, front_started_at, models: {name: {count, oldest_started_at, last_end_at}}, draining}` |
   | status | `POST /v1/front/drained` | front | `{model, drain_id}` |
+  | status | `POST /v1/front/busy` | front | `{model, drain_id}` — the front's answer to an idle drain that finds a request in flight; the gate unloads nothing |
+  | status | `POST /v1/front/refused` | front | `{at, code, model, key, message}` — a refusal of the front's own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`), for *recent* and `refused` |
   | status | `GET /v1/status` | users | `StatusView`, filtered for the caller |
   | status | `POST /v1/sessions` · `POST /v1/sessions/{id}/renew` · `DELETE /v1/sessions/{id}` | owner | `{model, pid, label}` → `{id, expires_at}`; `spark-admin` may end any |
   | control | `GET /v1/status` | admin | the full `StatusView` |
   | control | `POST /v1/load` · `POST /v1/unload` | admin | `{model}` → the confirmation's fields, or a refusal |
   | control | `POST /v1/pin` · `DELETE /v1/pin/{model}` | admin | `{model, until}` (`until` null for no end) |
   | control | `POST /v1/make-room/plan` · `POST /v1/make-room` | admin | `{size_gib}` or `{all: true}` → a `RoomPlan` with `plan_id`; `{plan_id, for_s}` → `{unloaded, free_gib, hold_gib, until}` |
-  | control | `POST /v1/release` | admin | → `{room: bool, brake: bool, reloading: [labels]}` |
+  | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only → `{room, brake, reloading: [labels]}`, what each ended |
   | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) |
-  | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's "drain now" |
+  | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold: the front holds every new request (`hold_all`), admission answers `restarting` at their deadlines, and nothing unloads; requests in flight finish; ended by `apply/end` (the held requests then go through admission) or `undrain-all` |
   | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`; *end* re-reads the registry, reloads the residents, sends `apply_restarted` |
   | control | `GET /v1/logs/{model}?n=` | admin | `{lines: [...]}`, the engine's last lines, read with the gate's key |
+  | control | `POST /v1/canary` | admin | `{needle}` → `{found: [where]}`: whether the string is in the gate's state, its refusal history or launch's records, never what surrounds it (doctor's `--full`) |
 
   There is no cancel route: the front drops its admit call when its client goes, and the gate
   takes the dropped call as the cancel.
@@ -1265,11 +1342,13 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `held_gib`, `free_for_a_load_gib`, `unaccounted_gib`); `models` (each: `name`, `label`,
   `resident`, `footprint_gib`, `state` — `ready`, `starting`, `draining`, `not_loaded` — `inflight`,
   `oldest_request_s`, `last_use`, `pinned_until`, `sessions`, `brake_mark` with `at` and
-  `seen_gib`); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — `memory`, `brake`,
-  `slot`, `dan`, `restart`, `llama_swap`); `paused` (`since`, `available_gib`, `releases_at`,
-  `waits_for_dan`, `last_fired`, `last_released`) or null; `held` (`size_gib`, `until`) or null;
-  `pins`; `sessions`; `recent` (`at`, `text`, `code`, `model`, `key_label`); `health` (`front`,
-  `gate`, `brake` with `key_checked_at`, `llama_swap`, `ntfy` with `failing_since`); `problems`.
+  `seen_gib`); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — one of `WAITING_WHY =
+  ("memory", "brake", "slot", "dan", "restart", "llama_swap")`); `paused` (`since`, `available_gib`,
+  `releases_at`, `waits_for_dan`, `last_fired`, `last_released`) or null; `held` (`size_gib`,
+  `until`) or null; `pins`; `sessions`; `recent` (`at`, `text`, `code`, `model`, `key_label`);
+  `health` (`front`, `gate`, `brake` with `key_checked_at`, `llama_swap`, `ntfy` with
+  `failing_since`, `activity_age_s`, and `no_ticket_since_boot`, the models launch refused for want
+  of a ticket since this boot: the bypass sweep); `problems`.
 - `gateclient.GateClient(path: Path, timeout_s: float)`: `get(route) -> dict`, `post(route, body:
   dict) -> dict`, `delete(route) -> dict`, `stream(route) -> Iterator[dict]`. `GateUnavailable` —
   no socket, a refused connection, or no answer within `timeout_s` (a socket systemd holds while
@@ -1293,7 +1372,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `{"message": "not yours"}` → `GateRefused(403, {"message": "not yours"})`.
 - `test_a_stream_yields_each_line_as_json` — the stand-in streams three NDJSON lines → three dicts.
 - `test_every_route_names_its_socket_and_callers` — every `ROUTES` entry's socket and callers are
-  from their sets; the `front` routes are exactly the four the table gives, all on `status`.
+  from their sets; the `front` routes are exactly the six the table gives, all on `status`.
 - In `test_tested_against.py`, the import check now includes `spark.gateclient`.
 
 **Steps:**
@@ -1321,13 +1400,19 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
 
 **Interfaces:**
 
-- `tickets.issue(folder: Path, model: str, deadline: float, *, now: float) -> None` —
-  `<folder>/tickets/<model>.json`, `{model, issued_at, deadline, nonce}`, written whole, mode
-  `0600`.
+- `tickets.issue(folder: Path, model: str, deadline: float, *, now: float, footprint_gib: float,
+  available_gib: float) -> None` — `<folder>/tickets/<model>.json`, `{model, issued_at, deadline,
+  nonce, footprint_gib, available_gib}` (the admitted footprint, or the model's cold load when the
+  registry has one, and `MemAvailable` at admission), written whole, mode `0600`.
 - `tickets.claim(folder: Path, model: str, now: float) -> Claim(ok: bool, code: str | None, why:
-  str)` — renames the ticket to a name of its own before reading it, then removes it, so only one
-  claim of a ticket can win; codes `no_ticket` (none, damaged, or another model's) and
-  `ticket_expired` (`deadline < now`). The ticket is gone whatever the outcome.
+  str, ticket: dict | None)` — renames the ticket to a name of its own before reading it, so only
+  one claim of a ticket can win; codes `no_ticket` (none, damaged, or another model's) and
+  `ticket_expired` (`deadline < now`). The ticket leaves `tickets/` whatever the outcome.
+- `tickets.mark_started(folder, ticket, now)` — launch, just before its exec, writes the claimed
+  ticket with `started_at` to `<folder>/started/<model>.json`, which the brake reads as a load in
+  progress while the gate's record is stale (Task 21); `tickets.started(folder) -> list[dict]`;
+  `tickets.clear_started(folder, model)` — the gate removes it once `/running` shows the model
+  ready or gone. A refused start leaves nothing under `started/`.
 - `tickets.withdraw(folder: Path, model: str) -> bool` — the gate removes one it issued that wasn't
   used.
 - `launch.main_launch(argv, *, registry: Path = paths.REGISTRY, state: Path = paths.STATE, launch:
@@ -1335,7 +1420,8 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
   int` — in this order: the registry loads (else refused `registry`); the model is known (else exit
   2); its ticket is claimed; the brake's hold (`held_by_brake`); Phase 1's zero-wait fit
   (`no_fit`); every file the model's `source` names exists under `hf_home` (`not_downloaded`, its
-  reason naming `make pull`); its refusal record cleared; its `oom_score_adj`; exec, with every
+  reason naming `make pull`); its refusal record cleared; `tickets.mark_started`; its
+  `oom_score_adj`; exec, with every
   `LLAMASWAP_KEY_*` variable dropped. A refusal exits 3, prints `spark: not starting <model>:
   <reason>` on stderr and records it. Never a sleep or a retry.
 - `launch.record_refusal(launch: Path, model, code, reason)`, `read_refusal(launch, model) -> dict
@@ -1347,8 +1433,13 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
 - `test_launch_refuses_without_a_ticket_and_records_why` — the fixture registry, room to fit, no
   hold, no ticket → exit 3; stderr `spark: not starting coder: no admission ticket from the gate`;
   `refusals/coder.json` with code `no_ticket`; no exec.
-- `test_a_ticket_is_used_up_by_one_start` — `issue(…, "coder", deadline=now+60)` → exec called, and
-  the ticket gone; a second launch → `no_ticket`.
+- `test_a_ticket_is_used_up_by_one_start` — `issue(…, "coder", deadline=now+60, …)` → exec
+  called, the ticket gone from `tickets/` and kept under `started/` with its footprint, its
+  `MemAvailable` and its `started_at`; a second launch → `no_ticket`.
+- `test_a_refused_start_leaves_nothing_started` — a ticket and a hold → `held_by_brake`, and
+  `started/` empty.
+- `test_clear_started_removes_the_record` — `mark_started` then `clear_started` → `started()` is
+  `[]`.
 - `test_two_claims_at_once_win_once` — two processes claim one ticket at once: exactly one `ok`.
 - `test_an_expired_ticket_starts_nothing` — deadline `now − 1` → `ticket_expired`; the file gone.
 - `test_a_ticket_for_another_model_starts_nothing` — a ticket for `embed`; launching `coder` →
@@ -1390,6 +1481,8 @@ git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate'
 
 - Create: `spark/src/spark/llamaswap_async.py`, `spark/tests/fake_llamaswap.py`,
   `spark/tests/test_llamaswap_async.py`
+- Modify: `spark/src/spark/render.py` (`HEALTH_CHECK_TIMEOUT_S = 180`, used by the rendered config,
+  so the gate's load timeout has its constant before Task 17), `spark/tests/test_render.py`
 
 **Interfaces:**
 
@@ -1429,6 +1522,8 @@ git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate'
 - `test_running_reads_v257s_shape` — Gemma ready, the coder starting →
   `[Running("gemma", "ready"), Running("coder", "starting")]`; a body without `running` →
   `LlamaSwapAnswered`.
+- In `test_render.py`: `test_health_check_timeout_is_180` — the rendered config's
+  `healthCheckTimeout` is `render.HEALTH_CHECK_TIMEOUT_S`, 180.
 - `test_the_load_timeout_is_the_deadline_plus_20` — `load_timeout_for(180)` is 200, which is
   `gateproto.LOAD_CALL_TIMEOUT_S`.
 - `test_load_waits_past_every_other_timeout` — a start of 1.0 s, `load_timeout_s` 3 → `READY`.
@@ -1455,7 +1550,8 @@ git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate'
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
-git add spark/src/spark/llamaswap_async.py spark/tests/fake_llamaswap.py spark/tests/test_llamaswap_async.py
+git add spark/src/spark/llamaswap_async.py spark/tests/fake_llamaswap.py spark/tests/test_llamaswap_async.py \
+  spark/src/spark/render.py spark/tests/test_render.py
 git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested against a v257 stand-in" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -1466,7 +1562,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
 
 **Files:**
 
-- Create: `spark/src/spark/gate/__init__.py`, `spark/src/spark/gate/state.py`,
+- Modify: `spark/src/spark/hold.py` (the hold's new fields, which the brake writes in Task 21 and
+  the gate reads from Task 16)
+- Create: `spark/src/spark/brakeevents.py`, `spark/tests/test_brakeevents.py`,
+  `spark/src/spark/gate/__init__.py`, `spark/src/spark/gate/state.py`,
   `spark/tests/test_gate_state.py`
 
 **Interfaces:**
@@ -1481,10 +1580,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   seen_gib: float)`; `RefusalRecord(at: float, model: str, key: str | None, uid: int | None, code:
   str, message: str)`.
 - `GateState(models: dict[str, ModelRecord], pins: dict[str, Pin], sessions: dict[str, Session],
-  room_hold: RoomHold | None, brake_marks: dict[str, BrakeMark], last_auto_release_at: float |
-  None, brake_events_seq: int, notified: set[str], notify_failing_since: float | None, refusals:
-  deque[RefusalRecord] (maxlen REFUSAL_HISTORY), clean_shutdown: bool, saved_at: float, boot_id:
-  str)`.
+  room_hold: RoomHold | None, brake_marks: dict[str, BrakeMark], last_auto_release_at: float | None,
+  brake_events_after: tuple[str, int] | None, notified: set[str], notify_failing_since: float |
+  None, refusals: deque[RefusalRecord] (maxlen REFUSAL_HISTORY), clean_shutdown: bool, saved_at:
+  float, boot_id: str)`.
 - `STATE_FILE = "state.json"`; `load_state(folder: Path) -> tuple[GateState, str | None]` — a
   missing file gives a fresh state and None; a damaged one, a fresh state and a problem naming the
   file (for `spark status`); never raises. `save_state(folder: Path, state: GateState) -> None` —
@@ -1496,6 +1595,15 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   caller sends `room_hold_ended`; pins, sessions, marks and refusals stay.
 - `Emit` — the protocol every gate module notifies through: `emit(type: str, event_key: str,
   **fields) -> None`.
+- The hold (`hold.py`) gains `boot_id: str | None`, `episode: int | None` and `loading: str | None`
+  (the model that was starting when the brake fired); `read_hold` reads Phase 1's holds, the three
+  then None, and a hold with no `boot_id` counts as another boot's.
+- `brakeevents.BrakeEvent(seq: int, at: float, boot_id: str, episode: int, kind: "fired" |
+  "unload" | "warn", model: str | None, state: str | None, available_gib: float, sent_by_brake:
+  bool)`; `append_event(path, event)` — one JSON line, fsynced; `next_seq(path) -> int` — one past
+  the file's last line, 1 for a missing file; `read_events(path, after: tuple[str, int] | None) ->
+  list[BrakeEvent]` — the events after `after`, keyed on (boot id, seq), so a file that was
+  removed or started again never hides the events written after it (`brake/events.jsonl`).
 
 **Tests** (`spark/tests/test_gate_state.py`):
 
@@ -1518,15 +1626,24 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
 - `test_state_is_written_whole_and_on_disk_before_it_returns` — `os.fsync`, spied on, is called
   for the file and its folder; a write that fails half-way leaves the previous file whole.
 - `test_the_refusal_history_keeps_the_last_50` — 60 added → the newest 50, oldest first.
+- `test_a_hold_carries_its_boot_episode_and_loading_model` — written and read back whole.
+- `test_a_phase_1_hold_reads_with_none_and_counts_as_another_boots` — a `hold.json` without the new
+  fields → a `Hold` with the three None.
+- In `test_brakeevents.py`: `test_events_append_whole_lines_and_continue_their_seq` — three
+  appended → seq 1, 2, 3; `next_seq` 4; `test_read_events_after_a_point` — after `(b, 2)` → the
+  third only; `test_a_file_started_again_still_reads` — the file removed and one event appended
+  with seq 1 on a new boot `b2` → read after `(b1, 3)` gives it.
 
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (`spark.gate` missing).
-- [ ] **Step 2:** `gate/state.py`; the tests pass; `make test lint`.
+- [ ] **Step 2:** `gate/state.py`, `brakeevents.py`, the hold's fields; the tests pass; `make test
+  lint`.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
-git add spark/src/spark/gate/__init__.py spark/src/spark/gate/state.py spark/tests/test_gate_state.py
+git add spark/src/spark/gate/__init__.py spark/src/spark/gate/state.py spark/tests/test_gate_state.py \
+  spark/src/spark/hold.py spark/src/spark/brakeevents.py spark/tests/test_brakeevents.py
 git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -1554,12 +1671,12 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
 - `NtfyPublisher(url: str, topic: str, header: tuple[str, str])` — `POST <url>/<topic>`, the text
   as the body, `Priority: high | default | low`, the token header from `read_header_credential(
   "ntfy-token")`, httpx with `trust_env=False`; it never logs the URL, the topic or the header.
-- `ingest_brake_events(path: Path, state) -> list[tuple[str, str, dict]]` — the brake's
-  `events.jsonl` lines after `state.brake_events_seq`: an episode's first unload becomes
+- `ingest_brake_events(path: Path, state) -> list[tuple[str, str, dict]]` — Task 12's
+  `read_events(path, state.brake_events_after)`: an episode's first unload becomes
   `brake_fired` (what was unloaded, and in what state), each later unload in it a short
   `brake_fired` follow-up; a line with `sent_by_brake: true` is skipped, the brake having sent it;
   an unload of a model that was `starting` becomes a `BrakeMark` with what it was seen using;
-  `brake_events_seq` advances.
+  `brake_events_after` advances.
 - `MemoryWarning` — `check(available_gib, warn_gib) -> bool`: true once per fall under the warn
   line, re-armed only above it.
 - `gate/units.py`: `unit_state(unit: str, run=subprocess.run) -> UnitState(active: bool,
@@ -1595,9 +1712,9 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
 - `test_brake_events_become_brake_fired_and_its_follow_ups` — events: fired at 03:12 at 19.6;
   unload of the coder while `starting`; at 03:13 unloads of Gemma and the embeddings, `idle` →
   two notifications whose texts are Task 6's `brake_fired` and its follow-up; a `BrakeMark` for the
-  coder; `brake_events_seq` at the last line.
+  coder; `brake_events_after` at the last line.
 - `test_what_the_brake_sent_itself_is_not_sent_again` — the same events marked `sent_by_brake` →
-  no publish; the seq advanced.
+  no publish; `brake_events_after` advanced.
 - `test_memory_warning_once_per_fall` — readings 30, 27.4, 27, 26, 29, 27 → two warnings, at 27.4
   and at the second 27.
 
@@ -1645,17 +1762,21 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
   - `async admit(req) -> Admitted | Refusal` — a model already `ready`: Admitted at once. One
     already starting: the request joins that load and waits for it, past its key's wait,
     bounded by the load's deadline. A model whose files aren't under `hf_home`: `not_downloaded`
-    at once, before any ticket. Otherwise it queues: Dan's requests ahead of `agent`'s, first come
-    first served within each; one load at a time; each request is rechecked whenever memory, the
+    at once, before any ticket. Otherwise it queues, in this order: the gate's own reloads of the
+    residents, then Dan's requests, then `agent`'s, first come first served within each; when the
+    one-load slot is free, the first request in that order that fits takes it, and one that doesn't
+    fit keeps its place; one load at a time; each request is rechecked whenever memory, the
     hold, a load, a drain or the queue changes; at its deadline it is refused with the code for
     what it was waiting on — `no_fit`, `loading` (its turn for the one-load slot never came),
     `held_by_brake`, `footprint_suspect`, `draining`, `restarting`, `llama_swap_down`.
-  - When a request fits: `tickets.issue(launch, model, deadline=now + LOAD_CALL_TIMEOUT_S)`;
+  - When a request fits: `tickets.issue(launch, model, deadline=now + LOAD_CALL_TIMEOUT_S,
+    footprint_gib=<its cold_load_gib, else its footprint>, available_gib=<MemAvailable now>)`;
     `waiting` (once, if it had waited) and `load_started`; `llamaswap.load(model)`. `READY` →
     `loaded`, a `ModelRecord` with the load's fall (`MemAvailable` before less after), capped at
     the model's `cold_load_gib` plus `LOAD_FALL_MARGIN_GIB` (2 GiB, this plan's value) when the
     registry has one, else at its footprint, and flagged when capped. `UNKNOWN` → the slot stays
-    held until `/running` shows it ready or gone. `failed` → `load_failed`, its text launch's
+    held until `/running` shows it ready or gone; ready or gone, `tickets.clear_started`. `failed`
+    → `load_failed`, its text launch's
     refusal record for the model if there is one, else the engine's last line
     (`llamaswap.last_lines`), or the deadline's variant for `health check timed out`; the ticket
     withdrawn if it wasn't used.
@@ -1688,6 +1809,11 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
   starts only after the first's returns.
 - `test_dans_keys_go_ahead_of_agents_and_first_come_within_each` — while a load runs: `agent` A,
   Dan B, `agent` C, Dan D, in that order → loads B, D, A, C.
+- `test_the_first_request_that_fits_takes_the_slot` — Dan's coder (doesn't fit) queued ahead of
+  `agent`'s embeddings (fits) → the embeddings load; Dan's request keeps its place and loads first
+  once memory frees.
+- `test_a_residents_reload_goes_ahead_of_dans_request` — a reload of Gemma queued behind Dan's
+  coder, both fitting → Gemma loads first.
 - `test_a_request_for_a_loading_model_joins_its_load_and_waits_past_its_wait` — the coder's load
   takes 50 s; Dan's request (wait 30 s) at 5 s → `Admitted` at 50 s.
 - `test_no_fit_after_the_keys_wait_carries_the_moments_numbers` — the examples' moment, Dan's key
@@ -1762,10 +1888,12 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
 
 - `FrontChannel` — the gate's side of the front's calls: `snapshot` (the latest whole in-flight
   report), `connected: bool`, `send(event: dict)` (onto the open `/v1/front/events` stream),
-  `drained(model, drain_id)`.
+  `drained(model, drain_id)` and `busy(model, drain_id)`.
 - `Drainer(front: FrontChannel, llamaswap, admitter, emit, clock)`: `async drain(model: str, why:
-  "make-room" | "unload" | "idle" | "apply") -> bool` — sends `drain`; waits for the front's
-  `drained`, however long the requests in flight take; unloads; sends `unloaded`; True. Not done
+  "make-room" | "unload" | "idle") -> bool` — sends `drain` with its `why`; waits for the front's
+  `drained`, however long the requests in flight take; unloads; sends `unloaded`; True. For `why:
+  "idle"`, the front's `busy` (a request was in flight when it marked the drain) ends it at once:
+  nothing unloads, the model's last use is now, and False. Not done
   `DRAIN_GRACE_S` after `drained` (the unload hung), or the channel drops at any point: sends
   `undrain` (when connected) and returns False. It never unloads before `drained`.
 - `idle_due(now, state, registry, snapshot, live: Callable[[Session], bool]) -> list[str]` —
@@ -1810,6 +1938,9 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   hangs → at 30 s `undrain` sent, False.
 - `test_every_drain_goes_back_if_the_fronts_channel_drops` — two drains under way, the channel
   drops → both False, no unload.
+- `test_an_idle_drain_that_finds_a_request_unloads_nothing` — `idle_due` names the coder, a request
+  lands before the front marks the drain, the front answers `busy` → no unload, False, and the
+  coder's last use is now.
 
 **Steps:**
 
@@ -1843,9 +1974,11 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
     and a session loses its model, each named in `ended` and in `spark status`'s *recent*; sets
     `RoomHold(size = the target, or every GiB free for a load with ALL; until = now + for_s, or
     none; this boot)`.
-  - `async release(uid) -> ReleaseResult(room: bool, brake: bool, reloading: list[str])` — ends the
-    room hold (`room_hold_ended`, *`--done`*) and lifts the brake's hold (`release_hold`), then
-    reloads.
+  - `async release(uid, *, room: bool, brake: bool) -> ReleaseResult(room: bool, brake: bool,
+    reloading: list[str])` — `room` ends Dan's hold (`room_hold_ended`, *`--done`*); `brake` lifts
+    the brake's hold (`release_hold`); each only what it is asked, and each answers with its own
+    confirmation (`room_done`, `brake_released_by_dan`); then the reloads that one allows.
+    `spark make-room --done` asks `room`, `make brake-release` asks `brake`.
   - `async load(model, uid)`, `async unload(model, uid)` — admission as Dan's; a drain (`why:
     "unload"`).
   - `expire(now)` — a hold whose `until` has passed ends (`room_hold_ended`, *its time ran out*).
@@ -1895,12 +2028,14 @@ and the drainer):
 - `test_at_most_one_automatic_release_an_hour` — released at T, fired again at T + 30 min, above
   28 for 5 min → `needs_dan`, `brake_needs_release` once.
 - `test_a_hold_from_a_previous_boot_waits_for_dan` — the hold's `boot_id` `b1`, now `b2` →
-  `needs_dan`, *After the reboot, …*.
+  `needs_dan`, *After the reboot, …*; a Phase 1 hold, its `boot_id` None → `needs_dan` too.
 - `test_the_model_loading_when_the_brake_fired_isnt_reloaded` — the hold's `loading` the coder →
   the release reloads the residents only, and `brake_released` ends *The coder was loading when it
   fired, so it loads again only when you ask.*
-- `test_dans_release_lifts_both_holds` — a room hold and a brake hold → `ReleaseResult(True, True,
-  …)`.
+- `test_done_ends_only_the_room_hold` — a room hold and a brake hold, `release(room=True)` → the
+  room hold ended, the brake's hold still standing, and `room_done`'s words.
+- `test_brake_release_ends_only_the_brakes_hold` — the same, `release(brake=True)` → the brake's
+  hold lifted, Dan's hold still standing, and the reloads kept out of it.
 - `test_the_preload_waits_for_llama_swap_then_loads_one_at_a_time` — llama-swap unreachable three
   times (backoff 1, 2, 4 s), then up → Gemma, the embeddings, whisper loaded in registry order,
   each after the last.
@@ -1936,7 +2071,9 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   hold's expiry, and the brake's release check every 5 s; saves the state on every change; sets
   `clean_shutdown` false at start and true on a clean stop.
 - The activity record, `GATE_STATE/activity.json`, written whole every second: `{written_at,
-  boot_id, models: {name: {state, inflight, last_use}}}` — what the brake reads (Task 21).
+  boot_id, models: {name: {state, inflight, last_use}}}`, and for a model `starting`, its
+  `admitted_gib`, `started_at` and `available_at_start` from its ticket — what the brake reads
+  (Task 21).
 - `build_apps(core, *, front_uid: int, admin_uids: Callable[[], set[int]]) -> tuple[Starlette,
   Starlette]` — the status app and the control app, each route authorizing the scope's
   `peer_cred` uid as Task 9's table says: `front` routes only `front_uid`; `users` any caller (the
@@ -1948,13 +2085,16 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   of Dan's*.
 - `gate/main.py`: `spark gate` — `listen_fds()["status"]` and `["control"]`; credentials
   `llamaswap-key` and `ntfy-token`; `NTFY_URL` and `NTFY_TOPIC_GATE` from the environment (the
-  values file); `spark-front`'s uid and `spark-admin`'s members from the system's databases;
+  values file); `spark-front`'s uid and `spark-admin`'s members from the system's databases, or
+  from `SPARK_FRONT_UID` and `SPARK_ADMIN_UIDS` when set, for tests only;
   `AsyncLlamaSwap(paths.LLAMASWAP_URL, key, load_timeout_s=load_timeout_for(
   render.HEALTH_CHECK_TIMEOUT_S))`; `run_servers` with `make_protocol(peer_cred=True,
-  header_timeout_s=10)` and `graceful_s=20`. `TESTED_AGAINST = {"llama-swap": "v257"}`.
+  header_timeout_s=10)` and `graceful_s=gateproto.GRACEFUL_S`. `TESTED_AGAINST = {"llama-swap":
+  "v257"}`.
 
 **Tests** (`spark/tests/test_gate_app.py`; the apps called with a scope whose `peer_cred` the test
-sets, or over real sockets where named):
+sets, or over real sockets where named; those over real sockets read `SO_PEERCRED`, so they skip
+off Linux with Task 8's reason, and the rest run everywhere):
 
 - `test_an_inflight_report_from_any_uid_but_spark_fronts_is_refused` — `front_uid` 990: a report
   from 990 → 200; from 1000 → 403, the snapshot unchanged.
@@ -1985,9 +2125,27 @@ sets, or over real sockets where named):
 - `test_logs_reads_the_engines_last_lines_with_the_gates_key` — the stand-in llama-swap's lines:
   `GET /v1/logs/coder?n=5` → the last five; the stand-in saw the gate's key.
 - `test_status_view_has_every_key` — `GET /v1/status`'s JSON has every `StatusView` key.
+- `test_status_view_at_the_examples_moment` — the examples' inputs (122 GiB in all, 48 available,
+  the residents' footprints 32, 8 and 3 holding 27, 7 and 3, the coder marked at 03:12 seen using
+  26, `agent` waiting for Dan, no hold, the brake fired at 03:12 and released at 03:40) → exactly
+  the `StatusView` dict Task 26's test formats: `free_for_a_load_gib` 18 (Dan's view, his hold
+  never counted), `above_brake_gib` 28, `owed_gib` 6, `unaccounted_gib` 0, `waiting[0].why`
+  `dan`; and through the status socket, `agent`'s view of the same moment, its *recent* only its
+  own and Dan's process unnamed.
+- `test_a_dropped_admit_call_cancels_its_queue_entry` — over a real socket, an admit held for
+  memory; the client closes; the admitter's `cancel` is called within 1 s and no load starts.
+- `test_drain_all_holds_and_unloads_nothing` — after `drain-all`: `hold_all` sent to the front, an
+  admit call waits and gets `restarting` at its deadline, nothing unloads; after `apply/end`:
+  `release_all` sent, and admission resumes.
+- `test_a_front_refusal_is_recorded_and_sent` — `POST /v1/front/refused` with `model_not_found`
+  → in *recent*, and one `refused` notification.
+- `test_the_canary_route_answers_found_or_not_only` — a needle in a refusal record → `{found:
+  ["refusals"]}`, and nothing else of the record in the answer.
 - `test_spark_gate_takes_its_two_sockets_from_systemd` — `spark gate` in a subprocess, given two
   short Unix sockets as `status:control`, stand-in credentials, a stand-in ntfy and the v257
-  stand-in: a `GateClient` gets the status on each; SIGTERM → exit 0, `STOPPING=1` sent, and the
+  stand-in, and `SPARK_FRONT_UID` and `SPARK_ADMIN_UIDS` (test-only overrides of the system's
+  databases, which `spark gate` reads only when set) naming this test's uid: a `GateClient` gets
+  the status on each; SIGTERM → exit 0, `STOPPING=1` sent, and the
   state file's `clean_shutdown` true.
 
 **Steps:**
@@ -2037,8 +2195,11 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
   `leave_…`; past a cap, `too_many_requests`.
 - `parse.journal_line(key: str, model: str, status: int, seconds: float) -> str` — `front: <key>
   <model> <status> <seconds, one decimal>s`, nothing more.
-- `app.FrontApp(registry, digests, *, upstream, gate, caps, log)` — the ASGI app. Bodies capped at
-  200 MiB (`MAX_BODY_BYTES = 200 * 2**20`). The front's own answers: `GET /health` → 200
+- `app.FrontApp(registry, digests, *, upstream, gate, caps, log)` — the ASGI app. A form's body,
+  spooled, is capped at 200 MiB (`MAX_BODY_BYTES = 200 * 2**20`); a JSON body, parsed in memory, at
+  16 MiB (`MAX_JSON_BYTES = 16 * 2**20`), so a few at once stay well inside `MemoryMax=512M`. At
+  start it refuses, naming the key and never a digest, a digest whose name the registry's `keys`
+  lacks and a registry key with no digest. The front's own answers: `GET /health` → 200
   `{"status": "ok"}` with no key needed; an unlisted route → 404 `route_not_served`; no key or an
   unknown one → 401, `{"error": {"message": messages.UNKNOWN_KEY, "code": "invalid_api_key"}}`; an
   unknown model → 404 `model_not_found`; over a cap → 429 `too_many_requests`; a body over the cap →
@@ -2074,6 +2235,10 @@ ASGI with a recording upstream stand-in, unless named):
   100 KiB part writes no file.
 - `test_a_body_over_200_mib_is_refused` — `Content-Length` of 200 MiB + 1 → 413 before reading;
   a chunked body that crosses 200 MiB → 413, and its spool file gone.
+- `test_a_json_body_over_16_mib_is_refused` — a JSON body of 16 MiB + 1 → 413; one of 15 MiB is
+  forwarded.
+- `test_the_digests_must_match_the_registrys_keys` — a digest named `robot`, and a registry key
+  `agent` with no digest: each refuses the start, naming the key, the message holding no hex.
 - `test_an_unparseable_request_gets_400_never_a_crash` — `{`, `[]`, `{"x": 1}` (no model), and a
   form with no boundary → 400 each; the next request is served.
 - `test_model_not_found_names_the_registrys_models` — `qwen3.6-35b-a3b` → 404 with Task 6's text.
@@ -2123,10 +2288,12 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
 - `front.main.FRONT_MODULES: frozenset[str]` — exactly the `spark` modules the front imports at
   start, all of them before it serves: `spark`, `spark.paths`, `spark.registry`,
   `spark.credentials`, `spark.sockets`, `spark.protocols`, `spark.sdnotify`, `spark.serve`,
-  `spark.gateproto`, `spark.messages`, and `spark.front` with its five modules. `spark front` —
+  `spark.gateproto`, `spark.messages`, and `spark.front` with `parse`, `app`, `upstream` and
+  `main` (Task 20 adds `gatelink`). `spark front` —
   `listen_fds()["front"]`; the registry's names and roles, and the credentials `client-keys` and
   `llamaswap-key`, read once at start; `run_servers` with `make_protocol(peer_cred=False,
-  header_timeout_s=10)`, `graceful_s=20`. `TESTED_AGAINST = {"llama-swap": "v257"}`.
+  header_timeout_s=10)`, `graceful_s=gateproto.GRACEFUL_S`. `TESTED_AGAINST = {"llama-swap":
+  "v257"}`.
 
 **Tests** (`spark/tests/test_front_forward.py`; the front on a real uvicorn, against the v257
 stand-in):
@@ -2176,7 +2343,8 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
 **Files:**
 
 - Create: `spark/src/spark/front/gatelink.py`, `spark/tests/test_front_gatelink.py`
-- Modify: `spark/src/spark/front/app.py`
+- Modify: `spark/src/spark/front/app.py`, `spark/src/spark/front/main.py` (`gatelink` imported at
+  start, and in `FRONT_MODULES`), `spark/tests/test_front_forward.py` (the modules test's set)
 
 **Interfaces:**
 
@@ -2192,11 +2360,21 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   key's wait`, nothing sent to the client meanwhile; the gate down → forwarded if loaded, else 503
   `gate_down`; the gate restarting → each held admission asked again with its original deadline;
   llama-swap's 500 `upstream command exited prematurely` → asked again once and forwarded again from
-  the held body, a second one reaching the client as 409 `load_failed`.
-- The drain, under one lock: on `drain`, the model is marked draining with its count checked, and
-  `drained` is posted when the count reaches 0; its new requests wait as for a load, and get
-  `draining` at their deadline; on `unloaded`, they go through admission; on `undrain`, they are
-  forwarded.
+  the held body, a second one reaching the client as 409 `load_failed`. A refused connection, or one
+  reset before the response's headers (llama-swap crashed or restarting), goes the same way: through
+  `admit`, with its original deadline, from the held body, so the gate answers it — `restarting` or
+  `llama_swap_down` at the deadline, or a load; once the headers have gone, a cut-off stream
+  reaches the client as it is.
+- The drain, under one lock: on `drain`, the model is marked draining with its count checked;
+  for `why: "idle"` with a request in flight, the front posts `busy` and keeps serving; otherwise
+  `drained` is posted when the count reaches 0, and its new requests wait as for a load, getting
+  `draining` at their deadline, worded by the drain's `why`; on `unloaded`, they go through
+  admission; on `undrain`, they are forwarded.
+- `hold_all` (apply's restart): every new request is held, as for a draining model; requests in
+  flight finish; on `release_all` the held requests go through admission; at a held request's
+  deadline it gets `restarting`.
+- A refusal of its own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`) is
+  posted to `/v1/front/refused` when the gate is up; not when it is down.
 
 **Tests** (`spark/tests/test_front_gatelink.py`; a scriptable gate stand-in on a short Unix socket,
 speaking Task 9's routes):
@@ -2230,6 +2408,18 @@ speaking Task 9's routes):
 - `test_unloaded_sends_waiting_requests_through_admission` — `unloaded` → the waiting request's
   admit call made.
 - `test_undrain_returns_the_model_to_serving` — `undrain` → the waiting request forwarded.
+- `test_an_idle_drain_with_a_request_in_flight_answers_busy` — 1 in flight, `drain` with `why:
+  "idle"` → `busy` posted, no `drained`, and a new request forwarded at once.
+- `test_draining_is_worded_by_its_reason` — `why: "unload"` → Task 6's neutral `draining` sentence;
+  `make-room` → the make-room one.
+- `test_a_refused_connection_goes_through_admission` — the model `ready` in the gate's state,
+  llama-swap stopped → `admit` called with the original deadline, and the client gets the
+  stand-in's `llama_swap_down` 503 at it; with the stand-in answering `restarting`, that.
+- `test_hold_all_holds_every_new_request_until_release_all` — `hold_all`: a request for a loaded
+  model is held, not forwarded; `release_all` → it goes through `admit`; held past its deadline →
+  503 `restarting`.
+- `test_the_fronts_own_refusals_reach_the_gate` — a `model_not_found` → one `/v1/front/refused`
+  post; with the gate down, none.
 - `test_in_flight_snapshots_are_whole_never_deltas` — every posted snapshot names every model with
   its count; at least one a second, and one on each change.
 - `test_nothing_is_written_to_a_waiting_clients_stream` — a streamed request waiting 1 s: the
@@ -2244,7 +2434,8 @@ speaking Task 9's routes):
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
-git add spark/src/spark/front/gatelink.py spark/src/spark/front/app.py spark/tests/test_front_gatelink.py
+git add spark/src/spark/front/gatelink.py spark/src/spark/front/app.py spark/src/spark/front/main.py \
+  spark/tests/test_front_gatelink.py spark/tests/test_front_forward.py
 git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keeps serving what's loaded while the gate is down" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2255,7 +2446,7 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
 
 **Files:**
 
-- Modify: `spark/src/spark/brake.py`, `spark/src/spark/hold.py`, `spark/tests/test_brake.py`
+- Modify: `spark/src/spark/brake.py`, `spark/tests/test_brake.py`
 
 **Interfaces:**
 
@@ -2265,28 +2456,41 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   with an activity record: a loading (`starting`) engine first, then models with nothing in flight,
   of any class, the longest unused first, then the rest, least recently used first; without one,
   Phase 1's order (on-demand first, then the largest).
+- `LoadInProgress(model: str, admitted_gib: float, available_at_start: float, started_at:
+  float)`; `loads_in_progress(activity, launch: Path) -> list[LoadInProgress]` — from the activity
+  record's `starting` models, or, when it is stale, from the claimed tickets under
+  `launch/started/` (Task 10). A fall the gate knowingly admitted is not a crash (the controller's
+  ruling, 2026-10-07).
+- `expected_floor(loads) -> float | None` — where the loads in progress should leave memory: the
+  earliest start's `available_at_start` less every load's `admitted_gib`, less
+  `LOAD_FLOOR_MARGIN_GIB` (2 GiB, this plan's value); None with nothing loading.
 - `predict_breach(readings: deque[tuple[float, float]], *, brake_gib: float, lead_s: float,
-  window_s: float) -> bool` — the fall over the last `window_s` (a least-squares slope of
-  `MemAvailable` against time), true when `available − rate × lead_s < brake_gib`; a rise or a flat
-  line is false. `FALL_WINDOW_S = 2.0` and `UNLOAD_LEAD_S = 10.0` to start (Phase 1's loads fell 2.0
-  to 2.6 GiB/s, and v257 gives an engine 10 s to stop); Task 45 sets both from measurements. When
-  it is true above the brake line, the brake holds and unloads as at the line.
-- The hold gains `boot_id: str | None`, `episode: int | None`, `loading: str | None` (the model
-  that was starting when it fired); `read_hold` still reads Phase 1's holds.
-- `BrakeEvents(path: Path)` — appends `{seq, at, boot_id, episode, kind: "fired" | "unload" |
-  "warn", model, state, available_gib, sent_by_brake}` to `brake/events.jsonl`, each line fsynced;
-  `seq` continues from the file's last line across restarts.
+  window_s: float, floor_gib: float | None) -> bool` — the fall over the last `window_s` (a
+  least-squares slope of `MemAvailable` against time), extrapolated `lead_s` ahead; with a floor,
+  while available is still above it, the extrapolation stops at the floor, since that much fall
+  was admitted; true when the extrapolated reading is under `brake_gib`. A rise or a flat line is
+  false; a load that runs past its floor counts as an unexplained fall. Since admission leaves the
+  reserve (24) and the growth owed free, an admitted load's floor is above the brake line (20), so
+  an ordinary load never trips the watch. `FALL_WINDOW_S = 2.0` and `UNLOAD_LEAD_S = 10.0` to start
+  (Phase 1's loads fell 2.0 to 2.6 GiB/s, and v257 gives an engine 10 s to stop); Task 45 sets them
+  from measurements. When it is true above the brake line, the brake holds and unloads as at the
+  line.
+- It writes the hold's new fields and the events of Task 12's `brakeevents` (`append_event`,
+  with `next_seq`), so `seq` continues across restarts.
 - `alert_without_gate(text: str, priority: str)` — only while `read_activity` is None (the gate's
   record missing or stale): `subprocess.Popen(["/usr/bin/curl", "--fail", "--silent",
-  "--max-time", "10", "-H", "@" + <credentials>/ntfy-token, "-H", "Priority: " + priority,
-  "--data-binary", text, NTFY_URL + "/" + NTFY_TOPIC_BRAKE], start_new_session=True,
-  stdout=DEVNULL, stderr=DEVNULL)`, never waited on; finished children reaped each tick; the event
-  recorded `sent_by_brake: true`. The text is Task 6's `brake_fired`.
+  "--max-time", "10", "--config", "-"], stdin=PIPE, start_new_session=True, stdout=DEVNULL,
+  stderr=DEVNULL)`, its config written to stdin and closed — `url`, the token header's file
+  (`header = "@<credentials>/ntfy-token"`), `header = "Priority: <priority>"` and `data-binary` —
+  so neither ntfy's address, its topic nor the text is on a command line `agent` can read; never
+  waited on; finished children reaped each tick; the event recorded `sent_by_brake: true`. The text
+  is Task 6's `brake_fired` with `by_brake`.
 - `spark brake --key-credential llamaswap-key` (the unit's): the key from
   `read_credential(name)`; the start check records `credential llamaswap-key` as its source, never
   the value. `--key-env` stays, for drills.
 - `spark brake --release` (`make brake-release`) — through `GateClient(GATE_CONTROL_SOCKET,
-  5).post("/v1/release")`, printing Task 6's `brake_released_by_dan`; on `GateUnavailable`, Phase
+  5).post("/v1/release", {"brake": true})`, which ends the brake's pause and never Dan's hold,
+  printing Task 6's `brake_released_by_dan`; on `GateUnavailable`, Phase
   1's direct release of the hold file, printing *The gate isn't answering, so the hold file was
   removed directly; nothing reloads until the gate is back.*; on `GateForbidden`, its text, and
   exit 1.
@@ -2298,21 +2502,28 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   flight, T − 1), the record fresh → `[coder, embed, gemma, whisper]`.
 - `test_a_stale_or_missing_activity_record_falls_back_to_phase_1s_order` — written at T − 4 → the
   coder, then Gemma, the embeddings, whisper (on-demand first, then by size); missing → the same.
-- `test_the_rate_of_fall_watch_acts_before_the_brake_line` — readings every 250 ms falling
-  2.5 GiB/s from 50: the brake holds and unloads at the first reading under 45 (45 − 25 = 20),
-  well above 28.
+- `test_an_admitted_coder_load_never_trips_the_rate_watch` — the coder `starting` in the
+  activity record (admitted 41 GiB, 74 available at its start), readings every 250 ms falling
+  2.5 GiB/s from 74 to 40 → no hold and no unload.
+- `test_an_unexplained_fall_at_the_same_rate_trips_it` — the same readings with nothing starting →
+  hold and unload at the first reading under 45 (45 − 25 = 20), well above 28.
+- `test_a_load_that_runs_past_its_admission_trips_it` — the coder `starting` from 74, the fall
+  going on at 2.5 GiB/s past its floor, 31 (74 − 41 − 2) → hold and unload at the first reading
+  under 31.
+- `test_with_the_gate_down_the_claimed_ticket_gives_the_load` — the activity record stale and
+  `launch/started/coder.json` holding 41 GiB, 74 available and its start → as the first test, no
+  hold.
 - `test_a_slow_fall_doesnt_trip_the_rate_watch` — 0.2 GiB/s from 40 → nothing early; the brake
   acts at 20 as before.
 - `test_noise_doesnt_trip_the_rate_watch` — ±0.5 GiB around 30 for a minute → never.
 - `test_the_hold_records_the_boot_the_episode_and_the_loading_model` — fired with the coder
   starting → `hold.json` holds the boot id, episode 1 and `loading: coder`.
-- `test_a_phase_1_hold_still_holds` — a `hold.json` without the new fields → `read_hold` gives a
-  `Hold`, with the three None.
 - `test_each_step_is_recorded_for_the_gate_with_a_rising_seq` — fired and two unloads → three lines,
   `seq` n, n + 1, n + 2; a new brake on the same file continues at n + 3.
 - `test_with_the_gate_down_the_brake_sends_brake_fired_itself_without_waiting` — the record stale:
-  firing calls `Popen` once, with the arguments above and Task 6's text; a `Popen` stand-in that
-  never finishes doesn't slow the tick; the event says `sent_by_brake: true`.
+  firing calls `Popen` once, with the arguments above, and its stdin holds the URL, the header
+  file, the priority and Task 6's text, none of which is in its argv; a `Popen` stand-in that never
+  finishes doesn't slow the tick; the event says `sent_by_brake: true`.
 - `test_with_the_gate_up_the_brake_sends_nothing_itself` — the record fresh → no `Popen`;
   `sent_by_brake: false`.
 - `test_finished_alerts_are_reaped` — a finished stand-in is polled and dropped on the next tick.
@@ -2329,11 +2540,11 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
 
 - [ ] **Step 1:** the failing tests; run them: they fail for the new behaviour; Phase 1's still
   pass.
-- [ ] **Step 2:** the brake and the hold; the tests pass; `make test lint`.
+- [ ] **Step 2:** the brake; the tests pass; `make test lint`.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
-git add spark/src/spark/brake.py spark/src/spark/hold.py spark/tests/test_brake.py
+git add spark/src/spark/brake.py spark/tests/test_brake.py
 git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches the rate of fall, and alerts by itself while the gate is down" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2348,14 +2559,14 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   `spark/tests/test_schema.py`
 - Modify: `spark/src/spark/render.py`, `stack/templates/local-ai-llama-swap.service`,
   `stack/models.yaml` (whisper's `--tmp-dir /var/lib/local-ai/whisper-tmp`; Gemma's
-  `--slot-prompt-similarity` only if Step 3 adopts it), `spark/tests/test_render.py`,
-  `spark/tests/test_stack_registry.py`, `website/design/plan.md` (Step 3's decision, and a
-  Revisions line)
+  `--slot-prompt-similarity` only if Step 3 adopts it), `spark/src/spark/apply.py`
+  (`validation_env`), `spark/tests/test_render.py`, `spark/tests/test_stack_registry.py`,
+  `website/design/plan.md` (Step 3's decision, and a Revisions line)
 
 **Interfaces:**
 
-- `render.LLAMASWAP_LISTEN = "127.0.0.1:900"`, `ENGINE_START_PORT = 800`, `HEALTH_CHECK_TIMEOUT_S =
-  180`, `INTERNAL_KEY_ENVS = ("LLAMASWAP_KEY_FRONT", "LLAMASWAP_KEY_GATE",
+- `render.LLAMASWAP_LISTEN = "127.0.0.1:900"`, `ENGINE_START_PORT = 800` (Task 11 made
+  `HEALTH_CHECK_TIMEOUT_S`, 180), `INTERNAL_KEY_ENVS = ("LLAMASWAP_KEY_FRONT", "LLAMASWAP_KEY_GATE",
   "LLAMASWAP_KEY_BRAKE")`; `KEY_ENVS` retires, and `apply.validation_env` uses the new names.
   Render refuses a registry whose engines' ports (800 upward, one per model) would reach 900.
 - `engine_cmd` passes `--alias <the model's name>` to every llama.cpp engine; `SPELLINGS` gains
@@ -2371,9 +2582,12 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   `ProtectHome=yes`, `PrivateTmp=yes`, `InaccessiblePaths=/etc/local-ai/secrets`,
   `RestrictSUIDSGID=yes`, `ProtectKernelTunables=yes`, `ProtectControlGroups=yes`; no
   `PrivateDevices=` or `MemoryDenyWriteExecute=`; `OnFailure=local-ai-notify@%n.service`.
-- `schema.check(config: dict, schema: dict) -> list[str]` — the parts of JSON Schema v257's file
-  uses (`type`, `properties`, `additionalProperties`, `required`, `enum`, `items`, `minimum`, local
-  `$ref`), one line per problem with its path; render refuses a config with any. The vendored file
+- `schema.check(config: dict, schema: dict) -> list[str]` — every keyword v257's file uses:
+  `type`, `properties`, `additionalProperties`, `required`, `enum`, `items`, `minimum`, local
+  `$ref`, `allOf`, `if`/`then`, `not`, `oneOf`, `propertyNames`, `pattern`, `minLength`,
+  `maxLength`, `minItems`, `uniqueItems` (and `format`, read as a note, not checked); any other
+  keyword fails closed, naming it. One line per problem with its path; render refuses a config with
+  any. The vendored file
   is `https://raw.githubusercontent.com/mostlygeek/llama-swap/v257/config-schema.json`, its SHA-256
   recorded in `test_schema.py` when it is vendored.
 - `--slot-prompt-similarity`: read b11146's code for what it does to a slot's choice, weigh it for
@@ -2388,7 +2602,6 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
 - `test_render_refuses_engine_ports_that_would_reach_900` — 101 stand-in models → a `RenderError`
   naming 900; 100 → renders.
 - `test_llama_swap_takes_only_the_three_internal_keys` — `apiKeys` is exactly the three references.
-- `test_health_check_timeout_is_180` — the config's value is `HEALTH_CHECK_TIMEOUT_S`, 180.
 - `test_every_llama_cpp_engine_answers_as_its_registry_name` — each llama.cpp `cmd` holds `--alias
   <name>`; whisper's holds no `--alias`.
 - `test_alias_is_render_owned_in_every_spelling` — `args: [-a, x]` or `[--alias, x]` → refused.
@@ -2409,6 +2622,8 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
 - `test_a_mistyped_group_key_fails_the_schema_check` — a group with `swapp: false` → a problem
   naming `swapp`.
 - `test_a_wrong_enum_fails_the_schema_check` — `logToStdout: everything` → a problem naming it.
+- `test_an_unknown_keyword_fails_closed` — a schema holding `dependentSchemas` → a problem naming
+  it, whatever the config.
 - `test_the_vendored_schema_is_v257s` — the file's SHA-256 is the recorded one.
 
 **Steps:**
@@ -2486,7 +2701,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
 - `local-ai-notify@.service` — `Type=oneshot`, `DynamicUser=yes`, `StateDirectory=local-ai-notify`,
   `LoadCredential=ntfy-token:…/ntfy-notify.header`, `EnvironmentFile=/etc/local-ai/values.env`,
   `Environment=NOTIFY_FRONT=<p> NOTIFY_GATE=<p> NOTIFY_BRAKE=<p> NOTIFY_LLAMA_SWAP=<p>` (the
-  registry's priorities for `front_down`, `gate_down`, `brake_down`, `llama_swap_down`),
+  registry's priorities for `front_down`, `gate_down`, `brake_down`, `llama_swap_down`; so a change
+  to one of these four needs `make install-units` after `make apply`, which the generated
+  notifications page says beside them),
   `ExecStart=/usr/local/libexec/local-ai-notify %i`; `NoNewPrivileges=yes`,
   `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`; no
   `[Install]`.
@@ -2496,10 +2713,10 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   stopped answering*; `oom-kill` → *it ran out of memory*; `timeout` → *it timed out*; anything
   else → *it failed*); the time, `date +%H:%M`; nothing sent for a priority of `off`; at most one
   alert per unit per `NOTIFIER_EVERY_S` (300), kept as a stamp file in `$STATE_DIRECTORY`; then
-  `"${CURL:-/usr/bin/curl}" --fail --silent --show-error --max-time 10 -H
-  "@$CREDENTIALS_DIRECTORY/ntfy-token" -H "Priority: <p>" --data-binary "<text>"
-  "$NTFY_URL/$NTFY_TOPIC_NOTIFY"`; never a journal line. (`CURL` is for the tests; the unit never
-  sets it.)
+  `"${CURL:-/usr/bin/curl}" --fail --silent --show-error --max-time 10 --config -`, its config on
+  stdin: the `url` (`$NTFY_URL/$NTFY_TOPIC_NOTIFY`), `header = "@$CREDENTIALS_DIRECTORY/ntfy-token"`,
+  `header = "Priority: <p>"` and `data-binary`, so neither the address, the topic nor the text is
+  on a command line; never a journal line. (`CURL` is for the tests; the unit never sets it.)
 - The brake's unit — `LoadCredential=llamaswap-key:…/brake.key`,
   `LoadCredential=ntfy-token:…/ntfy-brake.header`, `EnvironmentFile=/etc/local-ai/values.env`,
   `ExecStart=… spark brake --key-credential llamaswap-key`,
@@ -2532,7 +2749,7 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
 - `test_onfailure_is_on_the_four_services` — the front, the gate, the brake and llama-swap; not
   compose or the pull.
 - `test_graceful_shutdown_fits_inside_timeout_stop_sec` — `TimeoutStopSec=30` on the front and the
-  gate, above `front.main`'s and `gate.main`'s `GRACEFUL_S`, 20.
+  gate, above `gateproto.GRACEFUL_S`, 20, which both mains pass.
 - `test_the_new_services_score_minus_900` — `OOMScoreAdjust=-900` on the front and the gate.
 - `test_the_notifier_runs_ubuntus_curl_as_a_dynamic_user` — its unit as above.
 - `test_the_notifier_carries_the_registrys_priorities` — `front_down: off` in the registry →
@@ -2551,8 +2768,9 @@ arguments and data, a stand-in `date`, and temporary credential and state folder
 - `test_each_result_reads_in_words` — the five results, and an unknown one, give their words.
 - `test_the_notifier_sends_at_most_one_alert_per_unit_per_5_minutes` — the gate twice 10 s apart →
   one `curl`; the front then → one; the gate at + 301 s → another.
-- `test_the_token_reaches_curl_as_a_header_file_never_argv` — the arguments hold
-  `@<credentials>/ntfy-token`, never the token's text.
+- `test_the_token_reaches_curl_as_a_header_file_never_argv` — the config on stdin holds
+  `@<credentials>/ntfy-token`; neither the arguments nor the config hold the token's text, and the
+  arguments hold neither the URL nor the topic.
 - `test_an_off_priority_sends_nothing` — `NOTIFY_GATE=off` → no `curl`, exit 0.
 - `test_the_script_and_messages_agree` — for each of the four units, the script's text equals
   `messages.notification`'s for the same unit, result and time.
@@ -2603,7 +2821,7 @@ git commit -m "feat(stack): 🤖 units for the front, the gate and the failure n
   `spark-users`) and `spark-pull` (system, its own group, home `/var/lib/local-ai`, `nologin`).
 - `directories`: `/etc/local-ai/secrets` becomes `root:root 0700`, and each file in it `root:root
   0600` (root writing in a folder only root controls); `/var/lib/local-ai/gate`,
-  `/var/lib/local-ai/launch`, `…/launch/tickets`, `…/launch/refusals` and
+  `/var/lib/local-ai/launch`, `…/launch/tickets`, `…/launch/started`, `…/launch/refusals` and
   `/var/lib/local-ai/whisper-tmp` are made `spark:spark 0750`; `/var/lib/local-ai/pull-cache`
   `spark-pull:spark-pull 0750`.
 - `hf_cache_to_pull` — `/var/lib/local-ai/hf` becomes `spark-pull:spark`, `2750` at the top and its
@@ -2634,7 +2852,7 @@ git commit -m "feat(stack): 🤖 units for the front, the gate and the failure n
   0700 /etc/local-ai/secrets`; for a stand-in folder with two files, each `chmod 0600` and `chown
   root:root`.
 - `test_the_gate_launch_and_whisper_tmp_folders_are_sparks` — `install -d -o spark -g spark -m 0750`
-  for each of the five; `pull-cache` for `spark-pull`.
+  for each of the six; `pull-cache` for `spark-pull`.
 - `test_the_cache_moves_to_spark_pull_with_a_setgid_group` — a stand-in cache (folders, files, a
   link) and logging `chown`/`chmod` → `chown -R -P --no-dereference spark-pull:spark`, `chmod 2750`
   on the top and `g+s` on each folder.
@@ -2655,7 +2873,8 @@ git commit -m "feat(stack): 🤖 units for the front, the gate and the failure n
 - [ ] **Step 1:** the failing tests; run them: they fail.
 - [ ] **Step 2:** bootstrap, doctor's two checks, the pull; the tests pass; `make test lint`.
 - [ ] **Step 3: Docs.** `secret-files.md` and `bootstrap.md` (the 2a re-run: stop llama-swap and the
-  brake first, then `make bootstrap`), their blocks run on stand-ins first.
+  brake first, keep a second SSH session open while it runs, since it changes sshd's PAM stack, then
+  `make bootstrap`), their blocks run on stand-ins first.
 - [ ] **Step 4: Commit.** **On the Spark:**
 
 ```bash
@@ -2698,8 +2917,9 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
   script, appends the `pam_exec` line only if it is missing, writes the drop-in with the value,
   and reloads systemd.
 - `test_the_hook_acts_only_for_agent` — the script run with a stand-in `/proc`: `PAM_USER=chendaniely`
-  → writes nothing; `agent` and `open_session` → writes the value; `agent` and `close_session` →
-  nothing.
+  → writes nothing and exits 0 at once; `agent` and `open_session` → writes the value; `agent` and
+  `close_session` → nothing; and the line bootstrap appends is `session optional`, so a failure of
+  the script never stops a login.
 - `test_the_hook_and_drop_in_are_root_owned_and_not_agents` — the dry run's owners and modes.
 - `test_the_values_put_a_large_agent_job_first` — from `launch`'s values, earlyoom's `--prefer`
   bonus and `AGENT_OOM_SCORE_ADJ`: an `agent` process holding 10% of memory scores above every
@@ -2747,7 +2967,12 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     a reboot` without an end);
   - unaccounted: `unaccounted 5 GiB (idle 117, less 48 available and 64 of footprints)`;
   - the oldest request, in a loaded row: `answering 1 (oldest 3 min)` when it is a minute or more;
-  - ntfy failing: `ntfy failing since 08:52`.
+  - ntfy failing: `ntfy failing since 08:52`;
+  - a `waiting` row by its `why`: `memory` → `waiting for memory: needs 41 GiB, 18 free for a
+    load`; `brake` → `waiting for the brake's pause to end`; `slot` → `waiting its turn: Gemma is
+    loading`; `dan` → the example's `waiting for you: spark load coder`; `restart` → `waiting for
+    the model service's restart`; `llama_swap` → `waiting for the model service to answer`;
+  - a pin, in the `held` row: `pins the coder until 18:00` (`pins none` without one).
 - The gate not answering: the header from `/proc/meminfo` (the brake line from the deployed
   registry), then `gate        not answering: what's loaded, waiting, held or paused is unknown
   until it's back · make doctor`.
@@ -2763,7 +2988,9 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 - `test_agents_status_shows_only_its_refusals_and_no_dans_processes` — a view filtered as the
   status socket gives it → no Dan refusal; a holder shown as *a process of Dan's*.
 - `test_status_shows_paused_and_held_when_they_stand` — the two `paused` forms and the `held` form
-  above, each word for word.
+  above, each word for word, and a pin in the `held` row.
+- `test_each_waiting_reason_has_its_words` — every reason in `gateproto.WAITING_WHY` → its words
+  above, word for word; so a reason added later fails until it has its own.
 - `test_unaccounted_memory_is_idle_less_available_less_footprints` — idle 117, 48 available, 64 of
   footprints → the `unaccounted 5 GiB` line; 0 → no line.
 - `test_the_oldest_request_shows_from_a_minute` — 3 min → `(oldest 3 min)`; 40 s → nothing added.
@@ -2795,7 +3022,8 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
 
 - Create: `spark/src/spark/commands.py`, `spark/tests/test_commands.py`
 - Modify: `spark/src/spark/cli.py`, `Makefile` (`logs` takes `front`, `gate` and `notify`;
-  `brake-release`'s help), `spark/tests/test_makefile.py`, `spark/tests/test_tested_against.py`
+  `brake-release`'s help; `tunnel`'s help, *forward the Spark's model API, 127.0.0.1:9100*, which
+  is the front from 2a), `spark/tests/test_makefile.py`, `spark/tests/test_tested_against.py`
   (the import check gains `spark.commands`), `website/how-to/deploy.md` (`spark` on your `PATH`)
 
 **Interfaces:**
@@ -2834,8 +3062,8 @@ it):
   load, not 70. Free 61 and hold it? [y/N]*
 - `test_make_room_for_sets_its_end` — `--for 8h` → `for_s` 28800.
 - `test_make_room_all_and_done` — `--all` → `{all: true}`, the plan's `--all` sentence after one
-  question; `--done` → `POST /v1/release`, *Hold ended, all 40 GiB of it unused. Nothing to reload:
-  the coder loads on its next request.*
+  question; `--done` → `POST /v1/release` with `{room: true}` only, *Hold ended, all 40 GiB of it
+  unused. Nothing to reload: the coder loads on its next request.*
 - `test_a_question_without_a_terminal_refuses_without_yes` — stdin not a terminal → exit 2 and the
   sentence; `--yes` → proceeds.
 - `test_logs_reads_through_the_control_socket` — `logs coder -n 5` → `GET /v1/logs/coder?n=5`, each
@@ -2939,11 +3167,17 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   At the deadline it asks Task 6's *No quiet minute in 15 minutes. Drain now, holding new requests
   while the 2 in flight finish? [y/N]*; yes → `POST /v1/drain-all`, then waits for nothing in
   flight ("drained"); no → "declined". Ctrl-C at any point → nothing changed, exit 130.
+- Root's files come first, as in Phase 1: when any is pending, apply stages them and stops, exit
+  0, before it asks the gate anything (the cutover's Step 2 depends on it).
 - The order, when a restart waits for the quiet moment: render and validate; the diff; the wait;
-  only then the app's sync and the files written; `POST /v1/apply/begin` (the gate refuses loads
-  with `restarting` after their wait meanwhile); the restarts; the gate's `health.llama_swap` `ok`
-  within 30 s; `POST /v1/apply/end` (the registry re-read, the residents reloaded,
-  `apply_restarted` sent); on any failure after a drain, `POST /v1/undrain-all`.
+  on the quiet reading, `POST /v1/drain-all` at once (nothing is in flight then, so it costs
+  nothing), and on drain now, the same, then the wait for the requests in flight to finish; from
+  `drain-all` on, the front holds every new request and admission answers `restarting`, and nothing
+  unloads; only then the app's sync and the files written; `POST /v1/apply/begin` (the units it
+  restarts, for `spark status`); the restarts; the gate's `health.llama_swap` `ok` within 30 s;
+  `POST /v1/apply/end` (the held requests go through admission, the registry is re-read, the
+  residents reload, `apply_restarted` is sent); on any failure after `drain-all`, `POST
+  /v1/undrain-all`.
 - `--now` (`make apply-now`) — asks Task 6's *This restarts the model service now and cuts off the
   2 requests in flight (pi on the Mac, agent). Continue? [y/N]*, naming each from `/v1/quiet`;
   without requests in flight it doesn't ask.
@@ -2964,6 +3198,10 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   question; `y` → `drain-all`, then on with nothing in flight; `N` → exit 1, nothing changed.
 - `test_drain_now_holds_new_requests_until_those_in_flight_finish` — after `drain-all`, it waits
   for `/v1/quiet`'s `inflight` to empty; a failure after it → `undrain-all` posted.
+- `test_the_quiet_path_holds_new_requests_too` — the quiet reading → `drain-all` posted before the
+  sync, the files and the restart.
+- `test_root_files_pending_stage_before_any_gate_call` — root's files pending, llama-swap active,
+  the gate not answering → staged, exit 0, and no call to the gate.
 - `test_nothing_is_written_until_the_drain_is_done` — the sync and the writes come after the wait
   returns, never before.
 - `test_apply_now_names_the_requests_it_would_cut_off_and_asks` — two in flight → the question
@@ -3024,13 +3262,19 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
 - `S01` — the registry's on-demand idle time is 60 and the residents never idle-unload; `S02` —
   `POST /v1/make-room/plan` with 1 GiB answers, unloading nothing; `S03` — a made-up model through
   the front gets 404 with `model_not_found`'s words; `S05` — the brake active, its start check
-  passed, the gate's activity record fresh; `S14` — `OnFailure=` and `StartLimitIntervalSec=0` on
+  passed, and the gate's `health.activity_age_s` under 3 (doctor, as you, can't read the gate's
+  folder); `S14` — `OnFailure=` and `StartLimitIntervalSec=0` on
   the four, by `systemctl show`, and the notifier's script installed; `S17` (Task 29).
 - `a model, end to end` — the embeddings through the front with `SPARK_API_KEY`.
+- `bypass` — the gate's `health.no_ticket_since_boot` is empty: nothing asked llama-swap to start a
+  model around the gate since this boot (the design's bypass sweep).
+- `root's copies` — follows `render.UNITS`, all ten, not Phase 1's four.
 - `spark doctor --full` adds: a 170 MB upload to `/v1/audio/transcriptions` through the front; the
   privacy canary — a unique string sent through chat and speech-to-text, then looked for in the
-  journal, the gate's state and records, launch's records and the front's spool (which must be
-  empty), found in none.
+  journal (as you, in group `adm`) and through `POST /v1/canary` (the gate's state, its refusal
+  history and launch's records, which only `spark` reads), found in none. The front's spool isn't
+  searched: no account but the front sees its private `/tmp`, and Task 18's test pins that each
+  upload's file goes when its request ends.
 
 **Tests** (`spark/tests/test_doctor.py`, a `Probe` stand-in; one pass and one failure per check,
 and):
@@ -3049,7 +3293,11 @@ and):
   the plan route refusing (S02); the front answering 200 for a made-up model (S03); a stale activity
   record (S05); no `OnFailure=` on the brake (S14); `/v1/quiet` unanswered (S17).
 - `test_full_runs_the_upload_and_the_canary` — without `--full`, neither runs; with it, both, and
-  the canary found in the journal stand-in → FAIL naming the journal.
+  the canary found in the journal stand-in → FAIL naming the journal; the canary route answering
+  `found: ["refusals"]` → FAIL naming it.
+- `test_a_bypass_since_boot_fails` — `no_ticket_since_boot: ["coder"]` → FAIL naming the coder.
+- `test_roots_copies_follow_render_units` — a missing `local-ai-gate.service` copy → FAIL naming
+  it.
 - `test_doctor_still_never_prints_a_key` — Phase 1's, over every new check.
 
 **Steps:**
@@ -3163,22 +3411,23 @@ git commit -m "docs(website): 🤖 deploying 2a: the first deploy, its rollback,
 - [ ] **Step 1 [Dan, on the Spark]:** `make bootstrap-dry-run`, and read it. Stop the brake and
   llama-swap, which stops every model, since the cache's move refuses while they run:
   `systemctl stop local-ai-brake.service local-ai-llama-swap.service`, which the polkit rule allows
-  without sudo. Then `make bootstrap`,
-  and start them again: `systemctl start local-ai-llama-swap.service local-ai-brake.service`. The
+  without sudo. Then `make bootstrap`, with a second SSH session to the box left open until a fresh
+  login works afterwards, since bootstrap changes sshd's PAM stack (Task 25; bootstrap.md says so).
+  Then start them again: `systemctl start local-ai-llama-swap.service local-ai-brake.service`. The
   stack serves in Phase 1's layout meanwhile, reading the model files through the group.
 - [ ] **Step 2 [Spark]: Check it.** **On the Spark:**
 
 ```bash
 getent passwd spark-front spark-pull | cut -d: -f1,7
 id -nG spark-front
-stat -c '%U:%G %a %n' /var/lib/local-ai/hf /var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/launch/tickets /var/lib/local-ai/launch/refusals /var/lib/local-ai/whisper-tmp /var/lib/local-ai/pull-cache
+stat -c '%U:%G %a %n' /var/lib/local-ai/hf /var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/launch/tickets /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals /var/lib/local-ai/whisper-tmp /var/lib/local-ai/pull-cache
 test -x /usr/local/libexec/local-ai-notify && echo "notifier: installed" || echo "notifier: missing"
 test -x /usr/local/libexec/local-ai-agent-oom && grep -c 'local-ai-agent-oom' /etc/pam.d/sshd || echo "agent's OOM hook: missing"
 ```
 
   Expected: both users with `/usr/sbin/nologin`; `spark-front spark-users`;
   `spark-pull:spark 2750 /var/lib/local-ai/hf`; `spark:spark 750` for the gate's, launch's (and
-  its two folders) and whisper's; `spark-pull:spark-pull 750` for the pull's cache;
+  its three folders) and whisper's; `spark-pull:spark-pull 750` for the pull's cache;
   `notifier: installed`; `1`. **[Dan, on the Spark]**
   `sudo stat -c '%U:%G %a' /var/lib/local-ai/hf/tmp; sudo -k` reads `spark:spark 750`, left for
   whisper until the cutover. Then `make doctor`: its *secrets folder* and *spark's folders* lines
@@ -3223,7 +3472,8 @@ d=$(mktemp -d) && git worktree add "$d/main" main && (cd "$d/main" && uv run --f
   Expected: `render: 8 files → …`, then `EnvironmentFile=/etc/local-ai/secrets/llama-swap.env` and
   an `ExecStart` ending `-listen 127.0.0.1:9100`.
 
-  The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks once):
+  The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: for the
+  first line, and again at `make install-units`, after `sudo -k`):
 
 ```bash
 sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
@@ -3235,14 +3485,18 @@ make install-units
 make apply-now
 ```
 
-  Then `make doctor` from that worktree passes Phase 1's fifteen checks, and a plan revision says
-  what failed.
+  Then `make doctor` from that worktree passes every one of Phase 1's fifteen checks but *secrets
+  folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 33), and is expected; a
+  plan revision says what failed.
 
-- [ ] **Step 2:** `make apply`. Expected: it lists root's ten unit files as new or changed, stages
-  them, and stops.
+- [ ] **Step 2:** `make apply`. Expected: it lists root's nine new or changed unit files (the
+  compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 29),
+  since no gate runs yet.
 - [ ] **Step 3 [Dan, on the Spark]:** `make install-units`. Read every file it shows: they are what
   root will run. It installs root's copies and enables the sockets and the services, and starts
-  nothing new.
+  nothing new. Step 4 follows at once, with no reboot between: a boot now would start the front
+  and the gate against Phase 1's app, the front's socket and Phase 1's llama-swap both wanting
+  9100.
 - [ ] **Step 4 [Dan]: the cutover**, as one block. **On the Spark** (Dan; sudo asks once):
 
 ```bash
@@ -3390,13 +3644,65 @@ git commit -m "feat(stack): 🤖 the web containers drop every capability they d
 
 ***
 
-### Task 37 [Spark]: agent's OOM score, tested as agent
+### Task 37 [Spark]: the drills' memory hog, and agent's OOM score, tested as agent
 
-**Files (the record):** `changelog.md`, `README.md`, `website/design/plan.md` (*`agent`'s own GPU
-jobs are outside the gate*: resolved in 2a, or moved to 2b, with a Revisions line);
-`website/scenarios/s06-agent-gpu-step.md` only if it moves.
+**Files:**
 
-- [ ] **Step 1 [Dan, as `agent`]:** a fresh login (`ssh brightroar-agent` from the Mac), then inside
+- Create: `stack/measure/hog.py`, `spark/tests/test_hog.py`
+- Modify (the record): `changelog.md`, `README.md`, `website/design/plan.md` (*`agent`'s own GPU
+  jobs are outside the gate*: resolved in 2a, or moved to 2b, with a Revisions line);
+  `website/scenarios/s06-agent-gpu-step.md` only if it moves.
+
+**Interfaces:** `hog.py`, PEP 723 (Python ≥3.12, no dependencies), run with `uv run`: the one way
+the drills lower memory (Tasks 37, 45, 46 and 48), sized from `MemAvailable` read at the time,
+never a fixed size (the controller's ruling, 2026-10-07).
+
+- `main(argv)` with `--leave` (GiB, required: the `MemAvailable` it brings the box down to, never
+  below), `--floor` (GiB, default 24: the reserve, 4 above the brake's line; a `--leave` under it
+  is refused, exit 2), `--step-gib` (0.25), `--pause-s` (2.5) and `--hold-s` (how long it holds at
+  `--leave` before it frees everything and exits 0).
+- `grow(read_available, take, free_all, *, leave_gib, floor_gib, step_gib, pause_s, sleep) ->
+  Result(held_gib, stopped: "leave" | "not_reflected" | "floor", detail)` — before each step it
+  re-reads `MemAvailable`, and stops growing when that, less a step, would pass under `--leave`; a
+  step is anonymous memory with every page written; after each, it re-reads every 250 ms, for up
+  to 5 s, until `MemAvailable` has fallen since its start by at least 90% of all it holds, and
+  otherwise frees everything and stops `not_reflected`, exit 3. While it holds, a reading under
+  `--floor` frees everything at once and stops `floor`, exit 3. It prints each step's total and
+  `MemAvailable`, and frees everything on every way out, Ctrl-C and SIGTERM included.
+- The pace: 0.25 GiB every 2.5 s is 0.1 GiB/s, and one step inside the rate watch's 2 s window reads
+  as under 0.2 GiB/s, which Task 21's watch (10 s ahead, the brake at 20) takes for a breach only
+  under 22 GiB available, below the floor. So a drill trips the brake only where it raises the
+  brake's thresholds on purpose (Task 46).
+
+**Tests** (`spark/tests/test_hog.py`, the script loaded from its path, a stand-in reader and
+allocator):
+
+- `test_it_stops_at_leave` — `MemAvailable` from 74, falling with each step taken, `--leave 48` →
+  26 GiB held, stopped `leave`.
+- `test_a_leave_under_the_floor_is_refused` — `--leave 20` → exit 2, nothing taken.
+- `test_a_step_that_doesnt_show_stops_it` — the reading not falling after the third step →
+  `not_reflected`, exit 3, every step freed.
+- `test_a_fall_under_the_floor_while_it_holds_frees_everything` — holding, then a reading of 23 →
+  `floor`, exit 3, everything freed.
+- `test_it_frees_everything_on_any_way_out` — an exception, `KeyboardInterrupt` and SIGTERM at step
+  5 → each step freed.
+- `test_its_pace_stays_under_the_rate_watch` — the default step and pause, readings every 250 ms
+  from 74 down to the floor, through Task 21's `predict_breach` with `brake.FALL_WINDOW_S`,
+  `brake.UNLOAD_LEAD_S` and the registry's `brake_gib` → never true; so Task 45's new constants
+  re-check it.
+
+**Steps:**
+
+- [ ] **Step 1:** the failing tests; run them: they fail.
+- [ ] **Step 2:** the script; the tests pass; `make test lint`. Commit. **On the Spark:**
+
+```bash
+git add stack/measure/hog.py spark/tests/test_hog.py
+git commit -m "feat(stack): 🤖 one memory hog for the drills, sized from MemAvailable" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [ ] **Step 3 [Dan, as `agent`]:** a fresh login (`ssh brightroar-agent` from the Mac), then inside
   tmux. **On the Spark, as `agent`**, in each:
 
 ```bash
@@ -3406,11 +3712,20 @@ python3 -c 'v = int(open("/proc/self/oom_score_adj").read()); open("/proc/self/o
 
   Expected: Task 25's value, then `PermissionError: [Errno 13] Permission denied`. (As you, today,
   the second line succeeds: an ordinary process may lower its own score until root sets a floor.)
-- [ ] **Step 2 [Dan, on the Spark]:** a stand-in job started as `agent` that holds a tenth of memory;
-  earlyoom's dry run picks it before every engine. Then it stops.
-- [ ] **Step 3:** if either check fails, Task 25's hook comes out in a revert commit, and the item
+- [ ] **Step 4 [Dan, on the Spark]: a job of `agent`'s, against earlyoom.** `agent` can't read
+  your clone, so leave it a copy it can. **On the Spark**, as you:
+
+```bash
+d=$(mktemp -d) && chmod 755 "$d" && install -m 644 stack/measure/hog.py "$d/hog.py" && echo "$d"
+```
+
+  Then, **as `agent`**, in tmux: `uv run --no-project <that folder>/hog.py --hold-s 300 --leave
+  <N>`, with N the `MemAvailable` that `grep MemAvailable /proc/meminfo` reads just before, in
+  GiB, less 12 (about a tenth of memory). earlyoom's dry run picks it before every engine. Then
+  Ctrl-C (it frees everything), and, as you, `rm -r` the folder.
+- [ ] **Step 5:** if either check fails, Task 25's hook comes out in a revert commit, and the item
   moves to 2b with a plan revision.
-- [ ] **Step 4: The record and commit.** **On the Spark:**
+- [ ] **Step 6: The record and commit.** **On the Spark:**
 
 ```bash
 git add changelog.md README.md website/design/plan.md
@@ -3431,23 +3746,39 @@ git commit -m "docs(machine): 🤖 agent's processes carry a root-set OOM score"
   this measures, `[adapted]` to `[verified]`, and no other), `changelog.md`
 
 **Interfaces:** `cuda_ceiling.py`, PEP 723 (Python ≥3.12, no dependencies), run with `uv run`:
-`main(argv)` with `--lib` (default `/opt/local-ai/bin/llama.cpp/b11146/libcudart.so.13`) and
-`--reserve` (default 24); `measure(cuda, *, read_available, reserve_gib, step_gib=1) -> Result(
-allocated_gib, stopped: "reserve" | "cuda_error", detail)` — it prints `cudaMemGetInfo`'s free and
-total first, with nothing allocated; then, before each step, stops when `MemAvailable` less a step
-would fall under the reserve; else `cudaMalloc`s one GiB, `cudaMemset`s it (touching every page),
-and prints the running total and `MemAvailable`; it stops at the first CUDA error; every pointer is
-freed on every way out, Ctrl-C included. It never allocates "until failure".
+`main(argv)` with `--lib` (default `/opt/local-ai/bin/llama.cpp/b11146/libcudart.so.13`),
+`--reserve` (default 24), `--step-gib` (0.25) and `--pause-s` (2.5); `measure(cuda, *,
+read_available, reserve_gib, step_gib, pause_s, sleep) -> Result(allocated_gib, stopped: "reserve"
+| "cuda_error" | "not_reflected", detail)` — it prints `cudaMemGetInfo`'s free and total first,
+with nothing allocated; then, before each step, stops when `MemAvailable` less a step would fall
+under the reserve; else `cudaMalloc`s a step, `cudaMemset`s it (touching every page), and prints
+the running total and `MemAvailable`; after each step it re-reads every 250 ms, for up to 5 s,
+until `MemAvailable` has fallen since its start by at least 90% of all it holds, and otherwise
+frees everything and stops `not_reflected`; it stops at the first CUDA error; every pointer is
+freed on every way out, Ctrl-C included. It never allocates "until failure". CUDA's allocations
+don't show in a process's RSS, so earlyoom can't pick this script: its own reading, confirmed at
+every step, is its guard against a `MemAvailable` that reports late.
+
+The rate watch is accounted for by pace, not paused: 0.25 GiB every 2.5 s is Task 37's hog's pace,
+under Task 21's trigger while more than 22 GiB is available, and the script stops at the reserve,
+24. So the
+measurement sends `memory_warning` once, as it passes 28, and no `brake_fired`. About 16 minutes
+for the 93 GiB the box can give.
 
 **Tests** (`spark/tests/test_cuda_ceiling.py`, the script loaded from its path, a stand-in `cuda`):
 
-- `test_it_stops_when_memavailable_would_pass_the_reserve` — `MemAvailable` from 117, falling 1 GiB
-  a step, reserve 24 → 93 GiB allocated, stopped `reserve`.
+- `test_it_stops_when_memavailable_would_pass_the_reserve` — `MemAvailable` from 117, falling with
+  each step taken, reserve 24 → 93 GiB allocated, stopped `reserve`.
+- `test_a_step_that_doesnt_show_stops_it` — the reading not falling after the third step →
+  `not_reflected`, every pointer freed.
+- `test_its_pace_stays_under_the_rate_watch` — the default step and pause, readings every 250 ms
+  from 117 down to the reserve, through Task 21's `predict_breach` with its constants and the
+  registry's `brake_gib` → never true.
 - `test_it_touches_every_step` — `cudaMemset` called once per allocation, with its pointer and size.
 - `test_it_frees_everything_on_any_way_out` — an exception at step 5, and `KeyboardInterrupt` at
   step 5 → `cudaFree` for each pointer taken.
 - `test_it_stops_at_the_first_cuda_error` — `cudaMalloc` failing at step 10 → stopped
-  `cuda_error`, the 9 freed.
+  `cuda_error`, the 9 taken freed.
 - `test_it_reads_memgetinfo_before_allocating` — the first printed line holds the stand-in's free
   and total, before any `cudaMalloc`.
 
@@ -3455,12 +3786,19 @@ freed on every way out, Ctrl-C included. It never allocates "until failure".
 
 - [ ] **Step 1:** the failing tests; run them: they fail.
 - [ ] **Step 2:** the script; the tests pass; `make test lint`.
-- [ ] **Step 3: Measure it.** **[Dan, on the Spark]** `spark make-room --all` (one question), so the
-  box is clear and held for you; the brake and earlyoom running. **On the Spark**, in tmux,
-  `/opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`, then `uv run
-  stack/measure/cuda_ceiling.py`, watched. Then `spark make-room --done`: the residents reload.
+- [ ] **Step 3: Measure it** **[Dan, on the Spark, watching in tmux]**. `spark make-room --all`
+  (one question), so the box is clear and held for you; the brake and earlyoom running. Then, in
+  tmux, `/opt/local-ai/bin/llama.cpp/b11146/llama-server --list-devices`, then `uv run
+  stack/measure/cuda_ceiling.py`. Expected on the phone: `memory_warning` once, and no
+  `brake_fired`. Then `spark make-room --done`: the residents reload. If the brake fires anyway,
+  Dan stops the script with Ctrl-C (it frees everything); the residents then reload only after the
+  brake's release, 5 minutes above 28 GiB, not at `--done`; and the reading goes to Task 45, since
+  the watch's constants are wrong.
 - [ ] **Step 4:** the registry follows: `allocatable_gib` the measured figure (*at least* it, when
-  the script stopped at the reserve) and `allocatable_measured: true`; render still passes.
+  the script stopped at the reserve) and `allocatable_measured: true`; render still passes. **If
+  render refuses the 2a set at the measured ceiling, stop and ask Dan** before Task 39: the swap
+  waits for his choice (the design's: the old coder, still the registry's and on disk, or his
+  full-context, f16 rule), and a plan revision records it.
 - [ ] **Step 5: Commit.** **On the Spark:**
 
 ```bash
@@ -3502,20 +3840,49 @@ files stay on disk.
 
 - [ ] **Step 1:** the failing tests; run them: they fail.
 - [ ] **Step 2:** the entry; the tests pass; `make test lint`; render passes, 84 of the ceiling and
-  50 beside the residents. Commit (Step 5's block, without the record's files).
-- [ ] **Step 3: Apply it, S17's way.** `make apply`: the diff shows the coder's change; the quiet
-  wait; llama-swap restarts under the loaded residents, which stops every engine, the old coder
-  included; the gate reloads the residents; `apply_restarted` on the phone. **[Dan, on the Mac]**,
-  in pi, the old name reads `model_not_found`'s words, listing the new one, and the coder by its
-  role reads `not_downloaded`'s.
-- [ ] **Step 4 [Dan, on the Spark]:** `make pull` — 17.6 GB as `spark-pull`; follow it with
-  `make logs s=pull` in another pane. Expected: `pull: qwen3.8-27b: Qwen3.8-27B-UD-Q4_K_XL.gguf → …`
-  for the coder, and the residents' files already there.
-- [ ] **Step 5: The record and commit.** **On the Spark:**
+  50 beside the residents. Commit. **On the Spark:**
 
 ```bash
-git add stack/models.yaml spark/tests/test_stack_registry.py changelog.md README.md website/architecture.qmd website/design/plan.md
+git add stack/models.yaml spark/tests/test_stack_registry.py
 git commit -m "feat(stack): 🤖 Qwen3.8-27B becomes the registry's coder, by route A" \
+  -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [ ] **Step 3: Push, so the Mac can follow.** *Before every push* with `phase-2a`; **Dan OKs**
+  `git push`; CI is green. Step 6's `make clients` on the Mac needs this commit.
+- [ ] **Step 4: Apply it, S17's way.** `make apply`: the diff shows the coder's change; the quiet
+  wait; llama-swap restarts under the loaded residents, which stops every engine, the old coder
+  included; the gate reloads the residents; `apply_restarted` on the phone. **[Dan, on the Mac]**,
+  pi lists the old name until Step 6, and a request for it reads `model_not_found`'s words, naming
+  `qwen3.8-27b`. **[Dan, on the phone]**, the web UI, asked for `qwen3.8-27b`, shows
+  `not_downloaded`'s sentence. (pi lists real names only, so it can't ask by the role.)
+- [ ] **Step 5 [Dan, on the Spark]:** `make pull` — 17.6 GB as `spark-pull`; follow it with
+  `make logs s=pull` in another pane. Expected: `pull: qwen3.8-27b: Qwen3.8-27B-UD-Q4_K_XL.gguf → …`
+  for the coder, and the residents' files already there.
+- [ ] **Step 6: The clients, at once,** as the design's order has it (apply, the pull, then `make
+  clients`), so neither pi goes without a coder for longer than the pull, and Tasks 40–42 measure
+  in pi. **[Dan, as `agent`]**, on the Spark, Task 31's command:
+  `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml
+  --http-idle-timeout-ms 900000`. Expected: pi lists `qwen3.8-27b` and not `qwen3.6-35b-a3b`;
+  `~/.pi/agent/settings.json` holds `httpIdleTimeoutMs` 900000. **On the Mac**, from the clone, by
+  Dan:
+
+```bash
+git switch phase-2a && git pull && make clients
+```
+
+  Expected: `clients: wrote the 'spark' provider to …/.pi/agent/models.json`; with `make tunnel`
+  running, pi lists `qwen3.8-27b` and not `qwen3.6-35b-a3b`.
+- [ ] **The way back,** written now, used only if Dan chooses it at Task 41's or Task 42's
+  stop-and-ask: a commit that restores Qwen3.6-35B-A3B's entry and its tests (`fix(stack): 🤖
+  Qwen3.6-35B-A3B is the coder again`), `make apply` (S17's wait), the push with Dan's OK, and
+  Step 6's two clients again. Its files are still on disk, so nothing is pulled. A plan revision
+  records why.
+- [ ] **Step 7: The record and commit.** **On the Spark:**
+
+```bash
+git add changelog.md README.md website/architecture.qmd website/design/plan.md
+git commit -m "docs(machine): 🤖 Qwen3.8-27B is the coder, pulled, and both pis list it" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
@@ -3549,16 +3916,21 @@ inside the repo), `--hz` (10) and `--seconds`; `row(proc: Path, nvidia: Callable
 
 - [ ] **Step 1:** the failing tests; run them: they fail. The script; the tests pass; `make test
   lint`.
-- [ ] **Step 2: Fill the page cache**, the coder not loaded. **On the Spark:**
+- [ ] **Step 2: Fill the page cache**, the coder not loaded, only until E.1's case holds: `MemFree`
+  below what the coder's cold load takes (up to its 41 GiB footprint) and `Cached` high. The block fills what `MemFree`
+  holds above 30 GiB, and nothing when it already holds less. **On the Spark:**
 
 ```bash
+grep -E '^(MemFree|MemAvailable|Cached):' /proc/meminfo
+n=$(awk '/^MemFree:/ { m = int($2 / 1024) - 30 * 1024; print (m > 0 ? m : 0) }' /proc/meminfo)
 f=$(mktemp -p ~ pagecache-fill.XXXXXX)
-dd if=/dev/zero of="$f" bs=1M count=40960 status=none
+dd if=/dev/zero of="$f" bs=1M count="$n" status=none
 cat "$f" > /dev/null
 grep -E '^(MemFree|MemAvailable|Cached):' /proc/meminfo
 ```
 
-  Expected: `Cached` up by about 40 GiB, `MemFree` down by as much.
+  Expected, in the second reading: `MemFree` at about 30 GiB or under, `Cached` up by the fill, and
+  `MemAvailable` nearly where it was, since the page cache counts as available.
 - [ ] **Step 3:** in one tmux pane, `uv run stack/measure/sample_memory.py --out
   ~/samples/pagecache.csv --seconds 300`; in another, `spark load coder`. Then `rm -f "$f"`.
 - [ ] **Step 4:** read the samples against E.1's slow reclaim (`MemFree` pinned, the load stalled):
@@ -3589,6 +3961,10 @@ line), `cosmicbboy-local-ai.md` (only a claim this measures), `changelog.md`
   timeouts (the Mac's default and `agent`'s 900,000), and decode at long context; (5) its load
   time, cold and warm, against the 180 s deadline; (6) a busy coder's stop time, for the brake's
   `GRACE_S`. Step (3), the soak, is Task 42's.
+- [ ] **Stop and ask Dan** if b11146 doesn't load the file or doesn't draft with MTP (1), or if
+  time to first token at 250K passes the Mac's pi's 300 s (4): what gives is his choice, the
+  design's — Task 39's way back, or his full-context, f16 rule — and a plan revision records it.
+  Nothing else in this task runs until he has chosen.
 - [ ] **Step 2:** route A's decode, time to first token and prefill in pi, in Phase 5's order,
   recorded against Phase 5's table.
 - [ ] **Step 3:** the registry records the coder's `cold_load_gib`; private readings (load times,
@@ -3618,7 +3994,9 @@ line), `changelog.md`, `README.md`
   `nvidia-smi`'s per-process figure. `owed_reads_rss` turns on only if `RssAnon` accounts for the
   growth `MemAvailable` shows.
 - [ ] **Step 3:** the registry's footprints become the measured ones; render passes; **[Dan]**
-  decides whether the reserve moves.
+  decides whether the reserve moves. **If render refuses the measured set** (a footprint over what
+  the set leaves it), **stop and ask Dan**, as Task 41 does: Task 39's way back, or his
+  full-context, f16 rule, with a plan revision.
 - [ ] **Step 4: Commit.** **On the Spark:**
 
 ```bash
@@ -3629,22 +4007,15 @@ git commit -m "feat(stack): 🤖 every footprint measured by the soak, and what 
 
 ***
 
-## ⇄ Push point — the measured registry, for the Mac
-
-- [ ] *Before every push* with `phase-2a`; **Dan OKs** `git push`; CI is green.
-
-***
-
-### Task 43 [Spark]: the coder becomes the default for agent
+### Task 43 [Spark]: agent's pi completes a real task with the coder
 
 **Files (the record):** `changelog.md`, `README.md` (§Current state: `agent`'s pi).
 
-- [ ] **Step 1 [Dan, as `agent`]:** Task 31's command, `/opt/local-ai/app/.venv/bin/spark clients pi
-  --write --registry /opt/local-ai/etc/models.yaml --http-idle-timeout-ms 900000`. Expected: pi
-  lists `qwen3.8-27b` and not `qwen3.6-35b-a3b`; `~/.pi/agent/settings.json` holds
-  `httpIdleTimeoutMs` 900000.
-- [ ] **Step 2 [Dan, as `agent`]:** a real task with the coder, in tmux, completes.
-- [ ] **Step 3: Commit.** **On the Spark:**
+The coder becomes the default for real work here, once Tasks 40–42 have measured it; both pis have
+listed it since Task 39's Step 6.
+
+- [ ] **Step 1 [Dan, as `agent`]:** a real task with the coder, in tmux, completes.
+- [ ] **Step 2: Commit.** **On the Spark:**
 
 ```bash
 git add changelog.md README.md
@@ -3654,20 +4025,13 @@ git commit -m "docs(machine): 🤖 agent's pi works with Qwen3.8-27B" \
 
 ***
 
-### Task 44 [Mac]: the Mac's pi lists the new coder, and completes a task with it
+### Task 44 [Mac]: the Mac's pi completes a real task with the coder
 
-Dan runs this himself, from his clone; no Mac session is needed, and nothing in the repo changes.
+Dan runs this himself; no Mac session is needed, and nothing in the repo changes. The Mac's pi has
+listed the coder since Task 39's Step 6.
 
-- [ ] **Step 1:** **On the Mac**, from the clone:
-
-```bash
-git switch phase-2a && git pull && make clients
-```
-
-  Expected: `clients: wrote the 'spark' provider to …/.pi/agent/models.json`.
-- [ ] **Step 2:** with `make tunnel` running, pi lists `qwen3.8-27b` and not `qwen3.6-35b-a3b`, and a
-  real task completes. Dan tells the Spark session, which records it in README's Mac section with
-  its next commit.
+- [ ] **Step 1:** with `make tunnel` running, a real task completes in pi with `qwen3.8-27b`. Dan
+  tells the Spark session, which records it in README's Mac section with its next commit.
 
 ***
 
@@ -3685,12 +4049,16 @@ git switch phase-2a && git pull && make clients
 - [ ] **Step 1: Measure,** each with the sampler: a busy engine's stop time (an unload while the
   coder answers); how long after an engine leaves `/running` its memory shows in `MemAvailable`;
   `MemAvailable`'s noise while models generate; the falls of Task 41's loads, for the rate-of-fall
-  constants; earlyoom's order at the real thresholds, by its dry run; whether memory swaps before
-  `MemAvailable` reaches the brake. Every drill that lowers memory uses a stand-in hog that frees
-  itself above earlyoom's line, with the brake running.
+  constants; earlyoom's order at the real thresholds, by its dry run; whether memory swaps on the
+  way down. Every reading that lowers memory uses Task 37's hog, its `--leave` set from
+  `MemAvailable` read just before, never a fixed size and never under its floor, 24 GiB, with the
+  brake running and Dan watching in tmux; the record says how far below 28 each went. The brake's
+  own firing is drilled at raised thresholds (Task 46), not at 20.
 - [ ] **Step 2:** the constants from the measurements; the tests changed with them, failing first;
-  `make test lint`. **[Dan, on the Spark]** `make bootstrap` if earlyoom's arguments or swappiness
-  change; `make apply` restarts the brake.
+  `make test lint`, whose pace tests for the hog and the ceiling script (Tasks 37 and 38) read the
+  new constants: if one fails, that script's pace changes in this commit, with its files.
+  **[Dan, on the Spark]** `make bootstrap` if earlyoom's arguments or swappiness change; `make
+  apply` restarts the brake.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
@@ -3699,8 +4067,8 @@ git commit -m "feat(spark): 🤖 the brake's timings and rate-of-fall watch, fro
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
-  (With `stack/host/earlyoom.default`, `stack/host/bootstrap.sh` and their tests, if Step 2
-  changed them.)
+  (With `stack/host/earlyoom.default`, `stack/host/bootstrap.sh`, `stack/measure/hog.py`,
+  `stack/measure/cuda_ceiling.py` and their tests, if Step 2 changed them.)
 
 ***
 
@@ -3709,9 +4077,11 @@ git commit -m "feat(spark): 🤖 the brake's timings and rate-of-fall watch, fro
 **Files:** `website/scenarios/s05-memory-critically-low.md` (`status: verified`, `verified:` the
 date; `phase` stays 1), `changelog.md`, `website/design/plan.md` if anything differs from it.
 
-- [ ] **Step 1:** the brake's thresholds raised for the drill (a registry edit, `make apply`), as
-  Phase 1's drill did, and put back after. Each message checked word for word, on the phone, in pi
-  and in `spark status`:
+- [ ] **Step 1:** the brake's thresholds raised for the drill from `MemAvailable` read at the time
+  (a registry edit, `make apply`), as Phase 1's drill did, and put back after. Where a load alone
+  doesn't take memory past them, Task 37's hog does, its `--leave` set from the live reading and
+  never under its floor, with Dan watching in tmux. Each message checked word for word, on the
+  phone, in pi and in `spark status`:
   - the fall past the warn line: `memory_warning`, once;
   - the brake fires: `brake_fired`, high, naming the loading engine first, then idle models, with a
     follow-up for each later unload;
@@ -3741,14 +4111,15 @@ git commit -m "docs(website): 🤖 S05 verified: the brake fires, releases withi
 `website/design/plan.md` (*To verify*: `OnFailure=` under `Restart=`, and 9100 held through a crash
 loop; a Revisions line), `changelog.md`, `README.md`
 
-- [ ] **Step 1 [Dan, on the Spark]: each service killed in turn**,
-  `sudo systemctl kill --signal=SIGKILL local-ai-<name>.service` for the front, the gate, the brake
-  and llama-swap: each alert on the phone, high, once, in Task 6's words; `back_up` a minute after
-  each comes back. `sudo kill -STOP` on the front's process: its watchdog fires within 30 s, its
-  alert names it, and it restarts. A clean `sudo systemctl kill --signal=SIGTERM
-  local-ai-llama-swap.service`: no alert, and it comes back. With the gate stopped, a loaded model
-  answers and a load reads `gate_down`'s words; with llama-swap stopped past a key's wait,
-  `llama_swap_down`'s. Then `sudo -k`.
+- [ ] **Step 1 [Dan, on the Spark]: each service killed in turn**, `sudo systemctl kill
+      --signal=SIGKILL local-ai-<name>.service` for the front, the gate, the brake and llama-swap:
+      each alert on the phone, high, once, in Task 6's words; `back_up` a minute after each comes
+      back. `sudo kill -STOP` on the front's process: its watchdog fires within 30 s, and it
+      restarts after about 60 s, since the watchdog's SIGABRT waits on a stopped process until
+      `TimeoutAbortSec=` (30 s, from `TimeoutStopSec=`) sends SIGKILL; its alert names it. A clean
+      `sudo systemctl kill --signal=SIGTERM local-ai-llama-swap.service`: no alert, and it comes
+      back. With the gate stopped, a loaded model answers and a load reads `gate_down`'s words; with
+      llama-swap stopped past a key's wait, `llama_swap_down`'s. Then `sudo -k`.
 - [ ] **Step 2: The crash-loop check.** **[Dan, on the Spark]** (sudo asks once), the front killed
   again and again, then made to fail at start:
 
@@ -3802,15 +4173,16 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   request for the coder waits its 10 minutes and reads `no_fit`'s `agent` text, naming the hold; a
   request of Dan's loads into the hold and shrinks it; `spark make-room --done` reloads Gemma, or
   sends `resident_waiting`.
-- [ ] **Step 3: S03, and the runtime check of *Before Task 1*.** A stand-in job of Dan's holding
-  32 GiB: pi on the Mac shows only its usual thinking for 30 s, nothing added to the stream, then
-  the refusal, `409: {"message":"The coder didn't load: …","code":"no_fit"}`, at 30 s and without
-  retrying: `make logs s=front` shows one request from `dan-mac`, ending 409. The web UI, asked
-  the same, shows the sentence alone, with no retry. The phone gets `refused` once, and a burst
-  collapses with its count. Then, with the gate stopped for a moment, a request for the coder
-  reads `gate_down`'s words after pi's own retries, each a line in the front's log. The make-room
-  walk then loads the coder. What pi and the web UI did is recorded against *Before Task 1* and
-  Review Focus 6.
+- [ ] **Step 3: S03, and the runtime check of *Before Task 1*.** Task 37's hog, as Dan, with
+      `--leave 48`: S03's moment, 48 GiB available, whatever the hog has to take to get there (about
+      26 from the residents' 74). pi on the Mac shows only its usual thinking for 30 s, nothing
+      added to the stream, then the refusal, `409: {"message":"The coder didn't load:
+      …","code":"no_fit"}`, at 30 s and without retrying: `make logs s=front` shows one request from
+      `dan-mac`, ending 409. The web UI, asked the same, shows the sentence alone, with no retry.
+      The phone gets `refused` once, and a burst collapses with its count. Then, with the gate
+      stopped for a moment, a request for the coder reads `gate_down`'s words after pi's own
+      retries, each a line in the front's log. The make-room walk then loads the coder. What pi and
+      the web UI did is recorded against *Before Task 1* and Review Focus 6.
 - [ ] **Step 4: S17.** A registry edit with a request in flight: the diff; the quiet wait's words;
   Ctrl-C changes nothing; the 15-minute deadline (shortened for the drill and put back) offers
   "drain now"; `make apply-now` asks, naming the requests; a request during the restart reads
@@ -3869,9 +4241,21 @@ git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward l
 
 - [ ] **Step 1:** `make test lint docs`, on bash 3.2 and GNU make 3.81: the Makefile's new targets,
   the leak hooks, and the socket tests on the Mac's short paths; the site renders with no warnings,
-  the notifications page among the reference pages. A Mac difference is fixed here, with its test,
-  and in this plan.
-- [ ] **Step 2: Merge,** with Dan's OK. **On the Mac:**
+  the notifications page among the reference pages. Task 8's uid test and Task 17's two tests
+  over real sockets skip, with Task 8's reason (*SO_PEERCRED is Linux's, and the gate runs only on
+  the Spark*), as expected, beside the skips for a tool the Mac lacks that a test names
+  (`systemd-analyze`, say); any other skip is a finding. A Mac difference is fixed here, with its test, and in this plan.
+- [ ] **Step 2: CI's parity** (workflows are the Mac's): `.github/workflows/ci.yml` gains `spark docs
+  notifications --check` beside `spark docs stack --check`, and shellcheck of
+  `stack/host/local-ai-notify` and `stack/host/local-ai-agent-oom` beside bootstrap's. Commit;
+  *Before every push*; **Dan OKs** the push; CI is green. **On the Mac:**
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci(repo): 🤖 check the notifications page and shellcheck 2a's host scripts" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+- [ ] **Step 3: Merge,** with Dan's OK. **On the Mac:**
 
 ```bash
 git switch main && git pull
@@ -3906,20 +4290,25 @@ git merge --no-ff phase-2a -m "chore(repo): 🤖 merge phase 2a" -m "Co-Authored
 Every command block above was run on 2026-10-07, before it went in:
 
 - **Run for real, read-only, on the Spark:** Task 1's digest check (Docker Hub answered the pinned
-  digest); Task 33's check block (on the box as it stands, before bootstrap: the users and folders
-  missing, as expected); Task 34's ports block (it listed 9100 and 5800–5802 that day); Task 34's
-  bind block, as you, for 9100 and 900 (`bound … 0 times in 30 s` for each); Task 35's `lsmod`;
-  Task 37's two lines, as you (your score is 0, and the second line succeeded: why the check tells
-  a set floor from none); Task 47's watch loop, against 9100 and against a port nobody holds
-  (`200` and `000`).
+  digest); Task 33's check block, again after the plan review added `launch/started` (on the box as
+  it stands, before bootstrap: the users and folders missing, as expected); Task 34's ports block
+  (it listed 9100 and 5800–5802 that day); Task 34's bind block, as you, for 9100 and 900 (`bound …
+  0 times in 30 s` for each); Task 35's `lsmod`; Task 37's two lines, as you (your score is 0, and
+  the second line succeeded: why the check tells a set floor from none); Task 47's watch loop,
+  against 9100 and against a port nobody holds (`200` and `000`).
 - **In a scratch clone of this repo on the Spark:** Task 34's rollback render check (it rendered
-  `main`, `-listen 127.0.0.1:9100` and `llama-swap.env`) and its `git worktree` steps; Task 44's
-  Mac block, with a temporary `HOME` (it wrote the provider); every task's commit form; Task 50's
+  `main`, `-listen 127.0.0.1:9100` and `llama-swap.env`) and its `git worktree` steps; Task 39's
+  Mac block (Task 44's until the plan review moved it), with a temporary `HOME` (it wrote the
+  provider); every task's commit form, Task 37's and Task 50's new ones among them; Task 50's
   merge.
 - **With stand-ins that log their calls** for `sudo`, `systemctl`, `docker` and `make`, since the
   real ones would change the box: Task 34's rollback and cutover blocks; Task 36's container check;
   Task 47's crash-loop blocks.
-- **Smaller, in the scratchpad:** Task 40's fill, with a 64 MiB file in place of 40 GiB.
+- **Smaller, in the scratchpad:** Task 40's fill: its `MemFree` arithmetic on the box's own
+  `/proc/meminfo` (`MemFree` read 9.3 GiB that day, so it would fill nothing: E.1's case held
+  already), and the fill itself with 64 MiB in place of the computed size, and with none. Task
+  37's copy for `agent`, with a stand-in `hog.py`: the folder `755`, the file `644`, and `uv run
+  --no-project` running it from another folder.
 - **Not blocks:** the commands of the CLI this plan builds (`spark make-room`, `spark load`, `spark
   logs`, `spark clients … --http-idle-timeout-ms`) appear inline, since they can't run before their
   tasks; their tests pin them. So do `make` targets that need sudo (`make bootstrap`, `make
@@ -3930,3 +4319,23 @@ Every command block above was run on 2026-10-07, before it went in:
 - **ntfy's Compose file:** `docker compose config` with stand-in values read the file's shape this
   task's test pins (Docker's CLI needs no daemon for it): with the values it printed the service,
   a bcrypt hash's `$` kept; without them it stopped, naming `NTFY_BASE_URL`.
+
+***
+
+## Deferred notes for implementers
+
+The plan review (2026-10-07) found 1 Critical, 18 Important and 24 Minor items. Every one is fixed
+above but part of one Minor, the first note here; the other two are what the fixes leave for the
+tasks that meet them.
+
+- **`brake/events.jsonl` grows.** The brake appends a few lines per brake episode and never trims
+  the file (m-11). Keying on boot id and `seq` (Task 12) makes a removed or restarted file safe, so
+  Task 21 may trim it at the brake's start check, keeping this boot's lines, if the file is ever
+  large enough to matter; 2a doesn't need it.
+- **The hog's and the ceiling script's pace** (Tasks 37 and 38) is set against Task 21's starting
+  constants. Their `test_its_pace_stays_under_the_rate_watch` tests import the brake's constants,
+  so Task 45's new ones re-check them; if one then fails, the pace changes with the constants, in
+  the same commit.
+- **`spark status`'s `waiting` words** (Task 26) cover the six reasons in `gateproto.WAITING_WHY`;
+  a reason added later needs its line, and Task 26's test reads the tuple, so it fails until the
+  line is written.

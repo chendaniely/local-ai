@@ -545,7 +545,13 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      early when the fall would reach the brake line before an unload can free enough, set from 2a's measurements
      of loads' falls (2.0 to 2.6 GiB/s so far) and engines' stop times (*The minimal brake's
      reach*). The thresholds stay, and admission keeps **≥24 GiB** free: rule 9 records the
-     reserve's swing to 22 and back, the same day.
+     reserve's swing to 22 and back, the same day. *(Corrected 2026-10-07, after the
+     implementation plan's review, which found that a watch on the fall alone fires on every
+     ordinary coder load, since 2.0 to 2.6 GiB/s is how fast a load falls:)* **a fall the gate
+     knowingly admitted is not a crash.** The watch subtracts the expected fall of the loads in
+     progress, each admitted footprint from its start, which the gate's ticket and its activity
+     record carry, so an admitted load never trips it; it acts on a fall past that, or on one
+     nothing explains (the controller's ruling).
    - **The gate lifts the hold** once memory has stayed above the warn line for 5 minutes (5 is the
      plan's figure for Dan's "a few minutes"), and only if the models it would reload fit, by rule
      9's formula, with the reserve, the growth owed and any make-room hold. Each reload goes
@@ -679,14 +685,19 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      loaded would leave about 33, 5 GiB above the warn line.
    - **The reserve stays ≥24 GiB,** above the brake line, 20, which the registry enforces, so that
      a fresh load never trips the brake.
-   - **The ceiling gets measured** in 2a without coming near a freeze: first what CUDA reports
-     with nothing allocated (`llama-server --list-devices`); then a standard-library `ctypes`
-     script against llama.cpp's bundled CUDA runtime that allocates and touches 1 GiB steps,
-     re-reads `MemAvailable` at each and stops at `MemAvailable` less the reserve, with the brake
-     and earlyoom running, never "until failure". If it gets there, the ceiling is recorded as at
-     least that, and admission needs no CUDA term. Nothing is installed for it, and the registry
-     follows the measurement. If the ceiling or the soak comes in under the set, what gives is
-     Dan's to choose: the old coder, whose files are kept, or his full-context, f16 rule.
+   - **The ceiling gets measured** in 2a without coming near a freeze: first what CUDA reports with
+     nothing allocated (`llama-server --list-devices`); then a standard-library `ctypes` script
+     against llama.cpp's bundled CUDA runtime that allocates and touches 1 GiB steps, re-reads
+     `MemAvailable` at each and stops at `MemAvailable` less the reserve, with the brake and
+     earlyoom running, never "until failure". *(Corrected 2026-10-07, after the implementation
+     plan's review: the steps are 0.25 GiB, paced at 0.1 GiB/s so the rate-of-fall watch doesn't
+     take the measurement for a crash, and each is confirmed in `MemAvailable` before the next,
+     since earlyoom can't see CUDA's allocations. The drills lower memory with one hog sized from
+     `MemAvailable` at the time, never a fixed size, at the same pace.)* If it gets there, the
+     ceiling is recorded as at least that, and admission needs no CUDA term. Nothing is installed
+     for it, and the registry follows the measurement. If the ceiling or the soak comes in under the
+     set, what gives is Dan's to choose: the old coder, whose files are kept, or his full-context,
+     f16 rule.
 
 ### Users, access and security
 
@@ -961,6 +972,15 @@ outage. A burst of identical refusals (the same model, key and code) collapses: 
 once, and the repeats within 10 minutes go as one, with their count and the reason (*Didn't load
 the coder for agent 4 more times since 09:12: same reason.*). That is for clarity, not suppression:
 `spark status`'s *recent* list keeps each one.
+
+**Each refusal sends exactly one notification** (added 2026-10-07, after the implementation plan's
+review): `footprint_suspect` and `load_failed` send their own types, and every other code sends
+`refused`. The front's own refusals — `model_not_found`, `too_many_requests`, `route_not_served`
+and `draining` — reach the gate on its status socket, so they show in *recent* and send `refused`
+like the gate's; a `401` (the front's journal has it) and `gate_down` (the failure notifier's alert
+says it) don't. The brake's own `brake_fired`, sent while the gate is down, ends *They resume once
+the gate is back and memory has stayed above 28 GiB available for 5 min.*, since nothing resumes
+without the gate.
 
 **Quiet hours live on the phone** (*Visibility and notifications*, above): Android's Do Not
 Disturb runs 00:00–05:00 with the ntfy app's high and max channels let through, so only `high`
@@ -1463,16 +1483,20 @@ plan](phase-2a.md), written the same day.*
     checkpoints, prompt cache and long-input buffers, after which its footprint is marked measured;
     (4) time to first token at 32K, 128K and 250K, against pi's timeouts, and decode at long
     context; (5) its load time, cold and warm, for the load's deadline; (6) a busy coder's stop
-    time, for `GRACE_S`.
+    time, for `GRACE_S`. *(Clarified 2026-10-07, after the implementation plan's review: "the
+    default" means for real work, Dan's and `agent`'s first real tasks with it, which come after
+    these. Both pis list it from the swap on, since `make clients` follows the pull, as below, so
+    these measurements run in pi.)*
   - **Route A's speed** — decode, time to first token and prefill, in pi, in Phase 5's order — is
     recorded against Phase 5's table. Its reported decode is 15–27 tok/s, against today's coder's
     93 measured; Dan accepts the trade, with route B (38–50 reported) in 2c and routes C and D in
     Phase 5.
   - Qwen3.6-35B-A3B leaves the registry, and its files stay on disk. The swap runs in *Deploy
     workflow*'s order: apply, then the pull, then `make clients`.
-- [Spark] **the page-cache drill,** before the coder becomes the default: fill the page cache with
-  a large file, load the coder, and watch for E.1's slow reclaim. Its result settles rule 1's cache
-  drop (*Page cache and the launch check*).
+- [Spark] **the page-cache drill,** before the coder becomes the default (for real work, as above;
+  Qwen3.6's way back stays written down until then): fill the page cache, only until `MemFree` is
+  under the coder's cold load, load the coder, and watch for E.1's slow reclaim. Its result settles
+  rule 1's cache drop (*Page cache and the launch check*).
 - [Spark] **from Phase 1's close (2026-09-28):** `--alias`, so a reply names its model rather than
   its file; a soak at full context that measures every footprint, checkpoints and prompt caches
   included (rule 6); the brake's timings measured on a busy engine (`GRACE_S`,
@@ -2755,6 +2779,13 @@ Each item gets its own design pass when its turn comes.
   neither is transient, since a retry of `load_failed` repeats a full load and `not_downloaded`
   changes only with `make pull`. A `503` is now only for `gate_down`, `llama_swap_down`,
   `restarting` and `draining`.
+- **2026-10-07** — The implementation plan's review (1 Critical, 18 Important, 24 Minor) corrected
+  the design in four places: rule 5's rate-of-fall watch subtracts the fall of loads the gate
+  admitted, since it would have fired on every coder load; the CUDA ceiling's steps and the drills'
+  memory hog are paced under that watch, sized from `MemAvailable` at the time and confirmed step
+  by step; "before it becomes the default" means before real work, with both pis listing the
+  coder from the swap on; and each refusal sends exactly one notification, the front's own
+  included. The implementation plan carries the rest.
 
 ## Sources
 
