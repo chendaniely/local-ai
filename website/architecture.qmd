@@ -33,9 +33,12 @@ flowchart TB
 
   anthropic(("Anthropic"))
   apps["my pipelines and<br/>homelab apps · Phase 3"]:::planned
+  family["family and friends<br/>shared Tailscale node · Phase 6"]:::planned
+  guests["event guests<br/>venue LAN only · Phase 6"]:::planned
 
   subgraph spark["brightroar · the Spark"]
     tss["tailscale serve,<br/>HTTPS 443"]
+    guestui["guest web UI<br/>events only · Phase 6"]:::planned
     owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose"]
     searx["SearXNG · 127.0.0.1:8888<br/>root's Compose"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
@@ -65,6 +68,11 @@ flowchart TB
   agent_tmux --> swap
   agent_tmux -- "its Claude Code" --> anthropic
   apps -.-> litellm
+  family -.-> tss
+  family -.-> litellm
+  guests -.-> guestui
+  guests -.-> litellm
+  guestui -.-> litellm
   litellm -.-> swap
   swap -- "spark launch" --> engines
   swap -.-> vllm
@@ -94,8 +102,11 @@ flowchart LR
   piA["pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
   app["an app with its own key<br/>Phase 3"]:::planned
+  fam["family and friends<br/>over a shared Tailscale node · Phase 6"]:::planned
+  guest["a guest at an event<br/>venue LAN, a key each · Phase 6"]:::planned
 
   tunnel["SSH tunnel<br/>over Tailscale, or the LAN alias"]
+  guestui["guest web UI<br/>events only · Phase 6"]:::planned
   serve["tailscale serve, 443<br/>Tailscale only"]
   owui["Open WebUI"]
   searx["SearXNG"]
@@ -109,12 +120,18 @@ flowchart LR
   piA --> swap
   cc --> anthropic
   app -.-> litellm -.-> swap
+  fam -.-> serve
+  fam -.-> litellm
+  guest -.-> guestui -.-> litellm
+  guest -.-> litellm
 ```
 
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
 beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
-Phase 3, apps reach the models through LiteLLM, each with a key of its own.
+Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and
+friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark,
+and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's network only.
 
 ## Loading a model
 
