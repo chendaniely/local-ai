@@ -35,3 +35,11 @@ Thresholds live in `stack/models.yaml`.
 *Status: built, 2026-09-28 (Phase 1). Phase 1's minimal brake unloads the on-demand models first:
 Task 16's drill, at raised thresholds, held new loads and unloaded the coder while the residents
 stayed. The idle-first order and the notifications arrive in Phase 2.*
+
+*Designed 2026-10-07, for Phase 2a:* the brake moves into the gate, with the same thresholds and
+order, and a high-priority notification when it fires. It releases by itself once memory has
+stayed above 28 GiB for 5 minutes, and a default-priority notification says when it fired and when
+it released. The gate then reloads the always-loaded models one at a time, as at boot, and names
+them; on-demand models wait for a request. While it holds, a request waits for its key's wait and
+is then refused with `held_by_brake`. The brake is the only thing that may cut off a request in
+flight. `make brake-release` stays.

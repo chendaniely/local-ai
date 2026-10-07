@@ -10,7 +10,8 @@ format:
 One picture of where everything sits, then the three paths a request can take. Every scenario
 follows one of those paths, so the table at the end names the path for each, and each scenario's
 page says what happens along it. **Solid** parts are built and running; **dashed** parts are
-planned, labelled with the phase that brings them. [The plan](design/plan.md) holds the reasons.
+planned, labelled with the phase that brings them. A built part that a later phase changes stays
+solid, and its label adds the change with that phase. [The plan](design/plan.md) holds the reasons.
 
 ## Where everything sits
 
@@ -25,10 +26,12 @@ flowchart TB
     pi_mac["pi"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
+    ntfy_mac["ntfy alerts<br/>Phase 2a"]:::planned
   end
 
   subgraph phone["Android phone"]
     pwa["web UI,<br/>home-screen app"]
+    ntfy_phone["ntfy alerts<br/>Phase 2a"]:::planned
   end
 
   anthropic(("Anthropic"))
@@ -42,16 +45,19 @@ flowchart TB
     owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose"]
     searx["SearXNG · 127.0.0.1:8888<br/>root's Compose"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
-    litellm["LiteLLM, a key per app<br/>Phase 3"]:::planned
-    swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys"]
-    gate["spark-gate<br/>Phase 2"]:::planned
-    brake["memory brake<br/>as spark"]
+    litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, or in its place"]:::planned
+    front["the front · 127.0.0.1:9100<br/>as spark, the same client keys · Phase 2a"]:::planned
+    swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys<br/>to 9101, internal keys · Phase 2a"]
+    gate["spark-gate · Unix sockets<br/>decides every load · Phase 2a"]:::planned
+    brake["memory brake<br/>as spark<br/>folds into the gate · Phase 2a"]
+    notifier["failure notifier, OnFailure=<br/>front, gate, llama-swap · Phase 2a"]:::planned
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder"]
     vllm["vLLM or SGLang, for NVFP4<br/>Phase 5"]:::planned
   end
 
   subgraph nas["Synology"]
-    ntfy["ntfy and the watchdog<br/>Phase 2"]:::planned
+    ntfy["ntfy · Phase 2a<br/>tailnet and home LAN only"]:::planned
+    watchdog["the watchdog<br/>Phase 2b"]:::planned
     shares["shares and backups<br/>Phase 4"]:::planned
   end
 
@@ -67,6 +73,12 @@ flowchart TB
   owui --> swap
   agent_tmux --> swap
   agent_tmux -- "its Claude Code" --> anthropic
+  pi_mac -. "same tunnel" .-> front
+  owui -.-> front
+  agent_tmux -.-> front
+  front -. "internal key" .-> swap
+  front -. "asks before a load" .-> gate
+  gate -. "loads, unloads" .-> swap
   apps -.-> litellm
   family -.-> tss
   family -.-> litellm
@@ -77,8 +89,11 @@ flowchart TB
   swap -- "spark launch" --> engines
   swap -.-> vllm
   brake -- "unloads through llama-swap" --> engines
-  gate -.-> engines
   gate -.-> ntfy
+  notifier -.-> ntfy
+  watchdog -.-> ntfy
+  ntfy -.-> ntfy_mac
+  ntfy -.-> ntfy_phone
   agent_tmux -.-> shares
 ```
 
@@ -87,7 +102,13 @@ flowchart TB
   SSH alone from the LAN.
 - **Three accounts on the Spark.** Mine, the admin; `spark`, which runs llama-swap, the engines and
   the brake; and `agent`, for coding agents in tmux, with no sudo, no docker and keys of its own.
-  Root runs the web services from its own copies of their units.
+  Root runs the web services from its own copies of their units. From Phase 2a, `spark` also runs
+  the front, and the gate in place of the brake.
+- **From Phase 2a (planned), the front takes 127.0.0.1:9100** with the same keys, so pi, the web UI
+  and `agent` change nothing, and llama-swap moves to 9101, where only the front's and the gate's
+  internal keys reach it. The gate decides every load, unloads idle models and runs the brake, and
+  ntfy on the Synology carries its notifications to my Mac and phone, over the tailnet or the home
+  LAN only. [The plan](design/plan.md#the-front-and-the-gate-phase-2a) says why.
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
   Anthropic, wherever they run; Orca only starts them. The Spark is a separate mode.
 
@@ -110,8 +131,9 @@ flowchart LR
   serve["tailscale serve, 443<br/>Tailscale only"]
   owui["Open WebUI"]
   searx["SearXNG"]
-  swap["llama-swap, 127.0.0.1:9100<br/>a key on every request"]
-  litellm["LiteLLM on a LAN port<br/>Phase 3"]:::planned
+  front["the front, 127.0.0.1:9100 · Phase 2a<br/>the same keys, then an internal key"]:::planned
+  swap["llama-swap, 127.0.0.1:9100<br/>a key on every request<br/>to 9101 · Phase 2a"]
+  litellm["LiteLLM on a LAN port · Phase 3<br/>ahead of the front, or in its place"]:::planned
   anthropic(("Anthropic"))
 
   piT --> tunnel --> swap
@@ -119,6 +141,10 @@ flowchart LR
   owui --> searx
   piA --> swap
   cc --> anthropic
+  tunnel -.-> front
+  owui -.-> front
+  piA -.-> front
+  front -.-> swap
   app -.-> litellm -.-> swap
   fam -.-> serve
   fam -.-> litellm
@@ -129,7 +155,10 @@ flowchart LR
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
 beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
-Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and
+Phase 2a (planned), the same tunnel, address and keys reach the front instead, which checks the key
+and forwards to llama-swap on its new port with a key of its own; no client changes. From
+Phase 3, apps reach the models through LiteLLM, each with a key of its own; Phase 3 decides whether
+it sits ahead of the front or takes its place. From Phase 6, family and
 friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark,
 and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's network only.
 
@@ -149,13 +178,38 @@ flowchart TD
   fits -- yes --> load["the engine loads"] --> answer
   low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, on-demand ones first"]
   brake --> held
-  gate["Phase 2, the gate: a live fit check, one load at a time,<br/>idle unload, session pins, make-room, notifications"]:::planned
-  gate -.-> launch
+
+  front["Phase 2a: the front, on 9100, checks the key<br/>and counts the requests in flight"]:::planned
+  gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down"]:::planned
+  ask{"the gate: brake clear, and the footprint fits free memory,<br/>less the reserve and the loads already starting?<br/>one load at a time"}:::planned
+  gload["the gate loads it through llama-swap;<br/>spark launch keeps a zero-wait fit check"]:::planned
+  hold["the front holds the request, rechecking,<br/>for its key's wait: 30 s for mine, 10 minutes for agent's"]:::planned
+  inline["refused inline, like any API error: memory needed against free,<br/>the top holders, make-room or retry, a code and a retry-after"]:::planned
+  release["Phase 2a: the hold lifts after 5 minutes above 28 GiB,<br/>and the gate reloads the residents one at a time"]:::planned
+  idle["Phase 2a: the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room; neither cuts off a request in flight"]:::planned
+
+  req -.-> front
+  front -. loaded .-> answer
+  front -. "not loaded" .-> ask
+  front -. "gate down" .-> gdown
+  ask -. yes .-> gload
+  gload -.-> answer
+  ask -. no .-> hold
+  hold -. "fits in time" .-> gload
+  hold -. "time is up" .-> inline
+  brake -.-> release
+  ask -.- idle
 ```
 
 A model loads only if it fits: nothing is evicted to make room, and nothing is swapped for a
 smaller model. Free memory is the smaller of `MemAvailable` and what the GPU can allocate, and the
 reserve stays free, because overcommitting a GB10 can freeze it without an out-of-memory kill.
+
+From Phase 2a (planned, dashed), a request reaches the front first. A model that's loaded is
+forwarded at once; for one that isn't, the front asks the gate, which admits one load at a time.
+If the model doesn't fit, the request waits for its key's wait, then gets a refusal that says why,
+in the client itself. Today's launch check stays inside `spark launch` as a backstop that never
+waits. The reserve goes from 24 to 22 GiB, still above the brake's 20.
 
 ## Apps and speech (Phase 3, planned)
 
@@ -172,9 +226,11 @@ flowchart LR
   swap -.-> diar["speaker labels"]:::planned
 ```
 
-Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 3, my
-own pipelines and homelab apps come in through LiteLLM instead, each with a key of its own; it
-never logs what they send.
+Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 2a they
+reach the front instead, with the same keys, and it already waits per key and refuses inline. From
+Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
+never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front or takes its
+place.
 
 ## When something breaks, and upkeep
 

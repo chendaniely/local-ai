@@ -141,7 +141,10 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over
   ~110 GB do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path.
   The plan budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be
-  measured) and keeps ≥24 GiB free on admission.
+  measured) and keeps ≥24 GiB free on admission. *(Changed 2026-10-07, in Phase 2a's design: Dan
+  lowered the reserve to ≥22 GiB, knowingly, still above the brake's 20, and the budget check
+  becomes the set's footprints within the ceiling, with each load keeping the reserve free: the
+  plan's rule 9. The registry keeps 24 until Phase 2a builds it.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.

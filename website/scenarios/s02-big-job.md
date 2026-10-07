@@ -15,3 +15,11 @@ swapped.
 **What I see.** The list, and headroom on the menu bar.
 
 **How to override.** If I decline, nothing unloads. The brake remains the backstop.
+
+*Designed 2026-10-07, for Phase 2a:* `spark make-room 70G` lists everything it could unload, the
+always-loaded models included, largest first, and unloads what I confirm; `spark make-room --all`
+unloads everything after one confirmation, my clean slate for testing. Nothing it unloads cuts off
+a request in flight: it waits for pi's current request to finish first. pi's next request then
+waits up to its key's wait, 30 s from the Mac or 10 minutes as `agent`, and if there's still no
+room it gets a refusal in the client that says why. The headroom shows in `spark status` until the
+menu bar arrives in 2b.

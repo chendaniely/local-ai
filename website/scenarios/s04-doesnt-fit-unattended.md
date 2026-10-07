@@ -13,3 +13,8 @@ make room. If it still doesn't fit, it gets a refusal with a reason and a `retry
 **What I see.** A notification if it was refused — quiet hours are respected.
 
 **How to override.** The key's wait setting.
+
+*Added 2026-10-07, from Phase 2a's design:* an agent's request gets this from Phase 2a, through the
+front: `agent`'s key waits up to 10 minutes, then gets a refusal with its reason and a retry-after,
+and ntfy sends a default-priority "refused", which makes no sound in quiet hours (00:00–05:00).
+Apps get it with Phase 3.

@@ -20,3 +20,11 @@ tell, it refuses: it names the loaded models, changes nothing and exits 1. I run
 they're idle, or run `make apply-now` to restart llama-swap anyway. A model that starts loading
 after apply's first look puts off only llama-swap's restart: the files are deployed, apply says so
 and exits 1, and the next `make apply` makes the restart once the models are idle.
+
+*Designed 2026-10-07, for Phase 2a, correcting the wait above:* `make apply` shows the diff of what
+it would change. When the change needs llama-swap restarted, it waits until no request has been in
+flight for about 60 s on any engine, not until the models are idle: requests keep being served, and
+it shows what it's waiting on. Then it restarts llama-swap; the gate reloads the always-loaded
+models one at a time, and on-demand ones reload on their next request. Ctrl-C leaves nothing
+changed, and `make apply-now` restarts at once, after asking me to confirm. A change that needs no
+llama-swap restart applies at once.
