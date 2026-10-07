@@ -42,8 +42,8 @@ flowchart TB
   subgraph spark["brightroar · the Spark"]
     tss["tailscale serve,<br/>HTTPS 443"]
     guestui["guest web UI<br/>events only · Phase 6"]:::planned
-    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose"]
-    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose"]
+    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
+    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, or in its place"]:::planned
     sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets · Phase 2a"]:::planned
@@ -94,6 +94,7 @@ flowchart TB
   swap -.-> vllm
   brake -- "unloads through llama-swap" --> engines
   gate -.-> ntfy
+  brake -. "its own alert, while the gate is down" .-> ntfy
   notifier -.-> ntfy
   watchdog -.-> ntfy
   ntfy -.-> ntfy_mac
@@ -111,10 +112,12 @@ flowchart TB
   the model downloads (`spark-pull`).
 - **From Phase 2a (planned), the front takes 127.0.0.1:9100** with the same keys, so pi, the web UI
   and `agent` change nothing. systemd holds 9100 and the gate's two sockets, so they are never free,
-  even while the front or the gate restarts. llama-swap moves to 127.0.0.1:900 and the engines to
+  even while the front or the gate restarts, or crashes again and again. llama-swap moves to 127.0.0.1:900 and the engines to
   800 and up, below 1024, where no other user can listen, and only the internal keys reach
   llama-swap. The gate decides every load, unloads idle models and lifts the brake's hold; the
-  brake stays a unit of its own, so it runs even while the gate is down. ntfy on the Synology
+  brake stays a unit of its own, so it runs even while the gate is down, and then sends its own
+  alert. The web containers drop their capabilities, so they can't take those ports either. ntfy
+  on the Synology
   carries notifications to my phone, over the tailnet or the home LAN only, and to my Mac from
   Phase 2b. [The plan](design/plan.md#the-front-and-the-gate-phase-2a) says why.
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
@@ -180,7 +183,7 @@ flowchart TD
 
   req["a request names a model"] --> loaded{"already loaded?"}
   loaded -- yes --> answer["the engine answers"]
-  loaded -- no --> launch["llama-swap starts it<br/>through spark launch"]
+  loaded -- no --> launch["llama-swap starts it<br/>through spark launch<br/>Phase 2a: only with the gate's ticket"]
   launch --> held{"is the brake holding<br/>new loads?"}
   held -- yes --> refuse["refused, with its reason<br/>make status shows it"]
   held -- no --> fits{"does its footprint fit in<br/>free memory, less the reserve?"}

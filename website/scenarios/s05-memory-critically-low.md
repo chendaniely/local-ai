@@ -58,3 +58,12 @@ fast. The gate lifts the hold, with limits:
   refused with `held_by_brake` until I load it again.
 
 Admission keeps 24 GiB free, not 22: the reserve went back to 24 the same day.
+
+*Corrected after the design's re-review, the same day:*
+
+- **The model that was loading** still doesn't reload by itself, but my own request, from pi on the
+  Mac or the web UI, loads it as normal if it fits (my choice), as does `spark load`. `agent`'s
+  requests for it wait, then get `footprint_suspect`, naming `spark load <model>`, until I have
+  loaded it once; no `held_by_brake` without a hold.
+- **While the gate is down,** the brake sends its own high-priority "brake fired" to ntfy, by the
+  failure notifier's independent path, so I hear about the brake, not only that the gate is down.

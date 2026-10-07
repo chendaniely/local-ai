@@ -33,3 +33,7 @@ no waiting request (`agent`'s included), no boot preload and no brake release ta
 next request waits and is then refused with a reason that names the hold, never quietly loaded into
 my job's memory. When the hold ends, the always-loaded models reload one at a time, if they fit,
 and the coder waits for a request. `spark status` shows the hold, its size and when it ends.
+*(Added after the re-review, the same day:* asked for more than unloading everything could free,
+make-room says so, shows the most it can free, and unloads nothing unless I confirm that. An
+always-loaded model that doesn't fit when the hold ends waits, loads once it fits, and shows as
+waiting in `spark status`.)

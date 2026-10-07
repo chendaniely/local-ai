@@ -24,7 +24,10 @@ now.
 *Revised 2026-10-07, after the design's council:*
 
 - **The brake keeps running.** It stays a unit of its own, so a gate that is down never means no
-  brake; only its automatic release waits for the gate.
+  brake; only its automatic release waits for the gate. *(Corrected after the re-review, the same
+  day:* if the brake fires while the gate is down, it sends its own "brake fired" to ntfy, by the
+  same independent path as the failure notifier, so I hear about the brake too, not only "gate
+  down".)
 - **At boot it's worse.** "Models already loaded keep serving" holds only for what is loaded. At
   boot, or after a restart that stopped every engine, a gate that is down means nothing can load,
   so the API is down in effect until the gate starts.
@@ -36,3 +39,5 @@ now.
   the unit restarts by itself.
 - **The drill**, in 2a: kill each of the four services, freeze the front with SIGSTOP to trip its
   watchdog, and send llama-swap a clean SIGTERM, checking each alert, or its absence, on my phone.
+  *(Added after the re-review:)* a crash-loop check as `agent`, killing the front again and again,
+  shows that 9100 stays held and never answers as anyone else.
