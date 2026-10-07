@@ -41,3 +41,12 @@ now.
   watchdog, and send llama-swap a clean SIGTERM, checking each alert, or its absence, on my phone.
   *(Added after the re-review:)* a crash-loop check as `agent`, killing the front again and again,
   shows that 9100 stays held and never answers as anyone else.
+
+*What I see, worded at the design's UX pass (2026-10-07):* a high-priority *The gate on brightroar
+stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused
+until it's back*, and, once it is, a default *The gate on brightroar is running again, after 12 s
+down.* A request that needs a load meanwhile reads: *No new model can load: the gate on the Spark
+isn't running. Models already loaded still answer. Your phone has the alert; on the Spark,
+`make doctor` shows what's wrong.* The front, llama-swap and the brake each have an alert of their
+own, worded the same way, and a crash loop sends at most one per unit in a while. The plan's *What
+you see in Phase 2a* has every message.

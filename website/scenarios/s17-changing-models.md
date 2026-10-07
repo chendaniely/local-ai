@@ -42,3 +42,14 @@ llama-swap restart applies at once.
 - **The coder swap** runs apply, whose restart stops every engine, the old coder included; then the
   pull of the new coder, during which a request for it is refused with `not_downloaded`; then
   `make clients`.
+
+*What I see, worded at the design's UX pass (2026-10-07):* the diff, then *Waiting for a quiet
+moment: the coder answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C leaves
+everything as it was; `make apply-now` restarts now.* After 15 minutes: *No quiet minute in 15
+minutes. Drain now, holding new requests while the 2 in flight finish? [y/N]* `make apply-now`
+asks first, naming the requests it would cut off. After the restart my phone gets a default *make
+apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder
+loads on its next request.* During the swap, pi's request for the new coder reads *The coder isn't
+downloaded yet. On the Spark, `make pull` fetches it (16 GiB)*, and one for the old name reads
+*There's no model called qwen3.6-35b-a3b here …*, listing the models and saying `make clients`
+updates pi's list. The plan's *What you see in Phase 2a* has every message.

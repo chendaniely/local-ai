@@ -29,3 +29,11 @@ menu bar comes with 2b. From 2a the coder is Qwen3.8-27B.
 my phone in 2a, and my Mac from 2b. Whether 2a builds the weekday preload's setting, or leaves it
 until I turn it on, I decide with 2a's plan. After 2a this page stays `planned`, with a dated note
 recording its gate part, until 2b's menu bar completes it.
+
+*What I see, worded at the design's UX pass (2026-10-07):* pi shows only a slower first reply;
+nothing is added to its answer. My phone gets two silent notifications, *Loading the coder for pi
+on the Mac (24 s last time)…* and then *Loaded the coder in 24 s.* `spark pin coder 8h` answers
+*The coder stays loaded until 18:00 (`spark unpin coder` ends the pin)*, and when it runs out a
+silent *The pin on the coder ended at 18:00; it unloads after 60 min idle.* `spark status` lists
+the coder as *loads when asked*, the others as *always loaded*. The plan's *What you see in Phase
+2a* has every message.

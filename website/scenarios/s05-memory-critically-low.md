@@ -67,3 +67,14 @@ Admission keeps 24 GiB free, not 22: the reserve went back to 24 the same day.
   loaded it once; no `held_by_brake` without a hold.
 - **While the gate is down,** the brake sends its own high-priority "brake fired" to ntfy, by the
   failure notifier's independent path, so I hear about the brake, not only that the gate is down.
+
+*What I see, worded at the design's UX pass (2026-10-07):* a high-priority *Brake on brightroar at
+03:12: 19.6 GiB free, under the 20 GiB line. Unloaded the coder, which was loading; new loads are
+paused. They resume by themselves after 5 min above 28 GiB free.* Then, at default priority,
+*Brake released at 03:40, 64 GiB free. Reloaded Gemma and the embeddings. The coder was loading
+when it fired, so it loads again only when you ask.* A second brake within the hour, or a hold
+found after a reboot, sends a high-priority *… new loads are still paused. On the Spark,
+`make brake-release` resumes them.* While loads are paused, a request is refused with *Not loading
+the coder now: memory ran low at 03:12 …*, and `spark status` shows *paused*. `agent`'s requests
+for the coder afterwards get `footprint_suspect` and a notification naming `spark load coder`
+(my decision the same day). The plan's *What you see in Phase 2a* has every message.

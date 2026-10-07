@@ -42,3 +42,13 @@ names both. It is a `503` with `Retry-After` and `x-should-retry: false`, so the
 retry it by itself; how pi and Open WebUI show it is checked before 2a's plan is written. A start
 that fails is refused with `load_failed`, and its reason. The "refused" notification reaches my
 phone.
+
+*What I see, worded at the design's UX pass (2026-10-07):* with a 32 GiB python job of mine
+running beside the always-loaded models, pi shows only its usual "thinking" for 30 s, with nothing
+added to the answer, and then: *The coder didn't load: it needs 41 GiB, and 18 GiB is free after
+the 24 GiB reserve and the 6 GiB the loaded models may still grow into. Using memory now: python3
+(chendaniely) 32 GiB, Gemma 27 GiB. On the Spark, `spark make-room 41G` frees room; or try again
+later.* The code, `no_fit`, is in the error's `code` field, not the sentence. My phone gets a
+default-priority *Refused the coder for pi on the Mac: needs 41 GiB, 18 free*, and a burst of the
+same refusal collapses into one more, with a count. The plan's *What you see in Phase 2a* has the
+message for every code.

@@ -37,3 +37,13 @@ and the coder waits for a request. `spark status` shows the hold, its size and w
 make-room says so, shows the most it can free, and unloads nothing unless I confirm that. An
 always-loaded model that doesn't fit when the hold ends waits, loads once it fits, and shows as
 waiting in `spark status`.)
+
+*What I see, worded at the design's UX pass (2026-10-07):* with the always-loaded models and the
+coder loaded and nothing else running, 9 GiB is free for a load, so `spark make-room 70G` lists
+*the coder 41 GiB, loads when asked* and *Gemma 32 GiB, always loaded*, first, says that unloading
+both frees 82 GiB, and asks once. Then: *Unloaded the coder and Gemma. 82 GiB free; 70 GiB held for
+you until `spark make-room --done` or a reboot.* pi's next request waits 30 s and then reads: *The
+coder didn't load: it needs 41 GiB, and 12 GiB is free after the 24 GiB reserve and the 70 GiB held
+for you by make-room. On the Spark, `spark make-room --done` ends the hold; or try again later.*
+When I end the hold, a default notification says *make-room's 70 GiB hold ended*, and Gemma
+reloads. The plan's *What you see in Phase 2a* has every message.
