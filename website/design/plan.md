@@ -409,7 +409,13 @@ the memory needed against what's free for a load, after the reserve, the growth 
 make-room hold, the top holders, and the options (`spark make-room <size>`, or retry). So S03's explanation shows
 inline in the client from 2a, not from Phase 3. Each code's message, word for word, is under *What
 you see in Phase 2a*. pi's and Open WebUI's handling of the status, the
-retry and the text is checked before `website/design/phase-2a.md` fixes them.
+retry and the text is checked before `website/design/phase-2a.md` fixes them. *(Checked 2026-10-07,
+from their source, for that plan (its *Before Task 1*): Open WebUI v0.11.4 passes the status and
+the JSON body on, with no retry, and shows the error's `message`, so the error carries no `detail`;
+pi 0.85.1 and 0.87.1 show the error object as JSON after the status, so it carries only `message`
+and `code`, and pi's own auto-retry, on by default, retries a turn whose error text holds "503" up
+to three times, 2, 4 and 8 s apart, whatever `x-should-retry` says. The S03 drill confirms it on
+the box.)*
 
 `agent`'s pi has to wait that long. pi 0.85.1, `agent`'s pinned version, gives up on a request that
 has no response headers after `httpIdleTimeoutMs`, 300,000 by default, half `agent`'s wait (its
@@ -474,7 +480,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    a work-hours pin is a setting, off by default, fit-checked, that notifies if it doesn't fit
    (2026-10-05). Revised the same day after the council: pins are Dan's only, set on the control
    socket; `agent` keeps its model with a session, which is its own, tied to a live process, capped
-   and expiring (*The front and the gate*).)*
+   and expiring (*The front and the gate*). Ruled 2026-10-07, with 2a's plan: the weekday preload
+   isn't built in 2a; it waits in the Backlog until Dan asks for it.)*
 4. **make-room** lists candidate unloads with their sizes and unloads only what Dan confirms.
    *(Phase 2a, Dan's decision, 2026-10-07: `spark make-room <size>` lists everything it could
    unload, **residents included**, largest first, and unloads what Dan confirms; **`--all`**
@@ -1329,6 +1336,8 @@ same day after the council, with Dan's decisions and the session's rulings; for 
 after which `website/design/phase-2a.md` is written. As first written, its items had the brake in
 the gate, llama-swap on 9101, the reserve at 22, the coder at ~38 and a done-when of scenarios
 only; git history keeps them.)
+*Approved by Dan, 2026-10-07. Its implementation plan: [Phase 2a — implementation
+plan](phase-2a.md), written the same day.*
 
 - [Dan] **ntfy** on the Synology, in Container Manager, at the start of 2a (moved up from 2b; Dan,
   2026-10-05), pinned at v2.28.0 by its index digest, with no public relay (the ntfy row), over the
@@ -1355,6 +1364,9 @@ only; git history keeps them.)
 - [Spark] ntfy's records, in one commit: `stack/synology/compose.yaml` with the digest, a
   `stack/versions.yaml` row (`where: [synology]`), the Stack page generated again, an `updates.md`
   row, and a test that the compose file's digest is the pin. No address, token or hostname goes in.
+  *(Dan, 2026-10-07: the file is `stack/synology/ntfy/compose.yaml`, deployed with any Compose
+  helper, Portainer's stacks today, or plain `docker compose up -d`; the NAS's address, the topic
+  names and the tokens arrive as variables it names. 2b's watchdog follows the same pattern.)*
 - [Spark] **the front and the gate** (*The front and the gate*): the front as `spark-front` on the
   socket-activated 127.0.0.1:9100, with the key digests, the route list and its limits; the gate on
   its two socket-activated sockets, with SO_PEERCRED; `local-ai-brake` kept, reading the gate's
@@ -1384,7 +1396,7 @@ only; git history keeps them.)
   every refusal's message and each command's confirmation as *What you see in Phase 2a* words them
   (added at the UX pass). The weekday preload's setting, off by
   default, too, unless Dan leaves it until he turns it on, as the council's security review
-  suggests.
+  suggests. *(Ruled 2026-10-07, with the plan: not in 2a; the Backlog, until Dan asks for it.)*
 - [Spark] `spark status` (requests waiting, recent refusals, the growth owed, the holds,
   unaccounted memory, `--json`, in *What you see in Phase 2a*'s plain words and layout) · `spark doctor` with the front, the gate, the brake and ntfy, a
   check for each of 2a's scenarios, doctor's version-drift checks, and the rendered llama-swap
@@ -1683,7 +1695,9 @@ Each item gets its own design pass when its turn comes.
   `version:` inputs, uv's `required-version`, the gitleaks pin (Renovate's regex manager, or a
   `spark` check against each changelog) · tag the tailnet's always-on devices that aren't Dan's
   own (the NAS, if it runs Tailscale as Dan), so `autogroup:member`, which the ACL's grants to the
-  Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway.
+  Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway
+  · the weekday preload with a work-hours pin, a setting off by default (from Phase 2a,
+  2026-10-07, until Dan asks for it).
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
@@ -2682,6 +2696,23 @@ Each item gets its own design pass when its turn comes.
   load it"; llama-swap's `429` is passed on, worded; "leaves 50 GiB free for a load"; and *paused*
   is the brake's word, *held* make-room's, with `model_not_found`'s names an exception. S02, S03,
   S05, S14 and the Architecture page follow.
+- **2026-10-07** — Phase 2a's implementation plan, [`phase-2a.md`](phase-2a.md), written from the
+  approved design: 50 tasks, 46 on the Spark, 2 Dan's and 2 on the Mac, as contracts — files,
+  interfaces, each test and what it asserts — rather than code (the controller's ruling; every
+  command block in it run first, on stand-ins where the real thing would change the box). The
+  controller's rulings on the plan's questions, Dan having left them to the session: the weekday
+  preload isn't built in 2a, and waits in the Backlog (rule 3, the Phase 2a line and S01 say so);
+  the private values file is `/etc/local-ai/values.env`, its topic names private too; the values
+  the spec left open (caps, timeouts, the notifier's interval, each code's retry-after) are the
+  plan's Global Constraints; the notifications table is generated at
+  `website/reference/notifications.md`; `spark` and `spark-front` hold no sessions;
+  `make brake-release` falls back to Phase 1's direct release while the gate doesn't answer;
+  `llama-swap.env` stays, root-only, for the rollback until 2a's close; and `spark doctor`'s
+  upload and privacy canary run only with `--full`. Dan's additions the same day: ntfy is a Docker
+  Compose file deployed with any Compose helper, Portainer's stacks today (the Phase 2a line's
+  ntfy item), and a questions-and-answers page, [`phase-2a-qa.md`](phase-2a-qa.md), records why
+  the design is what it is. pi's and Open WebUI's handling of a refusal was checked from their
+  source (*The front and the gate*): pi retries a refused turn by itself, up to three times.
 
 ## Sources
 

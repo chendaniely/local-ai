@@ -37,3 +37,7 @@ on the Mac (24 s last time)…* and then *Loaded the coder in 24 s.* `spark pin 
 silent *The pin on the coder ended at 18:00; it unloads after 60 min idle.* `spark status` lists
 the coder as *loads when asked*, the others as *always loaded*. The plan's *What you see in Phase
 2a* has every message.
+
+*Ruled 2026-10-07, with 2a's plan (I had left it to the session):* the weekday preload isn't
+built in 2a. It waits in the plan's Backlog until I ask for it, so `spark load <coder>` and
+`spark pin <coder>` are 2a's way in the morning.
