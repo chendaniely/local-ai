@@ -51,6 +51,14 @@ SESSIONS_PER_UID = 8  # the sessions one uid may hold at once
 SESSION_TTL_S = 43200  # a session not renewed for 12 h ends, as one does when its process exits
 REFUSAL_HISTORY = 50  # the refusals the gate keeps, for status's *recent*
 NTFY_TIMEOUT_S = 5.0  # a publish to ntfy
+# The gate's publish queue holds at most this many: a high alert is never dropped and goes ahead of default and low;
+# when it is full, the oldest low goes first, then the oldest default (the controller's ruling at Task 14's review).
+NTFY_QUEUE_MAX = 100
+# A high alert ntfy didn't take is kept, and sent once ntfy answers again while it is under this old, saying it is late;
+# with nothing else to send, it is tried again this often (the controller's ruling at Task 14's review, under Dan's
+# "err on more notifications"). Default and low alerts aren't sent again.
+NTFY_LATE_KEEP_S = 21600
+NTFY_LATE_RETRY_S = 60
 BURST_WINDOW_S = 600  # of identical refusals the first goes at once, and the repeats within this go as one
 BACK_UP_AFTER_S = 60  # back_up once a unit that was down has stayed up this long
 # The brake's hold lifts by itself once memory has stayed above the warn line this long, if the reloads fit.
@@ -562,6 +570,7 @@ class BrakeHealth(TypedDict):
 class NtfyHealth(TypedDict):
     status: str
     failing_since: float | None
+    dropped: int  # notifications the full queue dropped since the gate started (Task 14's review): `spark status`
 
 
 class EngineView(TypedDict):

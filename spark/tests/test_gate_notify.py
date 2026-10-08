@@ -18,9 +18,11 @@ import pytest
 
 from spark import messages
 from spark.brakeevents import EVENTS_FILE, BrakeEvent, append_event
-from spark.gate.notify import MemoryWarning, Notifier, NtfyError, NtfyPublisher, ingest_brake_events
+from spark.gate.notify import (MemoryWarning, Notifier, NtfyError, NtfyPublisher, ingest_brake_events,
+                               quiet_http_loggers)
 from spark.gate.state import BrakeMark, GateState, ModelRecord, load_state, notified_key, save_state
-from spark.gateproto import FIRED_ALONE_S, RELEASE_AFTER_S
+from spark.gateproto import FIRED_ALONE_S, NTFY_LATE_KEEP_S, NTFY_LATE_RETRY_S, NTFY_QUEUE_MAX, RELEASE_AFTER_S
+from spark.hold import Hold, write_hold
 from spark.messages import Moment, Notification
 from spark.registry import NOTIFICATION_TYPES, load_registry
 
@@ -151,7 +153,10 @@ async def test_every_type_goes_at_its_registry_priority():
             for kind, fields in SENT_BY_THE_GATE.items():
                 notifier.emit(kind, f"event:{kind}", **fields)
             await notifier.drained()
-        assert [n.type for n in published.sent] == list(SENT_BY_THE_GATE)
+        # Each once; the high alerts first (the queue's order, the controller's ruling at Task 14's review).
+        assert sorted(n.type for n in published.sent) == sorted(SENT_BY_THE_GATE)
+        highs = [n.type for n in published.sent if n.priority == "high"]
+        assert [n.type for n in published.sent][:len(highs)] == highs
         for n in published.sent:
             assert n.priority == ROTATED.notifications[n.type] != REGISTRY.notifications[n.type]
             assert n.message == text(n.type, ROTATED, **SENT_BY_THE_GATE[n.type])
@@ -425,9 +430,30 @@ async def _stand_in_ntfy(answer: bytes, seen: list):
     return await asyncio.start_server(handle, "127.0.0.1", 0)
 
 
+@pytest.fixture
+def http_loggers():
+    """httpx's and httpcore's levels, put back after the test."""
+    kept = {name: logging.getLogger(name).level for name in ("httpx", "httpcore")}
+    yield
+    for name, level in kept.items():
+        logging.getLogger(name).setLevel(level)
+
+
+def test_the_publisher_leaves_the_loggers_to_the_gates_logging_setup(http_loggers):
+    # The gate's logging setup quiets httpx and httpcore (Task 19), whether or not ntfy is set up; the publisher
+    # changes nothing (the controller's ruling at Task 14's review).
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.NOTSET)
+    NtfyPublisher("http://standin-nas.invalid", TOPIC, ("Authorization", f"Bearer {TOKEN}"))
+    assert [logging.getLogger(name).level for name in ("httpx", "httpcore")] == [logging.NOTSET] * 2
+    quiet_http_loggers()
+    assert [logging.getLogger(name).level for name in ("httpx", "httpcore")] == [logging.WARNING] * 2
+
+
 @pytest.mark.anyio
-async def test_the_token_travels_only_in_a_header(caplog):
+async def test_the_token_travels_only_in_a_header(caplog, http_loggers):
     caplog.set_level(logging.DEBUG)
+    quiet_http_loggers()  # as the gate's logging setup does
     with anyio.fail_after(BOUND_S):
         seen: list = []
         server = await _stand_in_ntfy(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}", seen)
@@ -513,7 +539,8 @@ def plans_episode(folder: Path, *, by_brake: bool = False) -> list[BrakeEvent]:
 def test_brake_events_become_brake_fired_and_its_follow_ups(tmp_path):
     written = plans_episode(tmp_path)
     state = GateState()
-    found = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, now=at(3, 13, 2), starts={CODER: 45.9})
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 2),
+                                starts={CODER: 45.9})
     assert texts(found) == [
         "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was "
         "loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.",
@@ -529,7 +556,8 @@ def test_brake_events_become_brake_fired_and_its_follow_ups(tmp_path):
     assert set(state.brake_marks) == {CODER}
     last = written[-1]
     assert state.brake_events_after == (BOOT, last.seq, last.at)
-    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, now=at(3, 14)) == []  # each read once
+    # Each is read once.
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 14)) == []
 
 
 def test_a_mark_with_no_reading_of_its_start_sees_nothing(tmp_path):
@@ -537,14 +565,14 @@ def test_a_mark_with_no_reading_of_its_start_sees_nothing(tmp_path):
     # controller's ruling, at Task 14).
     plans_episode(tmp_path)
     state = GateState()
-    ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, now=at(3, 13, 2))
+    ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 2))
     assert state.brake_marks[CODER] == BrakeMark(CODER, at(3, 12), None)
 
 
 def test_what_the_brake_sent_itself_is_not_sent_again(tmp_path):
     written = plans_episode(tmp_path, by_brake=True)
     state = GateState()
-    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, now=at(3, 13, 2)) == []
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 2)) == []
     assert state.brake_events_after == (BOOT, written[-1].seq, written[-1].at)
     assert CODER in state.brake_marks  # the mark is the gate's state, whoever sent the alert
 
@@ -552,7 +580,7 @@ def test_what_the_brake_sent_itself_is_not_sent_again(tmp_path):
 def test_a_drill_lines_event_is_worded_with_its_own_line(tmp_path):
     write(tmp_path, event("fired", at(3, 12), available=52.3, line=56),
           event("unload", at(3, 12, 1), model=GEMMA, state="idle", available=52.0, line=56))
-    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, now=at(3, 12, 2))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
     (words,) = texts(found)
     assert "52.3 GiB available, under the 56 GiB line." in words and "20 GiB" not in words
 
@@ -561,11 +589,11 @@ def test_two_episodes_send_two_brake_fired(tmp_path):
     path = tmp_path / EVENTS_FILE
     state = GateState()
     write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"))
-    first = ingest_brake_events(path, state, REGISTRY, now=at(3, 12, 2))
+    first = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
     state.last_auto_release_at = at(3, 40)  # the gate's automatic release between the two
     write(tmp_path, event("fired", at(3, 50), episode=2), event("unload", at(3, 50, 1), episode=2, model=GEMMA,
                                                                 state="idle"))
-    second = ingest_brake_events(path, state, REGISTRY, now=at(3, 50, 2))
+    second = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 50, 2))
     assert [kind for kind, _, _ in first + second] == ["brake_fired", "brake_fired"]
     assert not any(fields.get("follow_up") for _, _, fields in first + second)
     assert first[0][1] != second[0][1]
@@ -577,7 +605,7 @@ def test_two_episodes_send_two_brake_fired(tmp_path):
 def test_after_a_damaged_start_a_brake_never_names_an_automatic_release(tmp_path):
     state = GateState(last_auto_release_at=at(3, 0), release_assumed=True)
     write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"))
-    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, now=at(3, 12, 2)))
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)))
     assert words.endswith("New loads stay paused until you release them: the gate's saved state was damaged, so it "
                           "can't tell when the last automatic release was. On the Spark, `make brake-release` resumes "
                           "them.")
@@ -589,16 +617,17 @@ def test_a_lone_fired_event_waits_for_its_unload(tmp_path):
     path = tmp_path / EVENTS_FILE
     state = GateState()
     write(tmp_path, event("fired", at(3, 12)))
-    assert ingest_brake_events(path, state, REGISTRY, now=at(3, 12, FIRED_ALONE_S - 0.5)) == []
+    assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, FIRED_ALONE_S - 0.5)) == []
     assert state.brake_events_after is None  # left to read again
     write(tmp_path, event("unload", at(3, 12, 3), model=CODER, state="starting"))
-    found = ingest_brake_events(path, state, REGISTRY, now=at(3, 12, 4))
+    found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 4))
     assert texts(found) == [text("brake_fired", **FIRED)]
 
 
 def test_a_brake_with_nothing_loaded_says_so_once_its_wait_is_over(tmp_path):
     write(tmp_path, event("fired", at(3, 12)))
-    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, now=at(3, 12, FIRED_ALONE_S))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
+                                now=at(3, 12, FIRED_ALONE_S))
     assert texts(found) == [
         "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Nothing of the stack's was loaded, "
         "so there was nothing to unload; new loads are paused. They resume by themselves after 5 min above 28 GiB "
@@ -611,13 +640,13 @@ def test_a_brake_whose_unload_went_unanswered_says_so_then_follows_up(tmp_path):
                                                  fall_flagged=False, rss_anon_at_load_gib=None, last_use=at(3, 0),
                                                  state="ready")})
     write(tmp_path, event("fired", at(3, 12)), event("warn", at(3, 12, 1)))  # a warn is no unload
-    found = ingest_brake_events(path, state, REGISTRY, now=at(3, 12, 6))
+    found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 6))
     assert texts(found) == [
         "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't "
-        "unloaded anything yet: llama-swap didn't answer its unload. On the Spark, `make logs s=brake` shows why. "
+        "unloaded anything yet: llama-swap hasn't confirmed its unload. On the Spark, `make logs s=brake` shows why. "
         "They resume by themselves after 5 min above 28 GiB available."]
     write(tmp_path, event("unload", at(3, 13), model=GEMMA, state="idle"))
-    assert texts(ingest_brake_events(path, state, REGISTRY, now=at(3, 13, 1))) == [
+    assert texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 1))) == [
         "Brake, 03:13: also unloaded Gemma, which was idle."]
 
 
@@ -626,3 +655,217 @@ def test_memory_warning_once_per_fall():
     assert [warning.check(reading, 28) for reading in (30, 27.4, 27, 26, 29, 27)] == [
         False, True, False, False, False, True]
 
+
+
+# A brake from before a reboot (the controller's ruling at Task 14's review): the box froze, or was power-cycled,
+# before the gate read the brake's events. The hold from that boot waits for Dan after the reboot (rule 5).
+LATER_BOOT = "boot-2"
+
+
+def gemma_loaded() -> dict:
+    return {GEMMA: ModelRecord(name=GEMMA, footprint_gib=32, loaded_at=at(4, 0), load_fall_gib=27, fall_flagged=False,
+                               rss_anon_at_load_gib=None, last_use=at(4, 0), state="ready")}
+
+
+def test_a_brake_from_before_a_reboot_says_the_pause_still_stands(tmp_path):
+    path = tmp_path / EVENTS_FILE
+    written = write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="starting"))
+    write_hold(tmp_path, Hold("2026-10-08T03:12:00", "19.6 GiB available", (CODER,), BOOT, 1, CODER, 19.6))
+    state = GateState(models=gemma_loaded(), boot_id=LATER_BOOT)  # restored on the new boot, Gemma reloaded
+    found = ingest_brake_events(path, state, REGISTRY, boot_id=LATER_BOOT, now=at(4, 1))
+    assert [(kind, key) for kind, key, _ in found] == [("brake_needs_release", f"brake-needs:{BOOT}:1")]
+    assert texts(found) == ["After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB "
+                            "available; it unloaded the coder). On the Spark, `make brake-release` resumes them."]
+    # The stale fired is marked notified, never sent: no "resume by themselves", no unload unconfirmed.
+    assert state.notified == {notified_key("brake_fired", f"brake:{BOOT}:1:{written[0].seq}"): at(4, 1)}
+    assert CODER in state.brake_marks
+    assert state.brake_events_after == (BOOT, written[-1].seq, written[-1].at)
+
+
+def test_a_lone_fired_from_before_a_reboot_isnt_held_and_says_only_what_is_known(tmp_path):
+    write(tmp_path, event("fired", at(3, 12)))
+    write_hold(tmp_path, Hold("2026-10-08T03:12:00", "19.6 GiB available", (), BOOT, 1, None, 19.6))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(models=gemma_loaded()), REGISTRY,
+                                boot_id=LATER_BOOT, now=at(3, 12, 1))  # 1 s after it, but its boot has gone
+    assert texts(found) == ["After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB "
+                            "available). On the Spark, `make brake-release` resumes them."]
+
+
+def test_a_brake_from_before_a_reboot_with_no_hold_left_sends_nothing(tmp_path):
+    # Nothing is paused, so "still paused" would be untrue: the fired is marked, and nothing goes.
+    written = write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=GEMMA, state="idle"))
+    state = GateState()
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=LATER_BOOT, now=at(4, 1)) == []
+    assert notified_key("brake_fired", f"brake:{BOOT}:1:{written[0].seq}") in state.notified
+
+
+@pytest.mark.anyio
+async def test_the_reboots_alert_and_the_holds_are_one(tmp_path):
+    # Task 17 sends brake_needs_release for the hold it finds after a reboot under the same key, so one goes.
+    write(tmp_path, event("fired", at(3, 12)))
+    write_hold(tmp_path, Hold("2026-10-08T03:12:00", "19.6 GiB available", (), BOOT, 1, None, 19.6))
+    state = GateState(boot_id=LATER_BOOT)
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        notifier = Notifier(published, REGISTRY, state, Clock(at(4, 1)))
+        async with serving(notifier):
+            for kind, key, fields in ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY,
+                                                         boot_id=LATER_BOOT, now=at(4, 1)):
+                notifier.emit(kind, key, **fields)
+            notifier.emit("brake_needs_release", f"brake-needs:{BOOT}:1", fired_at=at(3, 12))
+            await notifier.drained()
+    assert [n.type for n in published.sent] == ["brake_needs_release"]
+
+
+def test_an_episode_its_own_hold_dates_is_judged_by_that_hold(tmp_path):
+    # rule 5 for the episode's own hold, read from the events file's folder: fired at 02:30 by the hold, 30 min after
+    # the automatic release at 02:00, so it waits for Dan; another episode's hold is passed over for the event's time.
+    path = tmp_path / EVENTS_FILE
+    write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=GEMMA, state="idle"))
+    state = GateState(last_auto_release_at=at(2, 0))
+    write_hold(tmp_path, Hold("2026-10-08T02:30:00", "19.6 GiB available", (GEMMA,), BOOT, 1, None, 19.6))
+    (own,) = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
+    assert own[2]["release_waits_for_dan"] is True and own[2]["released_at"] == at(2, 0)
+    write_hold(tmp_path, Hold("2026-10-08T02:30:00", "19.6 GiB available", (GEMMA,), BOOT, 7, None, 19.6))
+    state = GateState(last_auto_release_at=at(2, 0))
+    (other,) = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
+    assert other[2]["release_waits_for_dan"] is False  # 03:12 is 72 min after 02:00
+
+
+# The publish queue (the controller's ruling at Task 14's review): at most NTFY_QUEUE_MAX; a high alert goes ahead of
+# default and low and is never dropped; when it is full, the oldest low goes first, then the oldest default.
+def low(n: int) -> tuple[str, str, dict]:
+    return "loaded", f"load:l{n}", {"label": "the coder", "seconds": n}
+
+
+def default(n: int) -> tuple[str, str, dict]:
+    return "resident_waiting", f"resident:d{n}", {"label": "Gemma", "needed_gib": n, "free_gib": 1, "after": "hold"}
+
+
+def high(n: int) -> tuple[str, str, dict]:
+    return "brake_needs_release", f"brake-needs:h{n}", {"fired_at": at(2, 0, 60 * n)}
+
+
+@pytest.mark.anyio
+async def test_the_queue_is_bounded_and_high_alerts_go_first_and_are_never_dropped(caplog):
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        notifier = Notifier(published, REGISTRY, GateState(), Clock(at(9, 0)))
+        emits = [low(n) for n in range(1, 61)] + [default(n) for n in range(1, 51)] + [high(n) for n in range(1, 4)]
+        for kind, key, fields in emits:  # nothing serves the queue yet: ntfy as good as out of reach
+            notifier.emit(kind, key, **fields)
+        assert notifier.dropped == 60 + 50 + 3 - NTFY_QUEUE_MAX  # the 13 oldest lows
+        notifier.emit(*high(4)[:2], **high(4)[2])
+        assert notifier.dropped == 14
+        async with serving(notifier):
+            await notifier.drained()
+    sent = published.sent
+    assert len(sent) == NTFY_QUEUE_MAX
+    assert [n.type for n in sent[:4]] == ["brake_needs_release"] * 4  # the highs first, in their order
+    assert [n.message for n in sent[:4]] == [text(*high(n)[:1], **high(n)[2]) for n in range(1, 5)]
+    rest = [n.message for n in sent[4:]]
+    assert rest == [text("loaded", **low(n)[2]) for n in range(15, 61)] + [text("resident_waiting", **default(n)[2])
+                                                                            for n in range(1, 51)]
+    assert "loaded notification was dropped" in caplog.text
+
+
+def test_when_full_with_no_low_the_oldest_default_goes_and_highs_stay():
+    notifier = Notifier(Published(), REGISTRY, GateState(), Clock(at(9, 0)))
+    for n in range(1, NTFY_QUEUE_MAX + 1):
+        notifier.emit(*default(n)[:2], **default(n)[2])
+    notifier.emit(*low(1)[:2], **low(1)[2])  # the only low, and the queue full: it goes, before any default
+    assert notifier.dropped == 1 and notifier.queued == NTFY_QUEUE_MAX
+    notifier.emit(*default(101)[:2], **default(101)[2])  # the oldest default goes
+    assert notifier.dropped == 2
+    for n in range(1, NTFY_QUEUE_MAX + 2):
+        notifier.emit(*high(n)[:2], **high(n)[2])
+    assert notifier.dropped == 2 + NTFY_QUEUE_MAX  # every default and low went first
+    assert notifier.queued == NTFY_QUEUE_MAX + 1  # and a high alert is never dropped, even past the bound
+
+
+@pytest.mark.anyio
+async def test_a_clean_stop_flushes_the_open_bursts_and_never_waits_on_a_hung_ntfy():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        clock = Clock(at(9, 12))
+        notifier = Notifier(published, REGISTRY, GateState(), clock)
+        async with serving(notifier):
+            for n in range(3):
+                notifier.emit("footprint_suspect", f"refusal:r{n}", **SUSPECT)
+            await notifier.drained()
+            assert len(published.sent) == 1
+            clock.now = at(9, 15)  # the window is still open
+            notifier.flush()
+            assert await notifier.drained()
+        assert published.texts[1] == "Didn't load the coder for agent 2 more times since 09:12: same reason."
+
+        hung = Published()
+        hung.hang = True
+        stuck = Notifier(hung, REGISTRY, GateState(), clock, timeout_s=60)
+        async with serving(stuck):
+            stuck.emit("loaded", "load:t1", label="the coder", seconds=24)
+            began = time.perf_counter()
+            assert await stuck.drained(timeout_s=0.05) is False  # bounded: a stop goes on
+            assert time.perf_counter() - began < 0.5
+
+
+# A high alert ntfy didn't take (the controller's ruling at Task 14's review, under Dan's "err on more notifications"):
+# kept, and sent once ntfy answers again while it is under NTFY_LATE_KEEP_S old, saying so. Default and low aren't.
+@pytest.mark.anyio
+async def test_a_high_alert_ntfy_missed_is_sent_late_once_it_answers():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.hang = True
+        clock = Clock(at(3, 12))
+        state = GateState()
+        notifier = Notifier(published, REGISTRY, state, clock, timeout_s=0.05)
+        fired = {**FIRED, "at": at(3, 12)}
+        async with serving(notifier):
+            notifier.emit("brake_fired", "brake:b:1:1", **fired)
+            notifier.emit("loaded", "load:t1", label="the coder", seconds=24)
+            await notifier.drained()
+            assert published.sent == [] and state.notify_failing_since == at(3, 12)
+            published.hang = False
+            clock.now = at(3, 12, 30)  # before its own retry is due
+            notifier.emit("loaded", "load:t2", label="the coder", seconds=22)  # ntfy answers again
+            await notifier.drained()
+            notifier.tick()
+            await notifier.drained()
+        assert published.texts == [
+            "Loaded the coder in 22 s.",
+            f"{text('brake_fired', **fired)} (sent late: ntfy was out of reach at 03:12)",
+        ]
+        assert published.sent[1].priority == "high"
+
+
+@pytest.mark.anyio
+async def test_a_missed_high_alert_is_retried_on_its_own_and_dropped_past_its_age():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.hang = True
+        clock = Clock(at(3, 12))
+        notifier = Notifier(published, REGISTRY, GateState(), clock, timeout_s=0.05)
+        async with serving(notifier):
+            notifier.emit(*high(1)[:2], **high(1)[2])
+            await notifier.drained()
+            published.hang = False
+            clock.now = at(3, 12) + NTFY_LATE_RETRY_S - 1
+            notifier.tick()
+            await notifier.drained()
+            assert published.sent == []  # not yet time to try again
+            clock.now = at(3, 12) + NTFY_LATE_RETRY_S
+            notifier.tick()  # nothing else is sent: it is tried again on its own
+            await notifier.drained()
+            assert published.texts == [f"{text(*high(1)[:1], **high(1)[2])} (sent late: ntfy was out of reach at "
+                                       "03:12)"]
+
+            published.hang = True
+            clock.now = at(5, 0)
+            notifier.emit(*high(2)[:2], **high(2)[2])
+            await notifier.drained()
+            published.hang = False
+            clock.now = at(5, 0) + NTFY_LATE_KEEP_S  # 6 h on: too old to be news
+            notifier.tick()
+            notifier.emit(*low(1)[:2], **low(1)[2])
+            await notifier.drained()
+        assert published.texts[1:] == [text("loaded", **low(1)[2])]

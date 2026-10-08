@@ -901,9 +901,13 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   low and default. *(Phase 2a, Dan's decisions: ntfy comes in 2a, set up by Dan at its start
   (2026-10-05), so the gate notifies from its first day; the watchdog stays in 2b. It is reached
   over the tailnet or the home LAN only, with no public relay, so out of reach means no alerts, for
-  now. **Quiet hours run 00:00–05:00**, when only high-priority alerts make a sound. The priorities
-  stay as above, with "brake released, and what reloaded" at default (2026-10-07). Revised the
-  same day after the council:
+  now. (Corrected 2026-10-08, at the implementation plan's Task 14 review, the controller's ruling,
+  under Dan's guidance, "I'd rather err on more notifications than something not being clear": a
+  high-priority alert of the gate's that ntfy didn't take is kept, and sent once ntfy answers again
+  while it is under 6 hours old, ending "(sent late: ntfy was out of reach at 03:12)"; default and
+  low alerts aren't sent again.) **Quiet hours run 00:00–05:00**, when only high-priority alerts
+  make a sound. The priorities stay as above, with "brake released, and what reloaded" at default
+  (2026-10-07). Revised the same day after the council:
   - **Quiet hours are set on Dan's phone,** since ntfy's server has none (the session's ruling):
     Android's Do Not Disturb runs 00:00–05:00, and the ntfy app's high and max priority channels
     are allowed through it. The publishers send every alert at its own priority, at any hour.
@@ -1068,10 +1072,10 @@ notifications:
 | Type | Priority | When | Example |
 |---|---|---|---|
 | `brake_fired` | high | the brake fired: it names what it unloaded, and each further unload in the same episode sends a short follow-up; while the gate is down, the brake sends it itself, and the gate, once back, skips what the brake already sent | *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* A brake within the hour after an automatic release, whose hold waits for Dan (rule 5), ends *It fired within an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, `make brake-release`.* in place of *They resume by themselves …* (added 2026-10-07, at the implementation plan's Task 7, the controller's ruling: rule 5's "its high-priority alert says so" is this alert, so one event sends one notification, and it says why this hold waits when the last one didn't). |
-| `brake_needs_release` | high | ~~a brake within the hour after an automatic release, or~~ a hold found after a reboot (corrected 2026-10-07, at the implementation plan's Task 7, the controller's ruling: a brake within the hour says it waits for Dan in its own `brake_fired`, above) | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* |
+| `brake_needs_release` | high | ~~a brake within the hour after an automatic release, or~~ a hold found after a reboot (corrected 2026-10-07, at the implementation plan's Task 7, the controller's ruling: a brake within the hour says it waits for Dan in its own `brake_fired`, above) | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* With what the gate knows of that brake, from the hold or the brake's events (added 2026-10-08, at the implementation plan's Task 14 review, the controller's ruling: one notification for a brake the box went down before the gate could report): *After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB available; it unloaded the coder). On the Spark, `make brake-release` resumes them.* |
 | `gate_down` | high | the failure notifier: the gate stopped | *The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused until it's back. On the Spark, `make doctor` shows what's wrong.* |
 | `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off. On the Spark, `make doctor` shows what's wrong.* |
-| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering; and (added 2026-10-08, at the implementation plan's Task 12 second re-review, the controller's ruling) the gate, once, when a model is still stopping 5 min after its unload call began, `why: "stuck_stopping"` | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* For `stuck_stopping`: *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.* |
+| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering; and (added 2026-10-08, at the implementation plan's Task 12 second re-review, the controller's ruling) the gate, once, when a model is still stopping 5 min after its unload call began, `why: "stuck_stopping"` | ~~*The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.*~~ The gate's, its unit up and not answering (corrected 2026-10-08, at the implementation plan's Task 14 review, the controller's ruling: it hadn't stopped): *The model service on brightroar isn't answering (since 09:14). No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* The failure notifier's, when it crashed: *The model service on brightroar stopped at 09:14 (it crashed; it is restarting). …* For `stuck_stopping`: *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.* |
 | `brake_down` | high | the failure notifier: the brake stopped | *The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the backstop. On the Spark, `make doctor` shows what's wrong.* |
 | `back_up` | default | the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop doesn't alternate it with the `*_down` alerts | *The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.* |
 | `refused` | default | a request was refused, whoever asked | *Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free space with `spark make-room 41G` on the Spark, then try again.* |
@@ -3219,6 +3223,18 @@ Each item gets its own design pass when its turn comes.
     15 s after the call begins, and a model still stopping after 5 minutes sends one high-priority
     alert.
   - Every progress line the gate streams names its kind, and the CLI tells lines apart by it.
+- **2026-10-08** — Phase 2a's Task 14 review, the controller's rulings. Dated notes are in
+  *Visibility and notifications* (ntfy) and *What you see in Phase 2a* (`brake_needs_release`'s and
+  `llama_swap_down`'s rows), and in the implementation plan's Tasks 7, 10, 13, 14, 17, 18, 19, 23
+  and 29.
+  - A high alert ntfy didn't take is sent late once it answers again, within 6 hours, saying so;
+    default and low alerts aren't. The gate's publish queue holds at most 100, high alerts first.
+  - A brake the box went down before the gate could report sends one alert after the reboot, that
+    new loads are still paused, with when it fired and what it unloaded, never words for a pause
+    that ends by itself.
+  - The gate's own downtime comes from systemd within a boot, and from its last activity record
+    across a reboot, never from when its state was last saved; when neither is known, it says so.
+  - llama-swap up but not answering reads *isn't answering*, not *stopped*.
 
 ## Sources
 

@@ -687,8 +687,8 @@ NOTIFICATION_ROWS = [
      "The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in "
      "flight were cut off. On the Spark, `make doctor` shows what's wrong."),
     ("llama_swap_down", {"at": at(9, 14)},
-     "The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are "
-     "refused. On the Spark, `make doctor` shows what's wrong."),
+     "The model service on brightroar isn't answering (since 09:14). No model answers until it's back; requests "
+     "wait, then are refused. On the Spark, `make doctor` shows what's wrong."),
     ("brake_down", DOWN,
      "The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the "
      "backstop. On the Spark, `make doctor` shows what's wrong."),
@@ -998,8 +998,23 @@ COMPOSED = [
     # after its saved state was damaged (the controller's rulings, at Task 14).
     ("brake_fired", {**FIRED, "unloaded": [], "unload_unanswered": True},
      "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't "
-     "unloaded anything yet: llama-swap didn't answer its unload. On the Spark, `make logs s=brake` shows why. They "
-     "resume by themselves after 5 min above 28 GiB available."),
+     "unloaded anything yet: llama-swap hasn't confirmed its unload. On the Spark, `make logs s=brake` shows why. "
+     "They resume by themselves after 5 min above 28 GiB available."),
+    # A brake read after a reboot, with what the gate knows of it (the controller's ruling at Task 14's review).
+    ("brake_needs_release", {"fired_at": AT_0312, "available_gib": 19.6, "unloaded": ["the coder"]},
+     "After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB available; it unloaded the "
+     "coder). On the Spark, `make brake-release` resumes them."),
+    ("brake_needs_release", {"fired_at": AT_0312, "available_gib": 19.6},
+     "After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB available). On the Spark,"),
+    ("brake_needs_release", {"fired_at": AT_0312, "unloaded": ["the coder", "Gemma"]},
+     "from the brake at 03:12 (it unloaded the coder and Gemma). On the Spark,"),
+    # A downtime neither systemd nor the activity record gives (the controller's ruling at Task 14's review).
+    ("back_up", {"unit": "gate", "down_unknown": True},
+     "The gate on brightroar has been running again for a minute; how long it was down isn't known. New loads work "
+     "again."),
+    ("llama_swap_down", {**DOWN, "result_words": "it crashed"},
+     "The model service on brightroar stopped at 09:14 (it crashed; it is restarting). No model answers until it's "
+     "back; requests wait, then are refused."),
     ("back_up", {"unit": "gate", "state_damaged": True},
      "The gate on brightroar has been running again for a minute; how long it was down isn't known: its saved state "
      "was damaged. New loads work again."),
@@ -1156,13 +1171,14 @@ def test_a_brake_after_a_damaged_start_never_names_an_automatic_release():
 
 
 UNANSWERED_HEAD = ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It "
-                   "hasn't unloaded anything yet: llama-swap didn't answer its unload. On the Spark, `make logs s=brake` "
-                   "shows why.")
+                   "hasn't unloaded anything yet: llama-swap hasn't confirmed its unload. On the Spark, `make logs "
+                   "s=brake` shows why.")
 
 
 def test_a_brake_whose_unload_went_unanswered_says_so_then_how_the_pause_ends():
     # The controller's ruling, at Task 14: no unload within FIRED_ALONE_S while something is loaded. Its words are
-    # true whether the unload was slow, failed or refused, then the usual pause sentence.
+    # true whether the unload was slow, failed, refused or never sent (the controller's ruling at Task 14's review),
+    # then the usual pause sentence.
     unanswered = {**FIRED, "unloaded": [], "unload_unanswered": True}
     assert say("brake_fired", **unanswered) == (
         f"{UNANSWERED_HEAD} They resume by themselves after 5 min above 28 GiB available.")
@@ -1182,6 +1198,36 @@ def test_a_brake_whose_unload_went_unanswered_says_so_then_how_the_pause_ends():
     makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
     assert re.search(r"^logs: ## On the Spark: make logs s=llama-swap\|brake\|", makefile, re.MULTILINE)
     assert "journalctl -u local-ai-$(s).service" in makefile
+
+
+def test_a_downtime_not_known_is_said_so_and_never_left_out():
+    # down_s None is a field left out unless down_unknown says the downtime isn't known, so a caller that forgot it
+    # never reads as "isn't known" (the controller's ruling at Task 14's review).
+    with pytest.raises(ValueError, match="^back_up's words need down_s"):
+        say("back_up", unit="front")
+    assert say("back_up", unit="front", down_unknown=True).endswith("how long it was down isn't known. Requests go "
+                                                                   "through again.")
+    with pytest.raises(ValueError, match="^back_up's down_unknown is for a downtime not known: no down_s"):
+        say("back_up", unit="front", down_s=3, down_unknown=True)
+
+
+def test_a_hang_reads_isnt_answering_and_a_crash_stopped():
+    # llama-swap up but not answering isn't "stopped" (the controller's ruling at Task 14's review): result_words None
+    # is the gate's hang; the failure notifier's crash names its result.
+    assert say("llama_swap_down", at=at(9, 14)).startswith("The model service on brightroar isn't answering (since "
+                                                            "09:14).")
+    assert "stopped" not in say("llama_swap_down", at=at(9, 14))
+    assert say("llama_swap_down", **DOWN).startswith("The model service on brightroar stopped at 09:14 (it crashed")
+    assert say("gate_down", at=at(9, 14)).startswith("The gate on brightroar stopped at 09:14.")
+
+
+def test_a_high_alert_sent_late_says_when_ntfy_was_out_of_reach():
+    # The controller's ruling at Task 14's review, under Dan's "err on more notifications": a high alert ntfy didn't
+    # take is sent once it answers again, saying so.
+    first = messages.notification("brake_fired", REGISTRY, **FIRED)
+    late = messages.sent_late(first, at(3, 12))
+    assert (late.type, late.priority) == (first.type, first.priority)
+    assert late.message == f"{first.message} (sent late: ntfy was out of reach at 03:12)"
 
 
 def test_the_gates_return_after_a_damaged_state_says_its_downtime_isnt_known():

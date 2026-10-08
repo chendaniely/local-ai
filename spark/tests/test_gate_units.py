@@ -144,25 +144,50 @@ def test_a_restart_by_hand_is_no_crash():
     # NRestarts counts only systemd's own restarts, and a start by hand sets it back: neither is a crash.
     clock, emitted = Clock(T), Emitted()
     watch = BackUpWatch(emitted, clock)
-    watch.observe("llama-swap", up(3, T - 3600, T - 3700))
+    watch.observe("llama-swap", up(3, T - 3600, T - 3700), answering=True)
     clock.now = T + 1000
-    watch.observe("llama-swap", up(0, T + 900, T + 899))
-    watch.observe("llama-swap", up(0, T + 900, T + 899))
+    watch.observe("llama-swap", up(0, T + 900, T + 899), answering=True)
+    watch.observe("llama-swap", up(0, T + 900, T + 899), answering=True)
     assert emitted.calls == []
 
 
-def test_the_gate_announces_its_own_return_after_an_unclean_stop():
+def test_llama_swaps_return_waits_for_it_to_answer():
+    # "Models answer again" goes only once /running answers, however long its unit has been up (the controller's
+    # ruling at Task 14's review); the core says whether it answered, and must.
+    clock, emitted = Clock(T - 5), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.observe("llama-swap", up(0, T - 3600, None), answering=True)
+    clock.now = T + 1
+    watch.observe("llama-swap", restarting(1, T - 3600, T), answering=False)
+    for now in (T + 13, T + 80, T + 200):
+        clock.now = now
+        watch.observe("llama-swap", up(1, T + 12, T), answering=False)
+    assert emitted.calls == []
+    clock.now = T + 201
+    watch.observe("llama-swap", up(1, T + 12, T), answering=True)
+    assert emitted.texts() == ["The model service on brightroar has been running again for a minute, after 12 s down. "
+                               "Models answer again."]
+    with pytest.raises(ValueError, match="llama-swap's return needs answering"):
+        watch.observe("llama-swap", up(1, T + 12, T))
+
+
+def test_the_gate_reads_its_own_downtime_from_systemd_within_a_boot():
+    # The state is saved only on a change, so saved_at can be hours old after an idle night: the downtime is systemd's
+    # own, from the crash to the return (the controller's ruling at Task 14's review).
     clock, emitted = Clock(T), Emitted()
     watch = BackUpWatch(emitted, clock)
-    watch.gate_restarted(GateState(clean_shutdown=False, saved_at=T - 12), T)
+    watch.gate_restarted(GateState(clean_shutdown=False, saved_at=T - 7 * 3600), T, last_alive=T - 7 * 3600)
+    watch.observe("gate", restarting(1, T - 9000, T - 2))  # Type=notify: activating until it is ready
+    clock.now = T + 1
+    watch.observe("gate", up(1, T + 1, T - 2))
     clock.now = T + BACK_UP_AFTER_S - 1
     watch.tick()
     assert emitted.calls == []
     clock.now = T + 60
     watch.tick()
-    assert emitted.texts() == ["The gate on brightroar has been running again for a minute, after 12 s down. New "
+    assert emitted.texts() == ["The gate on brightroar has been running again for a minute, after 3 s down. New "
                                "loads work again."]
-    assert emitted.calls[0][1] == f"back:gate:{T - 12:.3f}"
+    assert emitted.calls[0][1] == f"back:gate:{T - 2:.3f}"
     clock.now = T + 120
     watch.observe("front", up(0, T - 3600, None))  # observe checks it too, and it went once
     assert len(emitted.calls) == 1
@@ -176,15 +201,51 @@ def test_the_gate_announces_its_own_return_after_an_unclean_stop():
     assert quiet.calls == []
 
 
-def test_after_a_damaged_state_the_gates_return_says_its_downtime_isnt_known(tmp_path):
-    # load_state sets a damaged file aside and saves the fail-safe state at once, so its saved_at is the start, not the
-    # last run's: the downtime isn't known (the controller's ruling, at Task 13's re-review and Task 14).
+def test_after_a_reboot_the_gates_downtime_runs_from_its_last_activity_record():
+    # The gate's unit has no inactive time this boot: its last run ended in the boot before, and the activity record's
+    # written_at, every second, is when it was last alive.
+    clock, emitted = Clock(T), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.gate_restarted(GateState(clean_shutdown=False, saved_at=T - 7 * 3600), T, last_alive=T - 90)
+    watch.observe("gate", up(0, T + 1, None))
+    clock.now = T + 60
+    watch.tick()
+    assert emitted.calls == [("back_up", f"back:gate:{T - 90:.3f}", {"unit": "gate", "down_s": 91})]
+    assert emitted.texts() == ["The gate on brightroar has been running again for a minute, after 1 min 31 s down. "
+                               "New loads work again."]
+
+
+def test_a_downtime_neither_systemd_nor_the_activity_record_gives_isnt_known():
+    clock, emitted = Clock(T), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.gate_restarted(GateState(clean_shutdown=False, saved_at=T - 12), T)
+    watch.observe("gate", up(0, T + 1, None))
+    clock.now = T + 60
+    watch.tick()
+    assert emitted.calls == [("back_up", f"back:gate:{T:.3f}", {"unit": "gate", "down_unknown": True})]
+    assert emitted.texts() == ["The gate on brightroar has been running again for a minute; how long it was down "
+                               "isn't known. New loads work again."]
+
+
+def test_after_a_damaged_state_the_gates_downtime_is_still_systemds(tmp_path):
+    # load_state sets a damaged file aside and saves the fail-safe state at once, its clean_shutdown false. systemd's
+    # times don't depend on it; only with neither systemd's nor the activity record's does the damage word the
+    # unknown (the controller's rulings, at Task 13's re-review and Task 14's review).
     (tmp_path / "state.json").write_text("{")
     state, problem = load_state(tmp_path, now=T, set_aside=True)
     assert problem and state.fresh_after_damage and not state.clean_shutdown and state.saved_at == T
     clock, emitted = Clock(T), Emitted()
     watch = BackUpWatch(emitted, clock)
     watch.gate_restarted(state, T)
+    watch.observe("gate", up(1, T + 1, T - 4))
+    clock.now = T + 60
+    watch.tick()
+    assert emitted.calls == [("back_up", f"back:gate:{T - 4:.3f}", {"unit": "gate", "down_s": 5})]
+
+    clock, emitted = Clock(T), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.gate_restarted(state, T)
+    watch.observe("gate", up(0, T + 1, None))
     clock.now = T + 60
     watch.tick()
     assert emitted.calls == [("back_up", f"back:gate:{T:.3f}", {"unit": "gate", "state_damaged": True})]
@@ -204,8 +265,9 @@ def test_llama_swap_down_once_per_outage_when_it_hangs():
     clock.now = T + 1 + LLAMA_SWAP_HUNG_S
     watch.observe(False, unit, applying=None)
     assert emitted.calls == [("llama_swap_down", f"llama-swap:{T + 1:.3f}", {"at": T + 1, "result_words": None})]
-    assert emitted.texts() == ["The model service on brightroar stopped at 09:14. No model answers until it's back; "
-                               "requests wait, then are refused. On the Spark, `make doctor` shows what's wrong."]
+    assert emitted.texts() == ["The model service on brightroar isn't answering (since 09:14). No model answers "
+                               "until it's back; requests wait, then are refused. On the Spark, `make doctor` shows "
+                               "what's wrong."]
     clock.now = T + 60
     watch.observe(False, unit, applying=None)
     assert len(emitted.calls) == 1  # still the same outage
@@ -216,15 +278,35 @@ def test_llama_swap_down_once_per_outage_when_it_hangs():
         watch.observe(False, unit, applying=None)
     assert [key for _, key, _ in emitted.calls] == [f"llama-swap:{T + 1:.3f}", f"llama-swap:{T + 62:.3f}"]
 
-    # A crash is the failure notifier's: NRestarts rose, or the unit isn't active.
-    for st in (up(1, T + 205, T + 203), restarting(1, T - 3600, T + 203)):
-        crashed = Emitted()
-        watch = LlamaSwapWatch(crashed, clock := Clock(T + 200))
-        watch.observe(True, unit, applying=None)
-        for second in range(201, 260):
-            clock.now = T + second
-            watch.observe(False, unit if second < 203 else st, applying=None)
-        assert crashed.calls == []
+    # A crash is the failure notifier's: while its unit is down, and as it comes back with NRestarts risen, nothing
+    # goes. Back up and still not answering for LLAMA_SWAP_HUNG_S is a hang of its own (the controller's ruling at
+    # Task 14's review).
+    crashed = Emitted()
+    watch = LlamaSwapWatch(crashed, clock := Clock(T + 200))
+    readings = ([(True, unit)] + [(False, unit)] * 2  # T + 200 to 202
+                + [(False, restarting(1, T - 3600, T + 203))] * 2  # 203, 204: down, the notifier's
+                + [(False, up(1, T + 205, T + 203))] * (LLAMA_SWAP_HUNG_S - 1)  # back at 205, 9 s unanswered
+                + [(True, up(1, T + 205, T + 203))])  # then it answers
+    for second, (answering, st) in enumerate(readings, start=200):
+        clock.now = T + second
+        watch.observe(answering, st, applying=None)
+    assert crashed.calls == []
+    readings = ([(False, restarting(2, T + 205, T + 260))] * 2  # T + 260, 261: crashed again
+                + [(False, up(2, T + 262, T + 260))] * (LLAMA_SWAP_HUNG_S + 1))  # back at 262, never answering
+    for second, (answering, st) in enumerate(readings, start=260):
+        clock.now = T + second
+        watch.observe(answering, st, applying=None)
+    assert crashed.calls == [("llama_swap_down", f"llama-swap:{T + 262:.3f}", {"at": T + 262, "result_words": None})]
+    # Restarted between two readings, never seen down: its NRestarts rose, so a hang counts from that reading.
+    quick = Emitted()
+    watch = LlamaSwapWatch(quick, clock := Clock(T + 400))
+    readings = [(False, up(2, T + 262, T + 260))] * 5 + [(False, up(3, T + 404.5, T + 404))] * (LLAMA_SWAP_HUNG_S + 1)
+    for second, (answering, st) in enumerate(readings, start=400):
+        clock.now = T + second
+        watch.observe(answering, st, applying=None)
+        if second == 410:
+            assert quick.calls == []  # 10 s since T + 400, but only 5 since its restart
+    assert [key for _, key, _ in quick.calls] == [f"llama-swap:{T + 405:.3f}"]
 
     # Never while apply's hold stands: it expects the restart.
     holding = Emitted()

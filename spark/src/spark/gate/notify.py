@@ -12,9 +12,11 @@ module adds no words of its own.
   `load_failed` collapses per model, whoever asked. A refusal with no key (one of Dan's own commands) never collapses,
   since a burst's words need one: each goes at once. The windows live in memory, so a restart within one loses its
   count, never its first.
-- **ntfy out of reach never stalls the gate.** `emit` builds the text and returns at once; a queue, served by `run`,
-  publishes each, bounded by NTFY_TIMEOUT_S. A failure sets `GateState.notify_failing_since` to the first failure's
-  time, which `spark status` shows (Task 29), and the next success clears it. A notification that fails isn't sent again.
+- **ntfy out of reach never stalls the gate.** `emit` builds the text and returns at once; a queue of at most
+  NTFY_QUEUE_MAX, served by `run`, publishes each, high alerts first, bounded by NTFY_TIMEOUT_S. A failure sets
+  `GateState.notify_failing_since` to the first failure's time, which `spark status` shows (Task 29), and the next
+  success clears it. A high alert that fails is sent late once ntfy answers again, while it is under NTFY_LATE_KEEP_S
+  old; a default or low one isn't sent again.
 - **The token travels only in a header** (NtfyPublisher): never in the URL, a log line or an error, and neither do
   ntfy's address and the topic, which are private (`/etc/local-ai/values.env`).
 
@@ -40,7 +42,8 @@ from spark import messages
 from spark.brakeevents import BrakeEvent, read_events
 from spark.credentials import HEADER_NAME
 from spark.gate.state import BrakeMark, GateState, notified_key
-from spark.gateproto import BURST_WINDOW_S, FIRED_ALONE_S, NTFY_TIMEOUT_S, RELEASE_AFTER_S
+from spark.gateproto import (BURST_WINDOW_S, FIRED_ALONE_S, NTFY_LATE_KEEP_S, NTFY_LATE_RETRY_S, NTFY_QUEUE_MAX,
+                             NTFY_TIMEOUT_S, RELEASE_AFTER_S)
 from spark.hold import Hold, read_hold, release_waits_for_dan
 from spark.llamaswap import _url_ok
 from spark.messages import Moment, Notification
@@ -50,6 +53,7 @@ _log = logging.getLogger(__name__)
 # The types that carry a refusal: a burst of one refusal collapses into one notification with its count.
 BURST_TYPES = ("refused", "footprint_suspect", "load_failed")
 TICK_S = 1.0  # the publishing task closes the burst windows that are due at least this often
+DRAIN_BOUND_S = 5.0  # a clean stop waits at most this for the queue to empty (the controller's ruling, its review)
 NTFY_TOPIC = re.compile(r"[-_A-Za-z0-9]{1,64}")  # ntfy's own rule for a topic's name
 
 
@@ -65,13 +69,30 @@ class _Window:
     count: int = 0
 
 
+@dataclass(frozen=True)
+class _Item:
+    """A notification waiting to be sent: when it was accepted, and, for a high alert ntfy didn't take, when it first
+    failed, which its late words name."""
+
+    n: Notification
+    at: float
+    failed_at: float | None = None
+
+
 class Notifier:
     """Emit, for every gate module: `emit(type, event_key, **fields)`. `publish` sends one Notification (an
     NtfyPublisher; a recording stand-in in the tests); `clock` gives Unix seconds. The core runs `run()` as a task of
     its own, and saves the state when `on_change` says the notifier changed it (`notified`, `notify_failing_since`).
     `timeout_s` bounds each publish (NTFY_TIMEOUT_S). `registry` may be replaced when the registry is read again.
 
-    Everything here runs on the event loop's thread: `emit` and `tick` never await, so they are never interleaved."""
+    The queue holds at most NTFY_QUEUE_MAX: a high alert goes ahead of default and low and is never dropped; when it
+    is full, the oldest low goes first, then the oldest default, each counted in `dropped`, which `spark status` shows.
+    A high alert ntfy didn't take is kept, and sent once ntfy answers again while it is under NTFY_LATE_KEEP_S old,
+    saying it is late (messages.sent_late); with nothing else sent, it is tried again every NTFY_LATE_RETRY_S. Default
+    and low alerts aren't sent again (the controller's rulings at Task 14's review).
+
+    Everything here runs on the event loop's thread: `emit`, `tick` and `flush` never await, so they are never
+    interleaved."""
 
     def __init__(self, publish: Callable[[Notification], Awaitable[None]], registry: Registry, state: GateState,
                  clock: Callable[[], float] = time.time, *, timeout_s: float = NTFY_TIMEOUT_S,
@@ -82,16 +103,24 @@ class Notifier:
         self._clock = clock
         self.timeout_s = timeout_s
         self._on_change = on_change or (lambda: None)
-        self._queue: deque[Notification] = deque()
+        self._high: deque[_Item] = deque()  # sent first, in their order
+        self._rest: deque[_Item] = deque()  # default and low, in their order
+        self._late: list[_Item] = []  # high alerts ntfy didn't take, kept to send late
+        self._late_tried_at = 0.0
+        self.dropped = 0  # what the full queue dropped since the gate started
         self._windows: dict[tuple[str, str, str, str], _Window] = {}
         self._wake: asyncio.Event | None = None
         self._sending = False
+
+    @property
+    def queued(self) -> int:
+        return len(self._high) + len(self._rest)
 
     def emit(self, type: str, event_key: str, /, **fields: Any) -> None:  # noqa: A002 (Emit's name)
         """Queue the notification `type` for the event `event_key`, in messages' words, and return at once. A type the
         registry has `off` is dropped, and so is an event already notified. A field the type doesn't take, or one its
         words need left out, is messages' ValueError, even for a type that is off: the caller's bug, which its tests
-        show."""
+        show, and which a production caller logs and carries on from (Task 18)."""
         built = messages.notification(type, self.registry, **fields)
         self.tick()
         if built is None:
@@ -109,14 +138,24 @@ class Notifier:
                 window.count += 1
                 return
             self._windows[burst] = _Window(type, burst[1], burst[2], burst[3], since=now)
-        self._put(built)
+        self._put(_Item(built, now))
 
     def tick(self) -> None:
-        """Close each burst window that is due, queueing its repeats as one notification on its own type. `emit` and
-        `run` call it; the core may too."""
+        """Close each burst window that is due, queueing its repeats as one notification on its own type, and queue
+        the high alerts kept to send late once it is time to try them again. `emit` and `run` call it; the core may
+        too."""
         now = self._clock()
+        self._close(lambda window: now - window.since >= BURST_WINDOW_S)
+        if self._late and now - self._late_tried_at >= NTFY_LATE_RETRY_S:
+            self._send_late()
+
+    def flush(self) -> None:
+        """At a clean stop: close every burst window now, so what each has counted goes, before `drained()`."""
+        self._close(lambda window: True)
+
+    def _close(self, due: Callable[[_Window], bool]) -> None:
         for key, window in list(self._windows.items()):
-            if now - window.since < BURST_WINDOW_S:
+            if not due(window):
                 continue
             del self._windows[key]
             if window.count < 1:
@@ -131,28 +170,47 @@ class Notifier:
                 _log.error("notify: a %s burst couldn't be worded: %s", window.type, err)
                 continue
             if built is not None:
-                self._put(built)
+                self._put(_Item(built, self._clock()))
 
-    def _put(self, n: Notification) -> None:
-        self._queue.append(n)
+    def _put(self, item: _Item) -> None:
+        (self._high if item.n.priority == "high" else self._rest).append(item)
+        while self.queued > NTFY_QUEUE_MAX:
+            victim = next((each for each in self._rest if each.n.priority == "low"), None)
+            victim = victim or next((each for each in self._rest if each.n.priority == "default"), None)
+            if victim is None:  # only high alerts: never dropped
+                break
+            self._rest.remove(victim)
+            self.dropped += 1
+            _log.warning("notify: the queue is full, so a %s notification was dropped", victim.n.type)
         if self._wake is not None:
             self._wake.set()
 
+    def _send_late(self) -> None:
+        """Queue the high alerts kept to send late, but those NTFY_LATE_KEEP_S old or more, which are no longer news."""
+        now = self._clock()
+        self._late_tried_at = now
+        kept, self._late = self._late, []
+        for item in kept:
+            if now - item.at >= NTFY_LATE_KEEP_S:
+                _log.warning("notify: a %s alert ntfy didn't take is too old to send late, and isn't sent", item.n.type)
+                continue
+            self._put(item)
+
     async def run(self) -> None:
-        """Publish what is queued, one at a time, each bounded by `timeout_s`, and close the burst windows when they
-        are due; until cancelled."""
+        """Publish what is queued, high alerts first, one at a time, each bounded by `timeout_s`; close the burst
+        windows when they are due; until cancelled."""
         self._wake = asyncio.Event()
         while True:
             self.tick()
-            while self._queue:
+            while self.queued:
                 self._sending = True
                 try:
-                    await self._send(self._queue.popleft())
+                    await self._send((self._high or self._rest).popleft())
                 finally:
                     self._sending = False
                 self.tick()
             self._wake.clear()
-            if self._queue:
+            if self.queued:
                 continue
             try:
                 async with asyncio.timeout(self._until_next()):
@@ -167,30 +225,44 @@ class Notifier:
         due = min(window.since for window in self._windows.values()) + BURST_WINDOW_S - self._clock()
         return min(TICK_S, max(0.0, due))
 
-    async def drained(self) -> None:
-        """Return once nothing is queued and nothing is being sent: for a clean stop, and for the tests."""
-        while self._queue or self._sending:
-            await asyncio.sleep(0.001)
+    async def drained(self, timeout_s: float = DRAIN_BOUND_S) -> bool:
+        """True once nothing is queued and nothing is being sent; False after `timeout_s`, so a hung ntfy never holds
+        a stop. For a clean stop, after `flush()`, and for the tests."""
+        try:
+            async with asyncio.timeout(timeout_s):
+                while self.queued or self._sending:
+                    await asyncio.sleep(0.001)
+        except TimeoutError:
+            return False
+        return True
 
-    async def _send(self, n: Notification) -> None:
+    async def _send(self, item: _Item) -> None:
+        n = item.n if item.failed_at is None else messages.sent_late(item.n, item.failed_at)
         try:
             async with asyncio.timeout(self.timeout_s):
                 await self._publish(n)
         except TimeoutError:
-            self._failed(n, f"ntfy didn't answer within {self.timeout_s:g} s")
+            self._failed(item, f"ntfy didn't answer within {self.timeout_s:g} s")
         except Exception as err:  # noqa: BLE001 (ntfy's trouble never stops the gate)
-            self._failed(n, str(err) if isinstance(err, NtfyError) else type(err).__name__)
+            self._failed(item, str(err) if isinstance(err, NtfyError) else type(err).__name__)
         else:
             if self.state.notify_failing_since is not None:
                 self.state.notify_failing_since = None
                 self._on_change()
                 _log.info("notify: ntfy takes notifications again")
+            if self._late:  # ntfy answers again: the high alerts it missed go now
+                self._send_late()
 
-    def _failed(self, n: Notification, why: str) -> None:
-        """A notification ntfy didn't take: logged by its type alone, never its text, the address or the topic."""
-        _log.warning("notify: a %s notification wasn't sent: %s", n.type, why)
+    def _failed(self, item: _Item, why: str) -> None:
+        """A notification ntfy didn't take: logged by its type alone, never its text, the address or the topic. A high
+        alert is kept to send late; a default or low one is gone."""
+        now = self._clock()
+        _log.warning("notify: a %s notification wasn't sent: %s", item.n.type, why)
+        if item.n.priority == "high":
+            self._late.append(_Item(item.n, item.at, now if item.failed_at is None else item.failed_at))
+            self._late_tried_at = now
         if self.state.notify_failing_since is None:
-            self.state.notify_failing_since = self._clock()
+            self.state.notify_failing_since = now
             self._on_change()
 
 
@@ -228,9 +300,11 @@ class NtfyError(Exception):
     """ntfy didn't take a notification. Its text never holds ntfy's address, the topic or the token."""
 
 
-def _quiet_httpx() -> None:
+def quiet_http_loggers() -> None:
     """httpx logs every request's URL, the topic in its path, at INFO, and httpcore the host at DEBUG: the gate's
-    journal never gets either. This quiets the gate's llama-swap client's request lines too, a line a second."""
+    journal never gets either. The gate's logging setup calls it (Task 19), whether or not ntfy is set up, so the
+    journal's content never depends on that; it quiets the gate's llama-swap client's request lines too, a line a
+    second (the controller's ruling at Task 14's review)."""
     for name in ("httpx", "httpcore"):
         logger = logging.getLogger(name)
         if logger.level < logging.WARNING:
@@ -241,7 +315,8 @@ class NtfyPublisher:
     """Publishes a Notification to ntfy: `POST <url>/<topic>`, its text as the body, `Priority: high | default | low`,
     and the token as the header `read_header_credential("ntfy-token")` gives (`Authorization: Bearer …`), never in the
     URL. httpx with `trust_env=False`, so no proxy from the environment gets the token, and no redirect followed. It
-    never logs the URL, the topic or the header, and its errors (NtfyError) hold none of them. The gate builds it from
+    never logs the URL, the topic or the header, and its errors (NtfyError) hold none of them; httpx's own request
+    lines are quieted by the gate's logging setup (quiet_http_loggers). The gate builds it from
     the values file's NTFY_URL and NTFY_TOPIC_GATE and its credential; close it with `aclose()`."""
 
     def __init__(self, url: str, topic: str, header: tuple[str, str]):
@@ -254,7 +329,6 @@ class NtfyPublisher:
             raise ValueError("the ntfy token's header isn't one 'Name: value' line in printable ASCII")
         self._target = f"{url.rstrip('/')}/{topic}"
         self._header = (name, value)
-        _quiet_httpx()
         self._client = httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=NTFY_TIMEOUT_S)
 
     def __repr__(self) -> str:
@@ -288,6 +362,7 @@ class _Group:
     first: bool
     unloads: list[BrakeEvent] = field(default_factory=list)
     sent: bool = False  # the brake sent it itself (sent_by_brake): the gate doesn't send it again
+    reboot: bool = False  # an earlier boot's episode, never notified: one brake_needs_release, whatever was sent
 
 
 def _minute(at: float) -> str:
@@ -311,25 +386,26 @@ def _new_from(events: list[BrakeEvent], after: tuple[str, int, float] | None) ->
     return 0
 
 
-def _held_back(events: list[BrakeEvent], now: float) -> int:
-    """How many of `events` are left for the next read: from a last `fired` with nothing after it but `warn` events,
-    while it is younger than FIRED_ALONE_S, since its first unload may be a moment away."""
+def _held_back(events: list[BrakeEvent], now: float, boot_id: str) -> int:
+    """How many of `events` are left for the next read: from a last `fired` of this boot with nothing after it but
+    `warn` events, while it is younger than FIRED_ALONE_S, since its first unload may be a moment away. One from an
+    earlier boot has no unload to wait for."""
     for place in range(len(events) - 1, -1, -1):
         e = events[place]
         if e.kind == "warn":
             continue
-        if e.kind == "fired" and abs(now - e.at) < FIRED_ALONE_S:
+        if e.kind == "fired" and e.boot_id == boot_id and abs(now - e.at) < FIRED_ALONE_S:
             return len(events) - place
         return 0
     return 0
 
 
-def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, now: float | None = None,
+def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boot_id: str, now: float | None = None,
                         starts: Mapping[str, float] | None = None) -> list[tuple[str, str, dict[str, Any]]]:
     """The brake's events since `state.brake_events_after` (brake/events.jsonl, Task 13's), as the notifications they
     send, each (type, event key, fields) for Notifier.emit; `state.brake_events_after` advances past what was read,
-    and `state.brake_marks` gains the marks. `now` is the gate's clock (time.time() by default); `starts`, each
-    starting model's MemAvailable when its load began, from its ticket, as the core has it.
+    and `state.brake_marks` gains the marks. `boot_id` is this boot's; `now` is the gate's clock (time.time() by
+    default); `starts`, each starting model's MemAvailable when its load began, from its ticket, as the core has it.
 
     - An episode's first alert is `brake_fired`, worded with its `fired` event's own reading and line (a drill's raised
       line as itself), naming the unloads that came with it, each by the registry's label and in its state. A `fired`
@@ -345,6 +421,11 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, now
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
       episode's hold (or the `fired` event's moment, when the hold standing is another), judged on the episode's own
       boot, with the last automatic release as `released_at`, and `release_assumed` after a damaged state.
+    - An episode from an earlier boot that was never notified (the box froze or was power-cycled first) sends one
+      `brake_needs_release` only, while a hold from another boot stands: when the brake fired, what was available, and
+      what it unloaded, if known. Its `fired` is marked notified, never sent, so no alert of its claims the pause ends
+      by itself or the unload went unconfirmed (the controller's ruling at Task 14's review). With no such hold, nothing
+      is paused, and nothing goes. Its key is Task 17's, `brake-needs:<boot id>:<episode>`, so the two are one.
 
     The keys: `brake:<boot id>:<episode>:<seq>`, the seq of the `fired` event for a first alert (of its first unload
     when the file holds no `fired` for the episode) and of the first unload for a follow-up."""
@@ -352,28 +433,41 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, now
     events = read_events(path, None)
     start = _new_from(events, state.brake_events_after)
     new = events[start:]
-    taken = new[:len(new) - _held_back(new, now)]
+    taken = new[:len(new) - _held_back(new, now, boot_id)]
     if not taken:
         return []
-    begun = {_episode(e) for e in events[:start]}  # an episode read before: its first alert went then
+    read_before = {_episode(e) for e in events[:start]}  # an episode read before: its first alert went then
+    begun = set(read_before)
     fired_at = {_episode(e): e.at for e in events if e.kind == "fired"}
     groups: list[_Group] = []
     group: _Group | None = None
+    reboots: dict[tuple[str, int], _Group] = {}
     for e in taken:
         episode = _episode(e)
         if e.kind == "warn":
+            continue
+        if e.kind == "unload":
+            if not e.model:  # an unload names its model (Task 23): one that doesn't has nothing to say
+                _log.warning("notify: the brake's event %s:%s is an unload with no model; passed over", e.boot_id,
+                             e.seq)
+                continue
+            if e.state == "starting":
+                seen = None if not starts or e.model not in starts else max(0.0, starts[e.model] - e.available_gib)
+                state.brake_marks[e.model] = BrakeMark(e.model, fired_at.get(episode, e.at), seen)
+        if e.boot_id != boot_id and episode not in read_before:  # never notified, and its boot has gone
+            if episode not in reboots:
+                reboots[episode] = _Group(episode, None, first=True, reboot=True)
+                groups.append(reboots[episode])
+            if e.kind == "fired":
+                reboots[episode].fired = reboots[episode].fired or e
+            else:
+                reboots[episode].unloads.append(e)
             continue
         if e.kind == "fired":
             group = _Group(episode, e, first=True, sent=e.sent_by_brake)
             groups.append(group)
             begun.add(episode)
             continue
-        if not e.model:  # an unload names its model (Task 23): one that doesn't has nothing to say
-            _log.warning("notify: the brake's event %s:%s is an unload with no model; passed over", e.boot_id, e.seq)
-            continue
-        if e.state == "starting":
-            seen = None if not starts or e.model not in starts else max(0.0, starts[e.model] - e.available_gib)
-            state.brake_marks[e.model] = BrakeMark(e.model, fired_at.get(episode, e.at), seen)
         if _joins(group, e):
             group.unloads.append(e)
             continue
@@ -383,7 +477,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, now
         begun.add(episode)
     last = taken[-1]
     state.brake_events_after = (last.boot_id, last.seq, last.at)
-    return [_notification(group, path, state, registry, now) for group in groups if not group.sent]
+    found = [_notification(group, path, state, registry, now, boot_id) for group in groups if not group.sent]
+    return [each for each in found if each is not None]
 
 
 def _joins(group: _Group | None, e: BrakeEvent) -> bool:
@@ -403,9 +498,11 @@ def _label(registry: Registry, name: str) -> str:
     return model.label if model is not None else name
 
 
-def _notification(group: _Group, path: Path, state: GateState, registry: Registry,
-                  now: float) -> tuple[str, str, dict[str, Any]]:
+def _notification(group: _Group, path: Path, state: GateState, registry: Registry, now: float,
+                  boot_id: str) -> tuple[str, str, dict[str, Any]] | None:
     boot, episode = group.episode
+    if group.reboot:
+        return _after_reboot(group, path, state, registry, now, boot_id)
     unloaded = [(_label(registry, e.model or ""), e.state) for e in group.unloads]
     if not group.first:
         first = group.unloads[0]
@@ -421,6 +518,23 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
     if not unloaded and state.models:  # something is loaded, and no unload came by FIRED_ALONE_S
         fields["unload_unanswered"] = True
     return "brake_fired", f"brake:{boot}:{episode}:{reading.seq}", fields
+
+
+def _after_reboot(group: _Group, path: Path, state: GateState, registry: Registry, now: float,
+                  boot_id: str) -> tuple[str, str, dict[str, Any]] | None:
+    """An earlier boot's episode, never notified: its `fired` marked notified without being sent, and one
+    `brake_needs_release` while a hold from another boot stands (rule 5: it waits for Dan)."""
+    boot, episode = group.episode
+    reading = group.fired or group.unloads[0]
+    state.notified[notified_key("brake_fired", f"brake:{boot}:{episode}:{reading.seq}")] = now
+    hold = read_hold(path.parent)
+    if hold is None or hold.boot_id == boot_id:
+        _log.info("notify: the brake fired at %s before the reboot, and no hold of that boot stands, so nothing is "
+                  "sent", datetime.fromtimestamp(reading.at).isoformat(timespec="seconds"))
+        return None
+    labels = list(dict.fromkeys(_label(registry, e.model or "") for e in group.unloads))
+    return ("brake_needs_release", f"brake-needs:{boot}:{episode}",
+            {"fired_at": reading.at, "available_gib": reading.available_gib, "unloaded": labels})
 
 
 def _waits_for_dan(fired: BrakeEvent, path: Path, state: GateState, now: float) -> bool:

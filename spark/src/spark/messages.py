@@ -553,7 +553,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
     "brake_needs_release": (
         "a hold found after a reboot",
         "*After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
-        "resumes them.*"),
+        "resumes them.* With what the gate knows of that brake: *After the reboot, new loads are still paused from the "
+        "brake at 03:12 (19.6 GiB available; it unloaded the coder). …*"),
     "gate_down": (
         "the failure notifier: the gate stopped",
         "*The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new "
@@ -564,8 +565,9 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "flight were cut off. On the Spark, `make doctor` shows what's wrong.*"),
     "llama_swap_down": (
         "the failure notifier, or the gate when it stops answering",
-        "*The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are "
-        "refused. On the Spark, `make doctor` shows what's wrong.*"),
+        "*The model service on brightroar isn't answering (since 09:14). No model answers until it's back; requests "
+        "wait, then are refused. On the Spark, `make doctor` shows what's wrong.* From the failure notifier, when it "
+        "crashed: *The model service on brightroar stopped at 09:14 (it crashed; it is restarting). …*"),
     "brake_down": (
         "the failure notifier: the brake stopped",
         "*The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays "
@@ -754,8 +756,8 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
         raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
     # An empty list: the brake paused new loads with nothing of the stack's loaded, the memory taken by something
     # outside it (the controller's ruling at Task 7's review, worded at Task 13); or, with unload_unanswered, with
-    # something loaded and no unload by FIRED_ALONE_S: slow, failed or refused, llama-swap didn't answer it, and
-    # the brake's journal says which (the controller's ruling, at Task 14).
+    # something loaded and no unload by FIRED_ALONE_S: slow, failed, refused or never sent, llama-swap hasn't confirmed
+    # it, and the brake's journal says which (the controller's rulings, at Task 14 and its review).
     unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
                 else "Nothing of the stack's was loaded, so there was nothing to unload")
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
@@ -776,7 +778,7 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
                f"{_line(f['line_gib'])} line")
     if f["unload_unanswered"]:
-        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: llama-swap didn't answer its "
+        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: llama-swap hasn't confirmed its "
                 f"unload. On the Spark, `make logs s=brake` shows why. {resume}")
     return f"{reading}. {unloaded}; new loads are paused. {resume}"
 
@@ -786,13 +788,20 @@ def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
     same in its own brake_fired (release_waits_for_dan), so it sends no second alert (the controller's ruling,
     2026-10-07)."""
     _needs("brake_needs_release", f, "fired_at")
-    return (f"After the reboot, new loads are still paused from the brake at {_clock(f['fired_at'])}. On the Spark, "
-            "`make brake-release` resumes them.")
+    # What the gate knows of that brake, from the hold or the brake's events (the controller's ruling at Task 14's
+    # review): what was available, and what it unloaded; each left out when it isn't known.
+    known = [f"{_reading(f['available_gib'])} available"] if f["available_gib"] is not None else []
+    if f["unloaded"]:
+        known.append(f"it unloaded {_and(f['unloaded'])}")
+    detail = f" ({'; '.join(known)})" if known else ""
+    return (f"After the reboot, new loads are still paused from the brake at {_clock(f['fired_at'])}{detail}. On the "
+            "Spark, `make brake-release` resumes them.")
 
 
 # The four the failure notifier sends: what stopped, what that means, and how soon systemd starts it again (the brake's
 # 2 s matters most: nothing watches memory meanwhile). result_words is the notifier's result in words (Task 26), or
-# None for llama-swap that stopped answering with its unit still up, which nothing restarts.
+# None for llama-swap that isn't answering with its unit still up, which nothing restarts: the gate's, worded *isn't
+# answering* (the controller's ruling at Task 14's review).
 _DOWN = {
     "gate_down": ("The gate", "Loaded models still answer; new loads are refused until it's back.", ""),
     "front_down": ("The front", "Requests wait for it, and any in flight were cut off.", ""),
@@ -807,6 +816,9 @@ def _down_alert(kind: str) -> Callable[[Registry, dict[str, Any]], str]:
     def words(registry: Registry, f: dict[str, Any]) -> str:
         _needs(kind, f, "at")
         result = _one_line(f["result_words"] or "")
+        if kind == "llama_swap_down" and not result:  # the gate's: its unit up, /running unanswered, so not "stopped"
+            return (f"{name} on {_host()} isn't answering (since {_clock(f['at'])}). {effect} On the Spark, "
+                    "`make doctor` shows what's wrong.")  # the controller's ruling at Task 14's review
         why = f" ({result}; it is restarting{within})" if result else ""
         return (f"{name} on {_host()} stopped at {_clock(f['at'])}{why}. {effect} On the Spark, `make doctor` shows "
                 "what's wrong.")
@@ -823,12 +835,16 @@ def _back_up(registry: Registry, f: dict[str, Any]) -> str:
     _needs("back_up", f, "unit")
     _one_of("back_up", "unit", f["unit"], _UNITS)
     name, again = _UNITS[f["unit"]]
-    if f["state_damaged"]:  # the gate's own return after its saved state was damaged: its last run's end is lost
+    if f["state_damaged"]:  # the gate's own return, its downtime not known, after its saved state was damaged
         if f["unit"] != "gate" or f["down_s"] is not None:
             raise ValueError("back_up's state_damaged is the gate's alone, with no down_s: the gate's saved state is "
                              "what dates its last run")
         return (f"{name} on {_host()} has been running again for a minute; how long it was down isn't known: its saved "
                 f"state was damaged. {again}")  # the controller's ruling, at Task 13's re-review
+    if f["down_unknown"]:  # neither systemd nor the activity record dated it (the controller's ruling, its review)
+        if f["down_s"] is not None:
+            raise ValueError("back_up's down_unknown is for a downtime not known: no down_s")
+        return f"{name} on {_host()} has been running again for a minute; how long it was down isn't known. {again}"
     _needs("back_up", f, "down_s")
     return f"{name} on {_host()} has been running again for a minute, after {_brief(f['down_s'])} down. {again}"
 
@@ -1171,9 +1187,9 @@ _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
                     "release_assumed": False, "unload_unanswered": False},
-    "brake_needs_release": {"fired_at": None},
+    "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": []},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
-    "back_up": {"unit": None, "down_s": None, "state_damaged": False},
+    "back_up": {"unit": None, "down_s": None, "state_damaged": False, "down_unknown": False},
     "refused": dict.fromkeys(("code", "moment")),
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),
     "load_failed": dict.fromkeys(("model_label", "command", "engine_said", "deadline_s")),
@@ -1197,6 +1213,12 @@ _NOTIFY: dict[str, Callable[[Registry, dict[str, Any]], str]] = {
     "load_started": _load_started, "loaded": _loaded, "unloaded": _unloaded, "waiting": _waiting,
     "pin_ended": _pin_ended, "memory_warning": _memory_warning,
 }
+
+
+def sent_late(n: Notification, failed_at: datetime | float) -> Notification:
+    """A high alert ntfy didn't take, sent once it answers again, saying so (the controller's ruling at Task 14's
+    review, under Dan's "err on more notifications")."""
+    return Notification(n.type, n.priority, f"{n.message} (sent late: ntfy was out of reach at {_clock(failed_at)})")
 
 
 # ---------------------------------------------------------------------------------------------------------------------
