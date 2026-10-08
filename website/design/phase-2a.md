@@ -1142,7 +1142,9 @@ currently experiencing high demand
 
 - `load_failed`'s refusal quotes `engine_said` only when it matches none of `PI_RETRY_PATTERNS`;
   otherwise it reads *The coder started loading but failed: the engine stopped. On the Spark,
-  `spark status` shows the engine's last lines.*, so an engine's `timeout` or `terminated` never
+  `spark logs coder` shows the engine's last lines.* (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it named `spark status`,
+  which shows no engine lines; Task 30's `spark logs <model>` does, so `load_failed` needs
+  `model_command`*), so an engine's `timeout` or `terminated` never
   makes pi repeat a full load. Its notification (Task 7), which pi never sees, quotes the line
   either way. *(Added 2026-10-07, at Task 6, the controller's ruling: the same guard covers
   every text from outside the registry and the key list. A holder's process name, from `/proc`,
@@ -1213,12 +1215,18 @@ currently experiencing high demand
   - the wording follows `words`: `dan`'s rows for `dan`, `agent`'s for `agent`; and unless
     `names_processes`, a process of Dan's is named *a process of Dan's, <n> GiB*;
   - in `agent`'s words, a step only Dan can take says it is Dan's, and `agent` is never told to
-    run a command only Dan can run. The plan's own *On the Spark, `spark make-room --done` ends
-    the hold.*, in `agent`'s `no_fit`, is the one exception (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings*);
-  - no refusal makes pi retry it. A size pi's list would match (429 GiB and up, past this box's
-    memory) moves a GiB or two against the load: a need up, a room down. The one exception is
-    `concurrency_limit`'s own *Too many requests*, a `429`, which pi retries by its status, as the
-    plan intends (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings*).
+    run a command only Dan can run (*added 2026-10-07, at Task 6's fix round 1, the controller's
+    rulings*). ~~The plan's own *On the Spark, `spark make-room --done` ends the hold.*, in
+    `agent`'s `no_fit`, is the one exception~~: there is none, since `agent`'s `no_fit` now ends
+    *It ends when Dan runs `spark make-room --done` on the Spark.* (*corrected 2026-10-07, at Task
+    6's fix round 2, the controller's ruling*);
+  - no refusal makes pi retry it. ~~A size pi's list would match (429 GiB and up, past this box's
+    memory) moves a GiB or two against the load: a need up, a room down.~~ A size of 400 GiB or
+    more reads *more than 400 GiB*, and a `no_fit` that needs that much ends *The Spark can never
+    free that much.* No number a message shows is altered, and none of that size can occur on this
+    box (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*). The one exception is `concurrency_limit`'s own *Too many requests*, a
+    `429`, which pi retries by its status, as the plan intends (*added 2026-10-07, at Task 6's fix
+    round 1, the controller's rulings*).
 
 **The refusals, word for word.** Each test's expected text is plan.md's (*What you see in Phase
 2a*, the refusal table), its italics' asterisks dropped and its backticks kept, with these inputs
@@ -1228,14 +1236,14 @@ the test's own time zone):
 | Code | Inputs |
 |---|---|
 | `no_fit` (Dan) | needed 41, free for a load 18 (the gate's `free_gib`, *added 2026-10-07, at Task 6*), available 48, reserve 24, owed 6, hold not counted, holders `python3 (chendaniely)` 32 and Gemma 27, key *pi on the Mac*, command `coder` |
-| `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the Spark, `spark make-room --done` ends the hold.* |
-| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. On the Spark, `spark make-room --done` ends the hold.* |
+| `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. It ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it ended "On the Spark, `spark make-room --done` ends the hold."*) |
+| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. It ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling, as above.*) |
 | `loading` | loading Gemma, wait 30 s |
 | `held_by_brake` | brake at 03:12, 19.6 available, release automatic |
 | `held_by_brake` (waits for Dan) | the same, waiting for Dan: *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you release them: on the Spark, `make brake-release`.* |
 | `gate_down` | key *pi on the Mac* (Dan's words; ~~none~~, *added 2026-10-07, at Task 6's fix round 1, the controller's rulings: `words` picks its last sentence*) |
-| `load_failed` | the engine said `failed to load model` |
-| `load_failed` (deadline) | no engine text, deadline 180: *The coder started loading but didn't finish within 3 minutes. On the Spark, `spark status` shows the engine's last lines.* (*Corrected 2026-10-07, at Task 6's fix round 1: it read "within 180 s".*) |
+| `load_failed` | the engine said `failed to load model`, command `coder` (*added 2026-10-07, at Task 6's fix round 2, the controller's ruling: the next step names `spark logs coder`*) |
+| `load_failed` (deadline) | no engine text, deadline 180: *The coder started loading but didn't finish within 3 minutes. On the Spark, `spark logs coder` shows the engine's last lines.* (*Corrected 2026-10-07, at Task 6's fix round 1: it read "within 180 s". Corrected at fix round 2: it named `spark status`.*) |
 | `not_downloaded` | download 16 |
 | `restarting` | wait 30 s |
 | `llama_swap_down` | wait 30 s |
@@ -1306,12 +1314,14 @@ the test's own time zone):
     still starting may take*), both, and `agent`'s counted hold under the ceiling, with its clamp.
   - `test_agent_is_never_told_to_run_what_only_dan_can` — every refusal in `agent`'s words: a
     sentence naming `spark make-room`, `make brake-release`, `spark load`, `make pull`, `make
-    doctor` or `make clients` names Dan, but the plan's own *On the Spark, `spark make-room --done`
-    ends the hold.*
+    doctor` or `make clients` names Dan, ~~but the plan's own *On the Spark, `spark make-room --done`
+    ends the hold.*~~ every one, `spark logs` among them (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*)
   - `test_no_refusal_makes_pi_retry_at_any_boundary` — every row, in both words, at sizes of 429
     to 524 GiB, deadlines and waits of 500, 503, 520 and 529 s and of 500 to 520 minutes, and
     names ending in `-500m`: no message matches pi's list, but `concurrency_limit`'s own *Too many
-    requests*, a `429`. `test_a_size_pi_would_match_moves_against_the_load` shows how each moves.
+    requests*, a `429`. ~~`test_a_size_pi_would_match_moves_against_the_load` shows how each
+    moves.~~ `test_a_size_of_400_gib_or_more_reads_more_than_400_gib` shows each size of 400 GiB or
+    more as *more than 400 GiB*, and each under it as itself (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*).
   - `test_each_code_refuses_a_moment_without_the_fields_its_words_use` — for each code, each field
     its words use, left at its default → a `ValueError` naming the code and the field;
     `test_some_fields_are_needed_only_where_the_words_use_them` and
@@ -5392,6 +5402,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   `budget.make_room_plan`'s `free_now_gib`. It never works out `MemAvailable` less the reserve and
   the growth owed: where the CUDA ceiling binds, that count could find nothing to unload, and Dan's
   retry would be refused again.
+
+- **A key label pi's retry list matches is refused at startup** (added 2026-10-07, at Task 6's fix round 2, the controller's ruling). The private key
+  list's labels go into refusals (*Not loading the coder for <label>*, *<label> already has as many
+  requests …*), and render never reads that file. Whichever task first loads `keys.yaml` at run
+  time, the front's (Task 20) or the gate's, refuses at startup a label that
+  `messages.pi_retry_match` matches, with a plain error naming the key, as `render.check_words`
+  does for the registry.
 
 ### Minors the forward-and-back council left for the tasks that meet them
 

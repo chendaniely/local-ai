@@ -43,12 +43,14 @@ you until `spark make-room --done` or a reboot; your own requests can load into 
 automatic reloads can't.*, and for 70 GiB the same sentence names the coder and Gemma, and 82 GiB.
 `agent`'s request, refused before my job starts, reads *The coder didn't load: it needs 41 GiB, and
 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds
-for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the Spark, `spark make-room
---done` ends the hold.* Once my job has taken the room, it reads *The coder didn't load: it needs
-41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less
-the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. On the
-Spark, `spark make-room --done` ends the hold.* (both from the [implementation
-plan](../design/phase-2a.md)'s words). `spark make-room --done` says how much of the hold went
+for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. It ends when Dan runs `spark
+make-room --done` on the Spark.* Once my job has taken the room, it reads *The coder didn't load:
+it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB
+available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings
+8 GiB. It ends when Dan runs `spark make-room --done` on the Spark.* (both from the [implementation
+plan](../design/phase-2a.md)'s words). *(Corrected 2026-10-07, at the implementation plan's Task
+6: both ended *On the Spark, `spark make-room --done` ends the hold.*, which didn't say whose step
+it is.)* `spark make-room --done` says how much of the hold went
 unused and what reloads (*… Reloading Gemma.*), and my phone gets the same as *make-room's hold for
 you ended*. The plan's [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has
 every message.

@@ -68,8 +68,9 @@ embeddings. The coder was loading when it fired, so it loads again only when you
 waits for me sends, at high priority, *After the reboot, new loads are still paused from the brake
 at 02:58. On the Spark, `make brake-release` resumes them.* `agent`'s request for the coder
 afterwards reads *Not loading the coder for agent: it was loading when the brake fired at 03:12, so
-only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac
-or the web UI, which loads it if it fits.*, and my phone gets *Didn't load the coder for agent: it
+only Dan can load it again: `spark load coder` on the Spark, or one of Dan's requests from pi on
+the Mac or the web UI, which loads it if it fits.* *(corrected 2026-10-07, at the implementation
+plan's Task 6: it read *a request of his*)*, and my phone gets *Didn't load the coder for agent: it
 was loading when the brake fired at 03:12. On the Spark, `spark load coder` allows it again; your
 own requests load it if it fits.* The brake's own alert, sent while the gate is down, ends *They
 resume once the gate is back and memory has stayed above 28 GiB available for 5 min.* The plan's

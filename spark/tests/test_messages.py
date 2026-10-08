@@ -68,7 +68,7 @@ NO_FIT_DAN_BREAKDOWN = ("18 GiB is free for a load (48 GiB available, less the 2
 NO_FIT_CLAMPED_TEXT = (
     "The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan "
     "(36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. "
-    "On the Spark, `spark make-room --done` ends the hold."
+    "It ends when Dan runs `spark make-room --done` on the Spark."
 )
 LOADING_TEXT = (
     "The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and "
@@ -76,11 +76,11 @@ LOADING_TEXT = (
 )
 LOAD_FAILED_TEXT = (
     'The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, '
-    "`spark status` shows the engine's last lines."
+    "`spark logs coder` shows the engine's last lines."
 )
 LOAD_FAILED_UNQUOTED_TEXT = (
-    "The coder started loading but failed: the engine stopped. On the Spark, `spark status` shows the engine's last "
-    "lines."
+    "The coder started loading but failed: the engine stopped. On the Spark, `spark logs coder` shows the engine's "
+    "last lines."
 )
 RESTARTING_TEXT = (
     "The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a "
@@ -106,8 +106,8 @@ ROWS = [
     ("no_fit, Dan", "no_fit", NO_FIT_DAN, NO_FIT_DAN_TEXT),
     ("no_fit, agent", "no_fit", NO_FIT_AGENT,
      "The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB "
-     "reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the "
-     "Spark, `spark make-room --done` ends the hold."),
+     "reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. It ends "
+     "when Dan runs `spark make-room --done` on the Spark."),
     ("no_fit, agent, Dan's job in the hold", "no_fit", NO_FIT_AGENT_CLAMPED, NO_FIT_CLAMPED_TEXT),
     ("loading", "loading", LOADING, LOADING_TEXT),
     ("held_by_brake", "held_by_brake", HELD,
@@ -121,8 +121,8 @@ ROWS = [
     ("load_failed", "load_failed", LOAD_FAILED, LOAD_FAILED_TEXT),
     # A duration of a minute or more reads in minutes (the controller's ruling, fix round 1): never a bare 5xx.
     ("load_failed, deadline", "load_failed", replace(LOAD_FAILED, engine_said=None, deadline_s=180),
-     "The coder started loading but didn't finish within 3 minutes. On the Spark, `spark status` shows the engine's "
-     "last lines."),
+     "The coder started loading but didn't finish within 3 minutes. On the Spark, `spark logs coder` shows the "
+     "engine's last lines."),
     ("not_downloaded", "not_downloaded", NOT_DOWNLOADED,
      "The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB)."),
     ("restarting", "restarting", Moment(**CODER, **DAN), RESTARTING_TEXT),
@@ -138,8 +138,8 @@ ROWS = [
      "Spark."),
     ("footprint_suspect", "footprint_suspect", SUSPECT,
      "Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: "
-     "`spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it "
-     "fits."),
+     "`spark load coder` on the Spark, or one of Dan's requests from pi on the Mac or the web UI, which loads it if "
+     "it fits."),
     ("model_not_found", "model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **DAN),
      MODEL_NOT_FOUND_TEXT),
     # agent's pi is on the Spark, and after the cutover agent runs the deployed CLI (Task 34; the controller's ruling).
@@ -174,8 +174,8 @@ AGENT_ROWS = [
     ("gate_down, agent", "gate_down", Moment(**AGENT), GATE_DOWN_TEXT.replace(
         "Your phone has the alert; on the Spark, `make doctor` shows what's wrong.", DANS_ALERT)),
     ("load_failed, agent", "load_failed", replace(LOAD_FAILED, **AGENT), LOAD_FAILED_TEXT.replace(
-        "On the Spark, `spark status` shows the engine's last lines.",
-        "Dan can read the engine's last lines with `spark status` on the Spark.")),
+        "On the Spark, `spark logs coder` shows the engine's last lines.",
+        "Dan can see why with `spark logs coder` on the Spark.")),
     ("not_downloaded, agent", "not_downloaded", replace(NOT_DOWNLOADED, **AGENT),
      "The coder isn't downloaded yet. Dan can fetch it with `make pull` on the Spark (16 GiB)."),
     ("llama_swap_down, agent", "llama_swap_down", Moment(**CODER, **AGENT),
@@ -287,14 +287,22 @@ def test_no_refusal_makes_pi_retry_at_any_boundary(change):
     assert checked == 4 * (len(EVERY_ROW) - 1)
 
 
-def test_a_size_pi_would_match_moves_against_the_load():
-    # A need moves up, a room down, any other size up, a reading down a tenth at a time: never more than a few GiB,
-    # and only at sizes past this box's memory. 502.9 still holds "502", so 503.0 reads 501.9.
-    big = replace(NO_FIT_DAN, needed_gib=500, free_gib=503, available_gib=520, holders=[Holder("Gemma", 502, False)])
-    message = refusal("no_fit", big).message
-    assert "it needs 501 GiB, and 501 GiB is free for a load (519 GiB available," in message
-    assert "Using memory now: Gemma 505 GiB." in message and "`spark make-room 501G`" in message
-    assert "(501.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=503)).message
+def test_a_size_of_400_gib_or_more_reads_more_than_400_gib():
+    # A number a message shows is never altered. None of 400 GiB or more can occur on this box (render keeps every
+    # footprint under the ceiling), and "more than 400 GiB" is true and matches nothing in pi's list.
+    big = replace(NO_FIT_DAN, needed_gib=500, free_gib=400, available_gib=520, holders=[Holder("Gemma", 502, False)])
+    assert refusal("no_fit", big).message == (
+        "The coder didn't load: it needs more than 400 GiB, and more than 400 GiB is free for a load (more than "
+        "400 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory "
+        "now: Gemma more than 400 GiB. The Spark can never free that much.")
+    assert "(more than 400 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=503)).message
+    assert "above more than 400 GiB available" in refusal("held_by_brake", replace(HELD, warn_gib=520)).message
+    assert "(more than 400 GiB)" in refusal("not_downloaded", replace(NOT_DOWNLOADED, download_gib=429)).message
+    # Below 400, every number shows as it is, whatever it holds.
+    under = refusal("no_fit", replace(NO_FIT_DAN, needed_gib=399, free_gib=399.9, available_gib=399.9)).message
+    assert "it needs 399 GiB, and 399 GiB is free for a load (399 GiB available," in under
+    assert "`spark make-room 399G`" in under
+    assert "(399.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=399.99)).message
 
 
 def test_a_load_failed_never_quotes_words_pi_would_retry():
@@ -422,10 +430,9 @@ def test_no_outside_text_makes_pi_retry_a_refusal():
 
 
 # The commands only Dan can run, on the control socket or with Dan's account. agent's words may name one only in a
-# sentence that says it is Dan's step, but where the plan's own text does otherwise (listed in PLANS_OWN).
-DANS_COMMANDS = ("`spark make-room", "`make brake-release`", "`spark load", "`make pull`", "`make doctor`",
-                 "`make clients`")
-PLANS_OWN = {"On the Spark, `spark make-room --done` ends the hold."}  # no_fit's agent row in plan.md's table
+# sentence that says it is Dan's step (the controller's rulings, Task 6's fix rounds 1 and 2: no exception is left).
+DANS_COMMANDS = ("`spark make-room", "`make brake-release`", "`spark load", "`spark logs", "`make pull`",
+                 "`make doctor`", "`make clients`")
 
 
 def test_agent_is_never_told_to_run_what_only_dan_can():
@@ -434,9 +441,11 @@ def test_agent_is_never_told_to_run_what_only_dan_can():
         message = refusal(code, replace(moment, words="agent", names_processes=False, key_label="agent")).message
         for sentence in re.split(r"(?<=[.;])\s+", message):
             if any(command in sentence for command in DANS_COMMANDS):
-                assert "Dan" in sentence or sentence in PLANS_OWN, sentence
+                assert "Dan" in sentence, sentence
                 checked.add(sentence)
-    assert len(checked) >= 7  # make-room's end, the brake's release, spark load, make pull and make doctor among them
+    # make-room's end (no_fit's and draining's, one sentence), the brake's release (two forms), spark load, spark logs,
+    # make pull and make doctor.
+    assert len(checked) == 7
 
 
 def test_dans_own_hold_is_never_counted_against_him():
@@ -460,8 +469,11 @@ def test_the_wording_follows_the_groups_words():
         NO_FIT_DAN_TEXT.replace("python3 (chendaniely) 32 GiB", "a process of Dan's, 32 GiB"))
     # agent's words beside Dan's hold, with Dan's processes named because the group's names_processes says so.
     held = refusal("no_fit", replace(NO_FIT_AGENT, holders=[PYTHON, GEMMA], names_processes=True)).message
-    assert held.endswith("Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. On the Spark, "
-                         "`spark make-room --done` ends the hold.")
+    assert held.endswith("Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. It ends when Dan runs "
+                         "`spark make-room --done` on the Spark.")
+    # A group with Dan's words whose hold is counted (one without uses_hold) keeps the plan's step for Dan.
+    assert refusal("no_fit", replace(NO_FIT_AGENT, words="dan")).message.endswith(
+        "On the Spark, `spark make-room --done` ends the hold.")
 
 
 def test_sizes_round_against_the_load():
@@ -526,7 +538,7 @@ NEEDS = {
     "loading": ("model_label", "loading_label", "wait_s"),
     "held_by_brake": ("model_label", "brake_at", "brake_available_gib", "words"),
     "footprint_suspect": ("model_label", "key_label", "model_command", "brake_at"),
-    "load_failed": ("model_label", "words"),
+    "load_failed": ("model_label", "model_command", "words"),
     "not_downloaded": ("model_label", "words"),
     "restarting": ("wait_s",),
     "llama_swap_down": ("wait_s", "words"),

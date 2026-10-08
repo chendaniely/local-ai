@@ -14,7 +14,8 @@ No refusal may make pi retry it (phase-2a.md, *Before Task 1*):
 - Text from outside the registry and the key list goes in only on one line, and only when pi's retry list doesn't
   match it. That is a process's name from /proc, the engine's line, or the name a client asked for.
 - A duration reads in minutes and seconds from a minute on, so none prints as a bare 5xx.
-- A size pi's list would match (429 GiB and up, past this box's memory) moves a GiB or two against the load.
+- A size of 400 GiB or more reads *more than 400 GiB*, true and matched by nothing in pi's list. None can occur
+  on this box, since render keeps every footprint under the ceiling. No number a message shows is ever altered.
 - render refuses registry text pi's list matches (render.check_words)."""
 
 from __future__ import annotations
@@ -100,6 +101,9 @@ _ALERT = {"dan": "Your phone has the alert; on the Spark, `make doctor` shows wh
 # deployed registry. Without --http-idle-timeout-ms it leaves pi's settings.json as it is.
 _AGENTS_CLIENTS = "/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml"
 _TENTH = Decimal("0.1")
+# From this size up a message says "more than 400 GiB", never the number: pi's list holds 429, 500, 502-504, 520 and
+# 524, and no size under 400 can show one of them (a tenth's point breaks a reading's digits apart).
+_TOO_BIG_GIB = 400
 # Decimal's default 28 digits can't hold an absurd size to a tenth (budget.DIGITS says why); 400 hold any float's.
 _DIGITS = 400
 
@@ -230,44 +234,37 @@ def _gib(value: float | Decimal) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(repr(value))
 
 
-def _clear(n: int, step: int) -> int:
-    """`n`, moved a GiB at a time in `step`'s direction while pi's list matches it: only a size of 429 GiB or more,
-    past this box's memory, ever moves."""
-    while _PI_RETRIES.search(str(n)):
-        n += step
-    return n
-
-
 def _up(value: float | Decimal) -> int:
     """A need, in whole GiB, rounded up: with a room rounded down, the two never read as a fit."""
-    return _clear(int(_gib(value).to_integral_value(ROUND_CEILING)), +1)
+    return int(_gib(value).to_integral_value(ROUND_CEILING))
 
 
 def _down(value: float | Decimal) -> int:
     """*Available*, *free for a load* and the ceiling, in whole GiB, rounded down."""
-    return _clear(int(_gib(value).to_integral_value(ROUND_FLOOR)), -1)
+    return int(_gib(value).to_integral_value(ROUND_FLOOR))
 
 
 def _near(value: float | Decimal) -> int:
     """Any other size, in whole GiB, to the nearest, a half up."""
-    return _clear(int(_gib(value).to_integral_value(ROUND_HALF_UP)), +1)
+    return int(_gib(value).to_integral_value(ROUND_HALF_UP))
+
+
+def _size(shown: int | Decimal) -> str:
+    """A size as a message shows it, `<n> GiB`, but *more than 400 GiB* from 400 up (_TOO_BIG_GIB)."""
+    if shown >= _TOO_BIG_GIB:
+        return "more than 400 GiB"
+    return f"{shown:f} GiB" if isinstance(shown, Decimal) else f"{shown} GiB"
 
 
 def _reading(value: float | Decimal) -> str:
     """A reading near a line (the brake's, the warn line's), to one decimal, rounded down as available is: one just
     under the line never reads as at it."""
-    shown = _gib(value).quantize(_TENTH, ROUND_FLOOR)
-    while _PI_RETRIES.search(f"{shown:f}"):
-        shown -= _TENTH
-    return f"{shown:f}"
+    return _size(_gib(value).quantize(_TENTH, ROUND_FLOOR))
 
 
 def _line(value: float | Decimal) -> str:
-    """A line as the registry gives it: 28, or 28.5."""
-    shown = _gib(value).normalize()
-    while _PI_RETRIES.search(f"{shown:f}"):
-        shown += 1
-    return f"{shown:f}"
+    """A line as the registry gives it: 28 GiB, or 28.5 GiB."""
+    return _size(_gib(value).normalize())
 
 
 def _clock(at: datetime) -> str:
@@ -300,42 +297,47 @@ def _outside(text: str | None) -> str | None:
 
 
 def _holder(h: Holder, names_processes: bool) -> str:
-    """A holder, named unless it is Dan's and the group doesn't name his processes. Its name goes through _outside,
+    """A holder, named unless it is Dan's and the group doesn't name Dan's processes. Its name goes through _outside,
     since a process's comes from /proc; a model's is its label, which passes."""
     name = _outside(h.name) if names_processes or not h.dans else None
     if name is not None:
-        return f"{name} {_near(h.gib)} GiB"
-    return f"a process of Dan's, {_near(h.gib)} GiB" if h.dans else f"a process, {_near(h.gib)} GiB"
+        return f"{name} {_size(_near(h.gib))}"
+    return f"a process of Dan's, {_size(_near(h.gib))}" if h.dans else f"a process, {_size(_near(h.gib))}"
 
 
 def _no_fit(m: Moment) -> str:
     _need("no_fit", m, "model_label", "needed_gib", "free_gib", "words")
     if m.ceiling_gib is not None:  # ceiling − committed was the smaller term
-        whole = f"the {_down(m.ceiling_gib)} GiB the GPU can allocate"
-        less = [f"the {committed} GiB the loaded models may grow to"] if (committed := _near(m.committed_gib)) else []
+        whole = f"the {_size(_down(m.ceiling_gib))} the GPU can allocate"
+        committed = _near(m.committed_gib)
+        less = [f"the {_size(committed)} the loaded models may grow to"] if committed else []
     else:
         _need("no_fit", m, "available_gib", "reserve_gib")
-        whole = f"{_down(m.available_gib)} GiB available"
-        less = [f"the {reserve} GiB reserve"] if (reserve := _near(m.reserve_gib)) else []
+        whole = f"{_size(_down(m.available_gib))} available"
+        less = [f"the {_size(reserve)} reserve"] if (reserve := _near(m.reserve_gib)) else []
         if owed := _near(m.owed_gib):
-            less.append(f"the {owed} GiB the loaded models may still grow into")
+            less.append(f"the {_size(owed)} the loaded models may still grow into")
     if starting := _near(m.starting_gib):
-        less.append(f"the {starting} GiB the model still starting may take")
+        less.append(f"the {_size(starting)} the model still starting may take")
     need, free, held = _up(m.needed_gib), _down(m.free_gib), _near(m.held_gib) if m.hold_counted else 0
     if free >= 1:
-        room = f"{free} GiB is free for a load"
+        room = f"{_size(free)} is free for a load"
         if held:
-            less.append(f"the {held} GiB make-room holds for Dan")
+            less.append(f"the {_size(held)} make-room holds for Dan")
     elif held:
-        room = f"nothing is free for a load while make-room holds {held} GiB for Dan"
+        room = f"nothing is free for a load while make-room holds {_size(held)} for Dan"
     else:
         room = "nothing is free for a load"
     taken = f", less {_and(less)}" if less else ""
-    words = [f"{_start(m.model_label)} didn't load: it needs {need} GiB, and {room} ({whole}{taken})."]
+    words = [f"{_start(m.model_label)} didn't load: it needs {_size(need)}, and {room} ({whole}{taken})."]
     if m.holders:
         words.append(f"Using memory now: {', '.join(_holder(h, m.names_processes) for h in m.holders)}.")
-    if held:  # the plan's own text, for agent's key as for Dan's
+    if need >= _TOO_BIG_GIB:  # more than the box has: no command can make that much room
+        words.append("The Spark can never free that much.")
+    elif held and m.words == "dan":
         words.append("On the Spark, `spark make-room --done` ends the hold.")
+    elif held:  # the hold is Dan's to end (the controller's ruling, Task 6's fix round 2)
+        words.append("It ends when Dan runs `spark make-room --done` on the Spark.")
     elif m.words == "dan":
         words.append(f"Free space with `spark make-room {need}G` on the Spark, then try again.")
     else:  # make-room is Dan's alone, and its hold would bar agent anyway (rule 4)
@@ -352,11 +354,11 @@ def _loading(m: Moment) -> str:
 def _held_by_brake(m: Moment) -> str:
     _need("held_by_brake", m, "model_label", "brake_at", "brake_available_gib", "words")
     low = (f"Not loading {m.model_label} now: memory ran low at {_clock(m.brake_at)} "
-           f"({_reading(m.brake_available_gib)} GiB available), and new loads")
+           f"({_reading(m.brake_available_gib)} available), and new loads")
     if m.release_waits_for_dan:
         who = "you release them" if m.words == "dan" else "Dan releases them"  # the release is Dan's alone
         return f"{low} stay paused until {who}: on the Spark, `make brake-release`."
-    resume = (f"They resume by themselves after {duration(m.release_after_s)} above {_line(m.warn_gib)} GiB "
+    resume = (f"They resume by themselves after {duration(m.release_after_s)} above {_line(m.warn_gib)} "
               "available, if what would reload fits")
     if m.words == "dan":
         return f"{low} are paused. {resume}; on the Spark, `make brake-release` resumes them now."
@@ -370,10 +372,11 @@ def _gate_down(m: Moment) -> str:
 
 
 def _load_failed(m: Moment) -> str:
-    _need("load_failed", m, "model_label", "words")
+    _need("load_failed", m, "model_label", "model_command", "words")
     began = f"{_start(m.model_label)} started loading but"
-    after = ("On the Spark, `spark status` shows the engine's last lines." if m.words == "dan"
-             else "Dan can read the engine's last lines with `spark status` on the Spark.")
+    # The engine's lines are Task 30's `spark logs <model>`, on the control socket, which agent can't use.
+    after = (f"On the Spark, `spark logs {m.model_command}` shows the engine's last lines." if m.words == "dan"
+             else f"Dan can see why with `spark logs {m.model_command}` on the Spark.")
     if _one_line(m.engine_said or ""):
         said = _outside(m.engine_said)  # an engine's "timeout" or "terminated" would make pi repeat a whole load
         if said is not None:
@@ -385,7 +388,7 @@ def _load_failed(m: Moment) -> str:
 
 def _not_downloaded(m: Moment) -> str:
     _need("not_downloaded", m, "model_label", "words")
-    size = f" ({_near(m.download_gib)} GiB)" if m.download_gib is not None and _near(m.download_gib) else ""
+    size = f" ({_size(_near(m.download_gib))})" if m.download_gib is not None and _near(m.download_gib) else ""
     fetch = (f"On the Spark, `make pull` fetches it{size}." if m.words == "dan"
              else f"Dan can fetch it with `make pull` on the Spark{size}.")
     return f"{_start(m.model_label)} isn't downloaded yet. {fetch}"
@@ -422,8 +425,8 @@ def _draining(m: Moment) -> str:
 def _footprint_suspect(m: Moment) -> str:
     _need("footprint_suspect", m, "model_label", "key_label", "model_command", "brake_at")
     return (f"Not loading {m.model_label} for {m.key_label}: it was loading when the brake fired at "
-            f"{_clock(m.brake_at)}, so only Dan can load it again: `spark load {m.model_command}` on the Spark, or a "
-            f"request of his from {_DANS_KEYS}, which loads it if it fits.")
+            f"{_clock(m.brake_at)}, so only Dan can load it again: `spark load {m.model_command}` on the Spark, or "
+            f"one of Dan's requests from {_DANS_KEYS}, which loads it if it fits.")
 
 
 def _model_not_found(m: Moment) -> str:
