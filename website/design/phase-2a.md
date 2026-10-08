@@ -1609,7 +1609,8 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `LISTEN_FDS` a count, `LISTEN_FDNAMES` that many colon-separated names; the sockets are fds 3
   upward, each made with `socket.socket(fileno=fd)`, so the family is the socket's own; it removes
   the three variables. `SocketsError` names what is missing or disagrees. Names in use: `front`;
-  `status`, `control`.
+  `status`, `control`. *(Added 2026-10-08, at Task 9's review, the controller's ruling: an fd that
+  isn't a socket raises `SocketsError` too, naming the fd and its name.)*
 - `protocols.make_protocol(*, peer_cred: bool, header_timeout_s: float | None) -> type` — a subclass
   of uvicorn's `H11Protocol` (`uvicorn.protocols.http.h11_impl`). With `peer_cred`, on
   `connection_made` it reads `SO_PEERCRED` (Linux's; on any other system `make_protocol(peer_cred=
@@ -1618,7 +1619,14 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   int, "gid": int}`; a TCP connection gets no such key. With `header_timeout_s`, a connection whose
   first request's headers aren't complete in time is closed; the body, once the headers are in, has
   no such limit. `protocols.peer(scope) -> PeerCred | None`, where `PeerCred(pid: int, uid: int,
-  gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`.
+  gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`. *(Corrected 2026-10-08, at Task 9 and
+  its review, the controller's rulings. The deadline covers each request's head on a connection,
+  not only the first: uvicorn's keep-alive timer stops at a request's first byte, so a later head
+  sent a little at a time would hold the connection. And "no such limit" holds only until the
+  answer is sent. An app that answers before reading the body (the front's 401, 413 and 404, the
+  gate's 403) leaves the client sending a body uvicorn drops unread, and each byte of it stops the
+  keep-alive timer; so once the answer is sent, what is left of the body gets the same deadline,
+  from the next read. A body the app is still reading has no limit.)*
 - `sdnotify.notify(message: str, env: Mapping[str, str] = os.environ) -> bool` — a datagram to
   `NOTIFY_SOCKET` (a path, or `@name` for an abstract one); False, quietly, when it is unset;
   `ready()`, `stopping()`; `watchdog_interval_s(env) -> float | None` — half `WATCHDOG_USEC`, only
@@ -1633,12 +1641,20 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   comments and blank lines skipped; a duplicate name or a malformed line refused by line number,
   its content never shown. `match_key(presented: str, digests: dict[str, bytes]) -> str | None` —
   SHA-256 of the presented key, compared with `hmac.compare_digest` against every digest, in full,
-  whatever matches first.
+  whatever matches first. *(Added 2026-10-08, at Task 9's review, the controller's rulings:
+  `match_key` returns None for a key no encoder takes, a lone surrogate, rather than raise an
+  error whose text quotes it; and `read_credential_text(name, env) -> str` reads a credential of
+  many lines, the key list and the key digests, whole, refused by name when missing, empty or
+  blank, not UTF-8, or holding a control character other than a tab or a line break.)*
 - `serve.QuietServer(uvicorn.Server)` — its `capture_signals` is a plain context manager that only
   yields: uvicorn 0.54.0's own (`server.py`) replaces any earlier handler for SIGINT and SIGTERM
   with its own, restores it on the way out and re-raises the signal, so with two servers in one
   loop the second's handler replaces the first's and the last re-raise kills the process by
-  signal. `serve.TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`.
+  signal. `serve.TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`. *(Qualified 2026-10-08, at Task 9's
+  review: that is what two plain uvicorn servers do, seen on the Spark. Inside `run_servers`, whose
+  loop handlers are set before any server starts and get every signal through asyncio's wakeup
+  fd, uvicorn's own handling turned out harmless, so `QuietServer` is a defence there;
+  `test_quiet_server_leaves_sigint_and_sigterm_alone` pins it.)*
 - `serve.run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], *, protocol: type,
   graceful_s: float) -> None` — one event loop; one `QuietServer` per pair, run with
   `serve(sockets=…)`, each with `log_config=None`, `access_log=False`, `server_header=False`,
@@ -1646,7 +1662,9 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `timeout_graceful_shutdown=graceful_s`; `loop.add_signal_handler` for SIGTERM and SIGINT, which
   sets `should_exit` on every server; `READY=1` once every server listens; the watchdog loop when
   `watchdog_interval_s()` gives one; `STOPPING=1` on the way out; returns, exit 0, when a signal
-  has arrived and every server has stopped.
+  has arrived and every server has stopped. *(Added 2026-10-08, at Task 9's review, the
+  controller's ruling: `ws="none"` too, so an upgrade never leaves `protocol` for a WebSocket
+  library's, which would serve the request without its uid or the header deadline.)*
 
 **Tests:**
 
@@ -1721,12 +1739,35 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
 - `test_run_servers_says_ready_once_both_listen` — the `NOTIFY_SOCKET` stand-in receives exactly
   one `READY=1`, after both sockets answer.
 
+*(Added 2026-10-08, at Task 9 and its review.)* Beside these:
+
+- **New tests.** `test_listen_fds_refuses_an_fd_that_isnt_a_socket`,
+  `test_sd_notify_reaches_an_abstract_socket`,
+  `test_a_later_request_on_the_connection_gets_the_same_deadline`,
+  `test_an_answered_request_cant_hold_its_connection_with_a_trickled_body`,
+  `test_a_websocket_upgrade_stays_a_plain_request_on_its_connection` and
+  `test_quiet_server_leaves_sigint_and_sigterm_alone`.
+- **Tests that check more.**
+  - The uid test also sends a WebSocket upgrade.
+  - The forwarded test also finds no `server:` or `date:` header and no lifespan scope.
+  - The shutdown test runs for SIGTERM and for SIGINT, with a request in flight that finishes in
+    the graceful time.
+  - The credentials tests cover a surrogate key and `read_credential_text`.
+- **Four tests skip off Linux**, each for a Linux-only fact:
+  - the uid test and `test_a_tcp_request_carries_no_peer_cred`: *SO_PEERCRED is Linux's, and the
+    gate runs only on the Spark*;
+  - `test_a_tcp_socket_from_systemd_keeps_tcp_nodelay`: `socket.socket(fileno=)` reads a socket's
+    protocol only where `SO_PROTOCOL` exists, and the front runs only on the Spark;
+  - `test_sd_notify_reaches_an_abstract_socket`: abstract Unix sockets are Linux's, as systemd is.
+
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the five modules missing).
 - [ ] **Step 2:** the five modules; the tests pass, also on the Mac's shorter socket paths, where
   the uid test skips (Task 52); `make test lint`, including Task 3's `TESTED_AGAINST` test, which
-  now finds `protocols.TESTED_AGAINST`.
+  now finds `protocols.TESTED_AGAINST`. *(Corrected 2026-10-08, at Task 9's review: four tests
+  skip on the Mac, not one, each for a Linux-only fact, as the note under the tests lists them;
+  and Task 3's test finds `serve.TESTED_AGAINST` too, both of them by name.)*
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
@@ -2847,6 +2888,17 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   load_timeout_s=load_timeout_for(render.HEALTH_CHECK_TIMEOUT_S))`; `run_servers` with
   `make_protocol(peer_cred=True, header_timeout_s=10)` and `graceful_s=gateproto.GRACEFUL_S`.
   `TESTED_AGAINST = {"llama-swap": "v257"}`.
+- *(Added 2026-10-08, at Task 9's review, the controller's rulings.)*
+  - **The key list:** the `keys` credential is read with `credentials.read_credential_text`
+    (Task 9). It refuses a missing, empty or non-text file by name and never quotes it. The text
+    then goes to the key list's parser: `registry.load_keys` reads a path today, so this task gives
+    it a text form beside it, `registry.parse_keys(text, groups)`, which `load_keys` calls.
+  - **uvicorn's logging:** `run_servers` leaves `log_config=None`, so uvicorn's WARNING-and-up
+    lines and tracebacks ("Exception in ASGI application") reach stderr, and so the journal,
+    through logging's last-resort handler. A traceback carries its exception's text, which code can
+    build from a request (`int()` of a header quotes it). So `spark gate` puts a filter or handler
+    on `uvicorn.error` that drops `exc_info` and never logs request content: a body, a header, a
+    key. `test_a_raising_route_puts_no_request_content_on_stderr` checks it.
 
 **Tests** (`spark/tests/test_gate_app.py`; the apps called with a scope whose `peer_cred` the test
 sets, or over real sockets where named; those over real sockets read `SO_PEERCRED`, so they skip
@@ -2900,6 +2952,10 @@ off Linux with Task 9's reason, and the rest run everywhere):
   overrides of the system's databases, which `spark gate` reads only when set) naming this test's
   uid: a `GateClient` gets the status on each; SIGTERM → exit 0, `STOPPING=1` sent, and the state
   file's `clean_shutdown` true.
+- `test_a_raising_route_puts_no_request_content_on_stderr` — *(added 2026-10-08, at Task 9's
+  review)* `spark gate` in a subprocess, as above, with a route that raises: a request carrying a
+  body, headers and a key stand-in, each a distinct marker, gets its 500, and none of the markers,
+  nor a traceback, is on the process's stderr.
 
 **Steps:**
 
@@ -2929,7 +2985,12 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
   six inference paths; `GET /health` is the front's own.
 - `parse.authenticate(headers: list[tuple[bytes, bytes]], digests: dict[str, bytes]) -> str | None`
   — the key from `Authorization: Bearer <key>` or `x-api-key: <key>`, through
-  `credentials.match_key`; the key's name, or None.
+  `credentials.match_key`; the key's name, or None. *(Added 2026-10-08, at Task 9's review, the
+  controller's ruling: the digests come from the `client-keys` credential, and the key list from
+  `keys`. Each is read with `credentials.read_credential_text` (Task 9), which refuses a missing,
+  empty or non-text file by name without quoting it. Then `credentials.parse_digests` parses the
+  first and the key list's parser the second (Task 19's `registry.parse_keys`). Task 21's
+  `spark front` reads both at start.)*
 - `parse.read_json(receive, *, max_bytes: int) -> tuple[dict, bytes]` — the body parsed, and the
   bytes to send on, re-serialized from it (`json.dumps`, compact); 400 for a body that isn't a
   JSON object or has no string `model`.
@@ -3061,7 +3122,12 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   groups and its names and roles (the first `ModelList`), and the credentials `client-keys`, `keys`
   and `llamaswap-key`, read once at start; `run_servers` with `make_protocol(peer_cred=False,
   header_timeout_s=10)`, `graceful_s=gateproto.GRACEFUL_S`. `TESTED_AGAINST = {"llama-swap":
-  "v257"}`.
+  "v257"}`. *(Added 2026-10-08, at Task 9's review, the controller's ruling:)* uvicorn's
+  WARNING-and-up lines and tracebacks reach stderr, and so the journal, through logging's
+  last-resort handler, since `run_servers` leaves `log_config=None`. So `spark front` puts a filter
+  or handler on `uvicorn.error` that drops `exc_info` and never logs request content: a body, a
+  header, a key. The front's own journal lines stay as *The front's journal lines* (Global
+  Constraints) give them.
 
 **Tests** (`spark/tests/test_front_forward.py`; the front on a real uvicorn, against the v257
 stand-in):
@@ -3089,6 +3155,10 @@ stand-in):
 - `test_spark_front_takes_9100_from_systemd` — `spark front` in a subprocess, given a TCP listener
   on 127.0.0.1:0 as `front`, stand-in credentials, the v257 stand-in and a gate stand-in: `GET
   /health` → 200; SIGTERM → exit 0.
+- `test_a_raising_request_puts_no_request_content_on_stderr` — *(added 2026-10-08, at Task 9's
+  review)* `spark front` in a subprocess, as above, with the app made to raise on a request: a
+  request carrying a body, headers and a client key stand-in, each a distinct marker, gets its
+  500, and none of the markers, nor a traceback, is on the process's stderr.
 - `test_the_front_imports_only_its_listed_modules` — a subprocess importing `spark.front.main`: its
   `spark` modules in `sys.modules` are exactly `FRONT_MODULES`; one importing only `spark.front`
   loads no third-party module.
@@ -5425,7 +5495,15 @@ git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward l
   real sockets skip, with Task 9's reason (*SO_PEERCRED is Linux's, and the gate runs only on the
   Spark*), as expected, beside the skips for a tool the Mac lacks that a test names
   (`systemd-analyze`, say); any other skip is a finding. A Mac difference is fixed here, with its
-  test, and in this plan.
+  test, and in this plan. *(Corrected 2026-10-08, at Task 9's review.)* Task 9 has four expected
+  skips, each for a Linux-only fact:
+  - the uid test and `test_a_tcp_request_carries_no_peer_cred`, for `SO_PEERCRED`;
+  - `test_a_tcp_socket_from_systemd_keeps_tcp_nodelay`, for `SO_PROTOCOL`, without which
+    `socket.socket(fileno=)` leaves a TCP socket's protocol 0 and asyncio sets no `TCP_NODELAY`;
+  - `test_sd_notify_reaches_an_abstract_socket`, for the abstract socket namespace.
+
+  Those four, Task 19's over real sockets and a missing tool's are the expected skips; any other
+  skip is a finding.
 - [ ] **Step 2: CI's parity** (workflows are the Mac's): `.github/workflows/ci.yml` gains `spark docs
   notifications --check` beside `spark docs stack --check`, and shellcheck of
   `stack/host/local-ai-notify` and `stack/host/local-ai-agent-oom` beside bootstrap's. Commit;

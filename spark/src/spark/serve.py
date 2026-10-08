@@ -48,8 +48,13 @@ def _config(app: ASGIApp, protocol: type, graceful_s: float) -> uvicorn.Config:
     return uvicorn.Config(
         app,
         http=protocol,
+        # Never a WebSocket: were a library for one ever installed, an upgrade would leave `protocol` for the
+        # library's, and its request would reach the app without its caller's uid or the header deadline.
+        ws="none",
         lifespan="off",
-        log_config=None,  # the journal gets the services' own lines, not uvicorn's
+        # uvicorn configures no logging, so its WARNING-and-up lines and tracebacks ("Exception in ASGI application")
+        # reach stderr, and so the journal, through logging's last-resort handler. Tasks 19 and 21 set the policy.
+        log_config=None,
         access_log=False,  # an access line names the client and the path; the front logs what it means to
         server_header=False,
         date_header=False,

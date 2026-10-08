@@ -29,7 +29,8 @@ def listen_fds(env: MutableMapping[str, str] = os.environ, pid: int | None = Non
     family, type and protocol from the socket itself (so asyncio knows a TCP socket as TCP, and sets TCP_NODELAY on
     each connection), and made non-inheritable, as sd_listen_fds leaves them. The three variables are removed from
     `env` whatever the outcome, as sd_listen_fds removes them, so no child process takes them for its own. Everything
-    is checked before any fd is touched."""
+    is checked before any fd is touched; an fd that then turns out not to be a socket is refused by its number and
+    name."""
     pid = os.getpid() if pid is None else pid
     listen_pid, count, names = (env.pop(name, None) for name in VARIABLES)
 
@@ -52,7 +53,11 @@ def listen_fds(env: MutableMapping[str, str] = os.environ, pid: int | None = Non
 
     taken = {}
     for fd, name in enumerate(named, start=LISTEN_FDS_START):
-        sock = socket.socket(fileno=fd)
+        try:
+            sock = socket.socket(fileno=fd)
+        except OSError as exc:  # not a socket, or not open
+            message = f"fd {fd}, the socket LISTEN_FDNAMES calls {name}, isn't a socket: {exc.strerror}"
+            raise SocketsError(message) from None
         sock.set_inheritable(False)
         taken[name] = sock
     return taken

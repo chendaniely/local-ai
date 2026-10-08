@@ -101,3 +101,42 @@ def test_match_key_refuses_an_unknown_key():
     assert credentials.match_key("k3", digests) is None
     assert credentials.match_key("", digests) is None
     assert credentials.match_key("", {"empty": hashlib.sha256(b"").digest()}) is None  # never the empty key
+    # A key no encoder takes (a lone surrogate, from a header decoded with surrogateescape) matches nothing, and raises
+    # nothing either: UnicodeEncodeError's text quotes the character, and through uvicorn it would reach the journal.
+    assert credentials.match_key("k1\udcff", digests) is None
+
+
+def _multi_line_examples() -> tuple[str, str]:
+    """A digests file and a key list, the two multi-line credentials, each with stand-in names."""
+    one, two = _digest("k1"), _digest("k2")
+    digests = f"# the client keys' digests\ndan-mac {one}\n\nagent {two}\n"
+    keys = "keys:\n  dan-mac:\n    group: dan\n    label: Dan\u2019s Mac\n    account: chendaniely\n"
+    return digests, keys
+
+
+def test_a_multi_line_credential_is_read_whole_and_parsed(creds):
+    folder, env = creds
+    digests, keys = _multi_line_examples()  # kept whole, for their own parsers
+    (folder / "client-keys").write_text(digests)
+    (folder / "keys").write_text(keys, encoding="utf-8")
+    assert credentials.read_credential_text("client-keys", env) == digests
+    assert credentials.parse_digests(credentials.read_credential_text("client-keys", env)) == {
+        "dan-mac": bytes.fromhex(_digest("k1")), "agent": bytes.fromhex(_digest("k2"))}
+    assert credentials.read_credential_text("keys", env) == keys
+
+
+def test_a_multi_line_credential_missing_empty_or_not_text_is_refused_by_name(creds):
+    folder, env = creds
+    with pytest.raises(CredentialError, match="CREDENTIALS_DIRECTORY"):
+        credentials.read_credential_text("keys", {})
+    with pytest.raises(CredentialError, match="keys"):
+        credentials.read_credential_text("keys", env)  # no file
+
+    for content in (b"", b"\n", b"  \n\n\t\n", b"keys:\n  tk_x\xff\n", b"keys:\n  label: tk_x\x1b[31m\n",
+                    b"keys:\n  tk_x\x00\n", "keys:\n  label: tk_x\u0085\n".encode()):
+        (folder / "keys").write_bytes(content)
+        with pytest.raises(CredentialError) as refused:
+            credentials.read_credential_text("keys", env)
+        message = str(refused.value)
+        assert "keys" in message
+        assert "tk_" not in message and "0xff" not in message and "position" not in message

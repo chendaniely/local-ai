@@ -40,8 +40,7 @@ LAUNCHER = textwrap.dedent(
 )
 
 
-def _launch(script: str, passed: list[socket.socket], names: str) -> subprocess.CompletedProcess:
-    fds = [s.fileno() for s in passed]
+def _launch(script: str, fds: list[int], names: str) -> subprocess.CompletedProcess:
     environment = {**os.environ, "LISTEN_FDS": str(len(fds)), "LISTEN_FDNAMES": names}
     return subprocess.run([sys.executable, "-c", LAUNCHER, ",".join(map(str, fds)), script], pass_fds=fds,
                           env=environment, capture_output=True, text=True, timeout=30, check=False)
@@ -82,7 +81,7 @@ def test_listen_fds_takes_systemds_named_sockets(sockdir):
     with _tcp_listener() as front, socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as status:
         status.bind(str(sockdir / "status.sock"))
         status.listen()
-        result = _launch(REPORT, [front, status], "front:status")
+        result = _launch(REPORT, [front.fileno(), status.fileno()], "front:status")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "families": {"front": "AF_INET", "status": "AF_UNIX"},
@@ -112,6 +111,29 @@ def test_listen_fds_refuses_a_count_and_names_that_disagree():
         sockets.listen_fds({"LISTEN_PID": pid, "LISTEN_FDS": "two", "LISTEN_FDNAMES": "front:status"})
     with pytest.raises(SocketsError, match="status"):
         sockets.listen_fds({"LISTEN_PID": pid, "LISTEN_FDS": "2", "LISTEN_FDNAMES": "status:status"})
+
+
+REFUSED = textwrap.dedent(
+    """
+    from spark import sockets
+    try:
+        sockets.listen_fds()
+    except sockets.SocketsError as refused:
+        print(refused)
+    """
+)
+
+
+def test_listen_fds_refuses_an_fd_that_isnt_a_socket():
+    read_end, write_end = os.pipe()
+    try:
+        with _tcp_listener() as front:
+            result = _launch(REFUSED, [front.fileno(), read_end], "front:status")
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+    assert result.returncode == 0, result.stderr  # a SocketsError, not a bare OSError
+    assert "fd 4" in result.stdout and "status" in result.stdout
 
 
 NODELAY = textwrap.dedent(
@@ -149,7 +171,7 @@ def test_a_tcp_socket_from_systemd_keeps_tcp_nodelay():
     # asyncio sets TCP_NODELAY only on a socket it knows is TCP: socket.socket(fileno=) reads the protocol, and
     # socket.fromfd() leaves it 0, so the front's every small streamed chunk would wait on Nagle's algorithm.
     with _tcp_listener() as front:
-        result = _launch(NODELAY, [front], "front")
+        result = _launch(NODELAY, [front.fileno()], "front")
     assert result.returncode == 0, result.stderr
     assert int(result.stdout) != 0
 

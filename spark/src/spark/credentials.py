@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import os
 import re
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,8 +23,8 @@ class CredentialError(Exception):
     """A credential missing or malformed. Its text names the credential, never its content."""
 
 
-def _read(name: str, env: Mapping[str, str]) -> bytes:
-    """The credential's bytes, with one trailing newline dropped; refused when missing or empty."""
+def _raw(name: str, env: Mapping[str, str]) -> bytes:
+    """The credential's bytes, as they are; refused when the folder or the file is missing or can't be read."""
     directory = env.get("CREDENTIALS_DIRECTORY")
     if not directory:
         raise CredentialError(f"CREDENTIALS_DIRECTORY isn't set, so the credential {name} can't be read: "
@@ -34,6 +35,12 @@ def _read(name: str, env: Mapping[str, str]) -> bytes:
         raise CredentialError(f"the credential {name} is missing: its unit gives it with LoadCredential=") from None
     except OSError as exc:
         raise CredentialError(f"the credential {name} can't be read: {exc.strerror}") from None
+    return raw
+
+
+def _read(name: str, env: Mapping[str, str]) -> bytes:
+    """The credential's bytes, with one trailing newline dropped; refused when missing or empty."""
+    raw = _raw(name, env)
     if raw.endswith(b"\n"):
         raw = raw[:-1]
     if not raw:
@@ -62,6 +69,22 @@ def read_header_credential(name: str, env: Mapping[str, str] = os.environ) -> tu
     return header, value
 
 
+def read_credential_text(name: str, env: Mapping[str, str] = os.environ) -> str:
+    """The credential `name` as text of many lines, kept whole for its own parser: the key list (`keys`) and the key
+    digests. Refused when missing, empty or blank, not UTF-8, or holding a control character other than a tab or a
+    line break; the refusal names the credential and never quotes it, as UnicodeDecodeError's text would."""
+    raw = _raw(name, env)
+    if not raw.strip():
+        raise CredentialError(f"the credential {name} is empty")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise CredentialError(f"the credential {name} isn't UTF-8 text") from None
+    if any(unicodedata.category(char) == "Cc" and char not in "\t\n\r" for char in text):
+        raise CredentialError(f"the credential {name} holds a control character other than a tab or a line break")
+    return text
+
+
 def parse_digests(text: str) -> dict[str, bytes]:
     """The client keys' digests file: `<key name> <64 lowercase hex>` lines, the hex SHA-256 of the key; `#` comments
     and blank lines skipped. {key name: the 32-byte digest}. A malformed line or a name given twice is refused by its
@@ -84,10 +107,13 @@ def parse_digests(text: str) -> dict[str, bytes]:
 def match_key(presented: str, digests: dict[str, bytes]) -> str | None:
     """The name of the key whose digest the presented key's SHA-256 matches, or None. Every digest is compared, in
     full and in constant time, whichever matches, so the time taken says nothing about which or how much matched. An
-    empty key matches nothing."""
+    empty key matches nothing, nor does one no encoder takes (a lone surrogate)."""
     if not presented:
         return None
-    digest = hashlib.sha256(presented.encode("utf-8")).digest()
+    try:
+        digest = hashlib.sha256(presented.encode("utf-8")).digest()
+    except UnicodeEncodeError:  # its text would quote the key's character, and no key the Spark issued holds one
+        return None
     found = None
     for name, expected in digests.items():
         if hmac.compare_digest(digest, expected) and found is None:

@@ -1,9 +1,11 @@
-"""Task 9's uvicorn protocol: each caller's uid from SO_PEERCRED, and a deadline for a request's headers. A real
-uvicorn (the locked 0.54.0) serves each test on a short AF_UNIX path or on 127.0.0.1, in a thread of its own, or, for
-the forwarded headers, through serve.run_servers in a process of its own; this file and test_sockets.py run first on
-a uvicorn bump (website/how-to/updates.md), since protocols.py subclasses its internals."""
+"""Task 9's uvicorn protocol: each caller's uid from SO_PEERCRED, and the deadline for a request's head and for a body
+nobody reads. A real uvicorn (the locked 0.54.0), with the services' own settings (serve's), serves each test on a
+short AF_UNIX path or on 127.0.0.1, in a thread of its own, or, for the forwarded headers, through serve.run_servers
+in a process of its own; this file and test_sockets.py run first on a uvicorn bump (website/how-to/updates.md), since
+protocols.py subclasses its internals."""
 
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -20,13 +22,18 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+import uvicorn.protocols.websockets.auto
 from uvicorn.protocols.http.h11_impl import H11Protocol
 
-from spark import protocols
+from spark import protocols, serve
 
 LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux",
                                 reason="SO_PEERCRED is Linux's, and the gate runs only on the Spark")
 HEADER_TIMEOUT_S = 0.5
+# A WebSocket handshake's request. Its nonce, 16 bytes in base64 as RFC 6455 asks, is built from a stand-in phrase.
+NONCE = base64.b64encode(b"spark stand-in!!")
+UPGRADE = (b"GET / HTTP/1.1\r\nHost: spark\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+           b"Sec-WebSocket-Key: " + NONCE + b"\r\nSec-WebSocket-Version: 13\r\n\r\n")
 
 
 @pytest.fixture
@@ -51,6 +58,12 @@ async def who(scope, receive, send):
                                     "peer": None if cred is None else [cred.pid, cred.uid, cred.gid]}).encode())
 
 
+async def refuse(scope, receive, send):
+    """Answers 401 at once and reads none of the body, as the front does for a key it doesn't know."""
+    await send({"type": "http.response.start", "status": 401, "headers": [(b"content-length", b"0")]})
+    await send({"type": "http.response.body", "body": b""})
+
+
 async def echo(scope, receive, send):
     """Reads the whole body, however slowly it comes, and answers it."""
     body = b""
@@ -62,11 +75,38 @@ async def echo(scope, receive, send):
     await _answer(send, body)
 
 
+class StandInWebSocket(asyncio.Protocol):
+    """What a WebSocket library's protocol does with the upgrade uvicorn hands it (h11_impl.py's
+    handle_websocket_upgrade): it takes the connection over and answers 101, serving the app uvicorn's config loaded,
+    so neither the connection's uid nor its header deadline would follow the request there."""
+
+    def __init__(self, config, server_state, app_state, _loop=None):
+        self.transport = None
+        self.answered = False
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def data_received(self, data):
+        if not self.answered:
+            self.answered = True
+            self.transport.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                 b"Connection: Upgrade\r\n\r\n")
+
+
+@pytest.fixture
+def websocket_library(monkeypatch):
+    """As if a WebSocket library were installed, which uvicorn's ws="auto" would then take up."""
+    monkeypatch.setattr(uvicorn.protocols.websockets.auto, "AutoWebSocketsProtocol", StandInWebSocket)
+
+
 @contextmanager
-def serving(app, listener: socket.socket, protocol: type):
-    """A real uvicorn serving `app` on `listener` through `protocol`, on its own loop in a thread of its own."""
-    config = uvicorn.Config(app, http=protocol, lifespan="off", log_config=None, access_log=False,
-                            proxy_headers=False, timeout_graceful_shutdown=1)
+def serving(app, listener: socket.socket, protocol: type, *, keep_alive_s: float | None = None):
+    """A real uvicorn serving `app` on `listener` through `protocol`, with the services' own settings (serve's), on its
+    own loop in a thread of its own."""
+    config = serve._config(app, protocol, graceful_s=1)
+    if keep_alive_s is not None:
+        config.timeout_keep_alive = keep_alive_s
     server = uvicorn.Server(config)
     thread = threading.Thread(target=lambda: asyncio.run(server.serve(sockets=[listener])), daemon=True)
     thread.start()
@@ -105,6 +145,12 @@ def _connect(listener: socket.socket) -> socket.socket:
 
 def _read_response(client: socket.socket) -> tuple[bytes, bytes]:
     """One response, read by its content-length, so the connection can carry another: (status line, body)."""
+    lines, body = _response(client)
+    return lines[0], body
+
+
+def _response(client: socket.socket) -> tuple[list[bytes], bytes]:
+    """One response, read by its content-length (none: no body): (its head's lines, its body)."""
     data = b""
     while b"\r\n\r\n" not in data:
         chunk = client.recv(65536)
@@ -112,12 +158,12 @@ def _read_response(client: socket.socket) -> tuple[bytes, bytes]:
         data += chunk
     head, _, body = data.partition(b"\r\n\r\n")
     lines = head.split(b"\r\n")
-    length = next(int(line.split(b":", 1)[1]) for line in lines if line.lower().startswith(b"content-length:"))
+    length = next((int(line.split(b":", 1)[1]) for line in lines if line.lower().startswith(b"content-length:")), 0)
     while len(body) < length:
         chunk = client.recv(65536)
         assert chunk, "closed mid-body"
         body += chunk
-    return lines[0], body
+    return lines, body
 
 
 def _get(listener: socket.socket, app_path: str = "/") -> tuple[bytes, bytes]:
@@ -138,14 +184,17 @@ def _closed_after(client: socket.socket, limit_s: float) -> float:
 
 
 @LINUX_ONLY
-def test_the_gate_receives_each_callers_uid(sockdir):
+def test_the_gate_receives_each_callers_uid(sockdir, websocket_library):
     with _unix_listener(sockdir / "gate.sock") as listener, \
             serving(who, listener, protocols.make_protocol(peer_cred=True, header_timeout_s=None)):
         status, body = _get(listener)
-    assert status == b"HTTP/1.1 200 OK"
-    answer = json.loads(body)
-    assert answer["raw"] == {"pid": os.getpid(), "uid": os.getuid(), "gid": os.getegid()}
-    assert answer["peer"] == [os.getpid(), os.getuid(), os.getegid()]
+        with _connect(listener) as client:  # a WebSocket upgrade is never taken, so it carries the uid too
+            client.sendall(UPGRADE)
+            upgrade_status, upgrade_body = _read_response(client)
+    assert status == upgrade_status == b"HTTP/1.1 200 OK"
+    for answer in (json.loads(body), json.loads(upgrade_body)):
+        assert answer["raw"] == {"pid": os.getpid(), "uid": os.getuid(), "gid": os.getegid()}
+        assert answer["peer"] == [os.getpid(), os.getuid(), os.getegid()]
 
 
 def test_peer_cred_refuses_off_linux(monkeypatch):
@@ -165,14 +214,20 @@ def test_a_tcp_request_carries_no_peer_cred():
 
 
 # serve.run_servers, as the front and the gate run it, in a process of its own (it takes SIGTERM and SIGINT): an app
-# answering the scope's client address and scheme, on 127.0.0.1. It prints the port it listens on.
+# answering the scope's client address and scheme, and the type of every scope it was called with, on 127.0.0.1. It
+# prints the port it listens on.
 FORWARDED = textwrap.dedent(
     """
     import json, socket
     from spark import protocols, serve
 
+    seen = []
+
     async def app(scope, receive, send):
-        body = json.dumps({"client": scope["client"][0], "scheme": scope["scheme"]}).encode()
+        seen.append(scope["type"])
+        if scope["type"] != "http":
+            return  # a lifespan scope, which lifespan="off" never sends
+        body = json.dumps({"client": scope["client"][0], "scheme": scope["scheme"], "seen": seen}).encode()
         await send({"type": "http.response.start", "status": 200,
                     "headers": [(b"content-length", str(len(body)).encode())]})
         await send({"type": "http.response.body", "body": body})
@@ -197,9 +252,11 @@ def test_forwarded_headers_change_nothing():
         with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
             client.sendall(b"GET / HTTP/1.1\r\nHost: spark\r\nX-Forwarded-For: 203.0.113.9\r\n"
                            b"X-Forwarded-Proto: https\r\nConnection: close\r\n\r\n")
-            status, body = _read_response(client)
-        assert status == b"HTTP/1.1 200 OK"
-        assert json.loads(body) == {"client": "127.0.0.1", "scheme": "http"}
+            lines, body = _response(client)
+        assert lines[0] == b"HTTP/1.1 200 OK"
+        assert json.loads(body) == {"client": "127.0.0.1", "scheme": "http", "seen": ["http"]}  # and no lifespan
+        # run_servers' other settings, seen from outside: no `server: uvicorn` and no `date:` on any answer.
+        assert not [line for line in lines[1:] if line.lower().startswith((b"server:", b"date:"))]
         child.send_signal(signal.SIGTERM)
         _, err = child.communicate(timeout=10)
         assert child.returncode == 0, err
@@ -253,4 +310,41 @@ def test_a_later_request_on_the_connection_gets_the_same_deadline():
             client.sendall(b"GET / HTTP/1.1\r\nHost: spark\r\n\r\n")
             assert _read_response(client) == (b"HTTP/1.1 200 OK", b"")
             client.sendall(b"GET / HTTP/1.1\r\n")
+            assert _closed_after(client, 2) >= HEADER_TIMEOUT_S - 0.1
+
+
+def test_an_answered_request_cant_hold_its_connection_with_a_trickled_body():
+    # An app that answers before reading the body, as the front's 401 does. uvicorn starts the next request only once
+    # that body ends, and each byte of it stops uvicorn's keep-alive timer, so without the deadline a client refused at
+    # once could keep its connection for good by sending the body a byte at a time.
+    with _tcp_listener() as listener, \
+            serving(refuse, listener, protocols.make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S),
+                    keep_alive_s=2):
+        with _connect(listener) as client:
+            client.sendall(b"POST / HTTP/1.1\r\nHost: spark\r\nContent-Length: 1000\r\n\r\n")
+            assert _read_response(client)[0] == b"HTTP/1.1 401 Unauthorized"
+            started, closed = time.monotonic(), False
+            client.settimeout(1)
+            while not closed and time.monotonic() - started < 7:
+                try:
+                    client.sendall(b"x")  # one byte a second
+                    closed = client.recv(65536) == b""
+                except TimeoutError:
+                    continue
+                except (BrokenPipeError, ConnectionResetError):
+                    closed = True
+            took = time.monotonic() - started
+    assert closed, f"still open after {took:.1f} s of trickled body"
+    assert took <= HEADER_TIMEOUT_S + 1
+
+
+def test_a_websocket_upgrade_stays_a_plain_request_on_its_connection(websocket_library):
+    # ws="none": were a WebSocket library ever installed, an upgrade would leave this protocol for the library's,
+    # with the app uvicorn loaded rather than the connection's own, so without its uid and its header deadline.
+    with _tcp_listener() as listener, \
+            serving(echo, listener, protocols.make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S)):
+        with _connect(listener) as client:
+            client.sendall(UPGRADE)
+            assert _read_response(client) == (b"HTTP/1.1 200 OK", b"")  # the app answered it: no 101
+            client.sendall(b"GET / HTTP/1.1\r\n")  # and the connection is still this protocol's
             assert _closed_after(client, 2) >= HEADER_TIMEOUT_S - 0.1

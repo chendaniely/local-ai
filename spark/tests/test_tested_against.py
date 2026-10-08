@@ -42,7 +42,8 @@ def _standin(tested_against):
 def test_every_tested_against_matches_versions_yaml_or_the_lock():
     modules = _modules()
     # The walk has to reach the modules that carry one, or this test passes on nothing.
-    assert {"spark.llamaswap", "spark.render"} <= {m.__name__ for m in modules if hasattr(m, "TESTED_AGAINST")}
+    assert {"spark.llamaswap", "spark.render", "spark.protocols", "spark.serve"} <= {
+        m.__name__ for m in modules if hasattr(m, "TESTED_AGAINST")}
     assert versions.tested_against_problems(modules, _components()) == []
 
 
