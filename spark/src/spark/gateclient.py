@@ -6,10 +6,14 @@ and their messages are gateproto's.
 A call that gets no usable answer raises a GateError whose text is a sentence: GateUnavailable when there is no socket,
 nothing listening on it, or no answer within the timeout, as when systemd holds the socket while the gate is down;
 GateForbidden when the socket refuses this login, naming the group it is for; GateRefused when the gate answers with
-a status other than 2xx, carrying the status and the answer's body."""
+a status other than 2xx, carrying the status and the answer's body. cli.main prints that text as the command's one
+line (the controller's ruling at Task 10), so it says what state the socket is in and, where there is one, the next
+step, in the words of Task 6's refusals; and it never holds what was sent, nor what the gate answered beyond its
+`message`, the one plain line the gate words for whoever asked."""
 
 from __future__ import annotations
 
+import grp
 import http.client
 import json
 import os
@@ -21,11 +25,32 @@ from typing import Any, TypeVar
 from spark import gateproto, paths
 
 _T = TypeVar("_T")
+MESSAGE_MAX = 2000  # a refusal's message above this many characters isn't shown, nor one that isn't a printable line
+# Where to look when the gate is down: `make doctor`, Dan's, as Task 6's refusals say it for a service that is down
+# (messages._ALERT, whose phone half doesn't hold here: a socket can be missing with no alert sent).
+_STEP = {"dan": "On the Spark, `make doctor` shows what's wrong.",
+         "agent": "`make doctor` on the Spark shows Dan what's wrong."}
+
+
+def _words() -> str:
+    """Whose words a next step is in: Dan's for root and spark-admin's members, who can take it; agent's for every
+    other login, since agent is never told to run a command only Dan can run (Task 6)."""
+    if os.geteuid() == 0:
+        return "dan"
+    try:
+        admin = grp.getgrnam(gateproto.SOCKET_GROUPS["control"]).gr_gid
+    except KeyError:
+        return "agent"
+    return "dan" if admin == os.getegid() or admin in os.getgroups() else "agent"
+
+
+def _step() -> str:
+    return _STEP[_words()]
 
 
 class GateError(Exception):
-    """A call to the gate that got no usable answer; the text says why. A 2xx answer, or a stream's line, that isn't a
-    JSON object, as every answer of the gate's is to be (gateproto), raises this itself."""
+    """A call to the gate that got no usable answer; the text says why, in a sentence. A 2xx answer, or a stream's
+    line, that isn't a JSON object, as every answer of the gate's is to be (gateproto), raises this itself."""
 
 
 class GateUnavailable(GateError):
@@ -38,16 +63,22 @@ class GateForbidden(GateError):
 
 class GateRefused(GateError):
     """The gate answered with a status other than 2xx. `body` is its answer, a JSON object, or {} for an answer that
-    isn't one, such as uvicorn's own plain-text 500."""
+    isn't one, such as uvicorn's own plain-text 500. Its text is the body's `message` when that is one printable line
+    of at most MESSAGE_MAX characters, else a sentence with the status; nothing else of the body, in its text or its
+    repr, which shows only the status."""
 
     def __init__(self, status: int, body: dict[str, Any]) -> None:
-        super().__init__(status, body)
+        super().__init__(status)
         self.status = status
         self.body = body
 
     def __str__(self) -> str:
         message = self.body.get("message")
-        return message if isinstance(message, str) and message else f"The gate answered HTTP {self.status}."
+        if isinstance(message, str) and message.strip() and message.isprintable() and len(message) <= MESSAGE_MAX:
+            return message
+        if self.status >= 500:
+            return f"The gate failed on that request (HTTP {self.status}). {_step()}"
+        return f"The gate refused that request (HTTP {self.status})."
 
 
 class _UnixConnection(http.client.HTTPConnection):
@@ -99,7 +130,7 @@ class GateClient:
             finally:
                 connection.close()
             raise GateRefused(response.status, _refusal_body(raw))
-        return self._lines(method, route, connection, response)
+        return self._lines(connection, response)
 
     def _call(self, method: str, route: str, body: dict[str, Any] | None) -> dict[str, Any]:
         connection, response = self._open(method, route, body)
@@ -109,7 +140,7 @@ class GateClient:
             connection.close()
         if not 200 <= response.status < 300:
             raise GateRefused(response.status, _refusal_body(raw))
-        return _json_object(method, route, raw)
+        return _json_object(raw)
 
     def _open(self, method: str, route: str,
               body: dict[str, Any] | None) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
@@ -119,13 +150,13 @@ class GateClient:
         except PermissionError as err:
             raise GateForbidden(_who_may(self.path)) from err
         except FileNotFoundError as err:
-            raise GateUnavailable(f"The gate can't be reached: there is no socket at {self.path}.") from err
+            raise GateUnavailable(f"The gate can't be reached: there is no socket at {self.path}. {_step()}") from err
         except ConnectionRefusedError as err:
-            raise GateUnavailable(f"The gate can't be reached: nothing is listening on {self.path}.") from err
+            raise GateUnavailable(f"The gate can't be reached: nothing is listening on {self.path}. {_step()}") from err
         except TimeoutError as err:
             raise GateUnavailable(self._no_answer()) from err
         except OSError as err:
-            raise GateUnavailable(f"The gate can't be reached on {self.path}: {_reason(err)}.") from err
+            raise GateUnavailable(f"The gate can't be reached on {self.path}: {_reason(err)}. {_step()}") from err
         payload = None if body is None else json.dumps(body, allow_nan=False).encode()
         headers = {} if payload is None else {"Content-Type": "application/json"}
 
@@ -147,29 +178,29 @@ class GateClient:
         except TimeoutError as err:
             raise GateUnavailable(self._no_answer()) from err
         except (OSError, http.client.HTTPException) as err:
-            raise GateUnavailable(f"The gate stopped answering on {self.path}: {_reason(err)}.") from err
+            raise GateUnavailable(f"The gate stopped answering on {self.path}: {_reason(err)}. {_step()}") from err
 
-    def _lines(self, method: str, route: str, connection: http.client.HTTPConnection,
+    def _lines(self, connection: http.client.HTTPConnection,
                response: http.client.HTTPResponse) -> Iterator[dict[str, Any]]:
         try:
             while line := self._talk(response.readline):
                 if line.strip():
-                    yield _json_object(method, route, line)
+                    yield _json_object(line)
         finally:
             connection.close()
 
     def _no_answer(self) -> str:
         within = "" if self.timeout_s is None else f" within {self.timeout_s:g} s"
-        return f"The gate didn't answer on {self.path}{within}."
+        return f"The gate didn't answer on {self.path}{within}. {_step()}"
 
 
-def _json_object(method: str, route: str, raw: bytes) -> dict[str, Any]:
+def _json_object(raw: bytes) -> dict[str, Any]:
     try:
         answer = json.loads(raw)
     except ValueError:
         answer = None
     if not isinstance(answer, dict):
-        raise GateError(f"The gate's answer to {method} {route} isn't a JSON object.")
+        raise GateError(f"The gate's answer couldn't be read: it isn't a JSON object. {_step()}")
     return answer
 
 

@@ -14,13 +14,28 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from spark import gateproto, paths
-from spark.gateclient import GateClient, GateForbidden, GateRefused, GateUnavailable
+from spark import gateclient, gateproto, messages, paths
+from spark.gateclient import GateClient, GateError, GateForbidden, GateRefused, GateUnavailable
+
+WORDS = gateclient._words  # the real one, before dans_words replaces it
+DAN_STEP = "On the Spark, `make doctor` shows what's wrong."
+AGENT_STEP = "`make doctor` on the Spark shows Dan what's wrong."
+MARKER = "BODY-MARKER"  # stands for what an answer's body holds beyond its message
+CREDENTIAL = "CREDENTIAL-MARKER"  # stands for a key, wherever one might travel
+
+
+@pytest.fixture(autouse=True)
+def dans_words(monkeypatch):
+    """A sentence's next step is in Dan's words unless a test says otherwise: which words a login gets depends on its
+    groups (test_the_next_step_is_dans_only_for_a_login_that_can_take_it)."""
+    monkeypatch.setattr(gateclient, "_words", lambda: "dan")
 
 
 @pytest.fixture
@@ -54,9 +69,19 @@ class _Gate(BaseHTTPRequestHandler):
     def _body(self) -> dict:
         return json.loads(self.rfile.read(int(self.headers["Content-Length"])))
 
+    def _canned(self) -> None:
+        """The test's answer, as given: (status, the body's bytes)."""
+        status, data = self.server.canned
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         if self.path == "/v1/status":
             self._json(200, {"ok": True})
+        elif self.path == "/v1/canned":
+            self._canned()
         else:
             self._json(404, {"message": "no such route"})
 
@@ -69,6 +94,8 @@ class _Gate(BaseHTTPRequestHandler):
             self._json(200, {"method": self.command, "got": body, "content_type": self.headers["Content-Type"]})
         elif self.path == "/v1/pin":
             self._json(403, {"message": "not yours"})
+        elif self.path == "/v1/canned":
+            self._canned()
         elif self.path == "/v1/unload":
             # Three NDJSON lines (the gate's /v1/unload sends two, its count at once and its result once the drain is
             # done): the first, then a wait until the test has read it, so a client that waits for the whole answer
@@ -93,6 +120,7 @@ def _serving(path: Path):
     server.daemon_threads = True
     server.first_read = threading.Event()
     server.saw_first_read = None
+    server.canned = (200, b"{}")
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     try:
@@ -117,7 +145,7 @@ def test_a_missing_socket_reads_as_gate_unavailable(sockdir):
     path = sockdir / "absent.sock"
     with pytest.raises(GateUnavailable) as raised:
         GateClient(path, 1).get("/v1/status")
-    assert str(raised.value) == f"The gate can't be reached: there is no socket at {path}."
+    assert str(raised.value) == f"The gate can't be reached: there is no socket at {path}. {DAN_STEP}"
 
 
 def test_a_socket_nobody_listens_on_reads_as_gate_unavailable(sockdir):
@@ -127,7 +155,7 @@ def test_a_socket_nobody_listens_on_reads_as_gate_unavailable(sockdir):
         gone.bind(str(path))
     with pytest.raises(GateUnavailable) as raised:
         GateClient(path, 1).get("/v1/status")
-    assert str(raised.value) == f"The gate can't be reached: nothing is listening on {path}."
+    assert str(raised.value) == f"The gate can't be reached: nothing is listening on {path}. {DAN_STEP}"
 
 
 def test_a_socket_nobody_answers_times_out_as_gate_unavailable(sockdir):
@@ -152,7 +180,7 @@ def test_a_socket_nobody_answers_times_out_as_gate_unavailable(sockdir):
         took = time.monotonic() - started
     assert not asker.is_alive() and took < 2
     [error] = raised
-    assert str(error) == f"The gate didn't answer on {path} within 0.5 s."
+    assert str(error) == f"The gate didn't answer on {path} within 0.5 s. {DAN_STEP}"
 
 
 def test_a_closed_socket_says_who_may_use_it(monkeypatch):
@@ -180,6 +208,80 @@ def test_a_refusal_comes_back_as_gate_refused_with_its_body(sockdir):
             GateClient(path, 5).post("/v1/pin", {"model": "coder", "until": None})
     assert (raised.value.status, raised.value.body) == (403, {"message": "not yours"})
     assert str(raised.value) == "not yours"
+
+
+def test_no_gate_error_carries_a_credential_or_a_response_body(sockdir):
+    # The controller's ruling at Task 10: cli.main prints a GateError's text, so the text never holds what was sent,
+    # nor what the gate answered beyond its `message`, the one plain line the gate words for whoever asked.
+    path = sockdir / "g.sock"
+    with _serving(path) as server:
+        client = GateClient(path, 5)
+        errors = []
+
+        def caught(call):
+            with pytest.raises(GateError) as raised:
+                call()
+            errors.append(raised.value)
+            return raised.value
+
+        # A refusal: its message only, never the rest of its body.
+        server.canned = (409, json.dumps({"message": "Not loading the coder now.", "detail": MARKER,
+                                          "key": CREDENTIAL}).encode())
+        refused = caught(lambda: client.post("/v1/canned", {"model": "coder", "key": CREDENTIAL}))
+        assert str(refused) == "Not loading the coder now." and refused.body["detail"] == MARKER
+        # A message that isn't one line of printable text isn't shown at all, and nor is a body that isn't JSON.
+        server.canned = (409, json.dumps({"message": f"Not loading.\n{MARKER}"}).encode())
+        assert str(caught(lambda: client.get("/v1/canned"))) == "The gate refused that request (HTTP 409)."
+        server.canned = (409, json.dumps({"message": "Not loading." + "x" * 2000}).encode())
+        assert str(caught(lambda: client.get("/v1/canned"))) == "The gate refused that request (HTTP 409)."
+        server.canned = (500, f"Internal Server Error {MARKER}".encode())
+        assert str(caught(lambda: client.get("/v1/canned"))) == (
+            f"The gate failed on that request (HTTP 500). {DAN_STEP}")
+        # An answer that isn't a JSON object, whole or as a stream's line.
+        server.canned = (200, f"{MARKER} {CREDENTIAL}".encode())
+        assert str(caught(lambda: client.post("/v1/canned", {"key": CREDENTIAL}))) == (
+            f"The gate's answer couldn't be read: it isn't a JSON object. {DAN_STEP}")
+        server.canned = (200, f'{{"ok": true}}\n{MARKER}\n'.encode())
+        caught(lambda: list(client.stream("/v1/canned")))
+    # And a call that never reached the gate.
+    caught(lambda: GateClient(sockdir / "absent.sock", 1).post("/v1/load", {"model": CREDENTIAL}))
+    for error in errors:
+        for shown in (str(error), repr(error)):
+            assert MARKER not in shown and CREDENTIAL not in shown, shown
+
+
+def test_the_next_step_is_dans_only_for_a_login_that_can_take_it(monkeypatch, sockdir):
+    # Task 6's convention: agent is never told to run a command only Dan can run. `make doctor` is Dan's, so his
+    # words go to root and to spark-admin's members, who can run it, and agent's to every other login.
+    admin = SimpleNamespace(gr_gid=990)
+    monkeypatch.setattr(gateclient.grp, "getgrnam", lambda name: admin if name == "spark-admin" else None)
+    monkeypatch.setattr(gateclient.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(gateclient.os, "getegid", lambda: 1000)
+    monkeypatch.setattr(gateclient.os, "getgroups", lambda: [1000, 990])
+    assert WORDS() == "dan"
+    monkeypatch.setattr(gateclient.os, "getgroups", lambda: [1000])
+    assert WORDS() == "agent"
+    monkeypatch.setattr(gateclient.os, "getegid", lambda: 990)
+    assert WORDS() == "dan"
+    monkeypatch.setattr(gateclient.os, "getegid", lambda: 1000)
+    monkeypatch.setattr(gateclient.os, "geteuid", lambda: 0)
+    assert WORDS() == "dan"
+
+    def no_group(name):
+        raise KeyError(name)
+
+    monkeypatch.setattr(gateclient.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(gateclient.grp, "getgrnam", no_group)  # a box, or the Mac, without the group
+    assert WORDS() == "agent"
+    # agent's form, as a sentence.
+    monkeypatch.setattr(gateclient, "_words", lambda: "agent")
+    path = sockdir / "absent.sock"
+    with pytest.raises(GateUnavailable) as raised:
+        GateClient(path, 1).get("/v1/status")
+    assert str(raised.value) == f"The gate can't be reached: there is no socket at {path}. {AGENT_STEP}"
+    # The same steps as Task 6's refusals give for a service that is down, each in its own words.
+    assert messages._ALERT["dan"].endswith(" on the Spark, `make doctor` shows what's wrong.")
+    assert messages._ALERT["agent"].endswith(f" and {AGENT_STEP}")
 
 
 def test_a_stream_yields_each_line_as_json(sockdir):
@@ -257,7 +359,7 @@ def test_the_status_view_carries_the_plans_fields():
         "held_gib", "free_for_a_load_gib", "unaccounted_gib"}
     assert gateproto.ModelView.__required_keys__ == {
         "name", "label", "resident", "footprint_gib", "state", "inflight", "oldest_request_s", "last_use",
-        "pinned_until", "sessions", "brake_mark"}
+        "pinned", "pinned_until", "sessions", "brake_mark"}
     assert gateproto.MODEL_STATES == ("ready", "starting", "draining", "not_loaded")
     assert gateproto.WaitingView.__required_keys__ == {"key_label", "model", "waited_s", "wait_s", "why"}
     assert gateproto.WAITING_WHY == ("memory", "brake", "slot", "dan", "restart", "llama_swap")
@@ -272,6 +374,19 @@ def test_the_status_view_carries_the_plans_fields():
     assert gateproto.EngineView.__required_keys__ == {"model", "port", "pid"}
     assert gateproto.ApplyingView.__required_keys__ == {"since", "restarting"}
     assert gateproto.STATUS_SCHEMA == 1
+
+
+def test_a_pin_with_an_end_and_one_without_read_as_spark_pin_words_them():
+    # The controller's ruling at Task 10: `pinned` says whether there is a pin, and `pinned_until` only when it ends,
+    # None for no end, as Task 7's `pinned` confirmation takes it (and make-room's list marks `pinned`).
+    now = datetime(2026, 10, 8, 9, 0).astimezone()
+    six = datetime(2026, 10, 8, 18, 0).astimezone().timestamp()
+    # The fields of a ModelView these need; the rest are as any model's.
+    ends = {"label": "the coder", "pinned": True, "pinned_until": six}
+    endless = {"label": "the coder", "pinned": True, "pinned_until": None}
+    words = [messages.pinned(v["label"], v["pinned_until"], None, "coder", now=now) for v in (ends, endless)]
+    assert words == ["The coder stays loaded until 18:00. `spark unpin coder` ends the pin.",
+                     "The coder stays loaded, with no end set. `spark unpin coder` ends the pin."]
 
 
 PATHS = ("GATE_STATUS_SOCKET", "GATE_CONTROL_SOCKET", "GATE_STATE", "LAUNCH", "WHISPER_TMP", "VALUES", "FRONT_URL",

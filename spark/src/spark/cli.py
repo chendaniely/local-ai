@@ -8,6 +8,7 @@ import sys
 import yaml
 
 from spark import __version__
+from spark.gateclient import GateError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,9 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return args.func(args)
-    # A refusal (RegistryError, RenderError, VersionsError, PullError), a file that can't be read, or one that isn't
-    # YAML: the message is the reason. A command's own exit codes are returned above, untouched.
-    except (ValueError, OSError, yaml.YAMLError) as err:
+    # A refusal (RegistryError, RenderError, VersionsError, PullError), a file that can't be read, one that isn't
+    # YAML, or a call to the gate that failed (a GateError: its text says the socket's state and the next step, and
+    # never carries a key or the gate's body; the controller's ruling at Task 10): the message is the reason. A
+    # command's own exit codes are returned above, untouched.
+    except (GateError, ValueError, OSError, yaml.YAMLError) as err:
         print(f"spark {args.command}: {err}", file=sys.stderr)
         return 1
 

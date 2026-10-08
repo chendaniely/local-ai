@@ -1793,6 +1793,10 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `spark/tests/test_gateclient.py`
 - Modify: `spark/src/spark/paths.py`, `spark/tests/test_tested_against.py` (the import check gains
   `spark.gateclient`)
+- *(Added 2026-10-08, at Task 10, the controller's rulings:)* Modify also
+  `spark/tests/test_doctor.py`, whose stand-in llama-swap now answers at `paths.LLAMASWAP_URL`,
+  since 127.0.0.1:9100 is no longer its default; and `spark/src/spark/cli.py` with
+  `spark/tests/test_cli.py`, for `cli.main`'s catch of a `GateError` (below).
 
 **Interfaces:**
 
@@ -1857,7 +1861,10 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   that Task 8's `procs` finds on an engine port and whose pid no ticket's start recorded this boot,
   the evidence of a load around the gate — and `no_ticket_refusals`, the count of starts launch
   refused for want of a ticket since this boot, which is the backstop working, never a bypass);
-  `applying` (`since`, `restarting`) or null; `problems`.
+  `applying` (`since`, `restarting`) or null; `problems`. *(Added 2026-10-08, at Task 10, the
+  controller's ruling: each model also carries `pinned: bool`, and `pinned_until` is only the pin's
+  end, null for a pin with no end, as Task 7's `pinned` confirmation takes it, so a pin with no end
+  is never read as no pin.)*
 - `gateclient.GateClient(path: Path, timeout_s: float)`: `get(route) -> dict`, `post(route, body:
   dict) -> dict`, `delete(route) -> dict`, `stream(route, body: dict | None = None) ->
   Iterator[dict]` (a `POST` when a body is given, for `/v1/unload`). `GateUnavailable` —
@@ -1865,6 +1872,21 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   the gate is down); `GateForbidden` — `EACCES` on connect, its text saying which group may;
   `GateRefused(status: int, body: dict)` — any other non-2xx answer. `http.client` with an
   `AF_UNIX` connect; nothing else imported.
+  *(Added 2026-10-08, at Task 10 and the controller's rulings:)*
+  - `GateError` is the three's base, and is raised itself for a 2xx answer, or a stream's line,
+    that isn't a JSON object. `timeout_s` may be None, for no timeout, as `spark unload`'s stream
+    needs (Task 30).
+  - Each error's text is one sentence. It says the socket's state and, where there is one, the
+    next step, in Task 6's words. Root and `spark-admin`'s members get Dan's words (*On the Spark,
+    `make doctor` shows what's wrong.*), and any other login gets `agent`'s (*`make doctor` on the
+    Spark shows Dan what's wrong.*).
+  - The text never holds what was sent, nor what the gate answered beyond its `message`. That
+    `message` is shown only when it is one printable line of at most 2,000 characters, and a
+    `GateRefused`'s repr shows only its status.
+  - `cli.main` catches a `GateError` as it catches a `ValueError`: one line on stderr, exit 1,
+    never a traceback.
+  - `paths`' three without a named variable read `SPARK_WHISPER_TMP`, `SPARK_VALUES` and
+    `SPARK_FRONT_URL`.
 
 **Tests** (`spark/tests/test_gateclient.py`; a standard-library stand-in server on a short
 `AF_UNIX` path):
@@ -1884,6 +1906,16 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
 - `test_every_route_names_its_socket_and_callers` — every `ROUTES` entry's socket and callers are
   from their sets; the `front` routes are exactly the six the table gives, all on `status`.
 - In `test_tested_against.py`, the import check now includes `spark.gateclient`.
+- *(Added 2026-10-08, at Task 10 and the controller's rulings:)*
+  - In `test_gateclient.py`: `test_a_socket_nobody_listens_on_reads_as_gate_unavailable`,
+    `test_no_gate_error_carries_a_credential_or_a_response_body`,
+    `test_the_next_step_is_dans_only_for_a_login_that_can_take_it`,
+    `test_the_status_view_carries_the_plans_fields`,
+    `test_a_pin_with_an_end_and_one_without_read_as_spark_pin_words_them` and
+    `test_the_gates_paths_default_to_the_plans_and_each_variable_overrides_it`.
+  - In `test_cli.py`: `test_a_gate_error_is_one_plain_line_never_a_traceback`, for each of the
+    three errors.
+  - In `test_doctor.py`: the stand-in's address follows `paths.LLAMASWAP_URL`.
 
 **Steps:**
 

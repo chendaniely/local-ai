@@ -1,9 +1,12 @@
+import argparse
+import socket
 from pathlib import Path
 
 import pytest
 import yaml
 
-from spark import cli, launch
+from spark import cli, gateclient, launch, paths
+from spark.gateclient import GateClient, GateRefused
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -88,6 +91,48 @@ def test_a_command_keeps_the_exit_code_it_chose(tmp_path, monkeypatch, capsys):
     assert cli.main(["launch", "coder", "--", "/bin/engine"]) == 3
     assert capsys.readouterr().err.startswith(f"spark: not starting coder: the registry {registry} won't load: ")
     assert launch.read_refusal(tmp_path)["model"] == "coder"
+
+
+# The controller's ruling at Task 10: a call to the gate that fails is one plain line, exit 1, never a traceback; the
+# sentence says what state the socket is in and, where there is one, the next step.
+
+def _refused():
+    raise GateRefused(409, {"message": "Not loading the coder now.", "key": "CREDENTIAL-MARKER"})
+
+
+GATE_ERRORS = [
+    pytest.param(lambda: GateClient(Path("/nonexistent-spark-gate/g.sock"), 1).get("/v1/status"),
+                 "The gate can't be reached: there is no socket at /nonexistent-spark-gate/g.sock. On the Spark, "
+                 "`make doctor` shows what's wrong.", id="unavailable"),
+    pytest.param(lambda: GateClient(paths.GATE_CONTROL_SOCKET, 1).get("/v1/status"),
+                 f"The gate's control socket, {paths.GATE_CONTROL_SOCKET}, refused this login: it is for members of "
+                 "spark-admin. A group joined since logging in counts from the next login.", id="forbidden"),
+    pytest.param(_refused, "Not loading the coder now.", id="refused"),
+]
+
+
+@pytest.mark.parametrize(("call", "said"), GATE_ERRORS)
+def test_a_gate_error_is_one_plain_line_never_a_traceback(call, said, monkeypatch, capsys):
+    monkeypatch.setattr(gateclient, "_words", lambda: "dan")
+    real_connect = socket.socket.connect
+
+    def connect(sock, address):  # the control socket refuses this login; any other connects as it would
+        if address == str(paths.GATE_CONTROL_SOCKET):
+            raise PermissionError(13, "Permission denied")
+        return real_connect(sock, address)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+
+    def standin_parser():
+        parser = argparse.ArgumentParser(prog="spark")
+        commands = parser.add_subparsers(dest="command")
+        commands.add_parser("standin").set_defaults(func=lambda args: call())
+        return parser
+
+    monkeypatch.setattr(cli, "build_parser", standin_parser)
+    assert cli.main(["standin"]) == 1
+    out, err = capsys.readouterr()
+    assert (out, err) == ("", f"spark standin: {said}\n")
 
 
 def test_the_commands_the_units_and_the_makefile_run_are_registered():

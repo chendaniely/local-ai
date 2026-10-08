@@ -390,7 +390,8 @@ class ModelView(TypedDict):
     inflight: int
     oldest_request_s: float | None
     last_use: float | None
-    pinned_until: float | None  # the pin's end; None with no pin, and with a pin that has no end: `pins` says which
+    pinned: bool
+    pinned_until: float | None  # the pin's end, None for a pin with no end (and with no pin), as `spark pin` words it
     sessions: list[str]  # the labels of the sessions that keep it
     brake_mark: BrakeMarkView | None
 
