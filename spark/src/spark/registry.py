@@ -316,6 +316,10 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
         raise RegistryError(f"{name}: footprint, ctx and parallel must be positive; cache_ram_mib ≥ 0")
     if model.cold_load_gib is not None and model.cold_load_gib <= 0:
         raise RegistryError(f"{name}: cold_load_gib must be positive, not {raw['cold_load_gib']!r}")
+    # Above the footprint, the cap it gives a load's fall would pass the footprint (Task 15's review).
+    if model.cold_load_gib is not None and model.cold_load_gib > model.footprint_gib:
+        raise RegistryError(f"{name}: cold_load_gib ({model.cold_load_gib}) must be at most footprint_gib "
+                            f"({model.footprint_gib})")
     if model.needs_room and model.resident:  # a resident is loaded from the start: there is no room to make for it
         raise RegistryError(f"{name}: needs_room is only for an on-demand model, and {name} is resident")
     return model

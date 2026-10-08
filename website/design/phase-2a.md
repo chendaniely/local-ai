@@ -1971,7 +1971,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `oldest_request_s`, `last_use`, `pinned_until`, `sessions`, `brake_mark` with `at` and
   `seen_gib` (None without a reading: the controller's ruling, at Task 14)); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — one of `WAITING_WHY =
   ("memory", "brake", "slot", "dan", "restart", "llama_swap")` (and `draining`, since 2026-10-08,
-  the controller's ruling, at Task 15); `paused` (`since`, `available_gib`,
+  the controller's ruling, at Task 15; and `swap_refused`, the controller's ruling, at Task 15's review, a wait to try again after
+  llama-swap refused the load); `paused` (`since`, `available_gib`,
   `releases_at`, `waits_for_dan`, `last_fired`, `last_released`) or null; `held` (`size_gib`,
   `until`) or null; `pins`; `sessions`; `recent` (`at`, `text`, `code`, `model`, `key_label`);
   `health` (`front`, `gate`, `brake` with `key_checked_at`, `llama_swap`, `ntfy` with
@@ -3014,7 +3015,9 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     fit keeps its place; one load at a time; each request is rechecked whenever memory, the
     hold, a load, a drain or the queue changes; at its deadline it is refused with the code for
     what it was waiting on — `no_fit`, `loading` (its turn for the one-load slot never came),
-    `held_by_brake`, `footprint_suspect`, `draining`, `restarting`, `llama_swap_down`.
+    `held_by_brake`, `footprint_suspect`, `draining`, `restarting`, `llama_swap_down`, and *(added
+    2026-10-08, the controller's ruling, at Task 15's review)* `load_failed` (*kept refusing*: llama-swap answered its tries with a 429 or a
+    503).
   - When a request fits: `tickets.issue(launch, model, deadline=now + LOAD_CALL_TIMEOUT_S,
     footprint_gib=<its footprint, what rule 9 admitted>, available_gib=<MemAvailable now>,
     boot_id=<this boot's>)`; `waiting` (once, if it had waited) and `load_started`;
@@ -3050,7 +3053,8 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
       down) frees the slot only once the ticket is withdrawn or the `started/` record is read.
     - **The load call runs in a task of its own** that no requester's leaving cancels: a load, once
       started, is always waited for.
-    - **`load_failed` goes only to a 500.** llama-swap's own refusals are logged as such, never
+    - ~~**`load_failed` goes only to a 500.**~~ *(Struck 2026-10-08, the controller's ruling, at Task 15's review: the correction below
+      names what else is `load_failed`.)* llama-swap's own refusals are logged as such, never
       worded as a model that failed to start. *(Added 2026-10-08, at Task 12's re-review, the
       controller's ruling:)* nor every 500. One whose text holds `group: model unloaded` (an unload
       aborted the load: the brake's) or `group is shutting down` (llama-swap restarting) isn't
@@ -3082,7 +3086,8 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `tickets.read_record(…, own=True)`; an `OSError` reading or clearing it is caught and the load's
     outcome stands, since a record left uncleared stops counting 360 s after its start.)* A model
     that a restarted gate's `restore` found `starting` takes the same path once `/running` shows it
-    ready or gone. `failed` *(a 500 only: corrected 2026-10-08, at Task 12's review, as above)* →
+    ready or gone. `failed` ~~*(a 500 only: corrected 2026-10-08, at Task 12's review, as above)*~~
+    *(struck 2026-10-08, the controller's ruling, at Task 15's review: not only a 500, as above)* →
     `load_failed`, its text launch's refusal record for the model if there
     is one, else the engine's last line (`llamaswap.last_lines`), or the deadline's variant for
     `health check timed out`; the ticket withdrawn if it wasn't used. *(Added 2026-10-07, at Task 7,
@@ -3157,6 +3162,48 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
       has taken a request, its `admit` raises `CancelledError`.
     - `async stop()`: every task cancelled, its loads' included, then every request still waiting,
       before the llama-swap client closes (Task 19).
+    - *(Added 2026-10-08, the controller's ruling, at Task 15's review:)* `privileges(req, registry) -> Privileges`, the plan's
+      `privileges(req)` with the registry it reads, a module function; the gate's own reloads get
+      `RELOAD` (queue −1, every hold counted, no marked model).
+- *(Added 2026-10-08, the controller's rulings, at Task 15's review:)*
+  - **No ticket stays live past its load.** `_gone` withdraws first. At construction the admitter
+    withdraws the ticket of every registry model it has no restored load for, since a gate that
+    just started owns no load it didn't restore: a ticket issued just before a restart, its model
+    not yet in `/running`, would otherwise start a model rule 9 doesn't count. A withdraw that
+    raises `OSError` is tried once more. If it fails again, it is never read as claimed: the slot
+    is held until the ticket's deadline has passed (launch refuses `deadline < now`), or until
+    `/running` shows the model, which is then settled as a start. A request whose load ends that
+    way, with nothing ever shown in `/running`, is never told a start stopped: `load_failed`,
+    *The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor`
+    shows why.* (`agent`'s: *… `make doctor` on the Spark shows Dan why.*). After an end its
+    requests already heard (a start that stopped, the drainer's unload), a ticket it can't withdraw
+    holds the slot the same way.
+  - **A ticket that can't be written** is refused at once as the gate's own error, `load_failed`,
+    *The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.*, never
+    `loading`.
+  - **A wait to try again after llama-swap refused** has a reason of its own, `swap_refused`, in
+    `gateproto.WAITING_WHY`: its `WaitProgress` (the other fields None) and its `waiting` row, and
+    no `waiting` notification, since the phone gets `load_failed` if the refusals last (Tasks 10, 29
+    and 30).
+  - **A hold whose `since` parses is dated by it**, whatever else it lacks: *new loads are paused by
+    a brake hold from 03:12 (no reading recorded)*. Only a hold whose `since` doesn't parse is worded
+    as seen.
+  - **A start an unload of the drainer's ended** (make-room's, `spark unload`'s: the record's
+    `unload_requested_at` set) while the gate waited for it to be ready reads `draining`, worded by
+    that unload, never as a start that stopped.
+  - **The registry refuses a `cold_load_gib` above `footprint_gib`**, whose cap would pass the
+    footprint.
+  - Loads leave the slot by identity, never by name alone.
+  - Its tests: `test_a_restarted_gate_withdraws_every_ticket_it_has_no_load_for`,
+    `test_a_load_that_goes_withdraws_its_ticket_first`, `test_a_withdraw_that_fails_once_is_tried_again`,
+    `test_a_ticket_that_cant_be_withdrawn_holds_the_slot_until_its_deadline_and_says_so`,
+    `test_a_start_that_goes_with_a_ticket_left_it_cant_withdraw_holds_the_slot`,
+    `test_a_ticket_that_cant_be_written_is_refused_as_the_gates_own_error`,
+    `test_a_wait_after_llama_swap_refused_says_so`, `test_a_start_another_unload_ended_is_worded_by_that_unload`,
+    and three for rule 9's guards that had none failing without them (the review's I-2):
+    `test_a_starting_record_with_no_load_holds_the_slot`, `test_a_model_stopping_still_counts_against_the_ceiling`
+    and `test_a_model_being_unloaded_is_still_owed_its_growth`; and in `test_registry.py`, the cap in
+    `test_a_cold_load_is_optional_and_positive`.
 
 **Tests** (`spark/tests/test_gate_admission.py`; an injected clock; a stand-in llama-swap whose
 loads, `/running` and log lines the test scripts; memory from a list; a temporary `launch` and
@@ -3416,6 +3463,15 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
     late-start abort's `late_start`. A resumed drain with no why saved sends `unknown`, whose words
     name no command (`gateproto.DrainWhy`, Task 13). *(Added 2026-10-08, the controller's ruling, at
     Task 13's re-review: so does each drain the gate finishes at a start after damage, Task 18.)*
+
+- *(Added 2026-10-08, the controller's ruling, at Task 15's review:)* the admitter's `_ready` replaces a model's record whole, so a field
+  the drainer saved on a record still `starting` would be lost at ready. So the drainer never marks a
+  model the admitter has `starting`: an unload asked of a starting model waits until the admitter's
+  load ends, ready (then it drains the ready record, its fields saved before `drain` as above) or
+  gone (then there is nothing to unload). Only Task 15's late-start abort saves an unload on a
+  `starting` record, and the admitter's own `_ready` and `_undo_unload` handle it. A record `restore`
+  left `starting` with its unload requested has no load of the admitter's, so `_ready` never meets
+  it.
 
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
@@ -3808,6 +3864,10 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
     running at that start aren't reported as unticketed; each is logged as found after damage.
   - `StatusView.health` carries the damage while `damaged_at` is set, for Task 29's line.
 
+- *(Added 2026-10-08, the controller's ruling, at Task 15's review:)* the admitter's `read_hold` reads the hold file fresh on every pass,
+  never a cached copy older than a pass: after a `group: model unloaded` abort a request tries again
+  in 1 s, and only the brake's hold, read then, stops it reloading the model the brake just aborted
+  before its mark is read in. `read_mem` reads `/proc/meminfo` fresh too.
 - *(Added 2026-10-08, the controller's ruling, at Task 15:)* the admitter gets an accessor for each starting model's figures from
   its ticket, `admitted_gib`, `started_at` and `available_at_start`, which the activity record and
   `ingest_brake_events`' `starts` read. Task 15 keeps them in its private load records; this task
@@ -5181,6 +5241,7 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     loading`; `dan` → the example's `waiting for you: spark load coder`; `restart` → `waiting for
     the model service's restart`; `llama_swap` → `waiting for the model service to answer`;
     `draining` → `waiting while the coder finishes unloading` *(added 2026-10-08, the controller's ruling, at Task 15)*;
+    `swap_refused` → `waiting to try again: llama-swap refused the load` *(added 2026-10-08, the controller's ruling, at Task 15's review)*;
   - a pin, in the `held` row: `pins the coder until 18:00` (`pins none` without one).
 - The gate not answering: the header from `/proc/meminfo` (the brake line from the deployed
   registry), then `gate        not answering: what's loaded, waiting, held or paused is unknown
@@ -5336,7 +5397,10 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     them (no key, and no wait to give). For example, *The coder is waiting its turn to load: Gemma
     is loading, and one model loads at a time…* or *The coder is waiting for memory: it needs
     41 GiB, and 18 GiB is free for a load…*. The brake's reason takes `held_by_brake`'s words for
-    Dan. A `messages` function of Task 30's own holds them, with its test.
+    Dan. A `messages` function of Task 30's own holds them, with its test. *(Added 2026-10-08,
+    the controller's rulings, at Task 15's review:)* `draining` reads *The coder is waiting while it finishes unloading…*, and
+    `swap_refused` *Waiting to try again: llama-swap refused to load the coder, and the gate asks
+    again within your wait.*, which matches nothing on pi's list.
   - **The result line ends it.** Each streamed command stops reading at its result line, or a
     refusal line, and closes the stream there. So a cut after the result is never shown as an
     error after a success.
@@ -6963,7 +7027,8 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
 - **Apply's hold beside a make-room hold** (f-5). Task 29 doesn't word a `held` row when both stand;
   put both on the row, apply's first, and add the case to its test.
 - **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`
-  (seven since 2026-10-08, the controller's ruling, at Task 15: `draining`);
+  (seven since 2026-10-08, the controller's ruling, at Task 15: `draining`; eight since
+  the controller's ruling, at Task 15's review: `swap_refused`);
   a reason added later needs its line, and Task 29's test reads the tuple, so it fails until the
   line is written.
 - **make-room starts from the gate's own figure** (added 2026-10-07, at Task 6's fix round 1, the

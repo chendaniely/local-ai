@@ -1222,13 +1222,25 @@ async def test_a_brake_hold_without_its_reading_is_worded_as_seen(tmp_path):
         # The controller's ruling at Task 15: a hold that doesn't say when it fired or how low memory ran is worded
         # as the gate saw it, never as fired, with no reading the hold didn't record.
         gate = Gate(tmp_path / "before", models=loaded(GEMMA, EMBED, WHISPER), available=74)
-        gate.hold = Hold(since=datetime.fromtimestamp(AT_0312).strftime("%Y-%m-%dT%H:%M:%S"), reason="Phase 1's",
-                         unloaded=(GEMMA,))  # Phase 1's: no boot, no reading
+        gate.hold = Hold(since="2026-10-08T03:12:00 or so", reason="malformed", unloaded=(GEMMA,))
         asked = gate.ask(PI, CODER)
         await gate.at(T + 30)
         assert refused(asked, "held_by_brake") == (
             "Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at "
             "09:00); they stay paused until you release them: on the Spark, `make brake-release`.")
+
+        # Phase 1's hold has its time but no reading: dated by its time, whenever the gate saw it (the controller's
+        # ruling at Task 15's review).
+        gate = Gate(tmp_path / "phase1", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.ask(PI, GEMMA)  # a first look, with no hold
+        await settle()
+        gate.hold = Hold(since=datetime.fromtimestamp(AT_0312).strftime("%Y-%m-%dT%H:%M:%S"), reason="Phase 1's",
+                         unloaded=(GEMMA,))  # Phase 1's: no boot, no reading
+        asked = gate.ask(PI, CODER)
+        await gate.at(T + 30)
+        assert refused(asked, "held_by_brake") == (
+            "Not loading the coder now: new loads are paused by a brake hold from 03:12 (no reading recorded); they "
+            "stay paused until you release them: on the Spark, `make brake-release`.")
 
         from spark.hold import UNREADABLE_SINCE
         gate = Gate(tmp_path / "later", models=loaded(GEMMA, EMBED, WHISPER), available=74)
@@ -1241,6 +1253,224 @@ async def test_a_brake_hold_without_its_reading_is_worded_as_seen(tmp_path):
         assert refused(asked, "held_by_brake") == (
             "Not loading the coder now: new loads are paused by a brake hold the gate can't date (seen at 09:02); "
             "they stay paused until you release them: on the Spark, `make brake-release`.")
+
+
+UNCONFIRMED_TEXT = ("The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor` "
+                    "shows why.")
+
+
+def withdraw_fails(monkeypatch, times: int | None = None) -> list[int]:
+    """tickets.withdraw raising OSError, `times` times (None: every time), then as it is; the calls counted."""
+    real, calls = tickets.withdraw, []
+
+    def withdraw(folder, model):
+        calls.append(1)
+        if times is None or len(calls) <= times:
+            raise OSError(5, "Input/output error")
+        return real(folder, model)
+
+    monkeypatch.setattr(tickets, "withdraw", withdraw)
+    return calls
+
+
+@pytest.mark.anyio
+async def test_a_restarted_gate_withdraws_every_ticket_it_has_no_load_for(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The review's I-1: the gate died between issuing a ticket and the start's `starting`, so restore dropped the
+        # model and its id; the ticket must not stay live for a start that comes later.
+        launch = tmp_path / "launch"
+        launch.mkdir()
+        tickets.issue(launch, CODER, T - 5 + LOAD_CALL_TIMEOUT_S, now=T - 5, footprint_gib=41.0, available_gib=74.0,
+                      boot_id=BOOT)
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        await gate.at(T)
+        claim = tickets.claim(gate.launch, CODER, T + 1, boot_id=BOOT)
+        assert not claim.ok and claim.code == tickets.NO_TICKET
+
+
+@pytest.mark.anyio
+async def test_a_load_that_goes_withdraws_its_ticket_first(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A load a restarted gate found starting holds a live ticket the constructor leaves alone; when the model goes,
+        # the ticket goes too.
+        launch = tmp_path / "launch"
+        launch.mkdir()
+        ticket_id = tickets.issue(launch, CODER, T + 100, now=T - 100, footprint_gib=41.0, available_gib=74.0,
+                                  boot_id=BOOT)
+        state = GateState(boot_id=BOOT, issued={CODER: ticket_id})
+        state.models = loaded(GEMMA, EMBED, WHISPER) | {CODER: record(CODER, state="starting")}
+        gate = Gate(tmp_path, available=74, state=state)
+        assert gate.ticket(CODER) is not None
+        await gate.at(T)  # /running doesn't list it: gone
+        assert gate.ticket(CODER) is None and CODER not in gate.state.models
+
+
+@pytest.mark.anyio
+async def test_a_withdraw_that_fails_once_is_tried_again(tmp_path, monkeypatch, caplog):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, WHISPER), available=82)
+        calls = withdraw_fails(monkeypatch, times=1)
+        gate.swap.answer_next(CODER, LoadOutcome.unknown("refused"))
+        gate.ask(PI, CODER)
+        gate.ask(AGENT, EMBED)
+        await settle()
+        assert len(calls) == 2 and gate.ticket(CODER) is None
+        assert gate.swap.loads() == [CODER, EMBED]  # the second try withdrew it: no start used it, the slot is free
+
+
+@pytest.mark.anyio
+async def test_a_ticket_that_cant_be_withdrawn_holds_the_slot_until_its_deadline_and_says_so(tmp_path, monkeypatch,
+                                                                                               caplog):
+    with anyio.fail_after(BOUND_S):
+        # Never read as claimed: nothing showed in /running, so no request is told a start stopped. The slot is held
+        # until the ticket can no longer be claimed (launch refuses deadline < now).
+        gate = Gate(tmp_path / "deadline", models=loaded(GEMMA, WHISPER), available=82)
+        withdraw_fails(monkeypatch)
+        gate.swap.answer_next(CODER, LoadOutcome.unknown("refused"))
+        coder = gate.ask(PI, CODER)
+        embed = gate.ask(AGENT, EMBED)
+        await settle()
+        for second in (30, 100, LOAD_CALL_TIMEOUT_S):
+            await gate.at(T + second)
+            assert gate.swap.loads() == [CODER] and not coder.done and not embed.done
+        await gate.at(T + LOAD_CALL_TIMEOUT_S + 0.5)
+        assert refused(coder, "load_failed") == UNCONFIRMED_TEXT
+        assert gate.swap.loads() == [CODER, EMBED]
+        assert any("withdrawn" in r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR)
+        caplog.clear()
+
+        # The model shows in /running meanwhile: the ticket was used, and the load is settled as a start.
+        gate = Gate(tmp_path / "shown", models=loaded(GEMMA, WHISPER), available=82)
+        gate.swap.claim_late.add(CODER)
+        coder = gate.ask(PI, CODER)
+        await settle()
+        gate.swap.drops(CODER, "dropped")  # /running shows it starting
+        await settle()
+        gate.clock.now = T + 20
+        gate.swap.claim(CODER)
+        gate.swap.states[CODER] = "ready"
+        gate.available = 41.0
+        await gate.at(T + 21)
+        assert coder.result.model == CODER
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_a_start_that_goes_with_a_ticket_left_it_cant_withdraw_holds_the_slot(tmp_path, monkeypatch, caplog):
+    with anyio.fail_after(BOUND_S):
+        # Launch claimed its ticket, so the request hears the start stopped; the gate can't withdraw what is left in
+        # tickets/, so the slot waits until that can no longer be claimed.
+        gate = Gate(tmp_path, models=loaded(GEMMA, WHISPER), available=82)
+        coder = gate.ask(PI, CODER)
+        await settle()
+        gate.swap.drops(CODER, "dropped")
+        await settle()
+        withdraw_fails(monkeypatch)
+        embed = gate.ask(AGENT, EMBED)
+        gate.swap.states[CODER] = "stopped"
+        await gate.at(T + 40)
+        assert refused(coder, "load_failed") == (
+            "The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.")
+        await gate.at(T + LOAD_CALL_TIMEOUT_S)
+        assert gate.swap.loads() == [CODER] and not embed.done
+        await gate.at(T + LOAD_CALL_TIMEOUT_S + 0.5)
+        assert gate.swap.loads() == [CODER, EMBED]
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_a_ticket_that_cant_be_written_is_refused_as_the_gates_own_error(tmp_path, monkeypatch, caplog):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+
+        def full(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(tickets, "issue", full)
+        asked = gate.ask(PI, CODER)
+        await settle()
+        assert refused(asked, "load_failed") == (
+            "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.")
+        assert gate.swap.loads() == [] and CODER not in gate.state.models and gate.state.issued == {}
+        [(_, fields)] = gate.emitted.of("load_failed")
+        assert fields["ticket_unwritten"] is True
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_a_starting_record_with_no_load_holds_the_slot(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # What restore leaves when a late unload's first save landed: `starting`, its unload requested, and no _Load
+        # of the admitter's (the review's I-2a). No second start runs beside it.
+        going = record(CODER, state="starting", unload_requested_at=T - 5, drain_why="late_start")
+        gate = Gate(tmp_path, models=loaded(GEMMA, WHISPER) | {CODER: going}, available=82)
+        embed = gate.ask(AGENT, EMBED)
+        await gate.at(T + 5)
+        assert gate.swap.loads() == [] and not embed.done
+        del gate.state.models[CODER]  # the drainer saw it gone
+        await gate.at(T + 10)
+        assert gate.swap.loads() == [EMBED]
+
+
+@pytest.mark.anyio
+async def test_a_model_stopping_still_counts_against_the_ceiling(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Its memory isn't freed until /running shows it gone (the review's I-2b): the ceiling counts it.
+        moment = loaded(EMBED, WHISPER) | {GEMMA: record(GEMMA, fall=26.0),
+                                            "big-model": record("big-model", 49.0, state="stopping")}
+        gate = Gate(tmp_path, models=moment, available=48, holders=[PYTHON, Holder("Gemma", 27, False)])
+        asked = gate.ask(PI, CODER)
+        await gate.at(T + 30)
+        assert refused(asked, "no_fit") == NO_FIT_DAN_TEXT.replace(
+            NO_FIT_DAN_BREAKDOWN,
+            "10 GiB is free for a load (the 102 GiB the GPU can allocate, less the 92 GiB the loaded models may grow "
+            "to)")
+
+
+@pytest.mark.anyio
+async def test_a_model_being_unloaded_is_still_owed_its_growth(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Draining or stopping, it still holds what it held (the review's I-2c).
+        for state in ("draining", "stopping"):
+            gate = Gate(tmp_path / state, models={GEMMA: record(GEMMA, fall=25.0, state=state)})
+            assert gate.admitter.owed() == Decimal(7)
+
+
+@pytest.mark.anyio
+async def test_a_wait_after_llama_swap_refused_says_so(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The review's I-3: waiting to try again, never "waiting for the model service to answer" while it answers.
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.swap.answer_next(CODER, refusal_from_llama_swap(429))
+        command = gate.ask(None, CODER, kind="command", deadline=T + LOAD_CALL_TIMEOUT_S)
+        key = gate.ask(PI, CODER)
+        await settle()
+        assert command.progress[-1] == dict.fromkeys(gateproto.WaitProgress.__annotations__) | {
+            "kind": "waiting", "model": CODER, "label": "the coder", "why": "swap_refused"}
+        assert [row["why"] for row in gate.admitter.waiting()] == ["swap_refused", "swap_refused"]
+        assert gate.emitted.of("waiting") == []  # no notification: the phone gets load_failed if it lasts
+        await gate.at(T + 1)
+        assert gate.swap.loads() == [CODER, CODER] and not key.done
+
+
+@pytest.mark.anyio
+async def test_a_start_another_unload_ended_is_worded_by_that_unload(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # make-room's drain unloaded it while the gate waited for it to be ready (Minor 3 of Task 15's review): the
+        # requests read `draining`, worded by make-room, never a start that stopped by itself.
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        asked = gate.ask(PI, CODER)
+        await settle()
+        gate.swap.drops(CODER, "dropped")
+        await settle()
+        model = gate.state.models[CODER]
+        model.state, model.unload_requested_at, model.drain_id, model.drain_why = "draining", T + 10, "d7", "make-room"
+        gate.swap.states[CODER] = "stopped"
+        await gate.at(T + 40)
+        assert refused(asked, "draining") == (
+            "The coder is being unloaded for make-room, and your 30 s ran out. Try again in a minute: your request can "
+            "load it again, into the room make-room holds for you, if it fits.")
+        assert gate.emitted.of("load_failed") == [] and CODER not in gate.state.models
 
 
 @pytest.mark.anyio

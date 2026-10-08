@@ -574,7 +574,8 @@ def test_requests_in_flight_read_as_words():
 NEEDS = {
     "no_fit": ("model_label", "needed_gib", "free_gib", "available_gib", "reserve_gib", "words"),
     "loading": ("model_label", "loading_label", "wait_s"),
-    "held_by_brake": ("model_label", "brake_at", "brake_available_gib", "words"),
+    # A hold dated by its since needs no reading (Task 15's review): brake_at, or brake_seen_at, is what it needs.
+    "held_by_brake": ("model_label", "brake_at", "words"),
     "footprint_suspect": ("model_label", "key_label", "model_command", "brake_at"),
     "load_failed": ("model_label", "model_command", "words"),
     "not_downloaded": ("model_label", "words"),
@@ -1603,7 +1604,8 @@ def test_a_brake_hold_without_its_reading_is_worded_as_seen_never_as_fired():
         "Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at "
         "09:12). They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the "
         "Spark, `make brake-release` resumes them now.")
-    # A hold with its time but no reading is worded as seen too: no reading it didn't record.
+    # A hold with its time but no reading is dated by its time, with no reading it didn't record (the controller's
+    # ruling at Task 15's review).
     no_reading = replace(HELD, brake_available_gib=None, brake_seen_at=SEEN_0912, brake_hold_before_gate=True)
     assert "memory ran low" not in refusal("held_by_brake", no_reading).message
     assert say("refused", code="held_by_brake", moment=seen) == (
@@ -1620,3 +1622,36 @@ def test_waiting_on_a_model_being_unloaded_has_its_own_words():
         "Waiting while the coder finishes unloading, for pi on the Mac, up to 30 s. It loads again once the unload is "
         "done, if it fits.")
     assert "or a model being unloaded" in messages.NOTIFICATION_DOC["waiting"][0]
+
+
+# The controller's rulings at Task 15's review: a hold dated by its since whatever else it lacks, and the gate's own
+# errors with a load's ticket, each worded as what happened.
+
+def test_a_hold_with_its_time_and_no_reading_is_dated_by_its_time():
+    dated = replace(HELD, brake_available_gib=None, release_waits_for_dan=True)
+    assert refusal("held_by_brake", dated).message == (
+        "Not loading the coder now: new loads are paused by a brake hold from 03:12 (no reading recorded); they stay "
+        "paused until you release them: on the Spark, `make brake-release`.")
+    assert say("refused", code="held_by_brake", moment=dated) == (
+        "Refused the coder for pi on the Mac: new loads are paused by a brake hold from 03:12 (no reading recorded), "
+        "until you release them: on the Spark, `make brake-release`.")
+    assert not pi_retries(pi_shows(409, "held_by_brake", dated))
+
+
+def test_the_gates_own_ticket_errors_say_what_happened():
+    unwritten = replace(LOAD_FAILED, engine_said=None, ticket_unwritten=True)
+    assert refusal("load_failed", unwritten).message == (
+        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.")
+    assert refusal("load_failed", replace(unwritten, **AGENT)).message == (
+        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows Dan why.")
+    unconfirmed = replace(LOAD_FAILED, engine_said=None, ticket_unconfirmed=True)
+    assert refusal("load_failed", unconfirmed).message == (
+        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor` shows why.")
+    assert refusal("load_failed", replace(unconfirmed, **AGENT)).message == (
+        "The gate couldn't confirm the coder's load ticket was withdrawn; `make doctor` on the Spark shows Dan why.")
+    for moment in (unwritten, unconfirmed, replace(unwritten, **AGENT), replace(unconfirmed, **AGENT)):
+        assert not pi_retries(pi_shows(409, "load_failed", moment))
+    assert say("load_failed", model_label="the coder", command="coder", ticket_unwritten=True) == (
+        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.")
+    assert say("load_failed", model_label="the coder", command="coder", ticket_unconfirmed=True) == (
+        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor` shows why.")

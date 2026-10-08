@@ -175,6 +175,10 @@ class Moment:
     start_ended: bool = False
     swap_status: int | None = None
     swap_kept: bool = False
+    # load_failed, the controller's rulings at Task 15's review: the gate's own errors with the load's ticket, which it
+    # couldn't write, or couldn't confirm it withdrew (and no start ever showed in /running).
+    ticket_unwritten: bool = False
+    ticket_unconfirmed: bool = False
     download_gib: float | None = None  # not_downloaded: the model's files
     inflight: int = 0  # draining: the model's requests in flight
     # draining: why the model is being unloaded (gateproto.DrainWhy); only make-room's changes the words
@@ -404,8 +408,8 @@ def _loading(m: Moment) -> str:
 def _held_by_brake(m: Moment) -> str:
     _need("held_by_brake", m, "model_label", "words")
     if m.brake_at is None or m.brake_available_gib is None:
-        if m.brake_seen_at is None:
-            _need("held_by_brake", m, "brake_at", "brake_available_gib")
+        if m.brake_at is None and m.brake_seen_at is None:
+            _need("held_by_brake", m, "brake_at")
         return _held_as_seen(m)
     low = (f"Not loading {m.model_label} now: memory ran low at {_clock(m.brake_at)} "
            f"({_reading(m.brake_available_gib)} available), and new loads")
@@ -420,7 +424,11 @@ def _held_by_brake(m: Moment) -> str:
 
 
 def _hold_seen(m: Moment) -> str:
-    """A hold the gate can only say it saw: *a brake hold from before the gate started (seen at 09:12)*."""
+    """A hold that doesn't record both when it fired and how low memory ran: dated by its own time when it has one,
+    *a brake hold from 03:12 (no reading recorded)* (the controller's ruling at Task 15's review); else as the gate saw
+    it, *a brake hold from before the gate started (seen at 09:12)*."""
+    if m.brake_at is not None:
+        return f"new loads are paused by a brake hold from {_clock(m.brake_at)} (no reading recorded)"
     origin = "from before the gate started" if m.brake_hold_before_gate else "the gate can't date"
     return f"new loads are paused by a brake hold {origin} (seen at {_clock(m.brake_seen_at)})"
 
@@ -449,6 +457,8 @@ _SWAP_WHY = {404: "its config may not match the registry", 401: "it didn't accep
 
 def _load_failed(m: Moment) -> str:
     _need("load_failed", m, "model_label", "model_command", "words")
+    if m.ticket_unwritten or m.ticket_unconfirmed:
+        return _ticket_error(m.model_label, m.ticket_unwritten, m.words)
     if m.swap_status is not None or m.swap_kept:
         return _swap_refused(m)
     # A start launch claimed that left /running without becoming ready (Task 15's ruling). Not "ended without":
@@ -468,6 +478,16 @@ def _load_failed(m: Moment) -> str:
     elif m.deadline_s is not None:
         return f"{began} didn't finish within {duration(m.deadline_s)}. {after}"
     return f"{began} failed: the engine stopped. {after}"
+
+
+def _ticket_error(label: str, unwritten: bool, words: str | None) -> str:
+    """The gate's own error with a load's ticket (the controller's ruling at Task 15's review): `make doctor` is
+    Dan's."""
+    if unwritten:
+        why = "`make doctor` on the Spark shows why." if words == "dan" else "`make doctor` on the Spark shows Dan why."
+        return f"The gate couldn't write {label}'s load ticket: {why}"
+    why = "on the Spark, `make doctor` shows why." if words == "dan" else "`make doctor` on the Spark shows Dan why."
+    return f"The gate couldn't confirm {label}'s load ticket was withdrawn; {why}"
 
 
 def _swap_refused(m: Moment) -> str:
@@ -647,7 +667,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "*Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load "
         "coder` allows it again; your own requests load it if it fits.*"),
     "load_failed": (
-        "a start failed, passed its deadline or stopped before it was ready, or llama-swap refused the load",
+        "a start failed, passed its deadline or stopped before it was ready; llama-swap refused the load; or the gate "
+        "couldn't write or withdraw its ticket",
         "*The coder failed to load: the engine stopped with \"failed to load model\". On the Spark, `spark logs coder` "
         "shows the engine's last lines.*"),
     "brake_released": (
@@ -1099,6 +1120,8 @@ def _load_failed(registry: Registry, f: dict[str, Any]) -> str:
     if f.get("count") is not None:
         return _burst("load_failed", f)
     _needs("load_failed", f, "model_label", "command")
+    if f["ticket_unwritten"] or f["ticket_unconfirmed"]:  # the gate's own error: Dan's words
+        return _ticket_error(f["model_label"], f["ticket_unwritten"], "dan")
     if f["swap_status"] is not None or f["swap_kept"]:  # the phone shows the status: pi never sees it
         status = f" (HTTP {f['swap_status']})" if f["swap_status"] is not None else ""
         logs = "On the Spark, `make logs s=llama-swap` shows why."
@@ -1271,7 +1294,8 @@ _TAKES: dict[str, dict[str, Any]] = {
     "refused": dict.fromkeys(("code", "moment")),
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),
     "load_failed": {"model_label": None, "command": None, "engine_said": None, "deadline_s": None,
-                    "start_ended": False, "swap_status": None, "swap_kept": False},
+                    "start_ended": False, "swap_status": None, "swap_kept": False, "ticket_unwritten": False,
+                    "ticket_unconfirmed": False},
     "brake_released": {"at": None, "available_gib": None, "reloaded": [], "loading_label": None},
     "room_hold_ended": {"why": None, "unused_gib": None, "total_gib": None, "reloading": [], "next_label": None},
     "resident_waiting": dict.fromkeys(("label", "needed_gib", "free_gib", "after")),

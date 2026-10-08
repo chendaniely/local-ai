@@ -721,8 +721,10 @@ def test_the_status_view_carries_the_plans_fields():
     # re-review), so status shows a stop that hangs.
     assert gateproto.MODEL_STATES == ("ready", "starting", "draining", "stopping", "not_loaded")
     assert gateproto.WaitingView.__required_keys__ == {"key_label", "model", "waited_s", "wait_s", "why"}
-    # draining: a request waiting on a model being unloaded (the controller's ruling at Task 15).
-    assert gateproto.WAITING_WHY == ("memory", "brake", "slot", "dan", "restart", "llama_swap", "draining")
+    # draining: a request waiting on a model being unloaded (the controller's ruling at Task 15); swap_refused: one
+    # waiting to try again after llama-swap refused its load (the controller's ruling at Task 15's review).
+    assert gateproto.WAITING_WHY == ("memory", "brake", "slot", "dan", "restart", "llama_swap", "draining",
+                                     "swap_refused")
     assert gateproto.PausedView.__required_keys__ == {
         "since", "available_gib", "releases_at", "waits_for_dan", "last_fired", "last_released"}
     assert gateproto.HeldView.__required_keys__ == {"size_gib", "until"}

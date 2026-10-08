@@ -798,13 +798,19 @@ def test_a_cold_load_is_optional_and_positive(tmp_path):
     # What a model's cold load measured, which the soak records (Task 45): the gate caps a load's fall at it, plus a
     # margin (Task 15). Absent until then.
     assert load_registry(FIXTURE).models["coder"].cold_load_gib is None
-    coder = load_registry(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib=29.8))).models["coder"]
-    assert coder.cold_load_gib == 29.8
+    coder = load_registry(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib=25.8))).models["coder"]
+    assert coder.cold_load_gib == 25.8
     for value in (0, -1):
         refused(mutated(tmp_path, lambda d, v=value: d["models"]["coder"].update(cold_load_gib=v)),
                 f"coder: cold_load_gib must be positive, not {value}")
     refused(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib="30")),
             "coder: cold_load_gib must be a number, not '30'")
+    # Above the footprint, the cap it gives a load's fall would pass the footprint (the controller's ruling at Task 15's
+    # review). The fixture's coder is 28.
+    assert load_registry(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib=28))).models[
+        "coder"].cold_load_gib == 28
+    refused(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib=28.5)),
+            "coder: cold_load_gib (28.5) must be at most footprint_gib (28.0)")
 
 
 @pytest.mark.parametrize(
