@@ -415,8 +415,10 @@ class Room:
         controller's rulings at Task 17's review and re-review). One run at a time: a second, while one runs, is
         refused at once, its plan left for later."""
         if self._run is not None and not (self._run.finished or self._run.settled):
-            # One run at a time (the controller's ruling at Task 17's re-review).
-            yield _refusal(messages.room_running())
+            # One run at a time (the controller's ruling at Task 17's re-review), the refusal naming what is still
+            # under way, never --done, which ends the hold and not the drain (its second re-review).
+            under_way = self._run.current if self._run.drain is not None and not self._run.drain.done() else None
+            yield _refusal(messages.room_running(self._label(under_way[0]) if under_way else None))
             return
         entry = self._plans.pop(plan_id, None) if isinstance(plan_id, str) else None
         if entry is None:
@@ -484,10 +486,15 @@ class Room:
 
     def _room_drain_done(self, task: asyncio.Future, name: str, ends: list[DrainEnd], run: _Run) -> None:
         """A make-room drain's end, whether or not its caller is still there: its model counted, and, for a run whose
-        caller went, the run settled."""
-        self._room_record(run, name, ends, task)
-        if run.abandoned:
-            self._settle(run)
+        caller went, the run settled, even should the counting fail, so make-room is never left refusing every run
+        until a restart (the controller's ruling at Task 17's second re-review)."""
+        try:
+            self._room_record(run, name, ends, task)
+        except Exception:
+            _log.exception("recording make-room's unload of %s failed", name)
+        finally:
+            if run.abandoned:
+                self._settle(run)
 
     def _room_record(self, run: _Run, name: str, ends: list[DrainEnd], task: asyncio.Future) -> None:
         """A make-room drain that ended with its model gone, counted once: on the hold that stands, its pin ended and
@@ -587,15 +594,28 @@ class Room:
             self._emit_once("room_hold_ended", f"room:damaged:{self.state.damaged_at}", why="damaged")
 
     def resumed_drain_ended(self, model: str, why: str | None, end: str) -> None:
-        """A make-room drain a restarted gate resumed (Task 18 passes each resumed drain's end): its model, once gone,
-        goes on the room hold that stands, so its `--done` reloads it, as the run killed with the gate would have
-        recorded it (the controller's ruling at Task 17's re-review). Any other drain changes nothing here."""
-        current = self.state.room_hold
-        if why != "make-room" or end not in ("unloaded", "gone") or current is None:
+        """A drain a restarted gate resumed (Task 18 passes each resumed drain's end), once its model is gone, recorded
+        as the run killed with the gate would have recorded it (the controller's rulings at Task 17's re-review and
+        second re-review): a make-room drain's model goes on the room hold that stands, so its `--done` reloads it,
+        and with none standing a resident reloads at once, as _room_record does; a `spark unload` drain's resident is
+        marked Dan's, as Room.unload marks it. Any other drain changes nothing here."""
+        if end not in ("unloaded", "gone"):
             return
-        if current.boot_id == self._boot_id and model not in current.unloaded:
-            current.unloaded.append(model)
-            self._note()
+        known = self.registry.models.get(model)
+        if why == "unload":
+            if known is not None and known.resident:
+                self.state.dans_unloads[model] = self._boot_id
+                self._note()
+            return
+        if why != "make-room":
+            return
+        current = self.state.room_hold
+        if current is not None and current.boot_id == self._boot_id:
+            if model not in current.unloaded:
+                current.unloaded.append(model)
+                self._note()
+        elif known is not None and known.resident:
+            self._reload([model], "hold")
 
     async def release(self, uid: int, *, room: bool, brake: bool) -> ReleaseResult:
         """`spark make-room --done` asks `room`: make-room's hold ends (`room_hold_ended`, *`--done`*), and the
@@ -725,9 +745,10 @@ class Room:
     async def check_brake(self, now: float, *, above_since: float | None) -> Due | None:
         """The brake's release check, which the core runs every 5 s: `above_since` is when MemAvailable last rose above
         the warn line, None while it is under it. None with no hold. `release`: lifted, `brake_released`, and the
-        residents it unloaded reload. `needs_dan`: for a hold from another boot, one `brake_needs_release`. The five
-        minutes count from no earlier than admission first saw the hold, or than this check when it hasn't. With no
-        hold, a resident that left while one stood reloads now, never the model that hold was loading."""
+        residents it unloaded reload. `needs_dan`: for a hold from another boot, or one the gate's start put back, one
+        `brake_needs_release` (_needs_release). The five minutes count from no earlier than admission first saw the
+        hold, or than this check when it hasn't. With no hold, a resident that left while one stood reloads now, never
+        the model that hold was loading."""
         last = self._last_hold
         hold = self._hold()
         if hold is None:
@@ -758,8 +779,9 @@ class Room:
             return False
         try:
             released = bool(self._release_hold(hold))
-        except OSError as err:
-            _log.error("the brake's hold couldn't be lifted (%s); it stands", err)
+        except OSError as err:  # the truth for both: a hold moved aside and not put back comes back at the next start
+            _log.error("the brake's hold couldn't be lifted (%s): it stands, or, should it have been moved aside and "
+                       "not put back, the gate's next start puts it back", err)
             released = False
         if not released:
             _log.warning("the brake's hold the gate judged no longer stands as it was (the brake fired again, or it "
@@ -787,9 +809,11 @@ class Room:
         return True
 
     def _needs_release(self, hold: Hold) -> None:
-        """One `brake_needs_release`, high, for a hold from another boot (rule 5: it waits for Dan). A hold of this
-        boot that waits for Dan is a brake within the hour after an automatic release, whose own `brake_fired` said so
-        (Task 14). Keyed as Task 14 keys the same brake read from its events, so the two are one notification."""
+        """One `brake_needs_release`, high, for a hold from another boot (rule 5: it waits for Dan), keyed as Task 14
+        keys the same brake read from its events, so the two are one notification; and for a hold the gate's start put
+        back (hold.recover_release) that waits for Dan, from this boot or another, keyed `brake-needs:recovered:…`, so
+        it is never silent (the controller's rulings at Task 17's re-reviews). Any other hold of this boot that waits
+        for Dan is a brake within the hour after an automatic release, whose own `brake_fired` said so (Task 14)."""
         recovered = self._recovered is not None and hold == self._recovered
         if hold.boot_id is not None and hold.boot_id == self._boot_id and not recovered:
             return
@@ -802,11 +826,12 @@ class Room:
             return
         key = (f"brake-needs:{hold.boot_id}:{hold.episode if hold.episode is not None else hold.since}"
                if hold.boot_id is not None else f"brake-needs:phase-1:{hold.since}")
+        more: dict[str, Any] = {}
         if recovered:
             key = key.replace("brake-needs:", "brake-needs:recovered:", 1)
+            more = {"recovered": True, "rebooted": hold.boot_id != self._boot_id}
         self._emit_once("brake_needs_release", key, fired_at=fired, available_gib=hold.available_gib,
-                        unloaded=[self._label(name) for name in dict.fromkeys(hold.unloaded)],
-                        **({"recovered": True} if recovered else {}))
+                        unloaded=[self._label(name) for name in dict.fromkeys(hold.unloaded)], **more)
 
     def _brake_reloads(self, hold: Hold) -> list[str]:
         """The residents a release reloads, in the registry's order: those the brake unloaded and those that left while

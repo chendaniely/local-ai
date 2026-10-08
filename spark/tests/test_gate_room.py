@@ -1451,6 +1451,10 @@ async def test_a_run_whose_caller_goes_mid_drain_is_settled_when_the_drain_ends(
                 assert (hold.size_gib, hold.unloaded) == (40.0, [EMBED, CODER])
             else:
                 assert world.state.room_hold is before and CODER in world.state.models
+            # The run, settled, no longer counts as running: another isn't refused (the controller's ruling at Task
+            # 17's second re-review).
+            again, _ = world.room.plan(Decimal(1), DAN)  # already free: nothing to unload
+            assert (await collect(world.room.execute(again, None, DAN)))[-1]["unloaded"] == []
 
 
 @pytest.mark.anyio
@@ -1636,8 +1640,8 @@ async def test_two_unplanned_restarts_in_an_hour_leave_the_residents_for_dan(tmp
         [(key, fields)] = world.emitted.of("resident_waiting")
         assert key == f"resident-again:restart:{T}"
         text = messages.notification("resident_waiting", REGISTRY, **fields).message
-        assert text == ("Gemma, the embeddings and whisper already reloaded by themselves within the hour, so they "
-                        "won't again by themselves after the model service's restart. On the Spark, `spark load "
+        assert text == ("Gemma, the embeddings and whisper have each used their one automatic reload this hour, so "
+                        "they won't reload by themselves after the model service's restart. On the Spark, `spark load "
                         "small`, `spark load embed` and `spark load stt` load them.")
         assert messages.pi_retry_match(text) is None
         # make apply's planned restart reloads as normal.
@@ -1767,7 +1771,7 @@ async def test_the_restart_form_says_what_the_stamp_says(tmp_path):
         run = world.task(preloader.run(RESIDENTS, "restart"))
         await settle(world)
         assert world.emitted.texts("resident_waiting") == [
-            "Gemma already reloaded by itself within the hour, so it won't again by itself after the model service's "
+            "Gemma's one automatic reload this hour is used up, so it won't reload by itself after the model service's "
             "restart. On the Spark, `spark load small` loads it."]
         assert world.swap.loads() == [GEMMA, EMBED]  # the embeddings and whisper reload, one at a time
         run.cancel()
@@ -1852,8 +1856,7 @@ async def test_one_unreadable_read_never_loses_the_loading_model(tmp_path):
         del world.state.models[GEMMA]
         assert world.room.resident_left(GEMMA, shown="ready", since=T - 1) is False
         (world.brake / "hold.json").write_text("{not json")
-        assert world.room.check_brake  # an unreadable read
-        await world.room.check_brake(T + 5, above_since=None)
+        assert await world.room.check_brake(T + 5, above_since=None) == "needs_dan"  # an unreadable read
         (world.brake / "hold.json").unlink()
         assert await world.room.check_brake(T + 10, above_since=None) is None
         await settle(world)
@@ -1872,10 +1875,12 @@ async def test_one_make_room_run_at_a_time(tmp_path):
         await settle(world)
         hold_of_the_first = world.state.room_hold
         assert await collect(world.room.execute(second_id, None, DAN)) == [
-            {"code": None, "message": messages.room_running()}]
-        assert messages.room_running() == ("make-room is already running: wait for it, or `spark make-room --done` "
-                                           "ends its hold.")
-        assert messages.pi_retry_match(messages.room_running()) is None
+            {"code": None, "message": messages.room_running("the coder")}]
+        assert messages.room_running("the coder") == (
+            "make-room is still unloading the coder from its earlier run: try again once that finishes.")
+        assert messages.room_running(None) == (
+            "make-room's earlier run is still under way: try again once it finishes.")
+        assert [messages.pi_retry_match(messages.room_running(label)) for label in ("the coder", None)] == [None, None]
         assert world.state.room_hold is hold_of_the_first
         [drain] = world.front.drains()
         world.channel.drained(CODER, drain["drain_id"])
@@ -1897,7 +1902,123 @@ async def test_a_resumed_make_room_drain_puts_its_model_on_the_hold_that_stands(
         world.swap._stopped(GEMMA)
         del world.state.models[GEMMA]
         world.room.resumed_drain_ended(GEMMA, "make-room", "unloaded")
-        world.room.resumed_drain_ended(EMBED, "unload", "unloaded")  # not make-room's
+        world.room.resumed_drain_ended(EMBED, "idle", "unloaded")  # not make-room's
         assert world.state.room_hold.unloaded == [GEMMA]
         result = await world.room.release(DAN, room=True, brake=False)
         assert result.reloading == ["Gemma"]
+
+
+
+# Fix round 3 (the controller's rulings at Task 17's second re-review).
+
+@pytest.mark.anyio
+async def test_done_doesnt_end_a_run_whose_drain_is_still_under_way_and_the_refusal_says_so(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The re-review's N2: Dan's Ctrl-C mid-drain, then `--done`. The drain goes on, so make-room still runs, and a
+        # new run is refused with what is under way, never pointed at --done; once the drain ends, the next one runs.
+        world = World(tmp_path, models=all_loaded(), auto=False)
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        task = world.task(collect(world.room.execute(plan_id, None, DAN)))
+        await settle(world)
+        task.cancel()
+        await settle(world)
+        assert (await world.room.release(DAN, room=True, brake=False)).room is not None
+        second, _ = world.room.plan(Decimal(10), DAN)
+        assert await collect(world.room.execute(second, None, DAN)) == [
+            {"code": None, "message": "make-room is still unloading the coder from its earlier run: try again once "
+                                      "that finishes."}]
+        [drain] = world.front.drains()
+        world.channel.drained(CODER, drain["drain_id"])
+        await settle(world)
+        third, _ = world.room.plan(Decimal(10), DAN)
+        assert "unloaded" in (await collect(world.room.execute(third, None, DAN)))[-1]
+
+
+@pytest.mark.anyio
+async def test_a_fault_while_recording_an_abandoned_run_still_settles_it(tmp_path, caplog):
+    with anyio.fail_after(BOUND_S):
+        # The re-review's N1: the recording raises once in the drain's callback; the run is settled all the same, so
+        # make-room isn't wedged until a restart.
+        world = World(tmp_path, models=all_loaded(), auto=False)
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        task = world.task(collect(world.room.execute(plan_id, None, DAN)))
+        await settle(world)
+        task.cancel()
+        await settle(world)
+        real = world.room._ends_with_unload
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("a fault while recording")
+
+        world.room._ends_with_unload = boom
+        [drain] = world.front.drains()
+        world.channel.drained(CODER, drain["drain_id"])
+        await settle(world)
+        world.room._ends_with_unload = real
+        again, _ = world.room.plan(Decimal(10), DAN)
+        assert "unloaded" in (await collect(world.room.execute(again, None, DAN)))[-1]
+        assert any("recording" in r.getMessage() for r in caplog.records if r.name == "spark.gate.room")
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_the_restart_form_is_true_in_a_crash_loop(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The re-review's crash loop: llama-swap restarts at T and queues the three residents (Gemma starts, the others
+        # wait their turn), then restarts again 20 s later, before any is ready. The words say what the stamp records:
+        # each one's automatic reload this hour is used, never that it reloaded.
+        world = World(tmp_path)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+        first = world.task(preloader.run(RESIDENTS, "restart"))
+        await settle(world)
+        assert world.swap.loads() == [GEMMA]
+        first.cancel()
+        for name in list(world.state.models):
+            world.swap._stopped(name)
+            world.state.models.pop(name, None)
+        world.clock.now = T + 20
+        second = world.task(preloader.run(RESIDENTS, "restart"))
+        await settle(world)
+        assert world.emitted.texts("resident_waiting") == [
+            "Gemma, the embeddings and whisper have each used their one automatic reload this hour, so they won't "
+            "reload by themselves after the model service's restart. On the Spark, `spark load small`, `spark load "
+            "embed` and `spark load stt` load them."]
+        second.cancel()
+
+
+@pytest.mark.anyio
+async def test_a_resumed_drain_with_no_hold_standing_reloads_the_resident_and_a_resumed_unload_marks_it(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The re-review's N5: a resumed make-room drain that ends after the hold did (--done, its time): a resident
+        # reloads at once, as _room_record does. And a resumed `spark unload` drain of a resident marks it Dan's, as
+        # Room.unload would have (the controller's rulings at Task 17's second re-review).
+        world = World(tmp_path, models=residents())
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        world.room.resumed_drain_ended(GEMMA, "make-room", "unloaded")
+        await settle(world)
+        assert world.swap.loads() == [GEMMA]
+        world.swap._stopped(EMBED)
+        del world.state.models[EMBED]
+        world.room.resumed_drain_ended(EMBED, "unload", "unloaded")
+        await settle(world)
+        assert world.state.dans_unloads == {EMBED: BOOT} and world.swap.loads() == [GEMMA]
+        world.room.resumed_drain_ended(WHISPER, "unload", "not_taken")  # still loaded: nothing
+        assert world.state.dans_unloads == {EMBED: BOOT}
+
+
+@pytest.mark.anyio
+async def test_a_hold_put_back_from_an_earlier_boot_mentions_the_reboot(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600, boot="b0"))
+        (world.brake / "hold.json").rename(world.brake / "hold.json.releasing-1-ee")
+        recovered = hold.recover_release(world.brake)
+        world.room.at_start(None, recovered=recovered)
+        assert await world.room.check_brake(T + 4000, above_since=T) == "needs_dan"
+        [(key, _)] = world.emitted.of("brake_needs_release")
+        assert key == "brake-needs:recovered:b0:1"
+        assert world.emitted.texts("brake_needs_release") == [
+            "After the reboot, new loads are still paused from the brake at 08:50 (19.6 GiB available; it unloaded "
+            "Gemma and the embeddings); the gate had stopped while it was lifting that hold. On the Spark, `make "
+            "brake-release` resumes them."]
