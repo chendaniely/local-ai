@@ -15,10 +15,10 @@ import pytest
 
 from spark import hold
 from spark.gate import state as gate_state
-from spark.gate.state import (DAMAGED_KEEP, STATE_FILE, STATE_SCHEMA, ApplyHold, BrakeMark, GateState, ModelRecord,
-                              Pin, RefusalRecord, RoomHold, SavedDrain, Session, Ticketed, load_state, notified_key,
-                              restore, resumable_drains, save_state, session_live)
-from spark.gateproto import AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, REFUSAL_HISTORY
+from spark.gate.state import (DAMAGED_KEEP, STATE_FILE, STATE_SCHEMA, ApplyHold, BrakeMark, GateState, LateAlert,
+                              ModelRecord, Pin, RefusalRecord, RoomHold, SavedDrain, Session, Ticketed, load_state,
+                              notified_key, restore, resumable_drains, save_state, session_live)
+from spark.gateproto import AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, REFUSAL_HISTORY
 from spark.hold import Hold, read_hold, release_waits_for_dan, write_hold
 from spark.llamaswap import Running
 from spark.registry import load_registry
@@ -92,6 +92,21 @@ def test_a_brake_mark_with_no_reading_keeps_none(tmp_path):
     save_state(tmp_path, state, now=T)
     loaded, problem = load_state(tmp_path)
     assert problem is None and loaded.brake_marks[CODER].seen_gib is None
+
+
+def test_high_alerts_held_for_a_late_send_survive_a_restart_and_go_at_six_hours(tmp_path):
+    # The controller's ruling at Task 14's re-review: kept in the state, saved, and pruned at NTFY_LATE_KEEP_S, so a
+    # restart or a crash never loses one that is still news.
+    fresh = LateAlert("brake_fired", "high", "Brake on brightroar at 03:12: …", T - 60, T - 60, "unconfirmed")
+    stale = LateAlert("brake_needs_release", "high", "After the reboot, …", T - NTFY_LATE_KEEP_S, T - NTFY_LATE_KEEP_S,
+                      "unreached")
+    state = GateState(late_alerts=[stale, fresh])
+    save_state(tmp_path, state, now=T)
+    loaded, problem = load_state(tmp_path)
+    assert problem is None and loaded.late_alerts == [fresh]
+    (tmp_path / STATE_FILE).write_text(json.dumps({"schema": STATE_SCHEMA, "late_alerts": [
+        {"type": "brake_fired", "priority": "high", "message": "x", "at": T, "failed_at": T, "outcome": "lost"}]}))
+    assert load_state(tmp_path)[1] is not None  # an outcome it doesn't know is damage
 
 
 def test_a_missing_state_file_is_a_fresh_state_and_no_problem(tmp_path):

@@ -15,8 +15,9 @@ module adds no words of its own.
 - **ntfy out of reach never stalls the gate.** `emit` builds the text and returns at once; a queue of at most
   NTFY_QUEUE_MAX, served by `run`, publishes each, high alerts first, bounded by NTFY_TIMEOUT_S. A failure sets
   `GateState.notify_failing_since` to the first failure's time, which `spark status` shows (Task 29), and the next
-  success clears it. A high alert that fails is sent late once ntfy answers again, while it is under NTFY_LATE_KEEP_S
-  old; a default or low one isn't sent again.
+  success clears it. A high alert that fails is held with the state, so a restart keeps it, and sent late once ntfy
+  answers again, while it is under NTFY_LATE_KEEP_S old, saying what is known of the first send: out of reach,
+  refused, or sent again in case it didn't arrive. A default or low one isn't sent again.
 - **The token travels only in a header** (NtfyPublisher): never in the URL, a log line or an error, and neither do
   ntfy's address and the topic, which are private (`/etc/local-ai/values.env`).
 
@@ -31,7 +32,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ import httpx
 from spark import messages
 from spark.brakeevents import BrakeEvent, read_events
 from spark.credentials import HEADER_NAME
-from spark.gate.state import BrakeMark, GateState, notified_key
+from spark.gate.state import BrakeMark, GateState, LateAlert, notified_key
 from spark.gateproto import (BURST_WINDOW_S, FIRED_ALONE_S, NTFY_LATE_KEEP_S, NTFY_LATE_RETRY_S, NTFY_QUEUE_MAX,
                              NTFY_TIMEOUT_S, RELEASE_AFTER_S)
 from spark.hold import Hold, read_hold, release_waits_for_dan
@@ -71,12 +72,12 @@ class _Window:
 
 @dataclass(frozen=True)
 class _Item:
-    """A notification waiting to be sent: when it was accepted, and, for a high alert ntfy didn't take, when it first
-    failed, which its late words name."""
+    """A notification waiting to be sent: when it was accepted, and, for a high alert held to send late
+    (GateState.late_alerts), the alert it is, whose late words say what is known of its first send."""
 
     n: Notification
     at: float
-    failed_at: float | None = None
+    late: LateAlert | None = None
 
 
 class Notifier:
@@ -87,9 +88,11 @@ class Notifier:
 
     The queue holds at most NTFY_QUEUE_MAX: a high alert goes ahead of default and low and is never dropped; when it
     is full, the oldest low goes first, then the oldest default, each counted in `dropped`, which `spark status` shows.
-    A high alert ntfy didn't take is kept, and sent once ntfy answers again while it is under NTFY_LATE_KEEP_S old,
-    saying it is late (messages.sent_late); with nothing else sent, it is tried again every NTFY_LATE_RETRY_S. Default
-    and low alerts aren't sent again (the controller's rulings at Task 14's review).
+    A high alert ntfy didn't take is held in `state.late_alerts`, saved with the state, at most NTFY_QUEUE_MAX, and
+    sent once ntfy answers again while it is under NTFY_LATE_KEEP_S old, its words saying what is known of the first
+    send (messages.sent_late): out of reach, refused, or sent again in case it didn't arrive. With nothing else sent,
+    it is tried again every NTFY_LATE_RETRY_S, and `flush()` tries it too. Default and low alerts aren't sent again
+    (the controller's rulings at Task 14's review and re-review).
 
     Everything here runs on the event loop's thread: `emit`, `tick` and `flush` never await, so they are never
     interleaved."""
@@ -105,8 +108,8 @@ class Notifier:
         self._on_change = on_change or (lambda: None)
         self._high: deque[_Item] = deque()  # sent first, in their order
         self._rest: deque[_Item] = deque()  # default and low, in their order
-        self._late: list[_Item] = []  # high alerts ntfy didn't take, kept to send late
-        self._late_tried_at = 0.0
+        self._late_tried_at = 0.0  # so a restart tries the alerts it held at once
+        self._late_queued: set[tuple[float, str, str]] = set()  # held alerts queued or being sent
         self.dropped = 0  # what the full queue dropped since the gate started
         self._windows: dict[tuple[str, str, str, str], _Window] = {}
         self._wake: asyncio.Event | None = None
@@ -146,12 +149,15 @@ class Notifier:
         too."""
         now = self._clock()
         self._close(lambda window: now - window.since >= BURST_WINDOW_S)
-        if self._late and now - self._late_tried_at >= NTFY_LATE_RETRY_S:
+        if self.state.late_alerts and now - self._late_tried_at >= NTFY_LATE_RETRY_S:
             self._send_late()
 
     def flush(self) -> None:
-        """At a clean stop: close every burst window now, so what each has counted goes, before `drained()`."""
+        """At a clean stop: close every burst window now, so what each has counted goes, and try the high alerts held
+        to send late, before `drained()`."""
         self._close(lambda window: True)
+        if self.state.late_alerts:
+            self._send_late()
 
     def _close(self, due: Callable[[_Window], bool]) -> None:
         for key, window in list(self._windows.items()):
@@ -186,15 +192,20 @@ class Notifier:
             self._wake.set()
 
     def _send_late(self) -> None:
-        """Queue the high alerts kept to send late, but those NTFY_LATE_KEEP_S old or more, which are no longer news."""
+        """Queue the high alerts held to send late that aren't queued already; drop those NTFY_LATE_KEEP_S old, no
+        longer news. Each stays held until ntfy takes it."""
         now = self._clock()
         self._late_tried_at = now
-        kept, self._late = self._late, []
-        for item in kept:
-            if now - item.at >= NTFY_LATE_KEEP_S:
-                _log.warning("notify: a %s alert ntfy didn't take is too old to send late, and isn't sent", item.n.type)
-                continue
-            self._put(item)
+        stale = [alert for alert in self.state.late_alerts if now - alert.at >= NTFY_LATE_KEEP_S]
+        for alert in stale:
+            _log.warning("notify: a %s alert ntfy didn't take is too old to send late, and isn't sent", alert.type)
+        if stale:
+            self.state.late_alerts = [alert for alert in self.state.late_alerts if alert not in stale]
+            self._on_change()
+        for alert in self.state.late_alerts:
+            if _identity(alert) not in self._late_queued:
+                self._late_queued.add(_identity(alert))
+                self._put(_Item(Notification(alert.type, alert.priority, alert.message), alert.at, alert))
 
     async def run(self) -> None:
         """Publish what is queued, high alerts first, one at a time, each bounded by `timeout_s`; close the burst
@@ -237,33 +248,60 @@ class Notifier:
         return True
 
     async def _send(self, item: _Item) -> None:
-        n = item.n if item.failed_at is None else messages.sent_late(item.n, item.failed_at)
+        late = item.late
+        n = item.n if late is None else messages.sent_late(item.n, late.failed_at, late.outcome)
         try:
-            async with asyncio.timeout(self.timeout_s):
+            async with asyncio.timeout(self.timeout_s):  # the backstop: the publisher's own phases end first
                 await self._publish(n)
-        except TimeoutError:
-            self._failed(item, f"ntfy didn't answer within {self.timeout_s:g} s")
-        except Exception as err:  # noqa: BLE001 (ntfy's trouble never stops the gate)
-            self._failed(item, str(err) if isinstance(err, NtfyError) else type(err).__name__)
+        except TimeoutError:  # no answer, in no phase the publisher knew: it may have arrived
+            self._failed(item, f"ntfy didn't answer within {self.timeout_s:g} s", "unconfirmed")
+        except NtfyError as err:
+            self._failed(item, str(err), err.outcome)
+        except Exception as err:  # noqa: BLE001 (ntfy's trouble never stops the gate; what happened isn't known)
+            self._failed(item, type(err).__name__, "unconfirmed")
         else:
+            if late is not None:
+                self._late_queued.discard(_identity(late))
+                self.state.late_alerts = [alert for alert in self.state.late_alerts
+                                          if _identity(alert) != _identity(late)]
+                self._on_change()
             if self.state.notify_failing_since is not None:
                 self.state.notify_failing_since = None
                 self._on_change()
                 _log.info("notify: ntfy takes notifications again")
-            if self._late:  # ntfy answers again: the high alerts it missed go now
+            if self.state.late_alerts:  # ntfy answers again: the high alerts it missed go now
                 self._send_late()
 
-    def _failed(self, item: _Item, why: str) -> None:
+    def _failed(self, item: _Item, why: str, outcome: str) -> None:
         """A notification ntfy didn't take: logged by its type alone, never its text, the address or the topic. A high
-        alert is kept to send late; a default or low one is gone."""
+        alert is held to send late, at most NTFY_QUEUE_MAX, the oldest going first; a default or low one is gone. Once a
+        send may have arrived, its late words say so, whatever later tries find."""
         now = self._clock()
         _log.warning("notify: a %s notification wasn't sent: %s", item.n.type, why)
-        if item.n.priority == "high":
-            self._late.append(_Item(item.n, item.at, now if item.failed_at is None else item.failed_at))
+        if item.late is not None:
+            self._late_queued.discard(_identity(item.late))
+            if outcome == "unconfirmed" and item.late.outcome != "unconfirmed":
+                held = replace(item.late, outcome="unconfirmed")
+                self.state.late_alerts = [held if _identity(alert) == _identity(held) else alert
+                                          for alert in self.state.late_alerts]
+                self._on_change()
             self._late_tried_at = now
+        elif item.n.priority == "high":
+            held = LateAlert(item.n.type, item.n.priority, item.n.message, item.at, now, outcome)
+            self.state.late_alerts.append(held)
+            while len(self.state.late_alerts) > NTFY_QUEUE_MAX:
+                dropped = self.state.late_alerts.pop(0)
+                _log.warning("notify: too many alerts held to send late, so the oldest, a %s, was dropped",
+                             dropped.type)
+            self._late_tried_at = now
+            self._on_change()
         if self.state.notify_failing_since is None:
             self.state.notify_failing_since = now
             self._on_change()
+
+
+def _identity(alert: LateAlert) -> tuple[float, str, str]:
+    return alert.at, alert.type, alert.message
 
 
 def _burst_key(kind: str, fields: dict[str, Any]) -> tuple[str, str, str, str] | None:
@@ -297,7 +335,16 @@ def _refused_model(code: str, moment: Moment) -> str:
 
 
 class NtfyError(Exception):
-    """ntfy didn't take a notification. Its text never holds ntfy's address, the topic or the token."""
+    """ntfy didn't take a notification. Its text never holds ntfy's address, the topic or the token. `outcome` is what
+    is known of it (messages.LATE_OUTCOMES): `unreached`, ntfy never had it (no connection, or the request not fully
+    written); `refused`, ntfy answered with an error status; `unconfirmed`, no answer after the request was written, so
+    it may have arrived."""
+
+    def __init__(self, text: str, outcome: str):
+        if outcome not in messages.LATE_OUTCOMES:
+            raise ValueError(f"an NtfyError's outcome is one of {', '.join(messages.LATE_OUTCOMES)}, not {outcome!r}")
+        super().__init__(text)
+        self.outcome = outcome
 
 
 def quiet_http_loggers() -> None:
@@ -311,15 +358,25 @@ def quiet_http_loggers() -> None:
             logger.setLevel(logging.WARNING)
 
 
+# Each phase of a publish has a bound of its own, together within the Notifier's NTFY_TIMEOUT_S, so the publisher
+# knows which failed (the controller's ruling at Task 14's re-review): a connection or a write that fails, ntfy never
+# had it; a read that times out, after the request was written, it may have.
+NTFY_PHASES = httpx.Timeout(connect=1.5, write=1.0, read=2.0, pool=0.25)
+_UNREACHED = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.WriteError, httpx.WriteTimeout,
+              httpx.UnsupportedProtocol)
+
+
 class NtfyPublisher:
     """Publishes a Notification to ntfy: `POST <url>/<topic>`, its text as the body, `Priority: high | default | low`,
     and the token as the header `read_header_credential("ntfy-token")` gives (`Authorization: Bearer …`), never in the
-    URL. httpx with `trust_env=False`, so no proxy from the environment gets the token, and no redirect followed. It
+    URL. httpx with `trust_env=False`, so no proxy from the environment gets the token, and no redirect followed; each
+    phase bounded by NTFY_PHASES (`timeout`), so its NtfyError says which failed. `transport` is for the tests. It
     never logs the URL, the topic or the header, and its errors (NtfyError) hold none of them; httpx's own request
     lines are quieted by the gate's logging setup (quiet_http_loggers). The gate builds it from
     the values file's NTFY_URL and NTFY_TOPIC_GATE and its credential; close it with `aclose()`."""
 
-    def __init__(self, url: str, topic: str, header: tuple[str, str]):
+    def __init__(self, url: str, topic: str, header: tuple[str, str], *, timeout: httpx.Timeout = NTFY_PHASES,
+                 transport: httpx.AsyncBaseTransport | None = None):
         if not _url_ok(url):
             raise ValueError("NTFY_URL isn't an http(s) URL with a host")  # never the value: it is private
         if not NTFY_TOPIC.fullmatch(topic):
@@ -329,7 +386,7 @@ class NtfyPublisher:
             raise ValueError("the ntfy token's header isn't one 'Name: value' line in printable ASCII")
         self._target = f"{url.rstrip('/')}/{topic}"
         self._header = (name, value)
-        self._client = httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=NTFY_TIMEOUT_S)
+        self._client = httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=timeout, transport=transport)
 
     def __repr__(self) -> str:
         return "NtfyPublisher(<the values file's ntfy>)"
@@ -339,10 +396,12 @@ class NtfyPublisher:
         try:
             response = await self._client.post(self._target, content=n.message.encode("utf-8"),
                                                headers={"Priority": n.priority, name: value})
-        except (httpx.HTTPError, httpx.InvalidURL) as err:
-            raise NtfyError(f"ntfy couldn't be reached ({type(err).__name__})") from None
-        if not response.is_success:  # a redirect included: it is the answer, never followed
-            raise NtfyError(f"ntfy answered HTTP {response.status_code}")
+        except (*_UNREACHED, httpx.InvalidURL) as err:  # nothing reached ntfy whole
+            raise NtfyError(f"ntfy couldn't be reached ({type(err).__name__})", "unreached") from None
+        except httpx.HTTPError as err:  # the request was written, and no answer came: it may have arrived
+            raise NtfyError(f"ntfy didn't confirm it ({type(err).__name__})", "unconfirmed") from None
+        if not response.is_success:  # an error status, a 429 or a redirect: it is the answer, never followed
+            raise NtfyError(f"ntfy answered HTTP {response.status_code}", "refused")
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -410,8 +469,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     - An episode's first alert is `brake_fired`, worded with its `fired` event's own reading and line (a drill's raised
       line as itself), naming the unloads that came with it, each by the registry's label and in its state. A `fired`
       with no unload after it yet is left for the next read, up to FIRED_ALONE_S; then it is sent naming none: *Nothing
-      of the stack's was loaded* when the gate holds no model, else that llama-swap didn't answer the unload (the
-      controller's ruling, at Task 14).
+      of the stack's was loaded* when the gate holds no model, else that llama-swap hasn't confirmed the unload (the
+      controller's rulings, at Task 14 and its review).
     - Each later unload of the episode is a follow-up, *Brake, 03:13: also unloaded …*. The unloads of one read at the
       same local minute go together.
     - A line the brake sent itself (`sent_by_brake`) isn't sent again. A `warn` sends nothing: memory_warning is the
@@ -422,10 +481,11 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       episode's hold (or the `fired` event's moment, when the hold standing is another), judged on the episode's own
       boot, with the last automatic release as `released_at`, and `release_assumed` after a damaged state.
     - An episode from an earlier boot that was never notified (the box froze or was power-cycled first) sends one
-      `brake_needs_release` only, while a hold from another boot stands: when the brake fired, what was available, and
+      `brake_needs_release` only, while that episode's own hold stands: when the brake fired, what was available, and
       what it unloaded, if known. Its `fired` is marked notified, never sent, so no alert of its claims the pause ends
-      by itself or the unload went unconfirmed (the controller's ruling at Task 14's review). With no such hold, nothing
-      is paused, and nothing goes. Its key is Task 17's, `brake-needs:<boot id>:<episode>`, so the two are one.
+      by itself or the unload went unconfirmed (the controller's ruling at Task 14's review). With its hold gone, that
+      pause has ended, and nothing goes; another hold is Task 17's to speak for (the ruling at its re-review). Its
+      key is Task 17's, `brake-needs:<boot id>:<episode>`, so the two are one.
 
     The keys: `brake:<boot id>:<episode>:<seq>`, the seq of the `fired` event for a first alert (of its first unload
     when the file holds no `fired` for the episode) and of the first unload for a follow-up."""
@@ -523,14 +583,15 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
 def _after_reboot(group: _Group, path: Path, state: GateState, registry: Registry, now: float,
                   boot_id: str) -> tuple[str, str, dict[str, Any]] | None:
     """An earlier boot's episode, never notified: its `fired` marked notified without being sent, and one
-    `brake_needs_release` while a hold from another boot stands (rule 5: it waits for Dan)."""
+    `brake_needs_release` while that episode's own hold stands (rule 5: it waits for Dan). Any other hold is Task 17's
+    to speak for, from the hold (the controller's ruling at Task 14's re-review)."""
     boot, episode = group.episode
     reading = group.fired or group.unloads[0]
     state.notified[notified_key("brake_fired", f"brake:{boot}:{episode}:{reading.seq}")] = now
     hold = read_hold(path.parent)
-    if hold is None or hold.boot_id == boot_id:
-        _log.info("notify: the brake fired at %s before the reboot, and no hold of that boot stands, so nothing is "
-                  "sent", datetime.fromtimestamp(reading.at).isoformat(timespec="seconds"))
+    if hold is None or (hold.boot_id, hold.episode) != group.episode:  # Task 17 speaks for any other hold
+        _log.info("notify: the brake fired at %s before the reboot, and its hold no longer stands, so nothing is sent",
+                  datetime.fromtimestamp(reading.at).isoformat(timespec="seconds"))
         return None
     labels = list(dict.fromkeys(_label(registry, e.model or "") for e in group.unloads))
     return ("brake_needs_release", f"brake-needs:{boot}:{episode}",

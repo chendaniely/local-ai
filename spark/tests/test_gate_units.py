@@ -153,7 +153,8 @@ def test_a_restart_by_hand_is_no_crash():
 
 def test_llama_swaps_return_waits_for_it_to_answer():
     # "Models answer again" goes only once /running answers, however long its unit has been up (the controller's
-    # ruling at Task 14's review); the core says whether it answered, and must.
+    # ruling at Task 14's review); the core says whether it answered, and must. Its downtime runs from when models
+    # stopped answering, the crash here, to when /running answers, not the unit's own (the re-review's N-5).
     clock, emitted = Clock(T - 5), Emitted()
     watch = BackUpWatch(emitted, clock)
     watch.observe("llama-swap", up(0, T - 3600, None), answering=True)
@@ -165,10 +166,41 @@ def test_llama_swaps_return_waits_for_it_to_answer():
     assert emitted.calls == []
     clock.now = T + 201
     watch.observe("llama-swap", up(1, T + 12, T), answering=True)
-    assert emitted.texts() == ["The model service on brightroar has been running again for a minute, after 12 s down. "
-                               "Models answer again."]
+    assert emitted.calls == [("back_up", f"back:llama-swap:{T:.3f}", {"unit": "llama-swap", "down_s": 201})]
+    assert emitted.texts() == ["The model service on brightroar has been running again for a minute, after 3 min 21 s "
+                               "down. Models answer again."]
     with pytest.raises(ValueError, match="llama-swap's return needs answering"):
         watch.observe("llama-swap", up(1, T + 12, T))
+
+
+def test_llama_swaps_downtime_starts_with_the_hang_before_its_crash():
+    # Unanswered from T − 30, crashed at T, answering at T + 20, its unit back at T + 12: the return waits for the
+    # unit's minute, and its downtime runs from the hang's start to the first answer.
+    clock, emitted = Clock(T - 40), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.observe("llama-swap", up(0, T - 3600, None), answering=True)
+    for now, st, answering in ((T - 30, up(0, T - 3600, None), False), (T - 10, up(0, T - 3600, None), False),
+                               (T + 1, restarting(1, T - 3600, T), False), (T + 13, up(1, T + 12, T), False),
+                               (T + 20, up(1, T + 12, T), True), (T + 50, up(1, T + 12, T), True)):
+        clock.now = now
+        watch.observe("llama-swap", st, answering=answering)
+    assert emitted.calls == []
+    clock.now = T + 72
+    watch.observe("llama-swap", up(1, T + 12, T), answering=True)
+    assert emitted.calls == [("back_up", f"back:llama-swap:{T:.3f}", {"unit": "llama-swap", "down_s": 50})]
+
+
+def test_llama_swap_crashed_between_two_answered_readings_reads_down_until_it_was_seen_back():
+    # Answering at T − 5 and at T + 3, crashed at T in between: down from the crash to the reading that saw it back,
+    # never "0 s".
+    clock, emitted = Clock(T - 5), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.observe("llama-swap", up(0, T - 3600, None), answering=True)
+    clock.now = T + 3
+    watch.observe("llama-swap", up(1, T + 2, T), answering=True)
+    clock.now = T + 62
+    watch.observe("llama-swap", up(1, T + 2, T), answering=True)
+    assert emitted.calls == [("back_up", f"back:llama-swap:{T:.3f}", {"unit": "llama-swap", "down_s": 3})]
 
 
 def test_the_gate_reads_its_own_downtime_from_systemd_within_a_boot():
@@ -213,6 +245,18 @@ def test_after_a_reboot_the_gates_downtime_runs_from_its_last_activity_record():
     assert emitted.calls == [("back_up", f"back:gate:{T - 90:.3f}", {"unit": "gate", "down_s": 91})]
     assert emitted.texts() == ["The gate on brightroar has been running again for a minute, after 1 min 31 s down. "
                                "New loads work again."]
+
+
+def test_an_activity_record_not_before_the_return_gives_no_downtime():
+    # A clock set back, or a written_at from a later clock: "after 0 s down" would be untrue, so it isn't known (the
+    # controller's ruling at Task 14's re-review).
+    clock, emitted = Clock(T), Emitted()
+    watch = BackUpWatch(emitted, clock)
+    watch.gate_restarted(GateState(clean_shutdown=False, saved_at=T - 12), T, last_alive=T + 100)
+    watch.observe("gate", up(0, T + 1, None))
+    clock.now = T + 60
+    watch.tick()
+    assert emitted.calls == [("back_up", f"back:gate:{T:.3f}", {"unit": "gate", "down_unknown": True})]
 
 
 def test_a_downtime_neither_systemd_nor_the_activity_record_gives_isnt_known():

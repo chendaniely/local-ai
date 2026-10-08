@@ -1221,13 +1221,18 @@ def test_a_hang_reads_isnt_answering_and_a_crash_stopped():
     assert say("gate_down", at=at(9, 14)).startswith("The gate on brightroar stopped at 09:14.")
 
 
-def test_a_high_alert_sent_late_says_when_ntfy_was_out_of_reach():
-    # The controller's ruling at Task 14's review, under Dan's "err on more notifications": a high alert ntfy didn't
-    # take is sent once it answers again, saying so.
+def test_a_high_alert_sent_late_says_what_is_known_of_the_first():
+    # The controller's rulings at Task 14's review and re-review, under Dan's "err on more notifications": a high
+    # alert ntfy didn't take is sent once it answers again, worded by what is known of the first send.
     first = messages.notification("brake_fired", REGISTRY, **FIRED)
-    late = messages.sent_late(first, at(3, 12))
-    assert (late.type, late.priority) == (first.type, first.priority)
-    assert late.message == f"{first.message} (sent late: ntfy was out of reach at 03:12)"
+    for outcome, words in (("unreached", "(sent late: ntfy was out of reach at 03:12)"),
+                           ("refused", "(sent late: ntfy refused it at 03:12)"),
+                           ("unconfirmed", "(sent again in case the first didn't arrive at 03:12)")):
+        late = messages.sent_late(first, at(3, 12), outcome)
+        assert (late.type, late.priority) == (first.type, first.priority)
+        assert late.message == f"{first.message} {words}"
+    with pytest.raises(ValueError, match="^a late send's outcome is one of unreached, refused, unconfirmed"):
+        messages.sent_late(first, at(3, 12), "lost")
 
 
 def test_the_gates_return_after_a_damaged_state_says_its_downtime_isnt_known():

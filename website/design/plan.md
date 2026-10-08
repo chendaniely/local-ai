@@ -904,8 +904,14 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   now. (Corrected 2026-10-08, at the implementation plan's Task 14 review, the controller's ruling,
   under Dan's guidance, "I'd rather err on more notifications than something not being clear": a
   high-priority alert of the gate's that ntfy didn't take is kept, and sent once ntfy answers again
-  while it is under 6 hours old, ending "(sent late: ntfy was out of reach at 03:12)"; default and
-  low alerts aren't sent again.) **Quiet hours run 00:00–05:00**, when only high-priority alerts
+  while it is under 6 hours old, ~~ending "(sent late: ntfy was out of reach at 03:12)"~~; default and
+  low alerts aren't sent again. Corrected again the same day, at the implementation plan's Task 14
+  re-review, the controller's ruling: it is kept with the gate's saved state, so a restart or a crash
+  doesn't lose it, and its last words say what is known of the first send: "(sent late: ntfy was out
+  of reach at 03:12)" when ntfy never had it, "(sent late: ntfy refused it at 03:12)" when ntfy
+  answered with an error, and "(sent again in case the first didn't arrive at 03:12)" when no answer
+  came after it was sent, since a possible repeat, worded as one, beats a possible miss of a high
+  alert.) **Quiet hours run 00:00–05:00**, when only high-priority alerts
   make a sound. The priorities stay as above, with "brake released, and what reloaded" at default
   (2026-10-07). Revised the same day after the council:
   - **Quiet hours are set on Dan's phone,** since ntfy's server has none (the session's ruling):
@@ -1077,7 +1083,7 @@ notifications:
 | `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off. On the Spark, `make doctor` shows what's wrong.* |
 | `llama_swap_down` | high | the failure notifier, or the gate when it stops answering; and (added 2026-10-08, at the implementation plan's Task 12 second re-review, the controller's ruling) the gate, once, when a model is still stopping 5 min after its unload call began, `why: "stuck_stopping"` | ~~*The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.*~~ The gate's, its unit up and not answering (corrected 2026-10-08, at the implementation plan's Task 14 review, the controller's ruling: it hadn't stopped): *The model service on brightroar isn't answering (since 09:14). No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* The failure notifier's, when it crashed: *The model service on brightroar stopped at 09:14 (it crashed; it is restarting). …* For `stuck_stopping`: *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.* |
 | `brake_down` | high | the failure notifier: the brake stopped | *The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the backstop. On the Spark, `make doctor` shows what's wrong.* |
-| `back_up` | default | the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop doesn't alternate it with the `*_down` alerts | *The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.* |
+| `back_up` | default | the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop doesn't alternate it with the `*_down` alerts; llama-swap's only once its `/running` answers again, its downtime from when models stopped answering (added 2026-10-08, at the implementation plan's Task 14 re-review, the controller's ruling) | *The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.* |
 | `refused` | default | a request was refused, whoever asked | *Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free space with `spark make-room 41G` on the Spark, then try again.* |
 | `footprint_suspect` | default | an `agent` request for the model that was loading when the brake fired | *Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load coder` allows it again; your own requests load it if it fits.* |
 | `load_failed` | default | a start failed or passed its deadline | *The coder failed to load: the engine stopped with "failed to load model". On the Spark, `spark logs coder` shows the engine's last lines.* (Corrected 2026-10-07, at the implementation plan's Task 6's fix round 2, as the refusal's: it named `spark status`, which shows no engine lines.) |
@@ -3235,6 +3241,15 @@ Each item gets its own design pass when its turn comes.
   - The gate's own downtime comes from systemd within a boot, and from its last activity record
     across a reboot, never from when its state was last saved; when neither is known, it says so.
   - llama-swap up but not answering reads *isn't answering*, not *stopped*.
+- **2026-10-08** — Phase 2a's Task 14 re-review, the controller's rulings. Dated notes are in
+  *Visibility and notifications* (ntfy) and *What you see in Phase 2a* (`back_up`'s row), and in the
+  implementation plan's Tasks 2, 7, 13, 14, 19 and 38.
+  - A high alert sent late is kept with the gate's saved state, and says what is known of the first
+    send: out of reach, refused, or sent again in case the first didn't arrive.
+  - llama-swap's return gives the downtime models saw, from when they stopped answering to when
+    `/running` answers again.
+  - ntfy's per-visitor request limit is checked against the gate's queue when ntfy is set up and at
+    the cutover.
 
 ## Sources
 

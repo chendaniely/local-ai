@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
 from spark import procs
-from spark.gateproto import NOTIFIED_KEEP_S, REFUSAL_HISTORY, DrainWhy
+from spark.gateproto import NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, REFUSAL_HISTORY, DrainWhy
 from spark.llamaswap import Running
 from spark.registry import Registry
 
@@ -145,6 +145,22 @@ class RefusalRecord:
     extra: dict[str, Any] = _extra()
 
 
+@dataclass(frozen=True)
+class LateAlert:
+    """A high alert ntfy didn't take, held to be sent late once it answers again (Task 14), kept with the state so a
+    restart or a crash doesn't lose it (the controller's ruling at Task 14's re-review): its words as built, when it
+    was accepted, when it first failed, and what is known of that send (messages.LATE_OUTCOMES), which its late words
+    say."""
+
+    type: str
+    priority: str
+    message: str
+    at: float
+    failed_at: float
+    outcome: Literal["unreached", "refused", "unconfirmed"]
+    extra: dict[str, Any] = _extra()
+
+
 @dataclass
 class ApplyHold:
     """Apply's hold, saved like the rest, so a gate restarted inside an apply still holds."""
@@ -201,6 +217,9 @@ class GateState:
     # drain it doesn't resume, and the core sends each and drops it (Task 18), saved meanwhile, so a gate that stops
     # first still owes it.
     undrains: dict[str, str] = field(default_factory=dict)
+    # The high alerts ntfy didn't take, oldest first, held to send late (Task 14's Notifier); pruned at
+    # NTFY_LATE_KEEP_S on every save, and bounded by the Notifier.
+    late_alerts: list[LateAlert] = field(default_factory=list)
     clean_shutdown: bool = True  # a fresh state had no run to end
     saved_at: float = 0.0
     boot_id: str = ""  # the boot it was last settled on (restore)
@@ -269,6 +288,7 @@ _SCALARS: dict[str, Any] = {"last_auto_release_at": float | None, "notify_failin
                             "damaged_at": float | None, "damaged_kept_as": str | None, "release_assumed": bool}
 # Every part of the file this version reads; any other is kept as it was (GateState.extra).
 _KNOWN = {"schema", "room_hold", "applying", "brake_events_after", "notified", "issued", "undrains", "refusals",
+          "late_alerts",
           *(section for section, _, _ in _TABLES), *_SCALARS}
 
 
@@ -383,6 +403,10 @@ def _decode(data: Any) -> GateState:
     if not isinstance(refusals, list):
         raise ValueError("refusals must be a list")
     state.refusals = deque((_record(RefusalRecord, item, "refusals") for item in refusals), maxlen=REFUSAL_HISTORY)
+    late = data.get("late_alerts", [])
+    if not isinstance(late, list):
+        raise ValueError("late_alerts must be a list")
+    state.late_alerts = [_record(LateAlert, item, "late_alerts") for item in late]
     return state
 
 
@@ -401,7 +425,8 @@ def _encode(state: GateState) -> dict[str, Any]:
              "applying": None if state.applying is None else _plain(state.applying),
              "brake_events_after": None if state.brake_events_after is None else list(state.brake_events_after),
              "notified": dict(state.notified), "issued": dict(state.issued), "undrains": dict(state.undrains),
-             "refusals": [_plain(item) for item in state.refusals]}
+             "refusals": [_plain(item) for item in state.refusals],
+             "late_alerts": [_plain(item) for item in state.late_alerts]}
     return copy.deepcopy(state.extra) | data
 
 
@@ -540,8 +565,9 @@ def save_state(folder: Path, state: GateState, *, now: float | None = None) -> N
     """Write `state` whole as `folder`/STATE_FILE, mode 0600: to a new file of this write's own, fsynced, then swapped
     in, and the folder fsynced, so the file is on disk before it returns and a write that fails leaves the previous one
     whole. First it drops from `state.notified`, in place, what was sent more than NOTIFIED_KEEP_S before `now`, so
-    the record never grows for the life of the box, and sets `state.saved_at` to `now` (the gate's clock; time.time()
-    by default). Root is refused (PermissionError) before anything is written: the gate's folder is spark's."""
+    the record never grows for the life of the box, and from `state.late_alerts` what is NTFY_LATE_KEEP_S old, no
+    longer news, and sets `state.saved_at` to `now` (the gate's clock; time.time() by default). Root is refused
+    (PermissionError) before anything is written: the gate's folder is spark's."""
     folder = Path(folder)
     path = folder / STATE_FILE
     if os.geteuid() == 0:
@@ -549,6 +575,7 @@ def save_state(folder: Path, state: GateState, *, now: float | None = None) -> N
     now = time.time() if now is None else now
     for name in [name for name, sent in state.notified.items() if now - sent > NOTIFIED_KEEP_S]:
         del state.notified[name]
+    state.late_alerts = [alert for alert in state.late_alerts if now - alert.at < NTFY_LATE_KEEP_S]
     state.saved_at = now
     data = json.dumps(_encode(state), allow_nan=False).encode()
     folder.mkdir(mode=0o750, exist_ok=True)

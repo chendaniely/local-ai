@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import anyio
+import httpx
 import pytest
 
 from spark import messages
@@ -77,15 +78,24 @@ class Clock:
 
 class Published:
     """A recording publish: each Notification it was given, in order. `hang`: it never returns, as an ntfy out of
-    reach would not."""
+    reach would not. `fail`: it raises NtfyError with that outcome, as NtfyPublisher does. `took_then_hung`: it
+    records the message, then never returns, as an ntfy that took it and answered too slowly (the re-review's
+    probe)."""
 
     def __init__(self):
         self.sent: list[Notification] = []
         self.hang = False
+        self.fail: str | None = None
+        self.took_then_hung = False
         self.calls = 0
 
     async def __call__(self, n: Notification) -> None:
         self.calls += 1
+        if self.fail is not None:
+            raise NtfyError(f"stand-in: {self.fail}", self.fail)
+        if self.took_then_hung:
+            self.sent.append(n)
+            await asyncio.Event().wait()
         if self.hang:
             await asyncio.Event().wait()
         self.sent.append(n)
@@ -403,7 +413,7 @@ async def test_a_publish_that_fails_counts_as_failing_and_never_stops_the_notifi
         async def refuses(n: Notification) -> None:
             if not sent:
                 sent.append(None)
-                raise NtfyError("ntfy answered HTTP 403")
+                raise NtfyError("ntfy answered HTTP 403", "refused")
             sent.append(n)
 
         notifier = Notifier(refuses, REGISTRY, state, clock)
@@ -815,7 +825,7 @@ async def test_a_clean_stop_flushes_the_open_bursts_and_never_waits_on_a_hung_nt
 async def test_a_high_alert_ntfy_missed_is_sent_late_once_it_answers():
     with anyio.fail_after(BOUND_S):
         published = Published()
-        published.hang = True
+        published.fail = "unreached"  # connection refused: ntfy never had it
         clock = Clock(at(3, 12))
         state = GateState()
         notifier = Notifier(published, REGISTRY, state, clock, timeout_s=0.05)
@@ -825,7 +835,7 @@ async def test_a_high_alert_ntfy_missed_is_sent_late_once_it_answers():
             notifier.emit("loaded", "load:t1", label="the coder", seconds=24)
             await notifier.drained()
             assert published.sent == [] and state.notify_failing_since == at(3, 12)
-            published.hang = False
+            published.fail = None
             clock.now = at(3, 12, 30)  # before its own retry is due
             notifier.emit("loaded", "load:t2", label="the coder", seconds=22)  # ntfy answers again
             await notifier.drained()
@@ -842,13 +852,13 @@ async def test_a_high_alert_ntfy_missed_is_sent_late_once_it_answers():
 async def test_a_missed_high_alert_is_retried_on_its_own_and_dropped_past_its_age():
     with anyio.fail_after(BOUND_S):
         published = Published()
-        published.hang = True
+        published.fail = "unreached"
         clock = Clock(at(3, 12))
         notifier = Notifier(published, REGISTRY, GateState(), clock, timeout_s=0.05)
         async with serving(notifier):
             notifier.emit(*high(1)[:2], **high(1)[2])
             await notifier.drained()
-            published.hang = False
+            published.fail = None
             clock.now = at(3, 12) + NTFY_LATE_RETRY_S - 1
             notifier.tick()
             await notifier.drained()
@@ -859,13 +869,228 @@ async def test_a_missed_high_alert_is_retried_on_its_own_and_dropped_past_its_ag
             assert published.texts == [f"{text(*high(1)[:1], **high(1)[2])} (sent late: ntfy was out of reach at "
                                        "03:12)"]
 
-            published.hang = True
+            published.fail = "unreached"
             clock.now = at(5, 0)
             notifier.emit(*high(2)[:2], **high(2)[2])
             await notifier.drained()
-            published.hang = False
+            published.fail = None
             clock.now = at(5, 0) + NTFY_LATE_KEEP_S  # 6 h on: too old to be news
             notifier.tick()
             notifier.emit(*low(1)[:2], **low(1)[2])
             await notifier.drained()
         assert published.texts[1:] == [text("loaded", **low(1)[2])]
+
+
+# What a late send says follows what is known of the first (the controller's ruling at Task 14's re-review): out of
+# reach, refused, or possibly delivered. A publish that took the message, then hung, may have delivered it: sent
+# again, saying so, never "out of reach".
+@pytest.mark.anyio
+async def test_a_publish_that_took_the_message_then_hung_is_sent_again_never_out_of_reach():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.took_then_hung = True
+        clock = Clock(at(3, 12))
+        notifier = Notifier(published, REGISTRY, GateState(), clock, timeout_s=0.05)
+        fired = {**FIRED, "at": at(3, 12)}
+        async with serving(notifier):
+            notifier.emit("brake_fired", "brake:b:1:1", **fired)
+            await notifier.drained()
+            published.took_then_hung = False
+            clock.now = at(3, 12, 30)
+            notifier.emit("loaded", "load:t2", label="the coder", seconds=22)  # ntfy answers again
+            await notifier.drained()
+    assert published.texts == [
+        text("brake_fired", **fired),
+        "Loaded the coder in 22 s.",
+        f"{text('brake_fired', **fired)} (sent again in case the first didn't arrive at 03:12)",
+    ]
+    assert not any("out of reach" in each for each in published.texts)
+
+
+@pytest.mark.anyio
+async def test_a_high_alert_ntfy_refused_is_sent_late_saying_so():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.fail = "refused"
+        clock = Clock(at(3, 12))
+        notifier = Notifier(published, REGISTRY, GateState(), clock)
+        async with serving(notifier):
+            notifier.emit(*high(1)[:2], **high(1)[2])
+            await notifier.drained()
+            published.fail = None
+            clock.now = at(3, 12, 30)
+            notifier.emit(*low(1)[:2], **low(1)[2])
+            await notifier.drained()
+    assert published.texts[1] == f"{text(*high(1)[:1], **high(1)[2])} (sent late: ntfy refused it at 03:12)"
+
+
+@pytest.mark.anyio
+async def test_once_a_send_may_have_arrived_its_late_words_say_so_whatever_follows():
+    # Either order: a try that took the message and hung means a copy may have arrived, so the words say "sent again",
+    # whether it came first or after a try that never reached ntfy.
+    for first, then in ((("took_then_hung", True), ("fail", "unreached")),
+                        (("fail", "unreached"), ("took_then_hung", True))):
+        with anyio.fail_after(BOUND_S):
+            published = Published()
+            setattr(published, *first)
+            clock = Clock(at(3, 12))
+            state = GateState()
+            notifier = Notifier(published, REGISTRY, state, clock, timeout_s=0.05)
+            async with serving(notifier):
+                notifier.emit(*high(1)[:2], **high(1)[2])
+                await notifier.drained()
+                published.took_then_hung, published.fail = False, None
+                setattr(published, *then)
+                clock.now = at(3, 12) + NTFY_LATE_RETRY_S
+                notifier.tick()
+                await notifier.drained()
+                assert [a.outcome for a in state.late_alerts] == ["unconfirmed"], first
+                published.took_then_hung, published.fail = False, None
+                clock.now = at(3, 12) + 2 * NTFY_LATE_RETRY_S
+                notifier.tick()
+                await notifier.drained()
+        assert published.texts[-1].endswith("(sent again in case the first didn't arrive at 03:12)")
+        assert state.late_alerts == []
+
+
+# NtfyPublisher tells the phase that failed, each bounded by its own httpx timeout inside the Notifier's.
+def _failing_transport(error: type[Exception]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error("stand-in", request=request)
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.anyio
+async def test_the_publisher_tells_which_phase_failed():
+    n = Notification("brake_fired", "high", "Brake on brightroar at 03:12: …")
+    header = ("Authorization", f"Bearer {TOKEN}")
+    with anyio.fail_after(BOUND_S):
+        for error, outcome in ((httpx.ConnectError, "unreached"), (httpx.ConnectTimeout, "unreached"),
+                               (httpx.PoolTimeout, "unreached"), (httpx.WriteError, "unreached"),
+                               (httpx.WriteTimeout, "unreached"), (httpx.ReadTimeout, "unconfirmed"),
+                               (httpx.ReadError, "unconfirmed"), (httpx.RemoteProtocolError, "unconfirmed")):
+            publisher = NtfyPublisher("http://standin-nas.invalid", TOPIC, header, transport=_failing_transport(error))
+            with pytest.raises(NtfyError) as failed:
+                await publisher(n)
+            assert failed.value.outcome == outcome, error
+            await publisher.aclose()
+        for status in (500, 503, 429, 403):
+            answers = httpx.MockTransport(lambda request, status=status: httpx.Response(status))
+            publisher = NtfyPublisher("http://standin-nas.invalid", TOPIC, header, transport=answers)
+            with pytest.raises(NtfyError) as answered:
+                await publisher(n)
+            assert (answered.value.outcome, str(answered.value)) == ("refused", f"ntfy answered HTTP {status}")
+            await publisher.aclose()
+
+
+@pytest.mark.anyio
+async def test_the_real_publisher_sends_again_what_ntfy_may_have_taken():
+    # A stand-in ntfy that takes the first request and never answers it, then answers each later one: the brake's
+    # alert reaches it twice, the second saying it may be a repeat.
+    seen: list[bytes] = []
+
+    async def handle(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        length = re.search(rb"(?im)^content-length: *(\d+)", head)
+        seen.append(await reader.readexactly(int(length.group(1))))
+        if len(seen) == 1:
+            await asyncio.Event().wait()
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        await writer.drain()
+        writer.close()
+
+    with anyio.fail_after(BOUND_S):
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+        publisher = NtfyPublisher(url, TOPIC, ("Authorization", f"Bearer {TOKEN}"),
+                                  timeout=httpx.Timeout(1.0, read=0.1))
+        clock = Clock(at(3, 12))
+        notifier = Notifier(publisher, REGISTRY, GateState(), clock)
+        fired = {**FIRED, "at": at(3, 12)}
+        async with serving(notifier):
+            notifier.emit("brake_fired", "brake:b:1:1", **fired)
+            await notifier.drained()
+            clock.now = at(3, 12, 30)
+            notifier.emit("loaded", "load:t2", label="the coder", seconds=22)
+            await notifier.drained()
+        server.close()
+        await publisher.aclose()
+    assert [body.decode() for body in seen] == [
+        text("brake_fired", **fired), "Loaded the coder in 22 s.",
+        f"{text('brake_fired', **fired)} (sent again in case the first didn't arrive at 03:12)"]
+
+
+@pytest.mark.anyio
+async def test_a_high_alert_held_for_a_late_send_survives_a_restart(tmp_path):
+    # Kept in GateState, saved, so a restart or a crash doesn't lose it (the controller's ruling at Task 14's
+    # re-review).
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.fail = "unreached"
+        state = GateState()
+        notifier = Notifier(published, REGISTRY, state, Clock(at(3, 12)))
+        async with serving(notifier):
+            notifier.emit(*high(1)[:2], **high(1)[2])
+            await notifier.drained()
+        assert [(a.type, a.failed_at, a.outcome) for a in state.late_alerts] == [
+            ("brake_needs_release", at(3, 12), "unreached")]
+        save_state(tmp_path, state, now=at(3, 13))
+        again, problem = load_state(tmp_path)
+        assert problem is None and again.late_alerts == state.late_alerts
+
+        published.fail = None
+        restarted = Notifier(published, REGISTRY, again, Clock(at(3, 14)))
+        async with serving(restarted):  # a restart tries what it holds at once
+            assert await restarted.drained()
+    assert published.texts == [f"{text(*high(1)[:1], **high(1)[2])} (sent late: ntfy was out of reach at 03:12)"]
+    assert again.late_alerts == []
+
+
+@pytest.mark.anyio
+async def test_a_clean_stop_tries_the_alerts_held_for_a_late_send():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.fail = "unreached"
+        clock = Clock(at(3, 12))
+        state = GateState()
+        notifier = Notifier(published, REGISTRY, state, clock)
+        async with serving(notifier):
+            notifier.emit(*high(1)[:2], **high(1)[2])
+            await notifier.drained()
+            published.fail = None
+            clock.now = at(3, 12, 10)  # its own retry isn't due for 50 s
+            notifier.tick()
+            await notifier.drained()
+            assert published.sent == []
+            notifier.flush()  # the gate is stopping: it is tried now
+            assert await notifier.drained()
+    assert published.texts == [f"{text(*high(1)[:1], **high(1)[2])} (sent late: ntfy was out of reach at 03:12)"]
+    assert state.late_alerts == []
+
+
+@pytest.mark.anyio
+async def test_the_alerts_held_for_a_late_send_are_bounded():
+    with anyio.fail_after(BOUND_S):
+        published = Published()
+        published.fail = "unreached"
+        state = GateState()
+        notifier = Notifier(published, REGISTRY, state, Clock(at(3, 12)))
+        async with serving(notifier):
+            for n in range(1, NTFY_QUEUE_MAX + 3):
+                notifier.emit(*high(n)[:2], **high(n)[2])
+            await notifier.drained()
+    assert len(state.late_alerts) == NTFY_QUEUE_MAX
+    assert state.late_alerts[0].message == text(*high(3)[:1], **high(3)[2])  # the two oldest went
+
+
+def test_a_brake_from_before_a_reboot_speaks_only_for_the_hold_that_stands(tmp_path):
+    # The re-review's probe: episode 1, sent by the brake itself and released by removing the file, then episode 2,
+    # then the freeze. Only episode 2's hold stands: episode 1 is no longer paused, so only episode 2 is spoken for.
+    write(tmp_path, event("fired", at(3, 0), by_brake=True),
+          event("unload", at(3, 0, 1), model=GEMMA, state="idle", by_brake=True),
+          event("fired", at(3, 20), episode=2), event("unload", at(3, 20, 1), episode=2, model=CODER, state="idle"))
+    write_hold(tmp_path, Hold("2026-10-08T03:20:00", "19.6 GiB available", (CODER,), BOOT, 2, None, 19.6))
+    state = GateState(boot_id=LATER_BOOT)
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=LATER_BOOT, now=at(4, 1))
+    assert [(kind, key) for kind, key, _ in found] == [("brake_needs_release", f"brake-needs:{BOOT}:2")]
+    assert texts(found)[0].startswith("After the reboot, new loads are still paused from the brake at 03:20 ")

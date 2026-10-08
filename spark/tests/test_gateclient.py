@@ -724,6 +724,10 @@ def test_the_status_view_carries_the_plans_fields():
         "front", "gate", "brake", "llama_swap", "ntfy", "activity_age_s", "unticketed_engines", "no_ticket_refusals"}
     assert "key_checked_at" in gateproto.BrakeHealth.__required_keys__
     assert "failing_since" in gateproto.NtfyHealth.__required_keys__
+    # What the full publish queue dropped since the gate started, which `spark status` shows (the controller's ruling
+    # at Task 14's review; tested at its re-review).
+    assert gateproto.NtfyHealth.__required_keys__ == {"status", "failing_since", "dropped"}
+    assert typing.get_type_hints(gateproto.NtfyHealth)["dropped"] is int
     assert gateproto.EngineView.__required_keys__ == {"model", "port", "pid"}
     assert gateproto.ApplyingView.__required_keys__ == {"since", "restarting"}
     assert gateproto.STATUS_SCHEMA == 1

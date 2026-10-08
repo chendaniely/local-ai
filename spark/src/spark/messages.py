@@ -574,7 +574,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "the backstop. On the Spark, `make doctor` shows what's wrong.*"),
     "back_up": (
         "the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop "
-        "doesn't alternate it with the `*_down` alerts",
+        "doesn't alternate it with the `*_down` alerts; llama-swap's only once its `/running` answers again, its "
+        "downtime from when models stopped answering",
         "*The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.*"),
     "refused": (
         "a request was refused, whoever asked",
@@ -1215,10 +1216,20 @@ _NOTIFY: dict[str, Callable[[Registry, dict[str, Any]], str]] = {
 }
 
 
-def sent_late(n: Notification, failed_at: datetime | float) -> Notification:
-    """A high alert ntfy didn't take, sent once it answers again, saying so (the controller's ruling at Task 14's
-    review, under Dan's "err on more notifications")."""
-    return Notification(n.type, n.priority, f"{n.message} (sent late: ntfy was out of reach at {_clock(failed_at)})")
+# What a late send says, by what is known of the first (the controller's rulings at Task 14's review and re-review,
+# under Dan's "err on more notifications"): ntfy never had it (no connection, or the request not fully written); it
+# was reached and refused it (an error status); or it may have arrived (no answer after the request was written), so
+# this may be a repeat, worded as one, since a possible repeat beats a possible miss of a high alert.
+_LATE = {"unreached": "sent late: ntfy was out of reach at {}", "refused": "sent late: ntfy refused it at {}",
+         "unconfirmed": "sent again in case the first didn't arrive at {}"}
+LATE_OUTCOMES: tuple[str, ...] = tuple(_LATE)
+
+
+def sent_late(n: Notification, failed_at: datetime | float, outcome: str) -> Notification:
+    """A high alert ntfy didn't take, sent once it answers again, saying what is known of the first send."""
+    if outcome not in _LATE:
+        raise ValueError(f"a late send's outcome is one of {', '.join(_LATE)}, not {outcome!r}")
+    return Notification(n.type, n.priority, f"{n.message} ({_LATE[outcome].format(_clock(failed_at))})")
 
 
 # ---------------------------------------------------------------------------------------------------------------------

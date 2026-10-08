@@ -96,8 +96,10 @@ class _GateReturn:
 
 class BackUpWatch:
     """`back_up` for each unit that crashed, once it has run again for BACK_UP_AFTER_S, with how long it was down
-    (systemd's ActiveEnterTimestamp less its InactiveEnterTimestamp); a further crash first starts it over; llama-swap's
-    only once `/running` answers. `emit` is the Notifier; `clock` gives Unix seconds, systemd's clock."""
+    (systemd's ActiveEnterTimestamp less its InactiveEnterTimestamp); a further crash first starts it over. llama-swap's
+    goes only once `/running` answers, its downtime from when models stopped answering, the hang's start or the crash,
+    to when `/running` answered again, not its unit's own (the controller's ruling at Task 14's re-review). `emit` is
+    the Notifier; `clock` gives Unix seconds, systemd's clock."""
 
     def __init__(self, emit: Emit, clock: Callable[[], float] = time.time):
         self._emit = emit
@@ -106,6 +108,11 @@ class BackUpWatch:
         self._last: dict[str, UnitState] = {}  # each unit's last reading
         self._crashed: set[str] = set()  # the units back from a crash that haven't run BACK_UP_AFTER_S yet
         self._gate: _GateReturn | None = None
+        # llama-swap's outage as models see it (the controller's ruling at Task 14's re-review): when /running first
+        # went unanswered, when the outage that ended in its crash began, and since when it has answered again.
+        self._unanswered_since: float | None = None
+        self._models_down_since: float | None = None
+        self._answering_since: float | None = None
 
     def observe(self, unit: str, st: UnitState, *, answering: bool | None = None) -> None:
         """A reading of `unit` (gate, front, llama-swap or brake). The first is where its count starts: no crash. For
@@ -115,23 +122,46 @@ class BackUpWatch:
             raise ValueError("llama-swap's return needs answering: whether /running answered at the last read")
         self._last[unit] = st
         self.tick()
+        now = self._clock()
+        if unit == "llama-swap":
+            self._models(st, bool(answering), now)
         before = self._restarts.get(unit)
         self._restarts[unit] = st.n_restarts
         if before is None:
             return
         if st.n_restarts > before:  # systemd restarted it: a crash, which starts the minute over
             self._crashed.add(unit)
+            if unit == "llama-swap":
+                down = [t for t in (self._unanswered_since, st.inactive_since) if t is not None]
+                self._models_down_since = min(down) if down else now
+                if self._answering_since is not None and self._answering_since <= self._models_down_since:
+                    self._answering_since = now  # it crashed between two answered readings: first seen back now
         elif st.n_restarts < before:  # a start by hand sets the count back: no crash, and nothing owed
             self._crashed.discard(unit)
         if unit not in self._crashed:
             return
         back = (st.active and st.active_since is not None and st.inactive_since is not None
                 and st.active_since >= st.inactive_since and answering is not False)
-        if not back or self._clock() - st.active_since < BACK_UP_AFTER_S:
+        if not back or now - st.active_since < BACK_UP_AFTER_S:
             return
         self._crashed.discard(unit)
-        self._emit.emit("back_up", f"back:{unit}:{_key(st.inactive_since)}", unit=unit,
-                        down_s=st.active_since - st.inactive_since)
+        if unit == "llama-swap" and self._models_down_since is not None and self._answering_since is not None:
+            # From when models stopped answering, the hang's start or the crash, to when /running answered again.
+            down_s = max(0.0, self._answering_since - self._models_down_since)
+            self._models_down_since = None
+        else:
+            down_s = st.active_since - st.inactive_since
+        self._emit.emit("back_up", f"back:{unit}:{_key(st.inactive_since)}", unit=unit, down_s=down_s)
+
+    def _models(self, st: UnitState, answering: bool, now: float) -> None:
+        """llama-swap's `/running` as models see it: when it first went unanswered, and since when it answers again."""
+        if answering:
+            self._answering_since = self._answering_since or now
+            if "llama-swap" not in self._crashed:
+                self._unanswered_since = None  # a hang that ended without a crash: nothing owed
+        else:
+            self._answering_since = None
+            self._unanswered_since = self._unanswered_since or now
 
     def gate_restarted(self, state: GateState, now: float | None = None, *, last_alive: float | None = None) -> None:
         """At the gate's start, on the state as it was loaded, before the core sets `clean_shutdown` false and clears
@@ -141,8 +171,10 @@ class BackUpWatch:
 
         - within a boot, systemd's own, from the gate's last reading through `observe`: InactiveEnterTimestamp, the
           crash, to ActiveEnterTimestamp, its return;
-        - across a reboot, where its unit has no inactive time this boot, from `last_alive` to its return;
-        - neither known: the words say it isn't, and after a damaged state, that the state was damaged."""
+        - across a reboot, where its unit has no inactive time this boot, from `last_alive` to its return, when
+          `last_alive` is before the return;
+        - neither known, or a `last_alive` not before the return (the controller's ruling at Task 14's re-review): the
+          words say it isn't, and after a damaged state, that the state was damaged."""
         now = self._clock() if now is None else now
         if not state.clean_shutdown:
             self._gate = _GateReturn(now + BACK_UP_AFTER_S, now, last_alive, state.fresh_after_damage)
@@ -158,10 +190,10 @@ class BackUpWatch:
         fields: dict[str, Any]
         if back_at is not None and st is not None and st.inactive_since is not None and back_at >= st.inactive_since:
             down_at, fields = st.inactive_since, {"unit": "gate", "down_s": back_at - st.inactive_since}
-        elif owed.last_alive is not None:
-            back = back_at if back_at is not None and back_at >= owed.last_alive else owed.started
-            down_at, fields = owed.last_alive, {"unit": "gate", "down_s": max(0.0, back - owed.last_alive)}
-        else:
+        elif owed.last_alive is not None and (back_at if back_at is not None else owed.started) > owed.last_alive:
+            back = back_at if back_at is not None else owed.started
+            down_at, fields = owed.last_alive, {"unit": "gate", "down_s": back - owed.last_alive}
+        else:  # neither known, or a last_alive not before the return (a clock set back): not "after 0 s down"
             down_at = owed.started
             fields = {"unit": "gate", "state_damaged": True} if owed.damaged else {"unit": "gate", "down_unknown": True}
         self._emit.emit("back_up", f"back:gate:{_key(down_at)}", **fields)
