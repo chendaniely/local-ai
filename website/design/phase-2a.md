@@ -1218,8 +1218,8 @@ currently experiencing high demand
     run a command only Dan can run (*added 2026-10-07, at Task 6's fix round 1, the controller's
     rulings*). ~~The plan's own *On the Spark, `spark make-room --done` ends the hold.*, in
     `agent`'s `no_fit`, is the one exception~~: there is none, since `agent`'s `no_fit` now ends
-    *It ends when Dan runs `spark make-room --done` on the Spark.* (*corrected 2026-10-07, at Task
-    6's fix round 2, the controller's ruling*);
+    *The hold ends when Dan runs `spark make-room --done` on the Spark.* (*corrected 2026-10-07, at
+    Task 6's fix round 2, the controller's ruling*);
   - no refusal makes pi retry it. ~~A size pi's list would match (429 GiB and up, past this box's
     memory) moves a GiB or two against the load: a need up, a room down.~~ A size of 400 GiB or
     more reads *more than 400 GiB*, and a `no_fit` that needs that much ends *The Spark can never
@@ -1236,8 +1236,8 @@ the test's own time zone):
 | Code | Inputs |
 |---|---|
 | `no_fit` (Dan) | needed 41, free for a load 18 (the gate's `free_gib`, *added 2026-10-07, at Task 6*), available 48, reserve 24, owed 6, hold not counted, holders `python3 (chendaniely)` 32 and Gemma 27, key *pi on the Mac*, command `coder` |
-| `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. It ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it ended "On the Spark, `spark make-room --done` ends the hold."*) |
-| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. It ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling, as above.*) |
+| `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. The hold ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it ended "On the Spark, `spark make-room --done` ends the hold."*) |
+| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. The hold ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling, as above.*) |
 | `loading` | loading Gemma, wait 30 s |
 | `held_by_brake` | brake at 03:12, 19.6 available, release automatic |
 | `held_by_brake` (waits for Dan) | the same, waiting for Dan: *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you release them: on the Spark, `make brake-release`.* |
@@ -1248,7 +1248,7 @@ the test's own time zone):
 | `restarting` | wait 30 s |
 | `llama_swap_down` | wait 30 s |
 | `draining` (Dan) | 1 in flight, for make-room, wait 30 s |
-| `draining` (`agent`) | 1 in flight, for make-room, wait 600 s: *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. It won't load for agent while make-room's hold stands. It ends when Dan runs `spark make-room --done` on the Spark.* (*The last sentence added 2026-10-07, at Task 6's fix round 1, the controller's rulings.*) |
+| `draining` (`agent`) | 1 in flight, for make-room, wait 600 s: *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. It won't load for agent while make-room's hold stands. The hold ends when Dan runs `spark make-room --done` on the Spark.* (*The last sentence added 2026-10-07, at Task 6's fix round 1, the controller's rulings.*) |
 | `footprint_suspect` | brake at 03:12, command `coder` |
 | `model_not_found` | asked `qwen3.6-35b-a3b`; models the coder (`qwen3.8-27b`), Gemma, the embeddings, whisper — on-demand first, then residents, each in registry order; key *pi on the Mac* (Dan's words) |
 | `model_not_found` (`agent`) | the same, key *agent*: *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates pi's list.* (*Added 2026-10-07, at Task 6, the controller's ruling: `agent`'s pi is on the Spark. Corrected at Task 6's fix round 1: the first correction named the procedure before 2a, pulling `agent`'s clone and running `spark clients pi --write`. After the cutover `agent` has no clone and runs Task 34's deployed CLI. The command is Task 34's, and the coder swap's (Task 42, Step 6), byte for byte, without `--http-idle-timeout-ms`, so pi's settings stay as they are.*) |

@@ -68,7 +68,7 @@ NO_FIT_DAN_BREAKDOWN = ("18 GiB is free for a load (48 GiB available, less the 2
 NO_FIT_CLAMPED_TEXT = (
     "The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan "
     "(36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. "
-    "It ends when Dan runs `spark make-room --done` on the Spark."
+    "The hold ends when Dan runs `spark make-room --done` on the Spark."
 )
 LOADING_TEXT = (
     "The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and "
@@ -106,8 +106,8 @@ ROWS = [
     ("no_fit, Dan", "no_fit", NO_FIT_DAN, NO_FIT_DAN_TEXT),
     ("no_fit, agent", "no_fit", NO_FIT_AGENT,
      "The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB "
-     "reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. It ends "
-     "when Dan runs `spark make-room --done` on the Spark."),
+     "reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. The "
+     "hold ends when Dan runs `spark make-room --done` on the Spark."),
     ("no_fit, agent, Dan's job in the hold", "no_fit", NO_FIT_AGENT_CLAMPED, NO_FIT_CLAMPED_TEXT),
     ("loading", "loading", LOADING, LOADING_TEXT),
     ("held_by_brake", "held_by_brake", HELD,
@@ -134,8 +134,8 @@ ROWS = [
      "again in a minute: your request can load it again, into the room make-room holds for you, if it fits."),
     ("draining, agent", "draining", DRAINING_AGENT,
      "The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. "
-     "It won't load for agent while make-room's hold stands. It ends when Dan runs `spark make-room --done` on the "
-     "Spark."),
+     "It won't load for agent while make-room's hold stands. The hold ends when Dan runs `spark make-room --done` "
+     "on the Spark."),
     ("footprint_suspect", "footprint_suspect", SUSPECT,
      "Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: "
      "`spark load coder` on the Spark, or one of Dan's requests from pi on the Mac or the web UI, which loads it if "
@@ -469,7 +469,7 @@ def test_the_wording_follows_the_groups_words():
         NO_FIT_DAN_TEXT.replace("python3 (chendaniely) 32 GiB", "a process of Dan's, 32 GiB"))
     # agent's words beside Dan's hold, with Dan's processes named because the group's names_processes says so.
     held = refusal("no_fit", replace(NO_FIT_AGENT, holders=[PYTHON, GEMMA], names_processes=True)).message
-    assert held.endswith("Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. It ends when Dan runs "
+    assert held.endswith("Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. The hold ends when Dan runs "
                          "`spark make-room --done` on the Spark.")
     # A group with Dan's words whose hold is counted (one without uses_hold) keeps the plan's step for Dan.
     assert refusal("no_fit", replace(NO_FIT_AGENT, words="dan")).message.endswith(

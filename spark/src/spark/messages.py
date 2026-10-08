@@ -337,7 +337,7 @@ def _no_fit(m: Moment) -> str:
     elif held and m.words == "dan":
         words.append("On the Spark, `spark make-room --done` ends the hold.")
     elif held:  # the hold is Dan's to end (the controller's ruling, Task 6's fix round 2)
-        words.append("It ends when Dan runs `spark make-room --done` on the Spark.")
+        words.append("The hold ends when Dan runs `spark make-room --done` on the Spark.")
     elif m.words == "dan":
         words.append(f"Free space with `spark make-room {need}G` on the Spark, then try again.")
     else:  # make-room is Dan's alone, and its hold would bar agent anyway (rule 4)
@@ -418,7 +418,7 @@ def _draining(m: Moment) -> str:
         return (f"{ran_out} Try again in a minute: your request can load it again, into the room make-room holds for "
                 "you, if it fits.")
     _need("draining", m, "key_label")
-    return (f"{ran_out} It won't load for {m.key_label} while make-room's hold stands. It ends when Dan runs "
+    return (f"{ran_out} It won't load for {m.key_label} while make-room's hold stands. The hold ends when Dan runs "
             "`spark make-room --done` on the Spark.")
 
 
