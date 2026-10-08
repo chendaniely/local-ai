@@ -30,6 +30,7 @@ from spark import protocols, serve
 LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux",
                                 reason="SO_PEERCRED is Linux's, and the gate runs only on the Spark")
 HEADER_TIMEOUT_S = 0.5
+TRICKLE_S = 0.1  # a byte this often, well inside the deadline: a deadline each read put back would never fire
 # A WebSocket handshake's request. Its nonce, 16 bytes in base64 as RFC 6455 asks, is built from a stand-in phrase.
 NONCE = base64.b64encode(b"spark stand-in!!")
 UPGRADE = (b"GET / HTTP/1.1\r\nHost: spark\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
@@ -62,6 +63,14 @@ async def refuse(scope, receive, send):
     """Answers 401 at once and reads none of the body, as the front does for a key it doesn't know."""
     await send({"type": "http.response.start", "status": 401, "headers": [(b"content-length", b"0")]})
     await send({"type": "http.response.body", "body": b""})
+
+
+async def refuse_posts(scope, receive, send):
+    """A POST gets 401 at once, its body unread, as `refuse` gives it; anything else is answered `hi`."""
+    if scope["method"] == "POST":
+        await refuse(scope, receive, send)
+    else:
+        await _answer(send, b"hi")
 
 
 async def echo(scope, receive, send):
@@ -170,6 +179,24 @@ def _get(listener: socket.socket, app_path: str = "/") -> tuple[bytes, bytes]:
     with _connect(listener) as client:
         client.sendall(f"GET {app_path} HTTP/1.1\r\nHost: spark\r\nConnection: close\r\n\r\n".encode())
         return _read_response(client)
+
+
+def _trickle_until_closed(client: socket.socket, byte: bytes, limit_s: float) -> float:
+    """Sends `byte` every TRICKLE_S until the server closes the connection: how long that took, from this call; fails
+    past `limit_s`."""
+    started = time.monotonic()
+    client.settimeout(TRICKLE_S)
+    while time.monotonic() - started < limit_s:
+        try:
+            client.sendall(byte)
+            if client.recv(65536) == b"":
+                return time.monotonic() - started
+            pytest.fail("the server answered instead of closing")
+        except TimeoutError:
+            continue
+        except (BrokenPipeError, ConnectionResetError):
+            return time.monotonic() - started
+    pytest.fail(f"the connection was still open after {limit_s} s of trickled bytes")
 
 
 def _closed_after(client: socket.socket, limit_s: float) -> float:
@@ -316,26 +343,42 @@ def test_a_later_request_on_the_connection_gets_the_same_deadline():
 def test_an_answered_request_cant_hold_its_connection_with_a_trickled_body():
     # An app that answers before reading the body, as the front's 401 does. uvicorn starts the next request only once
     # that body ends, and each byte of it stops uvicorn's keep-alive timer, so without the deadline a client refused at
-    # once could keep its connection for good by sending the body a byte at a time.
+    # once could keep its connection for good by sending the body a byte at a time. A byte every TRICKLE_S, inside the
+    # deadline, shows the deadline runs from the first of them and no byte puts it back.
     with _tcp_listener() as listener, \
             serving(refuse, listener, protocols.make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S),
                     keep_alive_s=2):
         with _connect(listener) as client:
             client.sendall(b"POST / HTTP/1.1\r\nHost: spark\r\nContent-Length: 1000\r\n\r\n")
             assert _read_response(client)[0] == b"HTTP/1.1 401 Unauthorized"
-            started, closed = time.monotonic(), False
-            client.settimeout(1)
-            while not closed and time.monotonic() - started < 7:
-                try:
-                    client.sendall(b"x")  # one byte a second
-                    closed = client.recv(65536) == b""
-                except TimeoutError:
-                    continue
-                except (BrokenPipeError, ConnectionResetError):
-                    closed = True
-            took = time.monotonic() - started
-    assert closed, f"still open after {took:.1f} s of trickled body"
-    assert took <= HEADER_TIMEOUT_S + 1
+            took = _trickle_until_closed(client, b"x", limit_s=3)
+    assert HEADER_TIMEOUT_S - 0.1 <= took <= HEADER_TIMEOUT_S + 0.5
+
+
+def test_a_head_sent_a_byte_at_a_time_is_closed_by_its_deadline():
+    # The same for a request's head: the deadline runs from the connection's start, and the bytes that trickle in,
+    # each well inside it, never put it back.
+    with _tcp_listener() as listener, \
+            serving(echo, listener, protocols.make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S)):
+        with _connect(listener) as client:  # its deadline starts as the connection opens, a moment before this
+            client.sendall(b"GET / HTTP/1.1\r\nHost: spark\r\nX-Slow: ")
+            took = _trickle_until_closed(client, b"a", limit_s=3)
+    assert HEADER_TIMEOUT_S - 0.1 <= took <= HEADER_TIMEOUT_S + 0.5
+
+
+def test_a_client_that_finishes_an_unread_body_at_once_is_served_next():
+    # After an early answer, the next request's deadline runs from the first read after that answer: a client that
+    # sends the rest of the body at once, then its next request, is served, as keep-alive allows.
+    with _tcp_listener() as listener, \
+            serving(refuse_posts, listener,
+                    protocols.make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S)):
+        with _connect(listener) as client:
+            client.sendall(b"POST / HTTP/1.1\r\nHost: spark\r\nContent-Length: 10\r\n\r\n")
+            assert _read_response(client)[0] == b"HTTP/1.1 401 Unauthorized"
+            client.sendall(b"01234")  # the rest of the body in two reads, so one ends with the body still owed
+            time.sleep(0.05)
+            client.sendall(b"56789" + b"GET / HTTP/1.1\r\nHost: spark\r\n\r\n")
+            assert _read_response(client) == (b"HTTP/1.1 200 OK", b"hi")
 
 
 def test_a_websocket_upgrade_stays_a_plain_request_on_its_connection(websocket_library):

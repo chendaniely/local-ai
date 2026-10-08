@@ -1616,17 +1616,20 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `connection_made` it reads `SO_PEERCRED` (Linux's; on any other system `make_protocol(peer_cred=
   True)` raises at once, since the gate runs only on the Spark) from an `AF_UNIX` transport's socket
   and wraps the app, so each request's `scope["extensions"]["peer_cred"]` is `{"pid": int, "uid":
-  int, "gid": int}`; a TCP connection gets no such key. With `header_timeout_s`, a connection whose
-  first request's headers aren't complete in time is closed; the body, once the headers are in, has
-  no such limit. `protocols.peer(scope) -> PeerCred | None`, where `PeerCred(pid: int, uid: int,
-  gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`. *(Corrected 2026-10-08, at Task 9 and
-  its review, the controller's rulings. The deadline covers each request's head on a connection,
-  not only the first: uvicorn's keep-alive timer stops at a request's first byte, so a later head
-  sent a little at a time would hold the connection. And "no such limit" holds only until the
-  answer is sent. An app that answers before reading the body (the front's 401, 413 and 404, the
-  gate's 403) leaves the client sending a body uvicorn drops unread, and each byte of it stops the
-  keep-alive timer; so once the answer is sent, what is left of the body gets the same deadline,
-  from the next read. A body the app is still reading has no limit.)*
+  int, "gid": int}`; a TCP connection gets no such key. With `header_timeout_s`, ~~a connection
+  whose first request's headers aren't complete in time is closed; the body, once the headers are
+  in, has no such limit~~ a connection is closed when it doesn't finish a request's head, or a body
+  nobody will read, in time (the correction below). `protocols.peer(scope) -> PeerCred | None`,
+  where `PeerCred(pid: int, uid: int, gid: int)`. `TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}`.
+  *(Corrected 2026-10-08, at Task 9 and its review, the controller's rulings. The deadline covers
+  each request's head on a connection, not only the first: uvicorn's keep-alive timer stops at a
+  request's first byte, so a later head sent a little at a time would hold the connection. And "no
+  such limit" holds only until the answer is sent. An app that answers before reading the body (the
+  front's 401, 413 and 404, the gate's 403) leaves the client sending a body uvicorn drops unread,
+  and each byte of it stops the keep-alive timer; so once the answer is sent, what is left of the
+  body gets the same deadline, from the next read. A body the app is still reading has no limit.)*
+  *(Added 2026-10-08, at Task 9's re-review: after such an early answer, the next request's deadline
+  runs from the first read after that answer, not from a fresh start once the body ends.)*
 - `sdnotify.notify(message: str, env: Mapping[str, str] = os.environ) -> bool` — a datagram to
   `NOTIFY_SOCKET` (a path, or `@name` for an abstract one); False, quietly, when it is unset;
   `ready()`, `stopping()`; `watchdog_interval_s(env) -> float | None` — half `WATCHDOG_USEC`, only
@@ -1764,7 +1767,8 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the five modules missing).
 - [ ] **Step 2:** the five modules; the tests pass, also on the Mac's shorter socket paths, where
-  the uid test skips (Task 52); `make test lint`, including Task 3's `TESTED_AGAINST` test, which
+  ~~the uid test skips~~ four tests skip (Task 52); `make test lint`, including Task 3's
+  `TESTED_AGAINST` test, which
   now finds `protocols.TESTED_AGAINST`. *(Corrected 2026-10-08, at Task 9's review: four tests
   skip on the Mac, not one, each for a Linux-only fact, as the note under the tests lists them;
   and Task 3's test finds `serve.TESTED_AGAINST` too, both of them by name.)*
@@ -2863,7 +2867,8 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
 - Create: `spark/src/spark/gate/app.py`, `spark/src/spark/gate/main.py`,
   `spark/tests/test_gate_app.py`
 - Modify: `spark/src/spark/cli.py` (`spark gate`, its module imported inside its handler, so
-  Task 3's import test still holds)
+  Task 3's import test still holds); `spark/src/spark/registry.py` and
+  `spark/tests/test_registry.py` (`registry.parse_keys`: added 2026-10-08, at Task 9's re-review)
 
 **Interfaces:**
 
@@ -2881,7 +2886,9 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `account` (Task 4) is the caller's user name, and those whose record's `uid` is the caller's;
   Dan's processes only as *a process of Dan's*. Through the control socket, everything.
 - `gate/main.py`: `spark gate` — `listen_fds()["status"]` and `["control"]`; credentials
-  `llamaswap-key`, `ntfy-token` and `keys` (the private key list, read with `registry.load_keys`);
+  `llamaswap-key`, `ntfy-token` and `keys` (the private key list, ~~read with `registry.load_keys`~~
+  read with `credentials.read_credential_text` and parsed with `registry.parse_keys`, as the note
+  below says);
   `NTFY_URL` and `NTFY_TOPIC_GATE` from the environment (the values file); `spark-front`'s uid and
   `spark-admin`'s members from the system's databases, or from `SPARK_FRONT_UID` and
   `SPARK_ADMIN_UIDS` when set, for tests only; `AsyncLlamaSwap(paths.LLAMASWAP_URL, key,
@@ -2899,6 +2906,18 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     build from a request (`int()` of a header quotes it). So `spark gate` puts a filter or handler
     on `uvicorn.error` that drops `exc_info` and never logs request content: a body, a header, a
     key. `test_a_raising_route_puts_no_request_content_on_stderr` checks it.
+- *(Added 2026-10-08, the controller's rulings, at Task 9's re-review.)*
+  - **The upgrade warnings.** The same filter drops uvicorn's "Unsupported upgrade request."
+    warning and the "No supported WebSocket library detected" line after it. Any local process,
+    `agent` included, can cause them, since `ws="none"` (Task 9) turns every upgrade down.
+  - **Authorization before the body.** Every route authorizes on what it knows before the body,
+    the caller's uid from `peer_cred`, before its first `receive()`. So a refused caller is
+    answered at once, and its unread body falls under Task 9's deadline. A body the app is still
+    reading has no limit (Task 9), so authorizing after reading would give the hold back.
+    `test_an_unauthorized_caller_with_a_trickled_body_is_refused_at_once` checks it.
+  - **Startup errors about `keys.yaml`** may name a key's name or group and a line, and PyYAML's
+    may quote a snippet of that line: the list holds no key or digest, and the journal stays on
+    the box. They never quote a key or a digest from anywhere else.
 
 **Tests** (`spark/tests/test_gate_app.py`; the apps called with a scope whose `peer_cred` the test
 sets, or over real sockets where named; those over real sockets read `SO_PEERCRED`, so they skip
@@ -2953,19 +2972,33 @@ off Linux with Task 9's reason, and the rest run everywhere):
   uid: a `GateClient` gets the status on each; SIGTERM → exit 0, `STOPPING=1` sent, and the state
   file's `clean_shutdown` true.
 - `test_a_raising_route_puts_no_request_content_on_stderr` — *(added 2026-10-08, at Task 9's
-  review)* `spark gate` in a subprocess, as above, with a route that raises: a request carrying a
-  body, headers and a key stand-in, each a distinct marker, gets its 500, and none of the markers,
-  nor a traceback, is on the process's stderr.
+  review)* ~~`spark gate` in a subprocess, as above, with a route that raises:~~ *(corrected the
+  same day, the controller's ruling, at Task 9's re-review:)* a subprocess that installs
+  `spark gate`'s own logging setup (`gate.main.configure_logging()`, which `spark gate` calls
+  before it serves) and serves, through `run_servers`, a stand-in app that raises; production
+  code gets no test-only route or switch. A request carrying a body, headers and a key stand-in,
+  each a distinct marker, gets its 500, and none of the markers, nor a traceback, is on the
+  process's stderr.
+- `test_an_unauthorized_caller_with_a_trickled_body_is_refused_at_once` — *(added 2026-10-08, the
+  controller's ruling, at Task 9's re-review)* over a real socket, the apps served through
+  `make_protocol(peer_cred=True, header_timeout_s=0.5)`: a POST to a control-socket route from a
+  uid that isn't an admin, its `Content-Length` 1000, gets its 403 before any body byte is sent;
+  with the body then trickled a byte every 0.1 s, the connection is closed within the deadline.
+- `test_parse_keys_reads_the_key_list_from_its_text` (`spark/tests/test_registry.py`) — *(added
+  2026-10-08, at Task 9's re-review)* `stack/keys.example.yaml`'s text → the same keys
+  `load_keys` gives for the file; a text it refuses, `load_keys` refuses the same way.
 
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the modules missing).
 - [ ] **Step 2:** `gate/app.py`, `gate/main.py`, `spark gate`; the tests pass, Task 3's import test
   among them; `make test lint`.
-- [ ] **Step 3: Commit.** **On the Spark:**
+- [ ] **Step 3: Commit.** *(The `git add` gained `registry.py` and `test_registry.py` on
+  2026-10-08, at Task 9's re-review.)* **On the Spark:**
 
 ```bash
-git add spark/src/spark/gate/app.py spark/src/spark/gate/main.py spark/src/spark/cli.py spark/tests/test_gate_app.py
+git add spark/src/spark/gate/app.py spark/src/spark/gate/main.py spark/src/spark/cli.py spark/tests/test_gate_app.py \
+  spark/src/spark/registry.py spark/tests/test_registry.py
 git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, each caller known by its uid" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2990,7 +3023,11 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
   `keys`. Each is read with `credentials.read_credential_text` (Task 9), which refuses a missing,
   empty or non-text file by name without quoting it. Then `credentials.parse_digests` parses the
   first and the key list's parser the second (Task 19's `registry.parse_keys`). Task 21's
-  `spark front` reads both at start.)*
+  `spark front` reads both at start.)* *(Added 2026-10-08, the controller's ruling, at Task 9's
+  re-review:)* the app authorizes on the headers, the key through `parse.authenticate`, before its
+  first `receive()`. So an unknown key is answered at once, and its unread body falls under Task
+  9's deadline. A body the app is still reading has no limit, so reading before authorizing would
+  give the hold back.
 - `parse.read_json(receive, *, max_bytes: int) -> tuple[dict, bytes]` — the body parsed, and the
   bytes to send on, re-serialized from it (`json.dumps`, compact); 400 for a body that isn't a
   JSON object or has no string `model`.
@@ -3072,6 +3109,11 @@ ASGI with a recording upstream stand-in, unless named):
 - `test_journal_lines_carry_key_name_model_status_and_duration_only` — one request → one line
   `front: agent qwen3.8-27b 200 1.2s` (its duration the injected clock's); no header value, body
   or file name in it.
+- `test_an_unknown_key_with_a_trickled_body_is_refused_at_once` — *(added 2026-10-08, the
+  controller's ruling, at Task 9's re-review)* the app on a real uvicorn through
+  `make_protocol(peer_cred=False, header_timeout_s=0.5)`: a POST with an unknown key, its
+  `Content-Length` 1000, gets its 401 before any body byte is sent; with the body then trickled a
+  byte every 0.1 s, the connection is closed within the deadline.
 
 **Steps:**
 
@@ -3127,7 +3169,10 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   last-resort handler, since `run_servers` leaves `log_config=None`. So `spark front` puts a filter
   or handler on `uvicorn.error` that drops `exc_info` and never logs request content: a body, a
   header, a key. The front's own journal lines stay as *The front's journal lines* (Global
-  Constraints) give them.
+  Constraints) give them. *(Added 2026-10-08, the controller's ruling, at Task 9's re-review:)*
+  the same filter drops uvicorn's "Unsupported upgrade request." warning and the "No supported
+  WebSocket library detected" line after it. Any local process can cause them, since `ws="none"`
+  (Task 9) turns every upgrade down.
 
 **Tests** (`spark/tests/test_front_forward.py`; the front on a real uvicorn, against the v257
 stand-in):
@@ -3156,9 +3201,13 @@ stand-in):
   on 127.0.0.1:0 as `front`, stand-in credentials, the v257 stand-in and a gate stand-in: `GET
   /health` → 200; SIGTERM → exit 0.
 - `test_a_raising_request_puts_no_request_content_on_stderr` — *(added 2026-10-08, at Task 9's
-  review)* `spark front` in a subprocess, as above, with the app made to raise on a request: a
-  request carrying a body, headers and a client key stand-in, each a distinct marker, gets its
-  500, and none of the markers, nor a traceback, is on the process's stderr.
+  review)* ~~`spark front` in a subprocess, as above, with the app made to raise on a request:~~
+  *(corrected the same day, the controller's ruling, at Task 9's re-review:)* a subprocess that
+  installs `spark front`'s own logging setup (`front.main.configure_logging()`, which `spark front`
+  calls before it serves) and serves, through `run_servers`, a stand-in app that raises;
+  production code gets no test-only route or switch. A request carrying a body, headers and a
+  client key stand-in, each a distinct marker, gets its 500, and none of the markers, nor a
+  traceback, is on the process's stderr.
 - `test_the_front_imports_only_its_listed_modules` — a subprocess importing `spark.front.main`: its
   `spark` modules in `sys.modules` are exactly `FRONT_MODULES`; one importing only `spark.front`
   loads no third-party module.
@@ -5491,10 +5540,10 @@ git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward l
 
 - [ ] **Step 1:** `make test lint docs`, on bash 3.2 and GNU make 3.81: the Makefile's new targets,
   the leak hooks, and the socket tests on the Mac's short paths; the site renders with no warnings,
-  the notifications page among the reference pages. Task 9's uid test and Task 19's tests over
+  the notifications page among the reference pages. ~~Task 9's uid test and Task 19's tests over
   real sockets skip, with Task 9's reason (*SO_PEERCRED is Linux's, and the gate runs only on the
   Spark*), as expected, beside the skips for a tool the Mac lacks that a test names
-  (`systemd-analyze`, say); any other skip is a finding. A Mac difference is fixed here, with its
+  (`systemd-analyze`, say); any other skip is a finding.~~ A Mac difference is fixed here, with its
   test, and in this plan. *(Corrected 2026-10-08, at Task 9's review.)* Task 9 has four expected
   skips, each for a Linux-only fact:
   - the uid test and `test_a_tcp_request_carries_no_peer_cred`, for `SO_PEERCRED`;
@@ -5502,8 +5551,9 @@ git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward l
     `socket.socket(fileno=)` leaves a TCP socket's protocol 0 and asyncio sets no `TCP_NODELAY`;
   - `test_sd_notify_reaches_an_abstract_socket`, for the abstract socket namespace.
 
-  Those four, Task 19's over real sockets and a missing tool's are the expected skips; any other
-  skip is a finding.
+  Those four, Task 19's tests over real sockets (with Task 9's reason, *SO_PEERCRED is Linux's,
+  and the gate runs only on the Spark*) and those for a tool the Mac lacks that a test names
+  (`systemd-analyze`, say) are the expected skips; any other skip is a finding.
 - [ ] **Step 2: CI's parity** (workflows are the Mac's): `.github/workflows/ci.yml` gains `spark docs
   notifications --check` beside `spark docs stack --check`, and shellcheck of
   `stack/host/local-ai-notify` and `stack/host/local-ai-agent-oom` beside bootstrap's. Commit;

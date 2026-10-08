@@ -50,7 +50,8 @@ def make_protocol(*, peer_cred: bool, header_timeout_s: float | None) -> type:
     none. With `header_timeout_s`, a connection is closed when a request's head isn't complete in time:
     `header_timeout_s` after the connection opened, or, for a later request on it, after the read that began the wait
     for it. Its body has no such limit while the app may still read it; once the answer is sent, what is left of the
-    body gets the same deadline, from the next read."""
+    body gets the same deadline, from the next read. After such an early answer, the next request's deadline runs
+    from the first read after that answer too, not from a fresh start once the body ends."""
     if peer_cred and sys.platform != "linux":
         raise RuntimeError("SO_PEERCRED is Linux's, so a caller's uid can't be read here: the gate runs only on the "
                            "Spark")
