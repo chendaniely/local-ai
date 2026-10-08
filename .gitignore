@@ -243,6 +243,7 @@ secrets.*
 
 # Local agent / editor state that can carry paths and tokens
 .claude/settings.local.json
+.claude/worktrees/
 .mcp.local.json
 .vscode/settings.json
 
