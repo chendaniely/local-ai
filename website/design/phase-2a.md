@@ -3054,6 +3054,10 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
         *(Added 2026-10-08, the controller's ruling, at Task 13's review: that unload saves
         `unload_requested_at` with `drain_why: "late_start"`, so a gate restarted before it is done
         resumes it through the drainer and words it as what it was, never as `spark unload`.)*
+        *(Added 2026-10-08, the controller's ruling, at Task 16: the drainer resumes it without the
+        front, as this abort itself unloads, since no request can be in flight to a model that
+        never became ready; it retries an unload llama-swap never took, as this abort does. Only a
+        model that turned ready by then is drained, why `unknown`. Task 16 has the rule.)*
     - **A `failed` with status 500** (the start failed, it was unloaded, or llama-swap is shutting
       down) frees the slot only once the ticket is withdrawn or the `started/` record is read.
     - **The load call runs in a task of its own** that no requester's leaving cancels: a load, once
@@ -3413,6 +3417,11 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
 **Files:**
 
 - Create: `spark/src/spark/gate/policy.py`, `spark/tests/test_gate_policy.py`
+- *(Added 2026-10-08, the controller's rulings, at Task 16:)* Modify: `spark/src/spark/messages.py`
+  and `spark/tests/test_messages.py` (`llama_swap_down`'s `stuck_stopping` form, and
+  `front_not_connected`), `website/reference/notifications.md` (regenerated),
+  `spark/src/spark/procs.py` and `spark/tests/test_procs.py` (`procs.owner_uid`), and
+  `spark/src/spark/gate/state.py` (two docstrings on resumed drains).
 
 **Interfaces:**
 
@@ -3467,6 +3476,10 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
       - The model still listed → `undrain`, and False. v257's 401 and 404 both come before its
         `Unload` (`internal/server/auth.go:31-34`, `internal/server/apigroup.go:153-160`), so the
         model stays loaded, and a drain that waited for it to go would wait for ever.
+        *(Confirmed 2026-10-08, the controller's ruling, at Task 16:)* the model still listed **as
+        `stopping`** is an unload under way (the brake's, say), so the drain waits for `/running` to
+        show it gone, and never undrains: that is the sent-unload rule. Only a model listed
+        otherwise (ready, starting) undrains.
       - The model gone → `unloaded`, and True, and the unload counts as the gate's own.
         `LlamaSwapAnswered` also covers a 200 whose body broke off or couldn't be read, which v257
         sends only after its `Unload` has returned (`apigroup.go:161-163`).
@@ -3531,7 +3544,9 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
     call. The record turns `stopping` only once that call is sent, and an `undrain` clears all
     three. `resume(model, drain_id, why)`, which Task 18 calls at start, sends `drain` again under
     the saved id (a new one when None) and goes on as any drain does; for a model already
-    `stopping`, it waits for `/running` to show it gone.
+    `stopping`, it waits for `/running` to show it gone. *(Corrected 2026-10-08, the controller's
+    ruling, at Task 16: but a `late_start` drain, which needs no `drained`, as the note at this
+    list's end says.)*
   - *(Added 2026-10-08, the controller's ruling, at Task 13's review:)* every origin saves its own
     why: make-room's `make-room`, `spark unload`'s `unload`, the idle check's `idle`, and Task 15's
     late-start abort's `late_start`. A resumed drain with no why saved sends `unknown`, whose words
@@ -3555,6 +3570,66 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
     Minor 3: the requests read `draining`) is defensive. With the rule above, that the drainer never
     marks a model the admitter has `starting`, the gate's own drainer never reaches it; it stays for
     a record changed some other way.
+- *(Added 2026-10-08, the controller's rulings, at Task 16:)*
+  - **A resumed `late_start` drain needs no `drained`.** No request can be in flight to a model that
+    never became ready: its waiters are in the gate's queue, not the front's forwarded set. So the
+    drainer unloads it without the front, as Task 15's own abort (`_late_unload`) does, which never
+    sends `drain` either:
+    - `/running` shows it starting: unloaded at once. An unload llama-swap never took
+      (`LlamaSwapNotSent`, or answered with the model still starting) is tried again at the next
+      look, as Task 15's abort retries, and is never undone to `ready` while the model starts. A
+      channel drop changes nothing, since nothing waits on the front.
+    - It shows it ready by then: drained as any drain, why `unknown`, since requests may now be in
+      flight. (Task 15's own abort, finding its model ready, keeps it, since its load's requests wait
+      for it in the queue; after a restart there is no such load.)
+    - It shows it gone: `unloaded`.
+  - **A front that isn't connected.** `drain()` with the front's call closed sends nothing and
+    returns False, its end `front_away`; one whose call drops before its unload is sent ends
+    `front_dropped`. Dan's commands word both with `messages.front_not_connected(label)`: *The coder
+    wasn't unloaded: the front isn't connected to the gate, so the gate can't wait for the coder's
+    requests in flight to finish first. On the Spark, `make logs s=front` shows why.* It matches
+    nothing on pi's list. An idle drain just skips, with one journal line while the front stays
+    away.
+  - **The interfaces beside the plan's**, as built:
+    - `FrontChannel()`:
+      - `open(first=()) -> asyncio.Queue`: the events route's queue, `hello` and `state` at its
+        head; a new call drops the last.
+      - `close(queue)`: a drop. Every drain still waiting hears `dropped`, and the words that end a
+        drain (`undrain`, `unloaded`) still unsent go to `undelivered`.
+      - `opened()`, `dropped() -> asyncio.Event`, `report(snapshot)` (`/v1/front/inflight`),
+        `forget()`, and `expect(model, drain_id, *, takes_busy)`: only an idle drain takes `busy`,
+        so a stray `busy` never ends another drain's wait.
+      - `drained()` and `busy()` return whether a drain waited for that answer.
+    - `Drainer(front, llamaswap, admitter, emit, clock, *, on_change=None, poll_s=1.0)`:
+      - `drain(model, why, *, progress=None, ended=None) -> bool`: `progress` gets each
+        `StoppingProgress`, and `ended` how the drain ended, a `DrainEnd`: `unloaded`,
+        `not_loaded`, `gone`, `front_away`, `front_dropped`, `busy`, `not_taken`, `held`,
+        `loaded_again` or `broke`. A second drain of a model joins the one under way.
+      - `resume(model, drain_id, why, *, progress=None, ended=None) -> bool`.
+      - `changed()`: each drain looks again, and any word the front is owed goes once its call is
+        open.
+      - `send_owed()`: every word the front is owed, kept in `GateState.undrains`.
+      - `own_unload(model, since) -> bool`: whether the gate's own unload accounts for a model
+        leaving `/running`, for the residents' rule.
+      - `stop()`: every drain's task cancelled, each drain left saved for the restart.
+      - `on_change` may return an awaitable, awaited where a save must come first: before `drain`
+        is sent, and before the unload call, bounded there by the grace.
+    - `Pins(state, admitter, emit, clock, *, may_pin, on_change=None)`: `may_pin(uid)` is true for a
+      `spark-admin` uid and root. `unpin` returns `{label, idle_min, command}`, what
+      `messages.unpinned` takes, or a `policy.Refusal`.
+    - `Sessions(state, clock, *, proc, may_hold, on_change=None)`, and `Sessions.live(session)`, the
+      `live` that `idle_due` takes.
+    - `policy.Refusal(status, message, code=None)`, with `.body() -> GateRefusalBody`: the gate's own
+      refusal of a session or a pin, 403 for who may, 404 for a session that isn't there, 409 for
+      the rest. It isn't `messages.Refusal`.
+  - **Accepted:**
+    - A session's label goes on one line of at most 80 characters (`LABEL_MAX`), since Dan's
+      terminal shows it.
+    - A pin's or a session's end counts as its model's last use, so the model unloads
+      `idle_unload_min` after that end, as `pin_ended`'s and `unpinned`'s *it unloads after 60 min
+      idle* say.
+    - A session's process is the caller's by `procs.owner_uid(pid)`, its real uid, public and
+      tested, so `Sessions` reads no private helper of `procs`.
 
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
@@ -3614,6 +3689,23 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
 - `test_an_idle_drain_that_finds_a_request_unloads_nothing` — `idle_due` names the coder, a request
   lands before the front marks the drain, the front answers `busy` → no unload, False, and the
   coder's last use is now.
+- *(Added 2026-10-08, the controller's rulings, at Task 16:)*
+  - `test_an_answered_unload_with_the_model_stopping_waits_for_gone` — a 404 while `/running` shows
+    the coder stopping → no `undrain`; True once it is gone.
+  - `test_a_resumed_late_start_still_starting_is_unloaded_without_the_front` — the front's call
+    closed → the unload call at once, no `drain`, the one-load slot held until gone, then *Unloaded
+    the coder: its start ran past its deadline.*, and `unloaded` sent once the front is back.
+  - `test_a_resumed_late_start_whose_unload_isnt_taken_tries_again_never_back_to_ready` —
+    `LlamaSwapNotSent`, then a 404 → the record stays `draining`, its unload requested; tried again
+    at the next look, a channel drop changing nothing.
+  - `test_a_resumed_late_start_found_ready_is_drained_as_unknown` and
+    `test_a_resumed_late_start_found_gone_sends_unloaded`.
+  - `test_a_drain_with_the_front_away_sends_nothing_and_says_so` — `front_away`; three idle drains
+    with the front away → one journal line, and again once it has been back and gone.
+  - `test_each_drain_says_how_it_ended` — `unloaded`, `not_taken`, `front_dropped`, `not_loaded`.
+  - In `spark/tests/test_messages.py`: `test_an_unload_the_front_cant_drain_says_why_and_where_to_look`
+    and `test_a_stop_that_hangs_sends_llama_swap_downs_stuck_form`; in `spark/tests/test_procs.py`:
+    `test_owner_uid_is_a_running_processs_real_uid`.
 
 **Steps:**
 
@@ -3626,6 +3718,10 @@ git add spark/src/spark/gate/policy.py spark/tests/test_gate_policy.py
 git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unloads at 60 minutes; pins and sessions" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+*(Added 2026-10-08, at Task 16:)* the commit above also staged `messages.py`, `test_messages.py` and
+`notifications.md` by name. The controller's rulings before review went in a second commit, a
+`fix(spark)`, with the rest of the Files list and these notes.
 
 ***
 
@@ -3692,6 +3788,14 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
       `LoadProgress`. Its test: `test_load_yields_its_wait_before_its_start` — the coder's load
       queued behind Gemma's → `{why: "slot", loading_label: "Gemma", …}` while Gemma loads, then
       the coder's `LoadProgress`, then its result.
+  - *(Added 2026-10-08, the controller's rulings, at Task 16:)* `unload` and `execute` drain through
+    Task 16's `drainer.drain(model, why, progress=…, ended=…)`, passing `progress`, so each
+    `StoppingProgress` reaches their streams. A drain that ends False with `front_away` or
+    `front_dropped` (the front's call to the gate isn't open) ends the stream with a refusal line,
+    `GateRefusalBody` with `code` None, in `messages.front_not_connected(label)`'s words, with its
+    test. Each other `DrainEnd` of a False needs words of its own, which this task adds. The
+    residents' rule asks `drainer.own_unload(model, since=…)` whether the gate's own unload took a
+    resident that left `/running`.
   - `expire(now)` — a hold whose `until` has passed ends (`room_hold_ended`, *its time ran out*).
   - *(Added 2026-10-08, the controller's ruling, at Task 13's review:)* a make-room hold lost with a
     damaged state file sends `room_hold_ended`, its why *the gate's saved state was damaged*. The
@@ -3905,6 +4009,10 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
     `drain_id` is None (Task 15's late-start abort), drained under a new id and answered; and a
     front that restarted too, holding nothing, which adopts each resumed `drain` and answers
     `drained` with its id (Task 22), while an `undrain` it doesn't hold changes nothing.
+    *(Corrected 2026-10-08, the controller's ruling, at Task 16: a `late_start` drain whose model
+    `/running` shows starting is no longer drained, but unloaded without the front, Task 16's rule;
+    it is drained, under a new id and why `unknown`, only if `/running` shows it ready by then. The
+    first case's test reads so.)*
   - The gate loads its state with `load_state(GATE_STATE, now=…, set_aside=True)`. **At a start
     with `fresh_after_damage`**, it reads `/running`, then:
     - ~~sends the front `undrain` for every model `/running` shows `ready` that the front holds
@@ -3963,6 +4071,18 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   its ticket, `admitted_gib`, `started_at` and `available_at_start`, which the activity record and
   `ingest_brake_events`' `starts` read. Task 15 keeps them in its private load records; this task
   adds the accessor, in the shape the record needs.
+
+- *(Added 2026-10-08, the controller's rulings, at Task 16:)* the core's obligations to Task 16's
+  drainer and policy:
+  - It calls `drainer.changed()` on every reading, beside `admitter.changed()`. Each drain then looks
+    again at its clock and at `/running`, and any word the front is owed goes once its call is open.
+  - It calls `drainer.send_owed()` right after opening the front's events call with `hello` and
+    `state` (`FrontChannel.open([hello, state])`). That sends `state.undrains` once the call is open,
+    as the notes above ask, after a restart as after any drop.
+  - It calls `drainer.stop()` before the llama-swap client closes, with the admitter's `stop()`.
+  - Its idle check passes `Sessions.live` as `idle_due`'s `live`, and drains each model it names with
+    why `idle`, `Pins.expire(now)` and `Sessions.prune(now)` beside it. The residents' rule asks
+    `drainer.own_unload(model, since=<the last /running read that listed it>)`.
 
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):
@@ -5453,6 +5573,13 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     llama-swap finishes by itself. Its test: `test_unload_says_so_while_the_model_stays_stopping`
     — the stand-in streams two `StoppingProgress` lines before the result → both sentences, then
     *Unloaded the coder.*
+  - *(Added 2026-10-08, the controller's ruling, at Task 16:)* **A front that isn't connected.**
+    An unload, or one of make-room's, that the gate couldn't drain because the front's call to the
+    gate isn't open ends its stream with a refusal line in `messages.front_not_connected`'s words
+    (Task 17): *The coder wasn't unloaded: the front isn't connected to the gate, so the gate can't
+    wait for the coder's requests in flight to finish first. On the Spark, `make logs s=front`
+    shows why.* `unload` and `make-room` print it as any refusal, exit 1. Its test: the stand-in
+    streams that refusal line → its sentence, exit 1, never *Unloaded the coder.*
   - **Path parameters** — a model, a role or a session id — are quoted with
     `urllib.parse.quote(name, safe="")` before they go in a route.
   - **`parse_size`'s `Decimal`** goes in a body as `float(size)`, since json can't encode a

@@ -56,6 +56,14 @@ def start_time(pid: int, *, proc: Path = PROC) -> int | None:
     return int(words[19])
 
 
+def owner_uid(pid: int, *, proc: Path = PROC) -> int | None:
+    """The real uid of the process `pid` (Uid's first, never its effective one), or None when it isn't running: gone,
+    exited and not yet reaped, or with no Uid line. A session must name a live process of its caller's (Task 16). A
+    /proc that won't let us read it raises, as everywhere here."""
+    status = _status(pid, proc)
+    return _real_uid(status) if status is not None and _alive(status) else None
+
+
 def still_running(pid: int, started: int, *, proc: Path = PROC) -> bool:
     """Whether the process that started at `started` (start_time's ticks) still runs as `pid`: there, neither a zombie
     nor dead, and its start time unchanged, so a pid the kernel handed to another process is never taken for it. A

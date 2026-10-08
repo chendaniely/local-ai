@@ -1419,6 +1419,14 @@ def unloaded(label: str) -> str:
     return f"Unloaded {label}."
 
 
+def front_not_connected(label: str) -> str:
+    """`spark unload`'s and make-room's refusal for a model whose drain couldn't begin, or went back to serving before
+    its unload was sent, because the front's call to the gate isn't open (the controller's ruling at Task 16): the
+    drain's end `front_away` or `front_dropped` (gate.policy), as Room (Task 17) sends it."""
+    return (f"{_start(label)} wasn't unloaded: the front isn't connected to the gate, so the gate can't wait for "
+            f"{label}'s requests in flight to finish first. On the Spark, `make logs s=front` shows why.")
+
+
 def pinned(label: str, until: datetime | float | None, loaded_s: float | None, command: str, *,
            now: datetime | None = None) -> str:
     """`spark pin`: until None for a pin with no end; loaded_s when the pin loaded the model first."""

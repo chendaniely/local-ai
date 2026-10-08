@@ -1222,6 +1222,20 @@ def test_a_hang_reads_isnt_answering_and_a_crash_stopped():
     assert say("gate_down", at=at(9, 14)).startswith("The gate on brightroar stopped at 09:14.")
 
 
+def test_an_unload_the_front_cant_drain_says_why_and_where_to_look():
+    # The controller's ruling at Task 16: a drain that can't begin, or goes back, because the front's call to the gate
+    # isn't open, for Dan's make-room and `spark unload` (Tasks 17 and 30), in Task 6's voice.
+    text = messages.front_not_connected("the coder")
+    assert text == ("The coder wasn't unloaded: the front isn't connected to the gate, so the gate can't wait for the "
+                    "coder's requests in flight to finish first. On the Spark, `make logs s=front` shows why.")
+    assert messages.front_not_connected("Gemma").startswith("Gemma wasn't unloaded: ")
+    assert messages.pi_retry_match(text) is None
+    # The command it names is the Makefile's: `make logs s=front` reads local-ai-front.service's journal.
+    makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
+    recipe = makefile[makefile.index("\nlogs:"):makefile.index("\ntunnel:")]
+    assert "*) journalctl -u local-ai-$(s).service" in recipe and "front)" not in recipe
+
+
 STUCK = {"at": at(9, 19), "why": "stuck_stopping", "model_label": "the coder", "since": at(9, 14)}
 STUCK_TEXT = ("llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, "
               "`make logs s=llama-swap` shows why.")

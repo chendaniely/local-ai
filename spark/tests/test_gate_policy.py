@@ -699,7 +699,8 @@ async def test_a_drain_whose_unload_is_never_sent_goes_back_to_serving_at_90s(tm
             return None
 
         world = World(tmp_path, models={CODER: record(CODER)}, on_change=on_change)
-        drain = world.drain(CODER, "make-room")
+        ends: list[str] = []
+        drain = world.drain(CODER, "make-room", ended=ends.append)
         await settle()
         drain_id = world.front.drain_id(CODER)
         world.channel.drained(CODER, drain_id)
@@ -708,7 +709,7 @@ async def test_a_drain_whose_unload_is_never_sent_goes_back_to_serving_at_90s(tm
         await world.at(T + DRAIN_GRACE_S - 1)
         assert not drain.done() and world.front.ops() == [("drain", CODER)]
         await world.at(T + DRAIN_GRACE_S)
-        assert drain.result() is False and world.swap.unloads() == []
+        assert drain.result() is False and world.swap.unloads() == [] and ends == ["held"]
         assert world.front.events()[-1] == {"op": "undrain", "model": CODER, "drain_id": drain_id}
         coder = world.state.models[CODER]
         assert (coder.state, coder.unload_requested_at, coder.drain_id, coder.drain_why) == ("ready", None, None, None)
@@ -861,7 +862,9 @@ async def test_every_drain_goes_back_if_the_fronts_channel_drops(tmp_path):
 
         world = World(tmp_path, models={CODER: record(CODER), GEMMA: record(GEMMA), WHISPER: record(WHISPER)},
                       on_change=on_change)
-        drains = [world.drain(CODER, "make-room"), world.drain(GEMMA, "make-room"), world.drain(WHISPER, "unload")]
+        ends: list[str] = []
+        drains = [world.drain(CODER, "make-room"), world.drain(GEMMA, "make-room"),
+                  world.drain(WHISPER, "unload", ended=ends.append)]
         await settle()
         ids = {model: world.front.drain_id(model) for model in (CODER, GEMMA, WHISPER)}
         world.channel.drained(WHISPER, ids[WHISPER])
@@ -869,6 +872,7 @@ async def test_every_drain_goes_back_if_the_fronts_channel_drops(tmp_path):
         world.front.drop()
         await settle()
         assert [d.result() for d in drains] == [False, False, False] and world.swap.unloads() == []
+        assert ends == ["front_dropped"]  # dropped in its step before the call, not held past the grace
         assert {name: (r.state, r.drain_id, r.unload_requested_at) for name, r in world.state.models.items()} == {
             name: ("ready", None, None) for name in (CODER, GEMMA, WHISPER)}
         # The front may hold any of them drained: each is owed its undrain, saved, and sent once the front is back.
@@ -1021,12 +1025,50 @@ async def test_an_unload_joined_to_an_idle_drain_the_front_found_busy_drains_for
 
 
 @pytest.mark.anyio
-async def test_a_drain_with_the_front_away_sends_nothing(tmp_path):
+async def test_a_drain_with_the_front_away_sends_nothing_and_says_so(tmp_path, caplog):
     with anyio.fail_after(BOUND_S):
+        # The controller's ruling at Task 16: Dan's commands hear why (messages.front_not_connected, from the drain's
+        # end); an idle drain just skips, with one journal line while the front stays away.
         world = World(tmp_path, models={CODER: record(CODER)}, connected=False)
-        assert await world.drainer.drain(CODER, "idle") is False
+        ends: list[str] = []
+        assert await world.drainer.drain(CODER, "unload", ended=ends.append) is False and ends == ["front_away"]
         coder = world.state.models[CODER]
         assert (coder.state, coder.drain_id, coder.drain_why) == ("ready", None, None) and world.state.undrains == {}
+        caplog.clear()
+        for _ in range(3):
+            assert await world.drainer.drain(CODER, "idle") is False
+        skipped = [r.getMessage() for r in caplog.records if r.name == LOG]
+        assert skipped == [f"not idle-unloading {CODER}: the front's call to the gate isn't open, so nothing can "
+                           "drain it; it is tried again once the front is back"]
+        world.front = Front(world.channel)
+        drain = world.drain(CODER, "idle")
+        await settle()
+        world.channel.busy(CODER, world.front.drain_id(CODER))
+        await settle()
+        assert drain.result() is False
+        world.front.drop()
+        caplog.clear()
+        assert await world.drainer.drain(CODER, "idle") is False  # away again: said again
+        assert len([r for r in caplog.records if r.name == LOG]) == 1
+
+
+@pytest.mark.anyio
+async def test_each_drain_says_how_it_ended(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # What Room words a drain's end by (Task 17): the drain's own end, passed to `ended` as it returns.
+        world = World(tmp_path, models={CODER: record(CODER), GEMMA: record(GEMMA), WHISPER: record(WHISPER)})
+        ends: dict[str, list[str]] = {name: [] for name in (CODER, GEMMA, WHISPER, EMBED)}
+        world.swap.unload_as(GEMMA, "not_sent")
+        drains = [world.drain(name, "make-room", ended=ends[name].append) for name in (CODER, GEMMA, WHISPER)]
+        await settle()
+        world.channel.drained(CODER, world.front.drain_id(CODER))
+        world.channel.drained(GEMMA, world.front.drain_id(GEMMA))
+        await settle()
+        world.front.drop()
+        await settle()
+        assert [d.result() for d in drains] == [True, False, False]
+        assert await world.drainer.drain(EMBED, "unload", ended=ends[EMBED].append) is True
+        assert ends == {CODER: ["unloaded"], GEMMA: ["not_taken"], WHISPER: ["front_dropped"], EMBED: ["not_loaded"]}
 
 
 @pytest.mark.anyio
@@ -1140,29 +1182,95 @@ async def test_a_resumed_drain_with_no_why_names_no_command(tmp_path):
         assert drain.result() is True and unloaded_text(world) == ["Unloaded the coder."]
 
 
+def late_start_world(tmp_path: Path, shown: str, *, connected: bool = True) -> World:
+    """A late unload found across a restart (Task 15's abort of a start past its deadline, saved with why late_start
+    and no drain id): restore's `draining`, /running showing the coder `shown`."""
+    going = record(CODER, state="draining", unload_requested_at=T - 5, drain_why="late_start")
+    world = World(tmp_path, models={CODER: going}, connected=connected,
+                  running=[Running(CODER, "starting")] if shown == "starting" else None)
+    if shown == "gone":
+        del world.swap.states[CODER]
+    else:
+        world.swap.states[CODER] = shown
+    return world
+
+
+def resume_saved(world: World) -> asyncio.Task:
+    [saved] = resumable_drains(world.state)
+    assert (saved.model, saved.drain_id, saved.why) == (CODER, None, "late_start")
+    return asyncio.get_running_loop().create_task(world.drainer.resume(saved.model, saved.drain_id, saved.why))
+
+
 @pytest.mark.anyio
-async def test_a_resumed_drain_of_a_model_still_starting_holds_the_slot(tmp_path):
+async def test_a_resumed_late_start_still_starting_is_unloaded_without_the_front(tmp_path):
     with anyio.fail_after(BOUND_S):
-        # A late unload found across a restart: `draining`, its start still under way in /running, holds the one-load
-        # slot through the admitter's _slot_holders until /running shows it gone.
-        going = record(CODER, state="draining", unload_requested_at=T - 5, drain_why="late_start")
-        listed = [Running(CODER, "starting")]
-        world = World(tmp_path, models={CODER: going}, running=listed)
-        world.swap.states[CODER] = "starting"
-        [saved] = resumable_drains(world.state)
-        drain = asyncio.get_running_loop().create_task(world.drainer.resume(saved.model, saved.drain_id, saved.why))
+        # The controller's ruling at Task 16: no request can be in flight to a model that never became ready (its
+        # waiters are in the gate's queue), so the abort needs no `drained`, as Task 15's own doesn't: it unloads at
+        # once, with the front's call closed. Its start holds the one-load slot until /running shows it gone.
+        world = late_start_world(tmp_path, "starting", connected=False)
+        world.swap.unload_as(CODER, "holds")
+        drain = resume_saved(world)
         embed = asyncio.get_running_loop().create_task(world.admitter.admit(
             AdmitRequest("r1", EMBED, "command", None, T + LOAD_CALL_TIMEOUT_S)))
         await world.at(T + 5)
-        [event] = world.front.events()
-        assert event["why"] == "late_start" and event["drain_id"]  # a new id, since none was saved
+        assert world.swap.unloads() == [CODER] and world.state.models[CODER].state == "stopping"
         assert world.swap.loads() == [] and world.admitter.waiting()[0]["why"] == "slot"
-        world.channel.drained(CODER, event["drain_id"])
+        world.swap.stop_done(CODER)
         await world.at(T + 6)
-        assert drain.result() is True
+        assert drain.result() is True and CODER not in world.state.models
         assert unloaded_text(world) == ["Unloaded the coder: its start ran past its deadline."]
         await world.at(T + 7)
         assert world.swap.loads() == [EMBED] and not embed.done()
+        # No `drain` was ever sent; the `unloaded` that ends it waits, owed, for the front's call.
+        world.front = Front(world.channel)
+        await world.at(T + 8)
+        assert world.front.ops() == [("unloaded", CODER)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("how", ["not_sent", "404"])
+async def test_a_resumed_late_start_whose_unload_isnt_taken_tries_again_never_back_to_ready(tmp_path, how):
+    with anyio.fail_after(BOUND_S):
+        # An unload llama-swap never took, the model still starting: never undone to ready, which would serve a model
+        # still starting; tried again at the next look, as Task 15's abort does.
+        world = late_start_world(tmp_path, "starting")
+        world.swap.unload_as(CODER, how)
+        drain = resume_saved(world)
+        await world.at(T + 5)
+        assert world.swap.unloads() == [CODER] and not drain.done()
+        coder = world.state.models[CODER]
+        assert (coder.state, coder.unload_requested_at, coder.drain_why) == ("draining", T - 5, "late_start")
+        assert world.front.events() == [] and world.state.undrains == {}
+        world.front.drop()  # a channel drop changes nothing: the abort never waited on the front
+        await world.at(T + 6)
+        assert world.swap.unloads() == [CODER, CODER] and drain.result() is True
+        assert unloaded_text(world) == ["Unloaded the coder: its start ran past its deadline."]
+
+
+@pytest.mark.anyio
+async def test_a_resumed_late_start_found_ready_is_drained_as_unknown(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Ready by then: requests may be in flight, so it is a drain as any other, its why unknown, under a new id.
+        world = late_start_world(tmp_path, "ready")
+        drain = resume_saved(world)
+        await settle()
+        [event] = world.front.events()
+        assert event["op"] == "drain" and event["why"] == "unknown" and event["drain_id"]
+        assert world.state.models[CODER].drain_why == "unknown" and world.swap.unloads() == []
+        world.channel.drained(CODER, event["drain_id"])
+        await settle()
+        assert drain.result() is True and world.swap.unloads() == [CODER]
+        assert unloaded_text(world) == ["Unloaded the coder."]
+
+
+@pytest.mark.anyio
+async def test_a_resumed_late_start_found_gone_sends_unloaded(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        world = late_start_world(tmp_path, "gone")
+        drain = resume_saved(world)
+        await settle()
+        assert drain.result() is True and world.swap.unloads() == []
+        assert world.front.ops() == [("unloaded", CODER)] and CODER not in world.state.models
 
 
 @pytest.mark.anyio

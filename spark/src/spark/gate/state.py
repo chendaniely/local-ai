@@ -245,7 +245,8 @@ class Emit(Protocol):
 @dataclass(frozen=True)
 class SavedDrain:
     """A drain a restarted gate resumes (resumable_drains): under its saved id, or, for an unload requested with no
-    drain (Task 15's abort of a start past its deadline), under a new one."""
+    drain (Task 15's abort of a start past its deadline), under a new one, if it needs the front at all: that abort's
+    model is unloaded without one while it still starts (Task 16, the controller's ruling there)."""
 
     model: str
     drain_id: str | None
@@ -254,8 +255,9 @@ class SavedDrain:
 
 def resumable_drains(state: GateState) -> list[SavedDrain]:
     """The drains the gate resumes at start, on the state restore returned: each model whose unload it requested. One
-    left `draining` is drained again, so the requests in flight finish, then unloaded; one `stopping` waits for
-    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`. A model in a state the gate
+    left `draining` is drained again, so the requests in flight finish, then unloaded, but a `late_start` one still
+    starting, which is unloaded at once, since no request can be in flight to it; one `stopping` waits for /running to
+    show it gone (Task 16). Every other drain saved is in `state.undrains`. A model in a state the gate
     doesn't know waits until /running shows one it knows (Task 18). An unload with no why of the gate's (restore found
     the model stopping with no record of it) reads as `unknown`, worded neutrally (the controller's rulings at Task 13's
     review and re-review)."""

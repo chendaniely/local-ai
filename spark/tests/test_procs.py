@@ -154,6 +154,22 @@ def test_still_running_is_the_process_that_started_then(proc):
     assert not procs.still_running(310, 777_000, proc=proc)  # exited, not yet reaped
 
 
+def test_owner_uid_is_a_running_processs_real_uid(proc):
+    # A session must name a live process of its caller's (Task 16; the controller's ruling at Task 16): its real uid,
+    # Uid's first, never its effective one, and none for a process that isn't running.
+    process(proc, 300, "pi", uid=AGENT)
+    process(proc, 301, "sudo", uid=(AGENT, 0, 0, 0))  # real agent's, effective root's
+    process(proc, 310, "pi", uid=AGENT, state="Z (zombie)")
+    process(proc, 311, "pi", uid=AGENT, state="X (dead)")
+    assert procs.owner_uid(300, proc=proc) == AGENT
+    assert procs.owner_uid(301, proc=proc) == AGENT
+    assert procs.owner_uid(302, proc=proc) is None  # gone
+    assert procs.owner_uid(310, proc=proc) is None  # exited, not yet reaped
+    assert procs.owner_uid(311, proc=proc) is None
+    (proc / "300" / "status").write_text("Name:\tpi\nState:\tS (sleeping)\n")  # no Uid line to read
+    assert procs.owner_uid(300, proc=proc) is None
+
+
 def test_start_time_is_stats_22nd_field_read_after_the_names_last_parenthesis(proc):
     # The name, in parentheses, can hold spaces and parentheses of its own: field 3 comes first after the last ")",
     # so field 22 is the 20th word there (checked on the Spark, 2026-10-08).
