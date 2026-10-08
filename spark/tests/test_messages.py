@@ -994,6 +994,15 @@ def test_a_burst_goes_as_one_with_its_count_on_its_own_type():
 # The notifications the plan doesn't word, composed by its rules (the role first, whole GiB, the 24-hour clock, never
 # a negative number, where to act and the command), each with the inputs that give it.
 COMPOSED = [
+    # A brake whose unload llama-swap didn't answer within FIRED_ALONE_S, with something loaded; and the gate's return
+    # after its saved state was damaged (the controller's rulings, at Task 14).
+    ("brake_fired", {**FIRED, "unloaded": [], "unload_unanswered": True},
+     "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't "
+     "unloaded anything yet: llama-swap didn't answer its unload. On the Spark, `make logs s=brake` shows why. They "
+     "resume by themselves after 5 min above 28 GiB available."),
+    ("back_up", {"unit": "gate", "state_damaged": True},
+     "The gate on brightroar has been running again for a minute; how long it was down isn't known: its saved state "
+     "was damaged. New loads work again."),
     ("brake_fired", {**FIRED, "unloaded": [("the coder", "starting"), ("Gemma", "idle"), ("whisper", "answering")]},
      "Unloaded the coder (loading), Gemma (idle) and whisper (answering); new loads are paused."),
     ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle"), ("the embeddings", "idle"), ("whisper", "idle")],
@@ -1144,6 +1153,45 @@ def test_a_brake_after_a_damaged_start_never_names_an_automatic_release():
                          "`make brake-release` resumes them.")
     assert "automatic release at" not in text
     assert say("brake_fired", **WITHIN_THE_HOUR).endswith(DANS_RELEASE)  # a real release keeps its words
+
+
+UNANSWERED_HEAD = ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It "
+                   "hasn't unloaded anything yet: llama-swap didn't answer its unload. On the Spark, `make logs s=brake` "
+                   "shows why.")
+
+
+def test_a_brake_whose_unload_went_unanswered_says_so_then_how_the_pause_ends():
+    # The controller's ruling, at Task 14: no unload within FIRED_ALONE_S while something is loaded. Its words are
+    # true whether the unload was slow, failed or refused, then the usual pause sentence.
+    unanswered = {**FIRED, "unloaded": [], "unload_unanswered": True}
+    assert say("brake_fired", **unanswered) == (
+        f"{UNANSWERED_HEAD} They resume by themselves after 5 min above 28 GiB available.")
+    assert say("brake_fired", **{**unanswered, "by_brake": True}) == (
+        f"{UNANSWERED_HEAD} They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.")
+    assert say("brake_fired", **{**unanswered, "release_waits_for_dan": True, "released_at": at(3, 0)}) == (
+        f"{UNANSWERED_HEAD} It fired within an hour of the automatic release at 03:00, so they stay paused until you "
+        "release them: on the Spark, `make brake-release`.")
+    assert say("brake_fired", **{**unanswered, "release_waits_for_dan": True, "release_assumed": True}).startswith(
+        f"{UNANSWERED_HEAD} New loads stay paused until you release them: the gate's saved state was damaged")
+    # It names no unload, so a brake that did unload, or a follow-up, can't take it.
+    for given in ({**FIRED, "unload_unanswered": True}, {**NOTIFICATION_ROWS[1][1], "unload_unanswered": True}):
+        with pytest.raises(ValueError, match="^brake_fired's unload_unanswered is for a first alert that unloaded "
+                                             "nothing"):
+            say("brake_fired", **given)
+    # The command it names is the Makefile's: `make logs s=brake` reads local-ai-brake.service's journal.
+    makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
+    assert re.search(r"^logs: ## On the Spark: make logs s=llama-swap\|brake\|", makefile, re.MULTILINE)
+    assert "journalctl -u local-ai-$(s).service" in makefile
+
+
+def test_the_gates_return_after_a_damaged_state_says_its_downtime_isnt_known():
+    assert say("back_up", unit="gate", state_damaged=True) == (
+        "The gate on brightroar has been running again for a minute; how long it was down isn't known: its saved state "
+        "was damaged. New loads work again.")
+    # Only the gate keeps a saved state, and a downtime given is a downtime known.
+    for given in ({"unit": "front", "state_damaged": True}, {"unit": "gate", "down_s": 12, "state_damaged": True}):
+        with pytest.raises(ValueError, match="^back_up's state_damaged is the gate's alone, with no down_s"):
+            say("back_up", **given)
 
 
 def test_the_unloaded_whys_and_drain_for_are_gateprotos():

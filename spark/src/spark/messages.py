@@ -745,11 +745,17 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     _needs("brake_fired", f, "at")
     if f["follow_up"]:  # always an unload: an empty list is a field left out
         _needs("brake_fired", f, "unloaded")
+        if f["unload_unanswered"]:
+            raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
         return f"Brake, {_clock(f['at'])}: also unloaded {_brake_unloaded(f['unloaded'])}."
     if f["unloaded"] is None:
         raise ValueError("brake_fired's words need unloaded")
+    if f["unload_unanswered"] and f["unloaded"]:
+        raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
     # An empty list: the brake paused new loads with nothing of the stack's loaded, the memory taken by something
-    # outside it (the controller's ruling at Task 7's review, worded at Task 13).
+    # outside it (the controller's ruling at Task 7's review, worded at Task 13); or, with unload_unanswered, with
+    # something loaded and no unload by FIRED_ALONE_S: slow, failed or refused, llama-swap didn't answer it, and
+    # the brake's journal says which (the controller's ruling, at Task 14).
     unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
                 else "Nothing of the stack's was loaded, so there was nothing to unload")
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
@@ -767,8 +773,12 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
             resume = f"They resume once the gate is back and memory has stayed above {warn} available for {after}."
         else:
             resume = f"They resume by themselves after {after} above {warn} available."
-    return (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
-            f"{_line(f['line_gib'])} line. {unloaded}; new loads are paused. {resume}")
+    reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
+               f"{_line(f['line_gib'])} line")
+    if f["unload_unanswered"]:
+        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: llama-swap didn't answer its "
+                f"unload. On the Spark, `make logs s=brake` shows why. {resume}")
+    return f"{reading}. {unloaded}; new loads are paused. {resume}"
 
 
 def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
@@ -810,9 +820,16 @@ _UNITS = {"gate": ("The gate", "New loads work again."), "front": ("The front", 
 
 
 def _back_up(registry: Registry, f: dict[str, Any]) -> str:
-    _needs("back_up", f, "unit", "down_s")
+    _needs("back_up", f, "unit")
     _one_of("back_up", "unit", f["unit"], _UNITS)
     name, again = _UNITS[f["unit"]]
+    if f["state_damaged"]:  # the gate's own return after its saved state was damaged: its last run's end is lost
+        if f["unit"] != "gate" or f["down_s"] is not None:
+            raise ValueError("back_up's state_damaged is the gate's alone, with no down_s: the gate's saved state is "
+                             "what dates its last run")
+        return (f"{name} on {_host()} has been running again for a minute; how long it was down isn't known: its saved "
+                f"state was damaged. {again}")  # the controller's ruling, at Task 13's re-review
+    _needs("back_up", f, "down_s")
     return f"{name} on {_host()} has been running again for a minute, after {_brief(f['down_s'])} down. {again}"
 
 
@@ -825,7 +842,7 @@ def _burst(kind: str, f: dict[str, Any]) -> str:
     if not isinstance(f["count"], int) or f["count"] < 1:
         raise ValueError(f"{kind}'s words need count to be 1 or more")
     since = f"{_times(f['count'])} since {_clock(f['since'])}"
-    model = _shown_model(f["code"], f["model_label"])
+    model = shown_model(f["code"], f["model_label"])
     if kind == "load_failed":  # each a load of its own: the engine's line may differ, so no "same reason"
         _needs(kind, f, "model_label")
         return f"{_start(_one_line(f['model_label']))} failed to load {since}."
@@ -836,9 +853,10 @@ def _burst(kind: str, f: dict[str, Any]) -> str:
     return f"{did} {model} for {f['key_label']} {since}: same reason."
 
 
-def _shown_model(code: str, text: str | None) -> str:
+def shown_model(code: str, text: str | None) -> str:
     """A model as the phone may show it: on one line; for model_not_found, the name a client asked for, only when it
-    reads as a model's name, else nothing."""
+    reads as a model's name, else nothing. The notifier keys a burst on it (Task 14), so a stream of names the words
+    don't show collapses into one."""
     line = _one_line(text or "")
     if code == "model_not_found" and not _is_model_name(line):
         return ""
@@ -957,7 +975,7 @@ def _is_model_name(text: str) -> bool:
 
 
 def _phone_model_not_found(registry: Registry, m: Moment) -> str:
-    asked = _shown_model("model_not_found", m.asked_name)
+    asked = shown_model("model_not_found", m.asked_name)
     if asked:
         said = f"{_lead(m, asked)}there's no model by that name."
     else:
@@ -1152,10 +1170,10 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
-                    "release_assumed": False},
+                    "release_assumed": False, "unload_unanswered": False},
     "brake_needs_release": {"fired_at": None},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
-    "back_up": dict.fromkeys(("unit", "down_s")),
+    "back_up": {"unit": None, "down_s": None, "state_damaged": False},
     "refused": dict.fromkeys(("code", "moment")),
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),
     "load_failed": dict.fromkeys(("model_label", "command", "engine_said", "deadline_s")),

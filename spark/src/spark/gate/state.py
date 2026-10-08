@@ -128,7 +128,9 @@ class BrakeMark:
 
     model: str
     at: float
-    seen_gib: float  # what it was seen using
+    # What it was seen using: its load's fall from where it started to the brake's reading as it unloaded it; None
+    # without a reading of where it started, never a guess (the controller's ruling, at Task 14).
+    seen_gib: float | None
     extra: dict[str, Any] = _extra()
 
 

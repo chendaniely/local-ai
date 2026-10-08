@@ -85,6 +85,15 @@ def test_pins_sessions_holds_and_marks_survive_a_restart(tmp_path):
     assert list(loaded.refusals) == [refusal(0), refusal(1), refusal(2)]
 
 
+def test_a_brake_mark_with_no_reading_keeps_none(tmp_path):
+    # What the marked model was seen using isn't known without a reading of where its load started: None, never a
+    # guess, and `spark status` says *not known* (the controller's ruling, at Task 14).
+    state = GateState(brake_marks={CODER: BrakeMark(CODER, T, None)})
+    save_state(tmp_path, state, now=T)
+    loaded, problem = load_state(tmp_path)
+    assert problem is None and loaded.brake_marks[CODER].seen_gib is None
+
+
 def test_a_missing_state_file_is_a_fresh_state_and_no_problem(tmp_path):
     assert load_state(tmp_path) == (GateState(), None)
     assert load_state(tmp_path / "nowhere") == (GateState(), None)

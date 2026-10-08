@@ -65,6 +65,10 @@ NOTIFIED_KEEP_S = 86400  # the gate's record of what it has notified drops what 
 SESSION_HOLD_RENEW_S = 60  # `spark session hold` renews its session this often
 GRACEFUL_S = 20  # uvicorn's graceful shutdown in the front and the gate, below their units' TimeoutStopSec=30
 LLAMA_SWAP_HUNG_S = 10  # llama_swap_down once llama-swap hasn't answered this long while its unit stays active
+# The brake writes a `fired` event, then its first `unload`, as two appends, an unload call of up to 2 s between them:
+# a `fired` with no unload after it is held back this long, then sent as a brake that unloaded nothing (the
+# controller's ruling, at Task 14).
+FIRED_ALONE_S = 5.0
 
 Socket = Literal["status", "control"]
 Callers = Literal["front", "users", "owner", "admin"]
@@ -488,7 +492,7 @@ class MemoryView(TypedDict):
 
 class BrakeMarkView(TypedDict):
     at: float
-    seen_gib: float
+    seen_gib: float | None  # None: no reading of where its load started, and `spark status` says *not known*
 
 
 class ModelView(TypedDict):
