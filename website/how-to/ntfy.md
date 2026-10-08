@@ -186,8 +186,9 @@ Spark. Task 2 runs these steps on the NAS and corrects them here.
    inside the shared folder `docker` (`/volume1/docker/ntfy`).
 2. **In Portainer**: *Stacks* → *Add stack*, name it `ntfy`, and choose a build method:
    - *Web editor*: paste `stack/synology/ntfy/compose.yaml`, as it is at the commit you deploy.
-     Phase 2a's Task 2 uses this one, since the file reaches GitHub only with the push after
-     Task 35.
+     ~~Phase 2a's Task 2 uses this one, since the file reaches GitHub only with the push after
+     Task 35.~~ Either method works for Phase 2a's Task 2: `phase-2a` has been on GitHub since
+     2026-10-08, when it was pushed early so this runbook could be read from another machine.
    - *Repository*: *Repository URL* `https://github.com/chendaniely/local-ai`; *Repository
      reference* the branch that holds the file, `refs/heads/main` once Phase 2a merges (until then
      `refs/heads/phase-2a`, which goes away after the merge, so switch the stack to `main` then);

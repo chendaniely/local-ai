@@ -695,9 +695,11 @@ header files, as `ntfy.md` §8 writes them.
   new, and says so. The policy stays in the vault. *(Corrected 2026-10-07, after Task 1's review:
   §2's first grant keeps every member device's access to the tagged NAS, which is how the phone
   reaches ntfy's port.)*
-- [ ] **Step 3 [Dan, in Portainer on the Synology]:** `ntfy.md` §4, from the web editor: Task 1's
+- [ ] **Step 3 [Dan, in Portainer on the Synology]:** `ntfy.md` §4, ~~from the web editor: Task 1's
   file reaches GitHub only with the push after Task 35, and a Git-repository stack can follow it
-  from then on. Expected: the stack runs, and ntfy's web page answers on the NAS's address
+  from then on~~ from the web editor or a Repository stack on `refs/heads/phase-2a`, switched to
+  `main` once 2a merges *(corrected 2026-10-08: `phase-2a` was pushed early, at Dan's request, so
+  the runbook could be read on another machine)*. Expected: the stack runs, and ntfy's web page answers on the NAS's address
   from the phone, ~~asking for a login~~ loading (`200`), and only a topic there asks for a login.
   *(Corrected 2026-10-07, after Task 1's review: the Compose file sets no `NTFY_ENABLE_LOGIN` or
   `NTFY_REQUIRE_LOGIN`, so the page itself loads; `deny-all` refuses a topic without one.)*
