@@ -127,9 +127,11 @@ def runbook_blocks() -> list[str]:
 def test_no_runbook_block_changes_your_shell(tmp_path):
     # Dan pastes these blocks into his own shell. One that left `umask 077` there would make the next runbook's
     # `make apply` deploy files only he can read, which the services then can't; one that left him in the working
-    # folder would have §10 delete it from under him. So each block runs in a shell where every command outside
-    # bash is a no-op that succeeds (no PATH, and bash's command_not_found_handle), leaving only bash's own
-    # builtins to act (cd, umask, read, printf), and the shell's umask and folder are read afterwards.
+    # folder would have §10 delete it from under him. So each block runs in a shell where every command looked up
+    # on PATH is a no-op that succeeds (no PATH, and bash's command_not_found_handle), leaving only bash's own
+    # builtins to act (cd, umask, read, printf), and the shell's umask and folder are read afterwards. A command
+    # named by its path (`./ntfy`) still fails, as does `read` at end of input, so a block whose `umask` came
+    # after one of those in an `&&` chain would get past this test: each block's `cd` and `umask` come first.
     bash = shutil.which("bash")
     (tmp_path / "ntfy-setup").mkdir()
     blocks = runbook_blocks()

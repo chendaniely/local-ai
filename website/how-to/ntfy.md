@@ -99,8 +99,8 @@ folder and the topic names, which are private but not credentials. None of it go
 a chat.
 
 The steps below make every value in a working folder on the Spark, `~/ntfy-setup`, with nothing
-displayed. §10 deletes it. Each block runs in a subshell, `( … )`, so its `cd` and its
-`umask 077` end with it: a `umask 077` left in your shell would make the next runbook's
+displayed. §10 deletes it. Each block on the Spark runs in a subshell, `( … )`, so its `cd` and
+its `umask 077` end with it: a `umask 077` left in your shell would make the next runbook's
 `make apply` deploy new files only you can read, which the services then can't.
 
 **1. A working folder, and ntfy's own binary.** ntfy v2.28.0's release binary, the version the
@@ -361,4 +361,5 @@ credentials by name), the Spark's four files and the phone.
 **On a rebuilt Spark, with the NAS unchanged**, either run §3 to §9 again, which makes new hashes,
 tokens and topics, so the phone subscribes to the new topics; or write §8's four files again from
 the values that remain: the address and the topic names from the vault, and each token from the
-helper's `NTFY_AUTH_TOKENS`.
+helper's `NTFY_AUTH_TOKENS`. That second way puts the tokens on screen, wherever the helper shows
+its variables; the first shows nothing.
