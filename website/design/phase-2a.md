@@ -25,8 +25,11 @@ date: 2026-10-07
 
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
-> same day: the *Global Constraints* and the tasks carry them. No task has started. **Next: Task
-> 1.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
+> 1.**~~ **Task 1 is done** (2026-10-07: ntfy's Compose file and runbook, reviewed, with a fix round).
+> **Next: Task 2 [Dan] and Task 3, side by side**: no task before Task 27 reads what Task 2
+> makes, so the Spark tasks go on while Dan sets ntfy up, and Task 2 has to be done before Task 27
+> starts. Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`.
 
 **Goal:** Requests reach a new front on 127.0.0.1:9100, which checks the same client keys (held
