@@ -4,14 +4,14 @@ From Phase 2a it starts a model only with the gate's admission ticket, and uses 
 starts around the gate, not a crashed engine llama-swap would restart, nor a model a request reaches llama-swap for
 without the gate's admission. Behind the ticket it keeps two backstops, Phase 1's: the brake's hold, and a static fit
 that never waits (admission.py). It refuses a model whose files aren't downloaded. Just before the exec it records the
-start under `started/`, which the brake reads as a load in progress while the gate's record is stale, and the gate for
-its bypass check. It marks the engine among the first processes the kernel or earlyoom should kill, in the brake's
+start under `started/`, which the brake reads as a load in progress, in a union with the gate's record, bounded as
+phase-2a.md's Task 23 says, and the gate for its bypass check. It marks the engine among the first processes the kernel or earlyoom should kill, in the brake's
 order: an on-demand engine first, then a resident one. GB10's GPU memory doesn't count toward oom_score, so without
 this a user's job could be chosen instead. The engine gets llama-swap's environment without its API keys: it parses
 third-party model files and needs none of them.
 
 A refusal exits 3, says why on stderr, which llama-swap keeps, and leaves the reason in `refusals/<model>.json` under
-launch's folder, for the gate and `spark status`. Launch never sleeps or retries: the gate is where a load waits. It
+launch's folder, for the gate and `spark status`: every refusal but root's, which writes nothing. Launch never sleeps or retries: the gate is where a load waits. It
 runs as spark, never as root: its folder is spark's, and root never writes through a path spark controls.
 """
 

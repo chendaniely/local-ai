@@ -273,7 +273,12 @@ Four services, three sockets that systemd holds, and a notifier:
   load's deadline, so one issued for a load that never reached llama-swap can't start a model
   later. Tickets and `spark launch`'s refusal records get a folder of their own, the only state
   `ReadWritePaths=` opens to llama-swap's sandbox; the brake's hold folder is read-only there, so
-  an engine can no longer delete the hold.
+  an engine can no longer delete the hold. *(Corrected 2026-10-08, at the implementation plan's
+  Task 11 review, the controller's ruling:)* the folder holds a third kind of file, `started/`:
+  launch's record of each start, the claimed ticket with its start and pid, which the brake reads
+  as a load in progress and the gate for its bypass check. The sandbox has to open it too, and an
+  engine can write it, so a forged `started/` record reaches further than a forged ticket (*What
+  stays open*, below); the brake and the gate bound what they take from one.
 - **Sockets from systemd** (Dan, 2026-10-07): `local-ai-front.socket` holds 127.0.0.1:9100, and
   `local-ai-gate-status.socket` and `local-ai-gate-control.socket` hold the gate's two, each with
   its `SocketUser=`, `SocketGroup=` and `SocketMode=0660`. PID 1 holds them from boot, so 9100 is
@@ -359,7 +364,17 @@ over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SS
   or the hold (*Engines share llama-swap's user*). *(Narrowed after the re-review: the engines run
   inside llama-swap's sandbox, which leaves them only the tickets' folder, whisper's tmp-dir and the
   caches to write, so an engine can still forge a ticket, but can no longer delete the hold or
-  change the gate's state.)*
+  change the gate's state.)* *(Widened 2026-10-08, at the implementation plan's Task 11 review, the
+  controller's ruling:)* that folder also holds `started/`, the record of each start. A forged
+  ticket only starts a model, which still meets `spark launch`'s hold and fit checks. A forged
+  `started/` record reaches two readers: the brake, which takes each record as a load in progress
+  and lets memory fall as far as that load was admitted for, so a record with a large starting
+  figure could keep its rate watch quiet down to the brake line; and the gate's bypass check, which
+  counts a recorded pid as ticketed, so a record could hide an engine from it. No check in `spark
+  launch` can stop this, since launch and the engines share a user and a sandbox. So the brake
+  takes the starting memory from its own reading, caps a record's footprint at the registry's, and
+  counts a record only while its pid is alive and is that model's engine; and the gate counts a
+  record as ticketed only when its ticket's id is one it issued.
 
 **What each failure costs:**
 
@@ -2007,7 +2022,10 @@ Each item gets its own design pass when its turn comes.
   the hold. *Narrowed after the re-review:* the engines run inside llama-swap's sandbox, where the
   hold's folder and the gate's state are read-only and only the tickets' folder, whisper's tmp-dir
   and the caches can be written, so an engine can still forge a ticket, but no longer delete the
-  hold.) The same
+  hold. *Widened 2026-10-08, at the implementation plan's Task 11 review, the controller's
+  ruling:* or a `started/` record in the same folder, which reaches the brake's rate watch and the
+  gate's bypass check; *What stays open* in *The front and the gate* says how far, and how the
+  brake and the gate bound what they take from one.) The same
   reach belongs to `spark models pull`, which runs as `spark` with network egress by design: its
   Python dependencies, huggingface_hub and the packages it brings, run with it (found 2026-09-26, in
   Phase 1 Task 8's review). → Task 17 decides the same for the pull (decided 2026-09-28, at Phase 1's
@@ -3120,6 +3138,14 @@ Each item gets its own design pass when its turn comes.
   - Each error the CLI meets with the gate is one plain line, never a traceback. A socket that
     refuses this login says who it is for and the next step. An answer cut off partway is the gate
     stopping, never a success.
+- **2026-10-08** — Phase 2a's Task 11 review, the controller's rulings. Dated notes are in *The
+  front and the gate* (llama-swap's paragraph and *What stays open*) and *Open items and risks*,
+  and in the implementation plan's Tasks 11, 13, 15, 18, 23 and 24.
+  - The tickets' folder holds launch's `started/` records too. An engine can forge one, which
+    reaches further than a forged ticket: the brake's rate watch and the gate's bypass check. The
+    brake takes the starting memory from its own reading, caps a record's footprint at the
+    registry's, and counts a record only while its pid is that model's engine; the gate counts a
+    record as ticketed only when it issued its ticket.
 
 ## Sources
 

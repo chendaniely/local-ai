@@ -4,8 +4,9 @@ took the brake's own key when the brake started.
 It reports problems, it doesn't fail on them: what it can't read, it says so, shows the rest, and exits 0. What it says
 must be true for whoever runs it. The brake's state folder is 2770 spark:spark-admin, so an account outside spark-admin
 (agent) is told the hold is unknown to it, never that there is one or that there's none. Launch's folder, which holds
-the refusals since Phase 2a, is 0750 spark:spark, so an account outside the spark group, Dan's included, is told the
-last refusal is unknown to it, until Task 29 asks the gate instead.
+the refusals since Phase 2a, is 0750 spark:spark and each record in it 0600, so only spark reads them: any other
+account, Dan's included, is told the last refusal is unknown to it (outside the spark group) or can't be read (inside
+it), until Task 29 asks the gate instead.
 """
 
 from __future__ import annotations

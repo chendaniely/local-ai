@@ -1,7 +1,9 @@
 """Admission tickets (website/design/plan.md, *The front and the gate*): the gate issues one for each load it admits,
 and `spark launch` uses it up, so no engine starts around the gate. Launch then keeps the ticket under `started/`
-while the load runs, which the brake reads as a load in progress while the gate's record is stale, and the gate for
-its bypass check.
+while the load runs: the brake reads it as a load in progress, in a union with the gate's record, bounded as
+phase-2a.md's Task 23 says, and the gate for its bypass check, bounded as its Task 18 says. An engine runs as spark in
+llama-swap's sandbox and can write `started/`, so neither reader trusts a record whole (the controller's ruling, at
+Task 11's review).
 
 Everything lives in launch's folder (paths.LAUNCH, 0750 spark:spark): `tickets/<model>.json`, one per model, and
 `started/<model>.json`. The gate, launch and the brake all run as spark, so a ticket or record that spark doesn't own
@@ -16,6 +18,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import secrets
 import stat
 from dataclasses import dataclass
@@ -32,6 +35,8 @@ RECORD_MAX_BYTES = 65536  # a ticket is a few hundred bytes: a larger file isn't
 NO_TICKET, TICKET_EXPIRED = "no_ticket", "ticket_expired"
 NO_TICKET_WHY = "no admission ticket from the gate"
 _NUMBERS = ("issued_at", "deadline", "footprint_gib", "available_gib")
+# A claimed copy's name: `.<model>.json.claim-<the claiming launch's pid>-<hex>` (claim, below).
+_CLAIMED = re.compile(r"\.(?:.+)\.claim-(?P<pid>[0-9]+)-[0-9a-f]+")
 _TEXTS = ("model", "id", "nonce", "boot_id")
 
 
@@ -60,10 +65,12 @@ def issue(folder: Path, model: str, deadline: float, *, now: float, footprint_gi
 
 def claim(folder: Path, model: str, now: float, *, boot_id: str) -> Claim:
     """Use up the gate's ticket for `model`: renamed first to a name of this claim's own, so only one claim of it can
-    win, then read, and gone from `tickets/` whatever it holds. Refused NO_TICKET when there is none, or what is there
+    win, then read, and gone from `tickets/` whatever it holds. It first sweeps up the claimed copies that launches no
+    longer running left behind (_sweep). Refused NO_TICKET when there is none, or what is there
     is damaged, another account's, or another model's; TICKET_EXPIRED when its deadline has passed (`deadline < now`)
     or it is another boot's, since a boot can set the wall clock back."""
     path = record_path(folder, TICKETS, model)
+    _sweep(path.parent)
     claimed = path.with_name(f".{path.name}.claim-{os.getpid()}-{secrets.token_hex(4)}")
     try:
         os.rename(path, claimed)
@@ -143,7 +150,10 @@ def withdraw(folder: Path, model: str) -> bool:
 def write_whole(path: Path, data: dict) -> None:
     """`data` as JSON at `path`, mode 0600, its folder made if missing: written to a new file of this write's own, then
     swapped in, so a reader finds the old file or the new one, never part of one, and no file someone left at the
-    temporary name is written through."""
+    temporary name is written through. Root is refused (PermissionError) before anything is made: the folders are
+    spark's, and root never writes through a path spark controls (Task 11's review)."""
+    if os.geteuid() == 0:
+        raise PermissionError(f"root never writes in spark's folders, so {path} isn't written")
     path.parent.mkdir(mode=0o750, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -189,6 +199,36 @@ def record_path(folder: Path, kind: str, model: str) -> Path:
     return Path(folder) / kind / f"{model}.json"
 
 
+def _sweep(folder: Path) -> None:
+    """Remove the claimed copies whose launch isn't running: one killed between its rename and its removal, or a folder
+    _remove couldn't remove then. Never one whose launch still runs, which may be reading it, nor anything else in the
+    folder. Launch already writes in `tickets/`, so this needs no privilege of its own; a failure stops no claim."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        match = _CLAIMED.fullmatch(name)
+        if match and not _running(int(match["pid"])):
+            _remove(folder / name)
+
+
+def _running(pid: int) -> bool:
+    """Whether a process with this pid exists (signal 0 checks, and sends nothing). Another account's counts, since
+    the kernel won't say; a pid no kernel hands out doesn't."""
+    if pid <= 0:
+        return True  # 0 and below name process groups: never signalled, never swept
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OverflowError:
+        return False  # larger than any pid
+    except OSError:
+        return True  # PermissionError: another account's process
+    return True
+
+
 def _remove(claimed: Path) -> None:
     """A claimed ticket goes, whatever it held: a file, or an empty folder someone put in a ticket's place."""
     try:
@@ -201,7 +241,15 @@ def _remove(claimed: Path) -> None:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """A finite int or float, never a bool. JSON's ints have no bound, and math.isfinite raises OverflowError for one
+    too large for a float: that is no number of the gate's, and must never escape claim() or started() (Task 11's
+    review, I-1)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _ticket_problem(ticket: Any) -> str | None:

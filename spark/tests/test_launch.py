@@ -337,6 +337,19 @@ def test_a_ticket_that_isnt_for_this_start_starts_nothing(box, capsys, ticket, c
     assert box.tickets() == (["embed.json"] if ticket.get("model") == "embed" else [])
 
 
+def test_a_ticket_with_a_number_too_large_is_a_refusal_never_a_traceback(box, capsys):
+    # Task 11's review, I-1: an int too large for a float in a ticket made claim raise OverflowError, which the CLI
+    # doesn't catch: a traceback and exit 1, with nothing recorded.
+    (box.launch / "tickets").mkdir()
+    (box.launch / "tickets" / "coder.json").write_text(json.dumps({
+        "model": "coder", "id": "t1", "issued_at": NOW, "deadline": 10**400, "nonce": "n1", "boot_id": BOOT,
+        "footprint_gib": 28, "available_gib": 70.0}))
+    assert box.run() == 3
+    err = capsys.readouterr().err
+    assert err.startswith("spark: not starting coder: no admission ticket from the gate: ") and len(err.splitlines()) == 1
+    assert box.refusal()["code"] == "no_ticket" and box.execs == [] and box.tickets() == []
+
+
 def test_launch_keeps_the_hold_check_as_a_backstop(box, capsys):
     box.issue("embed")
     write_hold(box.state, Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",)))
@@ -587,12 +600,15 @@ def test_a_refusal_record_is_swapped_in_whole(tmp_path, monkeypatch):
     assert [p.name for p in (tmp_path / "refusals").iterdir()] == ["coder.json"]  # no temporary file left
 
 
-def test_a_refusal_for_a_name_that_isnt_a_models_writes_nothing(tmp_path):
+def test_a_refusal_for_a_name_that_isnt_a_models_writes_nothing(tmp_path, monkeypatch):
     # The name comes from llama-swap's command line, and names the record's file: one that isn't a model's could name a
     # file outside refusals/. The reason still reaches llama-swap's log through stderr.
     (tmp_path / "refusals").mkdir()
     launch.record_refusal(tmp_path, "../coder", "registry", "why")
     assert list(tmp_path.iterdir()) == [tmp_path / "refusals"] and list((tmp_path / "refusals").iterdir()) == []
+    monkeypatch.setattr(launch.os, "geteuid", lambda: 0)  # and root records nothing, even for a model's name
+    launch.record_refusal(tmp_path, "coder", "registry", "why")
+    assert list((tmp_path / "refusals").iterdir()) == []
     assert launch.read_refusal(tmp_path, "../coder") is None and launch.check_refusal(tmp_path, "../x") == (None, None)
 
 

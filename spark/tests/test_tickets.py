@@ -167,6 +167,9 @@ DAMAGED_TICKETS = {  # each damage, and what the refusal says of it
     "deadline NaN": (_fields().replace(str(NOW + 60).encode(), b"NaN"), "deadline must be a finite number"),
     "deadline infinite": (_fields().replace(str(NOW + 60).encode(), b"Infinity"), "deadline must be a finite number"),
     "deadline a bool": (_fields(deadline=True), "deadline must be a finite number"),
+    # Task 11's review, I-1: an int too large for a float made math.isfinite raise OverflowError out of claim
+    "deadline a huge int": (_fields(deadline=10**400), "deadline must be a finite number"),
+    "deadline past int's digit limit": (_fields().replace(str(NOW + 60).encode(), b"9" * 5000), "Exceeds the limit"),
     "no boot id": (_fields(boot_id=None), "boot_id must be non-empty text"),
     "no id": (_fields(id=None), "id must be non-empty text"),
     "footprint not a number": (_fields(footprint_gib="41"), "footprint_gib must be a finite number"),
@@ -289,6 +292,9 @@ def test_started_passes_over_a_record_that_isnt_one(tmp_path, monkeypatch):
     (folder / "coder.json").write_text("{")
     (folder / "embed.json").write_text(json.dumps(record | {"model": "embed", "pid": "1"}))
     (folder / "vision-chat.json").write_text(json.dumps(record))  # the stt's record under another name
+    # Task 11's review, I-1: an int too large for a float, which made started() raise OverflowError, not OSError
+    (folder / "big.json").write_text(json.dumps(record | {"model": "big", "started_at": 10**400}))
+    (folder / "huge.json").write_text(json.dumps(record | {"model": "huge", "footprint_gib": -10**400}))
     (folder / ".stt.json.123.abcd").write_text(json.dumps(record))  # a write not yet swapped in
     assert [r["model"] for r in tickets.started(tmp_path, now=NOW, boot_id=BOOT)] == ["stt"]
     monkeypatch.setattr(tickets.os, "geteuid", lambda: os.getuid() + 1)  # every record another account's
@@ -301,3 +307,38 @@ def test_started_with_no_folder_is_none(tmp_path):
 
 def test_started_expires_at_twice_llama_swaps_health_check_timeout():
     assert tickets.STARTED_EXPIRES_S == 360  # Task 12's test ties it to render.HEALTH_CHECK_TIMEOUT_S
+
+
+def test_a_claim_sweeps_up_what_launches_no_longer_running_left(tmp_path):
+    # Task 11's review: a launch killed between its rename and its removal leaves `.<model>.json.claim-<pid>-<hex>`
+    # behind, and a folder in a ticket's place can't be removed. A later claim sweeps those whose launch isn't running;
+    # never one whose launch still is, which may be reading it, nor a write of the gate's not yet swapped in.
+    folder = tmp_path / "tickets"
+    folder.mkdir()
+    dead = int(subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True,
+                              check=True).stdout)
+    for name in (f".coder.json.claim-{dead}-0123abcd", f".embed.json.claim-{dead}-0123abce",
+                 ".coder.json.claim-99999999999999999999-0123abcf"):
+        (folder / name).write_text("{}")
+    (folder / f".stt.json.claim-{dead}-0123abd0").mkdir()
+    kept = {f".coder.json.claim-{os.getpid()}-0123abd1", ".embed.json.4242.0123abd2", f".x.claim-{dead}"}
+    for name in kept:
+        (folder / name).write_text("{}")
+    issue(tmp_path)
+    assert tickets.claim(tmp_path, "coder", NOW, boot_id=BOOT).ok
+    assert {p.name for p in folder.iterdir()} == kept
+    assert tickets.claim(tmp_path, "embed", NOW, boot_id=BOOT).code == "no_ticket"  # with no ticket, it sweeps too
+    assert {p.name for p in folder.iterdir()} == kept
+
+
+def test_root_never_writes_a_record(tmp_path, monkeypatch):
+    # Task 11's review: the launch folder is spark's, and root never writes through a path spark controls. Launch
+    # refuses root first; this covers every other writer of a ticket, a started record or a refusal.
+    monkeypatch.setattr(tickets.os, "geteuid", lambda: 0)
+    with pytest.raises(PermissionError, match="root"):
+        tickets.write_whole(tmp_path / "tickets" / "coder.json", {"model": "coder"})
+    with pytest.raises(PermissionError):
+        issue(tmp_path)
+    with pytest.raises(PermissionError):
+        tickets.mark_started(tmp_path, {"model": "coder"}, NOW)
+    assert list(tmp_path.iterdir()) == []  # not even a folder

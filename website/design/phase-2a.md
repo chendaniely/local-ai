@@ -2027,6 +2027,9 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
   under `paths.LAUNCH` until Task 29 rewrites it), `spark/tests/test_status.py` (its two refusal
   fixtures written the new way) and `spark/tests/test_cli.py` (its `main_launch` test reads
   `read_refusal(launch, model)`)
+- *(Added 2026-10-08, at Task 11's review, the controller's ruling:)* `spark/src/spark/doctor.py`,
+  its docstring only: its sentence on "the last refusal record" became untrue with this task's
+  per-model records. The rest of doctor stays Phase 1's until Task 33 rewrites it.
 
 **Interfaces:**
 
@@ -2039,31 +2042,64 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
   str, ticket: dict | None)` — renames the ticket to a name of its own before reading it, so only
   one claim of a ticket can win; codes `no_ticket` (none, damaged, or another model's) and
   `ticket_expired` (`deadline < now`). The ticket leaves `tickets/` whatever the outcome.
+  *(Corrected 2026-10-08, at Task 11's review, the controller's ruling:)* `tickets.claim(folder:
+  Path, model: str, now: float, *, boot_id: str)`. `no_ticket` covers none; damaged (not JSON, not
+  an object, a field missing or of the wrong type, a number that isn't finite or is an int too large
+  for a float, over `RECORD_MAX_BYTES`, nested too deep); not a regular file (a link, a FIFO, a
+  folder: read without following a link or waiting on a FIFO); owned by an account other than
+  launch's (the gate and launch both run as `spark`); or another model's. `ticket_expired` covers
+  `deadline < now` **or another boot's `boot_id`**, since a boot can set the wall clock back. A
+  claim first sweeps up the claimed copies (`.<model>.json.claim-<pid>-<hex>`) whose launch is no
+  longer running, killed between its rename and its removal, never one whose launch still runs.
 - `tickets.mark_started(folder, ticket, now)` — launch, just before its exec, writes the claimed
   ticket with `started_at` and `pid` (launch's own, which the engine keeps across the exec) to
   `<folder>/started/<model>.json`, which the brake reads as a load in progress while the gate's
-  record is stale (Task 23), and the gate reads for the bypass check (Task 15);
-  `tickets.started(folder, *, now, boot_id) -> list[dict]` — only records of this boot, started
-  within `STARTED_EXPIRES_S` (360, a literal here: twice the 180 s `healthCheckTimeout`, which Task
-  12's test ties to `render.HEALTH_CHECK_TIMEOUT_S`), so a stale record can't
-  weaken the brake's watch; `tickets.clear_started(folder, model)`. A record is cleared on every
-  outcome: launch clears it when its exec fails, and a refused start writes none; the gate clears
-  it when the load is ready, has failed, or, after `UNKNOWN`, once `/running` shows it ready or
-  gone (Task 15).
+  record is stale (Task 23), and the gate reads for the bypass check (Task 15)
+  *(corrected 2026-10-08, at Task 11's review, the controller's ruling: the brake reads it always,
+  in the union with the gate's record, bounded as Task 23 says; the gate counts it for the bypass
+  check only as Task 18 bounds it; an engine can write `started/`, so neither trusts a record
+  whole)*; `tickets.started(folder, *, now, boot_id) -> list[dict]` — only records of this boot,
+  started within `STARTED_EXPIRES_S` (360, a literal here: twice the 180 s `healthCheckTimeout`,
+  which Task 12's test ties to `render.HEALTH_CHECK_TIMEOUT_S`), so a stale record can't weaken the
+  brake's watch; `tickets.clear_started(folder, model)`. A record is cleared on every outcome:
+  launch clears it when its exec fails, and a refused start writes none; the gate clears it when the
+  load is ready, has failed, or, after `UNKNOWN`, once `/running` shows it ready or gone (Task 15).
+  *(Added 2026-10-08, at Task 11's review, the controller's ruling:)* `started()` passes over a
+  record that isn't a whole one of `spark`'s under its own model's name, and one dated after `now`;
+  it raises `OSError` only for a folder it can't read, and `clear_started` for any failure but a
+  record already gone. Their callers (Tasks 15, 18 and 23) catch `OSError`: the brake reads no
+  record as no load in progress, the stricter way; a record left uncleared stops counting 360 s
+  after its start.
 - `tickets.withdraw(folder: Path, model: str) -> bool` — the gate removes one it issued that wasn't
   used.
 - `launch.main_launch(argv, *, registry: Path = paths.REGISTRY, state: Path = paths.STATE, launch:
   Path = paths.LAUNCH, hf_home: str = render.HF_HOME, clock: Callable[[], float] = time.time) ->
   int` — in this order: the registry loads (else refused `registry`); the model is known (else exit
-  2); its ticket is claimed; the brake's hold (`held_by_brake`); Phase 1's zero-wait fit
-  (`no_fit`); every file the model's `source` names exists under `hf_home` (`not_downloaded`, its
-  reason naming `make pull`); its refusal record cleared; `tickets.mark_started`; its
-  `oom_score_adj`; exec, with every
-  `LLAMASWAP_KEY_*` variable dropped. A refusal exits 3, prints `spark: not starting <model>:
-  <reason>` on stderr and records it. Never a sleep or a retry.
+  2); its ticket is claimed; the brake's hold (`held_by_brake`); Phase 1's zero-wait fit (`no_fit`);
+  every file the model's `source` names exists under `hf_home` (`not_downloaded`, its reason naming
+  `make pull`); its refusal record cleared; `tickets.mark_started`; its `oom_score_adj`; exec, with
+  every `LLAMASWAP_KEY_*` variable dropped. A refusal exits 3, prints `spark: not starting <model>:
+  <reason>` on stderr and records it. Never a sleep or a retry. *(Corrected 2026-10-08, at Task 11's
+  review, the controller's ruling:)* first, run as root, it exits 3 with one stderr line, before
+  anything is read or written in launch's folder, and records nothing (root never writes through a
+  path `spark` controls; `tickets.write_whole` refuses root too); after `tickets.mark_started`, a
+  record that can't be written is refused `start_unrecorded`, since a start neither the brake nor
+  the gate could see doesn't happen; at the exec, an exec that raises clears the `started/` record
+  and is refused `exec_failed`. A refusal records it (all but the root refusal). The codes launch
+  records are eight: `registry`, `no_ticket`, `ticket_expired`, `held_by_brake`, `no_fit`,
+  `not_downloaded`, `start_unrecorded` and `exec_failed`; `held_by_brake` and `no_fit` keep Phase
+  1's words.
 - `launch.record_refusal(launch: Path, model, code, reason)`, `read_refusal(launch, model) -> dict
   | None`, `clear_refusal(launch, model)` — `<launch>/refusals/<model>.json`, `{at, model, code,
   reason}`, written whole. Phase 1's single `last-refusal.json` goes.
+- *(Added 2026-10-08, at Task 11's review, the controller's ruling:)* the helpers later tasks reuse
+  rather than re-implement: in `tickets`, `write_whole(path, data)` (whole, `0600`, root refused),
+  `read_record(path, *, own)` (no link, no waiting, a regular file of at most `RECORD_MAX_BYTES`,
+  with `own` one this account owns), `record_path(folder, kind, model)` (a name that isn't a model's
+  refused), `RECORD_MAX_BYTES`, `NO_TICKET_WHY`, `TICKETS` and `STARTED`; in `launch`, `REFUSALS`,
+  `check_refusal(launch, model)` (Phase 1's, now per model: the record, or what's wrong with it) and
+  `newest_refusal(launch)`, status's interim reader, which Task 29 deletes with status's interim
+  docstring note.
 
 **Tests** (`spark/tests/test_launch.py` and `spark/tests/test_tickets.py`; `execvpe` replaced):
 
@@ -2111,10 +2147,13 @@ git commit -m "feat(spark): 🤖 the gate's protocol, and a standard-library cli
 ```bash
 git add spark/src/spark/tickets.py spark/src/spark/launch.py spark/src/spark/admission.py \
   spark/tests/test_tickets.py spark/tests/test_launch.py spark/src/spark/status.py \
-  spark/tests/test_status.py spark/tests/test_cli.py
+  spark/tests/test_status.py spark/tests/test_cli.py spark/src/spark/doctor.py
 git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate's ticket" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+*(Corrected 2026-10-08, at Task 11's review, the controller's ruling: the `git add` line gains
+`spark/src/spark/doctor.py`, as the commit `e0b1daf` staged it.)*
 
 ***
 
@@ -2234,6 +2273,11 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   list[str], ended: bool)` — apply's hold, saved like the rest, so a gate restarted inside an apply
   still holds; `ended` makes a second end do nothing; `Ticketed(model:
   str, pid: int, ticket_id: str, at: float)` — each engine a ticket started this boot.
+  *(Added 2026-10-08, at Task 11's review, the controller's ruling: `GateState` also keeps `issued:
+  dict[str, str]`, each model's ticket id for the load the gate issued it for this boot, saved
+  before the load call (Task 15) and dropped once its `started/` record has moved into `ticketed` or
+  the load has failed or gone; `restore` drops another boot's. Task 18's bypass check counts a
+  `started/` record as ticketed only when its `id` is there, since an engine can write `started/`.)*
 - `STATE_FILE = "state.json"`; `load_state(folder: Path) -> tuple[GateState, str | None]` — a
   missing file gives a fresh state and None; a damaged one, a fresh state and a problem naming the
   file (for `spark status`); never raises. `save_state(folder: Path, state: GateState) -> None` —
@@ -2512,28 +2556,31 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `held_by_brake`, `footprint_suspect`, `draining`, `restarting`, `llama_swap_down`.
   - When a request fits: `tickets.issue(launch, model, deadline=now + LOAD_CALL_TIMEOUT_S,
     footprint_gib=<its footprint, what rule 9 admitted>, available_gib=<MemAvailable now>,
-    boot_id=<this boot's>)`;
-    `waiting` (once, if it had waited) and `load_started`; `llamaswap.load(model)`. `READY` →
-    `loaded`, a `ModelRecord` with the load's fall (`MemAvailable` before less after), capped at
-    the model's `cold_load_gib` plus `LOAD_FALL_MARGIN_GIB` (2 GiB, this plan's value) when the
-    registry has one, else at its footprint, and flagged when capped. `UNKNOWN` → the slot stays
-    held until `/running` shows it ready or gone. On every outcome the model's `started/` record
-    is read, then cleared (`tickets.clear_started`): ready, its `pid` and ticket go into
-    `state.ticketed`, for the bypass check; failed, or gone, nothing is kept. A model that a
-    restarted gate's `restore` found `starting` takes the same path once `/running` shows it ready
-    or gone. `failed`
-    → `load_failed`, its text launch's
-    refusal record for the model if there is one, else the engine's last line
-    (`llamaswap.last_lines`), or the deadline's variant for `health check timed out`; the ticket
-    withdrawn if it wasn't used. *(Added 2026-10-07, at Task 7, the controller's ruling: every
-    refusal's notification is `REFUSAL_NOTIFICATION.get(code, "refused")`, sent with `code` and the
-    refusal's own `Moment` for `refused`; `load_failed`'s with `command` (`Moment.model_command`:
-    its first role, else its name); `footprint_suspect`'s with `key_label`; `waiting` for Dan with
-    `command`; and `load_started` with no `key_label` for a reload or one of Dan's commands.)*
-    *(Corrected 2026-10-07, at Task 7's review, the controller's ruling: a failed load sends one
-    `load_failed`, keyed by its ticket (`messages.refusal_notification`), however many requests
-    joined it; each of them still gets the `load_failed` refusal. `waiting` for the slot names the
-    model loading; for the brake, whether the pause waits for Dan and, if not, `RELEASE_AFTER_S`.)*
+    boot_id=<this boot's>)`; `waiting` (once, if it had waited) and `load_started`;
+    `llamaswap.load(model)`. `READY` → `loaded`, a `ModelRecord` with the load's fall
+    (`MemAvailable` before less after), capped at the model's `cold_load_gib` plus
+    `LOAD_FALL_MARGIN_GIB` (2 GiB, this plan's value) when the registry has one, else at its
+    footprint, and flagged when capped. `UNKNOWN` → the slot stays held until `/running` shows it
+    ready or gone. On every outcome the model's `started/` record is read, then cleared
+    (`tickets.clear_started`): ready, its `pid` and ticket go into `state.ticketed`, for the bypass
+    check; failed, or gone, nothing is kept. *(Added 2026-10-08, at Task 11's review, the
+    controller's ruling: the ticket's id goes into `state.issued` (Task 13), saved before the load
+    call; a `started/` record moves into `ticketed` only when its `id` is that one, read with
+    `tickets.read_record(…, own=True)`; an `OSError` reading or clearing it is caught and the load's
+    outcome stands, since a record left uncleared stops counting 360 s after its start.)* A model
+    that a restarted gate's `restore` found `starting` takes the same path once `/running` shows it
+    ready or gone. `failed` → `load_failed`, its text launch's refusal record for the model if there
+    is one, else the engine's last line (`llamaswap.last_lines`), or the deadline's variant for
+    `health check timed out`; the ticket withdrawn if it wasn't used. *(Added 2026-10-07, at Task 7,
+    the controller's ruling: every refusal's notification is `REFUSAL_NOTIFICATION.get(code,
+    "refused")`, sent with `code` and the refusal's own `Moment` for `refused`; `load_failed`'s with
+    `command` (`Moment.model_command`: its first role, else its name); `footprint_suspect`'s with
+    `key_label`; `waiting` for Dan with `command`; and `load_started` with no `key_label` for a
+    reload or one of Dan's commands.)* *(Corrected 2026-10-07, at Task 7's review, the controller's
+    ruling: a failed load sends one `load_failed`, keyed by its ticket
+    (`messages.refusal_notification`), however many requests joined it; each of them still gets the
+    `load_failed` refusal. `waiting` for the slot names the model loading; for the brake, whether
+    the pause waits for Dan and, if not, `RELEASE_AFTER_S`.)*
   - *owed* — `budget.owed_gib`, each model's `held_now` its load's fall, plus its engine's
     `RssAnon` growth since the load only when `registry.gate.owed_reads_rss` is on for that
     engine's kind. *held* — the room hold, not counted for a request whose privileges have
@@ -2958,8 +3005,14 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   restart, and a line in *recent* naming why it ended. A second call finds `ended` and does
   nothing.
 - The bypass check, every 5 s: Task 8's engines by port, each pid against `state.ticketed` and the
-  live `started/` records → `health.unticketed_engines`; launch's `no_ticket` refusal records,
-  each counted once as it appears this boot → `health.no_ticket_refusals`.
+  live `started/` records → `health.unticketed_engines`; launch's `no_ticket` refusal records, each
+  counted once as it appears this boot → `health.no_ticket_refusals`. *(Corrected 2026-10-08, at
+  Task 11's review, the controller's ruling:)* a live `started/` record counts as ticketed only when
+  its ticket's `id` is one the gate issued (`state.issued`, Task 13), since an engine can write
+  `started/`, and a forged record must not hide an engine from this check; launch's `ticket_expired`
+  refusals count in `no_ticket_refusals` alongside `no_ticket`, since a start around the gate that
+  meets a leftover ticket is refused `ticket_expired`; `tickets.started` raising `OSError` is caught
+  and reported under `health`, and the check counts no record as ticketed meanwhile.
 - `quiet() -> dict` — `/v1/quiet`'s answer, each request's `key_label` from the front's snapshot's
   `requests` (Task 10).
 
@@ -3004,7 +3057,9 @@ channel, the units and `/proc`):
 - `test_an_engine_without_a_ticket_is_reported` — an engine on 801, pid 4242, in neither
   `state.ticketed` nor a live `started/` record → `health.unticketed_engines` names it; with its pid
   in either → empty; three `no_ticket` refusals this boot, each counted as its record appears →
-  `no_ticket_refusals` 3.
+  `no_ticket_refusals` 3. *(Added 2026-10-08, at Task 11's review, the controller's ruling: a
+  `started/` record holding pid 4242 whose `id` the gate never issued → still named; two `no_ticket`
+  and one `ticket_expired` → 3.)*
 
 **Steps:**
 
@@ -3563,12 +3618,20 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   with an activity record: a loading (`starting`) engine first, then models with nothing in flight,
   of any class, the longest unused first, then the rest, least recently used first; without one,
   Phase 1's order (on-demand first, then the largest).
-- `LoadInProgress(model: str, admitted_gib: float, available_at_start: float, started_at:
-  float)`; `loads_in_progress(activity, launch: Path, *, now, boot_id) -> list[LoadInProgress]` —
-  the union, by model, of the activity record's `starting` models (when it is fresh) and the
-  claimed tickets under `launch/started/` that `tickets.started` returns: this boot's, under 360 s
-  old (Task 11). `admitted_gib` is the admitted footprint, never the cold load. A fall the gate
-  knowingly admitted is not a crash (the controller's rulings, 2026-10-07).
+- `LoadInProgress(model: str, admitted_gib: float, available_at_start: float, started_at: float)`;
+  `loads_in_progress(activity, launch: Path, *, now, boot_id) -> list[LoadInProgress]` — the union,
+  by model, of the activity record's `starting` models (when it is fresh) and the claimed tickets
+  under `launch/started/` that `tickets.started` returns: this boot's, under 360 s old (Task 11).
+  `admitted_gib` is the admitted footprint, never the cold load. A fall the gate knowingly admitted
+  is not a crash (the controller's rulings, 2026-10-07). *(Corrected 2026-10-08, at Task 11's
+  review, the controller's ruling:)* the union holds whether or not the gate's record is fresh, and
+  what it takes from `started/` is bounded, since an engine runs as `spark` in llama-swap's sandbox
+  and can write a record there: `available_at_start` is the brake's own reading nearest the record's
+  `started_at`, never the record's `available_gib`; `admitted_gib` is at most that model's registry
+  footprint; and a record counts only while its `pid` is alive and is that model's engine, read as
+  `procs.engine_pid` reads one (the process on the model's engine port, run as `spark`, an engine's
+  `comm`, and from Task 13 its start time). `tickets.started` raising `OSError` is caught: no record
+  is no load in progress, the stricter way.
 - `expected_floor(loads) -> float | None` — where the loads in progress should leave memory: the
   earliest start's `available_at_start` less every load's `admitted_gib`, less
   `LOAD_FLOOR_MARGIN_GIB` (2 GiB, this plan's value); None with nothing loading.
@@ -3631,6 +3694,13 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
 - `test_a_load_that_runs_past_its_admission_trips_it` — the coder `starting` from 74, the fall
   going on at 2.5 GiB/s past its floor, 31 (74 − 41 − 2) → hold and unload at the first reading
   under 31.
+- *(Added 2026-10-08, at Task 11's review, the controller's ruling:)*
+  `test_a_started_record_is_bounded_by_what_the_brake_reads` — a `started/` record claiming 74
+  available when the brake's own reading at its start was 60 → the floor from 60; one claiming 90
+  GiB for the coder → `admitted_gib` the registry's footprint; one whose `pid` is gone, or isn't the
+  coder's engine on its port → no load in progress; the gate's record fresh and a record that passes
+  these → still counted. The test below gives the brake its own readings from 74 and a `/proc`
+  stand-in with the coder's engine at the record's `pid`.
 - `test_with_the_gate_down_the_claimed_ticket_gives_the_load` — the activity record stale and
   `launch/started/coder.json` holding 41 GiB, 74 available and its start → as the first test, no
   hold.
@@ -3756,7 +3826,11 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
 - `test_llama_swap_starts_after_what_loads_nvidia_uvm` — `After=` names
   `nvidia-cdi-refresh.service` and `nvidia-persistenced.service`.
 - `test_only_the_tickets_folder_whispers_tmp_and_the_caches_are_writable_to_llama_swap` —
-  `ReadWritePaths` is exactly those four.
+  `ReadWritePaths` is exactly those four. *(Added 2026-10-08, at Task 11's review, the controller's
+  ruling: the fourth is launch's whole folder, `/var/lib/local-ai/launch`, never only
+  `launch/tickets`: launch, inside the sandbox, renames in `tickets/` and writes `started/` and
+  `refusals/`; a narrower path would refuse every start as `start_unrecorded` or leave refusals
+  unrecorded. The test asserts the folder, not a subfolder.)*
 - `test_llama_swap_reads_only_internal_keys_env` — its one `EnvironmentFile` is
   `internal-keys.env`.
 - `test_whisper_writes_its_temporary_files_outside_the_hf_cache` (stack registry) — its `--tmp-dir`
