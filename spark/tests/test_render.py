@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 import spark.render
-from spark import cli
+from spark import cli, tickets
 from spark.registry import load_registry
 from spark.render import (COMPOSE_DIR, HF_HOME, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render,
                           write_tree)
@@ -164,6 +164,15 @@ def test_open_webuis_lockdown_keeps_its_values(files):
 
 def test_llama_swap_listens_on_localhost_only():
     assert "-listen 127.0.0.1:9100" in rendered()["systemd/local-ai-llama-swap.service"]
+
+
+def test_health_check_timeout_is_180(files):
+    # 2a's load deadline (plan.md: nothing waits inside cmd any more, so it covers only a load), one constant for the
+    # rendered config and the gate's load call (llamaswap_async.load_timeout_for). A started record (Task 11) counts
+    # for twice it, so the two move together.
+    assert spark.render.HEALTH_CHECK_TIMEOUT_S == 180
+    assert yaml.safe_load(files["llama-swap.yaml"])["healthCheckTimeout"] == spark.render.HEALTH_CHECK_TIMEOUT_S
+    assert tickets.STARTED_EXPIRES_S == 2 * spark.render.HEALTH_CHECK_TIMEOUT_S
 
 
 def test_engines_and_downloads_cache_in_folders_bootstrap_gives_spark():

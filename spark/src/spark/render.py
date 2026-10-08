@@ -25,6 +25,10 @@ DEPLOY = "/opt/local-ai"
 HF_HOME = "/var/lib/local-ai/hf"
 SPARK_BIN = f"{DEPLOY}/app/.venv/bin/spark"
 KEY_ENVS = ("LLAMASWAP_KEY_DAN_MAC", "LLAMASWAP_KEY_AGENT", "LLAMASWAP_KEY_OPENWEBUI", "LLAMASWAP_KEY_SPARK")
+# llama-swap's one deadline for a start, after which it kills the engine: 180 s in 2a, down from Phase 1's 600, since
+# nothing waits inside cmd any more and it has only a load to cover (plan.md, the session's ruling). The gate's load
+# call waits it plus 20 s (llamaswap_async.load_timeout_for), and a started record counts for twice it (tickets.py).
+HEALTH_CHECK_TIMEOUT_S = 180
 UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service")
 # What root runs is root's own copy, in folders only root can write: `make install-units` (sudo)
 # installs the rendered units and Compose project there, and `spark apply` only stages them.
@@ -231,7 +235,7 @@ def llama_swap_config(registry: Registry) -> dict:
             "aliases": list(m.roles),
         }
     return {
-        "healthCheckTimeout": 600,
+        "healthCheckTimeout": HEALTH_CHECK_TIMEOUT_S,
         "captureBuffer": 0,
         "globalTTL": 0,
         "startPort": 5800,
