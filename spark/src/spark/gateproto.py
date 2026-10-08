@@ -24,6 +24,10 @@ REQUEST_TIMEOUT_S = 5.0
 # The gate's load call: 2a's healthCheckTimeout for llama-swap, 180 s, plus 20: the 5 s llama-swap takes to kill a
 # stuck start, and a margin.
 LOAD_CALL_TIMEOUT_S = 200.0
+# The gate's unload call (the controller's ruling at Task 12's review): v257 answers once the engine has stopped, a
+# stuck one after its unloadTimeout of 10 s and its kill, and stops queue in its one run loop, so room for four such.
+# A timeout isn't llama_swap_down: the gate reads /running and counts the model stopping until it is gone.
+UNLOAD_CALL_TIMEOUT_S = 60.0
 PING_EVERY_S = 1.0  # /v1/front/events sends {op: "ping", at} this often
 # The front counts the gate down once its events call has dropped and a new one hasn't been answered within this, and
 # only then refuses new loads with gate_down.

@@ -119,7 +119,7 @@ async def test_a_load_call_that_times_out_reads_as_unknown_not_failed(fake):
         async with serve_fake(fake) as url, AsyncLlamaSwap(url, KEY, load_timeout_s=0.2) as llamaswap:
             fake.script_start(CODER, delay_s=1.0)
             began = time.monotonic()
-            assert await llamaswap.load(CODER) == LoadOutcome.UNKNOWN
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("timeout")
             assert 0.2 <= time.monotonic() - began < 0.9
             # Which is the truth: v257's start goes on without its caller, so the caller keeps it counted as starting.
             assert await llamaswap.running() == [Running(CODER, "starting")]
@@ -150,6 +150,15 @@ async def test_a_failed_start_reads_as_failed_with_its_text(fake):
             fake.canned("GET", f"/upstream/{CODER}/health", 502, b"bad\x1b[2Jgateway\nnext")
             assert await llamaswap.load(CODER) == LoadOutcome.failed(502, "bad\\x1b[2Jgateway\\nnext")
 
+            # And at most 2 KiB of it, its head, counted once it is escaped: it goes into notifications and the
+            # gate's refusal history.
+            fake.canned("GET", f"/upstream/{CODER}/health", 500, b"unspecific error: " + b"\x1b" * 1000)
+            outcome = await llamaswap.load(CODER)
+            assert len(outcome.text) == 2048
+            assert outcome.text == ("unspecific error: " + "\\x1b" * 1000)[:2047] + "…"
+            fake.canned("GET", f"/upstream/{CODER}/health", 500, b"x" * 2048)
+            assert await llamaswap.load(CODER) == LoadOutcome.failed(500, "x" * 2048)
+
 
 @pytest.mark.anyio
 async def test_unload_returns_once_the_engine_is_gone(fake):
@@ -168,6 +177,66 @@ async def test_unload_returns_once_the_engine_is_gone(fake):
 
             with pytest.raises(LlamaSwapAnswered, match="^llama-swap POST /api/models/unload/nonesuch: HTTP 404$"):
                 await llamaswap.unload("nonesuch")
+
+
+@pytest.mark.anyio
+async def test_unload_waits_its_own_bound(fake, monkeypatch):
+    # A stuck engine's stop takes v257's unloadTimeout, 10 s, then its kill, and stops queue in its one run loop:
+    # the unload gets a bound of its own, the controller's ruling at Task 12's review.
+    assert gateproto.UNLOAD_CALL_TIMEOUT_S == 60
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, \
+                AsyncLlamaSwap(url, KEY, load_timeout_s=0.2, call_timeout_s=0.2) as llamaswap:
+            monkeypatch.setattr(gateproto, "UNLOAD_CALL_TIMEOUT_S", 3.0)
+            fake.set_state(CODER, "ready")
+            fake.script_stop(CODER, delay_s=0.6)  # past the load's bound and every other
+            began = time.monotonic()
+            await llamaswap.unload(CODER)
+            assert time.monotonic() - began >= 0.6
+            assert await llamaswap.running() == []
+
+            monkeypatch.setattr(gateproto, "UNLOAD_CALL_TIMEOUT_S", 0.3)
+            fake.set_state(CODER, "ready")
+            fake.script_stop(CODER, delay_s=1.0)
+            began = time.monotonic()
+            with pytest.raises(LlamaSwapUnreachable, match="no answer within 0.3 s$"):
+                await llamaswap.unload(CODER)
+            assert 0.3 <= time.monotonic() - began < 0.9
+            # What the gate does then (Tasks 16 and 17): read /running, where the stop goes on, and count the model
+            # stopping until it is gone; never llama_swap_down.
+            assert await llamaswap.running() == [Running(CODER, "stopping")]
+
+
+@pytest.mark.anyio
+async def test_a_load_whose_answer_cant_be_read_is_unknown(fake):
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, AsyncLlamaSwap(url, KEY, load_timeout_s=5) as llamaswap:
+            # A body that its Content-Encoding doesn't fit: httpx's DecodingError, which isn't a transport error.
+            fake.canned("GET", f"/upstream/{CODER}/health", 200, b"not gzip", {"content-encoding": "gzip"})
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("unreadable")
+            fake.canned("GET", f"/upstream/{CODER}/health", 500, b"x" * ((1 << 20) + 1))
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("too big")
+    # The reasons are a closed list, for the gate's journal.
+    with pytest.raises(ValueError, match="'slow'"):
+        LoadOutcome.unknown("slow")
+
+
+@pytest.mark.anyio
+async def test_an_answer_it_cant_read_is_answered_never_httpxs_own(fake):
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, AsyncLlamaSwap(url, KEY, load_timeout_s=5) as llamaswap:
+            garbled = (200, b"not gzip", {"content-encoding": "gzip"})
+            fake.canned("GET", "/running", *garbled)
+            with pytest.raises(LlamaSwapAnswered, match=r"^llama-swap GET /running: an answer it can't read "
+                                                        r"\(DecodingError\)$") as caught:
+                await llamaswap.running()
+            assert caught.value.__suppress_context__ and caught.value.__cause__ is None
+            fake.canned("POST", f"/api/models/unload/{CODER}", *garbled)
+            with pytest.raises(LlamaSwapAnswered, match=r"can't read \(DecodingError\)$"):
+                await llamaswap.unload(CODER)
+            fake.canned("GET", f"/logs/stream/{CODER}", *garbled)
+            with pytest.raises(LlamaSwapAnswered, match=r"can't read \(DecodingError\)$"):
+                await llamaswap.last_lines(CODER, read_s=0.1)
 
 
 @pytest.mark.anyio
@@ -220,6 +289,10 @@ async def test_an_environment_proxy_is_ignored(fake, monkeypatch):
         async with serve_fake(fake) as url, stand_in() as (proxy, seen):
             for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
                 monkeypatch.setenv(name, proxy)
+            # A NO_PROXY naming 127.0.0.1 would route it directly even with the environment trusted, and the test
+            # couldn't fail. conftest's environment has none; this test doesn't lean on it.
+            for name in ("NO_PROXY", "no_proxy"):
+                monkeypatch.delenv(name, raising=False)
             async with AsyncLlamaSwap(url, KEY, load_timeout_s=5) as llamaswap:
                 assert await llamaswap.load(GEMMA) == LoadOutcome.READY
                 assert await llamaswap.running() == [Running(GEMMA, "ready")]
@@ -265,13 +338,13 @@ async def test_a_call_nothing_answers_is_unreachable_and_a_load_is_unknown():
                 with pytest.raises(LlamaSwapUnreachable, match=f"^llama-swap unreachable at {closed}: "):
                     await call
             # plan.md: on any timeout or error the gate keeps the load counted as starting, never freeing the one-load
-            # slot early; so a load is UNKNOWN even when nothing was sent.
-            assert await llamaswap.load(CODER) == LoadOutcome.UNKNOWN
+            # slot early; so a load is UNKNOWN even when nothing was sent. Its reason is for the gate's journal.
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("refused")
 
         # Sent, then dropped unanswered: the load may be under way.
         async with stand_in(reply=None) as (dropping, seen), \
                 AsyncLlamaSwap(dropping, KEY, load_timeout_s=5) as llamaswap:
-            assert await llamaswap.load(CODER) == LoadOutcome.UNKNOWN
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("dropped")
             with pytest.raises(LlamaSwapUnreachable):
                 await llamaswap.running()
             assert len(seen) == 2
@@ -341,3 +414,63 @@ async def test_the_stand_in_answers_as_v257_does(fake):
             # And what it saw, with the headers it was sent.
             assert fake.requests[0].headers.get("authorization") is None
             assert fake.requests[-1].headers["authorization"] == f"Bearer {KEY}"
+
+
+@pytest.mark.anyio
+async def test_a_restart_serves_the_same_port_with_every_engine_stopped(fake):
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, AsyncLlamaSwap(url, KEY, load_timeout_s=5) as llamaswap:
+            fake.set_state(GEMMA, "ready")
+            fake.log(GEMMA, ["before the restart"])
+            fake.script_start(CODER, delay_s=30)
+            waiting = asyncio.create_task(llamaswap.load(CODER))
+
+            async def one():
+                return fake.reserved(CODER) == 1
+
+            await eventually(one)
+            began = time.monotonic()
+            restarting = asyncio.create_task(fake.restart(down_s=0.5))
+            # Its shutdown: a request waiting for a start gets llama-swap's 500 (internal/router/base.go:598-602) ...
+            outcome = await waiting
+            assert outcome == LoadOutcome.failed(500, outcome.text) and "group is shutting down" in outcome.text
+
+            # ... then, while it is down, nothing answers on its port ...
+            async def down():
+                try:
+                    await llamaswap.running()
+                except LlamaSwapUnreachable:
+                    return True
+                return False
+
+            await eventually(down, within_s=0.4)
+            assert not restarting.done()
+            await restarting
+            assert time.monotonic() - began >= 0.5  # down for down_s, beyond uvicorn's own stop
+            # ... then the same port answers, every engine stopped and its log empty, as v257 starts.
+            assert await llamaswap.running() == []
+            assert await llamaswap.last_lines(GEMMA, read_s=0.1) == []
+            fake.script_start(CODER, delay_s=0.1)
+            assert await llamaswap.load(CODER) == LoadOutcome.READY
+
+
+@pytest.mark.anyio
+async def test_the_stand_in_can_drop_a_stream_mid_way(fake):
+    # A connection that breaks mid-stream, as when llama-swap itself dies: the client's HTTP library reports a body
+    # that never ended. Every other early end the stand-in has is a clean one (an unload's, v257's own).
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, httpx.AsyncClient(base_url=url, trust_env=False) as http:
+            fake.set_state(GEMMA, "ready")
+            fake.stream(GEMMA, [b"data: 1\n\n", b"data: 2\n\n", b"data: [DONE]\n\n"], delay_s=0.05, drop_after=2)
+            got = []
+            with pytest.raises(httpx.RemoteProtocolError):
+                async with http.stream("POST", "/v1/chat/completions", headers={"Authorization": f"Bearer {KEY}"},
+                                       json={"model": GEMMA, "stream": True}) as streaming:
+                    async for chunk in streaming.aiter_raw():
+                        got.append(chunk)
+            assert b"".join(got) == b"data: 1\n\ndata: 2\n\n"
+
+            async def none():
+                return fake.reserved(GEMMA) == 0
+
+            await eventually(none)

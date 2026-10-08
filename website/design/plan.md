@@ -330,7 +330,15 @@ row named, would add nine, the compiled pydantic-core among them. httpx runs wit
 long prefill can be silent for minutes. The gate's load call waits at least `healthCheckTimeout`
 plus the 5 s llama-swap takes to kill a stuck start, plus a margin, never Phase 1's 10 s; on any
 timeout or error it keeps the load counted as starting until `/running` shows it ready or gone, so
-it never frees the one-load slot early. Blocking work in the gate, such as `nvidia-smi` and file
+it never frees the one-load slot early. *(Refined 2026-10-08, at the implementation plan's Task 12
+review, the controller's rulings. The load's admission ticket settles it: on an unknown outcome, or
+a `failed` that isn't a 500, which is llama-swap refusing the call rather than a start that ended,
+the gate withdraws the ticket first. A ticket still there means no start used it, and the slot is
+freed. One already claimed holds the slot until `/running` shows the model ready or gone, and a
+model still starting 20 s past its ticket's deadline is unloaded, since v257's health poll can
+outlast `healthCheckTimeout`. Only a 500 is `load_failed`. The gate's unload call waits up to 60 s,
+and its timeout isn't `llama_swap_down`: the model stays counted as stopping, its memory not freed,
+until `/running` shows it gone.)* Blocking work in the gate, such as `nvidia-smi` and file
 reads, runs off its event loop. The CLI talks to the gate with the standard library (`http.client`
 over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SSH, and
 `spark launch` never import uvicorn or httpx. It stays one uv project and one lock, deployed to
@@ -952,7 +960,12 @@ Task 6, the controller's ruling: or less, where the GPU's ceiling binds or a loa
 words, so a request that waits shows in the client only as a slow reply, its usual "thinking", and
 the wait is explained on the phone (`waiting`) and in `spark status`. A refusal or the answer ends
 it. A cold load looks like a slow first token; 2b's menu bar will show *loading*. llama-swap's
-`sendLoadingState` stays off.
+`sendLoadingState` stays off. *(Added 2026-10-08, at the implementation plan's Task 12 review, the
+controller's ruling: a stream cut upstream, by the brake, `make apply-now` or an engine that dies,
+reaches the client as a cut, never as a finish. v257 ends a stream whose engine was killed cleanly,
+only early, and pi's `openai` package reads a stream that stops without `[DONE]` as a whole answer.
+So the front ends the client's response without its last chunk, and the client's HTTP library
+reports a body that never ended. Nothing is injected.)*
 
 **Refusals, in the client.** Each is one sentence a person reads, then the numbers, then one next
 step. The code stays in the error's `code` field, for programs; Dan never has to read it. *(Added
@@ -3146,6 +3159,15 @@ Each item gets its own design pass when its turn comes.
     brake takes the starting memory from its own reading, caps a record's footprint at the
     registry's, and counts a record only while its pid is that model's engine; the gate counts a
     record as ticketed only when it issued its ticket.
+- **2026-10-08** — Phase 2a's Task 12 review, the controller's rulings. Dated notes are in *The
+  front and the gate* (*What they're built on*) and *What you see in Phase 2a* (*Nothing is
+  injected into a reply stream*), and in the implementation plan's Global Constraints and Tasks 10,
+  12, 15, 16, 17, 21, 22 and 50.
+  - An unknown load, or llama-swap refusing one, withdraws its ticket first, and the one-load slot
+    is freed only when no start used it. Only a 500 is `load_failed`. A start still running 20 s
+    past its ticket's deadline is unloaded.
+  - The gate's unload call waits up to 60 s, and its timeout isn't `llama_swap_down`.
+  - A stream cut upstream reaches the client as a cut, never as a finish.
 
 ## Sources
 

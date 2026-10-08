@@ -294,7 +294,10 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   timeout, 5 s, but for the routes that wait: an admission call is held for its key's wait,
   `/v1/load` and `/v1/pin` for the load call's 200 s, and `/v1/unload` and `/v1/make-room` for as
   long as their drains take · `WatchdogSec=30` · the
-  gate's load call, 200 s (180 + 20) · the notifier, at most one alert per unit per 5 minutes ·
+  gate's load call, 200 s (180 + 20) · the gate's unload call, 60 s (`UNLOAD_CALL_TIMEOUT_S`; the
+  controller's ruling at Task 12's review, 2026-10-08: v257 answers once the engine has stopped, a
+  stuck one after its 10 s `unloadTimeout` and its kill, and its one run loop queues the stops, so
+  room for four) · the notifier, at most one alert per unit per 5 minutes ·
   the activity record, written every second, stale after 3 s · ntfy's publish timeout, 5 s ·
   `TimeoutStopSec=30`, with uvicorn's graceful shutdown at 20 s · the refusal history, 50 entries.
 - **Notification types and priorities, all on by default:** `brake_fired` high ·
@@ -1815,7 +1818,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   43200`, `REFUSAL_HISTORY = 50`, `NTFY_TIMEOUT_S = 5.0`, `BURST_WINDOW_S = 600`,
   `BACK_UP_AFTER_S = 60`, `RELEASE_AFTER_S = 300`, `AUTO_RELEASE_EVERY_S = 3600`,
   `NOTIFIER_EVERY_S = 300`, `APPLY_RENEW_S = 15`, `APPLY_LAPSE_S = 60`, `NOTIFIED_KEEP_S = 86400`,
-  `SESSION_HOLD_RENEW_S = 60`.
+  `SESSION_HOLD_RENEW_S = 60`. *(Added 2026-10-08, at Task 12's review, the controller's ruling:
+  `UNLOAD_CALL_TIMEOUT_S = 60.0`, the gate's unload call, which Task 12's client uses.)*
 - `Route(socket: "status" | "control", method: str, path: str, callers: "front" | "users" |
   "owner" | "admin")` and `ROUTES`, the table below; message shapes as `TypedDict`s. JSON over
   HTTP/1.1 on the Unix sockets.
@@ -2165,6 +2169,10 @@ git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate'
   `spark/tests/test_llamaswap_async.py`
 - Modify: `spark/src/spark/render.py` (`HEALTH_CHECK_TIMEOUT_S = 180`, used by the rendered config,
   so the gate's load timeout has its constant before Task 19), `spark/tests/test_render.py`
+- *(Added 2026-10-08, at Task 12's review, the controller's ruling:)* Modify:
+  `spark/src/spark/gateproto.py` (`UNLOAD_CALL_TIMEOUT_S`), `spark/tests/test_tested_against.py`
+  (its set names `spark.llamaswap_async` and `fake_llamaswap`, and its guard on the stand-in's
+  existing goes, so a stand-in moved or renamed fails there rather than leaving the check).
 
 **Interfaces:**
 
@@ -2228,15 +2236,76 @@ git commit -m "feat(spark): 🤖 spark launch starts a model only with the gate'
   429, `Retry-After: 1`, code `concurrency_limit`; an unload during a stream ends the stream early;
   a waiter for a starting model gets 500 `group: model unloaded` when it is unloaded.
 
+*(Amended 2026-10-08, at Task 12's review and its fix round 1, the controller's rulings. The
+interfaces and tests above stand, as these change them:)*
+
+- **`AsyncLlamaSwap(base_url: str, key: str, *, load_timeout_s: float, call_timeout_s: float =
+  gateproto.LLAMA_SWAP_HUNG_S)`.**
+  - `call_timeout_s` bounds every call's connect, write and pool wait, `running()` as a whole, and
+    how long `last_lines` waits for its head.
+  - `load_timeout_s` bounds `load()` as a whole, its read included. `unload()` has a bound of its
+    own, `gateproto.UNLOAD_CALL_TIMEOUT_S`, 60 s (*Global Constraints*).
+  - A key that is empty or isn't printable ASCII is refused before anything is sent, and the error
+    doesn't name it.
+  - `aclose()` and `async with`. The gate closes the client when it shuts down (Task 19).
+- **`load()`.**
+  - `failed(status, text)` covers every answer but a 200: a 500 from a start that failed or was
+    aborted, and also llama-swap's own refusals (3xx, 401, 404, 429).
+  - Its text is the body decoded with `backslashreplace`, every non-printable character escaped,
+    then its head, at most `FAILED_TEXT_MAX` (2048) characters, the last of them `…` when it was cut.
+  - ~~`LoadOutcome.UNKNOWN`~~ `LoadOutcome.unknown(why)` comes from any timeout or error of httpx's,
+    a call never sent included, and from an answer over 1 MiB. `why` is one of `timeout`,
+    `refused`, `dropped`, `too big` and `unreadable`, for the gate's journal. Elsewhere in this plan,
+    *`UNKNOWN`* means an outcome of that kind.
+  - `load()` raises neither of Phase 1's errors. The other calls turn every error of httpx's into
+    one of them, raised from None: an answer they can't decode is `LlamaSwapAnswered`.
+- **The stand-in's controller** gains:
+  - `script_stop(model, delay_s)`;
+  - `canned(method, path, status, body, headers)`, a test's hook that answers before any key is
+    checked, and is never v257's behaviour;
+  - `reserved(model)` and `tails(model)`;
+  - `close()`, `serve_fake`'s end: v257's shutdown without its 30 s drain, every engine stopped;
+  - `restart(down_s)`: llama-swap restarted on the same port, nothing listening for `down_s`, then
+    serving again with every engine stopped and its logs empty, as v257 starts (Tasks 17, 18 and
+    32 need it);
+  - `stream(model, chunks, delay_s, drop_after=n)`: the connection dropped after `n` chunks, the
+    response never finished, a test's hook for a llama-swap that dies mid-stream (Task 21).
+- **The stand-in's v257 behaviours** gain:
+  - `/running` sorted by model (`internal/server/api.go:363`);
+  - the deadline's text in Go's duration, `health check timed out after 3m0s`;
+  - a stream whose engine an unload kills ends cleanly, only early, with no `[DONE]`
+    (`internal/process/process_command.go:492-507`).
+
+  Its docstring lists what it leaves out, among them the stall of every model's requests while a
+  stop runs (`internal/router/base.go:113-133`, 498-505), and the end of a ready engine's streams at
+  SIGTERM rather than at the stop's end.
+- **Tests:**
+  - `test_running_reads_v257s_shape`: `gemma-4-26b-a4b` ready, then `qwen3.6-35b-a3b` starting, in
+    that order. v257 sorts the list, so "gemma" and "coder" would come back with the coder first.
+  - `test_load_waits_past_every_other_timeout`: `call_timeout_s` is 0.5.
+  - `test_no_redirect_is_followed_with_the_key`: `running`, `unload` and `last_lines` raise
+    `LlamaSwapAnswered`, and `load` returns `failed(302, "")`.
+  - `test_a_failed_start_reads_as_failed_with_its_text` checks the 2 KiB cap too.
+  - Added: `test_the_key_goes_only_in_its_header`;
+    `test_a_call_nothing_answers_is_unreachable_and_a_load_is_unknown` (`refused`, and `dropped`
+    for a call dropped unanswered); `test_unload_waits_its_own_bound` (a timeout leaves the model
+    `stopping` in `/running`); `test_a_load_whose_answer_cant_be_read_is_unknown` and
+    `test_an_answer_it_cant_read_is_answered_never_httpxs_own` (a body its `Content-Encoding`
+    doesn't fit, and one over 1 MiB); `test_a_restart_serves_the_same_port_with_every_engine_stopped`;
+    `test_the_stand_in_can_drop_a_stream_mid_way`.
+
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the modules missing).
 - [ ] **Step 2:** the client and the stand-in; the tests pass; `make test lint`.
-- [ ] **Step 3: Commit.** **On the Spark:**
+- [ ] **Step 3: Commit.** **On the Spark:** *(Amended 2026-10-08, at Task 12's review: fix round 1
+  committed `spark/src/spark/gateproto.py` and `spark/tests/test_tested_against.py` with these,
+  under its own message, `fix(spark): 🤖 …`.)*
 
 ```bash
 git add spark/src/spark/llamaswap_async.py spark/tests/fake_llamaswap.py spark/tests/test_llamaswap_async.py \
-  spark/src/spark/render.py spark/tests/test_render.py
+  spark/src/spark/render.py spark/tests/test_render.py spark/src/spark/gateproto.py \
+  spark/tests/test_tested_against.py
 git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested against a v257 stand-in" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2560,8 +2629,29 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `llamaswap.load(model)`. `READY` → `loaded`, a `ModelRecord` with the load's fall
     (`MemAvailable` before less after), capped at the model's `cold_load_gib` plus
     `LOAD_FALL_MARGIN_GIB` (2 GiB, this plan's value) when the registry has one, else at its
-    footprint, and flagged when capped. `UNKNOWN` → the slot stays held until `/running` shows it
-    ready or gone. On every outcome the model's `started/` record is read, then cleared
+    footprint, and flagged when capped. ~~`UNKNOWN` → the slot stays held until `/running` shows it
+    ready or gone.~~ *(Corrected 2026-10-08, at Task 12's review, the controller's ruling: the
+    ticket settles what an unknown outcome means.)*
+    - **`UNKNOWN`, and any `failed` whose status isn't 500.** A 3xx, 401, 404 or 429 is
+      llama-swap refusing the call, not a start that ended.
+      - The ticket is withdrawn first (`tickets.withdraw`); a withdrawal and launch's claim can't
+        both win.
+      - If it was still there, no start used it, and the slot is freed.
+      - If it had been claimed, a start is under way. The slot stays held until `/running` shows
+        the model ready or gone; then the `started/` record is read as for any outcome.
+      - A load still `starting` past its ticket's deadline plus `llamaswap_async.PAST_THE_DEADLINE_S`
+        (20 s) is unloaded, which aborts the start (`internal/process/process_command.go:384-393`).
+        v257's health poll can hold a start past its deadline: the poll has no response-header
+        timeout (`internal/config/model_config.go:181`), and the deadline is checked only between
+        polls (`process_command.go:587-596`). The unload covers that.
+    - **A `failed` with status 500** (the start failed, it was unloaded, or llama-swap is shutting
+      down) frees the slot only once the ticket is withdrawn or the `started/` record is read.
+    - **The load call runs in a task of its own** that no requester's leaving cancels: a load, once
+      started, is always waited for.
+    - **`load_failed` goes only to a 500.** llama-swap's own refusals are logged as such, never
+      worded as a model that failed to start.
+
+    On every outcome the model's `started/` record is read, then cleared
     (`tickets.clear_started`): ready, its `pid` and ticket go into `state.ticketed`, for the bypass
     check; failed, or gone, nothing is kept. *(Added 2026-10-08, at Task 11's review, the
     controller's ruling: the ticket's id goes into `state.issued` (Task 13), saved before the load
@@ -2569,7 +2659,8 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `tickets.read_record(…, own=True)`; an `OSError` reading or clearing it is caught and the load's
     outcome stands, since a record left uncleared stops counting 360 s after its start.)* A model
     that a restarted gate's `restore` found `starting` takes the same path once `/running` shows it
-    ready or gone. `failed` → `load_failed`, its text launch's refusal record for the model if there
+    ready or gone. `failed` *(a 500 only: corrected 2026-10-08, at Task 12's review, as above)* →
+    `load_failed`, its text launch's refusal record for the model if there
     is one, else the engine's last line (`llamaswap.last_lines`), or the deadline's variant for
     `health check timed out`; the ticket withdrawn if it wasn't used. *(Added 2026-10-07, at Task 7,
     the controller's ruling: every refusal's notification is `REFUSAL_NOTIFICATION.get(code,
@@ -2673,7 +2764,16 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
 - `test_a_load_started_for_a_client_that_went_finishes` — `cancel` after the load call began → the
   load completes and the model's record is `ready`.
 - `test_a_load_call_that_times_out_keeps_the_slot_until_running_says_ready_or_gone` — `UNKNOWN`,
-  `/running` showing `starting` for 10 s then `ready`: a second request waits until then.
+  `/running` showing `starting` for 10 s then `ready`: a second request waits until then. *(Corrected
+  2026-10-08, at Task 12's review: with its ticket claimed, as launch claims it.)*
+- *(Added 2026-10-08, at Task 12's review, the controller's ruling:)*
+  - `test_an_unknown_load_whose_ticket_was_unused_frees_the_slot` — `UNKNOWN` (`refused`), the
+    ticket still on disk → withdrawn, and a second request's load starts at once.
+  - `test_a_refusal_of_llama_swaps_is_never_load_failed` — `failed(429, …)` and `failed(404, …)`,
+    each with its ticket unused → the ticket withdrawn, the slot freed, no `load_failed` sent.
+  - `test_a_load_starting_past_its_deadline_and_20_s_is_unloaded` — the ticket claimed,
+    `UNKNOWN`, `/running` showing `starting` past the deadline plus 20 s → the model is unloaded
+    and the slot freed.
 - `test_load_failed_carries_launchs_record_or_the_engines_last_lines` — `failed`, launch's record
   reason `failed to load model` → `load_failed` with Task 6's text; with no record and the last
   line `failed to load model` → the same text.
@@ -2738,7 +2838,14 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   "idle"`, the front's `busy` (a request was in flight when it marked the drain) ends it at once:
   nothing unloads, the model's last use is now, and False. Not done
   `DRAIN_GRACE_S` after `drained` (the unload hung), or the channel drops at any point: sends
-  `undrain` (when connected) and returns False. It never unloads before `drained`.
+  `undrain` (when connected) and returns False. It never unloads before `drained`. *(Added
+  2026-10-08, at Task 12's review, the controller's ruling:)* the unload is `llamaswap.unload`,
+  bounded by `gateproto.UNLOAD_CALL_TIMEOUT_S` (60 s). Its timeout, a `LlamaSwapUnreachable`, isn't
+  `llama_swap_down`: v257 still answers `/running` during a stop, since it reads the states outside
+  its run loop (`internal/router/base.go:366-376`). On a timeout the gate re-reads `/running`, and
+  the model stays counted as `stopping`, its memory not freed, until `/running` shows it gone.
+  `llama_swap_down` comes only from `/running` itself. How this meets `DRAIN_GRACE_S`, which is
+  shorter than the unload's bound, is for the controller to settle before this task.
 - `idle_due(now, state, registry, snapshot, live: Callable[[Session], bool]) -> list[str]` —
   on-demand models with no request in flight, no live session and no pin, idle at least
   `idle_unload_min`; residents never. The gate drains each, then emits `unloaded` (*after 60 min
@@ -2843,7 +2950,11 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
   - `async load(model, uid)` — admission as one of Dan's commands (`kind: "command"`), held up to
     the load call's 200 s; `unload(model, uid) -> AsyncIterator[dict]` — a drain (`why: "unload"`),
     yielding `{inflight: n}` at once and the result when the model is gone, which `/v1/unload`
-    streams.
+    streams. *(Added 2026-10-08, at Task 12's review, the controller's ruling:)* `execute`'s unloads
+    and `unload`'s go through Task 16's drainer, so an unload
+    call's timeout (`gateproto.UNLOAD_CALL_TIMEOUT_S`, 60 s) isn't `llama_swap_down`: the gate
+    re-reads `/running`, and the model stays counted as `stopping`, its memory not freed, until
+    `/running` shows it gone.
   - *(Added 2026-10-08, the controller's rulings, at Task 10's re-review:)* `execute` and `load`
     yield their progress, as `unload` yields its count, since `/v1/make-room` and `/v1/load` now
     stream it (Task 10's notes, Task 19):
@@ -3407,6 +3518,25 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   started_at}]`).
 - A disconnect: `receive()` watched for `http.disconnect` beside the stream; the upstream call
   cancelled, and its count left.
+- *(Added 2026-10-08, at Task 12's review, the controller's ruling:)* **A stream cut upstream
+  reaches the client as a cut.**
+  - An upstream SSE stream that ends without its route's last event is a cut: `data: [DONE]` on
+    `/v1/chat/completions` and `/v1/completions`, `message_stop` on `/v1/messages`, and
+    `response.completed` on `/v1/responses`. Each is checked against llama.cpp b11146's output
+    when this task is built.
+  - v257 ends a stream whose engine was killed cleanly, only early
+    (`internal/process/process_command.go:492-507`). The `openai` 6.40.0 that pi locks ends its
+    iteration without an error when a stream stops without `[DONE]` (its `core/streaming.js`,
+    `fromSSEResponse`, read 2026-10-08). So pi would show a cut answer as a whole one; the web UI
+    isn't checked. A stream is cut so by the brake's unloads, by `make apply-now`, and by an
+    engine's crash or earlyoom kill.
+  - The front passes a cut on as a cut, never as a finish. It ends the client's response without
+    its last chunk, so uvicorn closes the connection and the client's HTTP library reports a body
+    that never ended, which that `openai` raises rather than ending quietly (it rethrows any error
+    but an abort). Task 50's S03 drill confirms that pi shows it as an error. It injects
+    nothing (plan.md: *Nothing is injected into a reply stream*). It does the same for an upstream
+    connection that breaks mid-stream.
+  - Its journal line says `cut`, and the count goes down as on every other way out.
 - llama-swap's 429 `concurrency_limit` → the client's 429, its `Retry-After`, Task 6's words.
 - `FRONT_MODULES: frozenset[str]`, in `spark/front/__init__.py`, which imports nothing, so `apply`
   (Task 31) reads it without importing uvicorn — exactly the `spark` modules the front imports at
@@ -3434,7 +3564,13 @@ stand-in):
   first before the stand-in sends the last.
 - `test_the_count_goes_down_when_a_response_ends_a_client_goes_or_upstream_fails` — the model's
   count is 1 during a request and 0 after each of: a full response; the client closing mid-stream;
-  the stand-in dropping the connection mid-stream; the handler's task cancelled.
+  the stand-in dropping the connection mid-stream; the handler's task cancelled. *(Added 2026-10-08,
+  at Task 12's review: the stand-in drops it with `stream(…, drop_after=n)`.)*
+- *(Added 2026-10-08, at Task 12's review, the controller's ruling:)*
+  `test_a_stream_cut_upstream_reaches_the_client_as_a_cut` — an unload in the stand-in mid-stream,
+  and the stand-in dropping the connection mid-stream (`drop_after`): each time the client's httpx
+  raises `RemoteProtocolError`, nothing is injected, and the journal line says `cut`; a full stream,
+  its last event sent, still ends cleanly.
 - `test_a_client_gone_mid_stream_cancels_the_upstream_call` — the client closes: the stand-in sees
   its request end within 1 s.
 - `test_a_silent_long_prefill_is_never_timed_out` — the stand-in sends its headers, then nothing
@@ -3511,7 +3647,9 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   (llama-swap crashed or restarting), goes the same way: through `admit`, with its original
   deadline, from the held body, so the gate answers it — `restarting` or `llama_swap_down` at the
   deadline, both `409`s, or a load; once the headers have gone, a cut-off stream reaches the client
-  as it is.
+  as it is. *(Added 2026-10-08, at Task 12's review, the controller's ruling: that is, as a cut,
+  Task 21's rule. When the gate's events show the model left `/running` while the stream ran (the
+  brake, a crash), the front's journal line for the cut says why.)*
 - The drain, under one lock: on `drain`, the model is marked draining with its count checked;
   for `why: "idle"` with a request in flight, the front posts `busy` and keeps serving; otherwise
   `drained` is posted when the count reaches 0, and its new requests wait as for a load, getting
@@ -5800,7 +5938,11 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   with the gate made to fail at start (Task 48's block, put back after), a request for the coder
   reads `gate_down`'s words, a `503`, after pi's own retries, each a line in the front's log. The
   make-room walk then loads the coder. What pi and the web UI did is recorded against *Before Task
-  1* and Review Focus 6.
+  1* and Review Focus 6. *(Added 2026-10-08, at Task 12's review, the controller's ruling:)* Then
+  a cut. **[Dan, on the Mac]** pi asks the coder for a long reply; while it streams, **[Dan, on the
+  Spark]** the coder's engine process is killed with `sudo kill`. pi shows an error, not a
+  shorter answer as if whole, and `make logs s=front` shows that request ending `cut`, with why.
+  What the web UI shows is recorded beside it.
 - [ ] **Step 4: S17.** A registry edit that changes llama-swap's config, with a request in flight;
   **[Dan, on the Spark, in tmux]** `make apply`: the diff; the quiet wait's words; Ctrl-C changes
   nothing; the deadline, shortened for the drill with `spark apply --deadline-s 60` (Task 32),
@@ -6053,6 +6195,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   None is never read as 0, which would count the engine's whole `RssAnon` as growth on top of the
   fall that already measured it. Task 18's background read catches `PermissionError` and `OSError`
   on each read and reports it under `health`, so a failed read never ends its loop.
+
+- **The v257 stand-in restarts on its port** (added 2026-10-08, at Task 12's review, the controller's
+  ruling), for Tasks 17, 18 and 32. A test of the residents' return after a restart, apply's
+  restart, or llama-swap answering again uses `await fake.restart(down_s)`: the stand-in's
+  shutdown, nothing listening for `down_s`, then the same port serving with every engine stopped
+  and its logs empty, as v257 starts. A second `serve_fake` would start on a new port, which the
+  gate under test wouldn't follow.
 
 - **doctor's example address is the front's from the cutover** (added 2026-10-08, at Task 10's
   review, the controller's ruling), for Task 33. `doctor.py`'s refusal of a `SPARK_LLAMASWAP_URL`

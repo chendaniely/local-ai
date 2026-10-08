@@ -17,7 +17,6 @@ from spark.versions import load_versions
 
 ROOT = Path(__file__).resolve().parents[2]
 SPARK = ROOT / "spark"
-TESTS = Path(__file__).resolve().parent
 
 
 def _components():
@@ -26,10 +25,9 @@ def _components():
 
 def _modules():
     modules = [importlib.import_module(info.name) for info in pkgutil.walk_packages(spark.__path__, prefix="spark.")]
-    # Task 12's llama-swap stand-in, once it exists, imported as the other tests import it: pytest puts this folder on
-    # sys.path, since it has no __init__.py.
-    if (TESTS / "fake_llamaswap.py").exists():
-        modules.append(importlib.import_module("fake_llamaswap"))
+    # Task 12's llama-swap stand-in, imported as the other tests import it: pytest puts this folder on sys.path, since
+    # it has no __init__.py. No guard on its existing: a stand-in moved or renamed fails here, never leaves the check.
+    modules.append(importlib.import_module("fake_llamaswap"))
     return modules
 
 
@@ -42,8 +40,8 @@ def _standin(tested_against):
 def test_every_tested_against_matches_versions_yaml_or_the_lock():
     modules = _modules()
     # The walk has to reach the modules that carry one, or this test passes on nothing.
-    assert {"spark.llamaswap", "spark.render", "spark.protocols", "spark.serve"} <= {
-        m.__name__ for m in modules if hasattr(m, "TESTED_AGAINST")}
+    assert {"spark.llamaswap", "spark.render", "spark.protocols", "spark.serve", "spark.llamaswap_async",
+            "fake_llamaswap"} <= {m.__name__ for m in modules if hasattr(m, "TESTED_AGAINST")}
     assert versions.tested_against_problems(modules, _components()) == []
 
 

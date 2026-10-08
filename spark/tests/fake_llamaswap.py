@@ -4,11 +4,21 @@ keeps what it was sent (`requests`).
 
 Each behaviour cites the line of llama-swap's source it copies, as `path:line`, relative to the root of
 github.com/mostlygeek/llama-swap at tag v257 (commit f00d375), in the configuration render writes for 2a: one group
-that swaps out nothing, apiKeys, no ttl, no concurrencyLimit and no sendLoadingState. What it leaves out: aliases,
-peers, profiles, ignorePaths, the model routes but five (and their multipart ones), /v1/models, /api/events, the
-other /logs routes, and Go's 405 for a method a route doesn't take (a 404 here). A test that needs one adds it,
-citing its line. Its engines are stand-ins too: `/health` answers 200 once ready, and an inference route streams what
-`stream` scripted."""
+that swaps out nothing, apiKeys, no ttl, no concurrencyLimit and no sendLoadingState. What it leaves out:
+
+- aliases, peers, profiles and ignorePaths;
+- the model routes but five (and their multipart ones), /v1/models, /api/events and the other /logs routes;
+- Go's 405 for a method a route doesn't take (a 404 here);
+- the stall while a stop runs: v257's router takes one thing at a time in its run loop
+  (internal/router/base.go:113-133), so no request for any model is dispatched until an unload's stop is done
+  (base.go:498-505); here the others go on;
+- a stream's end at SIGTERM: a ready engine's streams end when it dies, which for llama-server is soon after SIGTERM,
+  at the stop's start (read, not checked on the box); here they end at the stop's end, after `script_stop`'s delay;
+- the 30 s drain of a shutdown (llama-swap.go:42, 487-492), and a reload (SIGHUP), which stops every engine as a
+  restart does.
+
+A test that needs one adds it, citing its line. Its engines are stand-ins too: `/health` answers 200 once ready, and
+an inference route streams what `stream` scripted. `restart` stands for llama-swap's restart on the same port."""
 
 from __future__ import annotations
 
@@ -66,6 +76,7 @@ class _Engine:
     stop_s: float = 0.0
     chunks: tuple[bytes, ...] = DEFAULT_CHUNKS
     delay_s: float = 0.0
+    drop_after: int | None = None  # the stream's connection drops after this many chunks
     starting: asyncio.Task | None = None  # the start under way (fifo.go:43's active swap)
     waiters: set[asyncio.Future] = field(default_factory=set)  # requests waiting on it
     reserved: int = 0  # requests admitted, waiting or served (fifo.go:44)
@@ -141,8 +152,9 @@ async def _redirect(send: ASGISend, method: str, status: int, location: str) -> 
 
 class FakeLlamaSwap:
     """llama-swap v257 with `keys` as its apiKeys and `models` as its models, all stopped. The controller:
-    `script_start`, `script_stop`, `set_state`, `stream`, `log` and `canned`; `requests`, what it was sent; and
-    `reserved` and `tails`, a model's admitted requests and open log streams."""
+    `script_start`, `script_stop`, `set_state`, `stream`, `log` and `canned`; `close` and `restart`, its shutdown
+    and its restart; `requests`, what it was sent; and `reserved` and `tails`, a model's admitted requests and open
+    log streams."""
 
     def __init__(self, keys: set[str], models: list[str]):
         self.keys = set(keys)
@@ -151,6 +163,7 @@ class FakeLlamaSwap:
         self._engines = {model: _Engine() for model in models}
         self._canned: dict[tuple[str, str], tuple[int, bytes, list[tuple[bytes, bytes]]]] = {}
         self._closing = asyncio.Event()
+        self._serving: _Serving | None = None  # serve_fake's uvicorn, for restart
 
     # The controller.
 
@@ -168,11 +181,13 @@ class FakeLlamaSwap:
         assert state in STATES, state
         self._engines[model].state = state
 
-    def stream(self, model: str, chunks: list[bytes], delay_s: float = 0.0) -> None:
+    def stream(self, model: str, chunks: list[bytes], delay_s: float = 0.0, drop_after: int | None = None) -> None:
         """What `model`'s engine sends each inference request from now on: `chunks`, the first at once and each of the
-        rest `delay_s` after the one before."""
-        self._engines[model].chunks = tuple(chunks)
-        self._engines[model].delay_s = delay_s
+        rest `delay_s` after the one before. With `drop_after`, the connection drops after that many, the response
+        never finished, as when llama-swap itself dies mid-stream; a test's hook, since v257 finishes a stream whose
+        engine dies (internal/process/process_command.go:492-507)."""
+        engine = self._engines[model]
+        engine.chunks, engine.delay_s, engine.drop_after = tuple(chunks), delay_s, drop_after
 
     def log(self, model: str, lines: list[str]) -> None:
         """`lines` written to `model`'s log, each ending in a newline: kept in its history, and sent on every stream
@@ -198,11 +213,35 @@ class FakeLlamaSwap:
         return len(self._engines[model].tails)
 
     def close(self) -> None:
-        """serve_fake's end, as llama-swap's shutdown goes (llama-swap.go:481-518) but without its drain: a log stream
-        ends at once (internal/server/server.go:503-508, log.go:139-140); what waits for a start gets 500 `group is
-        shutting down` (internal/router/base.go:598-602), and an inference stream ends, where v257 would first give
-        both up to 30 s (llama-swap.go:42, 487-492)."""
+        """llama-swap's shutdown (llama-swap.go:481-518), but without its drain: a log stream ends at once
+        (internal/server/server.go:503-508, log.go:139-140); what waits for a start gets 500 `group is shutting down`
+        (internal/router/base.go:598-602), and an inference stream ends, where v257 would first give both up to 30 s
+        (llama-swap.go:42, 487-492); then every engine is stopped, a start under way aborted (llama-swap.go:506,
+        internal/router/base.go:278-330). serve_fake's end, and the first half of `restart`."""
         self._closing.set()
+        for engine in self._engines.values():
+            if engine.starting is not None:
+                engine.starting.cancel()
+                engine.starting = None
+            for gone in engine.served:
+                gone.set()
+            engine.state = "stopped"
+            engine.idle.set()
+
+    async def restart(self, down_s: float = 0.0) -> None:
+        """llama-swap restarted on the same port: `close`, then nothing listening for `down_s`, then serving again
+        as a new v257 starts, every engine stopped (internal/process/process_command.go:179) with nothing preloaded
+        (the stack sets no hooks.on_startup.preload: internal/server/api.go:390-394), and its logs empty, since they
+        live only in its memory. The controller's scripts stay. Only inside serve_fake."""
+        if self._serving is None:
+            raise RuntimeError("restart() needs the stand-in served: inside serve_fake")
+        self.close()
+        await self._serving.stop()
+        await asyncio.sleep(down_s)
+        for engine in self._engines.values():
+            engine.history.clear()
+        self._closing = asyncio.Event()
+        await self._serving.start()
 
     # The app.
 
@@ -445,6 +484,8 @@ class FakeLlamaSwap:
             await send({"type": "http.response.start", "status": 200, "headers": [
                 (b"content-type", b"text/event-stream"), (b"x-accel-buffering", b"no")]})
             for i, chunk in enumerate(engine.chunks):
+                if i == engine.drop_after:
+                    return  # unfinished: uvicorn closes the connection (its h11_impl.py, run_asgi)
                 if i:
                     got, _ = await self._race(asyncio.sleep(engine.delay_s), gone, left)
                     if not got:
@@ -457,26 +498,50 @@ class FakeLlamaSwap:
             engine.served.discard(gone)
 
 
+class _Serving:
+    """A uvicorn serving the stand-in at 127.0.0.1:`port`, a port of its own when 0, in the running event loop; started
+    again on the same port by `restart`."""
+
+    def __init__(self, fake: FakeLlamaSwap, port: int = 0):
+        self.fake, self.port = fake, port
+        self._server: QuietServer | None = None
+        self._task: asyncio.Task | None = None
+        self._listener: socket.socket | None = None
+
+    async def start(self) -> None:
+        self._listener = listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # the same port again, past TIME_WAIT
+        listener.bind(("127.0.0.1", self.port))
+        self.port = listener.getsockname()[1]
+        config = uvicorn.Config(self.fake, lifespan="off", log_config=None, access_log=False, ws="none",
+                                server_header=False, date_header=False, timeout_graceful_shutdown=2)
+        self._server = QuietServer(config)  # leaves SIGINT and SIGTERM to pytest
+        self._task = asyncio.create_task(self._server.serve(sockets=[listener]))
+        while not self._server.started:
+            if self._task.done():
+                self._task.result()  # it failed to start: raise why
+                raise RuntimeError("uvicorn stopped before it started")
+            await asyncio.sleep(0.01)
+
+    async def stop(self) -> None:
+        """uvicorn's shutdown, then its listener closed."""
+        self._server.should_exit = True
+        try:
+            await self._task
+        finally:
+            self._listener.close()
+
+
 @contextlib.asynccontextmanager
 async def serve_fake(fake: FakeLlamaSwap) -> AsyncIterator[str]:
     """`fake` on a real uvicorn at 127.0.0.1 and a port of its own, in the running event loop, yielding its URL. At
     the end, llama-swap's shutdown (FakeLlamaSwap.close), then uvicorn's."""
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.bind(("127.0.0.1", 0))
-    port = listener.getsockname()[1]
-    config = uvicorn.Config(fake, lifespan="off", log_config=None, access_log=False, ws="none", server_header=False,
-                            date_header=False, timeout_graceful_shutdown=2)
-    server = QuietServer(config)  # leaves SIGINT and SIGTERM to pytest
-    serving = asyncio.create_task(server.serve(sockets=[listener]))
+    serving = _Serving(fake)
+    await serving.start()
+    fake._serving = serving
     try:
-        while not server.started:
-            if serving.done():
-                serving.result()  # it failed to start: raise why
-                raise RuntimeError("uvicorn stopped before it started")
-            await asyncio.sleep(0.01)
-        yield f"http://127.0.0.1:{port}"
+        yield f"http://127.0.0.1:{serving.port}"
     finally:
         fake.close()
-        server.should_exit = True
-        await serving
-        listener.close()
+        await serving.stop()
+        fake._serving = None
