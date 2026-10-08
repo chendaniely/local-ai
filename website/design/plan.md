@@ -940,7 +940,11 @@ it. A cold load looks like a slow first token; 2b's menu bar will show *loading*
 `sendLoadingState` stays off.
 
 **Refusals, in the client.** Each is one sentence a person reads, then the numbers, then one next
-step. The code stays in the error's `code` field, for programs; Dan never has to read it. The
+step. The code stays in the error's `code` field, for programs; Dan never has to read it. *(Added
+2026-10-07, at the implementation plan's Task 7, from its rulings: the body is OpenAI's error
+shape, `{"error": {"message": …, "code": …}}`, with only those two in `error` and never a `detail`,
+and `retry_after_s` beside `error` where the code has one, since pi shows every key of `error` and
+the web UI shows a `detail` in place of the message: *The front and the gate*'s check, above.)* The
 examples share one moment: the residents loaded, the coder not, and a 32 GiB python job of Dan's
 running, so 48 GiB is available and 18 GiB is free for a load (48 − 24 − 6 owed, or
 117 − 43 − 24 − 32; rule 9). The brake fired at 03:12 while the coder was loading, so the coder
@@ -995,7 +999,11 @@ is a one-line edit and `make apply`. `spark render` writes the gate's, the brake
 notifier's settings from that list, and ~~the table below is generated from it~~ a table generated
 from it lives at `website/reference/notifications.md` (the controller's ruling), as the Stack page
 is from `versions.yaml`; the table below is the design's, written by hand (corrected 2026-10-07,
-after the implementation plan's forward-and-back council). In `stack/models.yaml`, an excerpt (the
+after the implementation plan's forward-and-back council). *(Added 2026-10-07, at the
+implementation plan's Task 7, the controller's ruling: [the Notifications
+page](../reference/notifications.md) is built and kept current: `make docs` writes it, and a test
+fails while it is stale. CI checks it too from the implementation plan's Task 52,
+the next step on the Mac.)* In `stack/models.yaml`, an excerpt (the
 registry lists all twenty):
 
 ```yaml
@@ -1027,6 +1035,21 @@ notifications:
 | `waiting` | low | a request started waiting for memory, the brake, the load slot, or Dan (`footprint_suspect`) | *Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a load.* |
 | `pin_ended` | low | a pin's time ran out | *The pin on the coder ended at 18:00; it unloads after 60 min idle.* |
 | `memory_warning` | low | available memory fell under the warn line, 28 GiB (rule 5's warning), once per fall | *Memory is getting low on brightroar: 27.4 GiB available, under the 28 GiB warning line. The brake acts at 20.* |
+
+*(Added 2026-10-07, at the implementation plan's Task 7, the controller's rulings.)* `refused`
+words every code it carries for Dan's phone, as *Refused <model> for <key>: <why>. <Dan's step,
+where there is one>.*, the `no_fit` example above among them: for `agent`'s `no_fit` with Dan's
+hold counted, *Refused the coder for agent: needs 41 GiB, 12 free for a load while make-room holds
+70 GiB for you. On the Spark, `spark make-room --done` ends the hold.* Its holders are the
+processes outside the stack, since the loaded models are no news. A burst goes as one on the
+refusal's own type, so it keeps that type's priority; one that never got as far as a load
+(`model_not_found`, `too_many_requests`, `route_not_served`, `concurrency_limit`) reads *Refused …*,
+not *Didn't load …*. `resident_waiting` says when the model was to
+reload: *after the hold ended*, *at boot*, *after the brake's release*, *after make apply's
+restart*, *after the model service restarted* or *after it stopped outside the gate*. `brake_fired`
+names each model it unloaded in its state, *loading*, *idle* or *answering*. A model name a client
+sent reaches the lock screen only when it reads as one. The variants the table above doesn't give
+are worded in `spark/src/spark/messages.py`, each in its tests.
 
 The failure notifier's four `*_down` types keep its rules (*The front and the gate*): it sends the
 unit, its result and the time, worded as above, never a journal line. 2b adds the watchdog's
@@ -1120,6 +1143,14 @@ not loaded): `spark make-room 41G` unloads Gemma, leaving 50 GiB free for a load
 for Dan; his retry loads the coder into it, and the hold shrinks to the 9 GiB the coder didn't
 need from it. `--done` ends that, and Gemma, which needs 32 GiB with 9 free for a load, waits
 (`resident_waiting`) until the python job ends.
+
+*(Added 2026-10-07, at the implementation plan's Task 7, the controller's rulings.)* A row of
+make-room's list also marks a pin, a session and the requests in flight, with how long the oldest
+has run, as rule 4 says: *… loads when asked · pinned · session: agent's pi · idle 12 min*, *…
+always loaded · the web UI and photos use it · 1 request in flight for 3 min*. Asked for more than
+unloading everything frees, the list ends at its rows, and the question is *Unloading everything
+leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]*. `make apply`'s question names
+the deadline it was given, so a drill's shorter one reads true.
 
 ### Speech
 
@@ -3037,6 +3068,17 @@ Each item gets its own design pass when its turn comes.
     works.
   - Clauses that today's corrections replaced are struck through: rule 4's make-room count, among
     them.
+- **2026-10-07** — Phase 2a's Task 7, the controller's rulings: every notification and
+  confirmation in Dan's words. Dated notes are in *What you see in Phase 2a*, and in the
+  implementation plan's Task 7, the tasks that send or print its words (14, 15, 17, 19, 23, 26, 30
+  and 32) and its *Deferred notes for implementers*.
+  - The generated [Notifications page](../reference/notifications.md) is built; `make docs` writes
+    it, and a test fails while it is stale. CI's check comes with the next Mac step.
+  - A refusal's body carries only `message` and `code` in `error`, as the check of pi and Open WebUI
+    found.
+  - `refused` words every code it carries for Dan's phone, from the refusal's own moment; a burst
+    keeps its refusal's type; `resident_waiting` says when the model was to reload; the brake names
+    each model's state; make-room's list marks pins, sessions and requests in flight.
 
 ## Sources
 

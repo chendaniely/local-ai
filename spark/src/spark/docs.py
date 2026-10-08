@@ -10,10 +10,16 @@ from pathlib import Path
 
 import yaml as _yaml
 
+from spark import messages
+from spark.registry import NOTIFICATION_TYPES, Registry, load_registry
 from spark.versions import load_versions, render_stack_page
 
 VERSIONS = Path("stack/versions.yaml")
 STACK_PAGE = Path("website/reference/stack.md")
+REGISTRY_FILE = Path("stack/models.yaml")
+NOTIFICATIONS_PAGE = Path("website/reference/notifications.md")
+# The four the failure notifier sends: its unit carries their priorities, written by install-units (Task 25).
+NOTIFIER_TYPES = ("gate_down", "front_down", "llama_swap_down", "brake_down")
 SCENARIOS = Path("website/scenarios")
 STATUSES = {"planned", "built", "verified"}
 _NAME = _re.compile(r"^s(\d{2})-[a-z0-9-]+\.md$")
@@ -63,6 +69,45 @@ def check_scenarios(directory: Path) -> list[str]:
     return problems
 
 
+def render_notifications_page(registry: Registry) -> str:
+    """The Notifications page: every type, in NOTIFICATION_TYPES' order, with the registry's priority, and its *When*
+    and *Example* from messages.NOTIFICATION_DOC."""
+    rows = []
+    for kind in NOTIFICATION_TYPES:
+        when, example = messages.NOTIFICATION_DOC[kind]
+        rows.append(f"| `{kind}` | {registry.notifications[kind]} | {_cell(when)} | {_cell(example)} |")
+    four = ", ".join(f"`{kind}`" for kind in NOTIFIER_TYPES[:-1]) + f" or `{NOTIFIER_TYPES[-1]}`"
+    return "\n".join([
+        "---",
+        'title: "Notifications"',
+        'description: "Every notification type on Dan\'s phone, with its priority."',
+        "---",
+        "",
+        "This page is generated from `stack/models.yaml` by `spark docs notifications --write`. Edit that",
+        "file, not this one.",
+        "",
+        "Phase 2a's gate, brake and failure notifier send these to Dan's phone, through ntfy, once they are",
+        "deployed (Task 38 of the [implementation plan](../design/phase-2a.md)). Each type's priority is",
+        "`high`, `default` or `low`, or `off`, which sends none; changing one is a one-line edit in that",
+        "file's `notifications` section, then `make apply`. The examples share the moments of the plan's",
+        "[*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a).",
+        "",
+        "| Type | Priority | When | Example |",
+        "|---|---|---|---|",
+        *rows,
+        "",
+        f"A change to the priority of {four}",
+        "needs `make install-units` after `make apply`, since the failure notifier's unit carries those",
+        "four (Task 25 of the implementation plan).",
+        "",
+    ])
+
+
+def _cell(text: str) -> str:
+    """Text for a table cell: a `|` would end the cell."""
+    return text.replace("|", "\\|")
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser("docs", help="generate and check docs pages")
     sub = p.add_subparsers(dest="docs_command", required=True)
@@ -71,6 +116,11 @@ def register(subparsers) -> None:
     mode.add_argument("--write", action="store_true")
     mode.add_argument("--check", action="store_true")
     stack.set_defaults(func=run_stack)
+    notifications = sub.add_parser("notifications", help="the Notifications page from stack/models.yaml")
+    mode = notifications.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--write", action="store_true")
+    mode.add_argument("--check", action="store_true")
+    notifications.set_defaults(func=run_notifications)
     check = sub.add_parser("check-scenarios", help="validate website/scenarios/*.md front matter")
     check.set_defaults(func=run_check_scenarios)
 
@@ -83,6 +133,19 @@ def run_stack(args: argparse.Namespace) -> int:
         return 0
     if not STACK_PAGE.exists() or STACK_PAGE.read_text() != page:
         print("docs: website/reference/stack.md is stale — run `make docs`", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_notifications(args: argparse.Namespace) -> int:
+    page = render_notifications_page(load_registry(REGISTRY_FILE))
+    if args.write:
+        NOTIFICATIONS_PAGE.parent.mkdir(parents=True, exist_ok=True)
+        NOTIFICATIONS_PAGE.write_text(page)
+        return 0
+    if not NOTIFICATIONS_PAGE.exists() or NOTIFICATIONS_PAGE.read_text() != page:
+        print(f"docs: {NOTIFICATIONS_PAGE} is stale — run `make docs`, or `spark docs notifications --write`",
+              file=sys.stderr)
         return 1
     return 0
 

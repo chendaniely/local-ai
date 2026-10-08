@@ -1,8 +1,10 @@
-"""The refusals in Dan's words (website/design/plan.md, *What you see in Phase 2a*), each with its status and headers:
-what pi and the web UI show when the gate or the front says no."""
+"""Dan's words (website/design/plan.md, *What you see in Phase 2a*): the refusals, each with its status and headers,
+what pi and the web UI show when the gate or the front says no; the notifications on his phone; and what each command
+says in the terminal."""
 
 import json
 import re
+import socket
 import subprocess
 import sys
 import textwrap
@@ -10,11 +12,17 @@ import time
 from dataclasses import MISSING, fields, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
+from spark import messages
+from spark.budget import Candidate
 from spark.messages import (CODES_409, CODES_503, FRONT_CODES, PI_RETRY_PATTERNS, RETRY_AFTER_S, UNKNOWN_KEY, Holder,
                             Moment, Refusal, duration, pi_retry_match, refusal)
+from spark.registry import NOTIFICATION_TYPES, load_registry
+
+STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 
 # The tests' own time zone, seven hours behind UTC: POSIX's TZ writes it "PDT+7", its sign the other way round.
 TZ = "PDT+7"
@@ -23,9 +31,11 @@ ZONE = timezone(timedelta(hours=-7))
 
 @pytest.fixture(autouse=True)
 def local_zone(monkeypatch):
-    """Every test here reads the clock in ZONE; the process gets its own zone back afterwards."""
+    """Every test here reads the clock in ZONE, on a box called brightroar (the notifications name it, by its short
+    name); the process gets its own zone and name back afterwards."""
     monkeypatch.setenv("TZ", TZ)
     time.tzset()
+    monkeypatch.setattr(socket, "gethostname", lambda: "brightroar.local")
     yield
     monkeypatch.undo()
     time.tzset()
@@ -633,3 +643,615 @@ def test_messages_imports_no_more_than_the_registry(tmp_path):
 
 def test_the_unknown_key_text_is_the_rulings():
     assert UNKNOWN_KEY == "That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine."
+
+
+# The notifications, on Dan's phone (plan.md, *Notifications, on the phone*), and what each command says (*Each command
+# says what it did, and how to undo it*). The stack's registry gives each type's priority, the warn line and the labels.
+REGISTRY = load_registry(STACK_REGISTRY)
+
+
+def at(hour: int, minute: int) -> datetime:
+    """A moment on the examples' day, in the tests' zone."""
+    return datetime(2026, 10, 7, hour, minute, tzinfo=ZONE)
+
+
+def say(kind: str, **given) -> str:
+    return messages.notification(kind, REGISTRY, **given).message
+
+
+FIRED = {"at": AT_0312, "available_gib": 19.6, "line_gib": 20, "unloaded": [("the coder", "starting")]}
+DOWN = {"at": at(9, 14), "result_words": "it crashed"}
+SUSPECT_FIELDS = {"model_label": "the coder", "key_label": "agent", "fired_at": AT_0312, "command": "coder"}
+FAILED_FIELDS = {"model_label": "the coder", "command": "coder", "engine_said": "failed to load model"}
+HOLD_ENDED = {"why": "--done", "unused_gib": 40, "total_gib": 40, "reloading": [], "next_label": "the coder"}
+WAITING = {"label": "the coder", "key_label": "pi on the Mac", "why": "memory", "wait_s": 30, "needed_gib": 41,
+           "free_gib": 18}
+BURST = {"model_label": "the coder", "key_label": "agent", "count": 4, "since": at(9, 12)}
+
+# plan.md's notification table, each row's Example with the inputs that give it (the fields as phase-2a.md's Task 7
+# gives them, with the controller's additions of 2026-10-07), and the follow-up and the variant it gives in full.
+NOTIFICATION_ROWS = [
+    ("brake_fired", FIRED,
+     "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; "
+     "new loads are paused. They resume by themselves after 5 min above 28 GiB available."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle"), ("the embeddings", "idle")], "follow_up": True},
+     "Brake, 03:13: also unloaded Gemma and the embeddings, both idle."),
+    ("brake_needs_release", {"fired_at": at(2, 58), "why": "reboot"},
+     "After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
+     "resumes them."),
+    ("gate_down", DOWN,
+     "The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads "
+     "are refused until it's back. On the Spark, `make doctor` shows what's wrong."),
+    ("front_down", DOWN,
+     "The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in "
+     "flight were cut off. On the Spark, `make doctor` shows what's wrong."),
+    ("llama_swap_down", {"at": at(9, 14)},
+     "The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are "
+     "refused. On the Spark, `make doctor` shows what's wrong."),
+    ("brake_down", DOWN,
+     "The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the "
+     "backstop. On the Spark, `make doctor` shows what's wrong."),
+    ("back_up", {"unit": "gate", "down_s": 12},
+     "The gate on brightroar has been running again for a minute, after 12 s down. New loads work again."),
+    ("refused", {"code": "no_fit", "moment": NO_FIT_DAN},
+     "Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free "
+     "space with `spark make-room 41G` on the Spark, then try again."),
+    ("footprint_suspect", SUSPECT_FIELDS,
+     "Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load coder` "
+     "allows it again; your own requests load it if it fits."),
+    ("load_failed", FAILED_FIELDS,
+     'The coder failed to load: the engine stopped with "failed to load model". On the Spark, `spark logs coder` '
+     "shows the engine's last lines."),
+    ("brake_released",
+     {"at": at(3, 40), "available_gib": 64, "reloaded": ["Gemma", "the embeddings"], "loading_label": "the coder"},
+     "Brake released at 03:40, 64 GiB available. Reloaded Gemma and the embeddings. The coder was loading when it "
+     "fired, so it loads again only when you ask."),
+    ("room_hold_ended", HOLD_ENDED,
+     "make-room's hold for you ended (`--done`), all 40 GiB of it unused. Nothing to reload: the coder loads on its "
+     "next request."),
+    ("room_hold_ended", {**HOLD_ENDED, "reloading": ["Gemma"], "next_label": None},
+     "make-room's hold for you ended (`--done`), all 40 GiB of it unused. Reloading Gemma."),
+    ("resident_waiting", {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "hold"},
+     "Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself once "
+     "there's room."),
+    ("apply_restarted",
+     {"at": at(14, 2), "reloaded": ["Gemma", "the embeddings", "whisper"], "on_demand": ["the coder"]},
+     "make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads on "
+     "its next request."),
+    ("load_started", {"label": "the coder", "key_label": "pi on the Mac", "last_s": 24},
+     "Loading the coder for pi on the Mac (24 s last time)…"),
+    ("loaded", {"label": "the coder", "seconds": 24}, "Loaded the coder in 24 s."),
+    ("unloaded", {"label": "the coder", "why": "idle", "idle_min": 60}, "Unloaded the coder after 60 min idle."),
+    ("waiting", WAITING,
+     "Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a load."),
+    ("pin_ended", {"label": "the coder", "at": at(18, 0), "idle_min": 60},
+     "The pin on the coder ended at 18:00; it unloads after 60 min idle."),
+    ("memory_warning", {"available_gib": 27.4, "warn_gib": 28, "brake_gib": 20},
+     "Memory is getting low on brightroar: 27.4 GiB available, under the 28 GiB warning line. The brake acts at 20."),
+]
+# The variants phase-2a.md and plan.md give in full elsewhere: the brake's own alert, the second brake within the hour,
+# and the burst (*One notification per event*).
+PLAN_VARIANTS = [
+    ("brake_fired", {**FIRED, "by_brake": True},
+     "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; "
+     "new loads are paused. They resume once the gate is back and memory has stayed above 28 GiB available for "
+     "5 min."),
+    ("brake_needs_release", {"fired_at": at(3, 50), "why": "again", "released_at": at(3, 40)},
+     "The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until "
+     "you release them: on the Spark, `make brake-release`."),
+    ("footprint_suspect", {**BURST, "code": "footprint_suspect"},
+     "Didn't load the coder for agent 4 more times since 09:12: same reason."),
+]
+
+
+def _plain(markdown: str) -> str:
+    return markdown.replace("*", "")
+
+
+@pytest.mark.parametrize("kind, given, text",
+                         [pytest.param(k, g, t, id=f"{k}-{i}") for i, (k, g, t) in enumerate(NOTIFICATION_ROWS)])
+def test_each_notification_reads_word_for_word(kind, given, text):
+    built = messages.notification(kind, REGISTRY, **given)
+    assert built.message == text
+    assert (built.type, built.priority) == (kind, REGISTRY.notifications[kind])
+    # The notifications page shows each example as the plan's table has it, so the page stays true to the words.
+    assert text in _plain(messages.NOTIFICATION_DOC[kind][1])
+
+
+@pytest.mark.parametrize("kind, given, text",
+                         [pytest.param(k, g, t, id=f"{k}-{i}") for i, (k, g, t) in enumerate(PLAN_VARIANTS)])
+def test_the_plans_other_variants_read_word_for_word(kind, given, text):
+    assert say(kind, **given) == text
+
+
+def test_notification_doc_has_each_type_once_with_its_when_and_example():
+    assert list(messages.NOTIFICATION_DOC) == list(NOTIFICATION_TYPES)
+    assert all(when and example for when, example in messages.NOTIFICATION_DOC.values())
+
+
+def test_a_load_failed_notification_quotes_the_engine_either_way():
+    # pi never sees a notification, so the engine's line is quoted even where the refusal leaves it out.
+    for line in ("CUDA error: operation timed out", "failed to load model"):
+        assert f'the engine stopped with "{line}".' in say("load_failed", **{**FAILED_FIELDS, "engine_said": line})
+    assert say("load_failed", **{**FAILED_FIELDS, "engine_said": "failed to load\nmodel\t"}) == NOTIFICATION_ROWS[10][2]
+
+
+def test_an_off_notification_sends_nothing():
+    off = replace(REGISTRY, notifications={**REGISTRY.notifications, "loaded": "off"})
+    assert messages.notification("loaded", off, label="the coder", seconds=24) is None
+    # A type that is off still checks its fields, so a caller's mistake shows while it is off too.
+    with pytest.raises(ValueError, match="^loaded's words need seconds"):
+        messages.notification("loaded", off, label="the coder")
+
+
+def test_each_refusal_sends_exactly_one_type():
+    assert messages.REFUSAL_NOTIFICATION == {"footprint_suspect": "footprint_suspect", "load_failed": "load_failed"}
+    sent = {code: messages.REFUSAL_NOTIFICATION.get(code, "refused") for code in EVERY_CODE}
+    assert sent == {**dict.fromkeys(EVERY_CODE, "refused"), "footprint_suspect": "footprint_suspect",
+                    "load_failed": "load_failed"}
+    # refused never words a refusal that has a type of its own, nor gate_down, which the failure notifier's alert says.
+    for code, moment in (("footprint_suspect", SUSPECT), ("load_failed", LOAD_FAILED), ("gate_down", Moment(**DAN))):
+        with pytest.raises(ValueError, match=f"^refused doesn't word {code}"):
+            say("refused", code=code, moment=moment)
+
+
+# Dan's phone gets every refusal in his own words: what was refused, for whom, why, and Dan's step where there is one.
+# The moments are Task 6's rows; agent's key words Dan's step for an agent's request.
+FRONT_DAN = {"key_label": "pi on the Mac", "words": "dan"}
+REFUSED_ROWS = [
+    ("no_fit, agent, Dan's hold counted", NO_FIT_AGENT,
+     "Refused the coder for agent: needs 41 GiB, 12 free for a load while make-room holds 70 GiB for you. On the "
+     "Spark, `spark make-room --done` ends the hold."),
+    ("no_fit, agent, Dan's job in the hold", NO_FIT_AGENT_CLAMPED,
+     "Refused the coder for agent: needs 41 GiB, nothing free for a load while make-room holds 70 GiB for you; "
+     "python3 (chendaniely) holds 70. On the Spark, `spark make-room --done` ends the hold."),
+    ("no_fit, agent, no hold", replace(NO_FIT_DAN, **AGENT),
+     "Refused the coder for agent: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. On the Spark, "
+     "`spark status` shows what's using memory."),
+    ("no_fit, two processes outside the stack",
+     replace(NO_FIT_DAN, holders=[PYTHON, Holder("srv (agent)", 8.4, False), GEMMA]),
+     "Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32 and srv "
+     "(agent) holds 8. Free space with `spark make-room 41G` on the Spark, then try again."),
+    ("no_fit, only models hold memory", replace(NO_FIT_DAN, holders=[GEMMA]),
+     "Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load. Free space with `spark make-room 41G` on "
+     "the Spark, then try again."),
+    ("no_fit, more than the box", replace(NO_FIT_DAN, needed_gib=500, holders=[]),
+     "Refused the coder for pi on the Mac: needs more than 400 GiB, 18 free for a load. The Spark can never free that "
+     "much."),
+    ("loading", LOADING,
+     "Refused the coder for pi on the Mac: the 30 s wait ran out while Gemma loads, since one model loads at a time. "
+     "Try again in a minute."),
+    ("loading, agent", replace(LOADING, **AGENT),
+     "Refused the coder for agent: the 10 min wait ran out while Gemma loads, since one model loads at a time."),
+    ("held_by_brake", HELD,
+     "Refused the coder for pi on the Mac: new loads are paused since memory ran low at 03:12 (19.6 GiB available). "
+     "They resume by themselves after 5 min above 28 GiB available, if what would reload fits; on the Spark, "
+     "`make brake-release` resumes them now."),
+    ("held_by_brake, waits for Dan, agent", replace(HELD, release_waits_for_dan=True, **AGENT),
+     "Refused the coder for agent: new loads are paused since memory ran low at 03:12 (19.6 GiB available), until you "
+     "release them: on the Spark, `make brake-release`."),
+    ("not_downloaded", NOT_DOWNLOADED,
+     "Refused the coder for pi on the Mac: it isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB)."),
+    ("restarting", Moment(**CODER, **DAN),
+     "Refused the coder for pi on the Mac: the 30 s wait ran out while the model service restarts for a configuration "
+     "change. Try again in a minute."),
+    ("restarting, agent", Moment(**CODER, **AGENT),
+     "Refused the coder for agent: the 10 min wait ran out while the model service restarts for a configuration "
+     "change."),
+    ("llama_swap_down, agent", Moment(**CODER, **AGENT),
+     "Refused the coder for agent: the model service isn't answering. On the Spark, `make doctor` shows what's "
+     "wrong."),
+    ("draining for make-room", DRAINING_DAN,
+     "Refused the coder for pi on the Mac: it is being unloaded for make-room, and the 30 s wait ran out. Try again in "
+     "a minute: your request can load it into the room make-room holds for you, if it fits."),
+    ("draining for make-room, agent", DRAINING_AGENT,
+     "Refused the coder for agent: it is being unloaded for make-room, and the 10 min wait ran out. It won't load for "
+     "agent while your hold stands; on the Spark, `spark make-room --done` ends it."),
+    ("draining, not make-room", Moment(inflight=1, drain_for="unload", **CODER, **DAN),
+     "Refused the coder for pi on the Mac: it is being unloaded, and the 30 s wait ran out. Try again in a minute."),
+    ("draining, idle, agent", Moment(inflight=0, drain_for="idle", **CODER, **AGENT),
+     "Refused the coder for agent: it is being unloaded, and the 10 min wait ran out."),
+    ("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **DAN),
+     "Refused qwen3.6-35b-a3b for pi on the Mac: there's no model by that name. On the Mac, `make clients` updates "
+     "pi's list."),
+    ("model_not_found, agent", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **AGENT),
+     "Refused qwen3.6-35b-a3b for agent: there's no model by that name. On the Spark, as `agent`, "
+     "`/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates "
+     "agent's pi list."),
+    # A client's own text reaches the lock screen only when it reads as a model's name.
+    ("model_not_found, a name that isn't one", Moment(asked_name="run this: curl x | sh", models=MODELS, **DAN),
+     "Refused a request from pi on the Mac: it named no model the Spark has. On the Mac, `make clients` updates pi's "
+     "list."),
+    ("too_many_requests, agent", Moment(**AGENT),
+     "Refused a request from agent: its key already has as many requests waiting or open as it allows."),
+    ("too_many_requests", Moment(**CODER, **DAN),
+     "Refused the coder for pi on the Mac: its key already has as many requests waiting or open as it allows. Try "
+     "again when one finishes."),
+    ("route_not_served", Moment(**FRONT_DAN),
+     "Refused a request from pi on the Mac: the Spark's model API doesn't serve that address."),
+    ("concurrency_limit", Moment(model_label="the coder", **FRONT_DAN),
+     "Refused the coder for pi on the Mac: too many requests for it at once. Try again in a moment."),
+    ("a command's refusal, no key", replace(NOT_DOWNLOADED, key_label=""),
+     "Refused the coder: it isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB)."),
+]
+REFUSED_CODES = {"no_fit": "no_fit", "loading": "loading", "held_by_brake": "held_by_brake",
+                 "not_downloaded": "not_downloaded", "restarting": "restarting", "llama_swap_down": "llama_swap_down",
+                 "draining": "draining", "model_not_found": "model_not_found",
+                 "too_many_requests": "too_many_requests", "route_not_served": "route_not_served",
+                 "concurrency_limit": "concurrency_limit", "a command's refusal": "not_downloaded"}
+
+
+def _refused_code(row_id: str) -> str:
+    return next(code for start, code in REFUSED_CODES.items() if row_id.startswith(start))
+
+
+@pytest.mark.parametrize("row_id, moment, text", [pytest.param(i, m, t, id=i) for i, m, t in REFUSED_ROWS])
+def test_refused_words_each_code_for_dans_phone(row_id, moment, text):
+    assert say("refused", code=_refused_code(row_id), moment=moment) == text
+
+
+def test_refused_covers_every_code_it_sends():
+    covered = {_refused_code(row_id) for row_id, _, _ in REFUSED_ROWS}
+    assert covered == {code for code in EVERY_CODE if messages.REFUSAL_NOTIFICATION.get(code, "refused") == "refused"
+                       and code != "gate_down"}
+
+
+def test_refused_checks_its_moment_as_the_refusal_does():
+    with pytest.raises(ValueError, match="^no_fit's words need free_gib"):
+        say("refused", code="no_fit", moment=replace(NO_FIT_DAN, free_gib=None))
+
+
+def test_a_burst_goes_as_one_with_its_count_on_its_own_type():
+    # The first refusal goes at once; the repeats within 10 minutes go as one (plan.md, *One notification per event*),
+    # on the refusal's own type, so each keeps its priority and its off.
+    assert say("refused", **BURST, code="no_fit") == (
+        "Didn't load the coder for agent 4 more times since 09:12: same reason.")
+    assert say("load_failed", **BURST, code="load_failed") == (
+        "Didn't load the coder for agent 4 more times since 09:12: same reason.")
+    assert say("refused", **{**BURST, "count": 1}, code="no_fit") == (
+        "Didn't load the coder for agent 1 more time since 09:12: same reason.")
+    # A refusal that never got as far as a load (no such model, a key's cap, an address) reads as refused.
+    assert say("refused", **BURST, code="too_many_requests") == (
+        "Refused the coder for agent 4 more times since 09:12: same reason.")
+    assert say("refused", **{**BURST, "model_label": ""}, code="route_not_served") == (
+        "Refused agent 4 more times since 09:12: same reason.")
+    with pytest.raises(ValueError, match="^footprint_suspect's burst is for footprint_suspect, not no_fit"):
+        say("footprint_suspect", **BURST, code="no_fit")
+    with pytest.raises(ValueError, match="^refused's words need count to be 1 or more"):
+        say("refused", **{**BURST, "count": 0}, code="no_fit")
+
+
+# The notifications the plan doesn't word, composed by its rules (the role first, whole GiB, the 24-hour clock, never
+# a negative number, where to act and the command), each with the inputs that give it.
+COMPOSED = [
+    ("brake_fired", {**FIRED, "unloaded": [("the coder", "starting"), ("Gemma", "idle"), ("whisper", "answering")]},
+     "Unloaded the coder (loading), Gemma (idle) and whisper (answering); new loads are paused."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle"), ("the embeddings", "idle"), ("whisper", "idle")],
+                     "follow_up": True},
+     "Brake, 03:13: also unloaded Gemma, the embeddings and whisper, all idle."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle")], "follow_up": True},
+     "Brake, 03:13: also unloaded Gemma, which was idle."),
+    ("brake_fired", {**FIRED, "unloaded": [("Gemma", None)]}, "Unloaded Gemma; new loads are paused."),
+    # A drill's raised line is worded as itself, and the release time is the gate's.
+    ("brake_fired", {**FIRED, "available_gib": 52.3, "line_gib": 56, "release_after_s": 600},
+     "52.3 GiB available, under the 56 GiB line. Unloaded the coder, which was loading; new loads are paused. They "
+     "resume by themselves after 10 min above 28 GiB available."),
+    ("brake_down", {**DOWN, "result_words": "it stopped answering"},
+     "The memory brake on brightroar stopped at 09:14 (it stopped answering; it is restarting within 2 s)."),
+    ("llama_swap_down", {**DOWN, "result_words": "it ran out of memory"},
+     "The model service on brightroar stopped at 09:14 (it ran out of memory; it is restarting). No model answers"),
+    ("back_up", {"unit": "front", "down_s": 90},
+     "The front on brightroar has been running again for a minute, after 1 min 30 s down. Requests go through again."),
+    ("back_up", {"unit": "llama-swap", "down_s": 5},
+     "The model service on brightroar has been running again for a minute, after 5 s down. Models answer again."),
+    ("back_up", {"unit": "brake", "down_s": 2},
+     "The memory brake on brightroar has been running again for a minute, after 2 s down. Memory is watched again."),
+    ("back_up", {"unit": "gate", "down_s": -3}, "after 0 s down."),
+    ("load_failed", {**FAILED_FIELDS, "engine_said": None, "deadline_s": 180},
+     "The coder failed to load: it didn't finish within 3 min. On the Spark, `spark logs coder` shows the engine's "
+     "last lines."),
+    ("load_failed", {**FAILED_FIELDS, "engine_said": " \n"},
+     "The coder failed to load: the engine stopped. On the Spark, `spark logs coder` shows the engine's last lines."),
+    ("brake_released", {"at": at(3, 40), "available_gib": 64.9, "reloaded": []},
+     "Brake released at 03:40, 64 GiB available. Nothing to reload."),
+    ("room_hold_ended", {**HOLD_ENDED, "why": "time", "unused_gib": 9, "total_gib": 41, "reloading": ["Gemma"]},
+     "make-room's hold for you ended (its time ran out), 9 of its 41 GiB unused. Reloading Gemma; the coder loads on "
+     "its next request."),
+    ("room_hold_ended", {**HOLD_ENDED, "why": "reboot", "unused_gib": 0.2, "reloading": [], "next_label": None},
+     "make-room's hold for you ended (the Spark rebooted), all of it used. Nothing to reload."),
+    ("room_hold_ended",
+     {**HOLD_ENDED, "why": "used", "unused_gib": 0, "reloading": ["Gemma", "the embeddings"], "next_label": None},
+     "make-room's hold for you ended: your own loads used it up. Reloading Gemma, then the embeddings."),
+    ("resident_waiting", {"label": "the embeddings", "needed_gib": 7.5, "free_gib": 0.6, "after": "boot"},
+     "The embeddings didn't fit at boot: it needs 8 GiB, and nothing is free for a load. It loads by itself once "
+     "there's room."),
+    ("resident_waiting", {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "brake"},
+     "Gemma didn't fit after the brake's release:"),
+    ("resident_waiting", {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "apply"},
+     "Gemma didn't fit after make apply's restart:"),
+    ("resident_waiting", {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "restart"},
+     "Gemma didn't fit after the model service restarted:"),
+    ("resident_waiting", {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "crash"},
+     "Gemma didn't fit after it stopped outside the gate:"),
+    ("apply_restarted", {"at": at(14, 2), "reloaded": [], "on_demand": ["the coder", "Qwen"]},
+     "make apply restarted the model service at 14:02. The coder and Qwen load on their next request."),
+    ("apply_restarted", {"at": at(14, 2)}, "make apply restarted the model service at 14:02."),
+    ("load_started", {"label": "Gemma"}, "Loading Gemma…"),
+    ("unloaded", {"label": "the coder", "why": "make-room"}, "Unloaded the coder for make-room."),
+    ("unloaded", {"label": "the coder", "why": "unload"}, "Unloaded the coder, as `spark unload` asked."),
+    ("waiting", {**WAITING, "free_gib": -3}, "It needs 41 GiB, and nothing is free for a load."),
+    ("waiting", {**WAITING, "why": "brake", "needed_gib": None, "free_gib": None},
+     "Waiting while new loads are paused: the coder for pi on the Mac, up to 30 s. On the Spark, `make brake-release` "
+     "resumes them."),
+    ("waiting", {**WAITING, "why": "slot", "needed_gib": None, "free_gib": None},
+     "Waiting its turn to load: the coder for pi on the Mac, up to 30 s, since one model loads at a time."),
+    ("waiting", {**WAITING, "key_label": "agent", "why": "dan", "wait_s": 600, "needed_gib": None, "free_gib": None,
+                 "command": "coder"},
+     "Waiting for you: the coder for agent, up to 10 min. It was loading when the brake fired; on the Spark, "
+     "`spark load coder` allows it again."),
+    ("pin_ended", {"label": "Gemma", "at": at(18, 0)},
+     "The pin on Gemma ended at 18:00; it stays loaded, since it's always loaded."),
+    # Times can come as Unix seconds, as the gate keeps them: 21:14 UTC is 14:14 in the tests' zone.
+    ("pin_ended", {"label": "the coder", "at": datetime(2026, 10, 7, 21, 14, tzinfo=timezone.utc).timestamp(),
+                   "idle_min": 60}, "ended at 14:14;"),
+]
+
+
+@pytest.mark.parametrize("kind, given, text",
+                         [pytest.param(k, g, t, id=f"{k}-{i}") for i, (k, g, t) in enumerate(COMPOSED)])
+def test_each_composed_notification_reads_as_built(kind, given, text):
+    assert text in say(kind, **given)
+
+
+# What each notification type needs: a field left out, or None, an empty text or an empty list, is refused by name.
+NOTIFICATION_NEEDS = {
+    "brake_fired": (FIRED, ("at", "unloaded", "available_gib", "line_gib")),
+    "brake_needs_release": (PLAN_VARIANTS[1][1], ("fired_at", "why", "released_at")),
+    "gate_down": (DOWN, ("at",)),
+    "back_up": ({"unit": "gate", "down_s": 12}, ("unit", "down_s")),
+    "refused": ({"code": "no_fit", "moment": NO_FIT_DAN}, ("code", "moment")),
+    "footprint_suspect": (SUSPECT_FIELDS, ("model_label", "key_label", "fired_at", "command")),
+    "load_failed": (FAILED_FIELDS, ("model_label", "command")),
+    "brake_released": (NOTIFICATION_ROWS[11][1], ("at", "available_gib")),
+    "room_hold_ended": (HOLD_ENDED, ("why", "unused_gib", "total_gib")),
+    "resident_waiting": (NOTIFICATION_ROWS[14][1], ("label", "needed_gib", "free_gib", "after")),
+    "apply_restarted": (NOTIFICATION_ROWS[15][1], ("at",)),
+    "load_started": (NOTIFICATION_ROWS[16][1], ("label",)),
+    "loaded": (NOTIFICATION_ROWS[17][1], ("label", "seconds")),
+    "unloaded": (NOTIFICATION_ROWS[18][1], ("label", "why", "idle_min")),
+    "waiting": (WAITING, ("label", "key_label", "why", "wait_s", "needed_gib", "free_gib")),
+    "pin_ended": (NOTIFICATION_ROWS[20][1], ("label", "at")),
+    "memory_warning": (NOTIFICATION_ROWS[21][1], ("available_gib", "warn_gib", "brake_gib")),
+}
+
+
+@pytest.mark.parametrize("kind, name", [(k, n) for k, (_, names) in NOTIFICATION_NEEDS.items() for n in names])
+def test_each_notification_refuses_a_missing_field_by_name(kind, name):
+    given, _ = NOTIFICATION_NEEDS[kind]
+    with pytest.raises(ValueError, match=rf"^{kind}'s words need {name}\b"):
+        messages.notification(kind, REGISTRY, **{**given, name: None})
+    with pytest.raises(ValueError, match=rf"^{kind}'s words need {name}\b"):
+        messages.notification(kind, REGISTRY, **{k: v for k, v in given.items() if k != name})
+
+
+def test_a_field_needed_only_in_one_form_is_needed_there():
+    with pytest.raises(ValueError, match="^waiting's words need command"):
+        say("waiting", **{**WAITING, "why": "dan"})
+    assert say("brake_fired", **NOTIFICATION_ROWS[1][1]).startswith("Brake, 03:13:")  # a follow-up has no reading
+    assert say("unloaded", label="the coder", why="unload")  # only an idle unload names its minutes
+
+
+def test_a_field_a_type_doesnt_take_and_a_value_it_doesnt_know_are_refused():
+    with pytest.raises(ValueError, match="^loaded's words take no idle_min"):
+        say("loaded", label="the coder", seconds=24, idle_min=60)
+    with pytest.raises(ValueError, match="^'brake_on' isn't a notification type"):
+        say("brake_on", at=AT_0312)
+    for kind, given, name in (("back_up", {"unit": "web", "down_s": 1}, "unit"),
+                              ("unloaded", {"label": "the coder", "why": "brake"}, "why"),
+                              ("brake_fired", {**FIRED, "unloaded": [("Gemma", "busy")]}, "state"),
+                              ("resident_waiting", {**NOTIFICATION_ROWS[14][1], "after": "noon"}, "after"),
+                              ("room_hold_ended", {**HOLD_ENDED, "why": "done"}, "why")):
+        with pytest.raises(ValueError, match=rf"^{kind}'s {name} must be one of "):
+            say(kind, **given)
+
+
+def test_the_host_is_the_short_name_at_the_time(monkeypatch):
+    monkeypatch.setattr(socket, "gethostname", lambda: "otherbox")
+    assert say("gate_down", **DOWN).startswith("The gate on otherbox stopped at 09:14")
+
+
+# make-room's list: the residents and the coder loaded, nothing else running, 9 GiB free for a load (plan.md). The
+# plan's names: the coder is Qwen3.8-27B (Task 42), so the list's registry renames today's coder.
+CODER_MODEL = next(m for m in REGISTRY.models.values() if m.label == "the coder")
+PLAN_REGISTRY = replace(REGISTRY, models={**{n: m for n, m in REGISTRY.models.items() if m is not CODER_MODEL},
+                                          "qwen3.8-27b": replace(CODER_MODEL, name="qwen3.8-27b")})
+CANDIDATES = [
+    Candidate("qwen3.8-27b", "the coder", 41, False, False, None, 0, None, 12),
+    Candidate("gemma-4-26b-a4b", "Gemma", 32, True, False, None, 0, None, 1.5),
+    Candidate("qwen3-embedding-0.6b", "the embeddings", 8, True, False, None, 0, None, 30),
+    Candidate("whisper-large-v3-turbo", "whisper", 3, True, False, None, 0, None, 5),
+]
+ROOM_LIST = """\
+To make 40 GiB free for a load (9 GiB now):
+  1  the coder (qwen3.8-27b)      41 GiB  loads when asked · idle 12 min
+  2  Gemma (gemma-4-26b-a4b)      32 GiB  always loaded · the web UI and photos use it
+  3  the embeddings               8 GiB   always loaded
+  4  whisper                      3 GiB   always loaded
+Unloading 1 leaves 50 GiB free for a load. Unload 1? [y/N]"""
+
+
+def test_the_make_room_list_follows_its_rule():
+    assert messages.room_list(40, 9, CANDIDATES, ["qwen3.8-27b"], 50, registry=PLAN_REGISTRY) == ROOM_LIST
+    # Bracketed names on the chat models only: the coder and Gemma.
+    rows = ROOM_LIST.splitlines()[1:5]
+    assert [("(" in row) for row in rows] == [True, True, False, False]
+
+
+def test_the_make_room_list_marks_pins_sessions_and_requests_in_flight():
+    # plan.md's rule 4: pinned models and those a session holds included, each marked, with each one's requests in
+    # flight and how long they have run (Task 17's candidates).
+    marked = [replace(CANDIDATES[0], pinned=True, session="agent's pi"),
+              replace(CANDIDATES[1], inflight=1, oldest_s=180), *CANDIDATES[2:]]
+    rows = messages.room_list(40, 9, marked, ["qwen3.8-27b"], 50, registry=PLAN_REGISTRY).splitlines()
+    assert rows[1].endswith("41 GiB  loads when asked · pinned · session: agent's pi · idle 12 min")
+    assert rows[2].endswith("32 GiB  always loaded · the web UI and photos use it · 1 request in flight for 3 min")
+    two = messages.room_list(40, 9, [replace(CANDIDATES[0], inflight=2, oldest_s=75)], ["qwen3.8-27b"], 50,
+                             registry=PLAN_REGISTRY).splitlines()[1]
+    assert two.endswith("loads when asked · 2 requests in flight, the oldest for 1 min 15 s")  # in flight: not idle
+
+
+def test_the_make_room_list_for_more_or_less_than_it_needs():
+    both = messages.room_list(70, 9, CANDIDATES, ["qwen3.8-27b", "gemma-4-26b-a4b"], 82, registry=PLAN_REGISTRY)
+    assert both.splitlines()[-1] == "Unloading 1 and 2 leaves 82 GiB free for a load. Unload 1 and 2? [y/N]"
+    # Not enough even with everything: the list ends at its rows, and room_too_much asks the question.
+    short = messages.room_list(100, 9, CANDIDATES, [c.model for c in CANDIDATES], 93, registry=PLAN_REGISTRY)
+    assert short.splitlines()[-1].startswith("  4  whisper")
+    # Enough already: nothing to unload, and the hold is offered.
+    assert messages.room_list(5, 9, CANDIDATES, [], 9, registry=PLAN_REGISTRY).splitlines()[-1] == (
+        "Nothing needs to unload: 9 GiB is free for a load now. Hold 5 GiB of it for you? [y/N]")
+    # --all: everything, from nothing free for a load.
+    every = messages.room_list(None, 0.4, CANDIDATES, [c.model for c in CANDIDATES], 84.4, registry=PLAN_REGISTRY)
+    assert every.splitlines()[0] == "To unload everything (nothing free for a load now):"
+    assert every.splitlines()[-1] == ("Unloading 1, 2, 3 and 4 leaves 84 GiB free for a load. Unload 1, 2, 3 and 4? "
+                                      "[y/N]")
+    with pytest.raises(ValueError, match="'gpt-oss-120b' isn't on make-room's list"):
+        messages.room_list(40, 9, CANDIDATES, ["gpt-oss-120b"], 50, registry=PLAN_REGISTRY)
+
+
+NOW = at(10, 0)  # when the commands below run
+CONFIRMATIONS = [
+    ("loaded", "loaded", ("the coder", 24, 60, "coder"), {},
+     "Loaded the coder in 24 s. It unloads after 60 min idle; `spark pin coder` keeps it."),
+    ("unloading", "unloading", ("the coder", 1), {}, "Unloading the coder once its 1 request in flight finishes…"),
+    ("unloaded", "unloaded", ("the coder",), {}, "Unloaded the coder."),
+    ("pinned", "pinned", ("the coder", at(18, 0), 24, "coder"), {"now": NOW},
+     "The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin."),
+    ("unpinned", "unpinned", ("the coder", 60), {}, "The pin on the coder ended; it unloads after 60 min idle."),
+    ("make-room 40G", "room_held", (["the coder"], 50, 40, None), {},
+     "Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` "
+     "or a reboot; your own requests can load into it, agent's and automatic reloads can't."),
+    ("make-room 70G, too much", "room_too_much", (70, 61), {},
+     "Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]"),
+    ("make-room --all", "room_all", (), {},
+     "Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests "
+     "can load into it."),
+    ("make-room --done", "room_done", (40, 40, [], "the coder"), {},
+     "Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request."),
+    ("make-room --done, reloading", "room_done", (40, 40, ["Gemma"], None), {},
+     "Hold ended, all 40 GiB of it unused. Reloading Gemma."),
+    ("make brake-release", "brake_released_by_dan", (["Gemma", "the embeddings"],), {},
+     "New loads resume. Reloading Gemma, then the embeddings…"),
+    ("make apply, waiting", "apply_waiting", ("the coder", 20, 60), {},
+     "Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C leaves "
+     "everything as it was; `make apply-now` restarts now."),
+    ("make apply, no quiet minute", "apply_no_quiet", (2,), {},
+     "No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight finish? [y/N]"),
+    ("make apply-now", "apply_now_confirm", (["pi on the Mac", "agent"],), {},
+     "This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent). Continue? "
+     "[y/N]"),
+]
+
+
+@pytest.mark.parametrize("function, args, kwargs, text",
+                         [pytest.param(f, a, k, t, id=i) for i, f, a, k, t in CONFIRMATIONS])
+def test_each_confirmation_reads_word_for_word(function, args, kwargs, text):
+    assert getattr(messages, function)(*args, **kwargs) == text
+
+
+def test_make_brake_release_says_so_when_the_gate_isnt_answering():
+    assert messages.BRAKE_RELEASED_WITHOUT_GATE == (
+        "The gate isn't answering, so the hold file was removed directly; nothing reloads until the gate is back.")
+
+
+COMPOSED_CONFIRMATIONS = [
+    ("loaded", ("Gemma", 20, None, "gemma"), {}, "Loaded Gemma in 20 s. It stays loaded, since it's always loaded."),
+    ("loaded", ("the coder", None, 60, "coder"), {},
+     "The coder is already loaded. It unloads after 60 min idle; `spark pin coder` keeps it."),
+    ("unloading", ("the coder", 0), {}, "Unloading the coder…"),
+    ("unloading", ("the coder", 2), {}, "Unloading the coder once its 2 requests in flight finish…"),
+    ("pinned", ("the coder", None, None, "coder"), {"now": NOW},
+     "The coder stays loaded, with no end set. `spark unpin coder` ends the pin."),
+    # A pin's end more than a day away names its day.
+    ("pinned", ("the coder", at(18, 0) + timedelta(days=2), None, "coder"), {"now": NOW},
+     "The coder stays loaded until Fri 9 Oct, 18:00. `spark unpin coder` ends the pin."),
+    ("pinned", ("the coder", at(8, 0) + timedelta(days=1), 24, "coder"), {"now": at(22, 0)},
+     "The coder stays loaded until 08:00 (loaded it first, 24 s)."),
+    ("unpinned", ("Gemma", None), {}, "The pin on Gemma ended; it stays loaded, since it's always loaded."),
+    ("room_held", (["the coder", "Gemma"], 82, 70, at(18, 0)), {"now": NOW},
+     "Unloaded the coder and Gemma. 82 GiB is free for a load, and 70 GiB of it is held for you until 18:00, "
+     "`spark make-room --done` or a reboot;"),
+    ("room_held", ([], 50, 40, None), {}, "Nothing needed to unload. 50 GiB is free for a load,"),
+    ("room_too_much", (70, 0.4), {}, "Unloading everything leaves nothing free for a load, not 70."),
+    ("room_done", (9, 41, ["Gemma"], "the coder"), {},
+     "Hold ended, 9 of its 41 GiB unused. Reloading Gemma; the coder loads on its next request."),
+    ("room_done", (0, 41, [], None), {}, "Hold ended, all of it used. Nothing to reload."),
+    ("brake_released_by_dan", ([],), {}, "New loads resume. Nothing to reload."),
+    ("apply_waiting", ("the coder", 0, 60), {}, "Waiting for a quiet moment: the coder is answering now, and"),
+    ("apply_waiting", (None, 12, 60), {}, "Waiting for a quiet moment: the last request finished 12 s ago, and"),
+    # A drill shortens apply's deadline (Task 32's --deadline-s): the words name the one it was given.
+    ("apply_no_quiet", (1,), {"deadline_s": 120},
+     "No quiet minute in 2 minutes. Drain now, holding new requests while the 1 in flight finishes? [y/N]"),
+    ("apply_no_quiet", (0,), {}, "No quiet minute in 15 minutes. Drain now, holding new requests? [y/N]"),
+    ("apply_now_confirm", (["agent"],), {},
+     "This restarts the model service now and cuts off the 1 request in flight (agent). Continue? [y/N]"),
+    ("apply_now_confirm", ([],), {}, "This restarts the model service now; nothing is in flight. Continue? [y/N]"),
+]
+
+
+@pytest.mark.parametrize("function, args, kwargs, text",
+                         [pytest.param(f, a, k, t, id=f"{f}-{i}") for i, (f, a, k, t) in
+                          enumerate(COMPOSED_CONFIRMATIONS)])
+def test_each_composed_confirmation_reads_as_built(function, args, kwargs, text):
+    assert text in getattr(messages, function)(*args, **kwargs)
+
+
+def _every_text() -> list[tuple[str, str]]:
+    """Every refusal, notification and confirmation these tests build, by what built it."""
+    texts = [(f"refusal {code}", refusal(code, moment).message) for _, code, moment, _ in EVERY_ROW]
+    for kind, given, _ in NOTIFICATION_ROWS + PLAN_VARIANTS + COMPOSED:
+        texts.append((f"notification {kind}", say(kind, **given)))
+    for row_id, moment, _ in REFUSED_ROWS:
+        texts.append((f"notification refused, {row_id}", say("refused", code=_refused_code(row_id), moment=moment)))
+    for _, function, args, kwargs, _ in CONFIRMATIONS:
+        texts.append((f"confirmation {function}", getattr(messages, function)(*args, **kwargs)))
+    for function, args, kwargs, _ in COMPOSED_CONFIRMATIONS:
+        texts.append((f"confirmation {function}", getattr(messages, function)(*args, **kwargs)))
+    texts.append(("confirmation room_list", messages.room_list(40, 9, CANDIDATES, ["qwen3.8-27b"], 50,
+                                                               registry=PLAN_REGISTRY)))
+    texts.append(("confirmation brake release without the gate", messages.BRAKE_RELEASED_WITHOUT_GATE))
+    return texts
+
+
+# "free" as a word: as an adjective only in "free for a load" (plan.md, *Two numbers, two words*); as a verb,
+# make-room's action, only in the phrases the plan's and Task 6's own words use (the controller's ruling, 2026-10-07).
+FREE_ALLOWED = re.compile(r"free for a load|Free space with `spark make-room|Only Dan can free memory for it"
+                          r"|The Spark can never free that much|Free \d+ and hold it\?")
+
+
+def test_no_message_says_free_alone():
+    checked = 0
+    for source, text in _every_text():
+        assert not re.search(r"\bfree\b", FREE_ALLOWED.sub("", text), re.IGNORECASE), (source, text)
+        checked += 1
+    assert checked == (len(EVERY_ROW) + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED) + len(REFUSED_ROWS)
+                       + len(CONFIRMATIONS) + len(COMPOSED_CONFIRMATIONS) + 2)
+    # The test can fail: "free" alone, and a verb phrase outside the allowance.
+    assert re.search(r"\bfree\b", FREE_ALLOWED.sub("", "18 GiB free now"), re.IGNORECASE)
+    assert re.search(r"\bfree\b", FREE_ALLOWED.sub("", "Free 61 GiB"), re.IGNORECASE)
+
+
+# Every model's registry name, today's and the plan's: refusals and notifications name models by their labels.
+NAMES = {name for _, name in MODELS} | set(REGISTRY.models)
+
+
+def test_models_are_named_by_label():
+    checked = 0
+    for source, text in _every_text():
+        if source.startswith("confirmation") or "model_not_found" in source:
+            continue  # make-room's list brackets the chat models' names; model_not_found lists them, and the asked one
+        assert not any(name in text for name in NAMES), (source, text)
+        checked += 1
+    # Every refusal row but model_not_found's two, and every refused row but its three.
+    assert checked == (len(EVERY_ROW) - 2 + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED)
+                       + len(REFUSED_ROWS) - 3)
+    assert any(name in say("refused", code="model_not_found", moment=REFUSED_ROWS[18][1]) for name in NAMES)

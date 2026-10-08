@@ -100,5 +100,7 @@ def test_the_commands_the_units_and_the_makefile_run_are_registered():
                  ["clients", "pi", "--write"], ["doctor"],
                  # make brake-release, and the Makefile's Phase 0 commands: make hooks, and make docs (Task 10's R5).
                  ["brake", "--release"], ["leakcheck", "--message", "/dev/null"], ["docs", "stack", "--write"],
-                 ["docs", "check-scenarios"]):
+                 ["docs", "check-scenarios"],
+                 # make docs writes the notifications page too (Task 7, the controller's ruling).
+                 ["docs", "notifications", "--write"]):
         assert callable(parser.parse_args(argv).func), argv
