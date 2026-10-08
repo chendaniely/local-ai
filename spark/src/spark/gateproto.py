@@ -32,7 +32,9 @@ PING_EVERY_S = 1.0  # /v1/front/events sends {op: "ping", at} this often
 # The front counts the gate down once its events call has dropped and a new one hasn't been answered within this, and
 # only then refuses new loads with gate_down.
 GATE_DOWN_AFTER_S = 5.0
-DRAIN_GRACE_S = 30.0  # a drain not done this long after the front's "drained" goes back to serving
+# Past UNLOAD_CALL_TIMEOUT_S: a drain not done this long after "drained", its model no longer stopping, goes back
+# to serving; never while /running shows the model stopping (phase-2a.md, Task 16).
+DRAIN_GRACE_S = 90.0
 QUIET_S = 60  # make apply waits until no request has been in flight this long, by the front's counts
 APPLY_DEADLINE_S = 900  # make apply's wait for quiet lasts at most this, then it offers "drain now"
 ACTIVITY_EVERY_S = 1.0  # the gate writes its activity record, which the brake reads, this often

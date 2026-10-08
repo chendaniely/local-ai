@@ -1813,7 +1813,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
 - `gateproto` — the gate's constants (the Global Constraints' values, and this plan's
   `GRACEFUL_S = 20` and `LLAMA_SWAP_HUNG_S = 10`): `MAX_REQUEST_BYTES =
   65536`, `REQUEST_TIMEOUT_S = 5.0`, `LOAD_CALL_TIMEOUT_S = 200.0`, `PING_EVERY_S = 1.0`,
-  `GATE_DOWN_AFTER_S = 5.0`, `DRAIN_GRACE_S = 30.0`, `QUIET_S = 60`, `APPLY_DEADLINE_S = 900`,
+  `GATE_DOWN_AFTER_S = 5.0`, `DRAIN_GRACE_S = ~~30.0~~ 90.0` *(2026-10-08: past the unload's 60 s, Task 16's note)*, `QUIET_S = 60`, `APPLY_DEADLINE_S = 900`,
   `ACTIVITY_EVERY_S = 1.0`, `ACTIVITY_STALE_S = 3.0`, `SESSIONS_PER_UID = 8`, `SESSION_TTL_S =
   43200`, `REFUSAL_HISTORY = 50`, `NTFY_TIMEOUT_S = 5.0`, `BURST_WINDOW_S = 600`,
   `BACK_UP_AFTER_S = 60`, `RELEASE_AFTER_S = 300`, `AUTO_RELEASE_EVERY_S = 3600`,
@@ -2844,8 +2844,17 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   `llama_swap_down`: v257 still answers `/running` during a stop, since it reads the states outside
   its run loop (`internal/router/base.go:366-376`). On a timeout the gate re-reads `/running`, and
   the model stays counted as `stopping`, its memory not freed, until `/running` shows it gone.
-  `llama_swap_down` comes only from `/running` itself. How this meets `DRAIN_GRACE_S`, which is
-  shorter than the unload's bound, is for the controller to settle before this task.
+  `llama_swap_down` comes only from `/running` itself. ~~How this meets `DRAIN_GRACE_S`, which is
+  shorter than the unload's bound, is for the controller to settle before this task.~~ *(Settled
+  2026-10-08, the controller's ruling, after Task 12's fix round:)* the gate never sends
+  `undrain` while `/running` shows the model `stopping`: a drain whose unload has begun ends
+  only once `/running` shows the model gone (then `unloaded`) or back to ready (then `undrain`),
+  and `DRAIN_GRACE_S` goes from 30 to 90 s, past the unload's 60 s bound, so it ends only a
+  drain whose unload never answered and whose model `/running` no longer lists as stopping.
+  Undrained early, a request would reach llama-swap for a stopping model, which v257 holds and
+  then starts again; Task 11's tickets refuse that start, so it costs the request, not memory,
+  but the request would fail for no reason Dan could see. A test: an unload that times out
+  with `/running` showing `stopping` for 100 s sends no `undrain` until it shows the model gone.
 - `idle_due(now, state, registry, snapshot, live: Callable[[Session], bool]) -> list[str]` —
   on-demand models with no request in flight, no live session and no pin, idle at least
   `idle_unload_min`; residents never. The gate drains each, then emits `unloaded` (*after 60 min
