@@ -1664,6 +1664,12 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
 - `test_peer_cred_refuses_off_linux` — with `sys.platform` patched to `darwin`,
   `make_protocol(peer_cred=True)` raises, naming `SO_PEERCRED`.
 - `test_a_tcp_request_carries_no_peer_cred` — the same app over TCP answers `none`.
+- `test_forwarded_headers_change_nothing` — through `run_servers`, an app that answers its
+  `scope["client"]` and `scope["scheme"]`, sent `X-Forwarded-For: 203.0.113.9` and
+  `X-Forwarded-Proto: https` from 127.0.0.1 → it still sees 127.0.0.1 over http. Seen failing
+  first with uvicorn's default, which trusts those headers from loopback. *(Added 2026-10-07, at
+  Task 3, the controller's ruling: pins `proxy_headers=False`, so no local process, `agent`'s
+  included, can make the front or the gate see a forged address or scheme.)*
 - `test_a_connection_that_never_sends_its_headers_is_closed` — `header_timeout_s=0.5`; a raw
   client sends `GET / HTTP/1.1\r\n` and nothing more: the server closes the connection within 2 s.
 - `test_a_request_that_sends_its_headers_in_time_is_served` — the same timeout, headers sent at
