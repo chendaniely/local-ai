@@ -485,10 +485,10 @@ model, over a call the front keeps open on the status socket, a Unix socket, so 
 answer for the front. The front, under one lock, checks the model's in-flight count and marks it
 draining, so new requests for it wait, as they would for a load; it answers "drained" once the count
 reaches 0. The gate then unloads it and tells the front, whose waiting requests go through
-admission like any other. A drain the gate doesn't finish within ~~30 s~~ 90 s goes back to serving,
-and so does every drain if the front's call to the gate drops. `spark status` shows each model's
-oldest request in flight, so a count that leaked would show. *(Corrected 2026-10-07, after the
-re-review: the ~~30 s~~ 90 s run from the front's "drained", not from the start of the drain, which
+admission like any other. ~~A drain the gate doesn't finish within~~ ~~30 s~~ ~~90 s goes back to
+serving, and so does every drain if the front's call to the gate drops.~~ `spark status` shows each
+model's oldest request in flight, so a count that leaked would show. *(Corrected 2026-10-07, after
+the re-review: the ~~30 s~~ 90 s run from the front's "drained", not from the start of the drain, which
 waits as long as the requests in flight take, as rule 4 promises. A request that arrives for a
 draining model and outlasts its key's wait is refused with `draining`.)* *(Corrected 2026-10-08, at
 the implementation plan's Task 12 re-review, the controller's ruling: v257 never takes back an
@@ -496,11 +496,23 @@ unload it has taken, and a stopping model never returns to ready. So the grace, 
 drain whose unload was never sent. Once the unload is sent, the drain ends only when `/running`
 shows the model gone, and the gate never sends it back to serving, since a request let through then
 would wait in llama-swap behind the stop, or be cut by it. A drop of the front's call ends, on the
-gate's side, only a drain whose unload wasn't sent. The front still undrains on its own; a request
+gate's side, only a drain whose unload wasn't sent. ~~The front still undrains on its own; a request
 it then forwards for a model llama-swap is stopping waits out the stop, finds its start refused for
-want of a ticket, and goes through admission once, which costs it time, not memory. While a model
+want of a ticket, and goes through admission once, which costs it time, not memory.~~ While a model
 stays stopping, `spark unload` and `spark make-room` say so every 15 s, and Ctrl-C ends the wait,
-not the unload.)*
+not the unload.)* *(Corrected again 2026-10-08, at the implementation plan's Task 12 second
+re-review, the controller's rulings, the clause struck above with them, since no ruling made it
+true. What holds instead: a drain waits, however long, for the model's requests in flight, and the
+gate then unloads it. The grace, 90 s, runs from the front's "drained" to the moment the unload call
+begins, and a drain whose call hasn't begun by then goes back to serving. From the call's start, the
+drain ends only when `/running` shows the model gone, or, for an unload llama-swap never took, goes
+back to serving. If the front's call to the gate drops, a drain the front hasn't yet reported
+"drained" goes back to serving, since the gate sends no unload before "drained". One it has reported
+"drained" stays held until the gate, back again, says it is unloaded or undrained: its requests wait
+their key's wait, then get `gate_down`. The front's own undrain there could have let a request
+reach a model whose unload v257 had queued, to be cut when the stop ran, so rule 4's "no request is
+cut off" holds only this way. A model whose stop hangs shows as stopping in `spark status`, and one
+still stopping after 5 minutes sends one high-priority alert that its engine may be stuck.)*
 
 The rules for what unloads, and when, are rules 3–5 below; the budget is rule 9; what Dan sees is
 under *Visibility and notifications*; and `make apply`'s wait is under *Deploy workflow*.
@@ -1059,7 +1071,7 @@ notifications:
 | `brake_needs_release` | high | ~~a brake within the hour after an automatic release, or~~ a hold found after a reboot (corrected 2026-10-07, at the implementation plan's Task 7, the controller's ruling: a brake within the hour says it waits for Dan in its own `brake_fired`, above) | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* |
 | `gate_down` | high | the failure notifier: the gate stopped | *The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused until it's back. On the Spark, `make doctor` shows what's wrong.* |
 | `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off. On the Spark, `make doctor` shows what's wrong.* |
-| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* |
+| `llama_swap_down` | high | the failure notifier, or the gate when it stops answering; and (added 2026-10-08, at the implementation plan's Task 12 second re-review, the controller's ruling) the gate, once, when a model is still stopping 5 min after its unload call began, `why: "stuck_stopping"` | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* For `stuck_stopping`: *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.* |
 | `brake_down` | high | the failure notifier: the brake stopped | *The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays the backstop. On the Spark, `make doctor` shows what's wrong.* |
 | `back_up` | default | the gate, once it, the front, llama-swap or the brake has run again for 60 s after a crash, so a crash loop doesn't alternate it with the `*_down` alerts | *The gate on brightroar has been running again for a minute, after 12 s down. New loads work again.* |
 | `refused` | default | a request was refused, whoever asked | *Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free space with `spark make-room 41G` on the Spark, then try again.* |
@@ -3193,6 +3205,20 @@ Each item gets its own design pass when its turn comes.
     Ctrl-C ends the wait, not the unload.
   - A start unloaded 20 s past its deadline counts that deadline from its own start. A 500 from an
     unload or a restart, not a failed start, isn't `load_failed`.
+- **2026-10-08** — Phase 2a's Task 12 second re-review, the controller's rulings. Dated notes are in
+  *The front and the gate* (*Draining a model*) and *What you see in Phase 2a* (`llama_swap_down`'s
+  row), and in the implementation plan's Global Constraints and Tasks 10, 12, 13, 16, 17, 19, 22
+  and 30.
+  - The drain's grace runs from the front's "drained" to the moment the unload call begins, never
+    alongside the call. An unload llama-swap answers with an error is settled by `/running`.
+  - A front that has reported "drained" keeps holding the model while the gate is gone, until the
+    gate says it is unloaded or undrained, so no request reaches a model whose unload may be queued.
+    The clause that every drain goes back to serving when the call drops is struck, as is the one
+    that a drain not finished in 90 s does.
+  - A model whose unload call has begun shows as stopping, the first *Still stopping…* line comes
+    15 s after the call begins, and a model still stopping after 5 minutes sends one high-priority
+    alert.
+  - Every progress line the gate streams names its kind, and the CLI tells lines apart by it.
 
 ## Sources
 

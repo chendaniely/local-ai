@@ -664,19 +664,38 @@ def test_every_route_names_its_socket_and_callers():
     assert gateproto.GateRefusalBody.__required_keys__ == {"message", "code"}
     # The progress lines of the streams the CLI waits on: make-room's drains, and a load as it starts (the
     # controller's rulings at Task 10's review and re-review), each worded by Task 7's `unloading` and `load_started`.
-    assert gateproto.MakeRoomProgress.__required_keys__ == {"model", "label", "inflight"}
-    assert gateproto.LoadProgress.__required_keys__ == {"model", "label", "last_s"}
+    assert gateproto.MakeRoomProgress.__required_keys__ == {"kind", "model", "label", "inflight"}
+    assert gateproto.LoadProgress.__required_keys__ == {"kind", "model", "label", "last_s"}
     # A pin's result, as Task 7's `pinned` words it; a pin that loads streams a LoadProgress before it.
     assert gateproto.PinConfirmation.__required_keys__ == {"label", "until", "loaded_s", "command"}
     # A load, or a pin that loads, that waits for the slot or for memory says so before it starts (the controller's
     # ruling at Task 10's second re-review): the fields Task 7's `waiting` words a reason with.
     assert gateproto.WaitProgress.__required_keys__ == {
-        "model", "label", "why", "needed_gib", "free_gib", "loading_label", "release_waits_for_dan", "release_after_s"}
-    # An unload sent whose model stays stopping says so every 15 s, so Dan never waits in silence (the controller's
-    # ruling at Task 12's re-review): Task 30 words it, *Still stopping the coder: llama-swap hasn't finished its
-    # unload…*.
-    assert gateproto.StoppingProgress.__required_keys__ == {"model", "label"}
+        "kind", "model", "label", "why", "needed_gib", "free_gib", "loading_label", "release_waits_for_dan",
+        "release_after_s"}
+    # An unload whose model stays stopping says so every 15 s from the call's start, so Dan never waits in silence
+    # (the controller's rulings at Task 12's re-reviews): Task 30 words it, *Still stopping the coder: llama-swap
+    # hasn't finished its unload…*. Past 5 min, one alert says its engine may be stuck.
+    assert gateproto.StoppingProgress.__required_keys__ == {"kind", "model", "label"}
     assert gateproto.STOPPING_EVERY_S == 15
+    assert gateproto.STUCK_STOPPING_S == 300
+    # /v1/unload's count, at once, before any StoppingProgress and its result.
+    assert gateproto.UnloadCount.__required_keys__ == {"kind", "inflight"}
+    # Every progress line names its kind, and the CLI tells lines apart by it, never by their keys: a
+    # StoppingProgress's keys are a subset of a MakeRoomProgress's (the controller's ruling at Task 12's second
+    # re-review). A line without one is the result, or a refusal.
+    assert gateproto.PROGRESS_KINDS == ("waiting", "loading", "unloading", "stopping")
+    kinds = {shape: typing.get_type_hints(shape)["kind"] for shape in (
+        gateproto.WaitProgress, gateproto.LoadProgress, gateproto.UnloadCount, gateproto.MakeRoomProgress,
+        gateproto.StoppingProgress)}
+    assert kinds == {gateproto.WaitProgress: typing.Literal["waiting"],
+                     gateproto.LoadProgress: typing.Literal["loading"],
+                     gateproto.UnloadCount: typing.Literal["unloading"],
+                     gateproto.MakeRoomProgress: typing.Literal["unloading"],
+                     gateproto.StoppingProgress: typing.Literal["stopping"]}
+    for result in (gateproto.UnloadDone, gateproto.LoadConfirmation, gateproto.PinConfirmation,
+                   gateproto.MakeRoomAnswer, gateproto.GateRefusalBody):
+        assert "kind" not in result.__required_keys__, result
     # seconds None for a model already loaded, as `messages.loaded` takes it.
     assert typing.get_type_hints(gateproto.LoadConfirmation)["seconds"] == float | None
 
@@ -692,7 +711,9 @@ def test_the_status_view_carries_the_plans_fields():
     assert gateproto.ModelView.__required_keys__ == {
         "name", "label", "resident", "footprint_gib", "state", "inflight", "oldest_request_s", "last_use",
         "pinned", "pinned_until", "sessions", "brake_mark"}
-    assert gateproto.MODEL_STATES == ("ready", "starting", "draining", "not_loaded")
+    # stopping: an unload sent, the model not yet gone from /running (the controller's ruling at Task 12's second
+    # re-review), so status shows a stop that hangs.
+    assert gateproto.MODEL_STATES == ("ready", "starting", "draining", "stopping", "not_loaded")
     assert gateproto.WaitingView.__required_keys__ == {"key_label", "model", "waited_s", "wait_s", "why"}
     assert gateproto.WAITING_WHY == ("memory", "brake", "slot", "dan", "restart", "llama_swap")
     assert gateproto.PausedView.__required_keys__ == {

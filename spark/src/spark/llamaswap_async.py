@@ -92,7 +92,9 @@ class LlamaSwapNotSent(LlamaSwapUnreachable):
     """Nothing was sent: no connection to llama-swap, refused or not made in time. Still a LlamaSwapUnreachable, so a
     caller that doesn't care tells no difference. A drain does: an unload never sent leaves the model loaded, so the
     drain goes back to serving, whereas one sent waits for the model to go, since v257 never takes back an unload it
-    took (the controller's ruling at Task 12's re-review; Task 16)."""
+    took (the controller's ruling at Task 12's re-review; Task 16). `running()` may raise either for a connection not
+    made in time, since its whole call has the same bound as its connection; `unload()` and `last_lines()` bound
+    their whole calls by more than that, so they always tell."""
 
 
 class _TooBig(Exception):

@@ -32,13 +32,17 @@ PING_EVERY_S = 1.0  # /v1/front/events sends {op: "ping", at} this often
 # The front counts the gate down once its events call has dropped and a new one hasn't been answered within this, and
 # only then refuses new loads with gate_down.
 GATE_DOWN_AFTER_S = 5.0
-# Bounds only a drain whose unload call was never sent: one not sent this long after the front's "drained" goes back
-# to serving. Once its unload is sent, a drain ends only when /running shows the model gone, since v257 never takes
-# back an unload it took; so this outlasts UNLOAD_CALL_TIMEOUT_S, which a test checks (the controller's ruling at
-# Task 12's re-review; phase-2a.md, Task 16).
+# Runs from the front's "drained" to the moment the unload call begins, and no further: a drain whose call hasn't
+# begun this long after "drained" goes back to serving. From the call's start, only Task 16's rule ends a drain, at
+# the model's leaving /running, since v257 never takes back an unload it took. It still outlasts
+# UNLOAD_CALL_TIMEOUT_S, a sanity bound a test checks (the controller's rulings at Task 12's re-reviews).
 DRAIN_GRACE_S = 90.0
-# While an unload sent leaves its model stopping, /v1/unload and /v1/make-room send a StoppingProgress this often.
+# From the moment an unload call begins until /running shows its model gone, /v1/unload and /v1/make-room send a
+# StoppingProgress this often, the first this long after the call begins.
 STOPPING_EVERY_S = 15
+# A model still stopping this long after its unload call began sends one alert, llama_swap_down's type with the
+# why stuck_stopping: its engine may be stuck (the controller's ruling at Task 12's second re-review).
+STUCK_STOPPING_S = 300
 QUIET_S = 60  # make apply waits until no request has been in flight this long, by the front's counts
 APPLY_DEADLINE_S = 900  # make apply's wait for quiet lasts at most this, then it offers "drain now"
 ACTIVITY_EVERY_S = 1.0  # the gate writes its activity record, which the brake reads, this often
@@ -280,6 +284,13 @@ class ModelRequest(TypedDict):
     model: str
 
 
+# Every progress line of a stream names its kind, and the CLI tells lines apart by it, never by their keys: a
+# StoppingProgress's keys are a subset of a MakeRoomProgress's, in the same stream. A line without one is the result,
+# or a refusal (GateRefusalBody). (The controller's ruling at Task 12's second re-review.)
+ProgressKind = Literal["waiting", "loading", "unloading", "stopping"]
+PROGRESS_KINDS: tuple[str, ...] = get_args(ProgressKind)
+
+
 class WaitProgress(TypedDict):
     """A line of /v1/load's stream, and of a pin that loads, as the request starts waiting, and again whenever its
     reason changes, before its LoadProgress: so a queued load is never silent (the controller's ruling at Task 10's
@@ -287,6 +298,7 @@ class WaitProgress(TypedDict):
     loading, and one model loads at a time.*, *Waiting for memory: … It needs 41 GiB, and 18 GiB is free for a load.*
     Those a reason doesn't use are None."""
 
+    kind: Literal["waiting"]
     model: str
     label: str
     why: WaitingWhy
@@ -301,6 +313,7 @@ class LoadProgress(TypedDict):
     """A line of /v1/load's stream, as the load starts (none for a model already loaded): Task 7's `load_started`
     words it, *Loading the coder (24 s last time)…*."""
 
+    kind: Literal["loading"]
     model: str
     label: str
     last_s: float | None  # the model's last load, None when there is none to go by
@@ -314,6 +327,9 @@ class LoadConfirmation(TypedDict):
 
 
 class UnloadCount(TypedDict):
+    """/v1/unload's first line, at once: Task 7's `unloading` words it."""
+
+    kind: Literal["unloading"]
     inflight: int
 
 
@@ -355,16 +371,19 @@ class RoomPlanAnswer(TypedDict):
 class MakeRoomProgress(TypedDict):
     """A line of /v1/make-room's stream, as a model's drain begins: Task 7's `unloading` words it."""
 
+    kind: Literal["unloading"]
     model: str
     label: str
     inflight: int
 
 
 class StoppingProgress(TypedDict):
-    """A line of /v1/unload's and /v1/make-room's streams, every STOPPING_EVERY_S while a model whose unload was sent
-    stays stopping, so Dan never waits in silence (the controller's ruling at Task 12's re-review): Task 30 words it,
-    *Still stopping the coder: llama-swap hasn't finished its unload…*. Ctrl-C ends the wait, never the unload."""
+    """A line of /v1/unload's and /v1/make-room's streams, every STOPPING_EVERY_S from the moment a model's unload call
+    begins until /running shows it gone, the first STOPPING_EVERY_S after the call begins, so Dan never waits in
+    silence (the controller's rulings at Task 12's re-reviews): Task 30 words it, *Still stopping the coder:
+    llama-swap hasn't finished its unload…*. Ctrl-C ends the wait, never the unload."""
 
+    kind: Literal["stopping"]
     model: str
     label: str
 
@@ -442,7 +461,9 @@ class CanaryAnswer(TypedDict):
 # StatusView: `GET /v1/status` on either socket, and `spark status --json`'s shape, for 2b's menu bar.
 
 STATUS_SCHEMA = 1  # raised when a field's meaning changes
-ModelState = Literal["ready", "starting", "draining", "not_loaded"]
+# stopping: an unload call begun, and /running still lists the model (the controller's ruling at Task 12's second
+# re-review), so a stop that hangs shows.
+ModelState = Literal["ready", "starting", "draining", "stopping", "not_loaded"]
 MODEL_STATES: tuple[str, ...] = get_args(ModelState)
 WaitingWhy = Literal["memory", "brake", "slot", "dan", "restart", "llama_swap"]
 WAITING_WHY: tuple[str, ...] = get_args(WaitingWhy)

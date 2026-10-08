@@ -185,7 +185,8 @@ async def test_unload_waits_its_own_bound(fake, monkeypatch):
     # A stuck engine's stop takes v257's unloadTimeout, 10 s, then its kill, and stops queue in its one run loop:
     # the unload gets a bound of its own, the controller's ruling at Task 12's review.
     assert gateproto.UNLOAD_CALL_TIMEOUT_S == 60
-    # A drain's grace bounds only a drain whose unload was never sent, so it outlasts an unload call that was (Task 16).
+    # A sanity bound: a drain's grace runs from "drained" to the moment its unload call begins, never alongside the
+    # call (Task 16), and still outlasts one.
     assert gateproto.DRAIN_GRACE_S > gateproto.UNLOAD_CALL_TIMEOUT_S
     with anyio.fail_after(BOUND_S):
         async with serve_fake(fake) as url, \
@@ -355,6 +356,48 @@ async def test_a_call_nothing_answers_is_unreachable_and_a_load_is_unknown():
             with pytest.raises(LlamaSwapUnreachable):
                 await llamaswap.running()
             assert len(seen) == 2
+
+
+class _NeverConnects(httpx.AsyncBaseTransport):
+    """A connection that is never made in time: httpx's ConnectTimeout, which a real network gives only from a peer
+    that drops a SYN, something loopback can't stage the same way on every machine."""
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+
+@pytest.mark.anyio
+async def test_a_connection_not_made_in_time_sent_nothing_either(fake):
+    # A ConnectTimeout or a PoolTimeout sends nothing too. Counted as sent, either would leave a drain waiting for ever
+    # on a model that stays loaded (Task 16).
+    with anyio.fail_after(BOUND_S):
+        async with serve_fake(fake) as url, \
+                AsyncLlamaSwap(url, KEY, load_timeout_s=5, call_timeout_s=0.3) as llamaswap:
+            # A pool of one, held by an unload whose stop takes 3 s: the next call waits for a connection, then gives up.
+            await llamaswap._client._transport.aclose()
+            llamaswap._client._transport = httpx.AsyncHTTPTransport(limits=httpx.Limits(max_connections=1))
+            fake.set_state(GEMMA, "ready")
+            fake.script_stop(GEMMA, delay_s=3.0)
+            holding = asyncio.create_task(llamaswap.unload(GEMMA))
+
+            async def held():
+                return len(fake.requests) == 1
+
+            await eventually(held)
+            # running() isn't among them: its whole call has the same bound as its connection, so either may end it.
+            for call in (llamaswap.unload(CODER), llamaswap.last_lines(CODER, read_s=0.1)):
+                with pytest.raises(LlamaSwapNotSent, match=f"^llama-swap unreachable at {url}: PoolTimeout$"):
+                    await call
+            assert await llamaswap.load(CODER) == LoadOutcome.unknown("timeout")
+            assert [r.path for r in fake.requests] == [f"/api/models/unload/{GEMMA}"]  # nothing else reached it
+            await holding
+
+            await llamaswap._client._transport.aclose()
+            llamaswap._client._transport = _NeverConnects()
+            for call in (llamaswap.running(), llamaswap.unload(GEMMA), llamaswap.last_lines(GEMMA, read_s=0.1)):
+                with pytest.raises(LlamaSwapNotSent, match=f"^llama-swap unreachable at {url}: ConnectTimeout$"):
+                    await call
+            assert await llamaswap.load(GEMMA) == LoadOutcome.unknown("timeout")
 
 
 @pytest.mark.anyio

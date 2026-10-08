@@ -228,14 +228,24 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   apply's restart, and (Dan's decision, 2026-10-07, after the forward-and-back council) after an
   unplanned llama-swap restart, or when a resident leaves `/running` without the gate or the brake
   unloading it (an earlyoom kill, a crash).
-- **Draining:** "A drain the gate doesn't finish within ~~30 s~~ 90 s goes back to serving, and so does
-  every drain if the front's call to the gate drops"; "the ~~30 s~~ 90 s run from the front's
-  'drained'". *(Corrected 2026-10-08, at Task 12's re-review, the controller's ruling, plan.md with
-  it: v257 never takes back an unload it has taken, and a stopping model never returns to ready. So
-  `DRAIN_GRACE_S`, 90 s, bounds only a drain whose unload was never sent. Once it is sent, the drain
-  ends only when `/running` shows the model gone, and the gate never sends it back to serving. A
-  drop of the front's call ends, on the gate's side, only a drain whose unload wasn't sent; the
-  front still undrains on its own (Task 22). Task 16 has the rule.)*
+- **Draining:** ~~"A drain the gate doesn't finish within~~ ~~30 s~~ ~~90 s goes back to serving, and
+  so does every drain if the front's call to the gate drops"; "the~~ ~~30 s~~ ~~90 s run from the
+  front's 'drained'".~~ *(Corrected 2026-10-08, at Task 12's re-review, the controller's ruling,
+  plan.md with it: v257 never takes back an unload it has taken, and a stopping model never returns
+  to ready. So `DRAIN_GRACE_S`, 90 s, bounds only a drain whose unload was never sent. Once it is
+  sent, the drain ends only when `/running` shows the model gone, and the gate never sends it back
+  to serving. A drop of the front's call ends, on the gate's side, only a drain whose unload wasn't
+  sent; ~~the front still undrains on its own (Task 22)~~. Task 16 has the rule.)* *(Corrected again
+  2026-10-08, the controller's rulings, at Task 12's second re-review, the quoted clauses struck
+  above, since no ruling made them true; plan.md with it:)* what holds instead:
+  - A drain waits, however long, for the model's requests in flight, then the gate unloads it.
+  - `DRAIN_GRACE_S`, 90 s, runs from the front's "drained" to the moment the unload call begins.
+    A drain whose call hasn't begun by then goes back to serving.
+  - From the call's start, the drain ends only when `/running` shows the model gone, or, for an
+    unload llama-swap never took, with `undrain` (Task 16).
+  - If the front's call to the gate drops, a drain the front hasn't yet reported "drained" goes
+    back to serving. One it has reported "drained" stays held until the gate, back again, says
+    `unloaded` or `undrain`, its requests getting `gate_down` at their deadlines (Task 22).
 - **Idle:** "an on-demand model unloads after **60 minutes** with no request and no active session,
   and resident models never unload for being idle." Pins are `spark pin <model> [duration]`, Dan's
   only, on the control socket. `spark` and `spark-front` hold no sessions (the controller's ruling,
@@ -1451,7 +1461,7 @@ true sentence in every case the gate sends it, can be built.)*
 |---|---|
 | `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*). Added: `release_after_s` (gateproto's `RELEASE_AFTER_S`, which `messages` can't import, so the caller passes it: required, with no default to go stale); the 28 GiB is the registry's `brake.warn_gib`; a follow-up needs neither reading nor line; each `state` is `starting` (*loading*), `idle` or `answering`, or None when the gate's record was missing; and `release_waits_for_dan: bool`, required (a brake within the hour after an automatic release, rule 5), with `released_at`, the automatic release's time, whose last sentence is then *It fired within an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, `make brake-release`.*, ending in `held_by_brake`'s words for Dan, in place of *They resume …*, `by_brake` or not, and needing no `release_after_s` |
 | `brake_needs_release` | `fired_at`~~, `why: "reboot" \| "again"`, `released_at` (for `again`: *The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until you release them: on the Spark, `make brake-release`.*)~~ — sent only for a hold found after a reboot (corrected 2026-10-07, at Task 7, the controller's ruling: rule 5's alert for a brake within the hour is that brake's own `brake_fired`, with `release_waits_for_dan`, so one event sends one notification) |
-| `gate_down`, `front_down`, `llama_swap_down`, `brake_down` | `at`, `result_words` — added: the notifier's result in words (Task 26's, *it crashed* …), to which the words add *; it is restarting* (*within 2 s* for the brake); None, as for llama-swap that stopped answering with its unit up, gives no parenthesis |
+| `gate_down`, `front_down`, `llama_swap_down`, `brake_down` | `at`, `result_words` — added: the notifier's result in words (Task 26's, *it crashed* …), to which the words add *; it is restarting* (*within 2 s* for the brake); None, as for llama-swap that stopped answering with its unit up, gives no parenthesis; and for `llama_swap_down` (added 2026-10-08, the controller's ruling, at Task 12's second re-review) a second form: `why: "stuck_stopping"`, `model_label`, `since`, sent by the gate once when a model is still stopping `STUCK_STOPPING_S` (5 min) after its unload call began, worded *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.*; Task 16 adds it to `messages.py` |
 | `back_up` | `unit`, `down_s`; its second sentence per unit: the gate *New loads work again.*, the front *Requests go through again.*, llama-swap *Models answer again.*, the brake *Memory is watched again.* Added: `unit` is `gate`, `front`, `llama-swap` or `brake` |
 | `refused` | ~~`model_label`, `key_label`, `needed_gib`, `free_gib`, `holders`, `next_step`~~ `code` and `moment`, the `Moment` the refusal was built from, worded for Dan's phone: *Refused <model> for <key>: <why>. <Dan's step, where there is one>.* (`no_fit`'s is the plan's example; `holders` there are those outside the stack); the burst: `model_label`, `key_label`, `count`, `since`, `code` (added 2026-10-07, at Task 7, the controller's ruling: the old fields gave no reason for any code but `no_fit`, and a `next_step` passed in would have put Dan's words in the gate) |
 | `footprint_suspect` | `model_label`, `fired_at`, `command`; added: `key_label` (*for agent*) |
@@ -1826,7 +1836,9 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `BACK_UP_AFTER_S = 60`, `RELEASE_AFTER_S = 300`, `AUTO_RELEASE_EVERY_S = 3600`,
   `NOTIFIER_EVERY_S = 300`, `APPLY_RENEW_S = 15`, `APPLY_LAPSE_S = 60`, `NOTIFIED_KEEP_S = 86400`,
   `SESSION_HOLD_RENEW_S = 60`. *(Added 2026-10-08, at Task 12's review, the controller's ruling:
-  `UNLOAD_CALL_TIMEOUT_S = 60.0`, the gate's unload call, which Task 12's client uses.)*
+  `UNLOAD_CALL_TIMEOUT_S = 60.0`, the gate's unload call, which Task 12's client uses. And, at
+  Task 12's re-reviews: `STOPPING_EVERY_S = 15` and `STUCK_STOPPING_S = 300` (Task 16), and
+  `PROGRESS_KINDS`, as the note under the route table says.)*
 - `Route(socket: "status" | "control", method: str, path: str, callers: "front" | "users" |
   "owner" | "admin")` and `ROUTES`, the table below; message shapes as `TypedDict`s. JSON over
   HTTP/1.1 on the Unix sockets.
@@ -1884,12 +1896,26 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     release_waits_for_dan, release_after_s}`, None where a reason has no use for one. So a queued
     load is never silent. `LoadConfirmation.seconds` is None for a model already loaded, as
     `messages.loaded` takes it.
+  - *(Added 2026-10-08, the controller's rulings, at Task 12's re-reviews, in Task 12's
+    `gateproto.py`:)*
+    - `POST /v1/unload` and `POST /v1/make-room` also send a `gateproto.StoppingProgress`, `{kind,
+      model, label}`, every `STOPPING_EVERY_S` (15 s) from the moment a model's unload call begins
+      until `/running` shows it gone, the first 15 s after the call begins (Task 16). So
+      `/v1/unload` is no longer two steps: its count, any `StoppingProgress` lines, then its
+      result.
+    - Every progress line carries a `kind`: `WaitProgress` `"waiting"`, `LoadProgress`
+      `"loading"`, `UnloadCount` and `MakeRoomProgress` `"unloading"`, `StoppingProgress`
+      `"stopping"` (`PROGRESS_KINDS`). The CLI tells lines apart by `kind`, never by their keys,
+      since a `StoppingProgress`'s keys are a subset of a `MakeRoomProgress`'s, in the same stream.
+      A line without one is the result, or a refusal in `GateRefusalBody`'s shape.
 
 - `StatusView` (also `--json`'s shape, for 2b's menu bar): `schema` (1, raised when a field's
   meaning changes), `host`, `at`; `memory` (`total_gib`,
   `available_gib`, `brake_gib`, `warn_gib`, `above_brake_gib`, `reserve_gib`, `owed_gib`,
   `held_gib`, `free_for_a_load_gib`, `unaccounted_gib`); `models` (each: `name`, `label`,
-  `resident`, `footprint_gib`, `state` — `ready`, `starting`, `draining`, `not_loaded` — `inflight`,
+  `resident`, `footprint_gib`, `state` — `ready`, `starting`, `draining`, `not_loaded` (and
+  `stopping`, between `draining` and `not_loaded`: added 2026-10-08, the controller's ruling, at Task
+  12's second re-review, an unload call begun and `/running` still listing the model) — `inflight`,
   `oldest_request_s`, `last_use`, `pinned_until`, `sessions`, `brake_mark` with `at` and
   `seen_gib`); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — one of `WAITING_WHY =
   ("memory", "brake", "slot", "dan", "restart", "llama_swap")`); `paused` (`since`, `available_gib`,
@@ -2273,6 +2299,9 @@ interfaces and tests above stand, as these change them:)*
     `LlamaSwapUnreachable`, for a call that never had a connection (httpx's `ConnectError`,
     `ConnectTimeout` or `PoolTimeout`), so nothing was sent. Task 16's drain needs it: an unload
     never sent leaves the model loaded, and one sent is taken to the end by v257.
+    *(Added 2026-10-08, at Task 12's second re-review:)* `running()` may raise either for a
+    connection not made in time, since its whole call has the same bound as its connection;
+    `unload()` and `last_lines()` always tell.
 - **The stand-in's controller** gains:
   - `script_stop(model, delay_s)`;
   - `canned(method, path, status, body, headers)`, a test's hook that answers before any key is
@@ -2311,6 +2340,19 @@ interfaces and tests above stand, as these change them:)*
     `gateproto.DRAIN_GRACE_S > gateproto.UNLOAD_CALL_TIMEOUT_S`, and that a timed-out unload isn't
     `LlamaSwapNotSent`; `test_a_call_nothing_answers_is_unreachable_and_a_load_is_unknown` checks
     that a refused call is.
+  - *(Added 2026-10-08, the controller's rulings, at Task 12's second re-review:)*
+    - `test_a_connection_not_made_in_time_sent_nothing_either`: a `PoolTimeout` (a pool of one, held
+      by a slow unload) and a `ConnectTimeout` (a transport that never connects) are each
+      `LlamaSwapNotSent` for `unload` and `last_lines`, and unknown (`timeout`) for a load. Each
+      fails against `_NO_CONNECTION = (ConnectError,)`.
+    - `gateproto.py` changes with Tasks 16 and 30's rulings, checked in `test_gateclient.py`:
+      - every progress line carries a `kind` (`PROGRESS_KINDS`: `waiting`, `loading`, `unloading`,
+        `stopping`), and no result line does;
+      - `UnloadCount` gains it too;
+      - `ModelState` gains `stopping`;
+      - `STUCK_STOPPING_S = 300`.
+    - `DRAIN_GRACE_S`'s comment says it runs from "drained" to the moment the unload call begins;
+      the `> UNLOAD_CALL_TIMEOUT_S` check stays, as a sanity bound.
 
 **Steps:**
 
@@ -2383,7 +2425,12 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   12's re-review, the controller's ruling:)* a model `/running` shows `stopping` (a drain's unload
   under way when the gate restarted) stays counted as `stopping`, its memory not freed, until
   `/running` shows it gone, and the gate counts that unload as its own. Its leaving is never read
-  as a crash, so the residents' rule doesn't reload it.
+  as a crash, so the residents' rule doesn't reload it. *(Added 2026-10-08, the controller's
+  ruling, at Task 12's second re-review:)* the gate records "unload requested" for a model in its
+  state, saved, before it calls `unload`. A restore that finds the model still `ready` with that
+  record, its unload queued in v257 when the gate restarted, counts its leaving as the gate's own
+  unload, never as a resident to reload. The record goes once `/running` shows the model gone, or
+  once the drain undrains.
 - `Emit` — the protocol every gate module notifies through: `emit(type: str, event_key: str,
   **fields) -> None`.
 - The hold (`hold.py`) gains `boot_id: str | None`, `episode: int | None`, `loading: str | None`
@@ -2898,22 +2945,52 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
     then `unloaded`, and True. It never ends with `undrain`. v257 runs an unload it has taken to the
     end, whatever happens to the call (`internal/server/apigroup.go:161`,
     `internal/router/base.go:432-440`). And a stop ends only in `stopped`
-    (`internal/process/process_command.go:422-434`).
+    (`internal/process/process_command.go:422-434`). *(Corrected 2026-10-08, the controller's
+    ruling, at Task 12's second re-review: from the moment the unload call begins, the call counts
+    as sent. Only this rule and the two below then end the drain.)*
   - **The exception is an unload llama-swap never took**, which undrains, and False:
     - one that never had a connection, refused at connect or not made in time, so nothing was
       sent: Task 12's `LlamaSwapNotSent`;
-    - by the same reading (added at Task 12's fix round 2, for the controller to confirm), one
+    - ~~by the same reading (added at Task 12's fix round 2, for the controller to confirm), one
       answered with an error, `LlamaSwapAnswered`. v257's 401 and 404 both come before its `Unload`
       (`internal/server/auth.go:31-34`, `internal/server/apigroup.go:153-160`), so the model stays
-      loaded, and a drain that waited for it to go would wait for ever.
-  - **`DRAIN_GRACE_S`, 90 s, bounds only a drain whose unload was never sent.** One not sent this
-    long after `drained` undrains, and False.
+      loaded, and a drain that waited for it to go would wait for ever.~~ *(Corrected 2026-10-08,
+      the controller's ruling, at Task 12's second re-review, which confirms the reading and
+      narrows it:)* one answered with `LlamaSwapAnswered` is settled by `/running`, read again at
+      once.
+      - The model still listed → `undrain`, and False. v257's 401 and 404 both come before its
+        `Unload` (`internal/server/auth.go:31-34`, `internal/server/apigroup.go:153-160`), so the
+        model stays loaded, and a drain that waited for it to go would wait for ever.
+      - The model gone → `unloaded`, and True, and the unload counts as the gate's own.
+        `LlamaSwapAnswered` also covers a 200 whose body broke off or couldn't be read, which v257
+        sends only after its `Unload` has returned (`apigroup.go:161-163`).
+  - ~~**`DRAIN_GRACE_S`, 90 s, bounds only a drain whose unload was never sent.** One not sent this
+    long after `drained` undrains, and False.~~ *(Corrected 2026-10-08, the controller's ruling, at
+    Task 12's second re-review:)* **`DRAIN_GRACE_S`, 90 s, runs from `drained` to the moment the
+    unload call begins, and no further.** A drain whose call hasn't begun 90 s after `drained`
+    (the gate's own step before the call held up) undrains, and False. It never runs alongside the
+    call, which may already sit in v257.
   - **The channel-drop clause applies only before the unload is sent.** After that, a dropped
     channel leaves the drain to end at gone. The gate counts that unload as its own, so the
     residents' rule (Tasks 17 and 18) doesn't reload the model.
   - **While the model stays `stopping`**, `/v1/unload` and `/v1/make-room` send a
     `gateproto.StoppingProgress` every `gateproto.STOPPING_EVERY_S` (15 s), so Dan never waits in
-    silence (Tasks 17, 19 and 30). Ctrl-C ends the wait, never the unload.
+    silence (Tasks 17, 19 and 30). Ctrl-C ends the wait, never the unload. *(Corrected 2026-10-08,
+    the controller's rulings, at Task 12's second re-review:)*
+    - The model counts as `stopping`, `gateproto.ModelState`'s new state, which `spark status`
+      shows, from the moment its unload call begins until `/running` shows it gone, not from the
+      call's timeout. The first `StoppingProgress` goes 15 s after the call begins.
+    - A model still `stopping` `gateproto.STUCK_STOPPING_S` (5 min) after its call began sends one
+      alert. It uses `llama_swap_down`'s type and priority, with `why: "stuck_stopping"`, worded
+      *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark,
+      `make logs s=llama-swap` shows why.* It is sent once per stop, keyed by the model and the
+      call's start.
+    - The alert reaches Dan where no stream does: an idle drain, which has none, and a wait he
+      left with Ctrl-C. v257's run loop waits on a killed engine's exit with no bound
+      (`process_command.go:710-712`), and every model's requests stall meanwhile, while `/running`
+      still answers, so Task 14's `LlamaSwapWatch` never fires for it.
+    - This task adds the form to `messages.py` (Task 7's `llama_swap_down`, a `why` beside the
+      notifier's fields), with its test.
 - `idle_due(now, state, registry, snapshot, live: Callable[[Session], bool]) -> list[str]` —
   on-demand models with no request in flight, no live session and no pin, idle at least
   `idle_unload_min`; residents never. The gate drains each, then emits `unloaded` (*after 60 min
@@ -2971,6 +3048,17 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   controller's ruling:)* `test_a_drain_whose_unload_is_never_sent_goes_back_to_serving_at_90s` —
   `drained`, then the unload not sent for 90 s → at 90 s `undrain` sent, False; one refused at
   connect (`LlamaSwapNotSent`), or answered 404 (`LlamaSwapAnswered`) → `undrain` at once, False.
+  *(Corrected 2026-10-08, the controller's rulings, at Task 12's second re-review:)* the 90 s case
+  holds the drainer before the call (the gate's own step before the call blocked) and sees
+  `undrain` at 90 s, the call never begun. A hanging unload call is never this case. A 404 with
+  `/running` still listing the model → `undrain`, False.
+- *(Added 2026-10-08, the controller's rulings, at Task 12's second re-review:)*
+  - `test_an_answered_unload_is_settled_by_running` — `LlamaSwapAnswered` for a 200 that broke off,
+    `/running` no longer listing the model → `unloaded`, True, and the unload counted as the gate's
+    own.
+  - `test_a_model_stopping_for_5_min_sends_one_alert` — the unload call begun, `/running` showing
+    the coder `stopping` for 6 min → its state `stopping` from the call's start, one
+    `llama_swap_down` with `why: "stuck_stopping"` at 5 min, and no second one.
 - *(Added 2026-10-08, at Task 12's re-review, the controller's ruling:)*
   - `test_an_unload_that_times_out_waits_for_gone_and_never_undrains` — the unload call times out,
     and `/running` shows the model `stopping` for 100 s → no `undrain` is sent; `unloaded` once
@@ -3039,7 +3127,11 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
     result line comes only once `/running` shows the model gone. A caller that goes ends the
     iterator, never the unload. Its test: `test_an_unload_left_stopping_says_so_every_15_s` — the
     unload call times out and `/running` shows the coder `stopping` for 40 s → two
-    `StoppingProgress` lines, then the result once it is gone.
+    `StoppingProgress` lines, then the result once it is gone. *(Corrected 2026-10-08, the
+    controller's rulings, at Task 12's second re-review: the lines count from the moment the unload
+    call begins, not from its timeout, and each carries `kind: "stopping"`, so the test reads: the
+    unload call begun, `/running` showing the coder `stopping` for 40 s → `StoppingProgress` lines
+    at 15 and 30 s, then the result once it is gone.)*
   - *(Added 2026-10-08, the controller's rulings, at Task 10's re-review:)* `execute` and `load`
     yield their progress, as `unload` yields its count, since `/v1/make-room` and `/v1/load` now
     stream it (Task 10's notes, Task 19):
@@ -3343,6 +3435,9 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     Ctrl-C, ends the stream, never the unload.
   - **Shutdown.** `spark gate` cancels its load tasks (Task 15) before the client's `aclose()`. A
     load on a closed client raises httpx's `RuntimeError` instead of coming to a `LoadOutcome`.
+    *(Corrected 2026-10-08, the controller's ruling, at Task 12's second re-review:)* it cancels
+    every task that uses the client, not only the loads: the drains, the idle loop and the watchers
+    too. Each would meet the same `RuntimeError` after `aclose()`.
 - *(Added 2026-10-08, at Task 9's review, the controller's rulings.)*
   - **The key list:** the `keys` credential is read with `credentials.read_credential_text`
     (Task 9). It refuses a missing, empty or non-text file by name and never quotes it. The text
@@ -3756,17 +3851,27 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   `drained` is posted when the count reaches 0, and its new requests wait as for a load, getting
   `draining` at their deadline, worded by the drain's `why`; on `unloaded`, they go through
   admission; on `undrain`, they are forwarded. *(Added 2026-10-08, at Task 12's re-review, the
-  controller's ruling:)* when its call to the gate drops, the front undrains on its own, as
+  controller's ruling:)* ~~when its call to the gate drops, the front undrains on its own, as
   plan.md's *Draining a model* says, though the gate may already have sent that model's unload
-  (Task 16).
-  - A request the front then forwards reaches llama-swap for a model it is stopping. It waits out
-    the stop in v257's run loop (`internal/router/base.go:498-505`), and then starts the model.
-  - `spark launch` refuses that start for want of a ticket (Task 11), so llama-swap answers 500
-    `upstream command exited prematurely`.
-  - The front asks `admit` once, as above, and gets `gate_down` while the gate is down, or an
-    admission.
+  (Task 16).~~
+  - ~~A request the front then forwards reaches llama-swap for a model it is stopping. It waits out
+    the stop in v257's run loop (`internal/router/base.go:498-505`), and then starts the model.~~
+  - ~~`spark launch` refuses that start for want of a ticket (Task 11), so llama-swap answers 500
+    `upstream command exited prematurely`.~~
+  - ~~The front asks `admit` once, as above, and gets `gate_down` while the gate is down, or an
+    admission.~~
 
-  It costs the request time, never memory.
+  ~~It costs the request time, never memory.~~ *(Corrected 2026-10-08, the controller's ruling, at
+  Task 12's second re-review: that undrain could cut a request, not only delay it. While v257's
+  unload sits queued, not yet taken, the model is still ready. Its run loop picks between a
+  request and the queued unload at random (`internal/router/base.go:116-133`), and a request served
+  first is cut when the stop runs (`internal/router/scheduler/fifo.go:258-262`). That would break
+  rule 4's "no request is cut off". So:)*
+  - **Before the front has reported `drained`**, its own undrain on a dropped channel stays as
+    written. The gate sends no unload before `drained` (Task 16).
+  - **Once it has reported `drained`**, the front keeps holding the model until the gate, back
+    again, says `unloaded` or `undrain`. It never undrains on its own after it has reported
+    `drained`. Requests for that model wait their key's wait, then get `gate_down`.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
   apply holds again: every new request is held, as for a draining model; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through
@@ -3810,6 +3915,11 @@ speaking Task 10's routes):
 - `test_unloaded_sends_waiting_requests_through_admission` — `unloaded` → the waiting request's
   admit call made.
 - `test_undrain_returns_the_model_to_serving` — `undrain` → the waiting request forwarded.
+- *(Added 2026-10-08, the controller's ruling, at Task 12's second re-review:)*
+  `test_a_drained_model_stays_held_while_the_gate_is_gone` — `drained` posted, then the events call
+  drops → no undrain of the front's own; a request for that model waits its key's wait, then gets
+  `gate_down`; the gate back, its `unloaded` → the next request goes through admission. A drain not
+  yet `drained` when the call drops → the model served again at once.
 - `test_an_idle_drain_with_a_request_in_flight_answers_busy` — 1 in flight, `drain` with `why:
   "idle"` → `busy` posted, no `drained`, and a new request forwarded at once.
 - `test_draining_is_worded_by_its_reason` — `why: "unload"` → Task 6's neutral `draining` sentence;
@@ -4639,6 +4749,14 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     `GateUnavailable`; this covers one the gate ended cleanly but short.
   - **A refusal sent as a stream line** is recognized by `GateRefusalBody`'s shape (`message` and
     `code`), raised as `GateRefused`, and printed as the refusal, exit 1.
+  - *(Added 2026-10-08, the controller's ruling, at Task 12's second re-review; it corrects every
+    "for each `…Progress` line" in this task's notes:)* **A progress line is told apart by its
+    `kind`, never by its keys.**
+    - `waiting` is worded by `waiting`, `loading` by `load_started`, `unloading` (`UnloadCount`,
+      `MakeRoomProgress`) by `unloading`, and `stopping` by the *Still stopping…* sentence.
+    - A `StoppingProgress`'s keys are a subset of a `MakeRoomProgress`'s, in the same stream, so
+      telling them apart by keys would misread one as the other.
+    - A line without a `kind` is the result, or a refusal by the shape above.
   *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)*
   - **`pin`** calls `GateClient(GATE_CONTROL_SOCKET, REQUEST_TIMEOUT_S).stream("/v1/pin", …,
     then_s=LOAD_CALL_TIMEOUT_S + 10)`, as `load` does, since it can't know beforehand whether the
