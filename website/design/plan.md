@@ -396,7 +396,7 @@ over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SS
 |---|---|---|---|
 | The front crashes or restarts | 9100 stays held, and new connections wait in the backlog, through a crash loop too, since neither the socket nor the front ever gives up | every request in flight, streams and waiting requests included | the notifier, on a crash; a hang trips the watchdog first |
 | The gate is down | the models already loaded, through the front; the brake, which then sends its own alerts | every load (`gate_down`), idle unloads, make-room, the brake's release, every notification but the notifier's and the brake's. At boot, or after a restart that stopped every engine, nothing can load, so the API is down in effect (the session's ruling; rule 8) | the notifier; the brake's own "brake fired" |
-| llama-swap is down, outside `apply`'s restart | the front and the gate; once it answers again, the gate reloads the residents by themselves, one at a time (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council; the same for a resident lost to an earlyoom kill or a crash) | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
+| llama-swap is down, outside `apply`'s restart | the front and the gate; once it answers again, the gate reloads the residents by themselves, one at a time (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council; the same for a resident lost to an earlyoom kill or a crash, which reloads by itself at most once an hour, and a second within the hour waits for `spark load`: the controller's ruling, 2026-10-08, at the implementation plan's Task 17) | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
 | The brake is down | everything else; earlyoom | freeze protection, for the 2 s its restart takes | the notifier |
 
 A deploy restarts each of them only as *Deploy workflow* says, and never cuts off a request in
@@ -626,7 +626,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    - **The gate lifts the hold** once memory has stayed above the warn line for 5 minutes (5 is the
      plan's figure for Dan's "a few minutes"), and only if the models it would reload fit, by rule
      9's formula, with the reserve, the growth owed and any make-room hold. Each reload goes
-     through that same admission.
+     through that same admission. *(Made precise 2026-10-08, at the implementation plan's Task 17,
+     the controller's rulings: the 5 minutes count from no earlier than the brake fired, since the
+     rate-of-fall watch can fire above the warn line; the release is saved before the hold file
+     goes, and removes only the hold it judged, so a brake that fires again meanwhile keeps its
+     own.)*
    - **At most one automatic release an hour.** A brake that fires within the hour after an
      automatic release holds until Dan releases it, and its high-priority alert says so.
    - **A hold found after a reboot waits for Dan,** with a high-priority alert at boot: a freeze is
@@ -1091,9 +1095,9 @@ notifications:
 | `refused` | default | a request was refused, whoever asked | *Refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. Free space with `spark make-room 41G` on the Spark, then try again.* |
 | `footprint_suspect` | default | an `agent` request for the model that was loading when the brake fired | *Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load coder` allows it again; your own requests load it if it fits.* |
 | `load_failed` | default | a start failed or passed its deadline (and, since 2026-10-08, at the implementation plan's Task 15, the controller's rulings, stopped before it was ready, or llama-swap refused the load; and, since the review the same day, the gate couldn't write or withdraw its ticket) | *The coder failed to load: the engine stopped with "failed to load model". On the Spark, `spark logs coder` shows the engine's last lines.* (Corrected 2026-10-07, at the implementation plan's Task 6's fix round 2, as the refusal's: it named `spark status`, which shows no engine lines.) |
-| `brake_released` | default | the gate lifted the brake's hold | *Brake released at 03:40, 64 GiB available. Reloaded Gemma and the embeddings. The coder was loading when it fired, so it loads again only when you ask.* |
-| `room_hold_ended` | default | make-room's hold ended: `--done`, its time, a reboot, or used up by Dan's own loads | *make-room's hold for you ended (`--done`), all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* |
-| `resident_waiting` | default | an always-loaded model didn't fit ~~when a hold ended~~ when it was to reload: after a hold ended, at boot, after the brake's release, after `make apply`'s restart or the model service's, or after it stopped outside the gate (corrected 2026-10-07, at the implementation plan's Task 7's review: the gate reloads the residents in each of these, and the words say which) | *Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself once there's room.* |
+| `brake_released` | default | the gate lifted the brake's hold, and queued the reloads | *Brake released at 03:40, 64 GiB available. ~~Reloaded Gemma and the embeddings.~~ Reloading Gemma, then the embeddings. The coder was loading when it fired, so it loads again only when you ask.* (Corrected 2026-10-08, at the implementation plan's Task 17, the controller's ruling: it is sent at the release, with the reloads queued, not done.) |
+| `room_hold_ended` | default | make-room's hold ended: `--done`, its time, a reboot, or used up by Dan's own loads | *make-room's hold for you ended (`--done`), all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* After a start fresh from a damaged state file, for a hold that may have stood (added 2026-10-08, at the implementation plan's Task 17, from the controller's ruling at its Task 13's review): *If make-room was holding room for you, that hold has ended: the gate's saved state was damaged, so it can't tell whether one stood. On the Spark, `spark make-room` holds room again.* |
+| `resident_waiting` | default | an always-loaded model didn't fit ~~when a hold ended~~ when it was to reload: after a hold ended, at boot, after the brake's release, after `make apply`'s restart or the model service's, ~~or~~ after it stopped outside the gate (corrected 2026-10-07, at the implementation plan's Task 7's review: the gate reloads the residents in each of these, and the words say which), or after the gate unloaded it (an unload after damage, or a start the gate aborted); or it stopped again within an hour of its last automatic reload, so it won't reload by itself (both added 2026-10-08, at the implementation plan's Task 17, the controller's rulings) | *Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself once there's room.* Stopped again within the hour: *Gemma stopped again within an hour of its last automatic reload, so it won't reload by itself. On the Spark, `spark load small` loads it.* |
 | `apply_restarted` | default | `make apply` restarted the model service | *make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads on its next request.* |
 | `load_started` | low | a cold load started | *Loading the coder for pi on the Mac (24 s last time)…* |
 | `loaded` | low | a load finished | *Loaded the coder in 24 s.* |
@@ -1114,7 +1118,9 @@ not *Didn't load …*, and one whose model the phone may not show, or that has n
 request from agent 4 more times since 09:12: same reason.* A failed load's burst names no key: *The
 coder failed to load 4 more times since 09:12.* `resident_waiting` says when the model was to
 reload: *after the hold ended*, *at boot*, *after the brake's release*, *after make apply's
-restart*, *after the model service restarted* or *after it stopped outside the gate*. `brake_fired`
+restart*, *after the model service restarted*, ~~or~~ *after it stopped outside the gate* or
+*after the gate unloaded it* (the last added 2026-10-08, at the implementation plan's Task 17, the
+controller's ruling). `brake_fired`
 names each model it unloaded in its state, *loading*, *idle* or *answering*. A model name a client
 sent reaches the lock screen only when it reads as one, and never as a web address. The variants the table above doesn't give
 are worded in `spark/src/spark/messages.py`, each in its tests.
@@ -1162,9 +1168,14 @@ waiting     agent → the coder · 2 min of 10 · waiting for you: spark load co
 paused      no · the brake last fired at 03:12, released at 03:40
 held        nothing · pins none · sessions: agent's pi, since 08:40
 recent      09:12  refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load
-            03:40  brake released; reloaded Gemma and the embeddings
+            03:40  brake released; reloading Gemma and the embeddings
 health      front ok · gate ok · brake ok (key checked 09:00) · ntfy ok
 ```
+
+*(Corrected 2026-10-08, at the implementation plan's Task 17, the controller's ruling: the release
+line read *reloaded*, but the gate records it as it releases, with the reloads queued, so it reads
+*reloading*. *Recent* also holds the gate's events that aren't refusals, a pin make-room ended and a
+session that lost its model among them, beside the refusals, by time.)*
 
 *Up to* is each model's footprint. Through the status socket, which `agent` reads, the *recent* list
 holds only `agent`'s own refusals, and other processes go unnamed. `--json` carries the same, for
@@ -3326,6 +3337,23 @@ Each item gets its own design pass when its turn comes.
   `docker` folder, which anyone who can read that folder can read; a token can only publish to its
   own topic. Kept: the login, the tailnet and the home LAN only, and the pin. The runbook links his
   guide as the reference, with what to skip in it.
+- **2026-10-08** — Phase 2a's Task 17, the controller's rulings. Dated notes are in rule 5, *The
+  front and the gate* (the failures table), *What you see in Phase 2a* (the `brake_released`,
+  `room_hold_ended` and `resident_waiting` rows, and the `spark status` example), and in the
+  implementation plan's Global Constraints and Tasks 7, 13, 15, 16, 17, 18, 19, 29 and 30, and on the
+  S05 and S14 scenario pages.
+  - A resident lost to a crash or an earlyoom kill, or whose start the gate aborted, reloads by
+    itself at most once an hour; a second within the hour waits for Dan's `spark load`, and its
+    notification says so. One the gate unloaded after damage reloads, under the same bound; one Dan
+    unloaded doesn't.
+  - make-room sets its hold, and saves it, before its first drain, so the room each unload frees
+    is never open to anyone else's load. A run refused part-way keeps its hold and says what it
+    unloaded; one that unloaded nothing puts back the hold that stood before.
+  - The brake's automatic release counts its 5 minutes from no earlier than the brake fired, is
+    saved before the hold file goes, and removes only the hold it judged. `brake_released` says
+    *Reloading*, since the reloads are queued, not done.
+  - `spark status`'s *recent* gains the gate's events that aren't refusals, newest 50, each kept
+    a day.
 
 ## Sources
 

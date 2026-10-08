@@ -50,6 +50,10 @@ ACTIVITY_STALE_S = 3.0  # the brake takes an activity record older than this as 
 SESSIONS_PER_UID = 8  # the sessions one uid may hold at once
 SESSION_TTL_S = 43200  # a session not renewed for 12 h ends, as one does when its process exits
 REFUSAL_HISTORY = 50  # the refusals the gate keeps, for status's *recent*
+# The events for status's *recent* that aren't refusals (a pin make-room ended, a session that lost its model, and the
+# like): the newest this many, each kept this long (the controller's ruling at Task 17).
+RECENT_HISTORY = 50
+RECENT_KEEP_S = 86400
 NTFY_TIMEOUT_S = 5.0  # a publish to ntfy
 # The gate's publish queue holds at most this many: a high alert is never dropped and goes ahead of default and low;
 # when it is full, the oldest low goes first, then the oldest default (the controller's ruling at Task 14's review).
@@ -64,6 +68,9 @@ BACK_UP_AFTER_S = 60  # back_up once a unit that was down has stayed up this lon
 # The brake's hold lifts by itself once memory has stayed above the warn line this long, if the reloads fit.
 RELEASE_AFTER_S = 300
 AUTO_RELEASE_EVERY_S = 3600  # at most one automatic release of the brake's hold in this long
+# A resident a crash took, whose start the gate aborted, or that the gate unloaded after damage, reloads by itself at
+# most once in this long; a second within it waits for Dan's `spark load` (the controller's ruling at Task 17).
+RESIDENT_RELOAD_EVERY_S = 3600
 NOTIFIER_EVERY_S = 300  # the failure notifier sends at most one alert per unit in this long
 APPLY_RENEW_S = 15  # make apply renews its hold this often, from drain-all to the hold's end
 # The gate ends an apply hold not renewed for this long, before begin as after; and the front drops the hold once
@@ -423,10 +430,15 @@ class MakeRoomRequest(TypedDict):
 
 
 class MakeRoomAnswer(TypedDict):
+    """make-room's result (Task 17's RoomResult): what it unloaded, by label, as Task 7's `room_held` words it; free
+    for a load and held after it; the hold's end; and the pins and sessions it ended, each a phrase (the controller's
+    ruling at Task 17)."""
+
     unloaded: list[str]
     free_gib: float
     hold_gib: float
     until: float | None
+    ended: list[str]
 
 
 class ReleaseRequest(TypedDict):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import secrets
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -96,12 +97,53 @@ def write_hold(state_dir: Path, hold: Hold) -> None:
         os.close(folder)
 
 
-def release_hold(state_dir: Path) -> bool:
+def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
+    """Remove the brake's hold: True when one was removed. Dan's release (`expected` None) lifts whatever stands.
+
+    The gate's automatic release passes the hold it judged, and only that one goes (Task 17; the controller's ruling
+    there): the file is first moved aside under a name of this call's own, then read. One that isn't `expected` (the
+    brake fired again between the gate's reading and now, or it can't be read) is put back, but never over a newer hold
+    the brake wrote meanwhile, which then stands. The folder is fsynced, so what was done survives a power cycle."""
+    path = Path(state_dir) / FILE
+    if expected is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
+    aside = path.with_name(f"{FILE}.releasing-{os.getpid()}-{secrets.token_hex(4)}")
     try:
-        (Path(state_dir) / FILE).unlink()
+        os.rename(path, aside)
     except FileNotFoundError:
         return False
-    return True
+    try:
+        found = _parse(aside.read_text())
+    except (OSError, ValueError, RecursionError):
+        found = None
+    released = found is not None and found == expected
+    if released:
+        aside.unlink(missing_ok=True)
+    else:
+        try:
+            os.link(aside, path)  # back where it was, unless the brake has written a newer hold there meanwhile
+        except FileExistsError:
+            pass
+        except OSError:
+            os.rename(aside, path)  # no link here: renamed back, so a hold always stands; should that fail, it raises
+        aside.unlink(missing_ok=True)
+    try:
+        _fsync_folder(state_dir)
+    except OSError:
+        pass  # what was done is done; only its surviving a power cycle is less sure
+    return released
+
+
+def _fsync_folder(state_dir: Path) -> None:
+    folder = os.open(state_dir, os.O_RDONLY)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)
 
 
 def release_waits_for_dan(hold: Hold, *, boot_id: str, last_auto_release_at: float | None, now: float) -> bool:

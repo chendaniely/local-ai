@@ -231,7 +231,10 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 - **The residents** reload one at a time, through admission: at boot, after a hold ends, after
   apply's restart, and (Dan's decision, 2026-10-07, after the forward-and-back council) after an
   unplanned llama-swap restart, or when a resident leaves `/running` without the gate or the brake
-  unloading it (an earlyoom kill, a crash).
+  unloading it (an earlyoom kill, a crash). *(Added 2026-10-08, the controller's ruling, at Task 17:
+  after a crash, a start the gate aborted, or an unload after damage, a resident reloads by itself
+  at most once an hour; a second within the hour waits for Dan's `spark load`, and
+  `resident_waiting` says so.)*
 - **Draining:** ~~"A drain the gate doesn't finish within~~ ~~30 s~~ ~~90 s goes back to serving, and
   so does every drain if the front's call to the gate drops"; "the~~ ~~30 s~~ ~~90 s run from the
   front's 'drained'".~~ *(Corrected 2026-10-08, at Task 12's re-review, the controller's ruling,
@@ -1536,9 +1539,9 @@ true sentence in every case the gate sends it, can be built.)*
 | `refused` | ~~`model_label`, `key_label`, `needed_gib`, `free_gib`, `holders`, `next_step`~~ `code` and `moment`, the `Moment` the refusal was built from, worded for Dan's phone: *Refused <model> for <key>: <why>. <Dan's step, where there is one>.* (`no_fit`'s is the plan's example; `holders` there are those outside the stack); the burst: `model_label`, `key_label`, `count`, `since`, `code` (added 2026-10-07, at Task 7, the controller's ruling: the old fields gave no reason for any code but `no_fit`, and a `next_step` passed in would have put Dan's words in the gate) |
 | `footprint_suspect` | `model_label`, `fired_at`, `command`; added: `key_label` (*for agent*) |
 | `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s`; added: `command` (*`spark logs coder`*); sent once per failed load, never with a key (corrected 2026-10-07, at Task 7's review, the controller's ruling: `refusal_notification` keys it by the load's ticket); its burst: `model_label`, `count`, `since`, `code`; added 2026-10-08, the controller's ruling, at Task 15: `start_ended`, `swap_status` and `swap_kept`, worded as the refusal is, the phone showing any status |
-| `brake_released` | `at`, `available_gib`, `reloaded: list[label]`, `loading_label: str \| None` |
-| `room_hold_ended` | `why: "--done" \| "time" \| "reboot" \| "used"`, `unused_gib`, `total_gib`, `reloading: list[label]`, `next_label` |
-| `resident_waiting` | `label`, `needed_gib`, `free_gib`; added: `after: "hold" \| "brake" \| "apply" \| "boot" \| "restart" \| "crash"`, since *after the hold ended* is false in the other cases Tasks 15 and 17 send it |
+| `brake_released` | `at`, `available_gib`, ~~`reloaded: list[label]`~~ `reloading: list[label]` (corrected 2026-10-08, the controller's ruling, at Task 17: queued at the release, not done, so *Reloading Gemma, then the embeddings.*), `loading_label: str \| None` |
+| `room_hold_ended` | `why: "--done" \| "time" \| "reboot" \| "used"`, `unused_gib`, `total_gib`, `reloading: list[label]`, `next_label`; added 2026-10-08, at Task 17, from the controller's ruling at Task 13's review: `why: "damaged"`, with none of the other fields, for a hold that may have stood when the gate's saved state was damaged |
+| `resident_waiting` | `label`, `needed_gib`, `free_gib`; added: `after: "hold" \| "brake" \| "apply" \| "boot" \| "restart" \| "crash"`, since *after the hold ended* is false in the other cases Tasks 15 and 17 send it; added 2026-10-08, the controller's rulings, at Task 17: `after: "gate"` (*after the gate unloaded it*), and `again: bool` with `command`, for a resident that stopped again within an hour of its last automatic reload, which needs neither `needed_gib` nor `free_gib` |
 | `apply_restarted` | `at`, `reloaded: list[label]`, `on_demand: list[label]` |
 | `load_started` | `label`, `key_label`, `last_s: float \| None` (`key_label` None for a resident's reload or one of Dan's commands) |
 | `loaded` | `label`, `seconds` |
@@ -2491,6 +2494,16 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   before the load call (Task 15) and dropped once its `started/` record has moved into `ticketed` or
   the load has failed or gone; `restore` drops another boot's. Task 18's bypass check counts a
   `started/` record as ticketed only when its `id` is there, since an engine can write `started/`.)*
+  *(Added 2026-10-08, the controller's rulings, at Task 17:)* `RoomHold` gains `total_gib: float |
+  None = None`, the size the hold was set at, since Dan's loads shrink `size_gib` (None, a hold saved
+  before it, reads as `size_gib`); `GateState` gains `recent: deque[RecentRecord]`, the gate's events
+  for *recent* that aren't refusals, `RecentRecord(at, kind, text, model, uids)`, the newest
+  `RECENT_HISTORY` (50), dropped once `RECENT_KEEP_S` (a day) old on every save, and
+  `resident_reloads: dict[str, float]`, each resident's last automatic reload after a crash, an
+  aborted start or an unknown unload, dropped once `RESIDENT_RELOAD_EVERY_S` (an hour) old on every
+  save. Both stay across a reboot, bounded by time; a field either doesn't know is kept as Task 13's
+  rules keep one. `hold.release_hold(state_dir, expected=None)` removes, with `expected`, only that
+  hold: the file moved aside, compared, and any other put back, never over a newer one.
 - `STATE_FILE = "state.json"`; `load_state(folder: Path) -> tuple[GateState, str | None]` — a
   missing file gives a fresh state and None; a damaged one, a fresh state and a problem naming the
   file (for `spark status`); never raises. *(Added 2026-10-08, the controller's ruling, at Task 13's
@@ -3308,6 +3321,12 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `test_a_load_that_ends_forgets_running_showed_it_starting`,
     `test_observe_running_rechecks_at_once` and `test_a_watch_that_frees_clears_the_started_record`.
 
+*(Added 2026-10-08, the controller's rulings, at Task 17:)* `Admitter.late_unloads: dict[str, float]`
+records each model whose start past its deadline `_late_unload` unloaded, and when `/running` showed
+it gone, so the residents' rule (`Drainer.unloaded_why`, Task 16) knows the gate's own abort from a
+crash. `RELOAD_AFTER` gains `gate`, *after the gate unloaded it*, for the residents' rule's reloads
+after `unknown` and `late_start`.
+
 **Tests** (`spark/tests/test_gate_admission.py`; an injected clock; a stand-in llama-swap whose
 loads, `/running` and log lines the test scripts; memory from a list; a temporary `launch` and
 `hf_home` with the models' files):
@@ -3705,6 +3724,14 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   - The words above match nothing on pi's list, and each has its test in
     `spark/tests/test_messages.py`.
 
+*(Added 2026-10-08, the controller's rulings, at Task 17:)* `Drainer.unloaded_why(model, since) ->
+DrainWhy | None` says why the gate's own unload took a model that left `/running` at or after
+`since`: its record's why while its unload is requested (`unknown` when none was saved), the
+drainer's own drain's once `/running` showed it gone, or `late_start` for Task 15's abort, from
+`Admitter.late_unloads`. `own_unload` is `unloaded_why(…) is not None`. The residents' rule (Task
+17's `Room.resident_left`) reloads after `unknown` and `late_start`, never after `unload`,
+`make-room` or `idle`. Its test: `test_the_residents_rule_hears_why_the_gate_unloaded_a_model`.
+
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
 - `test_an_on_demand_model_idle_unloads_after_60_minutes` — the coder last used at T, nothing in
@@ -3823,6 +3850,15 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
 **Files:**
 
 - Create: `spark/src/spark/gate/room.py`, `spark/tests/test_gate_room.py`
+- *(Added 2026-10-08, the controller's rulings, at Task 17:)* Modify: `spark/src/spark/gateproto.py`
+  (`MakeRoomAnswer.ended`, `RECENT_HISTORY`, `RECENT_KEEP_S`, `RESIDENT_RELOAD_EVERY_S`),
+  `spark/src/spark/gate/state.py` (`RoomHold.total_gib`, `RecentRecord`, `GateState.recent`,
+  `GateState.resident_reloads`), `spark/src/spark/hold.py` (`release_hold(state_dir, expected)`),
+  `spark/src/spark/gate/admission.py` (`Admitter.late_unloads`; `RELOAD_AFTER` gains `gate`),
+  `spark/src/spark/gate/policy.py` (`Drainer.unloaded_why`), `spark/src/spark/messages.py` and
+  `website/reference/notifications.md` (regenerated), with their tests in
+  `spark/tests/test_gate_state.py`, `test_gate_policy.py`, `test_messages.py`, `test_gateclient.py`
+  and `test_gate_notify.py`; `website/design/plan.md` and the S05 and S14 scenario pages.
 
 **Interfaces:**
 
@@ -3930,6 +3966,109 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
   keyed `brake-needs:<boot id>:<episode>` from the hold, the key Task 14's `ingest_brake_events` uses
   for the same brake read from the events file, so the two are one notification.
 
+*(Added 2026-10-08, the controller's rulings, at Task 17, on its questions before any code:)*
+
+- **The residents' rule** (Q1). Task 16's `own_unload` said only whether the gate's own unload took a
+  resident, and the drainer forgot the why once the drain ended; and Task 15's own abort of a start
+  past its deadline, made without a drain, would have read as a crash, so a start that always hangs
+  would reload every 3 minutes or so. Now:
+  - `Drainer.unloaded_why(model, since) -> DrainWhy | None` (Task 16's file): the why of the gate's
+    own unload that took the model at or after `since`, its record's while its unload is requested,
+    the drainer's own drain's once gone, or `late_start` for the admitter's abort, which
+    `Admitter.late_unloads` (Task 15's file) records as `/running` shows it gone. `own_unload` is
+    `unloaded_why(…) is not None`.
+  - `Room.resident_left(model, *, shown, since) -> bool`, which the core calls for each resident
+    the last `/running` read listed (as `shown`) and this one doesn't: not while the brake's hold
+    stands (it is remembered, and the brake's release reloads it with the hold's own); not after
+    the gate's own unload with why `unload`, `make-room` or `idle`; not for a model the brake
+    marked; after `unknown` or `late_start` (`after: "gate"`, *after the gate unloaded it*, a
+    seventh `resident_waiting` `after` and `RELOAD_AFTER`), and after no unload of the gate's at
+    all, a crash or an earlyoom kill (`after: "crash"`).
+  - **One bound** for those reloads: each resident reloads by itself at most once in
+    `RESIDENT_RELOAD_EVERY_S` (3,600 s), the time kept in `GateState.resident_reloads`, saved and
+    dropped once an hour old. A second within the hour sends `resident_waiting` once, with
+    `again: true` and `command`: *Gemma stopped again within an hour of its last automatic reload,
+    so it won't reload by itself. On the Spark, `spark load small` loads it.* (matched by nothing
+    on pi's list), keyed `resident-again:<model>:<that reload's time>`. Dan's `spark load`
+    (`Room.load`) clears the bound.
+- **Q2.** `room_hold_ended` passes `next_label` as admission's `_hold_used_up` does, so the text
+  names the on-demand model after the reloads; the test text below is amended to match.
+- **Q3.** `brake_released` is sent at the release, the reloads queued, not done, so it says
+  *Reloading Gemma, then the embeddings.* Its field is `reloading` (was `reloaded`; Task 7's table
+  below is corrected).
+- **Q4.** `execute` sets make-room's hold, and saves it (bounded by `SAVE_BOUND_S`), before its
+  first drain, so the room each unload frees is never open to `agent`'s requests or the gate's
+  reloads. A save that fails ends the run with nothing unloaded: *make-room held nothing and
+  unloaded nothing: the gate couldn't save its state. On the Spark, `make logs s=gate` shows why.*
+  A drain that ends with its model still loaded ends the run with a refusal line: with something
+  unloaded, the hold stays, and the line says what was done, *Unloaded the coder. Gemma wasn't
+  unloaded: <that end's words>. The room freed so far stays held for you until `spark make-room
+  --done` or a reboot.*; with nothing unloaded, the hold that stood before (or none) is put back.
+- **Q5.** `GateState.recent`, `RecentRecord(at, kind, text, model, uids)`: the gate's events for
+  `spark status`'s *recent* that aren't refusals, the newest `RECENT_HISTORY` (50), each dropped
+  once `RECENT_KEEP_S` (a day) old on every save, a field it doesn't know kept as Task 13's rules
+  keep one. Room records a pin make-room ended and the sessions that lost the model (kind
+  `make-room`, *make-room unloaded the coder: your pin on it ended, and agent's pi lost it.*, `uids`
+  the caller's, the pin's and each session's), and each release of the brake's hold (kind
+  `brake_released`, *brake released; reloading Gemma and the embeddings*, as plan.md's `spark
+  status` example has it; Dan's *brake released with `make brake-release`; …*, `uids` his).
+- **Accepted as proposed:**
+  - `RoomHold.total_gib`, the size the hold was set at, for `RoomDone.total_gib` once Dan's loads
+    have shrunk `size_gib`; None, a hold saved before it, reads as `size_gib`.
+  - `gateproto.MakeRoomAnswer` gains `ended: list[str]`; `unloaded` and `ended` carry labels and
+    phrases (*your pin on the coder*, *the session agent's pi*), as Task 30 prints them.
+  - The automatic release removes only the hold it judged: `hold.release_hold(state_dir,
+    expected)` moves the file aside, compares, and puts back any other hold, never over a newer one
+    the brake wrote meanwhile, which then stands. Room's `release_hold(expected)` callable takes it,
+    None for `make brake-release`, which lifts whatever stands.
+  - The 5 minutes above the warn line count from no earlier than the hold's own `since`: the
+    rate-of-fall watch can fire above 28. A `since` that doesn't parse waits for Dan.
+  - `last_auto_release_at` (and `release_assumed` cleared) are saved, the save awaited, before the
+    hold file is removed, and put back if nothing was removed; a crash between the two leaves the
+    hold waiting for Dan, which errs safe.
+  - `brake_needs_release` isn't sent for a hold whose `since` doesn't parse (an unreadable file):
+    `held_by_brake`'s words and `spark status` already say it waits for Dan; it is logged once. A
+    Phase 1 hold's key is `brake-needs:phase-1:<since>`.
+  - The words for each way a drain ends with its model loaded: `messages.not_unloaded(end, label)`,
+    `front_away`/`front_dropped`, `not_saved` and `gate_stopping` in Task 16's words, and *The coder
+    wasn't unloaded: llama-swap didn't take the unload, so the coder went on serving. …* (`not_taken`),
+    *… the gate couldn't begin the unload soon enough after its requests finished, …* (`held`), *… it
+    stopped and loaded again while the gate was draining it, …* (`loaded_again`), *… the gate's drain
+    broke before the unload, …* (`broke`), and *… a request reached it first, …* (`busy`, which no
+    command meets). Each is checked against pi's list.
+  - `room_hold_ended`'s `damaged`, with no usage and no reloads: *If make-room was holding room for
+    you, that hold has ended: the gate's saved state was damaged, so it can't tell whether one
+    stood. On the Spark, `spark make-room` holds room again.*
+  - `Room.unload` of a model that isn't loaded is a refusal line, *The coder isn't loaded, so there's
+    nothing to unload.*, never *Unloaded the coder.*; a name the registry doesn't have, *There's no
+    model 'x' in the registry, so there's nothing to unload.* (or *load*).
+- **The interfaces, as built** (beside the plan's):
+  - `Room(…, *, read_mem, read_hold, release_hold, boot_id, front=None, live=None,
+    on_change=None)`: `front` the FrontChannel, whose snapshot gives the requests in flight; `live`
+    `Sessions.live`; `on_change` may return an awaitable, awaited where a save comes first.
+    `registry` is replaced when the registry is read again.
+  - `plan(target, uid)` takes a `Decimal` (an int or float is read as its repr reads) or `ALL`, and
+    refuses a size that isn't above 0 with `ValueError`. A plan is kept for `execute` once; the
+    newest eight are kept. A plan unknown or used: *That make-room plan isn't one the gate has: it
+    was used already, or the gate restarted since. Run `spark make-room` again.*; a `for_s` that
+    isn't above 0: *A make-room hold's time has to be more than 0 seconds.*
+  - `execute`'s hold: the target; asked for more than unloading everything frees, the least of the
+    target and what is free for a load once the unloads are done; for `ALL`, every GiB then free
+    for a load. A
+    caller that goes ends the iterator: the drain under way goes on, and what it unloads is held,
+    its pin ended and its sessions recorded, whether or not the caller is there.
+  - `at_start(ended)`: at the gate's start, after `restore`, `room_hold_ended` for the hold another
+    boot left (`reboot`), and, at a start fresh after damage, once, for one that may have stood
+    (`damaged`), keyed `room:damaged:<damaged_at>`.
+  - `async check_brake(now, *, above_since) -> "release" | "wait" | "needs_dan" | None` acts on
+    `brake_release_due`; None with no hold, when a resident that left while one stood reloads now.
+  - `Preloader(admitter, registry, emit, clock, *, llamaswap, sleep=asyncio.sleep)`: `run(models,
+    after)` probes `/running` with `backoff()` (1, 2, 4 … 30 s), then queues every reload in one
+    step, so they load one at a time, in order, ahead of any request; a model the brake marked is
+    left out, since its reload would wait in the queue for ever. Cancelling `run` ends only its wait.
+  - `brake_release_due` and `fired_at(hold)`; `RoomResult`, `RoomDone` and `ReleaseResult` are
+    frozen dataclasses, sent as `dataclasses.asdict`.
+
 **Tests** (`spark/tests/test_gate_room.py`; an injected clock; stand-ins for the admitter's loads
 and the drainer):
 
@@ -3952,7 +4091,9 @@ and the drainer):
   Gemma (32) waits; `resident_waiting` once.
 - `test_done_reloads_what_make_room_unloaded_one_at_a_time_if_they_fit` — make-room unloaded Gemma
   and the coder: `release` → Gemma reloads, the coder doesn't; `room_hold_ended`'s text ends
-  *Reloading Gemma.*
+  ~~*Reloading Gemma.*~~ *(corrected 2026-10-08, the controller's ruling, at Task 17: with the
+  embeddings unloaded too, so the one-at-a-time shows)* *Reloading Gemma, then the embeddings; the
+  coder loads on its next request.*
 - `test_done_with_nothing_to_reload_says_so` — make-room unloaded only the coder → *… Nothing to
   reload: the coder loads on its next request.*
 - `test_the_brake_releases_after_5_minutes_above_28_if_the_reloads_fit` — above 28 since T: at
@@ -3995,6 +4136,46 @@ and the drainer):
   "slot", loading_label: "Gemma", …}` while Gemma loads, then the coder's `LoadProgress`, then its
   result.
 
+- *(Added 2026-10-08, the controller's rulings, at Task 17:)*
+  - `test_two_late_starts_in_an_hour_reload_once_then_wait_for_dan` — Gemma's start hangs past its
+    deadline twice within the hour → one reload (`after: "gate"`), then `resident_waiting`'s
+    *won't reload by itself* form, once, and no second reload; an hour after that reload, it
+    reloads again.
+  - `test_dans_load_clears_the_residents_bound`,
+    `test_the_gates_own_unload_reloads_a_resident_only_when_it_wasnt_dans_choice` (`unload`,
+    `make-room`: no; `unknown`, `late_start`: yes) and
+    `test_a_model_that_isnt_a_resident_never_reloads_by_the_rule`.
+  - `test_a_run_refused_part_way_keeps_the_hold_and_says_what_it_unloaded` and
+    `test_a_run_that_unloaded_nothing_puts_back_the_hold_that_stood_before`.
+  - `test_the_hold_is_set_and_saved_before_the_first_drain_so_no_reload_takes_the_room` — Gemma's
+    reload waiting for memory while make-room unloads the coder → the hold saved before the drain
+    is sent, and Gemma never loads into the freed room.
+  - `test_make_room_starts_from_the_gates_own_figure_not_memavailable_less_the_reserve`, with the
+    ceiling binding.
+  - `test_brake_release_due_decides_by_rule_5` (a brake fired above the line counts from its own
+    time; a `since` that doesn't parse waits for Dan), `test_the_release_never_lifts_a_newer_brakes_hold`
+    and `test_a_release_whose_save_fails_lifts_nothing`.
+  - `test_a_hold_lost_at_a_reboot_or_to_damage_says_so_once`,
+    `test_a_plan_is_used_once_and_an_unknown_one_is_refused_in_words`,
+    `test_an_unload_left_stopping_says_so_every_15_s`,
+    `test_an_unload_with_the_front_away_says_why_in_words`,
+    `test_an_unload_llama_swap_never_took_says_so`,
+    `test_an_unload_of_a_model_not_loaded_or_unknown_is_refused_never_said_done`,
+    `test_a_load_is_one_of_dans_commands_and_may_load_into_his_hold`,
+    `test_a_refused_load_says_so_last`, `test_the_preloads_backoff_doubles_to_30_s`,
+    `test_the_preload_skips_the_model_the_brake_marked` and
+    `test_a_preload_that_goes_leaves_its_reloads_queued_and_ends_quietly_when_the_gate_stops`.
+  - Beside them: `test_the_residents_rule_hears_why_the_gate_unloaded_a_model`
+    (`test_gate_policy.py`); `test_recent_keeps_the_newest_50_for_a_day_and_fields_it_doesnt_know`,
+    `test_the_residents_reload_times_survive_a_restart_and_go_after_an_hour`,
+    `test_a_room_hold_saved_before_its_total_reads_as_its_size` and
+    `test_release_hold_with_the_hold_it_judged_lifts_only_that_hold` (`test_gate_state.py`);
+    `test_every_drain_that_leaves_its_model_loaded_says_why_in_dans_words`,
+    `test_make_rooms_own_words_for_a_run_refused_part_way_and_its_other_refusals`,
+    `test_a_room_hold_lost_to_damage_says_one_may_have_stood`,
+    `test_a_resident_that_stops_again_within_the_hour_waits_for_dan` and
+    `test_brake_released_says_the_reloads_are_under_way_not_done` (`test_messages.py`).
+
 **Steps:**
 
 - [ ] **Step 1:** the failing tests; run them: they fail (the module missing).
@@ -4006,6 +4187,9 @@ git add spark/src/spark/gate/room.py spark/tests/test_gate_room.py
 git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate releases the brake within bounds and reloads the residents" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+*(Added 2026-10-08, at Task 17:)* the commit above also staged, by name, the files the controller's
+rulings at Task 17 add to the Files list.
 
 ***
 
@@ -4185,6 +4369,26 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
     `live=Sessions.live`, so an idle drain checks a session again before it marks the model, and
     `Sessions` with `is_model=`, true for a name in the registry as last read.
 
+- *(Added 2026-10-08, the controller's rulings, at Task 17:)* the core's obligations to Task 17's
+  `Room` and `Preloader`:
+  - It builds `Room(…, release_hold=lambda expected: hold.release_hold(<the brake's folder>,
+    expected), boot_id=…, front=<the FrontChannel>, live=Sessions.live, on_change=…)` and
+    `Preloader(…, llamaswap=<the gate's AsyncLlamaSwap>)`, and replaces each one's `registry` when it
+    reads the registry again.
+  - At start, after `restore`, it calls `room.at_start(<the room hold restore ended, or None>)`,
+    which sends `room_hold_ended` for another boot's hold and, at a start with `fresh_after_damage`,
+    the one with why `damaged`, before it clears `fresh_after_damage`. Then it runs
+    `Preloader.run(<the residents>, "boot")`.
+  - Every 5 s, `room.expire(now)` and `await room.check_brake(now, above_since=…)`, `above_since`
+    being when MemAvailable last rose above the warn line by its 250 ms readings, None while it is
+    at or under it, so a dip between two checks restarts the 5 minutes.
+  - **The residents' rule** is `room.resident_left(model, shown=<its state in the last read that
+    listed it>, since=<that read's time>)`, asked once for each resident a `/running` read that
+    answered no longer lists, but never during apply's restart (apply's end queues every resident)
+    nor when the unit watch has seen llama-swap restart unannounced, which runs
+    `Preloader.run(<the residents>, "restart")` instead.
+  - `StatusView.recent` takes `state.recent` beside the refusals, by time (Task 29).
+
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):
 
@@ -4349,6 +4553,14 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `test_spark_gates_logging_setup_quiets_httpx_and_httpcore` — after the gate's logging setup runs,
   the `httpx` and `httpcore` loggers are at WARNING, and an httpx request to a stand-in leaves no
   line with its URL in the captured log.
+
+- *(Added 2026-10-08, the controller's rulings, at Task 17:)* the routes on Task 17's `Room`:
+  `/v1/make-room/plan` → `room.plan(Decimal(str(size_gib)) or ALL, uid)`, its `RoomPlan` as JSON
+  (`plan_id` beside it); `/v1/make-room` → `room.execute(plan_id, for_s, uid)`, whose last line is
+  `RoomResult`'s fields, `ended` among them (`gateproto.MakeRoomAnswer`); `/v1/release` →
+  `dataclasses.asdict(await room.release(uid, room=…, brake=…))` (`gateproto.ReleaseAnswer`);
+  `/v1/load` → `room.load`; `/v1/unload` → `room.unload`. `room.plan` raises `ValueError` for a
+  size that isn't above 0, which the route answers 400 in words.
 
 **Tests** (`spark/tests/test_gate_app.py`; the apps called with a scope whose `peer_cred` the test
 sets, or over real sockets where named; those over real sockets read `SO_PEERCRED`, so they skip
@@ -5578,6 +5790,14 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
   `damaged_kept_as`, through Task 18's `StatusView.health`), or *… the damaged file couldn't be
   kept* without a path, until the next boot.
 
+- *(Added 2026-10-08, the controller's ruling, at Task 17:)* the `recent` rows take, beside the
+  refusals, `GateState.recent` (Task 17), the gate's events that aren't refusals, all in one list
+  by time, each its `text`: a pin make-room ended and the sessions that lost the model (*make-room
+  unloaded the coder: your pin on it ended, and agent's pi lost it.*), and each release of the
+  brake's hold, as plan.md's example has it, *brake released; reloading Gemma and the embeddings*
+  (*reloading*, since the line is recorded as the reloads are queued; plan.md's example is corrected
+  with it). Through the status socket, an event shows when its `uids` holds the caller's.
+
 **Tests** (`spark/tests/test_status.py`; a gate stand-in on a short Unix socket):
 
 - `test_status_prints_the_plans_example_moment_line_for_line` — the `StatusView` of the plan's
@@ -5739,6 +5959,13 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
 - `make logs s=front|gate|notify` — `journalctl -u local-ai-front.service`, `-u
   local-ai-gate.service`, and `-u 'local-ai-notify@*'`.
 - `deploy.md`: bare `spark` on the Spark is the deployed one, linked once into `~/.local/bin`.
+
+- *(Added 2026-10-08, the controller's rulings, at Task 17:)* make-room's result carries `ended`,
+  the pin and the sessions it ended, a phrase each (*your pin on the coder*, *the session agent's
+  pi*), which `make-room` prints after `room_held`'s sentence in words of its own, with their test;
+  a run a drain refused part-way ends with a refusal line that says what it unloaded and that the
+  room stays held (Task 17), printed as any refusal, exit 1; and a plan the gate no longer has is
+  refused in words, *That make-room plan isn't one the gate has: …*.
 
 **Tests** (`spark/tests/test_commands.py`; a gate stand-in answering each route as Task 10 gives
 it):

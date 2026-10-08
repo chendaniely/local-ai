@@ -1,9 +1,10 @@
 """The gate's state, kept across its restarts (Phase 2a; plan.md, *The front and the gate*, *Admission and memory rules*
 4, 5 and 9): each loaded model's footprint and what its load took, pins, sessions, make-room's hold, the brake's marks,
 the last automatic release, apply's hold, the engines each ticket started and the tickets issued, what has been
-notified, and the refusal history. A restart must never lose a hold, a ticket in flight, or a model's growth still owed,
-so the state is saved whole on every change (Task 18), in `GATE_STATE/state.json`, the file and its folder fsynced
-before save_state returns, as the brake's hold is: a reader finds the old file or the new one, never part of one.
+notified, the refusal history, the other events for *recent*, and each resident's last automatic reload (Task 17). A
+restart must never lose a hold, a ticket in flight, or a model's growth still owed, so the state is saved whole on every
+change (Task 18), in `GATE_STATE/state.json`, the file and its folder fsynced before save_state returns, as the brake's
+hold is: a reader finds the old file or the new one, never part of one.
 
 At start the gate loads it (load_state, which never raises) and settles it against llama-swap's `/running` and this
 boot (restore). A damaged file, or one from a newer version, gives a fresh state that errs safe, and a problem for
@@ -12,9 +13,9 @@ settled from `/running` at start (Tasks 18 and 22), and the file kept aside for 
 Task 13's review). A field this version doesn't know is kept, and written back as it was.
 
 What belongs to a boot ends with it: make-room's hold, apply's hold, the sessions, the model records, the engines
-ticketed, the tickets issued and the drains. Pins, the brake's marks and the refusal history stay. A drain the gate
-saved is resumed under its id, or the front is owed an `undrain` under it, never left (the controller's rulings at
-Task 13).
+ticketed, the tickets issued and the drains. Pins, the brake's marks, the refusal history, the other events for *recent*
+and the residents' reload times stay; the last two are bounded by time. A drain the gate saved is resumed under its id,
+or the front is owed an `undrain` under it, never left (the controller's rulings at Task 13).
 
 Nothing heavy at import (no uvicorn, Starlette or httpx), since the brake reads the last automatic release from it too
 (Task 23)."""
@@ -37,7 +38,8 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
 from spark import procs
-from spark.gateproto import NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, REFUSAL_HISTORY, DrainWhy
+from spark.gateproto import (NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, RECENT_HISTORY, RECENT_KEEP_S, REFUSAL_HISTORY,
+                             RESIDENT_RELOAD_EVERY_S, DrainWhy)
 from spark.llamaswap import Running
 from spark.registry import Registry
 
@@ -119,11 +121,14 @@ class RoomHold:
     """make-room's hold (rule 4): ends at `until`, at `spark make-room --done`, when Dan's own loads use it up, or at
     the next boot."""
 
-    size_gib: float
+    size_gib: float  # what it holds now: Dan's own loads shrink it (Task 15)
     until: float | None  # None: until --done or the next boot
     boot_id: str
     created_at: float
     unloaded: list[str]  # what make-room unloaded, for the reloads when it ends
+    # The size it was set at, for *9 of its 41 GiB unused* (Task 17; the controller's ruling there). None, a hold saved
+    # before it was kept, reads as size_gib.
+    total_gib: float | None = None
     extra: dict[str, Any] = _extra()
 
 
@@ -147,6 +152,21 @@ class RefusalRecord:
     uid: int | None
     code: str
     message: str
+    extra: dict[str, Any] = _extra()
+
+
+@dataclass(frozen=True)
+class RecentRecord:
+    """An event for `spark status`'s *recent* that isn't a refusal (the controller's ruling at Task 17): a pin make-room
+    ended, a session that lost its model, and the like. `kind` names what happened (`make-room`); `text` is Dan's
+    words; `uids` the accounts it concerns, for the status socket's filter (Task 19). Shown beside the refusals, by
+    time (Task 29)."""
+
+    at: float
+    kind: str
+    text: str
+    model: str | None
+    uids: list[int] = field(default_factory=list, hash=False)
     extra: dict[str, Any] = _extra()
 
 
@@ -212,6 +232,13 @@ class GateState:
     notified: dict[str, float] = field(default_factory=dict)
     notify_failing_since: float | None = None
     refusals: deque[RefusalRecord] = field(default_factory=deque)  # the newest REFUSAL_HISTORY, oldest first
+    # The events that aren't refusals, for *recent*: the newest RECENT_HISTORY, oldest first, each dropped once
+    # RECENT_KEEP_S old on every save (the controller's ruling at Task 17).
+    recent: deque[RecentRecord] = field(default_factory=deque)
+    # Each resident's last automatic reload after a crash, a start the gate aborted or an unknown unload, so it reloads
+    # by itself at most once in RESIDENT_RELOAD_EVERY_S; dropped once that old on every save, and by Dan's `spark load`
+    # (the controller's ruling at Task 17).
+    resident_reloads: dict[str, float] = field(default_factory=dict)
     applying: ApplyHold | None = None
     ticketed: dict[str, Ticketed] = field(default_factory=dict)  # by model
     # Each model's ticket id for the load the gate issued it for this boot, saved before the load call and dropped
@@ -237,6 +264,7 @@ class GateState:
 
     def __post_init__(self) -> None:
         self.refusals = deque(self.refusals, maxlen=REFUSAL_HISTORY)
+        self.recent = deque(self.recent, maxlen=RECENT_HISTORY)
 
 
 @runtime_checkable
@@ -295,7 +323,7 @@ _SCALARS: dict[str, Any] = {"last_auto_release_at": float | None, "notify_failin
                             "damaged_at": float | None, "damaged_kept_as": str | None, "release_assumed": bool}
 # Every part of the file this version reads; any other is kept as it was (GateState.extra).
 _KNOWN = {"schema", "room_hold", "applying", "brake_events_after", "notified", "issued", "undrains", "refusals",
-          "late_alerts",
+          "late_alerts", "recent", "resident_reloads",
           *(section for section, _, _ in _TABLES), *_SCALARS}
 
 
@@ -401,6 +429,10 @@ def _decode(data: Any) -> GateState:
     if not (isinstance(notified, dict) and all(_finite(sent) for sent in notified.values())):
         raise ValueError("notified must map each notification to a finite time")
     state.notified = {name: float(sent) for name, sent in notified.items()}
+    reloads = data.get("resident_reloads", {})
+    if not (isinstance(reloads, dict) and all(_finite(when) for when in reloads.values())):
+        raise ValueError("resident_reloads must map each model to a finite time")
+    state.resident_reloads = {name: float(when) for name, when in reloads.items()}
     for name in ("issued", "undrains"):
         ids = data.get(name, {})
         if not (isinstance(ids, dict) and all(isinstance(value, str) and value for value in ids.values())):
@@ -410,6 +442,10 @@ def _decode(data: Any) -> GateState:
     if not isinstance(refusals, list):
         raise ValueError("refusals must be a list")
     state.refusals = deque((_record(RefusalRecord, item, "refusals") for item in refusals), maxlen=REFUSAL_HISTORY)
+    recent = data.get("recent", [])
+    if not isinstance(recent, list):
+        raise ValueError("recent must be a list")
+    state.recent = deque((_record(RecentRecord, item, "recent") for item in recent), maxlen=RECENT_HISTORY)
     late = data.get("late_alerts", [])
     if not isinstance(late, list):
         raise ValueError("late_alerts must be a list")
@@ -433,6 +469,8 @@ def _encode(state: GateState) -> dict[str, Any]:
              "brake_events_after": None if state.brake_events_after is None else list(state.brake_events_after),
              "notified": dict(state.notified), "issued": dict(state.issued), "undrains": dict(state.undrains),
              "refusals": [_plain(item) for item in state.refusals],
+             "recent": [_plain(item) for item in state.recent],
+             "resident_reloads": dict(state.resident_reloads),
              "late_alerts": [_plain(item) for item in state.late_alerts]}
     return copy.deepcopy(state.extra) | data
 
@@ -572,9 +610,11 @@ def save_state(folder: Path, state: GateState, *, now: float | None = None) -> N
     """Write `state` whole as `folder`/STATE_FILE, mode 0600: to a new file of this write's own, fsynced, then swapped
     in, and the folder fsynced, so the file is on disk before it returns and a write that fails leaves the previous one
     whole. First it drops from `state.notified`, in place, what was sent more than NOTIFIED_KEEP_S before `now`, so
-    the record never grows for the life of the box, and from `state.late_alerts` what is NTFY_LATE_KEEP_S old, no
-    longer news, and sets `state.saved_at` to `now` (the gate's clock; time.time() by default). Root is refused
-    (PermissionError) before anything is written: the gate's folder is spark's."""
+    the record never grows for the life of the box, from `state.late_alerts` what is NTFY_LATE_KEEP_S old, no
+    longer news, from `state.recent`, in place, what is RECENT_KEEP_S old, and from `state.resident_reloads`, in place,
+    what is RESIDENT_RELOAD_EVERY_S old and so bounds nothing; and sets `state.saved_at` to `now` (the gate's clock;
+    time.time() by default). Root is refused (PermissionError) before anything is written: the gate's folder is
+    spark's."""
     folder = Path(folder)
     path = folder / STATE_FILE
     if os.geteuid() == 0:
@@ -583,6 +623,12 @@ def save_state(folder: Path, state: GateState, *, now: float | None = None) -> N
     for name in [name for name, sent in state.notified.items() if now - sent > NOTIFIED_KEEP_S]:
         del state.notified[name]
     state.late_alerts = [alert for alert in state.late_alerts if now - alert.at < NTFY_LATE_KEEP_S]
+    kept = [event for event in state.recent if now - event.at < RECENT_KEEP_S]
+    if len(kept) != len(state.recent):  # in place, so whoever holds the deque sees it too
+        state.recent.clear()
+        state.recent.extend(kept)
+    for name in [name for name, when in state.resident_reloads.items() if now - when >= RESIDENT_RELOAD_EVERY_S]:
+        del state.resident_reloads[name]
     state.saved_at = now
     data = json.dumps(_encode(state), allow_nan=False).encode()
     folder.mkdir(mode=0o750, exist_ok=True)

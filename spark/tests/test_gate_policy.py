@@ -772,6 +772,35 @@ async def test_an_answered_unload_is_settled_by_running(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_the_residents_rule_hears_why_the_gate_unloaded_a_model(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The controller's ruling at Task 17: the residents' rule reloads a resident after an `unknown` or `late_start`
+        # unload, never after Dan's `spark unload` or make-room's, so it asks the drainer why, not only whether.
+        world = World(tmp_path, models={CODER: record(CODER), GEMMA: record(GEMMA)})
+        assert world.drainer.unloaded_why(CODER, since=T - 1) is None
+        drain = world.drain(CODER, "unload")
+        await settle()
+        world.channel.drained(CODER, world.front.drain_id(CODER))
+        await settle()
+        assert drain.result() is True and CODER not in world.state.models
+        assert world.drainer.unloaded_why(CODER, since=T - 1) == "unload"
+        assert world.drainer.unloaded_why(CODER, since=T + 1) is None  # one before `since` isn't this leaving
+        assert world.drainer.unloaded_why(GEMMA, since=T - 1) is None and not world.drainer.own_unload(GEMMA, T - 1)
+        # Task 15's own abort of a start past its deadline is the gate's own, though no drain made it.
+        world.admitter.late_unloads[GEMMA] = T
+        assert world.drainer.unloaded_why(GEMMA, since=T - 1) == "late_start"
+        assert world.drainer.own_unload(GEMMA, since=T - 1) and not world.drainer.own_unload(GEMMA, since=T + 1)
+        # A resumed one, the drainer's: late_start too; and one under way, its record's why.
+        late = late_start_world(tmp_path / "late", "starting")
+        assert late.drainer.unloaded_why(CODER, since=T - 1) == "late_start"  # its unload requested, saved
+        await settle()
+        resumed = resume_saved(late)
+        await late.at(T + 5)
+        assert resumed.result() is True and CODER not in late.state.models
+        assert late.drainer.unloaded_why(CODER, since=T) == "late_start"
+
+
+@pytest.mark.anyio
 async def test_an_answered_unload_with_the_model_stopping_waits_for_gone(tmp_path):
     with anyio.fail_after(BOUND_S):
         # Never undrain a model whose unload may be in flight: /running showing it stopping after an answered error

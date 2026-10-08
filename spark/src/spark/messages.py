@@ -687,19 +687,25 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "*The coder failed to load: the engine stopped with \"failed to load model\". On the Spark, `spark logs coder` "
         "shows the engine's last lines.*"),
     "brake_released": (
-        "the gate lifted the brake's hold",
-        "*Brake released at 03:40, 64 GiB available. Reloaded Gemma and the embeddings. The coder was loading when it "
-        "fired, so it loads again only when you ask.*"),
+        "the gate lifted the brake's hold, and queued the reloads",
+        "*Brake released at 03:40, 64 GiB available. Reloading Gemma, then the embeddings. The coder was loading when "
+        "it fired, so it loads again only when you ask.*"),
     "room_hold_ended": (
-        "make-room's hold ended: `--done`, its time, a reboot, or used up by Dan's own loads",
+        "make-room's hold ended: `--done`, its time, a reboot, or used up by Dan's own loads; or one may have stood "
+        "when the gate's saved state was damaged",
         "*make-room's hold for you ended (`--done`), all 40 GiB of it unused. Nothing to reload: the coder loads on "
         "its next request.* When it had unloaded always-loaded models: *make-room's hold for you ended (`--done`), "
-        "all 40 GiB of it unused. Reloading Gemma.*"),
+        "all 40 GiB of it unused. Reloading Gemma.* After damage: *If make-room was holding room for you, that hold "
+        "has ended: the gate's saved state was damaged, so it can't tell whether one stood. On the Spark, `spark "
+        "make-room` holds room again.*"),
     "resident_waiting": (
         "an always-loaded model didn't fit when it was to reload: after a hold ended, at boot, after the brake's "
-        "release, after `make apply`'s restart or the model service's, or after it stopped outside the gate",
+        "release, after `make apply`'s restart or the model service's, after it stopped outside the gate, or after "
+        "the gate unloaded it; or it stopped again within an hour of its last automatic reload, and won't reload by "
+        "itself",
         "*Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself "
-        "once there's room.*"),
+        "once there's room.* Stopped again within the hour: *Gemma stopped again within an hour of its last "
+        "automatic reload, so it won't reload by itself. On the Spark, `spark load small` loads it.*"),
     "apply_restarted": (
         "`make apply` restarted the model service",
         "*make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads "
@@ -1186,9 +1192,11 @@ def _load_failed(registry: Registry, f: dict[str, Any]) -> str:
 
 
 def _brake_released(registry: Registry, f: dict[str, Any]) -> str:
+    """The gate's automatic release (rule 5). It is sent at the release, the reloads queued, not done, so it says
+    *Reloading*, one at a time, as `make brake-release` and room_hold_ended do (the controller's ruling at Task 17)."""
     _needs("brake_released", f, "at", "available_gib")
     words = [f"Brake released at {_clock(f['at'])}, {_size(_down(f['available_gib']))} available."]
-    words.append(f"Reloaded {_and(f['reloaded'])}." if f["reloaded"] else "Nothing to reload.")
+    words.append(f"Reloading {', then '.join(f['reloading'])}." if f["reloading"] else "Nothing to reload.")
     if f["loading_label"]:
         words.append(f"{_start(f['loading_label'])} was loading when it fired, so it loads again only when you ask.")
     return " ".join(words)
@@ -1215,12 +1223,20 @@ def _reloads(reloading: list[str], next_label: str | None) -> str:
 
 
 _HOLD_ENDED = {"--done": " (`--done`)", "time": " (its time ran out)", "reboot": " (the Spark rebooted)",
-               "used": ": your own loads used it up"}
+               "used": ": your own loads used it up", "damaged": ""}
+_DAMAGED_HOLD = ("If make-room was holding room for you, that hold has ended: the gate's saved state was damaged, so "
+                 "it can't tell whether one stood. On the Spark, `spark make-room` holds room again.")
 
 
 def _room_hold_ended(registry: Registry, f: dict[str, Any]) -> str:
-    _needs("room_hold_ended", f, "why", "unused_gib", "total_gib")
+    _needs("room_hold_ended", f, "why")
     _one_of("room_hold_ended", "why", f["why"], _HOLD_ENDED)
+    if f["why"] == "damaged":  # a hold that may have stood, lost with the gate's saved state (Task 13's review)
+        for name in ("unused_gib", "total_gib", "reloading", "next_label"):
+            if f[name] not in (None, []):
+                raise ValueError(f"room_hold_ended's {name} isn't for why damaged: nothing is known of that hold")
+        return _DAMAGED_HOLD
+    _needs("room_hold_ended", f, "unused_gib", "total_gib")
     usage = "" if f["why"] == "used" else f", {_hold_usage(f['unused_gib'], f['total_gib'])}"
     return (f"make-room's hold for you ended{_HOLD_ENDED[f['why']]}{usage}. "
             f"{_reloads(f['reloading'], f['next_label'])}")
@@ -1229,12 +1245,17 @@ def _room_hold_ended(registry: Registry, f: dict[str, Any]) -> str:
 # When an always-loaded model reloads (Tasks 15 and 17), and so when it can find no room.
 _AFTER = {"hold": "after the hold ended", "brake": "after the brake's release", "apply": "after make apply's restart",
           "boot": "at boot", "restart": "after the model service restarted",
-          "crash": "after it stopped outside the gate"}
+          "crash": "after it stopped outside the gate", "gate": "after the gate unloaded it"}
 
 
 def _resident_waiting(registry: Registry, f: dict[str, Any]) -> str:
-    _needs("resident_waiting", f, "label", "needed_gib", "free_gib", "after")
+    _needs("resident_waiting", f, "label", "after")
     _one_of("resident_waiting", "after", f["after"], _AFTER)
+    if f["again"]:  # a second stop within the hour after its automatic reload (the controller's ruling at Task 17)
+        _needs("resident_waiting", f, "command")
+        return (f"{_start(f['label'])} stopped again within an hour of its last automatic reload, so it won't reload "
+                f"by itself. On the Spark, `spark load {f['command']}` loads it.")
+    _needs("resident_waiting", f, "needed_gib", "free_gib")
     return (f"{_start(f['label'])} didn't fit {_AFTER[f['after']]}: it needs {_size(_up(f['needed_gib']))}, and "
             f"{_room_words(f['free_gib'])}. It loads by itself once there's room.")
 
@@ -1342,9 +1363,10 @@ _TAKES: dict[str, dict[str, Any]] = {
     "load_failed": {"model_label": None, "command": None, "engine_said": None, "deadline_s": None,
                     "start_ended": False, "swap_status": None, "swap_kept": False, "ticket_unwritten": False,
                     "ticket_unconfirmed": False},
-    "brake_released": {"at": None, "available_gib": None, "reloaded": [], "loading_label": None},
+    "brake_released": {"at": None, "available_gib": None, "reloading": [], "loading_label": None},
     "room_hold_ended": {"why": None, "unused_gib": None, "total_gib": None, "reloading": [], "next_label": None},
-    "resident_waiting": dict.fromkeys(("label", "needed_gib", "free_gib", "after")),
+    "resident_waiting": {"label": None, "needed_gib": None, "free_gib": None, "after": None, "again": False,
+                         "command": None},
     "apply_restarted": {"at": None, "reloaded": [], "on_demand": []},
     "load_started": dict.fromkeys(("label", "key_label", "last_s")),
     "loaded": dict.fromkeys(("label", "seconds")),
@@ -1446,6 +1468,91 @@ def front_not_connected(label: str) -> str:
     drain's end `front_away` or `front_dropped` (gate.policy), as Room (Task 17) sends it."""
     return (f"{_start(label)} wasn't unloaded: the front isn't connected to the gate, so the gate can't wait for "
             f"{label}'s requests in flight to finish first. On the Spark, `make logs s=front` shows why.")
+
+
+# How a drain that left its model loaded ended (gate.policy.DrainEnd), for Dan's `spark unload` and make-room (Room,
+# Task 17): the controller's rulings at Tasks 16 and 17. `busy` ends only an idle drain, which no command waits on.
+_NOT_UNLOADED = {
+    "not_taken": "llama-swap didn't take the unload, so {label} went on serving. On the Spark, `make logs "
+                 "s=llama-swap` shows why.",
+    "held": "the gate couldn't begin the unload soon enough after its requests finished, so {label} went back to "
+            "serving. On the Spark, `make logs s=gate` shows why.",
+    "loaded_again": "it stopped and loaded again while the gate was draining it, and the gate left the new load "
+                    "running. On the Spark, `spark status` shows it.",
+    "broke": "the gate's drain broke before the unload, so {label} went back to serving. On the Spark, `make logs "
+             "s=gate` shows why.",
+    "busy": "a request reached it first, so it went on serving.",
+}
+
+
+def not_unloaded(end: str, label: str) -> str:
+    """`spark unload`'s and make-room's refusal for a drain that ended with its model still loaded, by how it ended:
+    the front not connected, the state not saved and the gate stopping in Task 16's words, the rest in their own."""
+    if end in ("front_away", "front_dropped"):
+        return front_not_connected(label)
+    if end == "not_saved":
+        return state_not_saved(label)
+    if end == "gate_stopping":
+        return gate_stopping(label)
+    if end not in _NOT_UNLOADED:
+        raise ValueError(f"{end!r} isn't a drain's end that leaves its model loaded")
+    return f"{_start(label)} wasn't unloaded: {_NOT_UNLOADED[end].format(label=label)}"
+
+
+def room_partly_held(unloaded: list[str], refused: str, until: datetime | float | None, *,
+                     now: datetime | None = None) -> str:
+    """make-room refused part-way (the controller's ruling at Task 17): what it unloaded, the refusal, and the hold it
+    keeps for the room freed so far."""
+    ends = f"until {_until(until, now)}, `spark make-room --done` or a reboot" if until is not None else (
+        "until `spark make-room --done` or a reboot")
+    return f"Unloaded {_and(unloaded)}. {refused} The room freed so far stays held for you {ends}."
+
+
+def room_plan_gone() -> str:
+    """make-room's confirmation for a plan the gate doesn't have."""
+    return ("That make-room plan isn't one the gate has: it was used already, or the gate restarted since. Run `spark "
+            "make-room` again.")
+
+
+def room_not_saved() -> str:
+    """make-room's refusal when the gate couldn't save the hold before the first drain: it unloads nothing unheld."""
+    return ("make-room held nothing and unloaded nothing: the gate couldn't save its state. On the Spark, `make logs "
+            "s=gate` shows why.")
+
+
+def room_for_s() -> str:
+    return "A make-room hold's time has to be more than 0 seconds."
+
+
+def not_loaded(label: str) -> str:
+    """`spark unload` of a model that isn't loaded: never *Unloaded …*."""
+    return f"{_start(label)} isn't loaded, so there's nothing to unload."
+
+
+def no_such_model(name: str, verb: str) -> str:
+    """`spark load` or `spark unload` of a name the registry doesn't have, shown on one line and short."""
+    return f"There's no model {_one_line(name)[:64]!r} in the registry, so there's nothing to {verb}."
+
+
+def room_ended(label: str, *, pinned: bool, sessions: list[str]) -> str:
+    """*recent*'s line for a model make-room unloaded that a pin or a session kept (rule 4: `spark status` says whose
+    they were)."""
+    parts = (["your pin on it ended"] if pinned else []) + ([f"{_and(sessions)} lost it"] if sessions else [])
+    if not parts:
+        raise ValueError("room_ended is for a model a pin or a session kept")
+    return f"make-room unloaded {label}: {', and '.join(parts)}."
+
+
+def recent_brake_released(reloading: list[str], *, by_dan: bool) -> str:
+    """*recent*'s line for a release of the brake's hold, as plan.md's `spark status` example has it: the gate's own,
+    or Dan's `make brake-release`, and what reloads (queued, so *reloading*: the controller's ruling at Task 17)."""
+    released = "brake released with `make brake-release`" if by_dan else "brake released"
+    return f"{released}; reloading {_and(reloading)}" if reloading else f"{released}; nothing to reload"
+
+
+def room_ended_parts(label: str, *, pinned: bool, sessions: list[str]) -> list[str]:
+    """make-room's `ended`: the pin it ended and each session that lost its model, a phrase each."""
+    return ([f"your pin on {label}"] if pinned else []) + [f"the session {session}" for session in sessions]
 
 
 def pinned(label: str, until: datetime | float | None, loaded_s: float | None, command: str, *,

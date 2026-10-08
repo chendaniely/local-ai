@@ -703,6 +703,9 @@ def test_every_route_names_its_socket_and_callers():
                      gateproto.MakeRoomProgress: typing.Literal["unloading"],
                      gateproto.StoppingProgress: typing.Literal["stopping"],
                      gateproto.AfterLoadProgress: typing.Literal["after_load"]}
+    # make-room's result: what it unloaded, by label, what is free for a load and held, until when, and the pins and
+    # sessions it ended (Task 17's RoomResult; the controller's ruling at Task 17).
+    assert gateproto.MakeRoomAnswer.__required_keys__ == {"unloaded", "free_gib", "hold_gib", "until", "ended"}
     for result in (gateproto.UnloadDone, gateproto.LoadConfirmation, gateproto.PinConfirmation,
                    gateproto.MakeRoomAnswer, gateproto.GateRefusalBody):
         assert "kind" not in result.__required_keys__, result

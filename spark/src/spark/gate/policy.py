@@ -282,7 +282,8 @@ class Drainer:
         self._poll_s = poll_s
         self._live = live or (lambda session: True)  # with no Sessions.live, every session counts as live
         self._drains: dict[str, _Drain] = {}
-        self._gone_own: dict[str, float] = {}  # each model the gate's own unload took, and when /running showed it gone
+        # Each model the gate's own unload took: when /running showed it gone, and the drain's why.
+        self._gone_own: dict[str, tuple[float, DrainWhy]] = {}
         self._owed_unloaded: dict[str, str] = {}  # the undrains owed (GateState.undrains) that are an `unloaded`
         self._last_final: dict[str, str] = {}  # each model's drain id of the last word that ended a drain
         self._idle_skipped: set[str] = set()  # the idle drains skipped, said once while the front stays away
@@ -380,13 +381,27 @@ class Drainer:
             self._note()
 
     def own_unload(self, model: str, since: float) -> bool:
-        """Whether the gate's own unload accounts for `model` leaving /running after `since`: its record has its unload
-        requested, or the drainer saw it gone, its own unload's, at or after `since`. The residents' rule (Tasks 17 and
-        18) reloads a resident that leaves /running only when this is false."""
+        """Whether the gate's own unload accounts for `model` leaving /running after `since` (unloaded_why)."""
+        return self.unloaded_why(model, since) is not None
+
+    def unloaded_why(self, model: str, since: float) -> DrainWhy | None:
+        """The why of the gate's own unload that accounts for `model` leaving /running after `since`: its record's,
+        while its unload is requested (`unknown` when none was saved); else the last drain of the drainer's own that saw
+        it gone at or after `since`; else the admitter's own abort of its start past its deadline at or after `since`
+        (`late_start`, Task 15's, which no drain makes); None when no unload of the gate's does. The residents' rule
+        (Room.resident_left, Task 17) reloads a resident after `unknown` and `late_start`, never after Dan's `unload` or
+        `make-room` (the controller's ruling at Task 17)."""
         record = self.state.models.get(model)
         if record is not None and record.unload_requested_at is not None:
-            return True
-        return self._gone_own.get(model, -math.inf) >= since
+            return record.drain_why or "unknown"
+        found: list[tuple[float, DrainWhy]] = []
+        gone = self._gone_own.get(model)
+        if gone is not None and gone[0] >= since:
+            found.append(gone)
+        late = self._admitter.late_unloads.get(model, -math.inf)
+        if late >= since:
+            found.append((late, "late_start"))
+        return max(found, key=lambda each: each[0])[1] if found else None
 
     async def stop(self) -> None:
         """The gate's shutdown: every drain's task cancelled before the llama-swap client closes. Each drain stays
@@ -718,7 +733,7 @@ class Drainer:
             del self.state.models[d.model]
             self.state.ticketed.pop(d.model, None)  # its engine went with it
         if d.ours or (d.record is not None and d.record.unload_requested_at is not None):
-            self._gone_own[d.model] = now
+            self._gone_own[d.model] = (now, d.why)
         self._note()
         if d.drain_sent or d.resume:
             self._final({"op": "unloaded", "model": d.model}, d.drain_id)

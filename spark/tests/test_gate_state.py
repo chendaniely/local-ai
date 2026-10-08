@@ -16,10 +16,11 @@ import pytest
 from spark import hold
 from spark.gate import state as gate_state
 from spark.gate.state import (DAMAGED_KEEP, STATE_FILE, STATE_SCHEMA, ApplyHold, BrakeMark, GateState, LateAlert,
-                              ModelRecord, Pin, RefusalRecord, RoomHold, SavedDrain, Session, Ticketed, load_state,
-                              notified_key, restore, resumable_drains, save_state, session_live)
-from spark.gateproto import AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, REFUSAL_HISTORY
-from spark.hold import Hold, read_hold, release_waits_for_dan, write_hold
+                              ModelRecord, Pin, RecentRecord, RefusalRecord, RoomHold, SavedDrain, Session, Ticketed,
+                              load_state, notified_key, restore, resumable_drains, save_state, session_live)
+from spark.gateproto import (AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, NTFY_LATE_KEEP_S, RECENT_HISTORY, RECENT_KEEP_S,
+                             REFUSAL_HISTORY, RESIDENT_RELOAD_EVERY_S)
+from spark.hold import Hold, read_hold, release_hold, release_waits_for_dan, write_hold
 from spark.llamaswap import Running
 from spark.registry import load_registry
 
@@ -48,6 +49,11 @@ def refusal(n: int) -> RefusalRecord:
     return RefusalRecord(at=T + n, model=CODER, key="agent", uid=AGENT, code="no_fit", message=f"refusal {n}")
 
 
+def event(n: int, at: float | None = None) -> RecentRecord:
+    return RecentRecord(at=T + n if at is None else at, kind="make-room", text=f"event {n}", model=CODER,
+                        uids=[DAN, AGENT])
+
+
 def full_state() -> GateState:
     """Every part of the state that survives a restart, filled."""
     state = GateState(boot_id=BOOT)
@@ -57,13 +63,16 @@ def full_state() -> GateState:
     state.pins = {CODER: Pin(model=CODER, until=T, by_uid=DAN)}
     state.sessions = {"s1": Session(id="s1", uid=AGENT, pid=4242, model=CODER, label="agent's pi", started_at=T - 600,
                                     renewed_at=T - 60, boot_id=BOOT, start_time=777_000)}
-    state.room_hold = RoomHold(size_gib=40.0, until=None, boot_id=BOOT, created_at=T - 300, unloaded=[CODER])
+    state.room_hold = RoomHold(size_gib=9.0, until=None, boot_id=BOOT, created_at=T - 300, unloaded=[CODER],
+                               total_gib=40.0)
     state.brake_marks = {CODER: BrakeMark(model=CODER, at=T - 3 * 3600, seen_gib=26.0)}
     state.last_auto_release_at = T - 1800
     state.brake_events_after = (BOOT, 7, T - 100)
     state.notified = {notified_key("loaded", "load:abc"): T - 10}
     state.notify_failing_since = T - 20
     state.refusals.extend(refusal(n) for n in range(3))
+    state.recent.extend(event(n) for n in range(2))
+    state.resident_reloads = {GEMMA: T - 600}
     state.applying = ApplyHold(since=T - 30, by_uid=DAN, renewed_at=T - 15, begun_at=T - 10,
                                restarting=["local-ai-gate.service", "local-ai-llama-swap.service"], ended=False)
     state.ticketed = {GEMMA: Ticketed(model=GEMMA, pid=4300, ticket_id="t-gemma", at=T - 7000, start_time=123456)}
@@ -80,9 +89,58 @@ def test_pins_sessions_holds_and_marks_survive_a_restart(tmp_path):
     assert problem is None
     assert loaded == state
     assert loaded.saved_at == T and loaded.brake_events_after == (BOOT, 7, T - 100)
-    assert loaded.pins[CODER].until == T and loaded.room_hold.until is None and loaded.room_hold.size_gib == 40
+    assert loaded.pins[CODER].until == T and loaded.room_hold.until is None
+    assert (loaded.room_hold.size_gib, loaded.room_hold.total_gib) == (9.0, 40.0)
     assert loaded.brake_marks[CODER] == BrakeMark(CODER, T - 3 * 3600, 26.0)
     assert list(loaded.refusals) == [refusal(0), refusal(1), refusal(2)]
+    assert list(loaded.recent) == [event(0), event(1)] and loaded.resident_reloads == {GEMMA: T - 600}
+
+
+def test_a_room_hold_saved_before_its_total_reads_as_its_size(tmp_path):
+    # A hold saved by Task 13's code has no total_gib: its size is all that is known of it (the controller's ruling at
+    # Task 17).
+    save_state(tmp_path, GateState(room_hold=RoomHold(40.0, None, BOOT, T, [])), now=T)
+    data = json.loads((tmp_path / STATE_FILE).read_text())
+    del data["room_hold"]["total_gib"]
+    (tmp_path / STATE_FILE).write_text(json.dumps(data))
+    loaded, problem = load_state(tmp_path)
+    assert problem is None and loaded.room_hold.total_gib is None and loaded.room_hold.size_gib == 40.0
+
+
+def test_recent_keeps_the_newest_50_for_a_day_and_fields_it_doesnt_know(tmp_path):
+    # The events for spark status's *recent* that aren't refusals (the controller's ruling at Task 17): bounded as the
+    # refusals are, dropped once a day old, saved, and a field a later version adds kept as it was.
+    assert (RECENT_HISTORY, RECENT_KEEP_S) == (50, 86400)
+    state = GateState()
+    state.recent.extend(event(n) for n in range(60))
+    assert list(state.recent) == [event(n) for n in range(10, 60)]  # the newest 50, oldest first
+    state.recent.popleft()
+    state.recent.appendleft(event(-1, at=T + 59 - RECENT_KEEP_S))  # a day old at the save
+    kept = state.recent
+    save_state(tmp_path, state, now=T + 59)
+    assert state.recent is kept and list(state.recent) == [event(n) for n in range(11, 60)]  # a day old: dropped
+    data = json.loads((tmp_path / STATE_FILE).read_text())
+    data["recent"][0]["later_field"] = "as it was"
+    data["recent"] = [data["recent"][0]] * 5 + data["recent"]
+    (tmp_path / STATE_FILE).write_text(json.dumps(data))
+    loaded, problem = load_state(tmp_path)
+    assert problem is None and len(loaded.recent) == 50 and loaded.recent[-1] == event(59)
+    save_state(tmp_path, loaded, now=T + 59)
+    assert json.loads((tmp_path / STATE_FILE).read_text())["recent"][0]["later_field"] == "as it was"
+    (tmp_path / STATE_FILE).write_text(json.dumps({"schema": STATE_SCHEMA, "recent": [{"at": T, "kind": "x"}]}))
+    assert load_state(tmp_path)[1] is not None  # an event missing its text is damage
+
+
+def test_the_residents_reload_times_survive_a_restart_and_go_after_an_hour(tmp_path):
+    # Each resident's last automatic reload after a crash, an aborted start or an unknown unload, so the bound of one
+    # an hour (the controller's ruling at Task 17) holds across a restart; an hour on, it bounds nothing.
+    assert RESIDENT_RELOAD_EVERY_S == 3600
+    state = GateState(resident_reloads={GEMMA: T - 3600, CODER: T - 3599})
+    save_state(tmp_path, state, now=T)
+    assert state.resident_reloads == {CODER: T - 3599}
+    assert load_state(tmp_path)[0].resident_reloads == {CODER: T - 3599}
+    (tmp_path / STATE_FILE).write_text(json.dumps({"schema": STATE_SCHEMA, "resident_reloads": {GEMMA: "soon"}}))
+    assert load_state(tmp_path)[1] is not None
 
 
 def test_a_brake_mark_with_no_reading_keeps_none(tmp_path):
@@ -673,6 +731,37 @@ def test_a_hold_with_a_damaged_new_field_still_holds(tmp_path, field, value):
     damaged = read_hold(tmp_path)
     assert damaged.since == hold.UNREADABLE_SINCE and "can't be read" in damaged.reason  # fail closed: still holds
     assert release_waits_for_dan(damaged, boot_id=BOOT, last_auto_release_at=None, now=T)
+
+
+def test_release_hold_with_the_hold_it_judged_lifts_only_that_hold(tmp_path):
+    # The gate's automatic release removes only the hold it judged: a newer brake's hold, written between its reading
+    # and its removal, stands (the controller's ruling at Task 17). Dan's release lifts whatever stands.
+    judged = Hold(local(T), "19.6 GiB available", (CODER,), boot_id=BOOT, episode=1, available_gib=19.6)
+    newer = replace(judged, since=local(T + 60), episode=2)
+    write_hold(tmp_path, newer)
+    assert release_hold(tmp_path, judged) is False and read_hold(tmp_path) == newer
+    assert sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]  # nothing left aside
+    write_hold(tmp_path, judged)
+    assert release_hold(tmp_path, judged) is True and read_hold(tmp_path) is None
+    assert release_hold(tmp_path, judged) is False  # none to lift
+    (tmp_path / hold.FILE).write_text("{not json")
+    assert release_hold(tmp_path, judged) is False and (tmp_path / hold.FILE).read_text() == "{not json"
+    assert release_hold(tmp_path) is True and read_hold(tmp_path) is None
+    # A hold the brake wrote again while the judged one was aside stands, and the judged one doesn't come back.
+    write_hold(tmp_path, judged)
+    real_rename = os.rename
+
+    def brake_writes_meanwhile(src, dst):
+        real_rename(src, dst)
+        if str(dst).startswith(str(tmp_path / hold.FILE)) and dst != tmp_path / hold.FILE:
+            write_hold(tmp_path, newer)
+
+    os.rename = brake_writes_meanwhile
+    try:
+        assert release_hold(tmp_path, replace(judged, episode=9)) is False
+    finally:
+        os.rename = real_rename
+    assert read_hold(tmp_path) == newer and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
 
 
 def test_release_waits_for_dan_after_a_reboot_or_a_second_brake_within_the_hour():

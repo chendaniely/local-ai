@@ -91,8 +91,10 @@ RETRY_FIRST_S, RETRY_MAX_S = 1.0, 30.0
 # llama-swap's refusals of a load that a retry may change, tried again within the request's wait; any other status but
 # 500 (a 404, a 401) is refused at once (the controller's ruling at Task 15).
 RETRY_STATUSES = (429, 503)
-# Why the gate reloads a resident (the controller's ruling at Task 7): resident_waiting's `after`.
-RELOAD_AFTER = ("hold", "brake", "apply", "boot", "restart", "crash")
+# Why the gate reloads a resident (the controller's ruling at Task 7): resident_waiting's `after`. `gate`: after the
+# gate's own unload that wasn't Dan's choice, one after damage or a start it aborted (the controller's ruling at Task
+# 17).
+RELOAD_AFTER = ("hold", "brake", "apply", "boot", "restart", "crash", "gate")
 # What a 500 says when it ended no start of the model's own (the controller's ruling at Task 12's re-review): an unload
 # aborted it (internal/router/scheduler/fifo.go:230-242), or llama-swap is shutting down (internal/router/base.go:
 # 598-602).
@@ -269,6 +271,10 @@ class Admitter:
         self._hold_seen: tuple[Hold, float, bool] | None = None
         self._looked = False
         self._stopped = False
+        # Each model whose start past its deadline this admitter unloaded (_late_unload), and when /running showed it
+        # gone: the gate's own unload, with no drain to remember it, which the residents' rule asks after (Task 17's
+        # Drainer.unloaded_why; the controller's ruling at Task 17).
+        self.late_unloads: dict[str, float] = {}
         # The models the last /running read showed starting, which hold the one-load slot whatever their record says
         # (the controller's ruling at Task 15's re-review): `running`, restore's own read; then each read the core
         # passes to observe_running, and the admitter's own.
@@ -862,6 +868,7 @@ class Admitter:
                 return False
             await self._sleep(self._poll_s)
         self._take_started(load)
+        self.late_unloads[load.model] = self._clock()
         model = self.registry.models.get(load.model)
         self._emit("unloaded", f"drain:late-start-{load.ticket_id or load.model}",
                    label=model.label if model else load.model, why="late_start")

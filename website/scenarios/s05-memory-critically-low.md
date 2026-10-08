@@ -63,8 +63,10 @@ paused. They resume by themselves after 5 min above 28 GiB available.*, and for 
 loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused.
 They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on
 the Spark, `make brake-release` resumes them now.*, and `spark status` shows *paused*. On release,
-at default priority: *Brake released at 03:40, 64 GiB available. Reloaded Gemma and the
-embeddings. The coder was loading when it fired, so it loads again only when you ask.* ~~A hold that
+at default priority: *Brake released at 03:40, 64 GiB available. ~~Reloaded Gemma and the
+embeddings.~~ Reloading Gemma, then the embeddings. The coder was loading when it fired, so it loads
+again only when you ask.* *(Corrected 2026-10-08, at the implementation plan's Task 17, the
+controller's ruling: it comes as the hold lifts, the reloads queued, not done.)* ~~A hold that
 waits for me sends~~ A hold found after a reboot sends, at high priority, *After the reboot, new
 loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.*;
 a brake within the hour after an automatic release says so in its own alert, which ends *It fired

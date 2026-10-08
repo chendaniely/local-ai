@@ -29,7 +29,10 @@ and becomes a crash; a clean exit fires nothing, since the unit restarts by itse
 is its own case: requests wait for their key's wait, then are refused with `llama_swap_down`, and
 the brake can hold new loads but not unload anything; once llama-swap is back, the gate reloads the
 always-loaded models by themselves, one at a time, as it does for one that earlyoom kills (my
-decision, 2026-10-07). ntfy reaches me over the tailnet or the home LAN only, so out of reach means
+decision, 2026-10-07). *(Added 2026-10-08, at the implementation plan's Task 17, the controller's
+ruling: one that earlyoom kills, or whose start keeps hanging, reloads by itself at most once an
+hour; a second time within the hour, my phone says it won't reload by itself, and `spark load`
+loads it.)* ntfy reaches me over the tailnet or the home LAN only, so out of reach means
 no alert, for now.
 
 In the plan's words: a high-priority *The gate on brightroar stopped at 09:14 (it crashed; it is

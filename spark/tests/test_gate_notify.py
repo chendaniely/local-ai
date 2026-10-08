@@ -138,7 +138,7 @@ SENT_BY_THE_GATE = {
     "refused": {"code": "no_fit", "moment": NO_FIT_AGENT},
     "footprint_suspect": SUSPECT,
     "load_failed": FAILED,
-    "brake_released": {"at": at(3, 40), "available_gib": 64, "reloaded": ["Gemma"], "loading_label": "the coder"},
+    "brake_released": {"at": at(3, 40), "available_gib": 64, "reloading": ["Gemma"], "loading_label": "the coder"},
     "room_hold_ended": {"why": "--done", "unused_gib": 40, "total_gib": 40, "reloading": [], "next_label": None},
     "resident_waiting": {"label": "Gemma", "needed_gib": 32, "free_gib": 9, "after": "hold"},
     "apply_restarted": {"at": at(14, 2), "reloaded": ["Gemma"], "on_demand": ["the coder"]},
