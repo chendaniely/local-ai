@@ -656,10 +656,13 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "*The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in "
         "flight were cut off. On the Spark, `make doctor` shows what's wrong.*"),
     "llama_swap_down": (
-        "the failure notifier, or the gate when it stops answering",
+        "the failure notifier, or the gate when it stops answering; or the gate, once, when a model is still stopping "
+        "5 minutes after its unload call began",
         "*The model service on brightroar isn't answering (since 09:14). No model answers until it's back; requests "
         "wait, then are refused. On the Spark, `make doctor` shows what's wrong.* From the failure notifier, when it "
-        "crashed: *The model service on brightroar stopped at 09:14 (it crashed; it is restarting). …*"),
+        "crashed: *The model service on brightroar stopped at 09:14 (it crashed; it is restarting). …* A stop that "
+        "hangs: *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs "
+        "s=llama-swap` shows why.*"),
     "brake_down": (
         "the failure notifier: the brake stopped",
         "*The memory brake on brightroar stopped at 09:14 (it crashed; it is restarting within 2 s). earlyoom stays "
@@ -896,7 +899,8 @@ def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
 # The four the failure notifier sends: what stopped, what that means, and how soon systemd starts it again (the brake's
 # 2 s matters most: nothing watches memory meanwhile). result_words is the notifier's result in words (Task 26), or
 # None for llama-swap that isn't answering with its unit still up, which nothing restarts: the gate's, worded *isn't
-# answering* (the controller's ruling at Task 14's review).
+# answering* (the controller's ruling at Task 14's review). llama_swap_down has the gate's third form too, a stop that
+# hangs (why stuck_stopping: _stuck_stopping).
 _DOWN = {
     "gate_down": ("The gate", "Loaded models still answer; new loads are refused until it's back.", ""),
     "front_down": ("The front", "Requests wait for it, and any in flight were cut off.", ""),
@@ -910,6 +914,10 @@ def _down_alert(kind: str) -> Callable[[Registry, dict[str, Any]], str]:
 
     def words(registry: Registry, f: dict[str, Any]) -> str:
         _needs(kind, f, "at")
+        if kind == "llama_swap_down":
+            stuck = _stuck_stopping(f)
+            if stuck is not None:
+                return stuck
         result = _one_line(f["result_words"] or "")
         if kind == "llama_swap_down" and not result:  # the gate's: its unit up, /running unanswered, so not "stopped"
             return (f"{name} on {_host()} isn't answering (since {_clock(f['at'])}). {effect} On the Spark, "
@@ -919,6 +927,26 @@ def _down_alert(kind: str) -> Callable[[Registry, dict[str, Any]], str]:
                 "what's wrong.")
 
     return words
+
+
+def _stuck_stopping(f: dict[str, Any]) -> str | None:
+    """llama_swap_down's form for a stop that hangs, why `stuck_stopping` (the controller's ruling at Task 12's second
+    re-review): the gate's, sent once when a model is still stopping STUCK_STOPPING_S after its unload call began (Task
+    16), `since` that call's start and `at` the alert's time. v257 waits on a killed engine's exit with no bound while
+    `/running` still answers, so no other alert says it. None for the other forms, which take neither model_label nor
+    since."""
+    if f["why"] is None:
+        for name in ("model_label", "since"):
+            if f[name] is not None:
+                raise ValueError(f"llama_swap_down's {name} is for why stuck_stopping")
+        return None
+    _one_of("llama_swap_down", "why", f["why"], ("stuck_stopping",))
+    _needs("llama_swap_down", f, "model_label", "since")
+    if f["result_words"] is not None:
+        raise ValueError("llama_swap_down's stuck_stopping is the gate's own: no result_words, since its unit is up")
+    stopping = _local(f["at"]).timestamp() - _local(f["since"]).timestamp()
+    return (f"llama-swap has been stopping {_one_line(f['model_label'])} for {_brief(stopping)}; its engine may be "
+            "stuck. On the Spark, `make logs s=llama-swap` shows why.")
 
 
 _UNITS = {"gate": ("The gate", "New loads work again."), "front": ("The front", "Requests go through again."),
@@ -1307,6 +1335,7 @@ _TAKES: dict[str, dict[str, Any]] = {
                     "release_assumed": False, "unload_unanswered": False},
     "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": []},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
+    "llama_swap_down": dict.fromkeys(("at", "result_words", "why", "model_label", "since")),  # why: stuck_stopping
     "back_up": {"unit": None, "down_s": None, "state_damaged": False, "down_unknown": False},
     "refused": dict.fromkeys(("code", "moment")),
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),

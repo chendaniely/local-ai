@@ -1222,6 +1222,41 @@ def test_a_hang_reads_isnt_answering_and_a_crash_stopped():
     assert say("gate_down", at=at(9, 14)).startswith("The gate on brightroar stopped at 09:14.")
 
 
+STUCK = {"at": at(9, 19), "why": "stuck_stopping", "model_label": "the coder", "since": at(9, 14)}
+STUCK_TEXT = ("llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, "
+              "`make logs s=llama-swap` shows why.")
+
+
+def test_a_stop_that_hangs_sends_llama_swap_downs_stuck_form():
+    # The controller's ruling at Task 12's second re-review (Task 16 adds it): a model still stopping
+    # STUCK_STOPPING_S after its unload call began sends one alert, llama_swap_down's type and priority, with why
+    # stuck_stopping, its model and when the call began; the time it has stopped for is `at` less `since`.
+    built = messages.notification("llama_swap_down", REGISTRY, **STUCK)
+    assert (built.type, built.priority, built.message) == ("llama_swap_down", "high", STUCK_TEXT)
+    assert say("llama_swap_down", **{**STUCK, "at": at(9, 20) + timedelta(seconds=40)}).startswith(
+        "llama-swap has been stopping the coder for 6 min 40 s;")
+    assert say("llama_swap_down", **{**STUCK, "at": at(9, 19).timestamp(),
+                                     "since": at(9, 14).timestamp()}) == STUCK_TEXT  # Unix seconds, as the gate keeps
+    # The notifications page shows it beside the other forms.
+    assert STUCK_TEXT in _plain(messages.NOTIFICATION_DOC["llama_swap_down"][1])
+    # The command it names is the Makefile's: `make logs s=llama-swap` reads local-ai-llama-swap.service's journal.
+    makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
+    assert re.search(r"^logs: ## On the Spark: make logs s=llama-swap\|", makefile, re.MULTILINE)
+    for name in ("model_label", "since"):
+        with pytest.raises(ValueError, match=f"^llama_swap_down's words need {name}"):
+            say("llama_swap_down", **{**STUCK, name: None})
+    with pytest.raises(ValueError, match="^llama_swap_down's stuck_stopping is the gate's own: no result_words"):
+        say("llama_swap_down", **{**STUCK, "result_words": "it crashed"})
+    with pytest.raises(ValueError, match="^llama_swap_down's why must be one of stuck_stopping"):
+        say("llama_swap_down", **{**STUCK, "why": "slow"})
+    for name in ("model_label", "since"):  # only the stuck form takes them
+        with pytest.raises(ValueError, match=f"^llama_swap_down's {name} is for why stuck_stopping"):
+            say("llama_swap_down", at=at(9, 14), **{name: STUCK[name]})
+    for kind in ("gate_down", "front_down", "brake_down"):  # and only llama_swap_down has it
+        with pytest.raises(ValueError, match=f"^{kind}'s words take no why"):
+            say(kind, at=at(9, 14), why="stuck_stopping")
+
+
 def test_a_high_alert_sent_late_says_what_is_known_of_the_first():
     # The controller's rulings at Task 14's review and re-review, under Dan's "err on more notifications": a high
     # alert ntfy didn't take is sent once it answers again, worded by what is known of the first send.
