@@ -1065,8 +1065,8 @@ git commit -m "feat(spark): 🤖 rule 9: render checks each model against the re
 **Files:**
 
 - Create: `spark/src/spark/messages.py`, `spark/tests/test_messages.py`
-- Modify: `spark/src/spark/render.py`, `spark/tests/test_render.py` (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings: render refuses registry
-  text that pi's retry list matches*)
+- Modify: `spark/src/spark/render.py`, `spark/tests/test_render.py` (*added 2026-10-07, at Task 6's
+  fix round 1, the controller's rulings: render refuses registry text that pi's retry list matches*)
 
 **Interfaces:**
 
@@ -1141,16 +1141,16 @@ currently experiencing high demand
 ```
 
 - `load_failed`'s refusal quotes `engine_said` only when it matches none of `PI_RETRY_PATTERNS`;
-  otherwise it reads *The coder started loading but failed: the engine stopped. On the Spark,
-  `spark logs coder` shows the engine's last lines.* (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it named `spark status`,
-  which shows no engine lines; Task 30's `spark logs <model>` does, so `load_failed` needs
-  `model_command`*), so an engine's `timeout` or `terminated` never
-  makes pi repeat a full load. Its notification (Task 7), which pi never sees, quotes the line
-  either way. *(Added 2026-10-07, at Task 6, the controller's ruling: the same guard covers
-  every text from outside the registry and the key list. A holder's process name, from `/proc`,
-  that pi's list matches is named only as *a process of Dan's, <n> GiB* or *a process, <n> GiB*.
-  An asked name that it matches reads *There's no model by that name here.* Each is put on one
-  line first. Registry labels are Dan's own text.)*
+  otherwise it reads *The coder started loading but failed: the engine stopped. On the Spark, `spark
+  logs coder` shows the engine's last lines.* (*corrected 2026-10-07, at Task 6's fix round 2, the
+  controller's ruling: it named `spark status`, which shows no engine lines; Task 30's `spark logs
+  <model>` does, so `load_failed` needs `model_command`*), so an engine's `timeout` or `terminated`
+  never makes pi repeat a full load. Its notification (Task 7), which pi never sees, quotes the line
+  either way. *(Added 2026-10-07, at Task 6, the controller's ruling: the same guard covers every
+  text from outside the registry and the key list. A holder's process name, from `/proc`, that pi's
+  list matches is named only as *a process of Dan's, <n> GiB* or *a process, <n> GiB*. An asked name
+  that it matches reads *There's no model by that name here.* Each is put on one line first.
+  Registry labels are Dan's own text.)*
 - `Holder(name: str, gib: float, dans: bool)` — a memory holder as messages name it, defined
   here; Task 8's `procs.top_holders` builds them.
 - `Moment` — what a message needs, every field with a default, since the front builds its own
@@ -1204,10 +1204,10 @@ currently experiencing high demand
     rest to the nearest), but a reading near a line (the brake's, the warn line's) to one decimal
     (*19.6 GiB*);
   - a time as the local 24-hour `HH:MM` of an aware `datetime`;
-  - a wait as `<n> s` under a minute, else `<n> minutes` (`1 minute`) (*corrected 2026-10-07, at
-    Task 6's fix round 1, the controller's ruling: every duration, a deadline included, from a minute
-    on, in minutes and seconds, `1 minute 30 s`, `3 minutes`, and from an hour, hours too, so none
-    prints as a bare 5xx*);
+  - a wait as `<n> s` under a minute~~, else `<n> minutes` (`1 minute`)~~ (*corrected 2026-10-07, at
+    Task 6's fix round 1, the controller's ruling: every duration, a deadline included, from a
+    minute on, in minutes and seconds, `1 minute 30 s`, `3 minutes`, and from an hour, hours too, so
+    none prints as a bare 5xx*);
   - *no_fit*'s parenthesis lists the reserve, then the growth owed when it isn't 0, then the hold
     when it is counted, joined "A and B" or "A, B and C". Where the ceiling binds, it starts from
     the ceiling less the loaded models' footprints instead, and a model still starting comes
@@ -1221,12 +1221,16 @@ currently experiencing high demand
     *The hold ends when Dan runs `spark make-room --done` on the Spark.* (*corrected 2026-10-07, at
     Task 6's fix round 2, the controller's ruling*);
   - no refusal makes pi retry it. ~~A size pi's list would match (429 GiB and up, past this box's
-    memory) moves a GiB or two against the load: a need up, a room down.~~ A size of 400 GiB or
-    more reads *more than 400 GiB*, and a `no_fit` that needs that much ends *The Spark can never
-    free that much.* No number a message shows is altered, and none of that size can occur on this
-    box (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*). The one exception is `concurrency_limit`'s own *Too many requests*, a
-    `429`, which pi retries by its status, as the plan intends (*added 2026-10-07, at Task 6's fix
-    round 1, the controller's rulings*).
+    memory) moves a GiB or two against the load: a need up, a room down.~~ A size over 400 GiB
+    reads *more than 400 GiB*, and a `no_fit` that needs that much ends *The Spark can never free
+    that much.* No number a message shows is altered, and none of that size can occur on this box
+    (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*). The one exception is
+    `concurrency_limit`'s own *Too many requests*, a `429`, which pi retries by its status, as the
+    plan intends (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings*);
+  - a breakdown adds up as shown: its terms in whole GiB when those add up to the figure shown, else
+    to one decimal, or two if one still doesn't. The start rounds down, as *available* does, and the
+    rest to the nearest. The figure stays whole, rounded down (*added 2026-10-07, at Task 6's fix
+    round 3, the controller's ruling*).
 
 **The refusals, word for word.** Each test's expected text is plan.md's (*What you see in Phase
 2a*, the refusal table), its italics' asterisks dropped and its backticks kept, with these inputs
@@ -1298,9 +1302,12 @@ the test's own time zone):
   leaves `spark.budget` out of `sys.modules`.
 - `test_the_unknown_key_text_is_the_rulings` — `UNKNOWN_KEY` is the ruling's sentence.
 - *Added 2026-10-07, at Task 6, with the controller's rulings:*
-  - `test_free_for_a_load_is_the_gates_own_figure` — where the ceiling binds, `free_gib` 10 is
-    below the breakdown's 48 − 24 − 6, and the message shows 10; 17.99 shows 17; `no_fit` without
-    `free_gib` is a `ValueError`.
+  - `test_free_for_a_load_is_the_gates_own_figure` — ~~where the ceiling binds, `free_gib` 10 is
+    below the breakdown's 48 − 24 − 6, and the message shows 10;~~ 17.99 shows 17~~; `no_fit`
+    without `free_gib` is a `ValueError`~~ (*corrected 2026-10-07, at Task 6's fix round 3: the
+    ceiling's case is `test_the_breakdown_is_the_term_that_gave_the_figure`'s, its breakdown the
+    ceiling's, and the missing field is
+    `test_each_code_refuses_a_moment_without_the_fields_its_words_use`'s*).
   - `test_no_outside_text_makes_pi_retry_a_refusal` — holders named `timeout (chendaniely)` and
     `terminated (agent)` read *a process of Dan's, 32 GiB* and *a process, 8 GiB*, and pi's text
     matches nothing. An asked name `gpt-timeout` reads *There's no model by that name here.*
@@ -1314,14 +1321,20 @@ the test's own time zone):
     still starting may take*), both, and `agent`'s counted hold under the ceiling, with its clamp.
   - `test_agent_is_never_told_to_run_what_only_dan_can` — every refusal in `agent`'s words: a
     sentence naming `spark make-room`, `make brake-release`, `spark load`, `make pull`, `make
-    doctor` or `make clients` names Dan, ~~but the plan's own *On the Spark, `spark make-room --done`
-    ends the hold.*~~ every one, `spark logs` among them (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*)
+    doctor` or `make clients` names Dan, ~~but the plan's own *On the Spark, `spark make-room
+    --done` ends the hold.*~~ every one, `spark logs` among them (*corrected 2026-10-07, at Task 6's
+    fix round 2, the controller's ruling*)
   - `test_no_refusal_makes_pi_retry_at_any_boundary` — every row, in both words, at sizes of 429
     to 524 GiB, deadlines and waits of 500, 503, 520 and 529 s and of 500 to 520 minutes, and
     names ending in `-500m`: no message matches pi's list, but `concurrency_limit`'s own *Too many
     requests*, a `429`. ~~`test_a_size_pi_would_match_moves_against_the_load` shows how each
-    moves.~~ `test_a_size_of_400_gib_or_more_reads_more_than_400_gib` shows each size of 400 GiB or
-    more as *more than 400 GiB*, and each under it as itself (*corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling*).
+    moves.~~ `test_a_size_over_400_gib_reads_more_than_400_gib` shows each size over 400 GiB as
+    *more than 400 GiB*, and each up to it as itself, 400 included (*corrected 2026-10-07, at Task
+    6's fix round 2, the controller's ruling*).
+  - `test_a_breakdown_adds_up_as_shown` (*added 2026-10-07, at Task 6's fix round 3, the
+    controller's ruling*): 48.3 − 24 − 6.2 reads whole, 48 − 24 − 6; 48.9 − 24 − 6.6 reads to one
+    decimal, since 48 − 24 − 7 is 17, not the 18 shown; the ceiling's 101.9 − 91.6 the same way;
+    48.95 − 24 − 6.95 to two decimals.
   - `test_each_code_refuses_a_moment_without_the_fields_its_words_use` — for each code, each field
     its words use, left at its default → a `ValueError` naming the code and the field;
     `test_some_fields_are_needed_only_where_the_words_use_them` and
@@ -1725,7 +1738,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 13), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by any of the ends the next rows name, each doing the same work |
   | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
   | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`, persisted with the hold, before the first restart; *end*, posted once llama-swap answers again, ends the hold. Every end — *end*, `undrain-all`, the gate seeing llama-swap answer again after a restart `begin` named, and a hold not renewed for `APPLY_LAPSE_S` (60 s), before `begin` as after — takes one path, once: it re-reads the registry, releases the hold (`release_all`), then queues the residents' reload ahead of anything else, in one step of the gate's loop, so no held request takes the load slot first, and sends `apply_restarted` when llama-swap did restart; a second end does nothing. So a `make apply` that died holds new requests for at most `APPLY_LAPSE_S` past its last renewal |
-  | control | `GET /v1/logs/{model}?n=` | admin | `{lines: [...]}`, the engine's last lines, read with the gate's key |
+  | control | `GET /v1/logs/{model}?n=` | admin | `{lines: [...]}`, the engine's last lines, read with the gate's key; `{model}` a model's name or one of its roles, resolved as `spark load`'s argument is (*added 2026-10-07, at Task 6's re-review: the refusals name the role*) |
   | control | `POST /v1/canary` | admin | `{needle}` → `{found: [where]}`: whether the string is in the gate's state, its refusal history or launch's records, never what surrounds it (doctor's `--full`) |
 
   There is no cancel route: the front drops its admit call when its client goes, and the gate
@@ -2328,10 +2341,15 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
   it loads into Dan's hold, and gets `footprint_suspect` for a marked model.
 - `test_a_request_for_a_loading_model_joins_its_load_and_waits_past_its_wait` — the coder's load
   takes 50 s; Dan's request (wait 30 s) at 5 s → `Admitted` at 50 s.
-- `test_no_fit_after_the_keys_wait_carries_the_moments_numbers` — the examples' moment, Dan's key
-  → at 30 s `no_fit`, its message Task 6's Dan text; recorded in `state.refusals`; `refused`
-  emitted. *(Added 2026-10-07, at Task 6: with a ceiling that binds, the message's figure is the
-  admitter's own `free_for_a_load`, passed as `Moment.free_gib`, not available − reserve − owed.)*
+- `test_no_fit_after_the_keys_wait_carries_the_moments_numbers` — the examples' moment, Dan's key →
+  at 30 s `no_fit`, its message Task 6's Dan text; recorded in `state.refusals`; `refused` emitted.
+  *(Added 2026-10-07, at Task 6: with a ceiling that binds, the message's figure is the admitter's
+  own `free_for_a_load`, passed as `Moment.free_gib`, not available − reserve − owed.)* *(Added
+  2026-10-07, at Task 6's fix round 3: and its expected breakdown is the ceiling's, *(the 102 GiB
+  the GPU can allocate, less …)*, compared as the whole text, so the admitter must fill
+  `ceiling_gib` and `committed_gib` whenever that term is the smaller. A gate that forgot them would
+  pass `refusal`'s own checks, since `available_gib` and `reserve_gib` would be there, and the
+  breakdown would no longer add up.)*
 - `test_room_appearing_within_the_wait_loads_the_model` — available 48, then 90 at 10 s → loaded
   at 10 s.
 - `test_loading_means_the_wait_ran_out_in_the_queue_for_the_slot` — Gemma's load holds the slot
@@ -3007,13 +3025,14 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   key's wait`, nothing sent to the client meanwhile; the gate down → forwarded if loaded, else 503
   `gate_down`, the one refusal that stays a `503`, in the asking key's group's `words` (*added
   2026-10-07, at Task 6's fix round 1: `agent`'s names Dan's phone and Dan's `make doctor`, so the
-  front passes `words`, and `key_label`, to every refusal it builds*); the gate restarting → each held admission asked
-  again with its original deadline; llama-swap's 500 `upstream command exited prematurely` → asked
-  again once and forwarded again from the held body, a second one reaching the client as 409
-  `load_failed`. A refused connection, or one reset before the response's headers (llama-swap
-  crashed or restarting), goes the same way: through `admit`, with its original deadline, from the
-  held body, so the gate answers it — `restarting` or `llama_swap_down` at the deadline, both
-  `409`s, or a load; once the headers have gone, a cut-off stream reaches the client as it is.
+  front passes `words`, and `key_label`, to every refusal it builds*); the gate restarting → each
+  held admission asked again with its original deadline; llama-swap's 500 `upstream command exited
+  prematurely` → asked again once and forwarded again from the held body, a second one reaching the
+  client as 409 `load_failed`. A refused connection, or one reset before the response's headers
+  (llama-swap crashed or restarting), goes the same way: through `admit`, with its original
+  deadline, from the held body, so the gate answers it — `restarting` or `llama_swap_down` at the
+  deadline, both `409`s, or a load; once the headers have gone, a cut-off stream reaches the client
+  as it is.
 - The drain, under one lock: on `drain`, the model is marked draining with its count checked;
   for `why: "idle"` with a request in flight, the front posts `busy` and keeps serving; otherwise
   `drained` is posted when the count reaches 0, and its new requests wait as for a load, getting
@@ -3809,11 +3828,12 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
 
 - `spark load <model|role>`, `spark unload <model|role>`, `spark pin <model> [duration]`, `spark
   unpin <model>`, `spark make-room <size> [--for <duration>]`, `spark make-room --all`, `spark
-  make-room --done`, `spark logs <model> [-n N]` — each on the control socket; `spark session
-  start --model M --pid P --label L`, `spark session renew <id>`, `spark session end <id>` — on the
-  status socket, for 2b's hooks. Each prints Task 7's confirmation, or the refusal's message (exit
-  1). Each registers with `cli.py` with its imports inside its handler, as Task 3's test holds it
-  to.
+  make-room --done`, `spark logs <model|role> [-n N]`, a role resolved as `spark load` resolves it
+  (*added 2026-10-07, at Task 6's re-review: the refusals name the role*) — each on the control
+  socket; `spark session start --model M --pid P --label L`, `spark session renew <id>`, `spark
+  session end <id>` — on the status socket, for 2b's hooks. Each prints Task 7's confirmation, or
+  the refusal's message (exit 1). Each registers with `cli.py` with its imports inside its handler,
+  as Task 3's test holds it to.
 - `spark session hold --model M --label L` (Dan's decision, 2026-10-07, after the forward-and-back
   council) — a session for a process that isn't on the Spark, such as Orca's pi on the Mac: it
   registers its own pid, renews every 60 s, and ends the session when its stdin closes, or on
@@ -5395,20 +5415,18 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
 - **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`;
   a reason added later needs its line, and Task 29's test reads the tuple, so it fails until the
   line is written.
-
 - **make-room starts from the gate's own figure** (added 2026-10-07, at Task 6's fix round 1, the
   controller's ruling; plan.md, rule 4's *What it frees*). Task 30's `spark make-room <size>`
   takes *free for a load* from the gate, rule 9's figure with its ceiling and starting terms, as
   `budget.make_room_plan`'s `free_now_gib`. It never works out `MemAvailable` less the reserve and
   the growth owed: where the CUDA ceiling binds, that count could find nothing to unload, and Dan's
   retry would be refused again.
-
-- **A key label pi's retry list matches is refused at startup** (added 2026-10-07, at Task 6's fix round 2, the controller's ruling). The private key
-  list's labels go into refusals (*Not loading the coder for <label>*, *<label> already has as many
-  requests …*), and render never reads that file. Whichever task first loads `keys.yaml` at run
-  time, the front's (Task 20) or the gate's, refuses at startup a label that
-  `messages.pi_retry_match` matches, with a plain error naming the key, as `render.check_words`
-  does for the registry.
+- **A key label pi's retry list matches is refused at startup** (added 2026-10-07, at Task 6's fix
+  round 2, the controller's ruling). The private key list's labels go into refusals (*Not loading
+  the coder for <label>*, *<label> already has as many requests …*), and render never reads that
+  file. Whichever task first loads `keys.yaml` at run time, the front's (Task 20) or the gate's,
+  refuses at startup a label that `messages.pi_retry_match` matches, with a plain error naming the
+  key, as `render.check_words` does for the registry.
 
 ### Minors the forward-and-back council left for the tasks that meet them
 

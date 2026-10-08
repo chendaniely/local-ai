@@ -14,7 +14,7 @@ No refusal may make pi retry it (phase-2a.md, *Before Task 1*):
 - Text from outside the registry and the key list goes in only on one line, and only when pi's retry list doesn't
   match it. That is a process's name from /proc, the engine's line, or the name a client asked for.
 - A duration reads in minutes and seconds from a minute on, so none prints as a bare 5xx.
-- A size of 400 GiB or more reads *more than 400 GiB*, true and matched by nothing in pi's list. None can occur
+- A size over 400 GiB reads *more than 400 GiB*, true and matched by nothing in pi's list. None can occur
   on this box, since render keeps every footprint under the ceiling. No number a message shows is ever altered.
 - render refuses registry text pi's list matches (render.check_words)."""
 
@@ -101,8 +101,8 @@ _ALERT = {"dan": "Your phone has the alert; on the Spark, `make doctor` shows wh
 # deployed registry. Without --http-idle-timeout-ms it leaves pi's settings.json as it is.
 _AGENTS_CLIENTS = "/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml"
 _TENTH = Decimal("0.1")
-# From this size up a message says "more than 400 GiB", never the number: pi's list holds 429, 500, 502-504, 520 and
-# 524, and no size under 400 can show one of them (a tenth's point breaks a reading's digits apart).
+# Past this size a message says "more than 400 GiB", never the number: pi's list holds 429, 500, 502-504, 520 and
+# 524, and no size up to 400 can show one of them (a decimal point breaks a reading's digits apart).
 _TOO_BIG_GIB = 400
 # Decimal's default 28 digits can't hold an absurd size to a tenth (budget.DIGITS says why); 400 hold any float's.
 _DIGITS = 400
@@ -250,8 +250,8 @@ def _near(value: float | Decimal) -> int:
 
 
 def _size(shown: int | Decimal) -> str:
-    """A size as a message shows it, `<n> GiB`, but *more than 400 GiB* from 400 up (_TOO_BIG_GIB)."""
-    if shown >= _TOO_BIG_GIB:
+    """A size as a message shows it, `<n> GiB`, but *more than 400 GiB* past 400 (_TOO_BIG_GIB)."""
+    if shown > _TOO_BIG_GIB:
         return "more than 400 GiB"
     return f"{shown:f} GiB" if isinstance(shown, Decimal) else f"{shown} GiB"
 
@@ -308,18 +308,16 @@ def _holder(h: Holder, names_processes: bool) -> str:
 def _no_fit(m: Moment) -> str:
     _need("no_fit", m, "model_label", "needed_gib", "free_gib", "words")
     if m.ceiling_gib is not None:  # ceiling − committed was the smaller term
-        whole = f"the {_size(_down(m.ceiling_gib))} the GPU can allocate"
-        committed = _near(m.committed_gib)
-        less = [f"the {_size(committed)} the loaded models may grow to"] if committed else []
+        start, start_words = m.ceiling_gib, "the {} the GPU can allocate"
+        items = [(m.committed_gib, "the {} the loaded models may grow to")]
     else:
         _need("no_fit", m, "available_gib", "reserve_gib")
-        whole = f"{_size(_down(m.available_gib))} available"
-        less = [f"the {_size(reserve)} reserve"] if (reserve := _near(m.reserve_gib)) else []
-        if owed := _near(m.owed_gib):
-            less.append(f"the {_size(owed)} the loaded models may still grow into")
-    if starting := _near(m.starting_gib):
-        less.append(f"the {_size(starting)} the model still starting may take")
-    need, free, held = _up(m.needed_gib), _down(m.free_gib), _near(m.held_gib) if m.hold_counted else 0
+        start, start_words = m.available_gib, "{} available"
+        items = [(m.reserve_gib, "the {} reserve"), (m.owed_gib, "the {} the loaded models may still grow into")]
+    items.append((m.starting_gib, "the {} the model still starting may take"))
+    need, free = _up(m.needed_gib), _down(m.free_gib)
+    whole, shown, held = _breakdown(start, items, m.held_gib if m.hold_counted else 0, free)
+    less = [words.format(_size(value)) for value, words in shown if value]
     if free >= 1:
         room = f"{_size(free)} is free for a load"
         if held:
@@ -329,10 +327,11 @@ def _no_fit(m: Moment) -> str:
     else:
         room = "nothing is free for a load"
     taken = f", less {_and(less)}" if less else ""
-    words = [f"{_start(m.model_label)} didn't load: it needs {_size(need)}, and {room} ({whole}{taken})."]
+    words = [f"{_start(m.model_label)} didn't load: it needs {_size(need)}, and {room} "
+             f"({start_words.format(_size(whole))}{taken})."]
     if m.holders:
         words.append(f"Using memory now: {', '.join(_holder(h, m.names_processes) for h in m.holders)}.")
-    if need >= _TOO_BIG_GIB:  # more than the box has: no command can make that much room
+    if need > _TOO_BIG_GIB:  # more than the box has: no command can make that much room
         words.append("The Spark can never free that much.")
     elif held and m.words == "dan":
         words.append("On the Spark, `spark make-room --done` ends the hold.")
@@ -343,6 +342,25 @@ def _no_fit(m: Moment) -> str:
     else:  # make-room is Dan's alone, and its hold would bar agent anyway (rule 4)
         words.append("Only Dan can free memory for it, on the Spark; try again after that.")
     return " ".join(words)
+
+
+def _breakdown(start: float | Decimal, items: list[tuple[float | Decimal, str]], held: float | Decimal,
+               free: int) -> tuple[Decimal, list[tuple[Decimal, str]], Decimal]:
+    """The breakdown's terms as the words show them, so that they add up to the figure shown, `free` (free for a load,
+    whole and rounded down, or nothing below 1). Whole GiB when the whole terms add up to it, else one decimal, else
+    two, the first that does (the controller's ruling, Task 6's fix round 3: a breakdown adds up as shown). The start
+    rounds down, as *available* does, the rest to the nearest. No number is altered: only how many places show."""
+    def shown_as(total: Decimal) -> int | None:
+        figure = int(total.to_integral_value(ROUND_FLOOR))
+        return figure if figure >= 1 else None
+
+    for places in (0, 1, 2):
+        step = Decimal((0, (1,), -places))
+        at = (_gib(start).quantize(step, ROUND_FLOOR), [(_gib(v).quantize(step, ROUND_HALF_UP), w) for v, w in items],
+              _gib(held).quantize(step, ROUND_HALF_UP))
+        if shown_as(at[0] - sum((v for v, _ in at[1]), Decimal(0)) - at[2]) == shown_as(Decimal(free)):
+            break
+    return at[0].normalize(), [(v.normalize(), w) for v, w in at[1]], at[2].normalize()
 
 
 def _loading(m: Moment) -> str:

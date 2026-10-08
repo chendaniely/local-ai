@@ -511,16 +511,17 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    requests in flight and briefly stalls every model. Only the brake may cut one off. Revised the
    same day after the council, with Dan's decision on the hold:)*
    - **What it frees.** `spark make-room <size>` works out what must unload so that
-     `MemAvailable`, less the reserve and the growth the loaded models are still owed (rule 9),
-     reaches `<size>`, that is, until `<size>` is *free for a load*: Dan's job can then take all of it and leave the reserve free, above the
-     brake. *(Corrected 2026-10-07, at the implementation plan's Task 6's review, the controller's
-     ruling: make-room starts from the gate's own figure for free for a load, rule 9's, which also
-     counts the CUDA ceiling and any model still starting. Counting `MemAvailable` alone, where the
-     ceiling binds, `spark make-room 41G` could find nothing to unload, and the retry would be
-     refused again.)* It lists everything it could unload, pinned models and those an agent's session holds
-     included, each marked, largest first, with each one's requests in flight and how long they
-     have run. Asked for more than unloading everything can free, it says so and shows the most
-     it can free, and unloads nothing unless Dan confirms that (added after the re-review).
+     ~~`MemAvailable`, less the reserve and the growth the loaded models are still owed (rule 9),
+     reaches `<size>`, that is, until~~ `<size>` is *free for a load*, the gate's own figure (rule
+     9): Dan's job can then take all of it and leave the reserve free, above the brake. *(Corrected
+     2026-10-07, at the implementation plan's Task 6's review, the controller's ruling: make-room
+     starts from the gate's own figure for free for a load, rule 9's, which also counts the CUDA
+     ceiling and any model still starting. Counting `MemAvailable` alone, where the ceiling binds,
+     `spark make-room 41G` could find nothing to unload, and the retry would be refused again.)* It
+     lists everything it could unload, pinned models and those an agent's session holds included,
+     each marked, largest first, with each one's requests in flight and how long they have run.
+     Asked for more than unloading everything can free, it says so and shows the most it can free,
+     and unloads nothing unless Dan confirms that (added after the re-review).
    - **What it unloads.** What Dan confirms, each after the front has drained it (*The front and
      the gate*). `--all` is the CLI's `stop-all`. Unloading a pinned model ends its pin, and a
      session loses its model; `spark status` says whose they were.
@@ -913,8 +914,9 @@ and the command. *(Added 2026-10-07, at the implementation plan's Task 6, the co
 a duration of a minute or more reads in minutes and seconds, *3 minutes* or *8 minutes 20 s*, so no
 deadline prints as a bare 5xx, which pi's retry list matches. In `agent`'s words, a step only Dan
 can take says it is Dan's: `agent` is never told to run a command that only Dan can run.)* *(Added
-2026-10-07, at the implementation plan's Task 6's fix round 2, the controller's ruling: a size of 400 GiB or more reads *more than 400 GiB*, never altered to dodge pi's retry list.
-None can occur on this box, since render keeps every footprint under the ceiling.)*
+2026-10-07, at the implementation plan's Task 6's fix round 2, the controller's ruling: a size over
+400 GiB reads *more than 400 GiB*, never altered to dodge pi's retry list. None can occur on this
+box, since render keeps every footprint under the ceiling.)*
 
 **Two numbers, two words, everywhere.** *Available* is always `MemAvailable`, the box's free
 memory: what the brake's lines (warn at 28 GiB, brake at 20) and the status header measure. *Free
@@ -923,9 +925,13 @@ loaded models are still owed and any make-room hold that isn't the asker's (rule
 notification or status line says "free" alone. *(Added 2026-10-07, at the implementation plan's
 Task 6, the controller's ruling: or less, where the GPU's ceiling binds or a load is starting: rule
 9. A refusal shows the gate's own figure, with the breakdown of the term that gave it, so the sum
-adds up. Where the ceiling binds it reads *(the 102 GiB the GPU can allocate, less the 92 GiB the
-loaded models may grow to)*; with a model starting, *… and the 27 GiB the model still starting may
-take*.)*
+   adds up. Where the ceiling binds it reads *(the 102 GiB the GPU can allocate, less the 92 GiB the
+   loaded models may grow to)*; with a model starting, *… and the 27 GiB the model still starting
+   may take*.)* *(Added 2026-10-07, at the implementation plan's Task 6's fix round 3, the
+   controller's ruling: the breakdown adds up as shown. Its terms are in whole GiB when those add up
+   to the figure shown, and otherwise to one decimal, or two if one still doesn't, as in *18 GiB is
+   free for a load (48.9 GiB available, less the 24 GiB reserve and the 6.6 GiB the loaded models
+   may still grow into)*. The figure stays whole, rounded down, and no number is altered.)*
 
 **Nothing is injected into a reply stream.** Gate text in a stream would read as the model's own
 words, so a request that waits shows in the client only as a slow reply, its usual "thinking", and
@@ -2985,8 +2991,8 @@ Each item gets its own design pass when its turn comes.
 - **2026-10-07** — Phase 2a's Task 6, the controller's rulings on its concerns. Dated notes are in
   *What you see in Phase 2a* and in the implementation plan's Tasks 6, 15 and 20.
   - `model_not_found` gains `agent`'s next step, *On the Spark, as `agent`: pull its clone and run
-    `spark clients pi --write` to update pi's list.*, since `agent`'s pi is on the Spark. *(Corrected
-    at Task 6's review, the same day: see the next entry.)*
+    `spark clients pi --write` to update pi's list.*, since `agent`'s pi is on the Spark.
+    *(Corrected at Task 6's review, the same day: see the next entry.)*
   - A refusal names a process whose name pi's retry list matches only as *a process*, so pi never
     retries a refusal because of a process's name.
   - A refusal's *free for a load* is the gate's own figure, ceiling term included, never one the
@@ -2994,8 +3000,8 @@ Each item gets its own design pass when its turn comes.
   - `held_by_brake`'s warn line and release time come from the registry and the gate, not from
     the text.
 - **2026-10-07** — Phase 2a's Task 6 review, the controller's rulings. Dated notes are in *What you
-  see in Phase 2a*, in rule 4's *What it frees*, and in the implementation plan's Tasks 6, 15, 20 and
-  22 and its *Deferred notes for implementers*.
+  see in Phase 2a*, in rule 4's *What it frees*, and in the implementation plan's Tasks 6, 15, 20
+  and 22 and its *Deferred notes for implementers*.
   - `agent`'s `model_not_found` names the deployed CLI, `/opt/local-ai/app/.venv/bin/spark clients
     pi --write --registry /opt/local-ai/etc/models.yaml`. The entry above named the clone procedure
     from before 2a, and after the cutover `agent` has no clone.
@@ -3018,9 +3024,19 @@ Each item gets its own design pass when its turn comes.
   - `agent`'s `no_fit` with Dan's hold counted ends *The hold ends when Dan runs `spark make-room
     --done` on the Spark.*, and so does `agent`'s `draining` for make-room. `footprint_suspect` says
     *one of Dan's requests*, not *a request of his*.
-  - A size of 400 GiB or more reads *more than 400 GiB*, and no number a message shows is altered.
+  - A size over 400 GiB reads *more than 400 GiB*, and no number a message shows is altered.
   - Whichever task first loads the private key list at run time refuses a key label pi's retry list
     matches.
+- **2026-10-07** — Phase 2a's Task 6, fix round 3, the controller's rulings on the re-review. Dated
+  notes are in *What you see in Phase 2a*, and in the implementation plan's Tasks 6, 15 and 30 and
+  its route table.
+  - A refusal's breakdown adds up as shown: in whole GiB where those add up to the figure, else to
+    one decimal, or two.
+  - Exactly 400 GiB reads *400 GiB*; only a size over it reads *more than 400 GiB*.
+  - `spark logs` takes a model or a role, as `spark load` does, so the refusals' `spark logs coder`
+    works.
+  - Clauses that today's corrections replaced are struck through: rule 4's make-room count, among
+    them.
 
 ## Sources
 

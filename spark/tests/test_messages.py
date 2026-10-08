@@ -287,10 +287,11 @@ def test_no_refusal_makes_pi_retry_at_any_boundary(change):
     assert checked == 4 * (len(EVERY_ROW) - 1)
 
 
-def test_a_size_of_400_gib_or_more_reads_more_than_400_gib():
-    # A number a message shows is never altered. None of 400 GiB or more can occur on this box (render keeps every
-    # footprint under the ceiling), and "more than 400 GiB" is true and matches nothing in pi's list.
-    big = replace(NO_FIT_DAN, needed_gib=500, free_gib=400, available_gib=520, holders=[Holder("Gemma", 502, False)])
+def test_a_size_over_400_gib_reads_more_than_400_gib():
+    # A number a message shows is never altered. No size over 400 GiB can occur on this box (render keeps every
+    # footprint under the ceiling), and "more than 400 GiB" is true and matches nothing in pi's list, whose smallest
+    # number is 429.
+    big = replace(NO_FIT_DAN, needed_gib=500, free_gib=401, available_gib=520, holders=[Holder("Gemma", 502, False)])
     assert refusal("no_fit", big).message == (
         "The coder didn't load: it needs more than 400 GiB, and more than 400 GiB is free for a load (more than "
         "400 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory "
@@ -298,10 +299,13 @@ def test_a_size_of_400_gib_or_more_reads_more_than_400_gib():
     assert "(more than 400 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=503)).message
     assert "above more than 400 GiB available" in refusal("held_by_brake", replace(HELD, warn_gib=520)).message
     assert "(more than 400 GiB)" in refusal("not_downloaded", replace(NOT_DOWNLOADED, download_gib=429)).message
-    # Below 400, every number shows as it is, whatever it holds.
-    under = refusal("no_fit", replace(NO_FIT_DAN, needed_gib=399, free_gib=399.9, available_gib=399.9)).message
-    assert "it needs 399 GiB, and 399 GiB is free for a load (399 GiB available," in under
+    # Up to 400, every number shows as it is: exactly 400 is "400 GiB", and a need of 399.5 rounds up to it.
+    under = refusal("no_fit", replace(NO_FIT_DAN, needed_gib=399, free_gib=369.9, available_gib=399.9)).message
+    assert "it needs 399 GiB, and 369 GiB is free for a load (399 GiB available," in under
     assert "`spark make-room 399G`" in under
+    at = refusal("no_fit", replace(NO_FIT_DAN, needed_gib=399.5, free_gib=370.5, available_gib=400.5)).message
+    assert "it needs 400 GiB, and 370 GiB is free for a load (400 GiB available," in at
+    assert "`spark make-room 400G` on the Spark, then try again." in at
     assert "(399.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=399.99)).message
 
 
@@ -375,6 +379,30 @@ def test_nothing_free_for_a_load_never_reads_negative():
 def test_free_for_a_load_is_the_gates_own_figure():
     # The words never work out a figure of their own: 17.99 from the gate reads 17, rounded down as admission's is.
     assert "and 17 GiB is free for a load" in refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal("17.99"))).message
+
+
+def test_a_breakdown_adds_up_as_shown():
+    # Whole GiB when the whole terms already add up to the figure shown: 48.3 − 24 − 6.2 = 18.1 reads 48 − 24 − 6.
+    whole = refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal("18.1"), available_gib=48.3, owed_gib=6.2)).message
+    assert whole == NO_FIT_DAN_TEXT
+    # Off by one in whole GiB (48 − 24 − 7 = 17 against 18): every term goes to one decimal, and the figure stays
+    # whole, rounded down (the controller's ruling, Task 6's fix round 3). No number is altered.
+    tenths = replace(NO_FIT_DAN, free_gib=Decimal("18.3"), available_gib=48.9, owed_gib=6.6)
+    assert refusal("no_fit", tenths).message == NO_FIT_DAN_TEXT.replace(
+        NO_FIT_DAN_BREAKDOWN,
+        "18 GiB is free for a load (48.9 GiB available, less the 24 GiB reserve and the 6.6 GiB the loaded models may "
+        "still grow into)")
+    # The ceiling's term the same way: 101 − 92 = 9 against 10, so 101.9 − 91.6 = 10.3.
+    ceiling = replace(NO_FIT_DAN, free_gib=Decimal("10.3"), ceiling_gib=101.9, committed_gib=91.6)
+    assert ("10 GiB is free for a load (the 101.9 GiB the GPU can allocate, less the 91.6 GiB the loaded models may "
+            "grow to)." in refusal("no_fit", ceiling).message)
+    # Where one decimal is off too (48.9 − 24 − 7.0 = 17.9 against 18), two: 48.95 − 24 − 6.95 = 18.
+    hundredths = replace(NO_FIT_DAN, free_gib=Decimal("18.00"), available_gib=48.95, owed_gib=6.95)
+    assert ("18 GiB is free for a load (48.95 GiB available, less the 24 GiB reserve and the 6.95 GiB the loaded "
+            "models may still grow into)." in refusal("no_fit", hundredths).message)
+    # A hold counts in the sum too, named after the figure when nothing is left: 36.4 − 24 − 70 is nothing either way.
+    clamped = replace(NO_FIT_AGENT_CLAMPED, free_gib=Decimal("-57.6"), available_gib=36.4)
+    assert refusal("no_fit", clamped).message == NO_FIT_CLAMPED_TEXT
 
 
 def test_the_breakdown_is_the_term_that_gave_the_figure():
@@ -489,9 +517,9 @@ def test_sizes_round_against_the_load():
     assert "(19.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=19.96)).message
     # Read exactly: as a binary float 19.7 is 19.69999…, which would round down to 19.6.
     assert "(19.7 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=19.7)).message
-    # An owed growth that rounds to 0 is left out of the breakdown, never shown as "0 GiB".
-    small = refusal("no_fit", replace(NO_FIT_DAN, free_gib=17.7, owed_gib=0.3)).message
-    assert "and 17 GiB is free for a load (48 GiB available, less the 24 GiB reserve)." in small
+    # An owed growth that rounds to 0 is left out of a whole-GiB breakdown, never shown as "0 GiB".
+    small = refusal("no_fit", replace(NO_FIT_DAN, free_gib=24.0, available_gib=48.3, owed_gib=0.3)).message
+    assert "and 24 GiB is free for a load (48 GiB available, less the 24 GiB reserve)." in small
 
 
 def test_held_by_brake_names_the_warn_line_and_the_release_time_it_is_given():
