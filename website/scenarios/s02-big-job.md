@@ -8,58 +8,51 @@ status: planned
 **Situation.** pi is mid-task with the coder loaded, and I start a cuDF job that needs about
 70 GiB.
 
-**What happens.** `spark make-room 70G` lists what would have to unload, with sizes, and
-unloads only what I confirm. pi's next request is refused with a reason, never quietly
-swapped.
+**What happens.** `spark make-room 70G` lists what would have to unload, with sizes, and unloads
+only what I confirm. pi's next request is refused with a reason, never quietly swapped.
 
-**What I see.** The list, and headroom on the menu bar.
+**What I see.** The list, and the room it frees and holds for me: in `spark status` from Phase 2a,
+and on the menu bar from Phase 2b.
 
 **How to override.** If I decline, nothing unloads. The brake remains the backstop.
 
-*Designed 2026-10-07, for Phase 2a:* `spark make-room 70G` lists everything it could unload, the
-always-loaded models included, largest first, and unloads what I confirm; `spark make-room --all`
-unloads everything after one confirmation, my clean slate for testing. Nothing it unloads cuts off
-a request in flight: it waits for pi's current request to finish first. pi's next request then
-waits up to its key's wait, 30 s from the Mac or 10 minutes as `agent`, and if there's still no
-room it gets a refusal in the client that says why. The headroom shows in `spark status` until the
-menu bar arrives in 2b.
+**Phase 2a, as designed (2026-10-07): what happens and what I see.** *Free for a load* is the box's
+available memory less the 24 GiB reserve, the growth the loaded models are still owed and any hold
+that isn't mine. `spark make-room 70G` works out what must unload so that 70 GiB is free for a load,
+so my job can take all of it and leave the reserve free, above the brake. It lists everything it
+could unload, the always-loaded models included, and pinned models and those an agent's session
+holds, each marked, largest first, with each one's requests in flight and how long they've run. It
+unloads what I confirm, each once its requests in flight have finished, so nothing is cut off.
+Asked for more than unloading everything can free, it says so, shows the most it can free, and
+unloads nothing unless I confirm that. `spark make-room --all` unloads everything after one
+confirmation, my clean slate for testing.
 
-*Revised 2026-10-07, after the design's council:* `spark make-room 70G` frees enough that 70 GiB
-are available beyond the reserve and the growth the loaded models are still owed, so the job can
-take all of it without reaching the brake. It lists pinned models and those an agent's session
-holds too, marked, with each one's requests in flight and how long they've run. Then it **holds
-that room for me** until `spark make-room --done`, a duration I give, or the next boot: no reload,
-no waiting request (`agent`'s included), no boot preload and no brake release takes it, so pi's
-next request waits and is then refused with a reason that names the hold, never quietly loaded into
-my job's memory. When the hold ends, the always-loaded models reload one at a time, if they fit,
-and the coder waits for a request. `spark status` shows the hold, its size and when it ends.
-*(Added after the re-review, the same day:* asked for more than unloading everything could free,
-make-room says so, shows the most it can free, and unloads nothing unless I confirm that. An
-always-loaded model that doesn't fit when the hold ends waits, loads once it fits, and shows as
-waiting in `spark status`.)
+Then it **holds that room for me** until `spark make-room --done`, a time I give, or the next boot.
+No reload, no request of `agent`'s and no brake release takes it, while my own requests, from pi on
+the Mac or the web UI, may load into it, and it shrinks by what they take. So the request that gets
+refused here is the agent's: it waits its 10 minutes and is then refused with a reason that names
+the hold. When the hold ends, the always-loaded models reload one at a time, if they fit, and the
+coder waits for a request; an always-loaded model that doesn't fit waits, loads once it fits, and
+shows as waiting in `spark status`.
 
-*What I see, worded at the design's UX pass (2026-10-07):* with the always-loaded models and the
-coder loaded and nothing else running, 9 GiB is free for a load, so `spark make-room 70G` lists
-*the coder 41 GiB, loads when asked* and *Gemma 32 GiB, always loaded*, first, says that unloading
-both frees 82 GiB, and asks once. Then: *Unloaded the coder and Gemma. 82 GiB free; 70 GiB held for
-you until `spark make-room --done` or a reboot.* pi's next request waits 30 s and then reads: *The
-coder didn't load: it needs 41 GiB, and 12 GiB is free after the 24 GiB reserve and the 70 GiB held
-for you by make-room. On the Spark, `spark make-room --done` ends the hold; or try again later.*
-When I end the hold, a default notification says *make-room's 70 GiB hold ended*, and Gemma
-reloads. The plan's *What you see in Phase 2a* has every message.
+With the always-loaded models and the coder loaded and nothing else running, 9 GiB is free for a
+load, so the list puts the coder (41 GiB, loads when asked) and Gemma (32 GiB, always loaded)
+first, says that unloading both leaves 82 GiB free for a load, and asks once. The plan words its
+answer for 40 GiB as *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for
+you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and
+automatic reloads can't.*, and for 70 GiB the same sentence names the coder and Gemma, and 82 GiB.
+`agent`'s request, refused before my job starts, reads *The coder didn't load: it needs 41 GiB, and
+12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds
+for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the Spark, `spark make-room
+--done` ends the hold.* Once my job has taken the room, it reads *The coder didn't load: it needs
+41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less
+the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. On the
+Spark, `spark make-room --done` ends the hold.* (both from the [implementation
+plan](../design/phase-2a.md)'s words). `spark make-room --done` says how much of the hold went
+unused and what reloads (*… Reloading Gemma.*), and my phone gets the same as *make-room's hold for
+you ended*. The plan's [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has
+every message.
 
-*Corrected after the design's final re-review, the same day (the session's rulings):*
-
-- **"Available" and "free for a load" are two numbers.** *Available* is the box's free memory;
-  *free for a load* is what's left after the reserve, the growth the loaded models are still owed
-  and any hold. So `spark make-room 70G` frees until 70 GiB is free for a load (above it said
-  "available"), and its message reads *Unloaded the coder and Gemma. 82 GiB is free for a load, and
-  70 GiB of it is held for you until `spark make-room --done` or a reboot.*
-- **The hold is mine.** My own requests, from pi on the Mac or the web UI, may load into it, and
-  it shrinks by what they take from it; only `agent`'s requests and the automatic reloads are kept
-  out. So the request that gets refused here is the agent's: it waits its 10 minutes and then
-  reads *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load, after the 24 GiB
-  reserve and the 70 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the
-  hold.* A request of mine would load the coder into the hold, shrinking it, which is my call.
-
-*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*
+*Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
+council. The notes this page gathered while the design moved, and the questions and answers behind
+them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

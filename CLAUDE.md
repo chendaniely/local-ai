@@ -138,15 +138,14 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 
 - **`free -g`, never `nvidia-smi`** — the GPU shares the CPU's LPDDR5X pool and `nvidia-smi`
   reports `[N/A]` for memory.
-- **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over
-  ~110 GB do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path.
-  The plan budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be
-  measured) and keeps ≥24 GiB free on admission. *(Phase 2a's design, 2026-10-07, awaiting Dan's
-  approval: the budget check becomes the set's footprints within the ceiling, with each load
-  keeping the reserve free and holding back the growth the loaded models are still owed: the
-  plan's rule 9. The reserve stays ≥24 GiB. The design first lowered it to 22, and this note said
-  so; after the design's council Dan put it back to 24 the same day, until 2a has measured the
-  footprints.)*
+- **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over ~110 GB
+  do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path. The plan
+  budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be measured) and
+  keeps ≥24 GiB free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day;
+  not yet built: the budget check becomes the set's footprints within the ceiling, with each load
+  keeping the reserve free and holding back the growth the loaded models are still owed: the plan's
+  rule 9. The reserve stays ≥24 GiB. The design first lowered it to 22, and this note said so; after
+  the design's council Dan put it back to 24 the same day, until 2a has measured the footprints.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.
@@ -156,20 +155,21 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   design anything that loads models around the gate.
 - **Overcommitting memory can hard-freeze the box** — no OOM kill, just a power cycle (reported;
   open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
-  them casually. *(Phase 2a's design, 2026-10-07, awaiting Dan's approval, loosens the brake on
-  purpose, within bounds: its hold lifts by itself once memory has stayed above the warn line for
-  5 minutes and the reloads fit, at most once an hour; a hold found after a reboot waits for Dan;
-  and the model that was loading when it fired doesn't reload by itself. The brake stays a unit of
-  its own. The plan's rule 5.)*
+  them casually. *(Phase 2a's design, 2026-10-07, approved by Dan the same day; not yet built,
+  loosens the brake on purpose, within bounds: its hold lifts by itself once memory has stayed above
+  the warn line for 5 minutes and the reloads fit, at most once an hour; a hold found after a reboot
+  waits for Dan; and the model that was loading when it fired doesn't reload by itself. The brake
+  stays a unit of its own. The plan's rule 5.)*
 - **Never reload llama-swap while models are loaded** — in v257 a config reload stops every engine.
   Changes go through `make apply`, which refuses to restart llama-swap while models are loaded;
   `make apply-now` restarts it anyway, when you choose to. (Corrected 2026-09-28, from Phase 1's
   council: this said `spark apply` "waits for idle or asks", which it never did.) *(Phase 2a's
-  design, 2026-10-07, awaiting Dan's approval, replaces this rule once built: `make apply` restarts
-  llama-swap with models loaded, once no request has been in flight for ~60 s by the front's
-  counts, waiting 15 minutes at most before it offers "drain now" and then `make apply-now`, and
-  the gate reloads the residents; no request in flight is cut off. Until 2a is built, the rule
-  above stands. The plan's *Deploy workflow*.)*
+  design, 2026-10-07, approved by Dan the same day; not yet built, replaces this rule once built:
+  `make apply` restarts llama-swap with models loaded, once no request has been in flight for ~60 s
+  by the front's counts, waiting 15 minutes at most before it offers "drain now" and then `make
+  apply-now`, and the gate reloads the residents; without Dan's say (`make apply-now`), no request
+  in flight is cut off, though a restart of the front itself cuts the requests it holds. Until 2a is
+  built, the rule above stands. The plan's *Deploy workflow*.)*
 - **Tens of tok/s is the realistic band** on a large MoE. Don't promise more: the reference repo's
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
@@ -226,6 +226,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   from the Mac, touch the Spark only with read-only SSH checks Dan has OK'd. (Until 2026-09-25 the
   Mac wrote the code, tests, CI and docs, and the Spark ran only what touched its GPU, memory,
   systemd or Docker.)
+- **Nothing deploys from a phase branch the running stack can't run** (Dan's decision, 2026-10-07,
+  for Phase 2a): from `phase-2a`, no `make apply`, `make apply-now` or `make install-units` until
+  its cutover task; an urgent fix is committed on `main`, deployed from a `main` worktree, pushed
+  with Dan's OK and merged into the phase branch. Dependabot's `spark/` bumps wait unmerged until
+  the phase merges. The phase plan's *Global Constraints* say which tasks.
 - **One session at a time.** The active session owns the phase branch; at a switch it commits, the
   branch is pushed with Dan's OK, and the other machine pulls.
 - **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase

@@ -14,3 +14,6 @@ later phase. This is verified by a dated drill.
 **What I see.** The notification, and "unreachable" on the menu bar.
 
 **How to override.** None.
+
+*Phase 2b, visibility (Phase 2's carving into 2a, 2b and 2c, 2026-10-07): the watchdog and the
+menu bar come with 2b, beside the ntfy 2a sets up.*

@@ -8,6 +8,17 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-05 — Dependabot's hatchling bump deployed (recorded 2026-10-07)
+
+**Deployed** at 03:19 by a `make apply` from the clone, and not recorded until the
+forward-and-back council of Phase 2a's implementation plan found it: the app's
+`spark/pyproject.toml`, with hatchling's new build requirement (Dependabot's 16efba8, merged
+2026-09-30), synced to `/opt/local-ai/app`, its venv rebuilt, and the brake restarted. Nothing else
+changed.
+
+**Checked** 2026-10-07: `make status` reads "llama-swap took its key at 2026-10-05T03:19:36", the
+brake unit's start; `make doctor` 15 of 15; `make apply-dry-run` has nothing to change.
+
 ## 2026-09-28 — Phase 1's council fixes deployed (Phase 1, Task 17)
 
 **Deployed** by Dan, **on the Spark**, at 21:19: `make apply` staged the new config and the two

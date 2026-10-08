@@ -70,7 +70,7 @@ In order of how much they constrain the design:
 | Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
-| Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* |
+| Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
 | Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by Phase 5's route A, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
@@ -99,7 +99,9 @@ Architecture page now, and git history keeps the drawing.)*
 - **Phase 3 onward:** LiteLLM sits in front. Its hook makes refusals inline (`error.code`,
   `retry_after_s`), adds `x-spark-model: <name>@<revision>`, and applies per-key `wait_for_fit_s`.
   *(Noted 2026-10-07: the front makes refusals inline and applies the per-key waits from Phase 2a,
-  so LiteLLM overlaps it. Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)*
+  so LiteLLM overlaps it. Phase 3 decides whether LiteLLM replaces the front or sits ahead of it, or
+  isn't used at all: Dan's decision, 2026-10-07, after the implementation plan's forward-and-back
+  council.)*
 - **Orca (2026-09-28)** is a client on the Mac, not a hop: pi started from it reaches llama-swap
   over the same tunnel as pi in a terminal, and Claude Code started from it talks straight to
   Anthropic.
@@ -113,10 +115,10 @@ Architecture page now, and git history keeps the drawing.)*
 |---|---|---|
 | **`stack/models.yaml`** (+ gitignored `models.local.yaml` for trials) | repo | real name, roles, capability, resident, engine + pin reference, source@revision, context, `parallel`, `cache_ram`, footprint {peak, steady, config hash}, cold start, idle policy, key access groups. *(Phase 2a, 2026-10-07: also the notification types, each with its priority or `off`, all on by default: *What you see in Phase 2a*.)* |
 | **`stack/versions.yaml`** | repo | every pin (image digest; tag + sha256) plus docs URL, context7 ID, changelog and advisory feed → generates the site's Stack page and the doc pointers in `CLAUDE.md`. |
-| **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. *(Phase 2a, designed 2026-10-07: `stop-all` is `spark make-room --all`; `spark make-room --done` and `make brake-release` both reach the control socket's *release*, which ends make-room's hold or lifts the brake's (rules 4 and 5). On the Spark these commands reach the gate's sockets, with no API key.)* |
-| **spark-gate** | Python/FastAPI, system unit `User=spark` *(Starlette on uvicorn, not FastAPI: Dan, 2026-10-07)* | Unix sockets: status + session pins (group `spark-users`, includes `agent`); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. *(Corrected 2026-10-07, Dan's design for Phase 2a, and revised the same day after the council: the gate is `local-ai-gate.service`, uvicorn serving a small Starlette app, not FastAPI (Dan's decision). It absorbs neither the brake nor the launch check. The brake stays `local-ai-brake`, its own small unit, and the gate reads its hold and lifts it (rule 5); `spark launch` starts a model only with the gate's admission ticket, and keeps a zero-wait fit check and the hold check as backstops. Its two sockets are held by systemd, and it knows each caller by its uid; the status socket carries sessions, and pins are Dan's, on the control socket. It loads and unloads through llama-swap with an internal key, and reads the front's in-flight counts; the `OnFailure=` notifier sits on the front, the gate, the brake and llama-swap. *The front and the gate* holds the design.)* |
+| **`spark` CLI** | Python — a uv project | `render/apply/--check` · `status` · `load/unload/pin/make-room/stop-all` · `try/promote/forget` · `measure/bench` · `doctor` · `keys create` · `backup` · `logs`. The root `Makefile` is the front door. *(Phase 2a, designed 2026-10-07: `stop-all` is `spark make-room --all`; `spark make-room --done` and `make brake-release` both reach the control socket's *release*, which ends make-room's hold or lifts the brake's (rules 4 and 5). On the Spark these commands reach the gate's sockets, with no API key. Since the implementation plan's forward-and-back council, Dan's decision: `spark session hold`, a session for a process that isn't on the Spark, such as 2b's Mac hooks', which ends when its stdin closes.)* |
+| **spark-gate** | Python/FastAPI, system unit `User=spark` *(Starlette on uvicorn, not FastAPI: Dan, 2026-10-07)* | Unix sockets: status + ~~session pins~~ sessions (group `spark-users`, includes `agent`; pins are Dan's alone since 2a's design); control (group `spark-admin` = Dan). Admission, brake, idle policy, resident preload (one at a time), events → ntfy, an `OnFailure=` notifier that works without the gate. Phase 1 ships only a **minimal brake** (a memory watchdog that unloads through llama-swap) plus a **minimal launch check** (the brake's hold flag and a static fit), so llama-swap can't reload a model the brake just unloaded; the gate absorbs both in Phase 2. *(Corrected 2026-10-07, Dan's design for Phase 2a, and revised the same day after the council: the gate is `local-ai-gate.service`, uvicorn serving a small Starlette app, not FastAPI (Dan's decision). It absorbs neither the brake nor the launch check. The brake stays `local-ai-brake`, its own small unit, and the gate reads its hold and lifts it (rule 5); `spark launch` starts a model only with the gate's admission ticket, and keeps a zero-wait fit check and the hold check as backstops. Its two sockets are held by systemd, and it knows each caller by its uid; the status socket carries sessions, and pins are Dan's, on the control socket. It loads and unloads through llama-swap with an internal key, and reads the front's in-flight counts; the `OnFailure=` notifier sits on the front, the gate, the brake and llama-swap. *The front and the gate* holds the design.)* |
 | **the front** (Phase 2a) | `local-ai-front.service`, system unit `User=spark-front`, a user of its own; 127.0.0.1:9100, held by `local-ai-front.socket` | A small forwarder in front of llama-swap, raw ASGI on uvicorn, with no policy about loads but a route policy: only the inference routes, so llama-swap's admin routes never reach it. The same client keys as llama-swap takes today (Dan's on the Mac, Open WebUI's, `agent`'s), so no client changes, held only as SHA-256 digests; an internal key of its own toward llama-swap, so clients' keys go no further; requests in flight counted per model, until each response ends; for a model that isn't loaded, asks the gate, which holds the request for its key's wait, then forwards or returns a refusal that says why; while the gate is down, forwards to loaded models and refuses only new loads (`gate_down`); limits on memory, bodies, waiting requests and connections; doesn't restart when llama-swap does, and 9100 stays held while it restarts; systemd sandboxing from the start; `OnFailure=` notifier. (Dan's design, 2026-10-07, revised the same day after the council; *The front and the gate*.) |
-| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; `logToStdout: proxy`, v257's default, pinned: the engines' output, a refused start's reason and an engine's crash included, stays in an in-memory buffer that every restart wipes, and only llama-swap's own lines reach the journal (Dan's decision, 2026-09-28, reversing that day's `both` before it was deployed: whisper-server logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which the journal would keep; Phase 2 revisits it with a check that covers speech); every `cmd` is `spark-launch <model>` (from Phase 2); no llama-swap preload; **never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*); validated with `-validate` and its schema. A separate lab instance serves `spark try`. *(Phase 2a, designed 2026-10-07 and revised the same day after the council: llama-swap stays at v257 and moves to **127.0.0.1:900**, its engines to **800 and up**, both below 1024, which only its unit, given `CAP_NET_BIND_SERVICE`, can bind (Dan's decision); its `apiKeys` are only the internal keys, one each for the front, the gate and the brake. `ttl: 0` stays, so the gate is the only thing that unloads. Since nothing waits inside `cmd` any more, `healthCheckTimeout` has only a load to cover, and goes from 600 s to **180 s** (the session's ruling). `Restart=always`, and its unit is sandboxed (Dan's decision). It is no longer **never reloaded while models are loaded**: `spark apply` waits until no request has been in flight for ~60 s, from the front's counts, then restarts it with models loaded, and the gate reloads the residents (*Deploy workflow*). The journal question above goes to Phase 2b.)* |
+| **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; `logToStdout: proxy`, v257's default, pinned: the engines' output, a refused start's reason and an engine's crash included, stays in an in-memory buffer that every restart wipes, and only llama-swap's own lines reach the journal (Dan's decision, 2026-09-28, reversing that day's `both` before it was deployed: whisper-server logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which the journal would keep; Phase 2 revisits it with a check that covers speech); every `cmd` is `spark-launch <model>` (~~from Phase 2~~ since Phase 1: corrected 2026-10-07); no llama-swap preload; ~~**never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*)~~ (Phase 1 refuses a reload while models are loaded, unless `make apply-now`; 2a's own rule is below); validated with `-validate` and its schema. A separate lab instance serves `spark try`. *(Phase 2a, designed 2026-10-07 and revised the same day after the council: llama-swap stays at v257 and moves to **127.0.0.1:900**, its engines to **800 and up**, both below 1024, which only its unit, given `CAP_NET_BIND_SERVICE`, can bind (Dan's decision); its `apiKeys` are only the internal keys, one each for the front, the gate and the brake. `ttl: 0` stays, so the gate is the only thing that unloads. Since nothing waits inside `cmd` any more, `healthCheckTimeout` has only a load to cover, and goes from 600 s to **180 s** (the session's ruling). `Restart=always`, and its unit is sandboxed (Dan's decision). It is no longer **never reloaded while models are loaded**: `spark apply` waits until no request has been in flight for ~60 s, from the front's counts, then restarts it with models loaded, and the gate reloads the residents (*Deploy workflow*). The journal question above goes to Phase 2b.)* |
 | **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
 | **vLLM** | NGC 26.08 container (26.09 was current on 2026-10-05; Phase 5 pins the newest one a week old); upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
@@ -126,7 +128,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* |
-| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (session pins + ntfy) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
 ### The front and the gate (Phase 2a)
@@ -365,29 +367,32 @@ over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SS
 |---|---|---|---|
 | The front crashes or restarts | 9100 stays held, and new connections wait in the backlog, through a crash loop too, since neither the socket nor the front ever gives up | every request in flight, streams and waiting requests included | the notifier, on a crash; a hang trips the watchdog first |
 | The gate is down | the models already loaded, through the front; the brake, which then sends its own alerts | every load (`gate_down`), idle unloads, make-room, the brake's release, every notification but the notifier's and the brake's. At boot, or after a restart that stopped every engine, nothing can load, so the API is down in effect (the session's ruling; rule 8) | the notifier; the brake's own "brake fired" |
-| llama-swap is down, outside `apply`'s restart | the front and the gate | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
+| llama-swap is down, outside `apply`'s restart | the front and the gate; once it answers again, the gate reloads the residents by themselves, one at a time (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council; the same for a resident lost to an earlyoom kill or a crash) | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
 | The brake is down | everything else; earlyoom | freeze protection, for the 2 s its restart takes | the notifier |
 
 A deploy restarts each of them only as *Deploy workflow* says, and never cuts off a request in
 flight without Dan's say.
 
-**Not in 2a:** a user of their own for the engines. A process that isn't root can't start engines
-as another user, and llama-swap runs as `spark`; render's allowlist of engine options stands
-meanwhile (*Engines share llama-swap's user*). *(Corrected 2026-10-07, after the council: Phase
-2's "not yet placed" line gave the same reason for `spark models pull`, where it doesn't hold,
-since the pull is a systemd oneshot that can run as a user of its own; 2a gives it one,
-`spark-pull` (Dan's decision). And
-once 2a is built, llama-swap holds only internal keys and no state, so llama-swap itself could run
-as the engines' user, with the gate and the brake staying `spark`: that is the route when this
+**Not in 2a:** a user of their own for the engines. A process that isn't root can't start engines as
+another user, and llama-swap runs as `spark`; render's allowlist of engine options stands meanwhile
+(*Engines share llama-swap's user*). *(Corrected 2026-10-07, after the council: Phase 2's "not yet
+placed" line gave the same reason for `spark models pull`, where it doesn't hold, since the pull is
+a systemd oneshot that can run as a user of its own; 2a gives it one, `spark-pull` (Dan's decision).
+And once 2a is built, llama-swap holds only internal keys and no state, so llama-swap itself could
+run as the engines' user, with the gate and the brake staying `spark`: that is the route when this
 comes.)* A private network namespace for llama-swap and its engines was weighed too (the v257
 research's option (d), unverified on this box); it stays in view for Phase 3's decision on who can
 reach the engines. **For Phase 3:** the front overlaps LiteLLM, which is itself a proxy in front
-with per-key limits; Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.
+with per-key limits; Phase 3 decides whether LiteLLM replaces the front or sits ahead of it, or
+isn't used at all (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back
+council; Phase 3's line).
 
 **A request that needs a load** (revised 2026-10-07 after the council). The front asks the gate
 once, *admit this model for this key*, and the gate answers when the model is ready, or with a
 refusal; the queue and its rechecks live in the gate alone. Requests from Dan's keys go ahead of
-`agent`'s, first come first served within each, and the gate admits **one load at a time**
+`agent`'s, first come first served within each (since Dan's decision of 2026-10-07, after the
+implementation plan's forward-and-back council, a key group's `queue` rank decides, with its four
+other settings apart: *Users, access and security*), and the gate admits **one load at a time**
 (rule 1), when the model fits by rule 9's formula: its footprint against `MemAvailable`, less the
 reserve, the growth the loaded models are still owed, the footprint of any model still starting
 and any make-room hold, which Dan's own keys may load into (rule 4).
@@ -403,8 +408,9 @@ count against the key's wait. A request for a model already loading joins that l
 it the same way. A client that has gone, whose disconnect the front sees, is dropped at once, from
 the queue and before any load is admitted for it; a load already started for it finishes, and the
 model stays until its idle time. If the key's wait runs out first, the client gets a **refusal that
-reads like a normal API error**: a `503` with `Retry-After` and `x-should-retry: false`, which
-OpenAI's SDKs read, so a refusal isn't silently retried; one of rule 7's codes; and text that gives
+reads like a normal API error**: a ~~`503` with `Retry-After` and~~ `409` (a `503` only for
+`gate_down`), with `x-should-retry: false`, which OpenAI's SDKs read, so a refusal isn't silently
+retried, and a `Retry-After` where its code has one; one of rule 7's codes; and text that gives
 the memory needed against what's free for a load, after the reserve, the growth owed and any
 make-room hold, the top holders, and the options (`spark make-room <size>`, or retry). So S03's explanation shows
 inline in the client from 2a, not from Phase 3. Each code's message, word for word, is under *What
@@ -418,12 +424,16 @@ to three times, 2, 4 and 8 s apart, whatever `x-should-retry` says. The S03 dril
 the box. Ruled the same day, from that check, Dan having left the UX to the session: a refusal that
 comes after a wait — `no_fit`, `loading`, `held_by_brake`, `footprint_suspect` — is a `409`, with
 the same body and sentence, since pi's list holds "503" but not "409", so Dan's 30 s refusal
-would otherwise reach him after about 2¼ minutes; an outage — `gate_down`, `llama_swap_down`,
-`restarting`, `draining` — stays a `503`, where a retry makes sense; `load_failed` and
+would otherwise reach him after about 2¼ minutes; ~~an outage — `gate_down`, `llama_swap_down`,
+`restarting`, `draining` — stays a `503`, where a retry makes sense;~~ `load_failed` and
 `not_downloaded`, first left `503`s, are `409`s too (ruled again the same day: neither is transient,
 since a retry of `load_failed` repeats a full load and `not_downloaded` changes only with
 `make pull`). Every `409` and `503` keeps `x-should-retry: false`, since OpenAI's SDKs retry
-both by default, and `Retry-After` comes only with a code's retry-after.)*
+both by default, and `Retry-After` comes only with a code's retry-after. *Decided by Dan the same
+day, after the implementation plan's forward-and-back council:* `restarting`, `llama_swap_down` and
+`draining` are `409`s too, since they also come after the key's wait, so pi would hold them as
+long; only `gate_down`, which the front answers at once while the gate is down, stays a `503`,
+which pi retries.)*
 
 `agent`'s pi has to wait that long. pi 0.85.1, `agent`'s pinned version, gives up on a request that
 has no response headers after `httpIdleTimeoutMs`, 300,000 by default, half `agent`'s wait (its
@@ -470,15 +480,17 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    request reaches llama-swap. The front asks the gate, which admits on rule 9's formula, one load
    at a time, issues a ticket for each load it admits, and holds the request for its key's wait.
    `spark launch` starts nothing without a ticket, and keeps a zero-wait fit check and the brake's
-   hold check as backstops. llama-swap v257 gives `spark launch` no way to know which key asked,
-   or to explain a refusal to the client: *The front and the gate*. Caches aren't dropped before a
+   hold check as backstops. llama-swap v257 gives `spark launch` no way to know which key asked, or
+   to explain a refusal to the client: *The front and the gate*. Caches aren't dropped before a
    load, and nothing yet builds the helper the Host row names: 2a's page-cache drill decides among
-   dropping them before a load that needs more than `MemFree`, through that root-owned helper,
-   which `spark` would run by an exact-arguments sudo rule; `--load-mode dio`; or nothing. Until
-   then a load's deadline, `healthCheckTimeout`, bounds a stall. Corrected after the re-review: no
-   sudo rule can run under `NoNewPrivileges=`, which llama-swap's unit, where `spark launch` runs,
-   and the sandboxed gate both have; the route, if the drill needs it, is a root oneshot unit that
-   polkit lets `spark` start by its exact name.)*
+   dropping them before a load that needs more than `MemFree`, through that root-owned helper, which
+   `spark` would run by an exact-arguments sudo rule; `--load-mode dio`; or nothing. Until then a
+   load's deadline, `healthCheckTimeout`, bounds a stall. Corrected after the re-review: no sudo
+   rule can run under `NoNewPrivileges=`, which llama-swap's unit, where `spark launch` runs, and
+   the sandboxed gate both have; the route, if the drill needs it, is a root oneshot unit that
+   polkit lets `spark` start by its exact name. Noted after the implementation plan's
+   forward-and-back council: the drill decides for llama.cpp's GGUF loads only; Phase 5's
+   safetensors loads, where E.1 was seen, get a drill of their own (Phase 5's cautions).)*
 2. **Never evict, never substitute.** The only automatic unloads are the idle policy and the brake.
 3. **Idle policy:** 30 minutes by default; in-flight requests and active agent sessions count as use;
    pins (manual, work hours); scheduled preloads are fit-checked and notify if they don't fit.
@@ -512,14 +524,17 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      the next boot (Dan, 2026-10-07); `--all` holds the whole box. The gate counts the hold as
      reserved in every admission (rule 9), so no reload, waiting request (`agent`'s included), boot
      preload or brake release takes it back (S02), and a refusal it causes says so. `spark status`
-     shows the hold, its size and when it ends. It errs safe: once Dan's job has allocated, the
-     hold still counts, until he ends it. *(Ruled the same day, after the final re-review, Dan
-     having left the UX to the session: the hold is Dan's. A request with one of his keys, or
-     `spark load`, may load into it, and the hold shrinks by the part of that load the room
-     outside it couldn't cover; `agent`'s requests and the gate's own reloads and preloads still
-     may not. So `no_fit`'s next step, "free space with `spark make-room 41G` on the Spark, then
-     try again", loads the model Dan wanted, which it couldn't while the hold barred his own
-     requests too. A hold his loads use up ends then, and `--done` ends whatever is left.)*
+     shows the hold, its size and when it ends. It errs safe: once Dan's job has allocated, the hold
+     still counts, until he ends it. *(Added 2026-10-07, after the implementation plan's
+     forward-and-back council: free for a load can then fall below 0 for `agent`, and its refusal
+     says "nothing is free for a load while make-room holds … for Dan", never a negative number.)*
+     *(Ruled the same day, after the final re-review, Dan having left the UX to the session: the
+     hold is Dan's. A request with one of his keys, or `spark load`, may load into it, and the hold
+     shrinks by the part of that load the room outside it couldn't cover; `agent`'s requests and the
+     gate's own reloads and preloads still may not. So `no_fit`'s next step, "free space with `spark
+     make-room 41G` on the Spark, then try again", loads the model Dan wanted, which it couldn't
+     while the hold barred his own requests too. A hold his loads use up ends then, and `--done`
+     ends whatever is left.)*
    - **When the hold ends,** the gate reloads the residents one at a time, if they fit; on-demand
      models wait for a request. `spark make-room --done` reaches the control socket's *release*,
      as `make brake-release` does for the brake's hold. A resident that doesn't fit then waits in
@@ -529,12 +544,12 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    any class, then the least recently used. Each step notifies, and "held by brake" blocks automatic
    reloads. Starting thresholds — tunable, set above the band where freezes have been reported: warn
    at 28 GiB available, brake at 20 GiB, admission keeps ≥24 GiB free, earlyoom at 12/9 GiB. Tuned
-   from measurements. *(Phase 2a: the brake moves into the gate, with the same thresholds and
-   order. It **releases by itself** once memory has stayed above the warn line, 28 GiB, for
+   from measurements. *(Phase 2a: ~~the brake moves into the gate, with the same thresholds and
+   order.~~ It **releases by itself** once memory has stayed above the warn line, 28 GiB, for
    **5 minutes** (Dan, 2026-10-05: "a few minutes"), and its notification says when it fired and
    when it released. The gate then reloads the resident models one at a time, as at boot (Dan,
-   2026-10-05); on-demand models wait for a request. Phase 1's `make brake-release` stays. And
-   admission keeps **≥22 GiB** free, not 24: rule 9. Revised the same day after the council, with
+   2026-10-05); on-demand models wait for a request. Phase 1's `make brake-release` stays. ~~And
+   admission keeps **≥22 GiB** free, not 24: rule 9.~~ Revised the same day after the council, with
    Dan's decisions of 2026-10-07:)*
    - **The brake stays its own unit,** `local-ai-brake`, not inside the gate, so a gate that is
      down never means no brake (*The front and the gate*); while the gate is down, the brake sends
@@ -591,13 +606,15 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    brake fired: rule 5). After the UX pass, the same day: `loading` now means the key's wait ran
    out in the queue for the one-load slot, the front's own refusals gain codes too
    (`model_not_found`, `too_many_requests`, `route_not_served`), and every code's message is
-   under *What you see in Phase 2a*. A refusal is a `503` with `Retry-After` and
-   `x-should-retry: false`, but for the front's own `404`s and `429`. *(Corrected 2026-10-07, with
+   under *What you see in Phase 2a*. ~~A refusal is a `503` with `Retry-After` and
+   `x-should-retry: false`, but for the front's own `404`s and `429`.~~ *(Corrected 2026-10-07, with
    the implementation plan: a refusal after a wait — `no_fit`, `loading`, `held_by_brake`,
    `footprint_suspect` — is a `409`, so pi doesn't retry the wait, and so are `load_failed` and
-   `not_downloaded`, which no retry changes; only the outages stay `503`s;
-   `x-should-retry: false` on both; `Retry-After` only with a code's retry-after. *The front and
-   the gate* says why.)* Its text names the stack's
+   `not_downloaded`, which no retry changes; ~~only the outages stay `503`s;~~ and, by Dan's
+   decision after the plan's forward-and-back council, `restarting`, `llama_swap_down` and
+   `draining` too, so only `gate_down` stays a `503`; `x-should-retry: false` on both;
+   `Retry-After` only with a code's retry-after; the front's own `404`s and `429` as before. *The
+   front and the gate* says why.)* Its text names the stack's
    models in full, and
    any other process by its user and its short process name, never its command line. How long a
    request waits, a request for a model that is already loading included, is defined once, under
@@ -617,11 +634,12 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    summed every model's footprint against `allocatable − reserve` (102 − 24 = 78), which counted
    the reserve twice: it kept the reserve free under the CUDA ceiling, which is itself about 15 GiB
    below idle `MemAvailable` on this box (117 GiB), and then the launch check kept it free again at
-   each load. With Phase 2a's coder the set comes to about 81 GiB of the 102, and the residents, 43,
-   plus the reserve fit under both. **The reserve goes from 24 to 22 GiB.** It has to exceed the
-   brake line, 20, which the registry enforces, so that a fresh load never trips the brake, and 22
-   keeps a 2 GiB margin. The reserve exists for freeze protection — overcommitting can hard-freeze a
-   GB10 with no OOM kill (NVIDIA's driver issue #1358) — and Dan lowered it knowingly. **The
+   each load. With Phase 2a's coder the set comes to about ~~81~~ 84 GiB of the 102, and the
+   residents, 43, plus the reserve fit under both. ~~**The reserve goes from 24 to 22 GiB.**~~ It
+   has to exceed the brake line, 20, which the registry enforces, so that a fresh load never trips
+   the brake~~, and 22 keeps a 2 GiB margin~~. The reserve exists for freeze protection —
+   overcommitting can hard-freeze a GB10 with no OOM kill (NVIDIA's driver issue #1358) ~~— and Dan
+   lowered it knowingly~~. **The
    ceiling gets measured** in 2a, carefully, since allocating until failure is how a GB10 freezes,
    and the registry follows the measurement. *(Revised the same day after the council, which found
    that admission ignored the growth still owed to loaded models, and that neither check had a
@@ -638,30 +656,30 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      holds now, never below 0. What it holds now is what its own load took, the fall in
      `MemAvailable` across it, which the gate measures, since it loads one at a time, plus its
      engine's own RSS growth since that load; the gate keeps both with its state. The bulk of a
-     model's growth, its context checkpoints and its prompt cache, is host memory, so it should
-     show in the engine's RSS, while GPU allocations don't (Phase 1's Task 13 found the engines'
-     RSS at 0.4–2.1 GiB against 2–25 GiB each on the GPU); growth that doesn't show in RSS stays in
-     *owed*, which errs safe. 2a checks that attribution on the box, during the soak, against
-     `MemAvailable`'s fall, before the gate relies on it. *(Made precise after the final
-     re-review: the growth read is the engine's anonymous RSS, `RssAnon` in `/proc/<pid>/status`,
-     not its total RSS. The embeddings engine runs without `--load-mode none`, so it maps its model
-     file, and file-backed RSS is page cache that `MemAvailable` still counts as available: a rise
-     in it would shrink *owed* with no memory taken. 2a's soak compares, for each engine, its
-     `RssAnon` growth with `MemAvailable`'s fall and with `nvidia-smi`'s per-process figure for it,
-     which Phase 1 read on this box, and records what each shows.)* The load's fall is capped at
-     the model's measured cold load plus a margin, once the soak has measured it, and a load
-     during which other memory moved is flagged, since an outside allocation would inflate the
-     fall and shrink *owed*. A footprint counts what a model holds at its most after admission, so without this
-     term a load admitted against the `MemAvailable` of the moment could land below the brake
-     once the others grow: the residents load cold at 33.5 GiB against footprints of 43, so
-     9.5 GiB is still to come (the council's reliability review). *committed* is the loaded
-     models' footprints; the ceiling term binds only if the measured ceiling comes in below idle
-     `MemAvailable` less the reserve. *starting* is the footprint of any model `/running` shows
-     starting: none, while the gate loads one at a time and no load is under way, but a model left
-     starting across a gate restart counts. *held* is make-room's hold (rule 4), which a request
-     with Dan's keys doesn't count, since he may load into it. Each loaded model keeps the
-     footprint of the registry that loaded it, never a newer one's, and `spark status` shows
-     *owed*.
+     model's growth, its context checkpoints and its prompt cache, is host memory, so it should show
+     in the engine's RSS, while GPU allocations don't (Phase 1's Task 13 found the engines' RSS at
+     0.4–2.1 GiB against 2–25 GiB each on the GPU); growth that doesn't show in RSS stays in *owed*,
+     which errs safe. 2a checks that attribution on the box, during the soak, against
+     `MemAvailable`'s fall, before the gate relies on it. *(Made precise after the final re-review:
+     the growth read is the engine's anonymous RSS, `RssAnon` in `/proc/<pid>/status`, not its total
+     RSS. The embeddings engine runs without `--load-mode none`, so it maps its model file, and
+     file-backed RSS is page cache that `MemAvailable` still counts as available: a rise in it would
+     shrink *owed* with no memory taken. 2a's soak compares, for each engine, its `RssAnon` growth
+     with `MemAvailable`'s fall and with `nvidia-smi`'s per-process figure for it, which Phase 1
+     read on this box, and records what each shows.)* The load's fall is capped at the model's
+     measured cold load plus a margin, once the soak has measured it, and a load during which other
+     memory moved is flagged, since an outside allocation would inflate the fall and shrink *owed*.
+     A footprint counts what a model holds at its most after admission, so without this term a load
+     admitted against the `MemAvailable` of the moment could land below the brake once the others
+     grow: the residents load cold at 33.5 GiB against footprints of 43, so 9.5 GiB is still to come
+     (the council's reliability review). *committed* is the loaded models' footprints; the ceiling
+     term binds only if the measured ceiling comes in below idle `MemAvailable` less the reserve.
+     *starting* is the footprint of any model `/running` shows starting: none, while the gate loads
+     one at a time and no load is under way, but a model left starting across a gate restart counts.
+     *held* is make-room's hold (rule 4), which a request with Dan's keys doesn't count, since he
+     may load into it (since the implementation plan's forward-and-back council, a key group's
+     `uses_hold` decides). Each loaded model keeps the footprint of the registry that loaded it,
+     never a newer one's, and `spark status` shows *owed*.
 
      Growth that shows in an engine's anonymous RSS leaves *owed* as it enters `MemAvailable`, so
      the two cancel: with nothing outside the stack and no hold, `MemAvailable − owed` is idle
@@ -674,15 +692,20 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      once in `MemAvailable` and once in *owed*. It erred safe, but it would refuse the coder once
      memory outside the stack and the residents' growth passed 9 GiB together, with nothing else
      running, against render's promise.)*
-   - **`spark render`, on the registry,** checks that the footprints together fit the ceiling; that
-     the residents and the reserve fit idle `MemAvailable`, a measured value the registry records;
-     and that each on-demand model fits beside the residents with the reserve, so the gate never has
-     to refuse one with nothing else running. That last check is the gate's formula, evaluated at
-     idle with the residents loaded and nothing else running, so render and the gate hold one
-     formula between them. It warns when every model loaded at its footprint
-     would leave memory under the warn line, 28 GiB. With Phase 2a's coder at ~41, the set comes to
-     ~84 of the 102; the coder, the residents and the reserve to 108 of the 117; and everything
-     loaded would leave about 33, 5 GiB above the warn line.
+   - **`spark render`, on the registry,** checks ~~that the footprints together fit the ceiling;~~
+     that the residents and the reserve fit idle `MemAvailable`, a measured value the registry
+     records; and that each on-demand model fits beside the residents with the reserve, so the gate
+     never has to refuse one with nothing else running. *(Revised 2026-10-07, Dan's decision after
+     the implementation plan's forward-and-back council: the whole set's fit to the ceiling is a
+     warning, since the gate admits each load against live memory and later phases' registries (two
+     coders, a fallback, a larger model) won't fit at once; and a model marked `needs_room`, which
+     loads only after make-room has freed room for it, is checked against idle `MemAvailable` less
+     the reserve and the ceiling, not beside the residents.)* That last check is the gate's formula,
+     evaluated at idle with the residents loaded and nothing else running, so render and the gate
+     hold one formula between them. It warns when every model loaded at its footprint would leave
+     memory under the warn line, 28 GiB. With Phase 2a's coder at ~41, the set comes to ~84 of the
+     102; the coder, the residents and the reserve to 108 of the 117; and everything loaded would
+     leave about 33, 5 GiB above the warn line.
    - **The reserve stays ≥24 GiB,** above the brake line, 20, which the registry enforces, so that
      a fresh load never trips the brake.
    - **The ceiling gets measured** in 2a without coming near a freeze: first what CUDA reports with
@@ -712,9 +735,9 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   root-owned copies that `make install-units` installs with sudo, after showing what changed, so
   nothing running as Dan — the Spark session, Positron's packages, a build — changes what root runs
   without Dan's sudo. The polkit rule lets `spark-admin` start, stop and restart the four units
-  by exact name, and nothing more. *(Phase 2a, designed 2026-10-07: `spark` also runs the front,
+  by exact name, and nothing more. *(Phase 2a, designed 2026-10-07: ~~`spark` also runs the front,
   and the gate replaces the brake, so the rule's list follows: the front and the gate in place of
-  the brake, five units in all. Revised the same day after the council, Dan's decisions: the brake
+  the brake, five units in all.~~ Revised the same day after the council, Dan's decisions: the brake
   stays, and `spark` runs the gate beside it; the front runs as **`spark-front`** and the model
   pull as **`spark-pull`**, system users of their own, so neither the engines nor the pull's
   downloader reaches the front, and the engines can't change the model files; `spark` reads the
@@ -867,12 +890,14 @@ number; and the examples now agree with their moments.)*
 | The menu bar on the Mac | the picture without asking | Phase 2b |
 
 **Plain words everywhere Dan reads.** Models by role first, as he knows them: *the coder*, *Gemma*,
-*the embeddings*, *whisper*; file names only in `spark status`, in brackets, and in
-`model_not_found`, which lists them so a client's list can be fixed. *Always loaded* and *loads
-when asked*, not resident and on-demand. *Paused* is the brake's word (new loads paused), and
-*held* is make-room's (room held for Dan). Sizes in whole GiB, times in his local time on a
-24-hour clock, never a stack trace. Every message and notification names where to act, *on the
-Spark* or *on your phone*, and the command.
+*the embeddings*, *whisper*; file names only in `spark status` and make-room's list, in brackets,
+and in `model_not_found`, which lists them so a client's list can be fixed. *Always loaded* and
+*loads when asked*, not resident and on-demand. *Paused* is the brake's word (new loads paused), and
+*held* is make-room's (room held for Dan); `spark status`'s `held` row also names the pins, the
+sessions and apply's hold, each by name (added 2026-10-07, after the implementation plan's
+forward-and-back council). Sizes in whole GiB, times in his local time on a 24-hour clock, never a
+stack trace. Every message and notification names where to act, *on the Spark* or *on your phone*,
+and the command.
 
 **Two numbers, two words, everywhere.** *Available* is always `MemAvailable`, the box's free
 memory: what the brake's lines (warn at 28 GiB, brake at 20) and the status header measure. *Free
@@ -895,46 +920,51 @@ carries its mark (rule 5).
 
 | Code | HTTP | The message, as pi or the web UI shows it |
 |---|---|---|
-| `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* |
+| `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* Once Dan's job has taken the room, below 0 is never shown: *… and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). …* |
 | `loading` | 409 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
 | `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
 | `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `load_failed` | 409 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
 | `not_downloaded` | 409 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
-| `restarting` | 503 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
-| `llama_swap_down` | 503 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
-| `draining` | 503 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
+| `restarting` | 409 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
+| `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
+| `draining` | 409 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
 | `footprint_suspect` | 409 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
 | `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
+| `invalid_api_key` | 401 | *That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.* (The controller's ruling, 2026-10-07; added to this table after the implementation plan's forward-and-back council.) |
 
 Every `503` carries `Retry-After` and `x-should-retry: false` (rule 7); the `429` carries
 `Retry-After` alone, and the `404`s neither. *(Corrected 2026-10-07, with the implementation plan:
 the four refusals that come after a wait, `no_fit`, `loading`, `held_by_brake` and
 `footprint_suspect`, are `409`s, as the table now gives them, where it gave `503`, because pi
 retries a `503` by itself, up to three times, and would hold Dan's 30 s refusal for about 2¼
-minutes; `load_failed` and `not_downloaded` are `409`s too, as the table gives them, since no
-retry changes either; only the outages, `gate_down`, `llama_swap_down`, `restarting` and
-`draining`, stay `503`s. Every `409` and `503`
-carries `x-should-retry: false`; `Retry-After` comes only with a code's retry-after, 30 s for
-`no_fit`, `gate_down` and `llama_swap_down`, 60 for `restarting` and `draining`, 300 for
-`held_by_brake` and 10 for the `429`.)* A make-room hold is Dan's (rule 4): his keys may load
-into it, so his `no_fit` never counts it, while `agent`'s does and names it, with
-`spark make-room --done` as the next step (S02). For `agent`'s key a refusal names Dan's processes
-only as *a process of Dan's, 32 GiB*, as the status socket does. `loading` now means the key's
-wait ran out in the queue for the one-load slot; a request for a model that has started loading
-waits for it instead (*A request that needs a load*). `too_many_requests` and `route_not_served`
-are the front's per-key caps and its route list, worded. llama-swap's own `429`,
+minutes; `load_failed` and `not_downloaded` are `409`s too, as the table gives them, since no retry
+changes either; ~~only the outages, `gate_down`, `llama_swap_down`, `restarting` and `draining`,
+stay `503`s~~; and, by Dan's decision after the implementation plan's forward-and-back council, so
+are `restarting`, `llama_swap_down` and `draining`, since they also come after the key's wait, so
+only `gate_down` stays a `503`. Every `409` and `503` carries `x-should-retry: false`; `Retry-After`
+comes only with a code's retry-after, 30 s for `no_fit`, `gate_down` and `llama_swap_down`, 60 for
+`restarting` and `draining`, 300 for `held_by_brake` and 10 for the `429`.)* A make-room hold is
+Dan's (rule 4): his keys may load into it, so his `no_fit` never counts it, while `agent`'s does and
+names it, with `spark make-room --done` as the next step (S02). For `agent`'s key a refusal names
+Dan's processes only as *a process of Dan's, 32 GiB*, as the status socket does. `loading` now means
+the key's wait ran out in the queue for the one-load slot; a request for a model that has started
+loading waits for it instead (*A request that needs a load*). `too_many_requests` and
+`route_not_served` are the front's per-key caps and its route list, worded. llama-swap's own `429`,
 `concurrency_limit`, can still arise when several keys' caps for one model add up past its 10; the
 front passes it on, worded: *Too many requests for the coder at once; try again in a moment.*
 *(Corrected after the final re-review: this said it couldn't arise.)*
 
-**Notifications, on the phone.** One list in the registry names every type and its priority,
-`high`, `default`, `low` or `off`, and **all are on by default**; turning one off, or changing its
-priority, is a one-line edit and `make apply`. `spark render` writes the gate's, the brake's and
-the failure notifier's settings from that list, and the table below is generated from it, as the
-Stack page is from `versions.yaml`. In `stack/models.yaml`:
+**Notifications, on the phone.** One list in the registry names every type and its priority, `high`,
+`default`, `low` or `off`, and **all are on by default**; turning one off, or changing its priority,
+is a one-line edit and `make apply`. `spark render` writes the gate's, the brake's and the failure
+notifier's settings from that list, and ~~the table below is generated from it~~ a table generated
+from it lives at `website/reference/notifications.md` (the controller's ruling), as the Stack page
+is from `versions.yaml`; the table below is the design's, written by hand (corrected 2026-10-07,
+after the implementation plan's forward-and-back council). In `stack/models.yaml`, an excerpt (the
+registry lists all twenty):
 
 ```yaml
 notifications:
@@ -994,7 +1024,7 @@ is waiting, what is paused or held, what happened, and whether everything is up.
 the refusal examples above, **on the Spark**, `spark status` shows:
 
 ```
-brightroar · 48 GiB available of 122 · 28 above the brake's 20 GiB line
+brightroar · 48 GiB available of 121 · 28 above the brake's 20 GiB line
 free for a load: 18 GiB (48 available, less the 24 GiB reserve and 6 GiB still owed)
 used by other processes: 26 GiB
 loaded      Gemma (gemma-4-26b-a4b)                up to 32 GiB  always loaded     answering 1
@@ -1017,10 +1047,12 @@ holds only `agent`'s own refusals, and other processes go unnamed. `--json` carr
 `MemAvailable` (117), less what is available now (48) and the loaded models' footprints (43); here
 Dan's python job, less the growth the residents are still owed. It shows only when it is above 0
 (corrected 2026-10-07, after the implementation plan's final check: this said "isn't 0", but cold
-residents hold less than their footprints, so at idle the formula goes below 0).
-*(Corrected 2026-10-07, after the implementation plan's re-check: this moment had no such line,
-though its formula gives 26.)* *(Corrected after the final re-review: the coder's brake mark and
-`agent`'s wait for Dan were missing from this moment, and its numbers now use the two words.)*
+residents hold less than their footprints, so at idle the formula goes below 0). *(Corrected
+2026-10-07, after the implementation plan's re-check: this moment had no such line, though its
+formula gives 26.)* *(And after the implementation plan's forward-and-back council: the header said
+"of 122"; the total rounds down, as available does, so 121.6 reads 121, as `free -g` says.)*
+*(Corrected after the final re-review: the coder's brake mark and `agent`'s wait for Dan were
+missing from this moment, and its numbers now use the two words.)*
 
 **Each command says what it did, and how to undo it.** All run **on the Spark**, from Dan's
 account.
@@ -1034,7 +1066,8 @@ account.
 | `spark make-room 40G` | the list below, one confirmation, then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
 | `spark make-room --all` | the full list, one confirmation, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
 | `spark make-room --done` | *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* | `spark make-room` again |
-| `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* | none needed: the brake fires again if memory falls |
+| `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* When the gate isn't answering: *The gate isn't answering, so the hold file was removed directly; nothing reloads until the gate is back.* | none needed: the brake fires again if memory falls |
+| `spark session hold --model coder --label "pi in Orca"` | nothing while it runs: the session keeps the coder loaded, and ends when the command's stdin closes, or on SIGTERM or SIGHUP, as when pi exits or the Mac sleeps (2b's Mac hooks run it over SSH; Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council) | end the command |
 | `make apply` | the diff, then *Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now.* After 15 minutes: *No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight finish? [y/N]* | revert the change, and `make apply` again |
 | `make apply-now` | *This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent). Continue? [y/N]* | as above |
 
@@ -1149,24 +1182,28 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
   A change that needs no llama-swap restart applies at once.) (*Revised 2026-10-07 after the
   council; S17:*
   - **What waits for the quiet moment:** a llama-swap restart, and a restart of the front, which
-    would cut off every request in flight. The front is restarted only when its own modules
-    change, not for every change to the app, and imports all it uses at start. It reads the
-    registry's model names and roles, and the key digests through `LoadCredential=`, at start too,
-    so a change to either restarts it, through the same wait (added after the re-review). A
-    change to the gate's or the brake's code restarts them at once: a gate restart keeps loaded
-    models serving and rebuilds its state, the front asks again for the requests it was holding,
-    with their original deadlines, and the brake is back within 2 s. *(Clarified 2026-10-07, after
-    the implementation plan's re-check, the controller's ruling:* when a llama-swap or front
-    restart waits for the quiet moment, the brake and the gate restart with it, after the drain,
-    in a fixed order — the brake, the gate, the front only if its own files changed, llama-swap
-    last. The restarting hold is kept in the gate's persisted state, so it survives the gate's own
-    restart, and is released once llama-swap answers again; a request held through it reads
-    `restarting`, never `llama_swap_down`. *(Added the same day, after the final check:* `make
-    apply` renews the hold every 15 s and the gate ends one not renewed for 60 s, so an apply that
-    died holds for about a minute at most; every end does the same work, the residents' reload
-    queued ahead of anything else; and the front drops the hold once the gate has been gone a
-    minute, so rule 8 holds. A front restart inside the apply, which comes only when its own files
-    change, cuts the requests it holds, as any front restart does.))
+    would cut off every request in flight. The front is restarted only when its own modules change,
+    not for every change to the app, and imports all it uses at start. It reads the ~~registry's
+    model names and roles, and the~~ key digests through `LoadCredential=`, at start too, so a
+    change to ~~either~~ them restarts it, through the same wait (added after the re-review; since
+    Dan's decision of 2026-10-07, after the implementation plan's forward-and-back council, the
+    front takes the model names and roles from the gate's events, so a registry change no longer
+    restarts it, while the key digests and the private key list still do). A change to the gate's or
+    the brake's code restarts them ~~at once~~ (at once when nothing waits for the quiet moment; in
+    the fixed order below when something does): a gate restart keeps loaded models serving and
+    rebuilds its state, the front asks again for the requests it was holding, with their original
+    deadlines, and the brake is back within 2 s. *(Clarified 2026-10-07, after the implementation
+    plan's re-check, the controller's ruling:* when a llama-swap or front restart waits for the
+    quiet moment, the brake and the gate restart with it, after the drain, in a fixed order — the
+    brake, the gate, the front only if its own files changed, llama-swap last. The restarting hold
+    is kept in the gate's persisted state, so it survives the gate's own restart, and is released
+    once llama-swap answers again; a request held through it reads `restarting`, never
+    `llama_swap_down`. *(Added the same day, after the final check:* `make apply` renews the hold
+    every 15 s and the gate ends one not renewed for 60 s, so an apply that died holds for about a
+    minute at most; every end does the same work, the residents' reload queued ahead of anything
+    else; and the front drops the hold once the gate has been gone a minute, so rule 8 holds. A
+    front restart inside the apply, which comes only when its own files change, cuts the requests it
+    holds, as any front restart does.))
   - **The wait has a deadline:** up to 15 minutes for ~60 s with no request in flight, then apply
     offers "drain now", which holds new requests and lets those in flight finish, through the
     front's drain, and then `make apply-now` (the session's ruling). A request that arrives during
@@ -1406,7 +1443,8 @@ after which `website/design/phase-2a.md` is written. As first written, its items
 the gate, llama-swap on 9101, the reserve at 22, the coder at ~38 and a done-when of scenarios
 only; git history keeps them.)
 *Approved by Dan, 2026-10-07. Its implementation plan: [Phase 2a — implementation
-plan](phase-2a.md), written the same day.*
+plan](phase-2a.md), written the same day, and revised the same day after its forward-and-back
+council, with Dan's fourteen decisions (Revisions).*
 
 - [Dan] **ntfy** on the Synology, in Container Manager, at the start of 2a (moved up from 2b; Dan,
   2026-10-05), pinned at v2.28.0 by its index digest, with no public relay (the ntfy row), over the
@@ -1456,7 +1494,9 @@ plan](phase-2a.md), written the same day.*
 - [Spark] **`cap_drop` for Open WebUI and SearXNG** (Dan's choice, 2026-10-07, after the
   re-review): both containers drop every capability and add back only what each is found to need,
   checked by the web UI working end to end and a search working, so root's containers with host
-  networking can no longer bind llama-swap's or the engines' ports.
+  networking can no longer bind llama-swap's or the engines' ports. *(Before the cutover, made and
+  deployed from `main`, since nothing deploys from the phase's branch before then: Dan's decisions,
+  2026-10-07, after the implementation plan's forward-and-back council.)*
 - [Spark] **in the gate:** admission, one load at a time, on rule 9's formula, with the queue
   (Dan's keys first), the tickets, the per-key waits and inline refusals, and the top GPU holder
   taken from `nvidia-smi`'s per-process list (from Phase 1's close); the drain; idle unloading at
@@ -1544,7 +1584,9 @@ plan](phase-2a.md), written the same day.*
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
   coder, and pi completes a task with it from the Mac and from tmux as `agent`**; the soak has
   measured every footprint, the coder's included, and the registry holds the numbers; the
-  CUDA-allocatable ceiling is measured; the brake's timings, `MemAvailable`'s lag, swap and
+  CUDA-allocatable ceiling is measured (recorded as *at least* the figure it reaches when the method
+  stops at the reserve: Dan's decision, 2026-10-07); the brake's timings, `MemAvailable`'s lag, swap
+  (down to 24 GiB available) and
   earlyoom's order are recorded; and route A's decode, time to first token and prefill are recorded
   against Phase 5's table.
 
@@ -1556,10 +1598,13 @@ plan](phase-2a.md), written the same day.*
   2026-09-28).
 - [Spark] harness hooks for `agent` · a pi session started from Orca counts as an active agent
   session and keeps its model until its pi process exits (Dan's decision, 2026-09-28), and SwiftBar
-  lists those sessions · `agent`'s GPU jobs get an OOM score before `agent` runs GPU work, with S06
-  (from Phase 1's close) · the engines' output to the journal, only after a check that covers
-  speech shows what it would keep (from Phase 1's close) · pi 0.87.1 for `agent` after a deliberate
-  test (from Phase 1's close; placed here, with `agent`'s hooks).
+  lists those sessions *(2a builds `spark session hold`, which the Mac's hook runs over SSH, since
+  Orca's pi has no process on the Spark: Dan's decision, 2026-10-07, after the implementation plan's
+  forward-and-back council)* · ~~`agent`'s GPU jobs get an OOM score before `agent` runs GPU work,
+  with S06 (from Phase 1's close)~~ (only if 2a's test as `agent` fails, below) · the engines'
+  output to the journal, only after a check that covers speech shows what it would keep (from Phase
+  1's close) · pi 0.87.1 for `agent` after a deliberate test (from Phase 1's close; placed here,
+  with `agent`'s hooks).
 - *Added 2026-10-07, after 2a's council:* [Mac] ntfy's alerts on the Mac, with the menu bar (Dan's
   decision; the council's toolstack review suggests the ntfy CLI as a launchd agent, which needs no
   HTTPS and no relay) · [Spark] `agent`'s hooks post through the gate's status socket, or with a
@@ -1579,9 +1624,16 @@ plan](phase-2a.md), written the same day.*
   2026-10-05.) Qwen3.6-35B-A3B can come back here as a trial.
 - *Added 2026-10-07, after 2a's council (the session's rulings):* route B is measured in Phase 5's
   order, decode and time to first token in pi, then quality per GB, then long context; whether it
-  becomes the coder is 2c's call, with those measurements. S11's trial note is written on the
-  Spark, shown in `spark status`, and filed in the vault by Dan, since the vault isn't reachable
-  from the Spark. The lab instance's ports sit below 1024 too.
+  becomes the coder is 2c's call, with those measurements. S11's trial note is written on the Spark,
+  shown in `spark status`, and filed in the vault by Dan, since the vault isn't reachable from the
+  Spark. The lab instance's ports sit below 1024 too. *(Noted after the implementation plan's
+  forward-and-back council: llama-swap-lab on 901 and its engines on 902–999 would sit clear of 2a's
+  800–899; the front and the gate are written for one upstream, so the lab needs them to learn a
+  second; and route B's adoption gains two checks, a two-key canary — Dan's and `agent`'s distinct
+  strings, back to back and, with `parallel` above 1, together, neither in the other's reply, the
+  coder staying `parallel: 1` unless it passes — and time to first token at 128K and 250K against
+  the Mac pi's 300 s, since llama.cpp's DFlash path has open reports of trouble under concurrency
+  and on long prefills.)*
 - *Scenarios:* S11.
 - *Done when:* S11 is verified and route B is measured.
 
@@ -1595,7 +1647,10 @@ llama-swap's sandboxing, the pull's own user and root-only secret files move int
 unplaced: the engines' own user, whose reason is corrected under *The front and the gate*, with
 llama-swap as that user the route; the web services' sandboxing; `cap_drop` for the web
 containers, which run as root with host networking; and the upgrade runbooks. After the re-review,
-the same day, Dan moved `cap_drop` into 2a too.)*
+the same day, Dan moved `cap_drop` into 2a too. Noted after the implementation plan's
+forward-and-back council: systemd sandboxing for the brake's and the pull's units is unplaced too,
+2a sandboxing only the front, the gate, llama-swap and the notifier; the pull, which runs
+huggingface_hub with network access, matters most.)*
 
 **Phase 3 — App API + speech** (Dan's audio pipeline is the first app with its own key)
 
@@ -1614,7 +1669,18 @@ the same day, Dan moved `cap_drop` into 2a too.)*
 - *The front and LiteLLM (noted 2026-10-07, from Phase 2a's design):* from 2a the front already
   checks keys, holds a request for its key's wait and returns refusals inline, so LiteLLM, itself a
   proxy in front with per-key limits, overlaps it. This phase decides whether LiteLLM replaces the
-  front or sits ahead of it.
+  front or sits ahead of it. *(Noted 2026-10-07, Dan's decision after the implementation plan's
+  forward-and-back council: a third option, **no LiteLLM**, the front growing what this phase needs.
+  What each costs after 2a: in its place, LiteLLM rebuilds what only the front does — in-flight
+  counts to each stream's end, the drain under one lock, apply's hold, the gate's events — and
+  reaches the status socket as `spark-front`'s uid from a root-run container; ahead of it, the front
+  sees one key, LiteLLM's, so every app gets one wait, one queue rank and one cap, refusals name
+  LiteLLM, and LiteLLM wraps the front's `409`s and sentences, chosen for pi, in its own errors,
+  unless the front trusts an identity header from LiteLLM's key only and passes its own refusals
+  through unchanged; with none, the front already has the digests, the per-key waits, the caps, the
+  route list and the inline refusals, and lacks a per-group model list, `x-spark-model` and a
+  listener beyond loopback. Keys then reload without a restart: since 2a they live in a private file
+  the front and the gate read at start, which this phase makes reloadable.)*
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
 
 **Phase 4 — NAS and backups**
@@ -1663,6 +1729,16 @@ the same day, Dan moved `cap_drop` into 2a too.)*
     vLLM with MTP hard-rebooted a Spark twice at 16K context with two requests, and SGLang run
     outside a container froze one: each starts behind the gate, after a soak. vLLM on this GPU
     has an open prefill regression (#55397) and runs FP8 KV cache only on `triton_attn`.
+  - **Since 2a's design** (noted 2026-10-07, after the implementation plan's forward-and-back
+    council): a container engine can't start from llama-swap's sandbox (`NoNewPrivileges=`, no
+    docker group for `spark`), and root may not claim a ticket through `spark`'s folder, so its
+    start route is still to design, and with it how "nothing starts without the gate" holds; the
+    gate's pid scan finds only `llama-server` and `whisper-server` run as `spark`, so a container's
+    engine needs launch's recorded pid or another way to be seen; a cold vLLM or SGLang start can
+    pass the 180 s deadline, so these starts come from persisted compile caches, measured, or the
+    gate waits for their readiness itself; vLLM's own start check reads CUDA's free figure, not
+    `MemAvailable`; and 2a's page-cache drill settled llama.cpp's GGUF loads, so it runs again with
+    a safetensors load, where E.1 was seen, before routes C and D.
 - *Qwen3.8-27B on SGLang (notes added 2026-09-28, from
   [MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark),
   read at its 2026-09-12 state; its numbers, not measured here):* on one GB10 it serves the NVFP4
@@ -1719,7 +1795,15 @@ Phases 2, 3 and 5)
   separate Open WebUI instance with its own data, port and accounts Dan creates, over HTTP on a
   network he trusts, or HTTPS once LAN HTTPS exists; Dan's own web UI and chats never meet it.
 - *Throughout:* nothing anyone sends is logged, as for every key; their requests share the memory
-  pool under the same admission rule as Dan's.
+  pool under the same admission rule as Dan's. *(Noted 2026-10-07, after the implementation plan's
+  forward-and-back council: the web UI's one key is in Dan's key group, so family members using
+  Dan's Open WebUI would get his privileges — the queue, his make-room hold, the marked model, his
+  processes named in their chat; they need an Open WebUI and a key of their own, or a front that
+  trusts Open WebUI's forwarded-user header from that key only (to check at the pinned version). Key
+  groups carry those five settings apart since 2a, and the key list is private, so per-person keys
+  stay out of the repo. Guests use instances Dan's keys don't, or shared models run with no prompt
+  cache, since a shared engine's isolation is the engine's business and a shared prompt cache is a
+  timing channel on other people's prompts.)*
 - *Done when (planned):* a family member chats and calls the API over a shared node, and reaches
   nothing else; an event dry run on a spare LAN — a guest key loads a menu model, an off-menu
   request goes through `spark try`, the guest web UI works — and event mode closes cleanly after.
@@ -1772,7 +1856,11 @@ Each item gets its own design pass when its turn comes.
   own (the NAS, if it runs Tailscale as Dan), so `autogroup:member`, which the ACL's grants to the
   Spark use, means only Dan's personal devices; Phase 2's watchdog needs a grant of its own anyway
   · the weekday preload with a work-hours pin, a setting off by default (from Phase 2a,
-  2026-10-07, until Dan asks for it).
+  2026-10-07, until Dan asks for it) · Ansible for the homelab as a whole, as a project of its own
+  — users, SSH keys, Tailscale, Docker and Compose stacks kept the same across the Synology and the
+  other machines — which could take in the Spark through a small role that runs this repo's `make
+  bootstrap` and `make apply`, never replacing them; not for the Spark now (Dan, 2026-10-07: "later";
+  the [Q&A](phase-2a-qa.md) has the reasons).
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
@@ -1811,9 +1899,14 @@ Each item gets its own design pass when its turn comes.
   Phase 1, the off-box watchdog, a clock cap if needed, Home Assistant power later; incidents are
   logged in the vault.
 - **llama-swap** has one main maintainer and fast config churn → pin, validate, adopt no optional
-  features; the gate keeps the boundary thin enough to swap it out.
+  features; the gate keeps the boundary thin enough to swap it out. *(Noted 2026-10-07, after the
+  implementation plan's forward-and-back council: since 2a's design the front and the gate rely on
+  v257's `/upstream/<model>/health` as the load call, `/api/models/unload`, its "exited prematurely"
+  text, `/logs/stream`, `/running`'s shape and its `429`, so an upgrade past v257, 2b's v259 idea
+  included, re-reads each of them; the `TESTED_AGAINST` test makes that loud.)*
 - **LiteLLM's 2026 security record** → it arrives in Phase 3 locked down, with swap triggers; the gate
-  could take over keys (~600 lines) if a trigger fires.
+  could take over keys (~600 lines) if a trigger fires. *(Since 2a's design the front holds the
+  keys, and Phase 3 weighs no LiteLLM at all: noted 2026-10-07.)*
 - **Open WebUI churn** → a pinned minor version, env-only config, a database dump before upgrades.
 - **vLLM** start can abort when free memory rises during profiling (#56830), and NGC lags upstream →
   llama.cpp first.
@@ -1879,24 +1972,24 @@ Each item gets its own design pass when its turn comes.
   make it do; it follows no redirect.) (Corrected 2026-09-28, from Phase 1's council: the client
   that the brake, `spark status` and `spark apply` use now refuses a redirect when it sends a key,
   as doctor's probe does, so a squatter can't send the key on. The port itself stays open to any
-  user, for Dan to decide.) *Decided 2026-09-28, at Phase 1's close (Dan):* the port stays for
-  Phase 1, with the redirect refused; in Phase 2, llama-swap moves behind a Unix socket with the
-  gate. *Mostly closed by Phase 2a's design (2026-10-07), once built:* llama-swap v257 can't listen
-  on a Unix socket, so the front takes 9100 instead and doesn't restart when llama-swap does, so a
-  llama-swap restart or crash no longer leaves 9100 free; and clients' keys stop at the front
-  (*The front and the gate*). What remains: llama-swap's private port, 9101, can still be taken
-  while llama-swap restarts, and a squatter there would get the front's or the gate's internal key,
-  never a client's, and could be sent requests if it answered as llama-swap does; 9100 itself is
-  free while the front restarts, after a crash or a deploy of its own; and the engines' ports take
-  no key (*127.0.0.1 is not a boundary against `agent`*). *Closed as designed (2026-10-07, after
-  the council, Dan's decisions), once built.* The council found that what stayed open was more than
-  the internal key: a squatter on 9100 while the front restarted would get Dan's key and every
-  prompt, and one on llama-swap's port or on a starting engine's would be sent the requests held
-  for it, whisper uploads included, with the internal key. Now systemd's socket units hold
-  127.0.0.1:9100 and the gate's two sockets from boot, so 9100 is never free, even while the front
-  restarts or crashes; llama-swap moves to 127.0.0.1:900 and the engines to 800 and up, below 1024,
-  which only llama-swap's unit, given `CAP_NET_BIND_SERVICE`, can bind; and clients' keys stop at
-  the front, which holds only their digests. 2a checks, as `agent`, that binding 9100 while the
+  user, for Dan to decide.) *Decided 2026-09-28, at Phase 1's close (Dan):* the port stays for Phase
+  1, with the redirect refused; in Phase 2, llama-swap moves behind a Unix socket with the gate.
+  *Mostly closed by Phase 2a's design (2026-10-07), once built:* llama-swap v257 can't listen on a
+  Unix socket, so the front takes 9100 instead and doesn't restart when llama-swap does, so a
+  llama-swap restart or crash no longer leaves 9100 free; and clients' keys stop at the front (*The
+  front and the gate*). What remains: llama-swap's private port, ~~9101~~ (900 since the council),
+  can still be taken while llama-swap restarts, and a squatter there would get the front's or the
+  gate's internal key, never a client's, and could be sent requests if it answered as llama-swap
+  does; 9100 itself is free while the front restarts, after a crash or a deploy of its own; and the
+  engines' ports take no key (*127.0.0.1 is not a boundary against `agent`*). *Closed as designed
+  (2026-10-07, after the council, Dan's decisions), once built.* The council found that what stayed
+  open was more than the internal key: a squatter on 9100 while the front restarted would get Dan's
+  key and every prompt, and one on llama-swap's port or on a starting engine's would be sent the
+  requests held for it, whisper uploads included, with the internal key. Now systemd's socket units
+  hold 127.0.0.1:9100 and the gate's two sockets from boot, so 9100 is never free, even while the
+  front restarts or crashes; llama-swap moves to 127.0.0.1:900 and the engines to 800 and up, below
+  1024, which only llama-swap's unit, given `CAP_NET_BIND_SERVICE`, can bind; and clients' keys stop
+  at the front, which holds only their digests. 2a checks, as `agent`, that binding 9100 while the
   front restarts and 900 while llama-swap restarts both fail. What remains: anything that runs as
   root can still bind those ports, the web containers among them, which run as root with host
   networking until their `cap_drop` (not yet placed), and so can Dan's account through sudo; the
@@ -1909,10 +2002,10 @@ Each item gets its own design pass when its turn comes.
   stops one whose service has hit its start limit, so a front crashing at start after a bad deploy
   would have freed 9100. The socket units now set `TriggerLimitIntervalSec=0`, and the front, the
   gate and the brake `StartLimitIntervalSec=0`, so neither ever gives up, and 2a's crash-loop check,
-  run as `agent`, confirms that 9100 never answers as anyone else. And the web containers lose
-  their capabilities in 2a, Dan's choice, so they can no longer bind those ports either. What
-  remains of the root-level path is root itself: Dan's account through sudo, and anything else
-  that runs as root on the box.)
+  run as `agent`, confirms that 9100 never answers as anyone else. And the web containers lose their
+  capabilities in 2a, Dan's choice, so they can no longer bind those ports either. What remains of
+  the root-level path is root itself: Dan's account through sudo, and anything else that runs as
+  root on the box.)
 - **The minimal brake's reach** (found 2026-09-26, in Phase 1 Task 4's reviews). It unloads through
   llama-swap, so while llama-swap is down or hung with engines loaded it can hold new loads but not
   unload. And llama-swap v257 answers an unload only once the engine has exited, one unload at a
@@ -1937,9 +2030,9 @@ Each item gets its own design pass when its turn comes.
   now asks once, with its own key, what runs, logs the answer, and records it in its state folder.
   `make status` shows the result on its `brake` line, `make doctor`'s `stack units` line fails
   unless it passed, and `spark apply` checks that the brake is still running 3 s after it restarts
-  it.) (*Phase 2a, designed 2026-10-07:* the brake moves into the gate, which still unloads through
-  llama-swap, so this reach stays; 2a's drill measures the two numbers left above, and the key
-  check at start moves into the gate. *Revised the same day after the council, Dan's decision:*
+  it.) (*Phase 2a, designed 2026-10-07:* ~~the brake moves into the gate, which still unloads
+  through llama-swap, so this reach stays; 2a's drill measures the two numbers left above, and the
+  key check at start moves into the gate.~~ *Revised the same day after the council, Dan's decision:*
   the brake stays its own unit, with its key check, so this reach is unchanged; 2a adds the
   rate-of-fall watch, set from its measured falls and stop times (rule 5), and llama-swap's
   `Restart=always`, so a stray SIGTERM no longer leaves it down.)
@@ -1947,8 +2040,8 @@ Each item gets its own design pass when its turn comes.
   brainstorm). It summed every registry model's footprint against `allocatable − reserve`
   (102 − 24 = 78), so Qwen3.8-27B, at an estimated 38 GiB, couldn't join the set, which then comes
   to about 81. The plan's rule is that footprints fit the CUDA-allocatable ceiling and that each
-  load leaves the reserve free at the moment it happens. → Phase 2a corrects the check and lowers
-  the reserve to 22 GiB, which Dan chose knowingly, and measures the ceiling (rule 9). *(Revised
+  load leaves the reserve free at the moment it happens. → Phase 2a corrects the check ~~and lowers
+  the reserve to 22 GiB, which Dan chose knowingly,~~ and measures the ceiling (rule 9). *(Revised
   the same day after the council: the reserve stays 24, Dan's decision, and the coder's estimate
   rises to ~41, so the set comes to about 84; the corrected check, now with its formulas, is what
   lets the coder fit, and the gate's formula also holds back the growth the loaded models are
@@ -2821,6 +2914,29 @@ Each item gets its own design pass when its turn comes.
   it, with the residents' reload first; `make apply` renews it and the gate ends one that lapses;
   the front drops it once the gate has been gone a minute; and *used by other processes* shows only
   above 0.
+- **2026-10-07** — Phase 2a's design approved by Dan the same day; the implementation plan written
+  from it (`CLAUDE.md`'s notes said "awaiting Dan's approval" until the forward-and-back council
+  found them).
+- **2026-10-07** — Ansible: later, for the homelab as a whole, not for the Spark now (Dan); the
+  Backlog has the line, and the [Q&A](phase-2a-qa.md) the reasons.
+- **2026-10-07** — The implementation plan's forward-and-back council (four reviewers: the docs,
+  the box and its code, executing the plan, the later phases; 0 Critical, 40 Important, 57
+  Minor), and Dan's fourteen decisions on it ("all recommended"): (1) `restarting`,
+  `llama_swap_down` and `draining` are `409`s too, so only `gate_down` stays a `503`; (2) nothing
+  deploys from `phase-2a` until the cutover, and an urgent fix goes from `main`; (3) `cap_drop`
+  for the web containers comes before the cutover; (4) Dependabot's `spark/` bumps wait until 2a
+  merges; (5) the residents reload by themselves after an unplanned llama-swap restart or an
+  earlyoom kill; (6) the CUDA ceiling is recorded as *at least* the figure measured when the method
+  stops at the reserve; (7) values a task sets from a measurement are the controller's rulings,
+  Dan told; (8) the gate-down drills make the gate fail at start, with Dan's sudo; (9) the
+  implementation plan's Tasks 6, 17 and 23 split, 43 and 44 merge, 52 tasks in all; (10) render's
+  whole-set check becomes a warning, with a `needs_room` flag for a model that loads only after
+  make-room; (11) the design's one `dan` flag splits into five settings of a key group, and the
+  key list moves to a private file; (12) the front takes its model list from the gate's events;
+  (13) Phase 3 weighs no LiteLLM as a third option; (14) `spark session hold`, in 2a. This plan's
+  superseded design clauses are struck through, their dated notes kept; the 2a scenario pages read
+  as one current account each, their history moved to the [Q&A](phase-2a-qa.md); and the later
+  phases' lines carry what 2a's design changes for them (2b, 2c, 3, 5, 6).
 
 ## Sources
 

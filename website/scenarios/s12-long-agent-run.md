@@ -9,7 +9,8 @@ status: built
 laptop.
 
 **What happens.** The run keeps going. I reattach from the Mac with
-`ssh -t brightroar-agent tmux a`. From Phase 2, hooks post done, needs input, or failed.
+`ssh -t brightroar-agent tmux a`. From Phase 2b (corrected 2026-10-07: Phase 2's carving put the
+hooks in 2b), hooks post done, needs input, or failed.
 *(Built 2026-09-28: Phase 1's half was checked that day, in Task 15. As `agent`, pi ran a task on
 the coder in tmux, and detaching, logging out and reattaching kept the session. The hooks and the
 notifications arrive in Phase 2.)*

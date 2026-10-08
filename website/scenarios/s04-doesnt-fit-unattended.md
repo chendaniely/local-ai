@@ -14,17 +14,14 @@ make room. If it still doesn't fit, it gets a refusal with a reason and a `retry
 
 **How to override.** The key's wait setting.
 
-*Added 2026-10-07, from Phase 2a's design:* an agent's request gets this from Phase 2a, through the
-front: `agent`'s key waits up to 10 minutes, then gets a refusal with its reason and a retry-after,
-and ntfy sends a default-priority "refused", which makes no sound in quiet hours (00:00–05:00).
-Apps get it with Phase 3.
+**From Phase 2a, as designed (2026-10-07), for `agent`.** An agent's request gets this through the
+front from Phase 2a; apps get it with Phase 3. `agent`'s key waits up to 10 minutes, then gets a
+refusal with its reason, a `409`, which `agent`'s pi shows and doesn't retry, and a retry-after
+where its code has one. By default `agent`'s pi gives up on a silent request after 5 minutes, half
+that wait, so `spark clients` sets it to about 15 minutes, and the refusal reaches it. My phone gets
+a default-priority *refused* notification, which makes no sound in quiet hours, 00:00–05:00: they
+are set on my phone, where only high-priority alerts get through Do Not Disturb.
 
-*Revised 2026-10-07, after the design's council:* `agent`'s pi gives up on a silent request after
-5 minutes by default, half that wait, so `spark clients` sets it to about 15 minutes, and the
-refusal reaches it. A refusal is a `503` that the client doesn't retry by itself. *(Corrected
-2026-10-07, with 2a's implementation plan: a refusal after the wait is a `409`, which `agent`'s pi
-doesn't retry; it would have retried a `503` up to three times, each with a 10-minute wait of its
-own.)* Quiet hours are set on my phone, where only high-priority alerts get through Do Not
-Disturb.
-
-*Why it works this way: the questions and Dan's answers are in [Phase 2a — questions and answers](../design/phase-2a-qa.md).*
+*Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
+council. The notes this page gathered while the design moved, and the questions and answers behind
+them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

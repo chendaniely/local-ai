@@ -45,7 +45,7 @@ flowchart TB
     owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
     searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
-    litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, or in its place"]:::planned
+    litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
     sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets · Phase 2a"]:::planned
     front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys · Phase 2a"]:::planned
     swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys<br/>to 127.0.0.1:900, internal keys · Phase 2a"]
@@ -89,7 +89,7 @@ flowchart TB
   guests -.-> guestui
   guests -.-> litellm
   guestui -.-> litellm
-  litellm -. "through the front, or in its place" .-> swap
+  litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap
   swap -- "spark launch" --> engines
   swap -.-> vllm
   brake -- "unloads through llama-swap" --> engines
@@ -144,7 +144,7 @@ flowchart LR
   searx["SearXNG"]
   front["the front, 127.0.0.1:9100 · Phase 2a<br/>the same keys, then an internal key"]:::planned
   swap["llama-swap, 127.0.0.1:9100<br/>a key on every request<br/>to 127.0.0.1:900 · Phase 2a"]
-  litellm["LiteLLM on a LAN port · Phase 3<br/>ahead of the front, or in its place"]:::planned
+  litellm["LiteLLM on a LAN port · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
   anthropic(("Anthropic"))
 
   piT --> tunnel --> swap
@@ -157,7 +157,7 @@ flowchart LR
   piA -.-> front
   front -.-> swap
   app -.-> litellm
-  litellm -. "through the front, or in its place" .-> swap
+  litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap
   fam -.-> serve
   fam -.-> litellm
   guest -.-> guestui -.-> litellm
@@ -169,11 +169,12 @@ beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over W
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
 Phase 2a (planned), the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
-inference routes go through: llama-swap's admin routes stay out of every client's reach. From
-Phase 3, apps reach the models through LiteLLM, each with a key of its own; Phase 3 decides whether
-it sits ahead of the front or takes its place. From Phase 6, family and
-friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark,
-and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's network only.
+inference routes go through: llama-swap's admin routes stay out of every client's reach. From Phase
+3, apps reach the models with a key of their own; Phase 3 decides whether LiteLLM sits ahead of the
+front, takes its place, or isn't used at all, the front growing what Phase 3 needs. From Phase 6,
+family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only
+the Spark, and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's
+network only.
 
 ## Loading a model
 
@@ -193,11 +194,11 @@ flowchart TD
   brake --> held
 
   front["Phase 2a: the front, on 9100, checks the key and the route<br/>and counts the requests in flight"]:::planned
-  gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down;<br/>at boot, nothing loads"]:::planned
+  gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down, a 503;<br/>at boot, nothing loads"]:::planned
   ask{"the gate: brake clear, and the footprint fits what's free for a load:<br/>available memory less the reserve, the growth the loaded models are owed,<br/>any load starting and any make-room hold that isn't mine?<br/>one load at a time, my keys first"}:::planned
   gload["the gate gives spark launch a ticket and loads it through llama-swap;<br/>spark launch keeps the hold check and a zero-wait fit check"]:::planned
   hold["the gate keeps the request waiting<br/>for its key's wait: 30 s for mine, 10 minutes for agent's"]:::planned
-  inline["refused inline, like any API error, a 409: memory needed against what's free for a load,<br/>the top holders, one next step, a code and a retry-after"]:::planned
+  inline["refused inline, like any API error: a 409, which clients don't retry,<br/>memory needed against what's free for a load, the top holders, one next step and a code"]:::planned
   release["Phase 2a: the gate lifts the hold after 5 minutes above 28 GiB, if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]:::planned
   idle["Phase 2a: the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]:::planned
 
@@ -236,7 +237,7 @@ flowchart LR
 
   app["an app or pipeline<br/>with its own key"]:::planned --> litellm["LiteLLM: limits and a wait per key,<br/>refusals inline, the real model named"]:::planned
   litellm -.-> pg[("Postgres<br/>keys and usage")]:::planned
-  litellm -. "through the front, or in its place" .-> swap["llama-swap"]
+  litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap["llama-swap"]
   swap --> chat["chat and embeddings"]
   swap --> stt["whisper, interactive"]
   swap -.-> batch["whisper, batch"]:::planned
@@ -246,8 +247,8 @@ flowchart LR
 Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 2a they
 reach the front instead, with the same keys, and it already waits per key and refuses inline. From
 Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
-never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front or takes its
-place.
+never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front, takes its
+place, or isn't used at all, the front growing what Phase 3 needs.
 
 ## When something breaks, and upkeep
 

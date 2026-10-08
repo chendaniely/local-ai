@@ -198,6 +198,8 @@ when that file was retired on 2026-09-23.
   `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
   footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
   which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
+  The app in `/opt/local-ai/app` was last synced on 2026-10-05, by a `make apply` of Dependabot's
+  hatchling bump (16efba8), which also restarted the brake (recorded 2026-10-07).
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
@@ -406,7 +408,10 @@ stack must account for to run it. Its numbers are its own, not measured here.
 - **Work runs on the Spark by default** (since 2026-09-25). The Mac keeps only its own clients and
   their config, changes under `.github/workflows/` (the Spark's repository-only token can't push
   them) and rendering the site until Quarto is on the Spark; sudo, logins and secrets are mine. One
-  session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Sessions
+  session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Nothing
+  deploys from a phase branch the running stack can't run: in Phase 2a, nothing from `phase-2a`
+  until its cutover, an urgent fix going from `main`, and Dependabot's `spark/` bumps waiting until
+  the phase merges (my decision, 2026-10-07). Sessions
   stage files by explicit path, and use my denylist only through the leak check, never reading it.
 - **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
   run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well
