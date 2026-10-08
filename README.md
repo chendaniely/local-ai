@@ -182,8 +182,9 @@ when that file was retired on 2026-09-23.
   Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
   model, and Open WebUI's task model, whose task calls run without thinking),
   `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
-  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`,
-  with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
+  `qwen3.8-27b` (on demand; `qwen3.6-35b-a3b` until 2026-10-08, its files still on disk). Their
+  files are in `/var/lib/local-ai/hf`,
+  with 729 GiB of disk left (2026-10-08; 752 before Qwen3.8's file). Open WebUI has its admin account, Dan's, and sign-up is closed.
   `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
   the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
   with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
@@ -198,12 +199,11 @@ when that file was retired on 2026-09-23.
   `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
   footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
   which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
-  *(2026-10-08, committed but not yet deployed: by Dan's decision the registry's coder becomes
-  `qwen3.8-27b`, Qwen3.8-27B, at 163,840 of its 262,144 tokens, with a footprint estimated at
-  35 GiB, so the footprints sum to all 78 GiB the budget allows. `qwen3.6-35b-a3b` leaves the
-  registry, and its files stay on disk. Phase 2a's Task 42 gives the coder its full context. The
-  box serves the coder above until Dan runs `make apply`, and Qwen3.8-27B once `make pull` has
-  fetched its file; this section changes then.)*
+  *(Since 2026-10-08, by Dan's decision: the coder is Qwen3.8-27B at 163,840 of its 262,144 tokens,
+  footprint 35 GiB, so the footprints are 32, 8, 3 and 35, all 78 GiB the budget allows; its cold
+  load took 30.6 GiB. Phase 2a's Task 42 gives it its full context. The figures above for the coder
+  before it, Qwen3.6-35B-A3B, record that model: its full 262,144 context, its ~30 GiB cold load
+  and its 33 GiB footprint.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
