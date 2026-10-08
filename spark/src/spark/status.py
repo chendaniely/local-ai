@@ -3,7 +3,9 @@ took the brake's own key when the brake started.
 
 It reports problems, it doesn't fail on them: what it can't read, it says so, shows the rest, and exits 0. What it says
 must be true for whoever runs it. The brake's state folder is 2770 spark:spark-admin, so an account outside spark-admin
-(agent) is told the hold is unknown to it, never that there is one or that there's none.
+(agent) is told the hold is unknown to it, never that there is one or that there's none. Launch's folder, which holds
+the refusals since Phase 2a, is 0750 spark:spark, so an account outside the spark group, Dan's included, is told the
+last refusal is unknown to it, until Task 29 asks the gate instead.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import yaml
 from spark import paths
 from spark.brake import FALLBACK, KeyCheck, read_key_check
 from spark.hold import UNREADABLE_SINCE, Hold, read_hold
-from spark.launch import check_refusal
+from spark.launch import REFUSALS, newest_refusal
 from spark.llamaswap import LlamaSwap, LlamaSwapError, Running, key_from_env
 from spark.memory import MemInfo, read_meminfo
 from spark.registry import Registry, load_registry
@@ -47,9 +49,10 @@ def gather(mem: MemInfo | None, registry: Registry | None, running: list[Running
            can_release: bool = True, key_check: KeyCheck | None = None) -> dict:
     """What `spark status` shows, as data. A `mem`, `registry` or `running` of None couldn't be read, and `problems`
     says why, by part (PARTS): with no registry, headroom is measured to the plan's brake line, and `running` None
-    with no "llama-swap" problem reads as llama-swap unreachable. A `hold`, `refusal` or `key_check` (the brake's
-    start check) of None is none. A "state" problem means the brake's state folder is closed to this account: the hold
-    and the start check are then unknown, not absent."""
+    with no "llama-swap" problem reads as llama-swap unreachable. A `hold`, `refusal` (the newest of launch's
+    refusal records) or `key_check` (the brake's start check) of None is none. A "state" problem means the brake's
+    state folder is closed to this account: the hold and the start check are then unknown, not absent. A "refusal"
+    problem means the last refusal is unknown: its folder is closed to this account, or its record isn't one."""
     problems = dict(problems or {})
     if mem is not None and not (math.isfinite(mem.total_gib) and math.isfinite(mem.available_gib)):
         problems.setdefault("memory", f"memory reads that aren't numbers: {mem}")
@@ -181,18 +184,18 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def _closed(state: Path) -> bool:
-    """Whether the brake's state folder is there but closed to this account. Then its hold and refusal are unknown to
-    it, not absent: `spark launch` runs as spark, which reads them."""
+def _closed(folder: Path) -> bool:
+    """Whether the folder (the brake's state folder, or launch's) is there but closed to this account. Then what it
+    holds is unknown to it, not absent: `spark launch` and the brake run as spark, which reads them."""
     try:
-        mode = os.stat(state).st_mode
+        mode = os.stat(folder).st_mode
     except FileNotFoundError:
-        return False  # no folder, so no hold file: launch finds the same
+        return False  # no folder, so no file in it: launch finds the same
     except PermissionError:
         return True  # a folder on the way to it can't be searched
     except OSError:
-        return False  # read_hold says what's wrong, as launch would find it
-    return stat.S_ISDIR(mode) and not os.access(state, os.X_OK)  # search is what opening a file in it takes
+        return False  # the reader says what's wrong, as launch would find it
+    return stat.S_ISDIR(mode) and not os.access(folder, os.X_OK)  # search is what opening a file in it takes
 
 
 def _one_line(err: BaseException) -> str:
@@ -219,14 +222,18 @@ def run(args: argparse.Namespace) -> int:
         problems["memory"] = f"can't read memory: {err}"
     hold = refusal = key_check = None
     if _closed(paths.STATE):
-        problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold, its start check and the "
-                             "last refusal are unknown to it; spark-admin can read them")
+        problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold and its start check are "
+                             "unknown to it; spark-admin can read them")
     else:
         hold = read_hold(paths.STATE)
         key_check, damaged = read_key_check(paths.STATE)
         if damaged:
             problems["key check"] = damaged
-        refusal, damaged = check_refusal(paths.STATE)
+    closed = [folder for folder in (paths.LAUNCH, paths.LAUNCH / REFUSALS) if _closed(folder)]
+    if closed:
+        problems["refusal"] = f"this account can't read {closed[0]}, so the last refusal is unknown to it"
+    else:
+        refusal, damaged = newest_refusal(paths.LAUNCH)
         if damaged:
             problems["refusal"] = damaged
     status = gather(mem, registry, running, hold, refusal, problems=problems,

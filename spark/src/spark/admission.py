@@ -1,5 +1,6 @@
-"""The Phase 1 launch check: the brake's hold, then a static fit against MemAvailable − reserve, with
-MemAvailable capped at what the GPU can allocate."""
+"""Phase 1's launch check, kept from Phase 2a as `spark launch`'s zero-wait backstop behind the gate's admission ticket:
+the brake's hold, then a static fit against MemAvailable − reserve, with MemAvailable capped at what the GPU can
+allocate. It decides at once and never waits; the gate's admission (rule 9) is where a load waits for room."""
 
 from __future__ import annotations
 

@@ -87,10 +87,11 @@ def test_a_command_keeps_the_exit_code_it_chose(tmp_path, monkeypatch, capsys):
     registry.write_text("budget: {allocatable_gib: 102}\n")
     monkeypatch.setitem(launch.main_launch.__kwdefaults__, "registry", registry)
     monkeypatch.setitem(launch.main_launch.__kwdefaults__, "state", tmp_path)
+    monkeypatch.setitem(launch.main_launch.__kwdefaults__, "launch", tmp_path)
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
     assert cli.main(["launch", "coder", "--", "/bin/engine"]) == 3
     assert capsys.readouterr().err.startswith(f"spark: not starting coder: the registry {registry} won't load: ")
-    assert launch.read_refusal(tmp_path)["model"] == "coder"
+    assert launch.read_refusal(tmp_path, "coder")["model"] == "coder"
 
 
 # The controller's ruling at Task 10: a call to the gate that fails is one plain line, exit 1, never a traceback; the

@@ -68,11 +68,12 @@ def standard(text: str):
 
 @pytest.fixture()
 def spark_status(tmp_path, monkeypatch, capsys):
-    """`spark status [flags]` on a fake box: the fixture registry, the state folder tmp_path/"state", 70 of 121.7 GiB
-    available, and llama-swap running the coder, with no key in the environment. A keyword changes what the box has:
-    `answer` is what LlamaSwap(...).running() returns, or raises when it's an error, or None for the real client.
-    Gives the exit code, what it printed, and how each LlamaSwap was made."""
+    """`spark status [flags]` on a fake box: the fixture registry, the state folder tmp_path/"state", launch's folder
+    tmp_path/"launch", 70 of 121.7 GiB available, and llama-swap running the coder, with no key in the environment. A
+    keyword changes what the box has: `answer` is what LlamaSwap(...).running() returns, or raises when it's an error,
+    or None for the real client. Gives the exit code, what it printed, and how each LlamaSwap was made."""
     (tmp_path / "state").mkdir()
+    (tmp_path / "launch").mkdir()
     monkeypatch.delenv("SPARK_API_KEY", raising=False)
 
     def run(*flags, registry=FIXTURE, mem=MemInfo(121.7, 70.0), answer=CODER):
@@ -89,6 +90,7 @@ def spark_status(tmp_path, monkeypatch, capsys):
 
         monkeypatch.setattr(paths, "REGISTRY", registry)
         monkeypatch.setattr(paths, "STATE", tmp_path / "state")
+        monkeypatch.setattr(paths, "LAUNCH", tmp_path / "launch")
         monkeypatch.setattr("spark.status.read_meminfo", mem if callable(mem) else lambda: mem)
         monkeypatch.setattr("spark.status.LlamaSwap", LlamaSwap if answer is None else FakeLlamaSwap)
         code = cli.main(["status", *flags])
@@ -142,7 +144,8 @@ def test_the_refusal_a_broken_registry_caused_is_shown(spark_status, tmp_path, m
     registry.write_text("budget: {allocatable_gib: 102}\n")
     monkeypatch.setattr(launch, "_mark_first_to_kill", lambda *args: pytest.fail("must not mark the engine"))
     monkeypatch.setattr(launch.os, "execvpe", lambda f, a, env: pytest.fail("must not exec"))
-    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=tmp_path / "state") == 3
+    assert launch.main_launch(["coder", "--", "/bin/engine"], registry=registry, state=tmp_path / "state",
+                              launch=tmp_path / "launch") == 3
     code, out, _ = spark_status(registry=registry)
     refused = [line for line in out.splitlines() if line.startswith("refused  coder at ")]
     assert code == 0 and refused and refused[0].endswith(
@@ -232,13 +235,14 @@ def test_the_real_client_s_401_and_a_closed_port_are_told_apart(spark_status, mo
 @pytest.mark.parametrize("inside", ["nothing", "a hold and a refusal"])
 def test_a_state_folder_this_account_cant_read_is_unknown_to_it(spark_status, tmp_path, inside):
     # agent isn't in spark-admin, and the folder is 2770 spark:spark-admin; nor is a shell of Dan's started before
-    # bootstrap added him to the group. Whether a hold stands is unknown to them, either way (I3).
+    # bootstrap added him to the group. Whether a hold stands is unknown to them, either way (I3). Launch's refusals
+    # are in a folder of their own since Phase 2a (Task 11), which is still read.
     if os.geteuid() == 0:
         pytest.skip("root reads any folder")
     state = tmp_path / "state"
     if inside != "nothing":
         write_hold(state, Hold("t0", "18.0 GiB available", ("coder",)))
-        launch.record_refusal(state, "coder", "needs 28.0 GiB")
+        launch.record_refusal(tmp_path / "launch", "coder", "no_fit", "needs 28.0 GiB")
     state.chmod(0)
     try:
         text, js = spark_status(), spark_status("--json")
@@ -247,12 +251,49 @@ def test_a_state_folder_this_account_cant_read_is_unknown_to_it(spark_status, tm
     code, out, _ = text
     assert code == 0 and "brake    unknown" in out.splitlines()
     assert "HOLDING" not in out and "--release" not in out
-    assert not any(line.startswith("refused") for line in out.splitlines())
-    assert (f"problem  this account can't read {state}, so the brake's hold, its start check and the last refusal are "
-            "unknown to it; spark-admin can read them") in out.splitlines()
+    assert [line.startswith("refused  coder at ") for line in out.splitlines() if line.startswith("refused")] == (
+        [] if inside == "nothing" else [True])
+    assert (f"problem  this account can't read {state}, so the brake's hold and its start check are unknown to it; "
+            "spark-admin can read them") in out.splitlines()
     code, out, _ = js
     status = standard(out)
-    assert code == 0 and status["brake"]["state"] == "unknown" and status["last_refusal"] is None
+    assert code == 0 and status["brake"]["state"] == "unknown"
+    assert (status["last_refusal"] is None) == (inside == "nothing")
+
+
+@pytest.mark.parametrize("closed", ["launch", "launch/refusals"])
+def test_a_launch_folder_this_account_cant_read_leaves_the_refusal_unknown(spark_status, tmp_path, closed):
+    # Launch's folder is 0750 spark:spark (Task 27), so an account outside the spark group, Dan's included, can't read
+    # its refusals until Task 29 asks the gate for them: the last refusal is unknown to it, never none.
+    if os.geteuid() == 0:
+        pytest.skip("root reads any folder")
+    launch.record_refusal(tmp_path / "launch", "coder", "no_fit", "needs 28.0 GiB")
+    folder = tmp_path / closed
+    folder.chmod(0)
+    try:
+        text, js = spark_status(), spark_status("--json")
+    finally:
+        folder.chmod(0o700)
+    code, out, _ = text
+    assert code == 0 and not any(line.startswith("refused") for line in out.splitlines())
+    assert f"problem  this account can't read {folder}, so the last refusal is unknown to it" in out.splitlines()
+    assert "brake    no hold · no start check recorded (`make logs s=brake`)" in out.splitlines()
+    code, out, _ = js
+    status = standard(out)
+    assert code == 0 and status["last_refusal"] is None and status["brake"]["state"] == "no hold"
+
+
+def test_the_refused_line_shows_the_newest_models_refusal(spark_status, tmp_path):
+    # Until Task 29 reads them through the gate, `refused` is the newest of the models' records.
+    launch.record_refusal(tmp_path / "launch", "embed", "held_by_brake", "the brake holds")
+    launch.record_refusal(tmp_path / "launch", "coder", "no_fit", "needs 28.0 GiB")
+    os.utime(tmp_path / "launch" / "refusals" / "embed.json", ns=(2 * 10**18, 2 * 10**18))
+    os.utime(tmp_path / "launch" / "refusals" / "coder.json", ns=(10**18, 10**18))
+    code, out, _ = spark_status()
+    assert code == 0 and [line for line in out.splitlines() if line.startswith("refused")] == [
+        f"refused  embed at {launch.read_refusal(tmp_path / 'launch', 'embed')['at']}: the brake holds"]
+    code, out, _ = spark_status("--json")
+    assert standard(out)["last_refusal"] == launch.read_refusal(tmp_path / "launch", "embed")
 
 
 def test_a_damaged_hold_still_holds_and_what_it_unloaded_is_unknown(spark_status, tmp_path):
@@ -292,7 +333,8 @@ def test_a_model_the_registry_doesnt_list_is_shown_not_a_crash(spark_status):
 @pytest.mark.parametrize("damage", ["[1]", '"s"', "5", '{"x": 1}', "[" * 100_000],
                          ids=["a list", "a string", "a number", "none of its fields", "nested too deep"])
 def test_a_damaged_refusal_record_is_said_not_a_crash(spark_status, tmp_path, damage):
-    record = tmp_path / "state" / "last-refusal.json"
+    record = tmp_path / "launch" / "refusals" / "coder.json"
+    record.parent.mkdir()
     record.write_text(damage)
     code, out, _ = spark_status()
     assert code == 0 and f"problem  the refusal record {record} " in out
