@@ -2,9 +2,11 @@
 gate's constants, its routes, each with the socket it is on and who may call it, and its messages' shapes.
 
 JSON over HTTP/1.1 on the gate's two Unix sockets, which systemd holds (sockets.py): the status socket, for group
-spark-users, and the control socket, for spark-admin. Every request body and every answer is a JSON object, and a
-stream (`GET /v1/front/events`, `POST /v1/unload`) is NDJSON, one object a line. Every time in a message is in Unix
-seconds, as time.time() gives it. A key appears only by its name in the private key list, never as the key itself.
+spark-users, and the control socket, for spark-admin. Every request body is a JSON object, and so is every answer
+but a 2xx with nothing in it, such as a 204; one with a status other than 2xx is a GateRefusalBody. A stream
+(`GET /v1/front/events`, `POST /v1/unload`, `POST /v1/make-room`) is NDJSON, one object a line. Every time in a
+message is in Unix seconds, as time.time() gives it. A key appears only by its name in the private key list, never
+as the key itself.
 
 The standard library only, and nothing but definitions at import: the CLI imports it through gateclient, and
 `spark status` and `spark launch` stay light (test_tested_against.py)."""
@@ -82,7 +84,9 @@ ROUTES: tuple[Route, ...] = (
     Route("control", "POST", "/v1/pin", "admin"),  # PinRequest; one that loads first, held up to LOAD_CALL_TIMEOUT_S
     Route("control", "DELETE", "/v1/pin/{model}", "admin"),
     Route("control", "POST", "/v1/make-room/plan", "admin"),  # RoomPlanRequest → RoomPlanAnswer
-    Route("control", "POST", "/v1/make-room", "admin"),  # MakeRoomRequest → MakeRoomAnswer, as long as its drains take
+    # MakeRoomRequest → NDJSON: a MakeRoomProgress as each model's drain begins, then MakeRoomAnswer (the controller's
+    # ruling at Task 10's review: its head comes at once, as /v1/unload's does, so a gate that is down shows in time).
+    Route("control", "POST", "/v1/make-room", "admin"),
     Route("control", "POST", "/v1/release", "admin"),  # ReleaseRequest → ReleaseAnswer
     Route("control", "GET", "/v1/quiet", "admin"),  # QuietAnswer
     Route("control", "POST", "/v1/drain-all", "admin"),  # apply's hold begins, persisted
@@ -96,6 +100,17 @@ ROUTES: tuple[Route, ...] = (
 
 # There is no cancel route: the front drops its admit call when its client goes, and the gate takes the dropped call
 # as the cancel.
+
+
+class GateRefusalBody(TypedDict):
+    """Every answer of the gate's with a status other than 2xx, and a refusal sent as a stream's line: `message`, one
+    plain line, which the CLI shows as it is (gateclient.GateRefused), and the refusal's code (messages'), None where
+    it has none, as for the 403 that says who may. Never OpenAI's {"error": {...}} shape, which the front's answers to
+    clients use. /v1/admit alone answers a refusal with 200 and AdmitRefused. (The controller's ruling at Task 10's
+    review.)"""
+
+    message: str
+    code: str | None
 
 DrainWhy = Literal["make-room", "unload", "idle"]
 DRAIN_WHY: tuple[str, ...] = get_args(DrainWhy)
@@ -284,6 +299,14 @@ class RoomPlanAnswer(TypedDict):
     plan: dict[str, Any]  # budget.RoomPlan, as JSON
 
 
+class MakeRoomProgress(TypedDict):
+    """A line of /v1/make-room's stream, as a model's drain begins: Task 7's `unloading` words it."""
+
+    model: str
+    label: str
+    inflight: int
+
+
 class MakeRoomRequest(TypedDict):
     plan_id: str
     for_s: float | None  # None: until --done or a reboot
@@ -313,7 +336,7 @@ class ReleaseAnswer(TypedDict):
     reloading: list[str]  # labels
 
 
-class QuietRequest(TypedDict):
+class QuietInflight(TypedDict):
     model: str
     model_label: str
     key_label: str
@@ -323,7 +346,7 @@ class QuietRequest(TypedDict):
 class QuietAnswer(TypedDict):
     quiet_for_s: float
     last_label: str | None  # the model that answered last
-    inflight: list[QuietRequest]
+    inflight: list[QuietInflight]
 
 
 class ApplyRenew(TypedDict):

@@ -1846,6 +1846,17 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   There is no cancel route: the front drops its admit call when its client goes, and the gate
   takes the dropped call as the cancel.
 
+  *(Added 2026-10-08, the controller's rulings, at Task 10's review:)*
+  - `POST /v1/make-room` answers as `/v1/unload` does: NDJSON, its head at once. Each model's
+    drain sends a line as it begins, `{model, label, inflight}` (`gateproto.MakeRoomProgress`,
+    which Task 7's `unloading` words). The result above comes last, so a gate that is down shows
+    in time.
+  - Every answer with a status other than 2xx, and a refusal sent as a stream's line, is
+    `gateproto.GateRefusalBody`: `{message, code}`, never the front's `{"error": …}`.
+    `/v1/admit` alone answers a refusal with 200 and `ok: false`.
+  - A 2xx answer with nothing in it, such as a 204, reads as `{}`.
+  - `/v1/quiet`'s `inflight` items are `gateproto.QuietInflight`.
+
 - `StatusView` (also `--json`'s shape, for 2b's menu bar): `schema` (1, raised when a field's
   meaning changes), `host`, `at`; `memory` (`total_gib`,
   `available_gib`, `brake_gib`, `warn_gib`, `above_brake_gib`, `reserve_gib`, `owed_gib`,
@@ -1874,8 +1885,14 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `AF_UNIX` connect; nothing else imported.
   *(Added 2026-10-08, at Task 10 and the controller's rulings:)*
   - `GateError` is the three's base, and is raised itself for a 2xx answer, or a stream's line,
-    that isn't a JSON object. `timeout_s` may be None, for no timeout, as `spark unload`'s stream
-    needs (Task 30).
+    that isn't a JSON object. ~~`timeout_s` may be None, for no timeout, as `spark unload`'s stream
+    needs (Task 30).~~ *(Corrected 2026-10-08, the controller's ruling, at Task 10's review: None
+    left the connection and the answer's head unbounded too, so `spark unload` would wait for ever,
+    silently, on a socket systemd holds while the gate can't start.)* `timeout_s` always bounds the
+    connection and the answer's head. `stream(route, body=None, *, then_s=...)` takes its own
+    `then_s` for the reads after the head: `timeout_s` by default, and None waits as long as the
+    gate streams. It returns a `GateStream`, whose `close()`, or the end of a `with` block, closes
+    the connection, even before its first line.
   - Each error's text is one sentence. It says the socket's state and, where there is one, the
     next step, in Task 6's words. Root and `spark-admin`'s members get Dan's words (*On the Spark,
     `make doctor` shows what's wrong.*), and any other login gets `agent`'s (*`make doctor` on the
@@ -1887,6 +1904,19 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     never a traceback.
   - `paths`' three without a named variable read `SPARK_WHISPER_TMP`, `SPARK_VALUES` and
     `SPARK_FRONT_URL`.
+  - *(Added 2026-10-08, the controller's rulings, at Task 10's review:)*
+    - A route holding a space, a control character or a character outside ASCII raises
+      `GateInputError`, a `ValueError` too, worded as the name given at fault, before any
+      connection.
+    - The body is made before any connection, so one that can't be sent leaves none open.
+    - A single answer over 1 MiB, or a stream's line over 64 KiB, reads as `GateUnavailable`.
+    - A 2xx answer with nothing in it reads as `{}`.
+    - `GateForbidden` names the next step, by whether this account is in the socket's group (the
+      group database) and whether this login has the group yet:
+      - a member whose login began before it joined: log in again;
+      - a member still refused: the socket's permissions are wrong, and `make doctor`;
+      - anyone else, on the control socket: *that is Dan's command, which runs as Dan, not as
+        agent*.
 
 **Tests** (`spark/tests/test_gateclient.py`; a standard-library stand-in server on a short
 `AF_UNIX` path):
@@ -1911,8 +1941,20 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     `test_no_gate_error_carries_a_credential_or_a_response_body`,
     `test_the_next_step_is_dans_only_for_a_login_that_can_take_it`,
     `test_the_status_view_carries_the_plans_fields`,
-    `test_a_pin_with_an_end_and_one_without_read_as_spark_pin_words_them` and
-    `test_the_gates_paths_default_to_the_plans_and_each_variable_overrides_it`.
+    ~~`test_a_pin_with_an_end_and_one_without_read_as_spark_pin_words_them`~~
+    `test_a_models_pin_round_trips_with_an_end_or_without` (renamed at Task 10's review: it now
+    checks `ModelView`'s types and its JSON round trip) and
+    `test_the_gates_paths_default_to_the_plans_and_each_variable_overrides_it` (since the review, it
+    drops `SPARK_*` from the environment it reads the defaults in).
+  - *(Added at Task 10's review:)*
+    `test_a_gate_that_accepts_and_never_answers_is_unavailable_even_when_its_stream_may_wait`,
+    `test_a_stream_waits_out_a_quiet_gate_only_when_told_to`,
+    `test_closing_a_stream_closes_its_connection_even_before_its_first_line`,
+    `test_an_empty_2xx_answer_reads_as_an_empty_object`,
+    `test_a_route_that_cant_be_sent_is_refused_as_the_callers_before_connecting`,
+    `test_a_body_that_cant_be_sent_is_refused_before_connecting` and
+    `test_an_answer_or_a_line_past_its_bound_reads_as_gate_unavailable`; and
+    `test_a_closed_socket_says_who_may_use_it` checks each case's next step.
   - In `test_cli.py`: `test_a_gate_error_is_one_plain_line_never_a_traceback`, for each of the
     three errors.
   - In `test_doctor.py`: the stand-in's address follows `paths.LLAMASWAP_URL`.
@@ -2914,6 +2956,16 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `/v1/front/events` (kept open), `/v1/load` and `/v1/pin` (`LOAD_CALL_TIMEOUT_S`), and
   `/v1/unload` and `/v1/make-room` (unbounded: a drain waits for its requests, and `/v1/unload`
   streams its count first).
+  *(Added 2026-10-08, the controller's rulings, at Task 10's review:)*
+  - `/v1/make-room` streams too: its head at once, a `gateproto.MakeRoomProgress` line as each
+    model's drain begins, then its result. So the CLI bounds the head and waits for the drains
+    (Task 30).
+  - The gate's every answer with a status other than 2xx, the 403 that says who may and a refused
+    `/v1/load` among them, and a refusal sent as a stream's line, is
+    `gateproto.GateRefusalBody`: a top-level `message`, one plain line the CLI shows as it is,
+    and `code`, None where there is none. It is never the front's `{"error": {…}}` shape, whose
+    reason the CLI wouldn't show. `/v1/admit` alone answers 200 with `ok: false`.
+  - A route with nothing to answer may answer 204, which the client reads as `{}`.
 - `GET /v1/status` through the status socket — the refusals the caller may see: those whose key's
   `account` (Task 4) is the caller's user name, and those whose record's `uid` is the caller's;
   Dan's processes only as *a process of Dan's*. Through the control socket, everything.
@@ -4112,9 +4164,22 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
   the session ends when pi exits or the Mac sleeps.
 - Each command's client timeout: `GateClient`'s 5 s for `make-room`'s plan, `--done`, `logs`, the
   pins without a load and the sessions; the load call's 200 s plus 10 for `load` and for a `pin`
-  that loads; none for `unload` and for `make-room`'s unloads, whose drains wait for their requests
+  that loads; ~~none for `unload` and for `make-room`'s unloads, whose drains wait for their requests~~
   — `unload` reads `/v1/unload`'s stream, printing the count's sentence at once and the result when
   it comes.
+  *(Corrected 2026-10-08, the controller's rulings, at Task 10's review:)*
+  - **No timeout for the head.** "None" left the call unbounded from the connect on, so on a
+    socket systemd holds while the gate can't start, `spark unload` would wait for ever, silently.
+  - **`unload` and `make-room`** call `GateClient(GATE_CONTROL_SOCKET,
+    REQUEST_TIMEOUT_S).stream(…, then_s=None)`. The 5 s bound the connect and the answer's head, so
+    a gate that is down is `GateUnavailable` at once, and the lines after the head wait as long as
+    the drains take.
+  - **`make-room`'s stream.** It prints Task 7's `unloading` for each `MakeRoomProgress` line as it
+    comes, then `room_held`.
+  - **Path parameters** — a model, a role or a session id — are quoted with
+    `urllib.parse.quote(name, safe="")` before they go in a route.
+  - **`parse_size`'s `Decimal`** goes in a body as `float(size)`, since json can't encode a
+    `Decimal`.
 - A question (`make-room`'s confirmation) is asked only on a terminal: without one it exits 2,
   saying to run it in a terminal or add `--yes`; `--yes` answers yes.
 - `parse_size(text) -> Decimal` — `41G`, `41GiB`, `41` → 41; `parse_duration(text) -> int` — `8h`
@@ -5746,6 +5811,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   None is never read as 0, which would count the engine's whole `RssAnon` as growth on top of the
   fall that already measured it. Task 18's background read catches `PermissionError` and `OSError`
   on each read and reports it under `health`, so a failed read never ends its loop.
+
+- **doctor's example address is the front's from the cutover** (added 2026-10-08, at Task 10's
+  review, the controller's ruling), for Task 33. `doctor.py`'s refusal of a `SPARK_LLAMASWAP_URL`
+  that isn't an http(s) URL offers `http://127.0.0.1:9100` as an example, and `test_doctor.py`
+  pins that string. Since Task 10, `paths.LLAMASWAP_URL` defaults to `http://127.0.0.1:900`, and
+  from the cutover 9100 is the front's. Task 33's rewrite offers 900, or no address, and moves the
+  test with it.
 
 ### Minors the forward-and-back council left for the tasks that meet them
 

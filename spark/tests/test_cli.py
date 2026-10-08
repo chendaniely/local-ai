@@ -105,8 +105,8 @@ GATE_ERRORS = [
                  "The gate can't be reached: there is no socket at /nonexistent-spark-gate/g.sock. On the Spark, "
                  "`make doctor` shows what's wrong.", id="unavailable"),
     pytest.param(lambda: GateClient(paths.GATE_CONTROL_SOCKET, 1).get("/v1/status"),
-                 f"The gate's control socket, {paths.GATE_CONTROL_SOCKET}, refused this login: it is for members of "
-                 "spark-admin. A group joined since logging in counts from the next login.", id="forbidden"),
+                 f"The gate's control socket, {paths.GATE_CONTROL_SOCKET}, refused this login: only spark-admin's "
+                 "members can use it, so that is Dan's command, which runs as Dan, not as agent.", id="forbidden"),
     pytest.param(_refused, "Not loading the coder now.", id="refused"),
 ]
 
@@ -114,6 +114,7 @@ GATE_ERRORS = [
 @pytest.mark.parametrize(("call", "said"), GATE_ERRORS)
 def test_a_gate_error_is_one_plain_line_never_a_traceback(call, said, monkeypatch, capsys):
     monkeypatch.setattr(gateclient, "_words", lambda: "dan")
+    monkeypatch.setattr(gateclient, "_membership", lambda group: (False, False))  # a login outside spark-admin
     real_connect = socket.socket.connect
 
     def connect(sock, address):  # the control socket refuses this login; any other connects as it would
