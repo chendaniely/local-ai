@@ -81,11 +81,44 @@ class _Gate(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _short(self) -> None:
+        """An answer that ends before its Content-Length, as from a gate that died after its head: (status, the length
+        its head gives, the bytes that come), then the connection closes."""
+        status, length, data = self.server.short
+        self.send_response(status)
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        self.wfile.write(data)
+        self.close_connection = True
+
+    def _cut(self) -> None:
+        """A chunked stream cut off after its first line, as by a gate that died mid-drain: no last chunk, a chunk
+        that stops short of its size, or a line that stops short of its Content-Length."""
+        how = self.server.cut
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        first = b'{"inflight": 1}\n'
+        if how == "short of its length":
+            self.send_header("Content-Length", str(len(first) + 20))
+            self.end_headers()
+            self.wfile.write(first + b'{"unl')
+        else:
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self._chunk(first)
+            if how == "mid-chunk":
+                self.wfile.write(b"14\r\n" + b'{"unl')  # a 20-byte chunk, 5 of them sent
+        self.close_connection = True
+
     def do_GET(self):
         if self.path == "/v1/status":
             self._json(200, {"ok": True})
         elif self.path == "/v1/canned":
             self._canned()
+        elif self.path == "/v1/short":
+            self._short()
+        elif self.path == "/v1/cut":
+            self._cut()
         else:
             self._json(404, {"message": "no such route"})
 
@@ -111,6 +144,10 @@ class _Gate(BaseHTTPRequestHandler):
             self._json(403, {"message": "not yours"})
         elif self.path == "/v1/canned":
             self._canned()
+        elif self.path == "/v1/short":
+            self._short()
+        elif self.path == "/v1/cut":
+            self._cut()
         elif self.path == "/v1/slow":
             # Its head and a line at once, then nothing for gap_s, as a drain behind a long request.
             try:
@@ -152,6 +189,8 @@ def _serving(path: Path):
     server.saw_first_read = None
     server.canned = (200, b"{}")
     server.gap_s = 0.9
+    server.short = (200, 40, b"")
+    server.cut = "no last chunk"
     server.client_gone = threading.Event()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
@@ -321,6 +360,38 @@ def test_an_empty_2xx_answer_reads_as_an_empty_object(sockdir):
         assert GateClient(path, 5).post("/v1/canned", {"model": "coder"}) == {}
 
 
+@pytest.mark.parametrize(("status", "data"), [
+    pytest.param(200, b"", id="a-head-only"),
+    pytest.param(200, b'{"seconds": 24}', id="a-whole-object-short-of-its-length"),
+    pytest.param(200, b'{"seconds": 2', id="half-a-body"),
+    pytest.param(409, b'{"message": "Not lo', id="half-a-refusal"),
+])
+def test_an_answer_that_stops_short_of_its_length_reads_as_gate_unavailable(status, data, sockdir):
+    # The re-review's N1: a gate that dies between its head and its body is no success, and no refusal either.
+    path = sockdir / "g.sock"
+    with _serving(path) as server:
+        server.short = (status, 40, data)
+        for call in (lambda: GateClient(path, 5).get("/v1/short"),
+                     lambda: GateClient(path, 5).post("/v1/short", {"model": "coder"})):
+            with pytest.raises(GateUnavailable) as raised:
+                call()
+            assert str(raised.value) == f"The gate stopped answering on {path}: its answer broke off. {DAN_STEP}"
+
+
+@pytest.mark.parametrize("how", ["no last chunk", "mid-chunk", "short of its length"])
+def test_a_stream_cut_off_partway_reads_as_gate_unavailable_not_its_end(how, sockdir):
+    # A gate that dies mid-drain: the lines that came are read, and then the stream says it broke off, never ends as
+    # if it were done.
+    path = sockdir / "g.sock"
+    with _serving(path) as server:
+        server.cut = how
+        lines = GateClient(path, 5).stream("/v1/cut", {"model": "coder"}, then_s=None)
+        assert next(lines) == {"inflight": 1}
+        with pytest.raises(GateUnavailable) as raised:
+            next(lines)
+        assert str(raised.value) == f"The gate stopped answering on {path}: its answer broke off. {DAN_STEP}"
+
+
 @pytest.mark.parametrize(("route", "holds"), [
     pytest.param("/v1/logs/my model", "a space", id="space"),
     pytest.param("/v1/logs/modèle", "'è'", id="beyond-ascii"),
@@ -348,7 +419,7 @@ def test_a_body_that_cant_be_sent_is_refused_before_connecting(sockdir):
         assert not _connected(held)
 
 
-def test_an_answer_or_a_line_past_its_bound_reads_as_gate_unavailable(sockdir):
+def test_an_answer_or_a_line_past_its_bound_is_a_gate_error_not_a_gate_thats_down(sockdir):
     path = sockdir / "g.sock"
     with _serving(path) as server:
         client = GateClient(path, 5)
@@ -356,16 +427,20 @@ def test_an_answer_or_a_line_past_its_bound_reads_as_gate_unavailable(sockdir):
         server.canned = (200, json.dumps({"a": at}).encode())  # exactly 1 MiB: read
         assert client.get("/v1/canned") == {"a": at}
         server.canned = (200, json.dumps({"a": at + "x"}).encode())
-        with pytest.raises(GateUnavailable) as raised:
+        with pytest.raises(GateError) as raised:
             client.get("/v1/canned")
+        # A plain GateError: the gate is up and answering, so no caller takes it for a gate that is down (Task 23's
+        # direct release of the brake's hold does that only on GateUnavailable).
+        assert type(raised.value) is GateError
         assert str(raised.value) == (f"The gate's answer on {path} was larger than 1 MiB, more than any of its answers "
                                      f"holds. {DAN_STEP}")
         line = json.dumps({"a": "x" * (LINE_BOUND - len('{"a": ""}\n'))}).encode() + b"\n"  # exactly 64 KiB: read
         server.canned = (200, line + json.dumps({"a": "y" * LINE_BOUND}).encode() + b"\n")
         lines = client.stream("/v1/canned")
         assert next(lines) == json.loads(line)
-        with pytest.raises(GateUnavailable) as raised:
+        with pytest.raises(GateError) as raised:
             next(lines)
+        assert type(raised.value) is GateError
         assert str(raised.value) == (f"A line of the gate's stream on {path} was longer than 64 KiB, more than any of "
                                      f"its lines holds. {DAN_STEP}")
 
@@ -554,6 +629,10 @@ def test_every_route_names_its_socket_and_callers():
     assert gateproto.SOCKET_GROUPS == {"status": "spark-users", "control": "spark-admin"}
     # Every non-2xx answer of the gate's: the message GateRefused shows, and its code.
     assert gateproto.GateRefusalBody.__required_keys__ == {"message", "code"}
+    # The progress lines of the streams the CLI waits on: make-room's drains, and a load as it starts (the
+    # controller's rulings at Task 10's review and re-review), each worded by Task 7's `unloading` and `load_started`.
+    assert gateproto.MakeRoomProgress.__required_keys__ == {"model", "label", "inflight"}
+    assert gateproto.LoadProgress.__required_keys__ == {"model", "label", "last_s"}
 
 
 def test_the_status_view_carries_the_plans_fields():

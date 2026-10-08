@@ -4,9 +4,10 @@ gate's constants, its routes, each with the socket it is on and who may call it,
 JSON over HTTP/1.1 on the gate's two Unix sockets, which systemd holds (sockets.py): the status socket, for group
 spark-users, and the control socket, for spark-admin. Every request body is a JSON object, and so is every answer
 but a 2xx with nothing in it, such as a 204; one with a status other than 2xx is a GateRefusalBody. A stream
-(`GET /v1/front/events`, `POST /v1/unload`, `POST /v1/make-room`) is NDJSON, one object a line. Every time in a
-message is in Unix seconds, as time.time() gives it. A key appears only by its name in the private key list, never
-as the key itself.
+(`GET /v1/front/events`, `POST /v1/unload`, `POST /v1/make-room`, `POST /v1/load`) is NDJSON, one object a line;
+each but the events ends with its result line, or a refusal line in GateRefusalBody's shape. Every time in a message
+is in Unix seconds, as time.time() gives it. A key appears only by its name in the private key list, never as the
+key itself.
 
 The standard library only, and nothing but definitions at import: the CLI imports it through gateclient, and
 `spark status` and `spark launch` stay light (test_tested_against.py)."""
@@ -79,7 +80,9 @@ ROUTES: tuple[Route, ...] = (
     Route("status", "POST", "/v1/sessions/{id}/renew", "owner"),  # → SessionGranted
     Route("status", "DELETE", "/v1/sessions/{id}", "owner"),
     Route("control", "GET", "/v1/status", "admin"),  # the full StatusView
-    Route("control", "POST", "/v1/load", "admin"),  # ModelRequest → LoadConfirmation, held up to LOAD_CALL_TIMEOUT_S
+    # ModelRequest → NDJSON (the controller's ruling at Task 10's re-review): its head at once, a LoadProgress as the
+    # load starts, then LoadConfirmation; held up to LOAD_CALL_TIMEOUT_S.
+    Route("control", "POST", "/v1/load", "admin"),
     Route("control", "POST", "/v1/unload", "admin"),  # ModelRequest → NDJSON: UnloadCount at once, then UnloadDone
     Route("control", "POST", "/v1/pin", "admin"),  # PinRequest; one that loads first, held up to LOAD_CALL_TIMEOUT_S
     Route("control", "DELETE", "/v1/pin/{model}", "admin"),
@@ -261,6 +264,15 @@ class SessionGranted(TypedDict):
 
 class ModelRequest(TypedDict):
     model: str
+
+
+class LoadProgress(TypedDict):
+    """A line of /v1/load's stream, as the load starts (none for a model already loaded): Task 7's `load_started`
+    words it, *Loading the coder (24 s last time)…*."""
+
+    model: str
+    label: str
+    last_s: float | None  # the model's last load, None when there is none to go by
 
 
 class LoadConfirmation(TypedDict):

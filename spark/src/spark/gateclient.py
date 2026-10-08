@@ -4,11 +4,12 @@ SSH, and the other commands that ask the gate import neither uvicorn nor httpx (
 and their messages are gateproto's.
 
 A call that gets no usable answer raises a GateError whose text is a sentence:
-- GateUnavailable when there is no socket, nothing listening on it, or no answer within the timeout, as when systemd
-  holds the socket while the gate is down; or when an answer runs past its bound;
+- GateUnavailable when there is no socket, nothing listening on it, no answer within the timeout, as when systemd
+  holds the socket while the gate is down, or an answer that broke off partway;
 - GateForbidden when the socket refuses this login, naming the group it is for and the next step;
 - GateRefused when the gate answers with a status other than 2xx, carrying the status and the answer's body;
-- GateInputError, a ValueError too, for a route that can't be sent: the caller's input is at fault, not the gate.
+- GateInputError, a ValueError too, for a route that can't be sent: the caller's input is at fault, not the gate;
+- GateError itself for an answer the gate did send but the client can't take: not a JSON object, or past its bound.
 cli.main prints that text as the command's one line (the controller's ruling at Task 10), so it says what state the
 socket is in and, where there is one, the next step, in the words of Task 6's refusals; and it never holds what was
 sent, nor what the gate answered beyond its `message`, the one plain line the gate words for whoever asked."""
@@ -29,8 +30,8 @@ from typing import Any, TypeVar
 from spark import gateproto, paths
 
 _T = TypeVar("_T")
-ANSWER_MAX = 1 << 20  # a single answer above 1 MiB, far more than any of the gate's, reads as the gate failing,
-LINE_MAX = 64 << 10  # and so does a stream's line above 64 KiB, its newline counted
+ANSWER_MAX = 1 << 20  # a single answer above 1 MiB, far more than any of the gate's, is refused as a GateError,
+LINE_MAX = 64 << 10  # and so is a stream's line above 64 KiB, its newline counted
 MESSAGE_MAX = 2000  # a refusal's message above this many characters isn't shown, nor one that isn't a printable line
 # Where to look when the gate is down: `make doctor`, Dan's, as Task 6's refusals say it for a service that is down
 # (messages._ALERT, whose phone half doesn't hold here: a socket can be missing with no alert sent).
@@ -67,14 +68,15 @@ def _step() -> str:
 
 
 class GateError(Exception):
-    """A call to the gate that got no usable answer; the text says why, in a sentence. A 2xx answer with a body, or
-    a stream's line, that isn't a JSON object, as every answer of the gate's is to be (gateproto), raises this
-    itself."""
+    """A call to the gate that got no usable answer; the text says why, in a sentence. An answer the gate sent but
+    the client can't take raises this itself: a 2xx answer with a body, or a stream's line, that isn't a JSON object,
+    as every answer of the gate's is to be (gateproto), and an answer or a line past its bound. The gate is up then,
+    so it is never a GateUnavailable, which a caller may take for a gate that is down (Task 23's direct release)."""
 
 
 class GateUnavailable(GateError):
-    """No socket, nothing listening on it, no answer within the timeout, or an answer past its bound: the gate isn't
-    there to ask, or isn't answering as itself."""
+    """No socket, nothing listening on it, no answer within the timeout, or an answer that broke off partway: the gate
+    isn't there to ask, or stopped answering."""
 
 
 class GateForbidden(GateError):
@@ -130,7 +132,8 @@ class _UnixConnection(http.client.HTTPConnection):
 
 class GateStream:
     """An NDJSON answer's lines, each a dict as it comes, from GateClient.stream. Closing it, or leaving a `with`
-    block, closes the connection, whether or not a line was read; so does the end of its lines, or an error."""
+    block, closes the connection, whether or not a line was read; so does the end of its lines, or an error. A stream
+    cut off partway, its last chunk missing or its Content-Length short, is GateUnavailable, never its end."""
 
     def __init__(self, client: GateClient, connection: _UnixConnection, response: http.client.HTTPResponse,
                  wait_s: float | None) -> None:
@@ -139,6 +142,8 @@ class GateStream:
         self._response = response
         self._wait_s = wait_s
         self._closed = False
+        self._buffer = b""
+        self._ended = False
 
     def __iter__(self) -> GateStream:
         return self
@@ -148,17 +153,34 @@ class GateStream:
             raise StopIteration
         try:
             while True:
-                line = self._client._talk(lambda: self._response.readline(LINE_MAX + 1), self._quiet)
+                line = self._line()
                 if not line:
                     raise StopIteration
-                if len(line) > LINE_MAX:
-                    raise GateUnavailable(f"A line of the gate's stream on {self._client.path} was longer than 64 KiB, "
-                                          f"more than any of its lines holds. {_step()}")
                 if line.strip():
                     return _json_object(line)
         except BaseException:
             self.close()
             raise
+
+    def _line(self) -> bytes:
+        """The next line, its newline kept (the last may have none), or b'' at the stream's end. Read with read1, not
+        http.client's readline, which takes a chunked answer cut off before its last chunk for a whole one; read1
+        raises IncompleteRead there, and a short Content-Length shows as `length` still owed."""
+        while True:
+            newline = self._buffer.find(b"\n")
+            end = newline + 1 if newline >= 0 else len(self._buffer)
+            if end > LINE_MAX:
+                raise GateError(f"A line of the gate's stream on {self._client.path} was longer than 64 KiB, more than "
+                                f"any of its lines holds. {_step()}")
+            if newline >= 0 or self._ended:
+                line, self._buffer = self._buffer[:end], self._buffer[end:]
+                return line
+            data = self._client._talk(lambda: self._response.read1(LINE_MAX), self._quiet)
+            if not data:
+                if self._response.length:
+                    raise GateUnavailable(self._client._broke_off())
+                self._ended = True
+            self._buffer += data
 
     def _quiet(self) -> str:
         if self._wait_s is None:  # no timeout was set, so only the system's own ETIMEDOUT
@@ -261,12 +283,19 @@ class GateClient:
             raise
 
     def _read(self, response: http.client.HTTPResponse) -> bytes:
-        """A whole answer, bounded at ANSWER_MAX."""
+        """A whole answer, bounded at ANSWER_MAX. read() with a size takes a Content-Length answer that ends short for
+        a whole one, and says so only in `length`, the bytes still owed, which is 0 for a whole answer or a 204 and
+        None for a chunked one, whose cut raises IncompleteRead itself."""
         raw = self._talk(lambda: response.read(ANSWER_MAX + 1), self._no_answer)
         if len(raw) > ANSWER_MAX:
-            raise GateUnavailable(f"The gate's answer on {self.path} was larger than 1 MiB, more than any of its "
-                                  f"answers holds. {_step()}")
+            raise GateError(f"The gate's answer on {self.path} was larger than 1 MiB, more than any of its answers "
+                            f"holds. {_step()}")
+        if response.length:
+            raise GateUnavailable(self._broke_off())
         return raw
+
+    def _broke_off(self) -> str:
+        return f"The gate stopped answering on {self.path}: its answer broke off. {_step()}"
 
     def _talk(self, step: Callable[[], _T], quiet: Callable[[], str]) -> _T:
         """One step of the exchange once connected: a timeout (worded by `quiet`), or a connection that breaks, is
