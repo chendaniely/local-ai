@@ -393,21 +393,22 @@ and for `spark/`'s Python dependencies. On upgrade day, for each one:
    `spark/tests/test_tested_against.py` on purpose until its companion change joins it
    ([Versions the code was written for](#versions-the-code-was-written-for)). That one takes step 2
    first; any other PR merges only green.
-2. *Only for a PR that fails on purpose* (added 2026-10-07): the companion change goes on
-   Dependabot's own branch, in the same PR. **On the Spark**, in the clone, with nothing
-   uncommitted, check out the branch the PR names, such as `dependabot/uv/spark/uvicorn-0.55.0`:
+2. *Only for a PR that fails on purpose* (added 2026-10-07; *not yet performed*: no such PR has
+   come yet): the companion change goes on Dependabot's own branch, in the same PR. **On the
+   Spark**, in the clone, with nothing uncommitted, check out the branch the PR names, such as
+   `dependabot/uv/spark/uvicorn-0.55.0`, in place of `<branch>` (the same name the scan below calls
+   `<branch>`):
 
    ```bash
    git fetch origin
-   git switch <the PR's branch>
+   git switch <branch>
    ```
 
-   There, make the change the failing test asks for: for uvicorn, the version
-   `test_uvicorn_is_pinned_exactly` expects and `pypi:uvicorn` in `protocols.TESTED_AGAINST`; for a
-   package added or dropped, the list in `test_the_lock_adds_only_uvicorn_and_starlette`, once you
-   have read why it came or went. Run `make test`, after `test_protocols.py` for uvicorn, as
-   [Versions the code was written for](#versions-the-code-was-written-for) says, and commit the
-   files by path. Then, still **on the Spark**, after
+   There, make the change the failing test names: for uvicorn, everything
+   [Versions the code was written for](#versions-the-code-was-written-for) lists, with its tests in
+   the order it gives; for a package added or dropped, the list in
+   `test_the_lock_adds_only_uvicorn_and_starlette`, once you have read why it came or went. Run
+   `make test`, and commit the files by path. Then, still **on the Spark**, after
    [the scan before every push](leak-guards.md#before-every-push), push it to the PR's branch and
    come back to your own (a Claude session pushes only with Dan's OK):
 
@@ -417,7 +418,8 @@ and for `spark/`'s Python dependencies. On upgrade day, for each one:
    ```
 
    CI then runs on the whole change. Dependabot stops rebasing a PR that carries someone else's
-   commit, which is fine: it merges as step 3 says.
+   commit, so merge it after the day's other PRs. If it conflicts with one merged before it,
+   comment `@dependabot recreate` on it, which drops the companion commit, and do this step again.
 3. **On github.com**, read the PR's commit messages, then merge it with a merge commit or a rebase.
    Never squash it: a squash can paste the release notes into the message, CI scans every commit
    message with the repo's patterns, and once merged, a finding in history can't be taken back or
