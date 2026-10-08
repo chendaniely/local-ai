@@ -13,7 +13,8 @@ rechecked whenever memory, the brake's hold, a load, a drain or the queue change
 every memory reading), and at least every `poll_s`; at its deadline it is refused with the code for what it was waiting
 on, in this order: apply's restart (`restarting`), llama-swap down (`llama_swap_down`), the brake's hold
 (`held_by_brake`), its model being unloaded (`draining`), the brake's mark for a group without reloads_marked
-(`footprint_suspect`), memory (`no_fit`), and the one-load slot (`loading`).
+(`footprint_suspect`), llama-swap refusing its load each time (`load_failed`, *kept refusing*), memory (`no_fit`),
+and the one-load slot (`loading`).
 
 A model fits by rule 9: footprint ≤ min(MemAvailable − reserve − owed, ceiling − committed) − starting − held, with
 `held` make-room's hold for a group without uses_hold, and the gate's reloads count it too. *owed* is each loaded
@@ -33,10 +34,13 @@ reviews):
   aborted the start (`group: model unloaded`, the brake's) or llama-swap is shutting down is no failed start: its
   requests go back to their places, and are worded by that cause.
 - Unknown, or llama-swap's own refusal (any status but 500): the ticket is withdrawn first. If it was still there, no
-  start used it: the slot is freed, and the requests go back to their places. If launch had claimed it, the slot stays
-  held until `/running` shows the model ready or gone; one still starting past its own start's deadline (the claimed
-  ticket's `started/` time, plus healthCheckTimeout and PAST_THE_DEADLINE_S) is unloaded, `/running` read right before,
-  and counted as a failed load.
+  start used it, and the slot is freed: a 404 or a 401 is `load_failed` at once; a 429 or a 503 sends the requests back
+  to their places, to try again within their wait, then `load_failed` (*kept refusing*), never `llama_swap_down` while
+  llama-swap answers; nothing answering sends them back to wait for llama-swap. If launch had claimed it, the slot stays
+  held until `/running` shows the model ready or gone; one gone without coming ready is a failed start (*stopped before
+  it was ready*); one still starting past its own start's deadline (the claimed ticket's `started/` time, plus
+  healthCheckTimeout and PAST_THE_DEADLINE_S) is unloaded, `/running` read right before, and counted as a failed load.
+  (The controller's rulings at Task 15.)
 On every outcome the model's `started/` record is read, then cleared; a ready engine's pid goes into `state.ticketed`
 only when the record is this ticket's. A model a restarted gate's `restore` left starting takes the ready-or-gone path.
 
@@ -74,6 +78,9 @@ LOAD_FALL_MARGIN_GIB = 2
 POLL_S = 1.0  # a waiting request is rechecked, and a load being settled reads /running, at least this often
 # A request whose load llama-swap didn't take waits this long before it tries again, doubling to the most.
 RETRY_FIRST_S, RETRY_MAX_S = 1.0, 30.0
+# llama-swap's refusals of a load that a retry may change, tried again within the request's wait; any other status but
+# 500 (a 404, a 401) is refused at once (the controller's ruling at Task 15).
+RETRY_STATUSES = (429, 503)
 # Why the gate reloads a resident (the controller's ruling at Task 7): resident_waiting's `after`.
 RELOAD_AFTER = ("hold", "brake", "apply", "boot", "restart", "crash")
 # What a 500 says when it ended no start of the model's own (the controller's ruling at Task 12's re-review): an unload
@@ -85,11 +92,15 @@ DEADLINE_PASSED = "health check timed out"  # process_command.go:587-589
 
 Kind = Literal["reload", "command", "key"]
 # What a waiting request waits on, in the order the first that applies is its reason, and the refusal each gives.
+# swap_refused: llama-swap answered its load with a 429 or a 503, and it waits to try again (Task 15's ruling).
 _CODES = {"restart": "restarting", "llama_swap": "llama_swap_down", "brake": "held_by_brake", "draining": "draining",
-          "dan": "footprint_suspect", "memory": "no_fit", "slot": "loading"}
-_WAITING_WORDS = ("memory", "brake", "slot", "dan")  # the reasons `waiting`'s words take (Task 7)
-# status's waiting rows take gateproto.WAITING_WHY's reasons; a model being unloaded has none of its own there yet.
-_ROW_WHY = {"draining": "memory"}
+          "dan": "footprint_suspect", "swap_refused": "load_failed", "memory": "no_fit", "slot": "loading"}
+_WAITING_WORDS = ("memory", "brake", "slot", "dan", "draining")  # the reasons `waiting`'s words take (Task 7)
+# What status's rows and the progress lines show for a reason gateproto.WAITING_WHY has no word of its own for.
+_SHOWN_WHY = {"swap_refused": "llama_swap"}
+# Why a request whose load came to nothing waits before it tries again, and what it then waits on: llama-swap not
+# answering or shutting down; llama-swap answering with a refusal; an unload aborting its start; or no ticket written.
+_RETRY_WHY = {"llama_swap": "llama_swap", "swap_refused": "swap_refused", "aborted": "draining", "ticket": "slot"}
 _UNREAD = object()  # /running couldn't be read
 
 
@@ -158,6 +169,9 @@ class _Waiter:
     resident_waiting_sent: bool = False
     retry_at: float | None = None
     retry_s: float = 0.0
+    retry_why: str = "llama_swap"  # _RETRY_WHY's key
+    refused_status: int | None = None  # llama-swap's status, when it refused its last load (a 429 or a 503)
+    refused_ticket: str | None = None  # that load's ticket, which keys its load_failed
 
 
 @dataclass(eq=False)
@@ -239,7 +253,9 @@ class Admitter:
         self._tasks: set[asyncio.Task] = set()
         self._ticker: asyncio.Task | None = None
         self._last_s: dict[str, float] = {}
-        self._hold_seen: tuple[Hold, float, float] | None = None
+        # The brake's hold as the gate first saw it: the hold, when, and whether at the gate's first look.
+        self._hold_seen: tuple[Hold, float, bool] | None = None
+        self._looked = False
         self._stopped = False
         found = clock()
         for name, record in state.models.items():
@@ -331,7 +347,7 @@ class Admitter:
             label = key.label if key is not None else "Dan" if waiter.req.kind == "command" else "the gate"
             why = waiter.why or "slot"
             rows.append({"key_label": label, "model": waiter.req.model, "waited_s": now - received, "wait_s": wait_s,
-                         "why": _ROW_WHY.get(why, why)})
+                         "why": _SHOWN_WHY.get(why, why)})
         return rows
 
     # The queue.
@@ -428,8 +444,9 @@ class Admitter:
         now = self._clock()
         hold = self._read_hold()
         available = self._read_mem().available_gib
-        self._note_hold(hold, now, available)
+        self._note_hold(hold, now)
         figures = self._figures(available)
+        self._looked = True
         for waiter in list(self._queue):
             if waiter.req.model not in self.registry.models:  # the registry, read again, no longer has it
                 self._dequeue(waiter)
@@ -460,7 +477,11 @@ class Admitter:
                 self._note_wait(waiter, why, hold, figures)
                 if waiter.req.deadline is not None and now >= waiter.req.deadline:
                     self._dequeue(waiter)
-                    self._refuse(waiter, _CODES[why], hold=hold, figures=figures)
+                    if why == "swap_refused":  # llama-swap kept refusing it: never llama_swap_down while it answers
+                        self._refuse(waiter, "load_failed", swap_status=waiter.refused_status, swap_kept=True,
+                                     ticket_id=waiter.refused_ticket)
+                    else:
+                        self._refuse(waiter, _CODES[why], hold=hold, figures=figures)
             except Exception as err:
                 _log.exception("admission couldn't answer request %s", waiter.req.id)
                 self._dequeue(waiter)
@@ -483,7 +504,7 @@ class Admitter:
         if name in self.state.brake_marks and not waiter.priv.reloads_marked:
             return "dan"
         if waiter.retry_at is not None and now < waiter.retry_at:
-            return "llama_swap"
+            return _RETRY_WHY[waiter.retry_why]
         if record is not None and record.state == "starting":
             return "slot"  # a start the gate didn't make: it waits for that one to end
         if _gib(self._footprint(name)) > figures.free(waiter.priv.uses_hold):
@@ -589,7 +610,7 @@ class Admitter:
                                       boot_id=self.state.boot_id)
         except (OSError, ValueError) as err:
             _log.error("no ticket could be issued for %s (%s), so it doesn't load yet", name, err)
-            self._retry(waiter, now)
+            self._retry(waiter, now, "ticket")
             return False
         hold_after = None
         if waiter.priv.uses_hold and self.state.room_hold is not None:
@@ -641,7 +662,7 @@ class Admitter:
             self._take_started(load)
             if ABORTED_BY_UNLOAD in outcome.text or SHUTTING_DOWN in outcome.text:
                 _log.warning("the load of %s was aborted (%s): its requests wait again", load.model, outcome.text)
-                return self._requeue(load)
+                return self._requeue(load, "aborted" if ABORTED_BY_UNLOAD in outcome.text else "llama_swap")
             if DEADLINE_PASSED in outcome.text:
                 return self._failed(load, None, HEALTH_CHECK_TIMEOUT_S)
             return self._failed(load, await self._engine_said(load), None)
@@ -650,7 +671,11 @@ class Admitter:
         if self._withdraw(load):
             _log.warning("the load call for %s %s; its ticket was unused, so no start used it", load.model, what)
             self._take_started(load)
-            return self._requeue(load)
+            if outcome.kind == "failed" and outcome.status not in RETRY_STATUSES:
+                return self._failed(load, None, None, swap_status=outcome.status)  # a 404, a 401: at once
+            if outcome.kind == "failed" or outcome.why in ("too big", "unreadable"):  # it answered, with a refusal
+                return self._requeue(load, "swap_refused", outcome.status)
+            return self._requeue(load, "llama_swap")  # nothing answered
         _log.warning("the load call for %s %s, and launch had claimed its ticket: the slot stays held until /running "
                      "shows it ready or gone", load.model, what)
         await self._ready_or_gone(load)
@@ -731,11 +756,13 @@ class Admitter:
 
     async def _gone(self, load: _Load) -> None:
         """The model left /running without coming ready: the brake's unload or llama-swap's restart send its requests
-        back to their places; any other end is a failed start."""
+        back to their places; any other end is a failed start, worded as one that stopped before it was ready."""
         self._take_started(load)
-        if self._read_hold() is not None or not self._llamaswap_up or self._restarting:
-            return self._requeue(load)
-        self._failed(load, await self._engine_said(load), None)
+        if self._read_hold() is not None:
+            return self._requeue(load, "aborted")
+        if not self._llamaswap_up or self._restarting:
+            return self._requeue(load, "llama_swap")
+        self._failed(load, None, None, start_ended=True)  # a failed start, though no 500 said so (Task 15's ruling)
 
     async def _abandon(self, load: _Load) -> None:
         """After a break: the slot held until /running shows the model neither starting nor stopping, then the record as
@@ -852,33 +879,39 @@ class Admitter:
         for model in residents:
             self.reload(model.name, "hold")
 
-    def _failed(self, load: _Load, engine_said: str | None, deadline_s: float | None) -> None:
-        """A failed start: one load_failed, whoever joined it; each request refused in its own group's words."""
+    def _failed(self, load: _Load, engine_said: str | None, deadline_s: float | None, *, start_ended: bool = False,
+                swap_status: int | None = None) -> None:
+        """A failed load: one load_failed, whoever joined it; each request refused in its own group's words. A start
+        that failed or passed its deadline; one that stopped before it was ready; or llama-swap's refusal at once."""
         self._drop(load)
         model = self.registry.models.get(load.model)
         label = model.label if model else load.model
         command = model.roles[0] if model and model.roles else load.model
         _, key = messages.refusal_notification("load_failed", request_id="",
                                                ticket_id=load.ticket_id or f"{load.model}-found-starting")
-        self._emit("load_failed", key, model_label=label, command=command, engine_said=engine_said,
-                   deadline_s=deadline_s)
+        how = {"engine_said": engine_said, "deadline_s": deadline_s, "start_ended": start_ended,
+               "swap_status": swap_status}
+        self._emit("load_failed", key, model_label=label, command=command, **how)
         for waiter in self._requesters(load):
-            self._refuse(waiter, "load_failed", notify=False, engine_said=engine_said, deadline_s=deadline_s)
+            self._refuse(waiter, "load_failed", notify=False, **how)
         self._kick()
 
-    def _requeue(self, load: _Load) -> None:
+    def _requeue(self, load: _Load, why: str, status: int | None = None) -> None:
         """No start of the model's own ended: its requests go back to their places, each waiting a while before it
-        tries again, so a llama-swap that refuses is never asked in a loop."""
+        tries again, so a llama-swap that refuses is never asked in a loop. `why` (_RETRY_WHY's) is what each waits on
+        meanwhile, and so its refusal should its wait run out first; `status`, llama-swap's, when it refused."""
         self._drop(load)
         now = self._clock()
         for waiter in self._requesters(load):
-            self._retry(waiter, now)
+            self._retry(waiter, now, why)
+            waiter.refused_status, waiter.refused_ticket = (status, load.ticket_id) if why == "swap_refused" else (
+                None, None)
             self._queue.append(waiter)
         self._kick()
 
-    def _retry(self, waiter: _Waiter, now: float) -> None:
+    def _retry(self, waiter: _Waiter, now: float, why: str) -> None:
         waiter.retry_s = min(RETRY_MAX_S, max(RETRY_FIRST_S, 2 * waiter.retry_s))
-        waiter.retry_at = now + waiter.retry_s
+        waiter.retry_at, waiter.retry_why = now + waiter.retry_s, why
 
     def _drop(self, load: _Load) -> None:
         """The load is over and nothing of it stays: the slot, its record, its ticket's id."""
@@ -959,18 +992,18 @@ class Admitter:
     # The words.
 
     def _refuse(self, waiter: _Waiter, code: str, *, notify: bool = True, hold: Hold | None = None,
-                figures: _Figures | None = None, engine_said: str | None = None,
-                deadline_s: float | None = None) -> Refusal:
+                figures: _Figures | None = None, ticket_id: str | None = None, **how: Any) -> Refusal:
         """`code`'s refusal for `waiter`, in its group's words, recorded in the history; its notification, unless the
-        caller sends one for several (load_failed's)."""
-        moment = self._moment(waiter, code, hold, figures, engine_said, deadline_s)
+        caller sends one for several (a failed load's). `how` is load_failed's: engine_said, deadline_s, start_ended,
+        swap_status and swap_kept; `ticket_id` keys its notification."""
+        moment = self._moment(waiter, code, hold, figures, how)
         refusal = messages.refusal(code, moment)
         req = waiter.req
         self.state.refusals.append(RefusalRecord(at=self._clock(), model=req.model,
                                                  key=req.key.name if req.key else None, uid=req.uid, code=code,
                                                  message=refusal.message))
         self._on_change_safe()
-        if notify:
+        if notify and code != "load_failed":
             sent = messages.refusal_notification(code, request_id=req.id)
             if sent is not None:
                 kind, key = sent
@@ -980,11 +1013,17 @@ class Admitter:
                     mark = self.state.brake_marks.get(req.model)
                     self._emit(kind, key, model_label=moment.model_label, key_label=moment.key_label,
                                fired_at=mark.at if mark else self._clock(), command=moment.model_command)
+        if notify and code == "load_failed":  # keyed by its load's ticket (messages.refusal_notification)
+            _, key = messages.refusal_notification(code, request_id=req.id,
+                                                   ticket_id=ticket_id or f"{req.model}-{req.id}")
+            self._emit(code, key, model_label=moment.model_label, command=moment.model_command,
+                       engine_said=moment.engine_said, deadline_s=moment.deadline_s, start_ended=moment.start_ended,
+                       swap_status=moment.swap_status, swap_kept=moment.swap_kept)
         self._resolve(waiter, refusal)
         return refusal
 
     def _moment(self, waiter: _Waiter, code: str, hold: Hold | None, figures: _Figures | None,
-                engine_said: str | None, deadline_s: float | None) -> Moment:
+                how: dict[str, Any]) -> Moment:
         name = waiter.req.model
         model = self.registry.models.get(name)
         key = waiter.req.key
@@ -1008,7 +1047,7 @@ class Admitter:
             words["drain_for"] = ("late_start" if load is not None and load.phase == "unloading"
                                   else (record.drain_why if record is not None else None) or "unknown")
         elif code == "load_failed":
-            words |= {"engine_said": engine_said, "deadline_s": deadline_s}
+            words |= how
         return Moment(**words)
 
     def _fit_words(self, waiter: _Waiter, figures: _Figures) -> dict[str, Any]:
@@ -1026,10 +1065,10 @@ class Admitter:
 
     def _brake_words(self, hold: Hold | None) -> dict[str, Any]:
         """held_by_brake's: when the brake fired and what was available then, from the hold; whether the pause waits
-        for Dan; the warn line and the release time. A hold without them (Phase 1's, or one that can't be read) is
-        dated by when the gate first saw it, with MemAvailable then."""
+        for Dan; the warn line and the release time. A hold that doesn't say both (Phase 1's, or one that can't be
+        read) is worded as seen, never as fired: when the gate first saw it, and whether it stood at the gate's first
+        look, with no reading the hold didn't record (the controller's ruling at Task 15)."""
         now = self._clock()
-        seen_at, seen_available = (self._hold_seen[1], self._hold_seen[2]) if self._hold_seen else (now, None)
         at = None
         if hold is not None:
             try:
@@ -1037,20 +1076,21 @@ class Admitter:
                 at = fired if fired.tzinfo else fired.astimezone()
             except ValueError:
                 at = None
-        available = hold.available_gib if hold is not None and hold.available_gib is not None else seen_available
-        if available is None:
-            available = self._read_mem().available_gib
         waits = True if hold is None else release_waits_for_dan(
             hold, boot_id=self.state.boot_id, last_auto_release_at=self.state.last_auto_release_at, now=now)
-        return {"brake_at": at or datetime.fromtimestamp(seen_at).astimezone(), "brake_available_gib": available,
-                "release_waits_for_dan": waits, "warn_gib": self.registry.brake.warn_gib,
-                "release_after_s": RELEASE_AFTER_S}
+        words = {"release_waits_for_dan": waits, "warn_gib": self.registry.brake.warn_gib,
+                 "release_after_s": RELEASE_AFTER_S}
+        if at is not None and hold.available_gib is not None:
+            return words | {"brake_at": at, "brake_available_gib": hold.available_gib}
+        seen_at, before = (self._hold_seen[1], self._hold_seen[2]) if self._hold_seen else (now, False)
+        return words | {"brake_seen_at": datetime.fromtimestamp(seen_at).astimezone(),
+                        "brake_hold_before_gate": before}
 
-    def _note_hold(self, hold: Hold | None, now: float, available: float) -> None:
+    def _note_hold(self, hold: Hold | None, now: float) -> None:
         if hold is None:
             self._hold_seen = None
         elif self._hold_seen is None or self._hold_seen[0] != hold:
-            self._hold_seen = (hold, now, available)
+            self._hold_seen = (hold, now, not self._looked)
 
     def _slot_label(self) -> str:
         """The model holding the one-load slot, by its label."""
@@ -1071,10 +1111,10 @@ class Admitter:
     def _note_wait(self, waiter: _Waiter, why: str, hold: Hold | None, figures: _Figures) -> None:
         """A request's reason, as it starts waiting and whenever it changes: a WaitProgress line; `waiting` once, for a
         key's request; `resident_waiting` once, for a reload that doesn't fit."""
-        if why != waiter.why:
-            waiter.why = why
-            if why in WAITING_WHY:
-                self._progress(waiter, self._wait_progress(waiter, why, hold, figures))
+        shown, before = _SHOWN_WHY.get(why, why), _SHOWN_WHY.get(waiter.why, waiter.why)
+        waiter.why = why
+        if shown != before and shown in WAITING_WHY:
+            self._progress(waiter, self._wait_progress(waiter, shown, hold, figures))
         name = waiter.req.model
         model = self.registry.models.get(name)
         label = model.label if model else name
@@ -1089,7 +1129,7 @@ class Admitter:
                 fields |= {"release_waits_for_dan": brake["release_waits_for_dan"], "release_after_s": RELEASE_AFTER_S}
             elif why == "slot":
                 fields["loading_label"] = self._slot_label()
-            else:
+            elif why == "dan":
                 fields["command"] = model.roles[0] if model and model.roles else name
             self._emit("waiting", f"wait:{waiter.req.id}", **fields)
         if waiter.req.kind == "reload" and why == "memory" and not waiter.resident_waiting_sent:

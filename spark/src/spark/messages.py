@@ -162,8 +162,19 @@ class Moment:
     release_waits_for_dan: bool = False  # held_by_brake: the hold lifts only when Dan releases it
     warn_gib: float = 28  # held_by_brake: the brake's warn line, the registry's brake.warn_gib
     release_after_s: float = 300  # held_by_brake: memory stays above the warn line this long, then new loads resume
+    # held_by_brake, for a hold that doesn't say when it fired or how low memory ran (Phase 1's, or one that can't be
+    # read): when the gate first saw it, an aware datetime, and whether it stood when the gate started. Its words say
+    # it as seen, never as fired, and give no reading (the controller's ruling at Task 15).
+    brake_seen_at: datetime | None = None
+    brake_hold_before_gate: bool = False
     engine_said: str | None = None  # load_failed: the engine's last line; None when the load passed its deadline
     deadline_s: float | None = None  # load_failed: the deadline the load passed
+    # load_failed, the controller's rulings at Task 15: a start launch claimed that left /running without becoming
+    # ready; llama-swap refusing the load with a status other than 500 (swap_status), and, with swap_kept, refusing it
+    # each time (a 429 or a 503) until the wait ran out.
+    start_ended: bool = False
+    swap_status: int | None = None
+    swap_kept: bool = False
     download_gib: float | None = None  # not_downloaded: the model's files
     inflight: int = 0  # draining: the model's requests in flight
     # draining: why the model is being unloaded (gateproto.DrainWhy); only make-room's changes the words
@@ -391,7 +402,11 @@ def _loading(m: Moment) -> str:
 
 
 def _held_by_brake(m: Moment) -> str:
-    _need("held_by_brake", m, "model_label", "brake_at", "brake_available_gib", "words")
+    _need("held_by_brake", m, "model_label", "words")
+    if m.brake_at is None or m.brake_available_gib is None:
+        if m.brake_seen_at is None:
+            _need("held_by_brake", m, "brake_at", "brake_available_gib")
+        return _held_as_seen(m)
     low = (f"Not loading {m.model_label} now: memory ran low at {_clock(m.brake_at)} "
            f"({_reading(m.brake_available_gib)} available), and new loads")
     if m.release_waits_for_dan:
@@ -404,14 +419,44 @@ def _held_by_brake(m: Moment) -> str:
     return f"{low} are paused. {resume}, or when Dan runs `make brake-release` on the Spark."
 
 
+def _hold_seen(m: Moment) -> str:
+    """A hold the gate can only say it saw: *a brake hold from before the gate started (seen at 09:12)*."""
+    origin = "from before the gate started" if m.brake_hold_before_gate else "the gate can't date"
+    return f"new loads are paused by a brake hold {origin} (seen at {_clock(m.brake_seen_at)})"
+
+
+def _held_as_seen(m: Moment) -> str:
+    paused = f"Not loading {m.model_label} now: {_hold_seen(m)}"
+    if m.release_waits_for_dan:
+        who = "you release them" if m.words == "dan" else "Dan releases them"
+        return f"{paused}; they stay paused until {who}: on the Spark, `make brake-release`."
+    resume = (f"They resume by themselves after {duration(m.release_after_s)} above {_line(m.warn_gib)} "
+              "available, if what would reload fits")
+    if m.words == "dan":
+        return f"{paused}. {resume}; on the Spark, `make brake-release` resumes them now."
+    return f"{paused}. {resume}, or when Dan runs `make brake-release` on the Spark."
+
+
 def _gate_down(m: Moment) -> str:
     _need("gate_down", m, "words")
     return ("No new model can load: the gate on the Spark isn't running. Models already loaded still answer. "
             f"{_ALERT[m.words]}")
 
 
+# Why llama-swap's refusal of a load matters, by its status (the controller's ruling at Task 15).
+_SWAP_WHY = {404: "its config may not match the registry", 401: "it didn't accept the gate's key"}
+
+
 def _load_failed(m: Moment) -> str:
     _need("load_failed", m, "model_label", "model_command", "words")
+    if m.swap_status is not None or m.swap_kept:
+        return _swap_refused(m)
+    # A start launch claimed that left /running without becoming ready (Task 15's ruling). Not "ended without":
+    # pi's list holds those words, and would retry the whole turn.
+    if m.start_ended:
+        why = (f"`spark logs {m.model_command}` on the Spark shows why." if m.words == "dan"
+               else f"Dan can see why with `spark logs {m.model_command}` on the Spark.")
+        return f"{_start(m.model_label)}'s start stopped before it was ready: {why}"
     began = f"{_start(m.model_label)} started loading but"
     # The engine's lines are Task 30's `spark logs <model>`, on the control socket, which agent can't use.
     after = (f"On the Spark, `spark logs {m.model_command}` shows the engine's last lines." if m.words == "dan"
@@ -423,6 +468,21 @@ def _load_failed(m: Moment) -> str:
     elif m.deadline_s is not None:
         return f"{began} didn't finish within {duration(m.deadline_s)}. {after}"
     return f"{began} failed: the engine stopped. {after}"
+
+
+def _swap_refused(m: Moment) -> str:
+    """llama-swap's own refusal of a load, which no start of the model's ended (the controller's ruling at Task 15): a
+    404 or 401 at once, a 429 or 503 once the wait ran out. Its status shows only where pi's list doesn't match it,
+    since "429" and "503" would make pi retry the whole turn; the phone shows it either way. Its journal is Dan's."""
+    logs = ("On the Spark, `make logs s=llama-swap` shows why." if m.words == "dan"
+            else "Dan can see why with `make logs s=llama-swap` on the Spark.")
+    status = m.swap_status
+    shown = f" (HTTP {status})" if status is not None and pi_retry_match(str(status)) is None else ""
+    if m.swap_kept:
+        _need("load_failed", m, "wait_s")
+        return f"llama-swap kept refusing to load {m.model_label}{shown}, and your {duration(m.wait_s)} ran out. {logs}"
+    why = _SWAP_WHY.get(status)
+    return f"llama-swap refused to load {m.model_label}{shown}{f': {why}.' if why else '.'} {logs}"
 
 
 def _not_downloaded(m: Moment) -> str:
@@ -587,7 +647,7 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "*Didn't load the coder for agent: it was loading when the brake fired at 03:12. On the Spark, `spark load "
         "coder` allows it again; your own requests load it if it fits.*"),
     "load_failed": (
-        "a start failed or passed its deadline",
+        "a start failed, passed its deadline or stopped before it was ready, or llama-swap refused the load",
         "*The coder failed to load: the engine stopped with \"failed to load model\". On the Spark, `spark logs coder` "
         "shows the engine's last lines.*"),
     "brake_released": (
@@ -613,7 +673,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
     "unloaded": ("an idle unload, make-room or `spark unload`; or the gate's own: a start past its deadline, or an "
                  "unload it resumed with no why saved", "*Unloaded the coder after 60 min idle.*"),
     "waiting": (
-        "a request started waiting for memory, the brake, the load slot, or Dan (`footprint_suspect`)",
+        "a request started waiting for memory, the brake, the load slot, Dan (`footprint_suspect`), or a model being "
+        "unloaded",
         "*Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a "
         "load.*"),
     "pin_ended": ("a pin's time ran out", "*The pin on the coder ended at 18:00; it unloads after 60 min idle.*"),
@@ -948,8 +1009,11 @@ def _phone_loading(registry: Registry, m: Moment) -> str:
 
 
 def _phone_held_by_brake(registry: Registry, m: Moment) -> str:
-    paused = (f"{_lead(m)}new loads are paused since memory ran low at {_clock(m.brake_at)} "
-              f"({_reading(m.brake_available_gib)} available)")
+    if m.brake_at is None or m.brake_available_gib is None:  # as seen, never as fired (Task 15's ruling)
+        paused = f"{_lead(m)}{_hold_seen(m)}"
+    else:
+        paused = (f"{_lead(m)}new loads are paused since memory ran low at {_clock(m.brake_at)} "
+                  f"({_reading(m.brake_available_gib)} available)")
     if m.release_waits_for_dan:
         return f"{paused}, until you release them: on the Spark, `make brake-release`."
     return (f"{paused}. They resume by themselves after {_brief(m.release_after_s)} above {_line(m.warn_gib)} "
@@ -1035,6 +1099,16 @@ def _load_failed(registry: Registry, f: dict[str, Any]) -> str:
     if f.get("count") is not None:
         return _burst("load_failed", f)
     _needs("load_failed", f, "model_label", "command")
+    if f["swap_status"] is not None or f["swap_kept"]:  # the phone shows the status: pi never sees it
+        status = f" (HTTP {f['swap_status']})" if f["swap_status"] is not None else ""
+        logs = "On the Spark, `make logs s=llama-swap` shows why."
+        if f["swap_kept"]:
+            return f"llama-swap kept refusing to load {f['model_label']}{status}. {logs}"
+        why = _SWAP_WHY.get(f["swap_status"])
+        return f"llama-swap refused to load {f['model_label']}{status}{f': {why}.' if why else '.'} {logs}"
+    if f["start_ended"]:
+        return (f"{_start(f['model_label'])}'s start stopped before it was ready: `spark logs {f['command']}` on the "
+                "Spark shows why.")
     began = f"{_start(f['model_label'])} failed to load"
     after = f"On the Spark, `spark logs {f['command']}` shows the engine's last lines."
     said = _one_line(f["engine_said"] or "")  # quoted either way: pi never sees a notification
@@ -1140,7 +1214,7 @@ def _unloaded(registry: Registry, f: dict[str, Any]) -> str:
 
 def _waiting(registry: Registry, f: dict[str, Any]) -> str:
     _needs("waiting", f, "label", "key_label", "why", "wait_s")
-    _one_of("waiting", "why", f["why"], ("memory", "brake", "slot", "dan"))
+    _one_of("waiting", "why", f["why"], ("memory", "brake", "slot", "dan", "draining"))
     who = f"{f['label']} for {f['key_label']}, up to {_brief(f['wait_s'])}"
     if f["why"] == "memory":
         _needs("waiting", f, "needed_gib", "free_gib")
@@ -1159,6 +1233,9 @@ def _waiting(registry: Registry, f: dict[str, Any]) -> str:
         _needs("waiting", f, "loading_label")
         return (f"Waiting its turn to load: {who}. {_start(f['loading_label'])} is loading, and one model loads at a "
                 "time.")
+    if f["why"] == "draining":  # its model being unloaded (the controller's ruling at Task 15)
+        return (f"Waiting while {f['label']} finishes unloading, for {f['key_label']}, up to {_brief(f['wait_s'])}. "
+                "It loads again once the unload is done, if it fits.")
     _needs("waiting", f, "command")
     return (f"Waiting for you: {who}. It was loading when the brake fired; on the Spark, `spark load {f['command']}` "
             "allows it again.")
@@ -1193,7 +1270,8 @@ _TAKES: dict[str, dict[str, Any]] = {
     "back_up": {"unit": None, "down_s": None, "state_damaged": False, "down_unknown": False},
     "refused": dict.fromkeys(("code", "moment")),
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),
-    "load_failed": dict.fromkeys(("model_label", "command", "engine_said", "deadline_s")),
+    "load_failed": {"model_label": None, "command": None, "engine_said": None, "deadline_s": None,
+                    "start_ended": False, "swap_status": None, "swap_kept": False},
     "brake_released": {"at": None, "available_gib": None, "reloaded": [], "loading_label": None},
     "room_hold_ended": {"why": None, "unused_gib": None, "total_gib": None, "reloading": [], "next_label": None},
     "resident_waiting": dict.fromkeys(("label", "needed_gib", "free_gib", "after")),

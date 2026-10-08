@@ -1528,3 +1528,95 @@ def test_apply_now_names_each_asker_once_with_its_count():
     assert messages.apply_now_confirm(["pi on the Mac", "agent", "pi on the Mac"]) == (
         "This restarts the model service now and cuts off the 3 requests in flight (pi on the Mac ×2, agent). "
         "Continue? [y/N]")
+
+
+# The controller's rulings at Task 15: a start that ended without becoming ready, llama-swap refusing a load, a request
+# waiting on a model being unloaded, and a brake hold whose record doesn't say when it fired or how low memory ran.
+
+def test_a_start_that_ended_without_becoming_ready_says_so():
+    ended = replace(LOAD_FAILED, engine_said=None, start_ended=True)
+    assert refusal("load_failed", ended).message == (
+        "The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.")
+    assert refusal("load_failed", replace(ended, **AGENT)).message == (
+        "The coder's start stopped before it was ready: Dan can see why with `spark logs coder` on the Spark.")
+    assert say("load_failed", model_label="the coder", command="coder", start_ended=True) == (
+        "The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.")
+    assert not pi_retries(pi_shows(409, "load_failed", ended))
+
+
+SWAP_LOGS = "On the Spark, `make logs s=llama-swap` shows why."
+SWAP_LOGS_AGENT = "Dan can see why with `make logs s=llama-swap` on the Spark."
+
+
+def test_llama_swap_refusing_a_load_says_so_and_why_it_matters():
+    refused_404 = replace(LOAD_FAILED, engine_said=None, swap_status=404)
+    assert refusal("load_failed", refused_404).message == (
+        f"llama-swap refused to load the coder (HTTP 404): its config may not match the registry. {SWAP_LOGS}")
+    assert refusal("load_failed", replace(refused_404, swap_status=401)).message == (
+        f"llama-swap refused to load the coder (HTTP 401): it didn't accept the gate's key. {SWAP_LOGS}")
+    assert refusal("load_failed", replace(refused_404, swap_status=302)).message == (
+        f"llama-swap refused to load the coder (HTTP 302). {SWAP_LOGS}")
+    assert refusal("load_failed", replace(refused_404, **AGENT)).message == (
+        f"llama-swap refused to load the coder (HTTP 404): its config may not match the registry. {SWAP_LOGS_AGENT}")
+    assert say("load_failed", model_label="the coder", command="coder", swap_status=404) == (
+        f"llama-swap refused to load the coder (HTTP 404): its config may not match the registry. {SWAP_LOGS}")
+
+
+def test_llama_swap_that_kept_refusing_names_no_status_pi_would_retry():
+    # A 429 or a 503 retried within the request's wait, then load_failed. Its status stays out of the refusal, since
+    # pi's list holds "429" and "503" and would retry the whole turn (phase-2a.md, *Before Task 1*); the phone, which
+    # pi never sees, shows it.
+    for status in (429, 503):
+        kept = replace(LOAD_FAILED, engine_said=None, swap_status=status, swap_kept=True)
+        assert refusal("load_failed", kept).message == (
+            f"llama-swap kept refusing to load the coder, and your 30 s ran out. {SWAP_LOGS}")
+        assert not pi_retries(pi_shows(409, "load_failed", kept))
+        assert refusal("load_failed", replace(kept, **AGENT)).message == (
+            f"llama-swap kept refusing to load the coder, and your 10 minutes ran out. {SWAP_LOGS_AGENT}")
+        assert say("load_failed", model_label="the coder", command="coder", swap_status=status, swap_kept=True) == (
+            f"llama-swap kept refusing to load the coder (HTTP {status}). {SWAP_LOGS}")
+    # A status pi's list doesn't hold shows in the refusal too.
+    assert refusal("load_failed", replace(LOAD_FAILED, engine_said=None, swap_status=409, swap_kept=True)).message == (
+        f"llama-swap kept refusing to load the coder (HTTP 409), and your 30 s ran out. {SWAP_LOGS}")
+    with pytest.raises(ValueError, match="^load_failed's words need wait_s"):
+        refusal("load_failed", replace(LOAD_FAILED, engine_said=None, swap_status=429, swap_kept=True, wait_s=None))
+    for status in (401, 404, 302):
+        assert not pi_retries(pi_shows(409, "load_failed", replace(LOAD_FAILED, swap_status=status)))
+
+
+SEEN_0912 = datetime(2026, 10, 7, 9, 12, tzinfo=ZONE)
+
+
+def test_a_brake_hold_without_its_reading_is_worded_as_seen_never_as_fired():
+    # A hold that doesn't say when it fired or how low memory ran (Phase 1's, or one that can't be read) is dated by
+    # when the gate saw it, and gives no reading it didn't record.
+    seen = replace(HELD, brake_at=None, brake_available_gib=None, brake_seen_at=SEEN_0912,
+                   brake_hold_before_gate=True, release_waits_for_dan=True)
+    assert refusal("held_by_brake", seen).message == (
+        "Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at "
+        "09:12); they stay paused until you release them: on the Spark, `make brake-release`.")
+    assert refusal("held_by_brake", replace(seen, brake_hold_before_gate=False, **AGENT)).message == (
+        "Not loading the coder now: new loads are paused by a brake hold the gate can't date (seen at 09:12); they "
+        "stay paused until Dan releases them: on the Spark, `make brake-release`.")
+    lifts = replace(seen, release_waits_for_dan=False)
+    assert refusal("held_by_brake", lifts).message == (
+        "Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at "
+        "09:12). They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the "
+        "Spark, `make brake-release` resumes them now.")
+    # A hold with its time but no reading is worded as seen too: no reading it didn't record.
+    no_reading = replace(HELD, brake_available_gib=None, brake_seen_at=SEEN_0912, brake_hold_before_gate=True)
+    assert "memory ran low" not in refusal("held_by_brake", no_reading).message
+    assert say("refused", code="held_by_brake", moment=seen) == (
+        "Refused the coder for pi on the Mac: new loads are paused by a brake hold from before the gate started (seen "
+        "at 09:12), until you release them: on the Spark, `make brake-release`.")
+    assert not pi_retries(pi_shows(409, "held_by_brake", seen))
+    with pytest.raises(ValueError, match="^held_by_brake's words need brake_at"):
+        refusal("held_by_brake", replace(HELD, brake_at=None))
+
+
+def test_waiting_on_a_model_being_unloaded_has_its_own_words():
+    draining = {**WAITING, "why": "draining", "needed_gib": None, "free_gib": None}
+    assert say("waiting", **draining) == (
+        "Waiting while the coder finishes unloading, for pi on the Mac, up to 30 s. It loads again once the unload is "
+        "done, if it fits.")
+    assert "or a model being unloaded" in messages.NOTIFICATION_DOC["waiting"][0]

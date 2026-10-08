@@ -176,6 +176,7 @@ class StandIn:
         self.observe = None
         self._calls: dict[str, asyncio.Future] = {}
         self._next: dict[str, LoadOutcome] = {}
+        self._every: dict[str, LoadOutcome] = {}
 
     def loads(self) -> list[str]:
         return [model for kind, model, _ in self.calls if kind == "load"]
@@ -194,6 +195,8 @@ class StandIn:
             self.observe(model)
         if model in self._next:
             return self._next.pop(model)
+        if model in self._every:
+            return self._every[model]
         self.states[model] = "starting"
         call = asyncio.get_running_loop().create_future()
         self._calls[model] = call
@@ -222,6 +225,13 @@ class StandIn:
 
     def answer_next(self, model: str, outcome: LoadOutcome) -> None:
         self._next[model] = outcome
+
+    def answer_every(self, model: str, outcome: LoadOutcome | None) -> None:
+        """Every call of `model` from now on answered `outcome` at once, nothing started; None ends it."""
+        if outcome is None:
+            self._every.pop(model, None)
+        else:
+            self._every[model] = outcome
 
     def shut_down(self) -> None:
         for model in list(self._calls):
@@ -395,6 +405,7 @@ DEADLINE_TEXT = ("The coder started loading but didn't finish within 3 minutes. 
 RESTARTING_TEXT = (
     "The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a "
     "minute.")
+DRAINING_TEXT = "The coder is being unloaded, and your 30 s ran out. Try again in a minute."
 LLAMA_SWAP_DOWN_TEXT = (
     "The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, "
     "`make doctor` shows what's wrong.")
@@ -858,20 +869,91 @@ async def test_an_unknown_load_whose_ticket_was_unused_frees_the_slot(tmp_path):
         assert CODER not in gate.state.models and CODER not in gate.state.issued
 
 
+def refusal_from_llama_swap(status: int) -> LoadOutcome:
+    return LoadOutcome.failed(status, _envelope(status, "refused").decode())
+
+
+SWAP_LOGS = "On the Spark, `make logs s=llama-swap` shows why."
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("status", [429, 404])
-async def test_a_refusal_of_llama_swaps_is_never_load_failed(tmp_path, status):
+@pytest.mark.parametrize("status, why", [(404, "its config may not match the registry"),
+                                         (401, "it didn't accept the gate's key")])
+async def test_a_404_or_401_from_llama_swap_is_refused_at_once(tmp_path, status, why):
     with anyio.fail_after(BOUND_S):
+        # The controller's ruling at Task 15: llama-swap refusing the call is no failed start, and no retry helps.
         gate = Gate(tmp_path, models=loaded(GEMMA, WHISPER), available=82)
-        gate.swap.answer_next(CODER, LoadOutcome.failed(status, _envelope(status, "refused").decode()))
+        gate.swap.answer_next(CODER, refusal_from_llama_swap(status))
         coder = gate.ask(PI, CODER)
         gate.ask(AGENT, EMBED)
         await settle()
-        assert gate.ticket(CODER) is None and gate.swap.loads() == [CODER, EMBED]
+        assert refused(coder, "load_failed") == (
+            f"llama-swap refused to load the coder (HTTP {status}): {why}. {SWAP_LOGS}")
+        assert gate.ticket(CODER) is None and gate.swap.loads() == [CODER, EMBED]  # withdrawn; the slot freed
+        [(key, fields)] = gate.emitted.of("load_failed")
+        assert gate.emitted.text("load_failed", fields) == (
+            f"llama-swap refused to load the coder (HTTP {status}): {why}. {SWAP_LOGS}")
         await gate.at(T + 30)
-        assert coder.done and coder.result.code != "load_failed"
-        assert gate.emitted.of("load_failed") == []
-        assert all(r.code != "load_failed" for r in gate.state.refusals)
+        assert gate.swap.loads() == [CODER, EMBED]  # never tried again
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [429, 503])
+async def test_a_429_or_503_retries_within_the_wait_then_says_llama_swap_kept_refusing(tmp_path, status):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.swap.answer_every(CODER, refusal_from_llama_swap(status))
+        coder = gate.ask(PI, CODER)
+        await settle()
+        for second in (1, 3, 7, 15):  # each retry once its wait is over, 1 s doubling
+            await gate.at(T + second - 0.1)
+            assert len(gate.swap.loads()) == {1: 1, 3: 2, 7: 3, 15: 4}[second]
+            await gate.at(T + second)
+        assert [at for kind, _, at in gate.swap.calls] == [T, T + 1, T + 3, T + 7, T + 15]
+        assert gate.ticket(CODER) is None  # each withdrawn, unused
+        await gate.at(T + 30)
+        assert refused(coder, "load_failed") == (
+            f"llama-swap kept refusing to load the coder, and your 30 s ran out. {SWAP_LOGS}")
+        [(_, fields)] = gate.emitted.of("load_failed")
+        assert gate.emitted.text("load_failed", fields) == (
+            f"llama-swap kept refusing to load the coder (HTTP {status}). {SWAP_LOGS}")
+        # llama-swap answered every time: nothing says it isn't answering.
+        assert all(r.code != "llama_swap_down" for r in gate.state.refusals)
+        assert gate.emitted.of("llama_swap_down") == []
+
+
+@pytest.mark.anyio
+async def test_a_load_llama_swap_refused_once_loads_on_its_retry(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.swap.answer_next(CODER, refusal_from_llama_swap(503))
+        coder = gate.ask(PI, CODER)
+        await settle()
+        assert gate.swap.loads() == [CODER] and not coder.done
+        await gate.at(T + 1)
+        assert gate.swap.loads() == [CODER, CODER]
+        gate.available = 40.0
+        gate.swap.ready(CODER)
+        await settle()
+        assert coder.result.model == CODER
+
+
+@pytest.mark.anyio
+async def test_a_claimed_start_that_leaves_running_unready_is_a_failed_start(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        dans, agents = gate.ask(PI, CODER), gate.ask(AGENT, CODER)
+        await settle()
+        gate.swap.drops(CODER, "dropped")  # launch had claimed the ticket
+        await settle()
+        gate.swap.states[CODER] = "stopped"
+        await gate.at(T + 40)
+        assert refused(dans, "load_failed") == (
+            "The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.")
+        assert refused(agents, "load_failed") == (
+            "The coder's start stopped before it was ready: Dan can see why with `spark logs coder` on the Spark.")
+        [(key, fields)] = gate.emitted.of("load_failed")
+        assert key.startswith("load-failed:") and fields["start_ended"] is True
 
 
 @pytest.mark.anyio
@@ -1088,6 +1170,16 @@ async def test_an_aborted_load_is_worded_by_its_cause(tmp_path):
         assert refused(asked, "held_by_brake") == HELD_TEXT
         assert gate.emitted.of("load_failed") == [] and CODER not in gate.state.models
 
+        # Another unload aborts it, no hold standing: the model was being unloaded, never llama_swap_down, since
+        # llama-swap answered.
+        gate = Gate(tmp_path / "unload", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        asked = gate.ask(PI, CODER)
+        await settle()
+        gate.clock.now = T + 40
+        await gate.swap.unload(CODER)
+        await settle()
+        assert refused(asked, "draining") == DRAINING_TEXT
+
         # llama-swap shutting down: restarting while apply restarts it, llama_swap_down otherwise.
         for restarting, code in ((True, "restarting"), (False, "llama_swap_down")):
             gate = Gate(tmp_path / code, models=loaded(GEMMA, EMBED, WHISPER), available=74)
@@ -1099,6 +1191,56 @@ async def test_an_aborted_load_is_worded_by_its_cause(tmp_path):
             await settle()
             assert refused(asked, code) == (RESTARTING_TEXT if restarting else LLAMA_SWAP_DOWN_TEXT)
             assert gate.emitted.of("load_failed") == [] and gate.swap.loads() == [CODER]
+
+
+@pytest.mark.anyio
+async def test_a_request_for_a_model_being_unloaded_waits_and_says_so(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The controller's ruling at Task 15: `draining` is a reason of its own, with its own line and words.
+        going = record(CODER, state="draining", unload_requested_at=T - 5, drain_id="d1", drain_why="idle")
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER) | {CODER: going}, available=74)
+        command = gate.ask(None, CODER, kind="command", deadline=T + LOAD_CALL_TIMEOUT_S)
+        key = gate.ask(PI, CODER)
+        await gate.at(T + 10)
+        assert command.progress == [dict.fromkeys(gateproto.WaitProgress.__annotations__) | {
+            "kind": "waiting", "model": CODER, "label": "the coder", "why": "draining"}]
+        [(wait_key, fields)] = gate.emitted.of("waiting")
+        assert wait_key == f"wait:{key.req.id}" and gate.emitted.text("waiting", fields) == (
+            "Waiting while the coder finishes unloading, for pi on the Mac, up to 30 s. It loads again once the unload "
+            "is done, if it fits.")
+        assert [row["why"] for row in gate.admitter.waiting()] == ["draining", "draining"]
+        await gate.at(T + 30)
+        assert refused(key, "draining") == DRAINING_TEXT
+        del gate.state.models[CODER]  # the drain's unload done (Task 16), then a change
+        await gate.at(T + 40)
+        assert gate.swap.loads() == [CODER] and command.progress[-1]["kind"] == "loading"
+
+
+@pytest.mark.anyio
+async def test_a_brake_hold_without_its_reading_is_worded_as_seen(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The controller's ruling at Task 15: a hold that doesn't say when it fired or how low memory ran is worded
+        # as the gate saw it, never as fired, with no reading the hold didn't record.
+        gate = Gate(tmp_path / "before", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.hold = Hold(since=datetime.fromtimestamp(AT_0312).strftime("%Y-%m-%dT%H:%M:%S"), reason="Phase 1's",
+                         unloaded=(GEMMA,))  # Phase 1's: no boot, no reading
+        asked = gate.ask(PI, CODER)
+        await gate.at(T + 30)
+        assert refused(asked, "held_by_brake") == (
+            "Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at "
+            "09:00); they stay paused until you release them: on the Spark, `make brake-release`.")
+
+        from spark.hold import UNREADABLE_SINCE
+        gate = Gate(tmp_path / "later", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.ask(PI, GEMMA)  # a first look, with no hold
+        await gate.at(T + 60)
+        gate.hold = Hold(UNREADABLE_SINCE, "hold file can't be read", ())  # read_hold's for a file it can't read
+        asked = gate.ask(PI, CODER)
+        await gate.at(T + 120)
+        await gate.at(T + 150)
+        assert refused(asked, "held_by_brake") == (
+            "Not loading the coder now: new loads are paused by a brake hold the gate can't date (seen at 09:02); "
+            "they stay paused until you release them: on the Spark, `make brake-release`.")
 
 
 @pytest.mark.anyio

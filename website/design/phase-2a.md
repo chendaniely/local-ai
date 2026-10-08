@@ -1275,6 +1275,9 @@ the test's own time zone):
 | `gate_down` | key *pi on the Mac* (Dan's words; ~~none~~, *added 2026-10-07, at Task 6's fix round 1, the controller's rulings: `words` picks its last sentence*) |
 | `load_failed` | the engine said `failed to load model`, command `coder` (*added 2026-10-07, at Task 6's fix round 2, the controller's ruling: the next step names `spark logs coder`*) |
 | `load_failed` (deadline) | no engine text, deadline 180: *The coder started loading but didn't finish within 3 minutes. On the Spark, `spark logs coder` shows the engine's last lines.* (*Corrected 2026-10-07, at Task 6's fix round 1: it read "within 180 s". Corrected at fix round 2: it named `spark status`.*) |
+| `load_failed` (stopped before ready) | `start_ended`: *The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.* (*Added 2026-10-08, the controller's ruling, at Task 15.*) |
+| `load_failed` (llama-swap refused) | `swap_status` 404: *llama-swap refused to load the coder (HTTP 404): its config may not match the registry. On the Spark, `make logs s=llama-swap` shows why.*; with `swap_kept`, a 429, wait 30 s: *llama-swap kept refusing to load the coder, and your 30 s ran out. On the Spark, `make logs s=llama-swap` shows why.*, no status pi's retry list matches (*Added 2026-10-08, the controller's ruling, at Task 15.*) |
+| `held_by_brake` (as seen) | no `brake_at` or no `brake_available_gib`; `brake_seen_at` 09:12, `brake_hold_before_gate`, waits for Dan: *Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at 09:12); they stay paused until you release them: on the Spark, `make brake-release`.* (*Added 2026-10-08, the controller's ruling, at Task 15.*) |
 | `not_downloaded` | download 16 |
 | `restarting` | wait 30 s |
 | `llama_swap_down` | wait 30 s |
@@ -1471,7 +1474,7 @@ true sentence in every case the gate sends it, can be built.)*
 | `back_up` | `unit`, `down_s`; its second sentence per unit: the gate *New loads work again.*, the front *Requests go through again.*, llama-swap *Models answer again.*, the brake *Memory is watched again.* Added: `unit` is `gate`, `front`, `llama-swap` or `brake`; added 2026-10-08, the controller's ruling, at Task 14: `state_damaged: bool`, the gate's alone, with no `down_s`, *The gate on brightroar has been running again for a minute; how long it was down isn't known: its saved state was damaged. New loads work again.*; added 2026-10-08, the controller's ruling, at Task 14's review: `down_unknown: bool`, with no `down_s`, *… has been running again for a minute; how long it was down isn't known. …*, and `state_damaged` only when the downtime isn't known either |
 | `refused` | ~~`model_label`, `key_label`, `needed_gib`, `free_gib`, `holders`, `next_step`~~ `code` and `moment`, the `Moment` the refusal was built from, worded for Dan's phone: *Refused <model> for <key>: <why>. <Dan's step, where there is one>.* (`no_fit`'s is the plan's example; `holders` there are those outside the stack); the burst: `model_label`, `key_label`, `count`, `since`, `code` (added 2026-10-07, at Task 7, the controller's ruling: the old fields gave no reason for any code but `no_fit`, and a `next_step` passed in would have put Dan's words in the gate) |
 | `footprint_suspect` | `model_label`, `fired_at`, `command`; added: `key_label` (*for agent*) |
-| `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s`; added: `command` (*`spark logs coder`*); sent once per failed load, never with a key (corrected 2026-10-07, at Task 7's review, the controller's ruling: `refusal_notification` keys it by the load's ticket); its burst: `model_label`, `count`, `since`, `code` |
+| `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s`; added: `command` (*`spark logs coder`*); sent once per failed load, never with a key (corrected 2026-10-07, at Task 7's review, the controller's ruling: `refusal_notification` keys it by the load's ticket); its burst: `model_label`, `count`, `since`, `code`; added 2026-10-08, the controller's ruling, at Task 15: `start_ended`, `swap_status` and `swap_kept`, worded as the refusal is, the phone showing any status |
 | `brake_released` | `at`, `available_gib`, `reloaded: list[label]`, `loading_label: str \| None` |
 | `room_hold_ended` | `why: "--done" \| "time" \| "reboot" \| "used"`, `unused_gib`, `total_gib`, `reloading: list[label]`, `next_label` |
 | `resident_waiting` | `label`, `needed_gib`, `free_gib`; added: `after: "hold" \| "brake" \| "apply" \| "boot" \| "restart" \| "crash"`, since *after the hold ended* is false in the other cases Tasks 15 and 17 send it |
@@ -1479,7 +1482,7 @@ true sentence in every case the gate sends it, can be built.)*
 | `load_started` | `label`, `key_label`, `last_s: float \| None` (`key_label` None for a resident's reload or one of Dan's commands) |
 | `loaded` | `label`, `seconds` |
 | `unloaded` | `label`, `why: "idle" \| "make-room" \| "unload"`, `idle_min` |
-| `waiting` | `label`, `key_label`, `why: "memory" \| "brake" \| "slot" \| "dan"`, `wait_s`, `needed_gib`, `free_gib` (for `memory`); added: `command`, for `dan` (*`spark load coder`*); `loading_label`, for `slot` (*Gemma is loading, and one model loads at a time.*); `release_waits_for_dan` and, unless it waits for Dan, `release_after_s`, for `brake`, which then says the pause ends by itself, in `held_by_brake`'s words |
+| `waiting` | `label`, `key_label`, `why: "memory" \| "brake" \| "slot" \| "dan"`, `wait_s`, `needed_gib`, `free_gib` (for `memory`); added: `command`, for `dan` (*`spark load coder`*); `loading_label`, for `slot` (*Gemma is loading, and one model loads at a time.*); `release_waits_for_dan` and, unless it waits for Dan, `release_after_s`, for `brake`, which then says the pause ends by itself, in `held_by_brake`'s words; `why` gains `draining` (added 2026-10-08, the controller's ruling, at Task 15) |
 | `pin_ended` | `label`, `at`, `idle_min` (None for an always-loaded model) |
 | `memory_warning` | `available_gib`, `warn_gib`, `brake_gib` |
 
@@ -1926,7 +1929,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   12's second re-review, an unload call begun and `/running` still listing the model) — `inflight`,
   `oldest_request_s`, `last_use`, `pinned_until`, `sessions`, `brake_mark` with `at` and
   `seen_gib` (None without a reading: the controller's ruling, at Task 14)); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — one of `WAITING_WHY =
-  ("memory", "brake", "slot", "dan", "restart", "llama_swap")`); `paused` (`since`, `available_gib`,
+  ("memory", "brake", "slot", "dan", "restart", "llama_swap")` (and `draining`, since 2026-10-08,
+  the controller's ruling, at Task 15); `paused` (`since`, `available_gib`,
   `releases_at`, `waits_for_dan`, `last_fired`, `last_released`) or null; `held` (`size_gib`,
   `until`) or null; `pins`; `sessions`; `recent` (`at`, `text`, `code`, `model`, `key_label`);
   `health` (`front`, `gate`, `brake` with `key_checked_at`, `llama_swap`, `ntfy` with
@@ -3009,7 +3013,25 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
       worded as a model that failed to start. *(Added 2026-10-08, at Task 12's re-review, the
       controller's ruling:)* nor every 500. One whose text holds `group: model unloaded` (an unload
       aborted the load: the brake's) or `group is shutting down` (llama-swap restarting) isn't
-      `load_failed` either. Each is worded by its cause.
+      `load_failed` either. Each is worded by its cause. *(Corrected 2026-10-08, the controller's
+      rulings, at Task 15: and not only a 500 is `load_failed`.)*
+      - A claimed start whose load call came back unknown, and that then leaves `/running` without
+        becoming ready, is a failed start: `load_failed`, worded *The coder's start stopped before it
+        was ready: `spark logs coder` on the Spark shows why.* (`agent`'s: *… Dan can see why with
+        `spark logs coder` on the Spark.*). The ruling's *ended without becoming ready* holds words
+        pi's retry list matches, *ended without*, so `messages` says *stopped before it was ready*.
+      - llama-swap's 404 or 401 is refused at once, with no retry, as `load_failed`: *llama-swap
+        refused to load the coder (HTTP 404): its config may not match the registry. On the Spark,
+        `make logs s=llama-swap` shows why.*; a 401, *… (HTTP 401): it didn't accept the gate's key.
+        …*; any other status but 500, 429 and 503 the same way, with no reason after it.
+      - A 429 or 503 is tried again within the request's wait, 1 s then doubling to 30 s, and at its
+        deadline gets `load_failed`: *llama-swap kept refusing to load the coder, and your 30 s ran
+        out. On the Spark, `make logs s=llama-swap` shows why.* A status shows in a refusal only
+        where pi's retry list doesn't match it, so never 429 or 503 there, which would make pi
+        retry the whole turn; the phone's `load_failed` shows it: *llama-swap kept refusing to load
+        the coder (HTTP 429). …*. Nothing reads `llama_swap_down` while llama-swap answers.
+      - A load another unload aborted, with no brake hold standing, reads `draining` at its
+        deadline, never `llama_swap_down`.
 
     On every outcome the model's `started/` record is read, then cleared
     (`tickets.clear_started`): ready, its `pid` and ticket go into `state.ticketed`, for the bypass
@@ -3066,6 +3088,34 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     reload, as Tasks 17 and 18 call it.
 - `registry.Model` gains `cold_load_gib: float | None = None` (Task 4's module), which the soak
   records (Task 45).
+- *(Added 2026-10-08, the controller's rulings, at Task 15:)*
+  - **A wait on a model being unloaded** has a reason of its own, `draining`, added to
+    `gateproto.WAITING_WHY` (Task 10's): its `WaitProgress` line, `why: "draining"` with the other
+    fields None; its `waiting` notification, *Waiting while the coder finishes unloading, for pi on
+    the Mac, up to 30 s. It loads again once the unload is done, if it fits.*; and its row in
+    `spark status` (Task 29).
+  - **A brake hold that doesn't record when it fired or how low memory ran** (Phase 1's, or one
+    that can't be read) is worded as seen, never as fired, and gives no reading: *Not loading the
+    coder now: new loads are paused by a brake hold from before the gate started (seen at 09:12);
+    they stay paused until you release them: on the Spark, `make brake-release`.*, or *… a brake
+    hold the gate can't date (seen at 09:12) …* for one the gate first saw after its first look.
+    `messages.Moment` gains `brake_seen_at` and `brake_hold_before_gate`; the phone's `refused` for
+    it reads the same way.
+  - **What the code gives beyond the lines above**, which later tasks rely on:
+    - `Admitter(…, on_change=None, poll_s=POLL_S, proc=procs.PROC)`. `on_change` is called after
+      every change to `state`, so the core saves it: before a load call, with its ticket's id in
+      `state.issued`, among them. `poll_s` (1 s) bounds how long a waiting request, or a load being
+      settled, goes unchecked without a `changed()`. `proc` is where the engines' `RssAnon` is read.
+    - `AdmitRequest(…, after=None, uid=None)`: a reload's why, and the asker's uid, for the refusal
+      history.
+    - `reload(model, after) -> asyncio.Future`, queued at once, so the residents a caller queues in
+      one step all go ahead of any request held meanwhile, and load one at a time, in that order
+      (Tasks 17 and 18).
+    - `admit(req, *, progress=None)`: `progress` is given each `WaitProgress` and `LoadProgress`
+      line, for `Room.load`'s and `Pins.pin`'s streams (Tasks 16 and 17). Once `cancel(req.id)`
+      has taken a request, its `admit` raises `CancelledError`.
+    - `async stop()`: every task cancelled, its loads' included, then every request still waiting,
+      before the llama-swap client closes (Task 19).
 
 **Tests** (`spark/tests/test_gate_admission.py`; an injected clock; a stand-in llama-swap whose
 loads, `/running` and log lines the test scripts; memory from a list; a temporary `launch` and
@@ -3129,8 +3179,20 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
 - *(Added 2026-10-08, at Task 12's review, the controller's ruling:)*
   - `test_an_unknown_load_whose_ticket_was_unused_frees_the_slot` — `UNKNOWN` (`refused`), the
     ticket still on disk → withdrawn, and a second request's load starts at once.
-  - `test_a_refusal_of_llama_swaps_is_never_load_failed` — `failed(429, …)` and `failed(404, …)`,
-    each with its ticket unused → the ticket withdrawn, the slot freed, no `load_failed` sent.
+  - ~~`test_a_refusal_of_llama_swaps_is_never_load_failed` — `failed(429, …)` and `failed(404, …)`,
+    each with its ticket unused → the ticket withdrawn, the slot freed, no `load_failed` sent.~~
+    *(Replaced 2026-10-08, the controller's rulings, at Task 15:)*
+    `test_a_404_or_401_from_llama_swap_is_refused_at_once` — each with its ticket unused → the
+    ticket withdrawn, the slot freed, `load_failed` at once in the ruling's words, never tried again;
+    `test_a_429_or_503_retries_within_the_wait_then_says_llama_swap_kept_refusing` — tried at 0, 1,
+    3, 7 and 15 s, then at 30 s `load_failed`, *llama-swap kept refusing …*, and nothing reads
+    `llama_swap_down`; `test_a_load_llama_swap_refused_once_loads_on_its_retry`; and
+    `test_a_claimed_start_that_leaves_running_unready_is_a_failed_start`.
+  - *(Added 2026-10-08, the controller's rulings, at Task 15:)*
+    `test_a_request_for_a_model_being_unloaded_waits_and_says_so` — its `WaitProgress` with `why:
+    "draining"`, its `waiting` words, its `waiting` row, `draining` at its deadline, and the load once
+    the model is gone; `test_a_brake_hold_without_its_reading_is_worded_as_seen` — Phase 1's hold at
+    the gate's first look, and a hold that can't be read seen later.
   - `test_a_load_starting_past_its_deadline_and_20_s_is_unloaded` — the ticket claimed,
     `UNKNOWN`, `/running` showing `starting` past the deadline plus 20 s → the model is unloaded
     and the slot freed. *(Corrected 2026-10-08, at Task 12's re-review: the deadline counts from the
@@ -3704,6 +3766,11 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   - **The bypass check after damage**: `ticketed` and `issued` were lost, so the engines already
     running at that start aren't reported as unticketed; each is logged as found after damage.
   - `StatusView.health` carries the damage while `damaged_at` is set, for Task 29's line.
+
+- *(Added 2026-10-08, the controller's ruling, at Task 15:)* the admitter gets an accessor for each starting model's figures from
+  its ticket, `admitted_gib`, `started_at` and `available_at_start`, which the activity record and
+  `ingest_brake_events`' `starts` read. Task 15 keeps them in its private load records; this task
+  adds the accessor, in the shape the record needs.
 
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):
@@ -5072,6 +5139,7 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     load`; `brake` → `waiting for the brake's pause to end`; `slot` → `waiting its turn: Gemma is
     loading`; `dan` → the example's `waiting for you: spark load coder`; `restart` → `waiting for
     the model service's restart`; `llama_swap` → `waiting for the model service to answer`;
+    `draining` → `waiting while the coder finishes unloading` *(added 2026-10-08, the controller's ruling, at Task 15)*;
   - a pin, in the `held` row: `pins the coder until 18:00` (`pins none` without one).
 - The gate not answering: the header from `/proc/meminfo` (the brake line from the deployed
   registry), then `gate        not answering: what's loaded, waiting, held or paused is unknown
@@ -6853,7 +6921,8 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   one. plan.md says so; nothing more is planned for it.
 - **Apply's hold beside a make-room hold** (f-5). Task 29 doesn't word a `held` row when both stand;
   put both on the row, apply's first, and add the case to its test.
-- **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`;
+- **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`
+  (seven since 2026-10-08, the controller's ruling, at Task 15: `draining`);
   a reason added later needs its line, and Task 29's test reads the tuple, so it fails until the
   line is written.
 - **make-room starts from the gate's own figure** (added 2026-10-07, at Task 6's fix round 1, the

@@ -311,8 +311,9 @@ class WaitProgress(TypedDict):
     """A line of /v1/load's stream, and of a pin that loads, as the request starts waiting, and again whenever its
     reason changes, before its LoadProgress: so a queued load is never silent (the controller's ruling at Task 10's
     second re-review). The fields Task 7's `waiting` words its reason with: *Waiting its turn to load: … Gemma is
-    loading, and one model loads at a time.*, *Waiting for memory: … It needs 41 GiB, and 18 GiB is free for a load.*
-    Those a reason doesn't use are None."""
+    loading, and one model loads at a time.*, *Waiting for memory: … It needs 41 GiB, and 18 GiB is free for a load.*,
+    *Waiting while the coder finishes unloading, …* (`draining`, the controller's ruling at Task 15). Those a reason
+    doesn't use are None."""
 
     kind: Literal["waiting"]
     model: str
@@ -481,7 +482,9 @@ STATUS_SCHEMA = 1  # raised when a field's meaning changes
 # re-review), so a stop that hangs shows.
 ModelState = Literal["ready", "starting", "draining", "stopping", "not_loaded"]
 MODEL_STATES: tuple[str, ...] = get_args(ModelState)
-WaitingWhy = Literal["memory", "brake", "slot", "dan", "restart", "llama_swap"]
+# draining: the request's model is being unloaded, and it loads again once the unload is done (the controller's ruling
+# at Task 15).
+WaitingWhy = Literal["memory", "brake", "slot", "dan", "restart", "llama_swap", "draining"]
 WAITING_WHY: tuple[str, ...] = get_args(WaitingWhy)
 
 
