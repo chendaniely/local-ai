@@ -50,9 +50,9 @@ admitter withdraws the ticket of every model it has no restored load for. A with
 one that fails again is never read as claimed: a watch holds the slot until `/running` shows the model, then settled
 as a start, or until the ticket's deadline has passed and a `/running` read that answered doesn't list it, never
 while `/running` can't be read. A watch has no requests of its own: each waits in the queue, on its own blocker, to its
-own deadline, and one for the watched model hears the gate couldn't confirm the ticket was withdrawn. A constructor's
-watch for a model that already has a record keeps it whole. A ticket that can't be written is the gate's own error,
-refused at once. A model `/running` shows starting holds the slot whatever its record reads.
+own deadline, and one for the watched model hears the gate couldn't confirm the ticket was withdrawn. A watch keeps a
+record that isn't a start's whole while it stands, deciding at each read. A ticket that can't be written is the gate's
+own error, refused at once. A model `/running` shows starting holds the slot whatever its record reads.
 
 `cancel(request_id)`: a client gone leaves the queue at once, and nothing loads for it; a load already started finishes.
 """
@@ -199,9 +199,6 @@ class _Load:
     starter: _Waiter | None = None
     joiners: list[_Waiter] = field(default_factory=list)
     hold_after: tuple[float, Decimal] | None = None  # (make-room's hold's created_at, its size once this load is in)
-    # A watch of the constructor's for a model that already has a record (ready, draining, stopping, or starting with
-    # its unload requested): its record is never the watch's to settle (the controller's ruling at Task 15's re-review).
-    keeps_record: bool = False
     clears_mark: bool = False
     started_at: float | None = None  # launch's, from this ticket's started/ record
     task: asyncio.Task | None = None
@@ -286,14 +283,15 @@ class Admitter:
         # A gate that just started owns no load it didn't restore, so no ticket of another may stay live: one issued
         # just before a restart, its model not yet in /running, would start a model rule 9 doesn't count (the
         # controller's ruling at Task 15's review). One it can't withdraw holds the slot until it can't be claimed.
-        # A model that already has a record keeps it whole: the watch only holds the slot (the controller's ruling at
-        # Task 15's re-review).
+        # The watch takes the ticket's id and deadline from the ticket itself, so a start it sees is ticketed (the
+        # controller's ruling at Task 15's second re-review); whether the model's record is its to settle it decides
+        # at each read (_watch_ticket).
         for name, model in registry.models.items():
             if name not in self._loads and self._withdraw(name) is None:
-                deadline = self._ticket_deadline(name, found)
-                if deadline is not None:
-                    self._loads[name] = _Load(name, model.footprint_gib, None, None, deadline, None, "watching",
-                                              keeps_record=name in state.models)
+                ticket = self._ticket_info(name, found)
+                if ticket is not None:
+                    deadline, ticket_id = ticket
+                    self._loads[name] = _Load(name, model.footprint_gib, ticket_id, None, deadline, None, "watching")
 
     # What the core and the routes call.
 
@@ -338,7 +336,9 @@ class Admitter:
     def observe_running(self, running: list[Running]) -> None:
         """llama-swap's `/running`, as the core reads it every second: a model it shows starting holds the one-load
         slot whatever the gate's record says, as a late unload found across a restart (`draining`) whose start is still
-        under way (the controller's ruling at Task 15's re-review)."""
+        under way (the controller's ruling at Task 15's re-review). Only a read that answered: a failed read is never
+        passed, least of all as `[]`, which would free the slot blind (the controller's ruling at Task 15's second
+        re-review)."""
         self._running_starting = {entry.model for entry in running if entry.state == "starting"}
         self.changed()
 
@@ -578,8 +578,10 @@ class Admitter:
     def _slot_holders(self) -> list[str]:
         """The models that hold the one-load slot with a start: a load of the admitter's other than a ticket's watch, a
         record `starting`, and any model /running last showed starting, whatever its record says (the controller's
-        ruling at Task 15's re-review). A model whose ticket the gate is watching has shown no start: its own record
-        stays `starting` meanwhile, counted in the figures, but it is named nowhere as loading."""
+        ruling at Task 15's re-review). A model whose ticket the gate is watching has shown no start, so it is never
+        named as the model loading. Its own record stays `starting` meanwhile, counted in the figures, and `no_fit`'s
+        breakdown names that term as *the model still starting may take*, true of a start that may be under way
+        (the controller's ruling at Task 15's second re-review)."""
         watched = {name for name, load in self._loads.items() if load.phase == "watching"}
         names = [name for name, load in self._loads.items() if load.phase != "watching"]
         names += [name for name, record in self.state.models.items() if record.state == "starting"]
@@ -756,8 +758,11 @@ class Admitter:
         - or the ticket's deadline has passed, when launch can no longer claim it, and a /running read that answered
           doesn't list the model. While /running can't be read, it holds on, and leaves `started/` alone, as every
           settle path does: a start claimed after the last read it saw may be under way.
-        A watch of the constructor's for a model that already has a record keeps that record whole: it only holds the
-        slot, and frees it past the deadline on any read that answered."""
+        Whether the model's record is the watch's to settle it decides at each read, never once (the controller's
+        ruling at Task 15's second re-review). A record that isn't a start's (`ready`, `draining`, `stopping`, or
+        `starting` with its unload requested, as a restarted gate finds them) is kept whole: the watch only holds the
+        slot, and frees it past the deadline on any read that answered. Once that record has gone, a start the watch
+        sees is recorded and settled like any other."""
         load.phase = "watching"
         while True:
             shown = await self._shown(load.model)
@@ -765,17 +770,21 @@ class Admitter:
                 await self._sleep(self._poll_s)
                 continue
             now = self._clock()
-            if shown is not None and not load.keeps_record:
-                if load.model not in self.state.models:  # counted, as restore counts what it finds
+            record = self.state.models.get(load.model)
+            a_start = record is None or (record.state == "starting" and record.unload_requested_at is None)
+            if shown is not None and a_start:
+                if record is None:  # counted, as restore counts what it finds
                     self.state.models[load.model] = ModelRecord(
                         name=load.model, footprint_gib=load.footprint, loaded_at=now, load_fall_gib=None,
                         fall_flagged=False, rss_anon_at_load_gib=None, last_use=now,
                         state="stopping" if shown == "stopping" else "starting")
+                    if load.ticket_id is not None:  # the gate issued it: its started/ record is the gate's
+                        self.state.issued.setdefault(load.model, load.ticket_id)
                     self._on_change_safe()
                 return await self._ready_or_gone(load)
             left = load.deadline - now
             if left < 0:  # launch refuses a ticket whose deadline < now
-                if not load.keeps_record:
+                if a_start:
                     self._take_started(load)
                     self._drop(load)
                 else:
@@ -1069,19 +1078,28 @@ class Admitter:
                    "claimed", name, failed)
         return None
 
-    def _ticket_deadline(self, name: str, now: float) -> float | None:
-        """The deadline of `name`'s ticket, or None when there is none; LOAD_CALL_TIMEOUT_S from `now`, the most a
-        ticket the gate issued lives, when it can't be read, and never later than that (the controller's ruling at
-        Task 15's re-review), so a bogus far deadline can't hold the slot."""
+    def _ticket_info(self, name: str, now: float) -> tuple[float, str | None] | None:
+        """`name`'s ticket, as the deadline a watch holds the slot to and the ticket's id; None when there is no
+        ticket launch could claim (none, another account's, damaged, or another boot's: tickets.claim refuses each).
+        The deadline is capped at the ticket's own `issued_at` + LOAD_CALL_TIMEOUT_S, the most a ticket the gate
+        issued lives, so a bogus far deadline can't hold the slot, and whatever the wall clock did since, never by the
+        gate's own clock (the controller's ruling at Task 15's second re-review). A ticket that can't be read at all
+        holds LOAD_CALL_TIMEOUT_S from `now`, with no id: launch, the same account, can't read it either."""
         try:
-            ticket = tickets.read_record(tickets.record_path(self._launch, tickets.TICKETS, name), own=False)
+            ticket = tickets.read_record(tickets.record_path(self._launch, tickets.TICKETS, name), own=True)
         except FileNotFoundError:
             return None
-        except (OSError, ValueError):
-            return now + LOAD_CALL_TIMEOUT_S
-        deadline = ticket.get("deadline") if isinstance(ticket, dict) else None
-        most = now + LOAD_CALL_TIMEOUT_S
-        return min(float(deadline), most) if _finite(deadline) else most
+        except ValueError:  # not a regular file, another account's, not JSON: launch's claim refuses it too
+            return None
+        except OSError:
+            return now + LOAD_CALL_TIMEOUT_S, None
+        if not isinstance(ticket, dict) or ticket.get("model") != name or ticket.get("boot_id") != self.state.boot_id:
+            return None
+        deadline, issued = ticket.get("deadline"), ticket.get("issued_at")
+        if not (_finite(deadline) and _finite(issued)):
+            return None
+        ticket_id = ticket.get("id") if isinstance(ticket.get("id"), str) and ticket.get("id") else None
+        return min(float(deadline), float(issued) + LOAD_CALL_TIMEOUT_S), ticket_id
 
     def _read_started(self, load: _Load) -> dict | None:
         """This ticket's started/ record, as launch wrote it, or None."""

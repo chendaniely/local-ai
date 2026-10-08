@@ -179,7 +179,8 @@ class Moment:
     swap_status: int | None = None
     swap_kept: bool = False
     # load_failed, the controller's rulings at Task 15's review: the gate's own errors with the load's ticket, which it
-    # couldn't write, or couldn't confirm it withdrew (and no start ever showed in /running).
+    # couldn't write, or couldn't confirm it withdrew: for a request whose own wait ran out while the gate waited on
+    # that ticket (made exact at Task 15's second re-review).
     ticket_unwritten: bool = False
     ticket_unconfirmed: bool = False
     download_gib: float | None = None  # not_downloaded: the model's files

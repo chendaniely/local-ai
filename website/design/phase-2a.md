@@ -3177,12 +3177,14 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     not yet in `/running`, would otherwise start a model rule 9 doesn't count. A withdraw that
     raises `OSError` is tried once more. If it fails again, it is never read as claimed: the slot
     is held until the ticket's deadline has passed (launch refuses `deadline < now`), or until
-    `/running` shows the model, which is then settled as a start. A request whose load ends that
-    way, with nothing ever shown in `/running`, is never told a start stopped: `load_failed`,
+    `/running` shows the model, which is then settled as a start *(how the slot is held and freed,
+    and when a request hears, are the re-review's and second re-review's bullets below: the controller's ruling, at Task 15's second re-review)*. A
+    request whose load ends that way, with nothing ever shown in `/running`, is never told a start
+    stopped: `load_failed`,
     *The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, ~~`make doctor`~~
     `make logs s=gate` shows why.* (`agent`'s: ~~*… `make doctor` on the Spark shows Dan why.*~~ *…
-    Dan can see why with `make logs s=gate` on the Spark.*) *(the controller's ruling, at Task 15's re-review: `make doctor` doesn't read
-    launch's folder; the reason is in the gate's journal.)* ~~After an end its requests already heard
+    Dan can see why with `make logs s=gate` on the Spark.*) *(Corrected 2026-10-08, the controller's ruling, at Task 15's re-review: `make
+    doctor` doesn't read launch's folder; the reason is in the gate's journal.)* ~~After an end its requests already heard
     (a start that stopped, the drainer's unload), a ticket it can't withdraw holds the slot the same
     way.~~ *(Corrected 2026-10-08, the controller's ruling, at Task 15's re-review: after an end, a ticket it can't withdraw holds the slot the
     same way, and the load's requests were either answered (a start that stopped) or sent back to the
@@ -3222,10 +3224,14 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
   - **A watch of the constructor's settles as a start only a model with no record.** A model that
     already has one (`ready`, `draining`, `stopping`, or `starting` with its unload requested) keeps
     its record whole: the watch holds the slot until the ticket's deadline, and frees it then on a
-    `/running` read that answered. A watch that sees a start of a model with no record records it
-    `starting` at its footprint, as `restore` records one, so `starting_gib()` counts it and a late
-    unload from there saves `unload_requested_at`. `_ticket_deadline` caps a ticket's deadline at
-    `LOAD_CALL_TIMEOUT_S` from the gate's start, the most a ticket it issued lives.
+    `/running` read that answered. *(Corrected 2026-10-08, the controller's ruling, at Task 15's second re-review: decided at each read, never once
+    at construction; once that record has gone, a start the watch sees is recorded and settled.)* A
+    watch that sees a start of a model with no record records it `starting` at its footprint, as
+    `restore` records one, so `starting_gib()` counts it and a late unload from there saves
+    `unload_requested_at`. ~~`_ticket_deadline` caps a ticket's deadline at `LOAD_CALL_TIMEOUT_S`
+    from the gate's start, the most a ticket it issued lives.~~ *(Corrected 2026-10-08, the controller's ruling, at Task 15's second re-review:
+    `_ticket_info` caps it at the ticket's own `issued_at` + `LOAD_CALL_TIMEOUT_S`, whatever the wall
+    clock did, never by the gate's start.)*
   - **A watch has no requests of its own.** A request for the watched model never joins it: it
     waits in the queue, on its own blocker, to its own key's deadline, and is refused then with the
     *couldn't confirm* words, or by its own blocker first (the brake's `held_by_brake`, at its own
@@ -3236,8 +3242,13 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     own (`Moment.slot_ticket`): *The embeddings didn't start in time: it was waiting its turn while
     the gate settles a load ticket it couldn't withdraw, and your 30 s ran out. On the Spark, `make
     logs s=gate` shows why.* (`agent`'s: *… Dan can see why with `make logs s=gate` on the Spark.*),
-    checked against pi's list. A watched model's own record stays `starting`, counted in the
-    figures, but no words name it as loading.
+    checked against pi's list. ~~A watched model's own record stays `starting`, counted in the
+    figures, but no words name it as loading.~~ *(Corrected 2026-10-08, the controller's ruling, at Task 15's second re-review:)* A watched model is
+    never named as the model loading. Its own record stays `starting`, counted in the figures, and
+    `no_fit`'s breakdown names that term as *the model still starting may take*, true of a start
+    that may be under way. The code for a request behind a watch stays `loading` (its turn for the
+    one-load slot never came), with words of its own; the re-review's "not `loading`" meant its
+    words.
   - **A model `/running` shows starting holds the one-load slot, whatever its record reads**, a
     late unload found across a restart (`draining`) among them. The admitter keeps the last read's
     starting models: `Admitter(…, running=None)`, `restore`'s own read; `observe_running(running)`,
@@ -3250,6 +3261,23 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `test_a_request_beside_a_watch_keeps_its_own_deadline_and_its_own_blocker` (P6),
     `test_another_models_request_behind_a_watch_hears_why` (P7) and
     `test_a_model_running_shows_starting_holds_the_slot_whatever_its_record`.
+- *(Added 2026-10-08, the controller's rulings, at Task 15's second re-review:)*
+  - **The watch decides at each read whether the model's record is its to settle** (Minor 1,
+    promoted): a record that goes while the watch runs, followed by a claim of the leftover ticket,
+    gets the start recorded `starting`, counted, ticketed and settled.
+  - **The constructor's watch takes the ticket's id** from the file `_ticket_info` reads (own,
+    this model's, this boot's, or no watch at all, since launch's claim refuses any other), so a
+    start it sees is ticketed, `loaded` goes, its id goes into `state.issued` while it starts, and
+    `started/` is read before it is cleared. Its deadline is capped at the ticket's own `issued_at`
+    + `LOAD_CALL_TIMEOUT_S` (Minor 4).
+  - Its tests: `test_a_watch_settles_a_start_once_the_record_it_kept_is_gone` (Q8),
+    `test_a_start_beside_a_watch_that_frees_still_holds_the_slot` (Q3, `_shown`'s refresh of the
+    starting models), `test_a_late_unload_under_way_holds_the_slot_in_its_own_words` (Q7, the loads
+    term), `test_a_tickets_deadline_is_capped_by_its_own_issue_never_the_gates_clock`,
+    `test_a_constructor_watch_tickets_the_start_it_sees`,
+    `test_a_load_the_gate_is_settling_counts_in_a_refusals_figure` (Q1b),
+    `test_a_load_that_ends_forgets_running_showed_it_starting`,
+    `test_observe_running_rechecks_at_once` and `test_a_watch_that_frees_clears_the_started_record`.
 
 **Tests** (`spark/tests/test_gate_admission.py`; an injected clock; a stand-in llama-swap whose
 loads, `/running` and log lines the test scripts; memory from a list; a temporary `launch` and
@@ -3924,7 +3952,9 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   `starting`, at the registry's footprint, any model `/running` lists that the state lacks. So no
   claim lands unseen between the read and the constructor's withdraw. It passes every later
   `/running` read to `admitter.observe_running(running)`, so a model `/running` shows starting holds
-  the one-load slot whatever its record reads (a late unload found across a restart).
+  the one-load slot whatever its record reads (a late unload found across a restart). *(Added
+  2026-10-08, the controller's ruling, at Task 15's second re-review:)* only a read that answered: a failed read never reaches `observe_running`, least
+  of all as `[]`, which would free the slot blind.
 - *(Added 2026-10-08, the controller's ruling, at Task 15's review:)* the admitter's `read_hold` reads the hold file fresh on every pass,
   never a cached copy older than a pass: after a `group: model unloaded` abort a request tries again
   in 1 s, and only the brake's hold, read then, stops it reloading the model the brake just aborted
