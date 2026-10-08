@@ -698,8 +698,8 @@ header files, as `ntfy.md` §8 writes them.
 - [ ] **Step 3 [Dan, in Portainer on the Synology]:** `ntfy.md` §4, ~~from the web editor: Task 1's
   file reaches GitHub only with the push after Task 35, and a Git-repository stack can follow it
   from then on~~ from the web editor or a Repository stack on `refs/heads/phase-2a`, switched to
-  `main` once 2a merges *(corrected 2026-10-08: `phase-2a` was pushed early, at Dan's request, so
-  the runbook could be read on another machine)*. Expected: the stack runs, and ntfy's web page answers on the NAS's address
+  `main` once 2a merges *(corrected 2026-10-08: `phase-2a` was pushed early, so the runbook could
+  be read on another machine)*. Expected: the stack runs, and ntfy's web page answers on the NAS's address
   from the phone, ~~asking for a login~~ loading (`200`), and only a topic there asks for a login.
   *(Corrected 2026-10-07, after Task 1's review: the Compose file sets no `NTFY_ENABLE_LOGIN` or
   `NTFY_REQUIRE_LOGIN`, so the page itself loads; `deny-all` refuses a topic without one.)*
