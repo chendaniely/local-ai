@@ -549,7 +549,11 @@ follows the same pattern, under `stack/synology/watchdog/`.
      `ntfy user hash`; a token for each publisher from `ntfy token generate`; how each variable is
      written (ntfy's comma-separated `user:hash:role`, `user:topic:permission` and `user:token`
      forms), with publishers write-only to their own topic and the phone read-only to the three.
-     Where each value is kept: the helper's variables and the vault, never the repo or a chat.
+     Where each value is kept: the helper's variables ~~and the vault~~, never the repo or a chat;
+     the address, the port, the folder and the topic names also in the vault, and the hashes and
+     tokens never there, only in the helper and (the tokens) the Spark's root-only header files,
+     the vault recording where. *(Corrected 2026-10-07, after Task 1's review: `CLAUDE.md` keeps
+     credentials in the vault by reference only, and its rule wins.)*
   4. *Deploy it — Portainer today*: a stack from the web editor (the file pasted in) or from a Git
      repository (this repo's URL, its branch, the compose path `stack/synology/ntfy/compose.yaml`;
      the branch is `main` once 2a merges, since `phase-2a` goes away), the six variables in the
@@ -595,7 +599,9 @@ follows the same pattern, under `stack/synology/watchdog/`.
   stand-ins written to `tmp_path` (`NTFY_BASE_URL=http://nas.example.invalid:8090`, a
   single-quoted bcrypt-shaped hash holding `$`, a `tk_` stand-in, `NTFY_DATA_DIR=/volume1/docker/ntfy`,
   `NTFY_PORT=8090`), and its output keeps the hash's `$` (as `$$`); with no values it exits
-  non-zero, naming `NTFY_BASE_URL`.
+  non-zero, naming ~~`NTFY_BASE_URL`~~ one of the six, and with each one left out in turn it
+  names that one. *(Corrected 2026-10-07, in Task 1: Compose names whichever missing variable it
+  reaches first, which varies from run to run.)*
 
 **Steps:**
 
@@ -643,8 +649,12 @@ git commit -m "build(stack): 🤖 ntfy v2.28.0 as a Compose file for the Synolog
 **Files (the session's record, once Dan's steps are done):**
 
 - Modify: `CLAUDE.md` (*Where that material goes instead*: the values file, and that ntfy's
-  values live in its Compose helper and the vault), `README.md` (§My environment: the values file;
-  §Current state: ntfy on the Synology, its version, its helper), `changelog.md`,
+  values live in its Compose helper ~~and the vault~~, its address, port, folder and topic names
+  also in the vault, and its hashes and tokens never there, only in the helper and (the tokens)
+  the Spark's root-only header files, the vault recording where; *corrected 2026-10-07, after
+  Task 1's review: `CLAUDE.md` keeps credentials in the vault by reference only*), `README.md`
+  (§My environment: the values file; §Current state: ntfy on the Synology, its version, its
+  helper), `changelog.md`,
   `website/architecture.qmd` (`ntfy` and `ntfy_phone` solid; the edges into `ntfy` stay dashed
   until each publisher is built), `website/how-to/ntfy.md` (only what Dan's run corrects,
   Portainer's steps above all)
@@ -655,13 +665,19 @@ header files, as `ntfy.md` §8 writes them.
 - [ ] **Step 1 [Dan, on the Synology and in Tailscale's console]:** `ntfy.md` §1 and §3.
 - [ ] **Step 2: The grant, reviewed in this task** (`CLAUDE.md`, *Review permissions … in the task
   that changes them*). **[Dan]** adds the grant of `ntfy.md` §2, then shows it to the session in
-  the chat, never in a file. The session checks that it lets exactly the Spark's tag and Dan's
-  phone reach ntfy's port on the NAS, that it widens nothing else, and that the NAS's own node
-  reaches nothing new, and says so. The policy stays in the vault.
+  the chat, never in a file. The session checks that it lets ~~exactly the Spark's tag and Dan's
+  phone reach ntfy's port on the NAS~~ the Spark's tag reach ntfy's port on the NAS and nothing
+  else there, that the members' access to the NAS (the phone's among it) is unchanged from before
+  the NAS was tagged, that it widens nothing else, and that the NAS's own node reaches nothing
+  new, and says so. The policy stays in the vault. *(Corrected 2026-10-07, after Task 1's review:
+  §2's first grant keeps every member device's access to the tagged NAS, which is how the phone
+  reaches ntfy's port.)*
 - [ ] **Step 3 [Dan, in Portainer on the Synology]:** `ntfy.md` §4, from the web editor: Task 1's
   file reaches GitHub only with the push after Task 35, and a Git-repository stack can follow it
   from then on. Expected: the stack runs, and ntfy's web page answers on the NAS's address
-  from the phone, asking for a login.
+  from the phone, ~~asking for a login~~ loading (`200`), and only a topic there asks for a login.
+  *(Corrected 2026-10-07, after Task 1's review: the Compose file sets no `NTFY_ENABLE_LOGIN` or
+  `NTFY_REQUIRE_LOGIN`, so the page itself loads; `deny-all` refuses a topic without one.)*
 - [ ] **Step 4 [Dan, on the phone]:** `ntfy.md` §7.
 - [ ] **Step 5 [Dan, on the Spark]:** `ntfy.md` §8 and §9. Expected: each test message arrives;
   `high` sounds and `low` arrives silently; with Do Not Disturb switched on by hand, only `high`

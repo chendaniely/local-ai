@@ -1,6 +1,9 @@
 # The six variables compose.yaml needs, by name only. Their values are private and never go in this repo: they
 # live in the Compose helper (in Portainer, the stack's environment variables) or in a .env file beside
-# compose.yaml on the machine that runs it, and in the vault (website/how-to/ntfy.md, "The values").
+# compose.yaml on the machine that runs it. The address, the port, the folder and the topic names may also be
+# kept in the vault. The hashes and the tokens never are: the hashes live only in the helper, the tokens only in
+# the helper and the Spark's root-only header files, and the vault records where (website/how-to/ntfy.md,
+# "The values").
 #
 # A value holding a `$`, as every bcrypt hash does, is single-quoted, or Compose reads `$` and the letters after it
 # as a variable and drops them: NTFY_AUTH_USERS='...'. Portainer writes each variable to a file Compose reads the

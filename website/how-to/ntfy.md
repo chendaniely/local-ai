@@ -48,7 +48,10 @@ grant names `tag:nas` as a source; if something on the NAS reached another machi
 ## 2. The grant
 
 Pick ntfy's port on the NAS now, one nothing else on the NAS uses (DSM itself has 5000 and 5001);
-§3 asks for the same one. It stands in for `<ntfy-port>` below.
+§3 asks for the same one. It stands in for `<ntfy-port>` below. The Compose file publishes it on
+every one of the NAS's interfaces, so it is your router that keeps it off the internet: never
+forward it there. Don't count on DSM's firewall to narrow it instead: reports differ on whether
+DSM's rules reach a port that Docker publishes for a container.
 
 Write the change into the vault's copy of the ACL policy first, then make it **in Tailscale's admin
 console**, *Access controls*, in the JSON editor. The NAS's tag gets an owner beside the Spark's:
@@ -96,14 +99,16 @@ folder and the topic names, which are private but not credentials. None of it go
 a chat.
 
 The steps below make every value in a working folder on the Spark, `~/ntfy-setup`, with nothing
-displayed. §10 deletes it.
+displayed. §10 deletes it. Each block runs in a subshell, `( … )`, so its `cd` and its
+`umask 077` end with it: a `umask 077` left in your shell would make the next runbook's
+`make apply` deploy new files only you can read, which the services then can't.
 
 **1. A working folder, and ntfy's own binary.** ntfy v2.28.0's release binary, the version the
 Compose file pins, checked against its release's checksums, makes the hashes and the tokens.
 **On the Spark**, as you:
 
 ```bash
-mkdir -m 700 ~/ntfy-setup && cd ~/ntfy-setup && curl -fsSLO https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_arm64.tar.gz && curl -fsSLO https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/checksums.txt && grep ' ntfy_2.28.0_linux_arm64.tar.gz$' checksums.txt | sha256sum -c - && tar xzf ntfy_2.28.0_linux_arm64.tar.gz --strip-components=1 ntfy_2.28.0_linux_arm64/ntfy && ./ntfy --version
+( mkdir -m 700 ~/ntfy-setup && cd ~/ntfy-setup && curl -fsSLO https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_arm64.tar.gz && curl -fsSLO https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/checksums.txt && grep ' ntfy_2.28.0_linux_arm64.tar.gz$' checksums.txt | sha256sum -c - && tar xzf ntfy_2.28.0_linux_arm64.tar.gz --strip-components=1 ntfy_2.28.0_linux_arm64/ntfy && ./ntfy --version )
 ```
 
 Expected: `ntfy_2.28.0_linux_arm64.tar.gz: OK`, then `ntfy version 2.28.0`. If `mkdir` says the
@@ -113,14 +118,14 @@ folder exists, an earlier run left it: delete it (`rm -r ~/ntfy-setup`) and star
 named after it with a random ending. **On the Spark:**
 
 ```bash
-cd ~/ntfy-setup && umask 077 && for u in spark-gate spark-notify spark-brake; do p=$(openssl rand -hex 32) && printf '%s\n%s\n' "$p" "$p" | ./ntfy user hash > "$u.hash" 2>/dev/null && ./ntfy token generate > "$u.token" && printf '%s-%s\n' "$u" "$(openssl rand -hex 6)" > "$u.topic" || { echo "stopped at $u" >&2; break; }; done; unset p
+( cd ~/ntfy-setup && umask 077 && for u in spark-gate spark-notify spark-brake; do p=$(openssl rand -hex 32) && printf '%s\n%s\n' "$p" "$p" | ./ntfy user hash > "$u.hash" 2>/dev/null && ./ntfy token generate > "$u.token" && printf '%s-%s\n' "$u" "$(openssl rand -hex 6)" > "$u.topic" || { echo "stopped at $u" >&2; break; }; done )
 ```
 
 **3. The phone's user.** Type the phone's password at `password:`, and again at `confirm:`. Nothing
 shows as you type. **On the Spark:**
 
 ```bash
-cd ~/ntfy-setup && umask 077 && ./ntfy user hash > phone.hash
+( cd ~/ntfy-setup && umask 077 && ./ntfy user hash > phone.hash )
 ```
 
 **4. The NAS's address, port and folder.** It asks three questions: the NAS's full tailnet name,
@@ -128,7 +133,7 @@ from *Machines* in Tailscale's admin console; the port picked in §2; and the fo
 NAS, such as `/volume1/docker/ntfy`. **On the Spark:**
 
 ```bash
-cd ~/ntfy-setup && umask 077 && read -rp "The NAS's tailnet name: " nas && read -rp "ntfy's port on the NAS: " port && read -rp "ntfy's folder on the NAS: " dir && printf 'http://%s:%s\n' "$nas" "$port" > address && printf '%s\n' "$port" > port && printf '%s\n' "$dir" > folder
+( cd ~/ntfy-setup && umask 077 && read -rp "The NAS's tailnet name: " nas && read -rp "ntfy's port on the NAS: " port && read -rp "ntfy's folder on the NAS: " dir && printf 'http://%s:%s\n' "$nas" "$port" > address && printf '%s\n' "$port" > port && printf '%s\n' "$dir" > folder )
 ```
 
 **5. The files.** This writes `ntfy.env`, the six variables for the Compose helper, its three
@@ -137,18 +142,18 @@ three header files, each one line, `Authorization: Bearer <token>`. Run again, i
 afresh from the steps above. **On the Spark:**
 
 ```bash
-cd ~/ntfy-setup && umask 077 && {
+( cd ~/ntfy-setup && umask 077 && {
   printf 'NTFY_BASE_URL=%s\nNTFY_PORT=%s\nNTFY_DATA_DIR=%s\n' "$(cat address)" "$(cat port)" "$(cat folder)"
   printf "NTFY_AUTH_USERS='spark-gate:%s:user,spark-notify:%s:user,spark-brake:%s:user,phone:%s:user'\n" "$(cat spark-gate.hash)" "$(cat spark-notify.hash)" "$(cat spark-brake.hash)" "$(cat phone.hash)"
   printf "NTFY_AUTH_ACCESS='spark-gate:%s:wo,spark-notify:%s:wo,spark-brake:%s:wo,phone:%s:ro,phone:%s:ro,phone:%s:ro'\n" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)"
   printf "NTFY_AUTH_TOKENS='spark-gate:%s,spark-notify:%s,spark-brake:%s'\n" "$(cat spark-gate.token)" "$(cat spark-notify.token)" "$(cat spark-brake.token)"
-} > ntfy.env && printf 'NTFY_URL=%s\nNTFY_TOPIC_GATE=%s\nNTFY_TOPIC_NOTIFY=%s\nNTFY_TOPIC_BRAKE=%s\n' "$(cat address)" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)" > values.env && for p in gate notify brake; do printf 'Authorization: Bearer %s\n' "$(cat spark-$p.token)" > "ntfy-$p.header"; done
+} > ntfy.env && printf 'NTFY_URL=%s\nNTFY_TOPIC_GATE=%s\nNTFY_TOPIC_NOTIFY=%s\nNTFY_TOPIC_BRAKE=%s\n' "$(cat address)" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)" > values.env && for p in gate notify brake; do printf 'Authorization: Bearer %s\n' "$(cat spark-$p.token)" > "ntfy-$p.header"; done )
 ```
 
 **6. Check them, without showing a value.** **On the Spark:**
 
 ```bash
-cd ~/ntfy-setup && sed -n 's/=.*//p' ntfy.env values.env && grep -o ':\$2a\$10\$' ntfy.env | wc -l && wc -c ntfy-gate.header ntfy-notify.header ntfy-brake.header
+( cd ~/ntfy-setup && sed -n 's/=.*//p' ntfy.env values.env && grep -o ':\$2a\$10\$' ntfy.env | wc -l && wc -c ntfy-gate.header ntfy-notify.header ntfy-brake.header )
 ```
 
 Expected: the names `NTFY_BASE_URL`, `NTFY_PORT`, `NTFY_DATA_DIR`, `NTFY_AUTH_USERS`,
@@ -189,8 +194,10 @@ Spark. Task 2 runs these steps on the NAS and corrects them here.
      *Compose path* `stack/synology/ntfy/compose.yaml`; *Authentication* off, since the repo is
      public. Leave *GitOps updates* off: the pin moves by hand on upgrade day (§6).
 3. Under *Environment variables*, choose *Advanced mode* and paste the six lines of `ntfy.env`, as
-   they are, single quotes included. **On the Mac**, this puts them on the clipboard without
-   showing them:
+   they are, single quotes included. They hold the tokens, and macOS's Universal Clipboard copies
+   the clipboard to your other Apple devices: switch Handoff off (*System Settings* → *General* →
+   *AirDrop & Handoff*) and pause any clipboard manager until the clipboard is emptied again.
+   **On the Mac**, this puts them on the clipboard without showing them:
 
    ```bash
    ssh brightroar 'cat ntfy-setup/ntfy.env' | pbcopy
@@ -207,8 +214,8 @@ Expected: the container runs, and its log (*Containers* → the ntfy container �
 `Listening on :80[http], ntfy 2.28.0, …`. From the phone, with Tailscale on, the address opens
 ntfy's web page, and a topic there answers only after a login. If the deploy stops with
 `required variable … is missing a value`, that variable is missing from the stack's environment. If
-the container stops at once and its log says `invalid auth-users`, a hash has lost its `$` signs:
-check its quotes.
+the container keeps restarting (`restart: unless-stopped` starts it again each time it stops) and
+its log says `invalid auth-users`, a hash has lost its `$` signs: check its quotes.
 
 ## 5. Deploy it — any other Compose helper
 
@@ -339,8 +346,8 @@ Expected: nine lines, each ending `403`. A `200` means a grant is wider than §3
 **In the vault's entry note**, beside the values §3 put there: the values file,
 `/etc/local-ai/values.env`, and its four names; each of the three tokens by reference, never its
 value: in `/etc/local-ai/secrets/ntfy-<publisher>.header` on the Spark, and in the helper's
-`NTFY_AUTH_TOKENS`; the phone's password, and where you keep it; and that the publishers' passwords
-aren't kept anywhere.
+`NTFY_AUTH_TOKENS`; where the phone's password is kept, never the password; and that the
+publishers' passwords aren't kept anywhere.
 
 Then, with the stack running and §9 passed, delete the working folder. **On the Spark:**
 
@@ -350,3 +357,8 @@ rm -r ~/ntfy-setup
 
 From then on the values live in the helper's variables, the vault (the private values, and the
 credentials by name), the Spark's four files and the phone.
+
+**On a rebuilt Spark, with the NAS unchanged**, either run §3 to §9 again, which makes new hashes,
+tokens and topics, so the phone subscribes to the new topics; or write §8's four files again from
+the values that remain: the address and the topic names from the vault, and each token from the
+helper's `NTFY_AUTH_TOKENS`.

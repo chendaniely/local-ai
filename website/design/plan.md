@@ -2937,6 +2937,15 @@ Each item gets its own design pass when its turn comes.
   superseded design clauses are struck through, their dated notes kept; the 2a scenario pages read
   as one current account each, their history moved to the [Q&A](phase-2a-qa.md); and the later
   phases' lines carry what 2a's design changes for them (2b, 2c, 3, 5, 6).
+- **2026-10-07** — Phase 2a's Task 1 and its review corrected the implementation plan, with dated
+  notes there: ntfy's address, port, data folder and topic names may go in the vault, but its
+  hashes and tokens never do, only in its Compose helper and (the tokens) the Spark's root-only
+  header files, the vault recording where (`CLAUDE.md`'s rule; Task 1's §3 and Task 2's
+  `CLAUDE.md` change had said "the helper's variables and the vault"); Task 2's grant check reads
+  "the Spark's tag reaches only ntfy's port, and the members' access is unchanged", since §2 keeps
+  every member device's access to the tagged NAS; its Step 3 expects ntfy's web page to load,
+  with only a topic asking for a login; and Compose, given no values, names whichever missing
+  variable it reaches first, not always `NTFY_BASE_URL`.
 
 ## Sources
 
