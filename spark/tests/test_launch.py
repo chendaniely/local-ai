@@ -11,7 +11,7 @@ import pytest
 from spark import launch
 from spark.admission import Decision, admit
 from spark.hold import Hold, read_hold, release_hold, write_hold
-from spark.memory import MemInfo, parse_meminfo
+from spark.memory import MemInfo, boot_id, parse_meminfo
 from spark.registry import load_registry
 
 FIXTURE = Path(__file__).parent / "fixtures" / "models.yaml"
@@ -32,6 +32,25 @@ def test_parse_meminfo_needs_both_fields():
         parse_meminfo("MemTotal: 1 kB\n")
     with pytest.raises(ValueError, match="MemTotal"):
         parse_meminfo("MemAvailable: 1 kB\n")
+
+
+def test_meminfo_reads_memfree_and_cached():
+    # /proc/meminfo's own order and padding; SwapCached, right after Cached, is a different figure.
+    text = ("MemTotal:       127622144 kB\nMemFree:         2097152 kB\nMemAvailable:   73400320 kB\n"
+            "Buffers:           65536 kB\nCached:         62914560 kB\nSwapCached:            0 kB\n")
+    mem = parse_meminfo(text)
+    assert (mem.free_gib, mem.cached_gib) == (2.0, 60.0)
+    assert mem.available_gib == 70.0
+    bare = parse_meminfo("MemTotal:       127622144 kB\nMemAvailable:   73400320 kB\n")
+    assert (bare.free_gib, bare.cached_gib) == (None, None)
+    assert round(bare.total_gib, 1) == 121.7
+    assert bare.available_gib == 70.0
+
+
+def test_boot_id_is_read_stripped(tmp_path):
+    path = tmp_path / "boot_id"
+    path.write_text("abc\n")
+    assert boot_id(path) == "abc"
 
 
 def test_admit_fits():
