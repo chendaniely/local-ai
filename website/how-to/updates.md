@@ -23,9 +23,9 @@ decision, 2026-09-28; `CLAUDE.md`, *Building it*).
 | gitleaks | a direct install in `/usr/local/bin` | Upgrade day — [gitleaks](#upgrade-day-gitleaks); no package manager sees it |
 | uv | the Spark: your `~/.local/bin`; the Mac: as installed there | Upgrade day, **on the Spark**: `uv self update <version>`, the version `stack/versions.yaml` pins; the Mac's uv, which the hooks also run, moves to the same version on the Mac. *(Added 2026-09-28: `agent`'s uv, in its `~/.local/bin`, came from uv's installer at its newest, 0.12.19, not the pin; `stack/versions.yaml` records it.)* |
 | Python for `spark/` | `spark/.python-version` pins 3.12 | Only deliberately, on upgrade day: change the pin, and each machine rebuilds `spark/.venv` on its next `uv run` |
-| llama.cpp (`llama-server`) | its release's prebuilt arm64 CUDA binaries, in `/opt/local-ai/bin/llama.cpp/<version>/`; `stack/versions.yaml` pins it | By hand, on upgrade day, one component at a time (the plan's *Weekly upgrade day*). Its runbook is written with its first bump |
-| llama-swap | its release binary, in `/opt/local-ai/bin/llama-swap/<version>/`; pinned | By hand, on upgrade day. Its runbook is written with its first bump |
-| whisper.cpp (`whisper-server`) | built on the Spark from its release, in `/opt/local-ai/bin/whisper.cpp/<version>/`; pinned by commit | By hand, on upgrade day. Its runbook is written with its first bump. A rebuild after the GPU set moves is [the GPU set](#upgrade-day-the-gpu-set)'s step 7 |
+| llama.cpp (`llama-server`) | its release's prebuilt arm64 CUDA binaries, in `/opt/local-ai/bin/llama.cpp/<version>/`; `stack/versions.yaml` pins it | By hand, on upgrade day, one component at a time (the plan's *Weekly upgrade day*). Its runbook is written with its first bump. The code written for it moves with it: [Versions the code was written for](#versions-the-code-was-written-for) |
+| llama-swap | its release binary, in `/opt/local-ai/bin/llama-swap/<version>/`; pinned | By hand, on upgrade day. Its runbook is written with its first bump. The code written for it moves with it: [Versions the code was written for](#versions-the-code-was-written-for) |
+| whisper.cpp (`whisper-server`) | built on the Spark from its release, in `/opt/local-ai/bin/whisper.cpp/<version>/`; pinned by commit | By hand, on upgrade day. Its runbook is written with its first bump. The code written for it moves with it: [Versions the code was written for](#versions-the-code-was-written-for). A rebuild after the GPU set moves is [the GPU set](#upgrade-day-the-gpu-set)'s step 7 |
 | Open WebUI | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump. Before any upgrade, copy its data folder, `/var/lib/local-ai/open-webui`: Open WebUI migrates its database when it starts, and a migration can't be undone |
 | SearXNG | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump |
 | ntfy | its container image on the Synology, pinned by digest | By hand on upgrade day, in its Compose helper, as [ntfy on the Synology](ntfy.md) §6 says |
@@ -388,11 +388,40 @@ modules), the previous kernel won't help.
 Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
 and for `spark/`'s Python dependencies. On upgrade day, for each one:
 
-1. **On github.com**, read what it bumps and its release notes, and let CI finish green.
-2. There, read the PR's commit message, then merge it with a merge commit or a rebase. Never squash
-   it: a squash can paste the release notes into the message, CI scans every commit message with
-   the repo's patterns, and once merged, a finding in history can't be taken back or marked
-   allowed.
+1. **On github.com**, read what it bumps and its release notes, and let CI finish green. A PR that
+   moves uvicorn's pin, or adds a package to the lock or drops one, fails
+   `spark/tests/test_tested_against.py` on purpose until its companion change joins it
+   ([Versions the code was written for](#versions-the-code-was-written-for)). That one takes step 2
+   first; any other PR merges only green.
+2. *Only for a PR that fails on purpose* (added 2026-10-07): the companion change goes on
+   Dependabot's own branch, in the same PR. **On the Spark**, in the clone, with nothing
+   uncommitted, check out the branch the PR names, such as `dependabot/uv/spark/uvicorn-0.55.0`:
+
+   ```bash
+   git fetch origin
+   git switch <the PR's branch>
+   ```
+
+   There, make the change the failing test asks for: for uvicorn, the version
+   `test_uvicorn_is_pinned_exactly` expects and `pypi:uvicorn` in `protocols.TESTED_AGAINST`; for a
+   package added or dropped, the list in `test_the_lock_adds_only_uvicorn_and_starlette`, once you
+   have read why it came or went. Run `make test`, after `test_protocols.py` for uvicorn, as
+   [Versions the code was written for](#versions-the-code-was-written-for) says, and commit the
+   files by path. Then, still **on the Spark**, after
+   [the scan before every push](leak-guards.md#before-every-push), push it to the PR's branch and
+   come back to your own (a Claude session pushes only with Dan's OK):
+
+   ```bash
+   git push origin HEAD
+   git switch -
+   ```
+
+   CI then runs on the whole change. Dependabot stops rebasing a PR that carries someone else's
+   commit, which is fine: it merges as step 3 says.
+3. **On github.com**, read the PR's commit messages, then merge it with a merge commit or a rebase.
+   Never squash it: a squash can paste the release notes into the message, CI scans every commit
+   message with the repo's patterns, and once merged, a finding in history can't be taken back or
+   marked allowed.
 
 They don't touch `stack/versions.yaml`, the workflows' `version:` inputs, uv's `required-version`
 or the gitleaks pin; those still move by hand.
@@ -430,22 +459,31 @@ its config, its options or its internals. Each names it in a `TESTED_AGAINST` co
 component of `stack/versions.yaml` by its name and a Python package as `pypi:<name>`.
 `spark/tests/test_tested_against.py` checks every one against `stack/versions.yaml` and against
 the installed packages, which `uv run --frozen` installs at the lock's versions, so a bump that
-leaves one behind fails `make test`, and CI. Today `llamaswap.py` names llama-swap v257, and
-`render.py` llama-swap v257, llama.cpp b11146 and whisper.cpp v1.9.4. Moving one of those in
-`stack/versions.yaml` means checking the module against the new release, then moving its constant
-with it. `test_tested_against.py` also holds the lock's list of packages, so a PR that adds a
-package to the lock or drops one fails CI until that list changes too, a decision of its own.
+leaves one behind fails `make test`, and CI. Moving a component in `stack/versions.yaml` means
+checking each module that names it against the new release, then moving its constant with it.
+**On the Spark**, in the clone, this lists every constant and the module it is in:
+
+```bash
+grep -rn --include='*.py' '^TESTED_AGAINST' spark/src spark/tests
+```
+
+`test_tested_against.py` also holds the lock's list of packages, so a PR that adds a package to the
+lock or drops one fails CI until that list changes too. Changing it is a decision of its own: by
+hand, in one commit with the lock; for Dependabot's PR, on its branch, in the same PR (step 2
+above).
 
 **uvicorn is pinned exactly**, `uvicorn==0.54.0` without extras, where every other dependency
 takes a range (Starlette's, `>=1.3.1,<2`, starts at 1.3.1, which fixed the last advisory against
 1.x as of 2026-10-07). From Phase 2a's Task 9, `spark/src/spark/protocols.py`, which the front and
 the gate serve through, subclasses uvicorn's internals, its h11 protocol, which no release promises
 to keep; so only the uvicorn it was tested with may run, and the pin is the release that task is
-written for. A uvicorn bump, Dependabot's or by hand, changes these together, in one commit with
-the lock: the pin in `spark/pyproject.toml`, `pypi:uvicorn` in `protocols.TESTED_AGAINST`, and the
-version `test_uvicorn_is_pinned_exactly` expects. A PR that moves the pin alone fails CI, on
-purpose. Lock it with the `uv lock` above, then, **on the Spark**, in the clone, run
-`test_protocols.py` before anything else, and the rest after it:
+written for. A uvicorn bump changes three things together: the pin in `spark/pyproject.toml`,
+`pypi:uvicorn` in `protocols.TESTED_AGAINST`, and the version `test_uvicorn_is_pinned_exactly`
+expects. By hand, all three go in one commit with the lock, made with the `uv lock` above.
+Dependabot's PR brings the pin and the lock, so the other two go on its branch, in the same PR
+(step 2 above); a PR that moves the pin alone fails CI, on purpose. Either way, **on the Spark**, in
+the clone, with the bump checked out, run `test_protocols.py` before anything else, and the rest
+after it:
 
 ```bash
 uv run --frozen --project spark pytest spark/tests/test_protocols.py

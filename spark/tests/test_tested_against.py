@@ -1,7 +1,6 @@
 """Version assumptions in the code, tied to stack/versions.yaml and the lock (Phase 2a, Task 3)."""
 
 import importlib
-import importlib.util
 import pkgutil
 import re
 import subprocess
@@ -27,12 +26,10 @@ def _components():
 
 def _modules():
     modules = [importlib.import_module(info.name) for info in pkgutil.walk_packages(spark.__path__, prefix="spark.")]
-    fake = TESTS / "fake_llamaswap.py"  # Task 12's llama-swap stand-in, once it exists
-    if fake.exists():
-        spec = importlib.util.spec_from_file_location("fake_llamaswap", fake)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        modules.append(module)
+    # Task 12's llama-swap stand-in, once it exists, imported as the other tests import it: pytest puts this folder on
+    # sys.path, since it has no __init__.py.
+    if (TESTS / "fake_llamaswap.py").exists():
+        modules.append(importlib.import_module("fake_llamaswap"))
     return modules
 
 
