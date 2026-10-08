@@ -2069,7 +2069,7 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   `ticketed` once it is ready; every loaded model's `last_use` is `now`; a model `/running` doesn't
   list is dropped; a room hold from another boot ends, and is returned so the caller sends
   `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins, sessions, marks
-  and refusals stay. `notified` (an event key and when it was sent) drops keys older than
+  and refusals stay. `notified` (~~an event key~~ a type and an event key, and when it was sent) drops keys older than
   `NOTIFIED_KEEP_S` (86,400, this plan's value) on every save, so it never grows for the life of
   the box.
 - `Emit` — the protocol every gate module notifies through: `emit(type: str, event_key: str,
@@ -2166,7 +2166,11 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
 - `Notifier(publish: Callable[[Notification], Awaitable[None]], registry, state: GateState,
   clock)` implements `Emit`. `emit(type, event_key, **fields)` builds the text with
   `messages.notification` and returns at once; a type the registry has `off` is dropped; an
-  `event_key` already in `state.notified` is dropped, so a restart never repeats one. A queue,
+  ~~`event_key` already in `state.notified`~~ event already in `state.notified`, which is keyed by
+  the type and the event key together (`<type> <event_key>`), is dropped, so a restart never
+  repeats one and two types never share a key *(corrected 2026-10-07, after Task 7's fix round,
+  the controller's ruling: keyed by the event key alone, `loaded` and `load_failed` would have
+  been dropped as repeats of `load_started`, which sends `load:<ticket id>` for the same load)*. A queue,
   served by a task of its own, publishes each, bounded by `NTFY_TIMEOUT_S`; a failure sets
   `state.notify_failing_since` to the first failure's time, and the next success clears it. Every
   type that carries a refusal (`refused`, `footprint_suspect`, `load_failed`) collapses: per
@@ -2187,7 +2191,8 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   id>`, once per failed load, both from `messages.refusal_notification`; a prefix of its own, since
   `notified` is keyed by the event key alone and `load_started` has sent `load:<ticket id>` for that
   load; `loaded` shares `load:<ticket id>` with `load_started` the same way, which this task
-  settles, with a prefix per type or `notified` keyed by type and key)*; `unloaded`,
+  settles, with a prefix per type or `notified` keyed by type and key; *settled the same day*:
+  `notified` is keyed by type and key, above)*; `unloaded`,
   `drain:<drain id>`; `brake_fired`, `brake:<boot id>:<episode>:<seq>`; `brake_needs_release`,
   `brake-needs:<boot id>:<episode>`; `brake_released`, `release:<boot id>:<episode>`;
   `room_hold_ended`, `room:<created_at>`; `resident_waiting`, `resident:<model>:<wait's start>`;
