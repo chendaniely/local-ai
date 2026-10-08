@@ -27,7 +27,7 @@ ledger.
 | The engines | llama-swap v257, llama.cpp b11146 (the build llama.cpp's v0.5.0 release names), and whisper.cpp v1.9.4 built for `121a-real`, installed at their pins. | [Stack](../reference/stack.md) · phase-1.md, Task 11 |
 | The stack on the box | Serving since 2026-09-28: Gemma 4 26B (resident vision chat and Open WebUI's task model), Qwen3-Embedding-0.6B and whisper large-v3-turbo (resident), and the Qwen3.6-35B-A3B coder (on demand), each at its full context; Open WebUI and SearXNG under root's Compose unit; Open WebUI on the tailnet over HTTPS through `tailscale serve`. | `README.md` §Current state · `changelog.md` |
 | Clients | pi's `spark` provider, written by `spark clients`: on the Mac through the tunnel, and for `agent` in tmux, whose Claude Code gets the secrets guard before its key. | [pi](../how-to/pi.md) |
-| Runbooks | Two new ones, deploy.md and pi.md, steps 7 and 8 of *In order*. Every runbook says where each command runs, in bold above its block. | [How-to](../how-to/index.qmd) |
+| Runbooks | Two new ones, deploy.md and pi.md, steps 7 and 8 of *In order* (8 and 9 since 2026-10-07, when Phase 2a's Task 1 put ntfy.md at step 7). Every runbook says where each command runs, in bold above its block. | [How-to](../how-to/index.qmd) |
 | Measurements | The brake drill's numbers, the first taken on this box; footprints at two contexts; load times. | `cosmicbboy-local-ai.md` §I · `changelog.md` |
 | The lock's window | `spark/uv.lock` takes only releases at least seven days old, and Dependabot's uv PRs wait as long. | [Updates](../how-to/updates.md) · `spark/pyproject.toml` |
 
@@ -326,7 +326,9 @@ stopped, so a thread that dies can't leave that state for good.
 **On a new or rebuilt box**, start as [Phase 0's page](phase-0-retro.md#starting-over) says, and
 follow the How-to page's [*In order*](../how-to/index.qmd#in-order) to its end, now eight steps.
 Before step 7, install the engines as [Phase 1's plan](phase-1.md), Task 11, does; there is no
-runbook yet, and `updates.md` says each component's is written with its first bump.
+runbook yet, and `updates.md` says each component's is written with its first bump. *(Corrected
+2026-10-07: nine steps since Phase 2a's Task 1 put [ntfy on the Synology](../how-to/ntfy.md) at
+step 7, so the engines come before step 8, Deploy the stack.)*
 [Deploy the stack](../how-to/deploy.md) then covers your own key on the Spark, `make apply`,
 `make install-units`, `make pull`, the start, the web UI's first account straight after it (the
 first account becomes the admin) and `tailscale serve`. [pi](../how-to/pi.md) gives `agent` its

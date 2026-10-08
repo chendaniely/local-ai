@@ -14,6 +14,7 @@ file, not this one.
 | llama-swap | v257 | spark | yes | [docs](https://github.com/mostlygeek/llama-swap) | [changelog](https://github.com/mostlygeek/llama-swap/releases) | — |
 | llama.cpp | b11146 | spark | yes | [docs](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) | [changelog](https://github.com/ggml-org/llama.cpp/releases) | [advisories](https://github.com/ggml-org/llama.cpp/security/advisories) |
 | nodejs | 22.23.3-1nodesource1 | spark | n/a | [docs](https://nodejs.org/docs/latest-v22.x/api/) | [changelog](https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_V22.md) | [advisories](https://nodejs.org/en/blog/vulnerability) |
+| ntfy | v2.28.0 | synology | yes | [docs](https://docs.ntfy.sh/) | [changelog](https://github.com/binwiederhier/ntfy/releases) | [advisories](https://github.com/binwiederhier/ntfy/security/advisories) |
 | open-webui | v0.11.4 | spark | yes | [docs](https://docs.openwebui.com/) | [changelog](https://github.com/open-webui/open-webui/releases) | [advisories](https://github.com/open-webui/open-webui/security/advisories) |
 | pi | 0.85.1 | spark | n/a | [docs](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | [changelog](https://www.npmjs.com/package/@earendil-works/pi-coding-agent?activeTab=versions) | — |
 | quarto | 1.10.3 | mac, ci | n/a | [docs](https://quarto.org/docs/) | [changelog](https://github.com/quarto-dev/quarto-cli/releases) | — |

@@ -1,0 +1,13 @@
+# The six variables compose.yaml needs, by name only. Their values are private and never go in this repo: they
+# live in the Compose helper (in Portainer, the stack's environment variables) or in a .env file beside
+# compose.yaml on the machine that runs it, and in the vault (website/how-to/ntfy.md, "The values").
+#
+# A value holding a `$`, as every bcrypt hash does, is single-quoted, or Compose reads `$` and the letters after it
+# as a variable and drops them: NTFY_AUTH_USERS='...'. Portainer writes each variable to a file Compose reads the
+# same way, so it takes the same quotes.
+NTFY_BASE_URL=<http://NAS-TAILNET-NAME:PORT, ntfy's address as the phone and the Spark reach it>
+NTFY_AUTH_USERS=<each user as name:bcrypt-hash:user, comma-separated, single-quoted>
+NTFY_AUTH_ACCESS=<each grant as user:topic:permission, comma-separated>
+NTFY_AUTH_TOKENS=<each token as user:token, comma-separated>
+NTFY_DATA_DIR=<the folder on the NAS that keeps ntfy's databases>
+NTFY_PORT=<the NAS's port for ntfy, published to the container's 80>

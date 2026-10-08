@@ -28,6 +28,7 @@ decision, 2026-09-28; `CLAUDE.md`, *Building it*).
 | whisper.cpp (`whisper-server`) | built on the Spark from its release, in `/opt/local-ai/bin/whisper.cpp/<version>/`; pinned by commit | By hand, on upgrade day. Its runbook is written with its first bump. A rebuild after the GPU set moves is [the GPU set](#upgrade-day-the-gpu-set)'s step 7 |
 | Open WebUI | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump. Before any upgrade, copy its data folder, `/var/lib/local-ai/open-webui`: Open WebUI migrates its database when it starts, and a migration can't be undone |
 | SearXNG | its container image; pinned by digest | By hand, on upgrade day. Its runbook is written with its first bump |
+| ntfy | its container image on the Synology, pinned by digest | By hand on upgrade day, in its Compose helper, as [ntfy on the Synology](ntfy.md) §6 says |
 | The desktop's snaps (browser, mail, Snap Store, firmware updater) and their runtimes | snap | By themselves, about four times a day |
 | Claude Code | your `~/.local/bin` | By itself |
 | Firmware | fwupd | Not automatically. Whether GIGABYTE publishes this box's firmware there is not yet checked |

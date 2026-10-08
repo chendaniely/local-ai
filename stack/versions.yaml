@@ -110,6 +110,18 @@ components:
     context7: null
     changelog: https://github.com/searxng/searxng/commits/master
     advisories: https://github.com/searxng/searxng/security/advisories
+  ntfy:
+    # On the Synology, as a Compose file (stack/synology/ntfy/compose.yaml, whose image: this row's image,
+    # version and pin make); it moves by hand on upgrade day, in its Compose helper (website/how-to/ntfy.md).
+    version: v2.28.0
+    image: docker.io/binwiederhier/ntfy
+    where: [synology]
+    pin: sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
+    deployed: true
+    docs: https://docs.ntfy.sh/
+    context7: null
+    changelog: https://github.com/binwiederhier/ntfy/releases
+    advisories: https://github.com/binwiederhier/ntfy/security/advisories
   pi:
     version: 0.85.1   # 0.86.0–0.87.1 are reported to crash llama-server; stay below them
     # agent's, on the Spark. The Mac's comes from Homebrew, unpinned (Dan's decision, 2026-09-28).
