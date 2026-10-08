@@ -155,6 +155,22 @@ def test_the_residents_must_fit_under_the_ceiling_too(on_demand):
     assert not [line for line in check.errors + check.warnings if re.search(r"-\d", line)]  # never a negative number
 
 
+@pytest.mark.parametrize("budget_terms", [dict(ceiling=43.3), dict(idle=67.3)], ids=["ceiling", "idle less the reserve"])
+def test_residents_exactly_at_the_room_pass(budget_terms):
+    # The gate admits a footprint at most what's free for a load, so residents of exactly the room fit, under either
+    # term. In binary floats 32 + 8.1 + 3.2 is 43.300000000000004, which would refuse them.
+    exact = (model("gemma", 32, resident=True), model("embed", 8.1, resident=True), model("whisper", 3.2, resident=True))
+    assert check_set(registry(*exact, **budget_terms)).errors == []
+
+
+def test_a_room_under_a_tenth_reads_nothing_is_free():
+    # The controller's ruling at Task 5's re-review (2026-10-07): a room that rounds down to 0.0 reads as nothing, not
+    # "0.0 GiB is free". Beside the residents' 43 with idle 67.05: min(67.05 − 43 − 24, 102 − 43) leaves 0.05.
+    check = check_set(registry(*RESIDENTS, model("small", 1, resident=False), idle=67.05))
+    assert len(check.errors) == 1
+    assert check.errors[0].startswith("small: needs 1.0 GiB, but nothing is free for a load beside ")
+
+
 def test_an_on_demand_model_that_cant_load_beside_the_residents_is_refused():
     # The gate's formula at idle with the residents loaded: min(117 − 43 − 24, 102 − 43) = 50, against 57.
     check = check_set(registry(*RESIDENTS, model("big", 57, resident=False)))

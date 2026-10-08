@@ -3,8 +3,8 @@ the loaded models are still owed, what a load of Dan's takes from make-room's ho
 of the registry, which evaluate the gate's formula at idle, so that render and the gate hold one formula between them.
 
 Every number is an exact Decimal: a float or an int as its repr reads, as admission._gib does, and each function here
-does its arithmetic in a decimal context of its own, whatever its caller's. In binary floats 52.3 − 24 is
-28.299999999999997, which would refuse a 28.3 GiB model that fits exactly."""
+sets its own precision, DIGITS digits, on a copy of its caller's decimal context, whatever the caller's precision. In
+binary floats 52.3 − 24 is 28.299999999999997, which would refuse a 28.3 GiB model that fits exactly."""
 
 from __future__ import annotations
 
@@ -26,7 +26,8 @@ DIGITS = 400
 
 
 def _exact(func):
-    """`func`, run in a decimal context of its own with DIGITS digits, never its caller's (28 digits by default)."""
+    """`func`, run with DIGITS digits of precision, whatever its caller's (28 by default): localcontext copies the
+    caller's decimal context and sets only the precision on the copy, which it drops on the way out."""
 
     @functools.wraps(func)
     def exact(*args, **kwargs):
@@ -52,7 +53,8 @@ def _down(value: Decimal) -> str:
 
 
 def _free(room: Decimal) -> str:
-    """What is free for a load, in plain words, which never show a negative number."""
+    """What is free for a load, in plain words, which never show a negative number: a room that rounds down to 0 (below
+    0.1 GiB) reads *nothing is free for a load*, not "0.0 GiB is free"."""
     shown = room.quantize(TENTH, ROUND_FLOOR)
     return f"{shown:f} GiB is free for a load" if shown > 0 else "nothing is free for a load"
 

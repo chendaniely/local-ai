@@ -924,8 +924,9 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
   warnings), `spark/tests/test_render.py`, `CLAUDE.md` (the reserve gotcha's dated note)
 
 **Interfaces** (exact `Decimal` arithmetic throughout, from `Decimal(repr(x))`, as
-`admission._gib` does; each public function in a decimal context of its own, whatever its
-caller's, *added 2026-10-07, at Task 5's review*):
+`admission._gib` does; each public function sets its own precision, 400 digits, on a copy of
+its caller's decimal context, whatever the caller's precision, *added 2026-10-07, at Task 5's
+review; worded at its re-review*):
 
 - `Loaded(name: str, footprint_gib: float, held_now_gib: float)` — `held_now` is what the model's
   load took (the fall in `MemAvailable` across it), plus its engine's `RssAnon` growth since, when
@@ -967,7 +968,9 @@ caller's, *added 2026-10-07, at Task 5's review*):
   phases' registries won't); `idle_available − Σ footprints < brake.warn_gib`, which says by how
   much Σ passes idle when it does, never a negative number (*added 2026-10-07, at Task 5's
   review*). Each line names its numbers to one decimal, the need rounded up and the room down;
-  room below 0 reads *nothing is free for a load*.
+  a room that rounds down to 0 (below 0.1 GiB) reads *nothing is free for a load* (*added
+  2026-10-07, at Task 5's review; at its re-review the controller ruled that a room under 0.1
+  reads as nothing, not "0.0 GiB is free"*).
 - `render.check_budget(registry) -> list[str]` raises `RenderError` on the first error and returns
   the warnings; `spark render` prints each as `render: warning — <text>` and still exits 0.
 
@@ -1027,8 +1030,15 @@ caller's, *added 2026-10-07, at Task 5's review*):
 - `test_the_numbers_add_up_exactly` — available 52.3, reserve 24, owed 0, ceiling 102, committed
   0, starting 0, held 0 → exactly `28.3`.
 - `test_each_formula_is_exact_on_its_own` — under the caller's default 28 digits, 1e30 less 0.1
-  stays exact in `free_for_a_load`, `owed_gib`, `hold_after_dans_load` and `make_room_plan`
-  (*added 2026-10-07, at Task 5's review*).
+  stays exact in `free_for_a_load`, `owed_gib` and `hold_after_dans_load`, and 1e30 plus 0.1 in
+  `make_room_plan`, which adds (*added 2026-10-07, at Task 5's review; "plus" for
+  `make_room_plan` at its re-review*).
+- `test_residents_exactly_at_the_room_pass` — Gemma 32, the embeddings 8.1 and whisper 3.2, 43.3
+  in all, against a ceiling of 43.3, and against an idle of 67.3 less the 24 reserve → no error;
+  binary floats would sum them to 43.300000000000004 (*added 2026-10-07, at Task 5's re-review*).
+- `test_a_room_under_a_tenth_reads_nothing_is_free` — residents 43, idle 67.05, a 1 GiB
+  on-demand model → its error reads *nothing is free for a load*, not "0.0 GiB" (*added
+  2026-10-07, at Task 5's re-review*).
 - In `test_render.py`: Phase 1's budget tests rewritten to the new checks;
   `test_spark_render_prints_its_warnings` — a registry that warns: `spark render` prints
   `render: warning — …` and returns 0.
@@ -1151,7 +1161,10 @@ currently experiencing high demand
     Mac*, *agent*, *The web UI* at a sentence's start);
   - *available* only for `MemAvailable`, *free for a load* only for the admission figure, never
     "free" alone;
-  - *free for a load* at 0 or below reads *nothing is free for a load*, never a negative number;
+  - *free for a load* ~~at 0 or below~~ that rounds down to 0 as shown (below 1 GiB in whole GiB,
+    below 0.1 GiB at one decimal) reads *nothing is free for a load*, never a negative number or
+    a zero (*corrected 2026-10-07, at Task 5's re-review, after the controller's ruling on
+    render's words*);
     with a make-room hold counted, *nothing is free for a load while make-room holds <n> GiB for
     Dan*, and the parenthesis then lists the available memory and what else is taken from it (the
     docs reviewer's I-4: once Dan's job runs in his hold, `agent`'s figure is 36 − 24 − 70);
