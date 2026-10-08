@@ -719,7 +719,10 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   pull as **`spark-pull`**, system users of their own, so neither the engines nor the pull's
   downloader reaches the front, and the engines can't change the model files; `spark` reads the
   Hugging Face cache, which `spark-pull` owns, through its group. The rule's list grows to six:
-  the front and the gate join the four. The socket units and the failure notifier aren't on it.)*
+  the front and the gate join the four. The socket units and the failure notifier aren't on it.
+  Seven since the implementation plan's re-check, 2026-10-07 (the controller's ruling): the S05
+  drill's oneshot, `local-ai-brake-drill.service`, which runs `spark brake --once` as `spark`
+  against a drill copy of the registry that Dan writes, so the drill needs no sudo.)*
   (Corrected 2026-09-25: this said Dan's account is effectively root-capable through sudo and through `spark-admin`, which could change what the `local-ai-*`
   units run without a password; Dan's decision on the unit-file model, under *Open items and
   risks*, closed the second path. Corrected again 2026-09-25, after Phase 1's pre-flight review:
@@ -993,6 +996,7 @@ the refusal examples above, **on the Spark**, `spark status` shows:
 ```
 brightroar · 48 GiB available of 122 · 28 above the brake's 20 GiB line
 free for a load: 18 GiB (48 available, less the 24 GiB reserve and 6 GiB still owed)
+used by other processes: 26 GiB
 loaded      Gemma (gemma-4-26b-a4b)                up to 32 GiB  always loaded     answering 1
             the embeddings (qwen3-embedding-0.6b)  up to 8 GiB   always loaded
             whisper (whisper-large-v3-turbo)       up to 3 GiB   always loaded
@@ -1007,10 +1011,14 @@ recent      09:12  refused the coder for pi on the Mac: needs 41 GiB, 18 free fo
 health      front ok · gate ok · brake ok (key checked 09:00) · ntfy ok
 ```
 
-*Up to* is each model's footprint. Through the status socket, which `agent` reads, the *recent*
-list holds only `agent`'s own refusals, and other processes go unnamed. `--json` carries the same,
-for 2b's menu bar. *(Corrected after the final re-review: the coder's brake mark and `agent`'s
-wait for Dan were missing from this moment, and its numbers now use the two words.)*
+*Up to* is each model's footprint. Through the status socket, which `agent` reads, the *recent* list
+holds only `agent`'s own refusals, and other processes go unnamed. `--json` carries the same, for
+2b's menu bar. *Used by other processes* is the unaccounted memory, in plain words: idle
+`MemAvailable` (117), less what is available now (48) and the loaded models' footprints (43); here
+Dan's python job, less the growth the residents are still owed. It shows only when it isn't 0.
+*(Corrected 2026-10-07, after the implementation plan's re-check: this moment had no such line,
+though its formula gives 26.)* *(Corrected after the final re-review: the coder's brake mark and
+`agent`'s wait for Dan were missing from this moment, and its numbers now use the two words.)*
 
 **Each command says what it did, and how to undo it.** All run **on the Spark**, from Dan's
 account.
@@ -1145,7 +1153,13 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
     so a change to either restarts it, through the same wait (added after the re-review). A
     change to the gate's or the brake's code restarts them at once: a gate restart keeps loaded
     models serving and rebuilds its state, the front asks again for the requests it was holding,
-    with their original deadlines, and the brake is back within 2 s.
+    with their original deadlines, and the brake is back within 2 s. *(Clarified 2026-10-07, after
+    the implementation plan's re-check, the controller's ruling:* when a llama-swap or front
+    restart waits for the quiet moment, the brake and the gate restart with it, after the drain,
+    in a fixed order — the brake, the gate, the front only if its own files changed, llama-swap
+    last. The restarting hold is kept in the gate's persisted state, so it survives the gate's own
+    restart, and is released once llama-swap answers again; a request held through it reads
+    `restarting`, never `llama_swap_down`.)
   - **The wait has a deadline:** up to 15 minutes for ~60 s with no request in flight, then apply
     offers "drain now", which holds new requests and lets those in flight finish, through the
     front's drain, and then `make apply-now` (the session's ruling). A request that arrives during
@@ -1423,14 +1437,15 @@ plan](phase-2a.md), written the same day.*
   keys only, `healthCheckTimeout` 180 s, `Restart=always` and its sandboxing, `NoNewPrivileges=`
   tested from a cold boot; `spark launch`'s tickets, backstops and file check; the failure notifier
   on the four services; systemd sandboxing for the front and the gate; uvicorn and Starlette in the
-  lock; the polkit rule's six services. Checked as `agent`: binding 9100 while the front restarts,
-  or 900 while llama-swap restarts, fails; the control socket refuses it; the front refuses every
-  route outside its list. The docs and code that talk to 9100 move with it: `deploy.md`'s log step,
-  doctor's probes, `status.py` and `apply.py`. *(Added after the re-review:)* the start and
-  trigger limits set so that no crash loop frees a socket, and a **crash-loop check, run as
-  `agent`**: kill the front again and again, or make it fail at start, and 9100 stays with PID 1,
-  binding it fails, and it never answers as anyone else; the uvicorn protocol subclass that gives
-  the gate each caller's uid, with its test; and the brake's own alert while the gate is down.
+  lock; the polkit rule's six services (seven since 2026-10-07, with the S05 drill's oneshot).
+  Checked as `agent`: binding 9100 while the front restarts, or 900 while llama-swap restarts,
+  fails; the control socket refuses it; the front refuses every route outside its list. The docs and
+  code that talk to 9100 move with it: `deploy.md`'s log step, doctor's probes, `status.py` and
+  `apply.py`. *(Added after the re-review:)* the start and trigger limits set so that no crash loop
+  frees a socket, and a **crash-loop check, run as `agent`**: kill the front again and again, or
+  make it fail at start, and 9100 stays with PID 1, binding it fails, and it never answers as anyone
+  else; the uvicorn protocol subclass that gives the gate each caller's uid, with its test; and the
+  brake's own alert while the gate is down.
 - [Spark] **`cap_drop` for Open WebUI and SearXNG** (Dan's choice, 2026-10-07, after the
   re-review): both containers drop every capability and add back only what each is found to need,
   checked by the web UI working end to end and a search working, so root's containers with host
@@ -1501,14 +1516,15 @@ plan](phase-2a.md), written the same day.*
   its file; a soak at full context that measures every footprint, checkpoints and prompt caches
   included (rule 6); the brake's timings measured on a busy engine (`GRACE_S`,
   `FLOOR_TOLERANCE_GIB`), and the lag before an unloaded engine's memory shows in `MemAvailable`;
-  earlyoom's order, and swap and swappiness, at the real thresholds; SearXNG's request timeout; a
-  higher `--slot-prompt-similarity` for Gemma, weighed, with the registry's other changes; a
-  test that ties the code's version assumptions — the front's and the gate's on llama-swap v257
-  among them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own
-  user, `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's
-  sandboxing. Phase 1's close also moved llama-swap behind a Unix socket with the gate, since
-  anyone on the box can take 127.0.0.1:9100 while it restarts; v257 can't listen on one, so
-  socket activation and the ports below 1024 close that risk instead (*Open items and risks*).
+  earlyoom's order, and swap and swappiness, at the real thresholds (swap down to 24 GiB available
+  only: corrected 2026-10-07, after the implementation plan's re-check); SearXNG's request timeout;
+  a higher `--slot-prompt-similarity` for Gemma, weighed, with the registry's other changes; a test
+  that ties the code's version assumptions — the front's and the gate's on llama-swap v257 among
+  them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own user,
+  `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's sandboxing.
+  Phase 1's close also moved llama-swap behind a Unix socket with the gate, since anyone on the box
+  can take 127.0.0.1:9100 while it restarts; v257 can't listen on one, so socket activation and the
+  ports below 1024 close that risk instead (*Open items and risks*).
 - [Spark] **`agent`'s own GPU jobs** (Dan, 2026-10-07): root sets `agent`'s processes an
   `oom_score_adj` that `agent` can't lower, at login (a root-owned `pam_exec` line for sshd and a
   `user@` drop-in, for instance), with the engines' values reviewed so that `agent`'s job is killed
@@ -2034,7 +2050,9 @@ Each item gets its own design pass when its turn comes.
   council, 2026-09-28, residents start at `oom_score_adj` 900 and on-demand engines at 1000, an
   order earlyoom's dry run confirmed after that day's deploy); whether memory swaps out before `MemAvailable` reaches the
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness (Phase
-  2a measures it at the real thresholds; added 2026-10-07); that
+  2a measures it at the real thresholds; added 2026-10-07; corrected the same day, after the
+  implementation plan's re-check: down to 24 GiB available only, the drills' floor, with the 20–24
+  band left unmeasured by choice); that
   the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
   one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
   to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
@@ -2786,6 +2804,12 @@ Each item gets its own design pass when its turn comes.
   by step; "before it becomes the default" means before real work, with both pis listing the
   coder from the swap on; and each refusal sends exactly one notification, the front's own
   included. The implementation plan carries the rest.
+- **2026-10-07** — The implementation plan's re-check (the controller's rulings): `spark status`'s
+  example gains *used by other processes: 26 GiB*, which its formula gives; `make apply` restarts
+  in a fixed order, its restarting hold kept in the gate's persisted state until llama-swap answers
+  again; the polkit rule's list grows to seven, with the S05 drill's oneshot unit, which runs
+  `spark brake --once` against a drill copy of the registry; and swap is measured down to 24 GiB
+  available only.
 
 ## Sources
 
