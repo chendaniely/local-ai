@@ -143,6 +143,17 @@ def test_a_recorded_pid_is_taken_only_at_the_start_time_recorded_for_it(proc):
     assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, proc=proc) == 200
 
 
+def test_still_running_is_the_process_that_started_then(proc):
+    # A session's process and a ticketed engine are each known by pid and start time (the controller's rulings at
+    # Tasks 8 and 13).
+    process(proc, 300, "pi", uid=AGENT, start=777_000)
+    process(proc, 310, "pi", uid=AGENT, start=777_000, state="Z (zombie)")
+    assert procs.still_running(300, 777_000, proc=proc)
+    assert not procs.still_running(300, 999_000, proc=proc)  # the pid handed out again
+    assert not procs.still_running(301, 777_000, proc=proc)  # gone
+    assert not procs.still_running(310, 777_000, proc=proc)  # exited, not yet reaped
+
+
 def test_start_time_is_stats_22nd_field_read_after_the_names_last_parenthesis(proc):
     # The name, in parentheses, can hold spaces and parentheses of its own: field 3 comes first after the last ")",
     # so field 22 is the 20th word there (checked on the Spark, 2026-10-08).

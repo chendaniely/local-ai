@@ -56,6 +56,14 @@ def start_time(pid: int, *, proc: Path = PROC) -> int | None:
     return int(words[19])
 
 
+def still_running(pid: int, started: int, *, proc: Path = PROC) -> bool:
+    """Whether the process that started at `started` (start_time's ticks) still runs as `pid`: there, neither a zombie
+    nor dead, and its start time unchanged, so a pid the kernel handed to another process is never taken for it. A
+    /proc that won't let us read it raises, as everywhere here."""
+    status = _status(pid, proc)
+    return status is not None and _alive(status) and start_time(pid, proc=proc) == started
+
+
 def engine_pid(port: int, *, spark_uid: int, recorded: int | None = None, recorded_start: int | None = None,
                proc: Path = PROC) -> int | None:
     """The engine serving `port`. A `recorded` pid (launch's, which the gate keeps in state.ticketed) is taken as it
@@ -67,8 +75,8 @@ def engine_pid(port: int, *, spark_uid: int, recorded: int | None = None, record
     the port; None when there is none."""
     if recorded is not None and recorded_start is not None:
         status = _status(recorded, proc)
-        if (status is not None and _alive(status) and _real_uid(status) == spark_uid
-                and start_time(recorded, proc=proc) == recorded_start):
+        if (status is not None and _real_uid(status) == spark_uid
+                and still_running(recorded, recorded_start, proc=proc)):
             return recorded
     wanted = [b"--port", str(port).encode()]
     for pid in _pids(proc):

@@ -7,8 +7,9 @@ before save_state returns, as the brake's hold is: a reader finds the old file o
 
 At start the gate loads it (load_state, which never raises: a damaged file is a fresh state and a problem for `spark
 status`) and settles it against llama-swap's `/running` and this boot (restore). What belongs to a boot ends with it:
-make-room's hold, apply's hold, the engines ticketed and the tickets issued. Pins, sessions, the brake's marks and the
-refusal history stay.
+make-room's hold, apply's hold, the sessions, the engines ticketed, the tickets issued and the drains. Pins, the
+brake's marks and the refusal history stay. A drain the gate saved is resumed under its id, or the front is owed an
+`undrain` under it, never left (the controller's rulings at Task 13).
 
 The standard library only, and nothing heavy at import: the brake reads the last automatic release from it too (Task
 23)."""
@@ -29,15 +30,16 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
-from spark.gateproto import NOTIFIED_KEEP_S, REFUSAL_HISTORY
+from spark import procs
+from spark.gateproto import NOTIFIED_KEEP_S, REFUSAL_HISTORY, DrainWhy
 from spark.llamaswap import Running
 from spark.registry import Registry
 
 STATE_FILE = "state.json"
 STATE_MAX_BYTES = 16 << 20  # far more than 50 refusals and a day of notifications: a larger file isn't the gate's
-# A loaded model's state in the gate's record. stopping: its unload requested, from just before the call, until
-# /running shows it gone, its memory not yet freed (gateproto.ModelState's, the controller's rulings at Task 12's
-# re-reviews).
+# A loaded model's state in the gate's record. stopping: from the moment its unload call is sent until /running shows
+# it gone, its memory not yet freed (gateproto.ModelState's, the controller's rulings at Task 12's re-reviews and at
+# Task 13: never before the call is sent, so a model never sits stopping while it serves).
 RecordState = Literal["starting", "ready", "draining", "stopping"]
 RECORD_STATES: tuple[str, ...] = get_args(RecordState)
 
@@ -55,9 +57,13 @@ class ModelRecord:
     last_use: float
     state: RecordState
     # "unload requested": saved before the gate calls unload (the controller's ruling at Task 12's second re-review),
-    # the call's start, so its leaving /running is the gate's own unload, never a crash for the residents' rule. It
-    # goes with the record once /running shows the model gone, and the drain clears it when it undrains (Task 16).
+    # so its leaving /running is the gate's own unload, never a crash for the residents' rule. It goes with the record
+    # once /running shows the model gone, and the drain clears it when it undrains (Task 16).
     unload_requested_at: float | None = None
+    # The drain under way, saved when the drainer sends `drain` (Task 16), so a restarted gate resumes it under its id
+    # or sends the front `undrain` under it (the controller's ruling at Task 13).
+    drain_id: str | None = None
+    drain_why: DrainWhy | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,8 @@ class Pin:
 
 @dataclass
 class Session:
+    """An agent's session, which keeps its model loaded while it is live (session_live)."""
+
     id: str
     uid: int
     pid: int
@@ -76,6 +84,8 @@ class Session:
     label: str
     started_at: float
     renewed_at: float
+    boot_id: str  # the boot it was recorded on: a reboot ends it
+    start_time: int | None  # its pid's procs.start_time when it was recorded; None: never live
 
 
 @dataclass
@@ -156,6 +166,10 @@ class GateState:
     # once its started/ record has moved into ticketed or the load has failed or gone (Task 15): Task 18's bypass
     # check counts a started/ record as ticketed only when its id is here (the controller's ruling at Task 11's review).
     issued: dict[str, str] = field(default_factory=dict)
+    # Each drain the gate owes the front an `undrain` for, model to its saved drain id: restore puts here every saved
+    # drain it doesn't resume, and the core sends each and drops it (Task 18), saved meanwhile, so a gate that stops
+    # first still owes it.
+    undrains: dict[str, str] = field(default_factory=dict)
     clean_shutdown: bool = True  # a fresh state had no run to end
     saved_at: float = 0.0
     boot_id: str = ""  # the boot it was last settled on (restore)
@@ -170,6 +184,32 @@ class Emit(Protocol):
     registry's), `event_key` the event's own identity (Task 14), and `fields` what its words take (messages)."""
 
     def emit(self, type: str, event_key: str, /, **fields: Any) -> None: ...
+
+
+@dataclass(frozen=True)
+class SavedDrain:
+    """A drain a restarted gate resumes (resumable_drains): under its saved id, or, for an unload requested with no
+    drain (Task 15's abort of a start past its deadline), under a new one."""
+
+    model: str
+    drain_id: str | None
+    why: DrainWhy | None
+
+
+def resumable_drains(state: GateState) -> list[SavedDrain]:
+    """The drains the gate resumes at start, on the state restore returned: each model whose unload it requested. One
+    left `draining` is drained again, so the requests in flight finish, then unloaded; one `stopping` waits for
+    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`."""
+    return [SavedDrain(record.name, record.drain_id, record.drain_why) for record in state.models.values()
+            if record.unload_requested_at is not None]
+
+
+def session_live(session: Session, *, boot_id: str, proc: Path = procs.PROC) -> bool:
+    """Whether `session` still keeps its model: recorded this boot, and its pid still the process that started at
+    the time recorded with it (procs.still_running), so a pid the kernel handed out again keeps nothing loaded (the
+    controller's ruling at Task 13). A /proc that won't let the gate read the process raises, as procs' readers do."""
+    return (session.boot_id == boot_id and session.start_time is not None
+            and procs.still_running(session.pid, session.start_time, proc=proc))
 
 
 def notified_key(type: str, event_key: str) -> str:
@@ -283,10 +323,11 @@ def _decode(data: Any) -> GateState:
     if not (isinstance(notified, dict) and all(_finite(sent) for sent in notified.values())):
         raise ValueError("notified must map each notification to a finite time")
     state.notified = {name: float(sent) for name, sent in notified.items()}
-    issued = data.get("issued", {})
-    if not (isinstance(issued, dict) and all(isinstance(ticket, str) and ticket for ticket in issued.values())):
-        raise ValueError("issued must map each model to a ticket id")
-    state.issued = dict(issued)
+    for name in ("issued", "undrains"):
+        ids = data.get(name, {})
+        if not (isinstance(ids, dict) and all(isinstance(value, str) and value for value in ids.values())):
+            raise ValueError(f"{name} must map each model to an id")
+        setattr(state, name, dict(ids))
     refusals = data.get("refusals", [])
     if not isinstance(refusals, list):
         raise ValueError("refusals must be a list")
@@ -301,7 +342,7 @@ def _encode(state: GateState) -> dict[str, Any]:
     data |= {"room_hold": None if state.room_hold is None else asdict(state.room_hold),
              "applying": None if state.applying is None else asdict(state.applying),
              "brake_events_after": None if state.brake_events_after is None else list(state.brake_events_after),
-             "notified": dict(state.notified), "issued": dict(state.issued),
+             "notified": dict(state.notified), "issued": dict(state.issued), "undrains": dict(state.undrains),
              "refusals": [asdict(item) for item in state.refusals]}
     return data
 
@@ -412,22 +453,32 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
 
     - Each model `/running` lists keeps its record, footprint included, or gets one at the registry's footprint (with
       no fall and no RssAnon, so *owed* errs safe). Its `last_use` is `now`, so a restart can't cause an idle unload.
-    - One whose unload was requested, or that `/running` shows stopping, is `stopping`: its memory not freed until
-      `/running` shows it gone, and its leaving the gate's own unload, never a crash (the controller's rulings at Task
-      12's re-reviews). One found stopping with no request recorded gets one, at `now`.
+    - One `/running` shows stopping is `stopping`: its memory not freed until `/running` shows it gone, and its
+      leaving the gate's own unload, never a crash (the controller's rulings at Task 12's re-reviews). One found
+      stopping with no request recorded gets one, at `now`.
+    - One whose unload was requested and that `/running` still shows ready (or starting) is `draining`, left for the
+      drainer: the call may never have gone out, so the drainer drains it again, so the requests in flight finish,
+      then unloads it; it counts as `stopping` only once that call is sent, never while it serves. Its leaving is
+      still the gate's own (the controller's ruling at Task 13).
     - One `/running` shows starting is `starting`, and so is a load not yet settled (recorded starting, or its ticket
       in `issued` and not yet in `ticketed`) that finished while the gate was away: each takes Task 15's ready-or-gone
       path, so its started/ record moves into `ticketed` once it is ready.
-    - Any other is `ready`: a drain whose unload wasn't requested doesn't outlive the gate that ran it.
+    - Any other is `ready`.
     - A model `/running` doesn't list is dropped, with its ticketed engine.
-    - A room hold from another boot ends; so do apply's hold, `ticketed` and `issued`, if the state is another boot's.
-      Pins, sessions, the brake's marks, the refusals and the rest stay."""
+    - Every drain saved is resumed (resumable_drains: each model whose unload was requested and that `/running` still
+      lists) or owed an `undrain` under its id (`state.undrains`): one whose unload wasn't requested, and one whose
+      model is gone. The front holds a drained model until the gate says `unloaded` or `undrain` (Task 12's R-3), so
+      no drain is left (the controller's ruling at Task 13).
+    - A room hold from another boot ends. If the state is another boot's, so do apply's hold, the sessions, `ticketed`,
+      `issued`, the drains and the undrains owed: none of their processes outlives the boot, and the front starts
+      afresh. Pins, the brake's marks, the refusals and the rest stay."""
     state = copy.deepcopy(state)
     ended = None
     if state.room_hold is not None and state.room_hold.boot_id != boot_id:
         ended, state.room_hold = state.room_hold, None
-    if state.boot_id != boot_id:
-        state.applying, state.ticketed, state.issued = None, {}, {}
+    other_boot = state.boot_id != boot_id
+    if other_boot:
+        state.applying, state.sessions, state.ticketed, state.issued, state.undrains = None, {}, {}, {}, {}
     listed = {entry.model: entry.state for entry in running}
     models: dict[str, ModelRecord] = {}
     for name, shown in listed.items():
@@ -437,16 +488,26 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
                                     state="starting")
         ticket = state.issued.get(name)
         unsettled = ticket is not None and (name not in state.ticketed or state.ticketed[name].ticket_id != ticket)
-        if shown == "stopping" or record.unload_requested_at is not None:
+        if shown == "stopping":
             record.state = "stopping"
             if record.unload_requested_at is None:
                 record.unload_requested_at = now
+        elif record.unload_requested_at is not None:
+            record.state = "draining"  # left for the drainer, which drains it, then unloads it
         elif shown == "starting" or (old is not None and old.state == "starting") or unsettled:
             record.state = "starting"
         else:
             record.state = "ready"
+        if other_boot:
+            record.drain_id = record.drain_why = None  # the front starts afresh with the boot, holding nothing
+        if record.unload_requested_at is None and record.drain_id is not None:
+            state.undrains[name] = record.drain_id  # a drain not resumed: the front is told to serve it again
+            record.drain_id = record.drain_why = None
         record.last_use = now
         models[name] = record
+    for name, gone in state.models.items():
+        if name not in listed and gone.drain_id is not None and not other_boot:
+            state.undrains[name] = gone.drain_id
     state.models = models
     state.ticketed = {name: engine for name, engine in state.ticketed.items() if name in listed}
     state.boot_id = boot_id

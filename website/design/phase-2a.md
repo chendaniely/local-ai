@@ -2419,8 +2419,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   if it wasn't recorded, and takes Task 15's ready-or-gone path, so its `started/` record moves into
   `ticketed` once it is ready; every loaded model's `last_use` is `now`; a model `/running` doesn't
   list is dropped; a room hold from another boot ends, and is returned so the caller sends
-  `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins, sessions, marks
-  and refusals stay. `notified` (~~an event key~~ a type and an event key, and when it was sent)
+  `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins, ~~sessions,~~
+  marks and refusals stay *(corrected 2026-10-08, the controller's ruling, at Task 13: the state
+  file survives a reboot, the sessions don't; a reboot ends every session, since none of their
+  processes outlives the boot)*. `notified` (~~an event key~~ a type and an event key, and when it was sent)
   drops keys older than `NOTIFIED_KEEP_S` (86,400, this plan's value) on every save, so it never
   grows for the life of the box. *(Corrected 2026-10-07, after Task 7's fix round, the controller's
   ruling: keyed by type and event key together; Task 14 has why.)* *(Added 2026-10-08, at Task
@@ -2459,9 +2461,11 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
 - *(Added 2026-10-08, at Task 13, what its code gives beyond the lines above, for the tasks that
   use it:)*
   - `ModelRecord` gains `unload_requested_at: float | None = None`, the "unload requested" record
-    (the unload call's start, saved before the call), and its `state` takes `stopping` too, as
-    `gateproto.ModelState` does. `restore` counts a model `stopping` while that record stands or
-    `/running` shows it stopping (one found stopping with no record gets one, at `now`), a load not
+    (saved before the unload call), and its `state` takes `stopping` too, as
+    `gateproto.ModelState` does. `restore` counts a model `stopping` ~~while that record stands or~~
+    when `/running` shows it stopping (one found stopping with no record gets one, at `now`)
+    *(corrected the same day, the controller's ruling, below: one still ready with its unload
+    requested is left `draining`, for the drainer)*, a load not
     yet settled (its ticket in `issued` and not in `ticketed`, or recorded `starting`) as
     `starting`, and a `draining` model whose unload wasn't requested as `ready`. A model `/running`
     lists with no record gets one at the registry's footprint, or the registry's largest for a model
@@ -2484,6 +2488,33 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
     byte for byte.
   - `messages`' `brake_fired` with `unloaded=[]` words a brake with nothing loaded (the deferred
     notes).
+- *(Added 2026-10-08, the controller's rulings, at Task 13, before its review:)*
+  - **Sessions and a reboot.** `Session` gains `boot_id: str` and `start_time: int | None`, its
+    pid's `procs.start_time` when it was recorded. A session is live only while it was recorded
+    this boot and its pid's start time still matches the one recorded with it, as `Ticketed`'s
+    does: `session_live(session, *, boot_id, proc) -> bool`, through the new
+    `procs.still_running(pid, started)`. So a pid reused within a boot keeps no model loaded.
+    `restore` ends every session from another boot (Task 16 has the rest).
+  - **A model the registry doesn't know** counts at the registry's largest footprint, which errs
+    safe, and `spark status` names it (Tasks 18 and 29).
+  - **A model restored ready with its unload requested** is left for the drainer, `draining`, not
+    `stopping`. At start the gate re-runs that unload through the drainer, drain first, so the
+    requests in flight finish, and then Task 16's rule for a sent unload applies. A model counts
+    as `stopping` only once its unload call is actually sent (Tasks 16 and 18).
+  - **Drains across a restart.** `ModelRecord` gains `drain_id: str | None` and `drain_why`,
+    saved with `unload_requested_at`. On restart the gate resumes, under its saved id, each drain
+    `resumable_drains(state) -> list[SavedDrain(model, drain_id, why)]` names: each model whose
+    unload it requested and that `/running` still lists, `draining` or `stopping`. The front holds
+    a drained model until the gate says so (Task 12's R-3), so the gate sends `undrain` under the
+    saved id for every drain it doesn't resume. `restore` puts those in `GateState.undrains: dict[str,
+    str]` (model to drain id), saved until sent: a drain whose unload wasn't requested (the model
+    `ready` again) and one whose model is gone. A reboot owes none, since the front starts afresh
+    with it. Tasks 16, 18 and 22 have the rest. Tests:
+    `test_a_saved_drain_is_resumed_or_undrained_never_left`,
+    `test_a_model_still_ready_with_its_unload_requested_is_left_for_the_drainer`,
+    `test_a_reboot_owes_the_front_no_undrain`,
+    `test_a_session_is_live_only_in_its_boot_while_its_pid_is_the_process_recorded` and
+    `test_pins_marks_and_refusals_stay_across_a_reboot_and_sessions_end`.
 
 **Tests** (`spark/tests/test_gate_state.py`):
 
@@ -3043,6 +3074,17 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   at most `SESSIONS_PER_UID` per uid; `renew(id, uid)`; `end(id, uid, *, admin: bool)` — the
   owner or `spark-admin`; `prune(now)` — a session whose process exited, or not renewed for
   `SESSION_TTL_S`, ends. `may_hold(uid)` is false for `spark` and `spark-front`.
+- *(Added 2026-10-08, the controller's rulings, at Task 13:)*
+  - `register` records the session's `boot_id` and its pid's `procs.start_time` (Task 13's
+    `Session` fields). A session is live only while `gate.state.session_live` says so: recorded
+    this boot, and its pid still the process that started then (`procs.still_running`). `prune`
+    and `idle_due`'s `live` use it, so a pid reused within a boot keeps no model loaded.
+  - The drainer saves the drain's id and `why` on the model's record (`drain_id`, `drain_why`)
+    when it sends `drain`, and `unload_requested_at` before the unload call. The record turns
+    `stopping` only once that call is sent, and an `undrain` clears all three.
+    `resume(model, drain_id, why)`, which Task 18 calls at start, sends `drain` again under the
+    saved id (a new one when None) and goes on as any drain does; for a model already `stopping`,
+    it waits for `/running` to show it gone.
 
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
@@ -3335,6 +3377,23 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   and reported under `health`, and the check counts no record as ticketed meanwhile.
 - `quiet() -> dict` — `/v1/quiet`'s answer, each request's `key_label` from the front's snapshot's
   `requests` (Task 10).
+- *(Added 2026-10-08, the controller's rulings, at Task 13:)* at start, after `restore`:
+  - The core resumes each drain `gate.state.resumable_drains(state)` names, through Task 16's
+    drainer under its saved id: one left `draining` (its unload requested, the model still
+    listed) is drained again, so its requests in flight finish, then unloaded, and counts as
+    `stopping` only once that call is sent; one `stopping` waits for `/running` to show it gone.
+  - It sends the front `undrain`, under the saved id, for each entry in `state.undrains`, and drops
+    each once sent, saving the state, so a gate that stops first still owes it. It sends them once
+    the front's events call is open.
+  - A model `restore` counted at the registry's largest footprint, being one the registry doesn't
+    know, goes into `StatusView.problems`: *llama-swap runs <name>, which the registry doesn't
+    know; it is counted at <n> GiB, the largest footprint the registry has.* (Task 29 prints it.)
+  - Its tests: `test_a_restart_resumes_or_undrains_every_saved_drain` — a saved drain per case of
+    Task 13's `test_a_saved_drain_is_resumed_or_undrained_never_left` → each resumed under its id or
+    undrained under it, never left; and
+    `test_a_model_restored_with_its_unload_requested_is_drained_then_unloaded` — `/running` shows it
+    ready → `drain` under its saved id, the requests in flight finish, then the unload call, and
+    its state is `draining`, never `stopping`, until that call is sent.
 
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):
@@ -3904,6 +3963,14 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   - **Once it has reported `drained`**, the front keeps holding the model until the gate, back
     again, says `unloaded` or `undrain`. It never undrains on its own after it has reported
     `drained`. Requests for that model wait their key's wait, then get `gate_down`.
+  - *(Added 2026-10-08, the controller's ruling, at Task 13:)* the gate saves each drain's id
+    (Task 13's `ModelRecord.drain_id`), so a restarted gate settles every drain the front holds.
+    It resumes the drains whose unload it had requested, sending `drain` again under the saved id,
+    and sends `undrain` under the saved id for every other (Task 18). So the front takes a `drain`
+    whose id it already holds as the same drain, posting `drained` again once its count is 0, and
+    ignores an `undrain` or a `drain` id it doesn't hold, as after its own restart, when it holds
+    nothing. Its test: a drained model held across the gate's restart is released by the
+    `undrain` under its saved id, and a resumed `drain` under that id is answered `drained`.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
   apply holds again: every new request is held, as for a draining model; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through
@@ -4669,6 +4736,10 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 - `--json` — the `StatusView` as the gate gave it; with the gate not answering, `{schema: 1, host,
   at, memory: {total_gib, available_gib, brake_gib}, gate: "not answering"}`, so 2b's menu bar has
   a shape for that too.
+- *(Added 2026-10-08, the controller's ruling, at Task 13:)* a model llama-swap runs that the
+  registry doesn't know is counted at the registry's largest footprint (Task 13's `restore`), which
+  errs safe, and `spark status` names it: the gate puts it in `StatusView.problems` (Task 18), with
+  the footprint it is counted at, and its `problem` line shows it.
 
 **Tests** (`spark/tests/test_status.py`; a gate stand-in on a short Unix socket):
 

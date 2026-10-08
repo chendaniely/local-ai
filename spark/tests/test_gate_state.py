@@ -14,7 +14,8 @@ import pytest
 from spark import hold
 from spark.gate import state as gate_state
 from spark.gate.state import (STATE_FILE, ApplyHold, BrakeMark, GateState, ModelRecord, Pin, RefusalRecord, RoomHold,
-                              Session, Ticketed, load_state, notified_key, restore, save_state)
+                              SavedDrain, Session, Ticketed, load_state, notified_key, restore, resumable_drains,
+                              save_state, session_live)
 from spark.gateproto import AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, REFUSAL_HISTORY
 from spark.hold import Hold, read_hold, release_waits_for_dan, write_hold
 from spark.llamaswap import Running
@@ -48,10 +49,12 @@ def refusal(n: int) -> RefusalRecord:
 def full_state() -> GateState:
     """Every part of the state that survives a restart, filled."""
     state = GateState(boot_id=BOOT)
-    state.models = {GEMMA: record(GEMMA), CODER: record(CODER, footprint=33.0, unload_requested_at=T - 5)}
+    state.models = {GEMMA: record(GEMMA), CODER: record(CODER, footprint=33.0, state="draining",
+                                                        unload_requested_at=T - 5, drain_id="d-coder",
+                                                        drain_why="make-room")}
     state.pins = {CODER: Pin(model=CODER, until=T, by_uid=DAN)}
     state.sessions = {"s1": Session(id="s1", uid=AGENT, pid=4242, model=CODER, label="agent's pi", started_at=T - 600,
-                                    renewed_at=T - 60)}
+                                    renewed_at=T - 60, boot_id=BOOT, start_time=777_000)}
     state.room_hold = RoomHold(size_gib=40.0, until=None, boot_id=BOOT, created_at=T - 300, unloaded=[CODER])
     state.brake_marks = {CODER: BrakeMark(model=CODER, at=T - 3 * 3600, seen_gib=26.0)}
     state.last_auto_release_at = T - 1800
@@ -63,6 +66,7 @@ def full_state() -> GateState:
                                restarting=["local-ai-gate.service", "local-ai-llama-swap.service"], ended=False)
     state.ticketed = {GEMMA: Ticketed(model=GEMMA, pid=4300, ticket_id="t-gemma", at=T - 7000, start_time=123456)}
     state.issued = {CODER: "t-coder"}
+    state.undrains = {GEMMA: "d-gemma"}
     state.clean_shutdown = False
     return state
 
@@ -152,14 +156,60 @@ def test_a_model_found_stopping_stays_stopping_and_its_leaving_is_the_gates_own(
     assert (gemma.state, gemma.footprint_gib, gemma.unload_requested_at) == ("stopping", 32, T)
 
 
-def test_a_model_still_ready_with_its_unload_requested_counts_as_stopping():
-    # The gate saved "unload requested" before it called unload, and restarted while v257 had the unload queued: the
-    # model still ready, its leaving the gate's own (the controller's ruling at Task 12's second re-review).
-    state = GateState(boot_id=BOOT, models={CODER: record(CODER, state="draining", unload_requested_at=T - 3)})
+def test_a_model_still_ready_with_its_unload_requested_is_left_for_the_drainer():
+    # The gate saved "unload requested" before it called unload, and restarted with the model still ready: the call
+    # may never have gone out. Restore leaves it for the drainer, drain first, so the requests in flight finish, then
+    # the unload again; it counts as stopping only once that call is sent, so it never sits stopping while it serves
+    # (the controller's ruling at Task 13). Its leaving is still the gate's own.
+    state = GateState(boot_id=BOOT, models={CODER: record(CODER, state="draining", unload_requested_at=T - 3,
+                                                           drain_id="d1", drain_why="unload")})
     restored, _ = restore(state, [Running(CODER, "ready")], now=T, boot_id=BOOT, registry=REGISTRY)
-    assert restored.models[CODER].state == "stopping" and restored.models[CODER].unload_requested_at == T - 3
-    restored, _ = restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)  # gone: the record goes with it
-    assert restored.models == {}
+    coder = restored.models[CODER]
+    assert (coder.state, coder.unload_requested_at, coder.drain_id) == ("draining", T - 3, "d1")
+    assert resumable_drains(restored) == [SavedDrain(CODER, "d1", "unload")] and restored.undrains == {}
+    # An unload requested with no drain (Task 15's abort of a start past its deadline): the drainer drains it anew.
+    state.models[CODER] = record(CODER, state="starting", unload_requested_at=T - 3)
+    restored, _ = restore(state, [Running(CODER, "ready")], now=T, boot_id=BOOT, registry=REGISTRY)
+    assert restored.models[CODER].state == "draining"
+    assert resumable_drains(restored) == [SavedDrain(CODER, None, None)]
+
+
+@pytest.mark.parametrize("shown, requested, resumed", [
+    ("ready", None, False),  # drained, its unload not yet requested: the front is told to serve it again
+    ("ready", T - 3, True),  # its unload requested: drained again, then unloaded
+    ("stopping", T - 3, True),  # its unload under way: the drain ends once /running shows it gone
+    ("stopping", None, True),
+    (None, None, False),  # gone from /running: the front holds it no longer
+    (None, T - 3, False),
+])
+def test_a_saved_drain_is_resumed_or_undrained_never_left(shown, requested, resumed):
+    # The front holds a drained model until the gate says unloaded or undrain (Task 12's R-3), so every drain the gate
+    # saved is either resumed under its saved id or undrained under it (the controller's ruling at Task 13).
+    state = GateState(boot_id=BOOT, models={CODER: record(CODER, state="draining", unload_requested_at=requested,
+                                                           drain_id="d1", drain_why="idle")},
+                      undrains={GEMMA: "d0"})
+    running = [] if shown is None else [Running(CODER, shown)]
+    restored, _ = restore(state, running, now=T, boot_id=BOOT, registry=REGISTRY)
+    resuming = [drain.drain_id for drain in resumable_drains(restored)]
+    if resumed:
+        assert resuming == ["d1"] and restored.undrains == {GEMMA: "d0"}
+    else:
+        assert resuming == [] and restored.undrains == {GEMMA: "d0", CODER: "d1"}
+    if shown == "ready" and requested is None:
+        assert restored.models[CODER].state == "ready"
+        assert (restored.models[CODER].drain_id, restored.models[CODER].drain_why) == (None, None)
+    if shown is not None and resumed:
+        assert restored.models[CODER].state == ("stopping" if shown == "stopping" else "draining")
+
+
+def test_a_reboot_owes_the_front_no_undrain():
+    # A reboot starts the front afresh, holding nothing: neither a saved drain nor an undrain still owed carries over.
+    state = GateState(boot_id=BOOT, models={CODER: record(CODER, state="draining", drain_id="d1", drain_why="idle")},
+                      undrains={GEMMA: "d0"})
+    restored, _ = restore(state, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)
+    assert restored.undrains == {} and resumable_drains(restored) == []
+    restored, _ = restore(state, [Running(CODER, "ready")], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)
+    assert restored.undrains == {} and restored.models[CODER].drain_id is None
 
 
 def test_a_room_hold_ends_at_the_next_boot():
@@ -171,18 +221,52 @@ def test_a_room_hold_ends_at_the_next_boot():
     assert restored.room_hold == held and ended is None
 
 
-def test_pins_sessions_marks_and_refusals_stay_across_a_reboot():
+def test_pins_marks_and_refusals_stay_across_a_reboot_and_sessions_end():
+    # The state file survives a reboot; the sessions don't, since none of their processes outlive the boot (the
+    # controller's ruling at Task 13).
     state = full_state()
     restored, _ = restore(state, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)
-    assert (restored.pins, restored.sessions, restored.brake_marks) == (state.pins, state.sessions, state.brake_marks)
+    assert (restored.pins, restored.brake_marks) == (state.pins, state.brake_marks)
     assert list(restored.refusals) == list(state.refusals) and restored.boot_id == NEXT_BOOT
     assert restored.last_auto_release_at == state.last_auto_release_at
+    assert restored.sessions == {}
+    assert restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].sessions == state.sessions  # a restart
+
+
+def a_process(proc: Path, pid: int, start: int, state: str = "S (sleeping)") -> None:
+    """A stand-in /proc/<pid>, its status and stat as the kernel writes them, as far as liveness reads them."""
+    folder = proc / str(pid)
+    folder.mkdir(parents=True)
+    (folder / "status").write_text(f"Name:\tpi\nState:\t{state}\nPid:\t{pid}\nUid:\t{AGENT}\t{AGENT}\t{AGENT}\t{AGENT}\n")
+    rest = [state[0], "1", str(pid), str(pid), "0", "-1", "4194560"] + ["0"] * 12 + [str(start)] + ["0"] * 30
+    (folder / "stat").write_text(f"{pid} (pi) " + " ".join(rest) + "\n")
+
+
+def test_a_session_is_live_only_in_its_boot_while_its_pid_is_the_process_recorded(tmp_path):
+    # The controller's ruling at Task 13: recorded this boot, and its pid's start time still the one recorded with it,
+    # as Ticketed's is, so a pid the kernel handed out again keeps no model loaded.
+    proc = tmp_path / "proc"
+    session = Session(id="s1", uid=AGENT, pid=4242, model=CODER, label="agent's pi", started_at=T - 600,
+                      renewed_at=T - 60, boot_id=BOOT, start_time=777_000)
+    assert not session_live(session, boot_id=BOOT, proc=proc)  # its process gone
+    a_process(proc, 4242, 777_000)
+    assert session_live(session, boot_id=BOOT, proc=proc)
+    assert not session_live(replace(session, boot_id="b0"), boot_id=BOOT, proc=proc)  # recorded on another boot
+    assert not session_live(replace(session, start_time=None), boot_id=BOOT, proc=proc)  # no start time to match
+    (proc / "4242" / "stat").unlink()
+    (proc / "4242" / "status").unlink()
+    (proc / "4242").rmdir()
+    a_process(proc, 4242, 999_000)  # the pid reused within the boot, by another process of agent's
+    assert not session_live(session, boot_id=BOOT, proc=proc)
+    a_process(proc, 4243, 777_000, state="Z (zombie)")  # exited, not yet reaped
+    assert not session_live(replace(session, pid=4243), boot_id=BOOT, proc=proc)
 
 
 @pytest.mark.parametrize("damage", ["{", "[]", '{"models": 5}', '{"saved_at": NaN}', '{"saved_at": 1e999}',
                                     '{"last_auto_release_at": true}', '{"brake_events_after": ["b1"]}',
                                     '{"pins": {"coder": {"model": "gemma", "until": null, "by_uid": 1000}}}',
-                                    '{"models": {"coder": {"name": "coder"}}}', "[" * 100_000, "\udcff"])
+                                    '{"models": {"coder": {"name": "coder"}}}', '{"undrains": {"coder": ""}}',
+                                    "[" * 100_000, "\udcff"])
 def test_a_damaged_state_file_starts_fresh_and_says_so(tmp_path, damage):
     (tmp_path / STATE_FILE).write_text(damage, errors="surrogateescape")
     fresh, problem = load_state(tmp_path)
