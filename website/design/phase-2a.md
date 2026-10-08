@@ -1219,7 +1219,9 @@ currently experiencing high demand
     rulings*). ~~The plan's own *On the Spark, `spark make-room --done` ends the hold.*, in
     `agent`'s `no_fit`, is the one exception~~: there is none, since `agent`'s `no_fit` now ends
     *The hold ends when Dan runs `spark make-room --done` on the Spark.* (*corrected 2026-10-07, at
-    Task 6's fix round 2, the controller's ruling*);
+    Task 6's fix round 2, the controller's ruling*) (*and, corrected at Task 7's review the same day,
+    the controller's ruling: only when ending the hold would let the load fit; otherwise "Only Dan
+    can free memory for it, on the Spark; try again after that."*);
   - no refusal makes pi retry it. ~~A size pi's list would match (429 GiB and up, past this box's
     memory) moves a GiB or two against the load: a need up, a room down.~~ A size over 400 GiB
     reads *more than 400 GiB*, and a `no_fit` that needs that much ends *The Spark can never free
@@ -1241,7 +1243,7 @@ the test's own time zone):
 |---|---|
 | `no_fit` (Dan) | needed 41, free for a load 18 (the gate's `free_gib`, *added 2026-10-07, at Task 6*), available 48, reserve 24, owed 6, hold not counted, holders `python3 (chendaniely)` 32 and Gemma 27, key *pi on the Mac*, command `coder` |
 | `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. The hold ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling: it ended "On the Spark, `spark make-room --done` ends the hold."*) |
-| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. The hold ends when Dan runs `spark make-room --done` on the Spark.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling, as above.*) |
+| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. ~~The hold ends when Dan runs `spark make-room --done` on the Spark.~~ Only Dan can free memory for it, on the Spark; try again after that.* (*Corrected 2026-10-07, at Task 6's fix round 2, the controller's ruling, as above.*) (*Corrected again at Task 7's review, the same day, the controller's ruling: ending the hold would leave 36 − 24 = 12 GiB, short of 41, so its end isn't the step.*) |
 | `loading` | loading Gemma, wait 30 s |
 | `held_by_brake` | brake at 03:12, 19.6 available, release automatic |
 | `held_by_brake` (waits for Dan) | the same, waiting for Dan: *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you release them: on the Spark, `make brake-release`.* |
@@ -1387,7 +1389,15 @@ git commit -m "feat(spark): 🤖 every refusal in Dan's words, with its status a
   naming where each goes, so no refusal is sent twice. A burst goes as one on the refusal's own
   type, `refused`, `footprint_suspect` or `load_failed`, so it keeps that type's priority and its
   `off`: each of the three takes the burst's fields, `model_label`, `key_label`, `count`, `since`
-  and `code`, in place of its own when `count` is given.)*
+  and `code`, in place of its own when `count` is given; `load_failed`'s burst takes no
+  `key_label`, below. A burst's model passes the single form's gate: on one line, and a client's
+  name for `model_not_found` only when it reads as a model's, never a web address; without one it
+  reads *Refused a request from agent 4 more times since 09:12: same reason.*)* *(Corrected
+  2026-10-07, at Task 7's review, the controller's ruling: `refusal_notification(code, *,
+  request_id, ticket_id=None) -> (type, event key) | None` — None for `gate_down`; `refusal:<request
+  id>` for every refusal but `load_failed`, which is keyed by its load, `load-failed:<ticket id>`,
+  so the requests that joined one failed start send one `load_failed`. Its words name no asker, and
+  its burst is per model: *The coder failed to load 4 more times since 09:12.*)*
 - `NOTIFICATION_DOC: dict[str, tuple[str, str]]` — each type's *When* and *Example*, from plan.md's
   table.
 - Confirmations, each the plan's *Each command says what it did, and how to undo it* row, word for
@@ -1430,13 +1440,13 @@ true sentence in every case the gate sends it, can be built.)*
 
 | Type | Fields |
 |---|---|
-| `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*). Added: `release_after_s` (default 300, gateproto's `RELEASE_AFTER_S`, which `messages` can't import); the 28 GiB is the registry's `brake.warn_gib`; a follow-up needs neither reading nor line; each `state` is `starting` (*loading*), `idle` or `answering`, or None when the gate's record was missing; and `release_waits_for_dan: bool` (a brake within the hour after an automatic release, rule 5), whose last sentence is then *New loads stay paused until you release them: on the Spark, `make brake-release`.*, `held_by_brake`'s words for Dan, in place of *They resume …*, `by_brake` or not |
+| `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*). Added: `release_after_s` (gateproto's `RELEASE_AFTER_S`, which `messages` can't import, so the caller passes it: required, with no default to go stale); the 28 GiB is the registry's `brake.warn_gib`; a follow-up needs neither reading nor line; each `state` is `starting` (*loading*), `idle` or `answering`, or None when the gate's record was missing; and `release_waits_for_dan: bool`, required (a brake within the hour after an automatic release, rule 5), with `released_at`, the automatic release's time, whose last sentence is then *It fired within an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, `make brake-release`.*, ending in `held_by_brake`'s words for Dan, in place of *They resume …*, `by_brake` or not, and needing no `release_after_s` |
 | `brake_needs_release` | `fired_at`~~, `why: "reboot" \| "again"`, `released_at` (for `again`: *The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until you release them: on the Spark, `make brake-release`.*)~~ — sent only for a hold found after a reboot (corrected 2026-10-07, at Task 7, the controller's ruling: rule 5's alert for a brake within the hour is that brake's own `brake_fired`, with `release_waits_for_dan`, so one event sends one notification) |
 | `gate_down`, `front_down`, `llama_swap_down`, `brake_down` | `at`, `result_words` — added: the notifier's result in words (Task 26's, *it crashed* …), to which the words add *; it is restarting* (*within 2 s* for the brake); None, as for llama-swap that stopped answering with its unit up, gives no parenthesis |
 | `back_up` | `unit`, `down_s`; its second sentence per unit: the gate *New loads work again.*, the front *Requests go through again.*, llama-swap *Models answer again.*, the brake *Memory is watched again.* Added: `unit` is `gate`, `front`, `llama-swap` or `brake` |
 | `refused` | ~~`model_label`, `key_label`, `needed_gib`, `free_gib`, `holders`, `next_step`~~ `code` and `moment`, the `Moment` the refusal was built from, worded for Dan's phone: *Refused <model> for <key>: <why>. <Dan's step, where there is one>.* (`no_fit`'s is the plan's example; `holders` there are those outside the stack); the burst: `model_label`, `key_label`, `count`, `since`, `code` (added 2026-10-07, at Task 7, the controller's ruling: the old fields gave no reason for any code but `no_fit`, and a `next_step` passed in would have put Dan's words in the gate) |
 | `footprint_suspect` | `model_label`, `fired_at`, `command`; added: `key_label` (*for agent*) |
-| `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s`; added: `command` (*`spark logs coder`*) |
+| `load_failed` | `model_label`, `engine_said: str \| None`, `deadline_s`; added: `command` (*`spark logs coder`*); sent once per failed load, never with a key (corrected 2026-10-07, at Task 7's review, the controller's ruling: `refusal_notification` keys it by the load's ticket); its burst: `model_label`, `count`, `since`, `code` |
 | `brake_released` | `at`, `available_gib`, `reloaded: list[label]`, `loading_label: str \| None` |
 | `room_hold_ended` | `why: "--done" \| "time" \| "reboot" \| "used"`, `unused_gib`, `total_gib`, `reloading: list[label]`, `next_label` |
 | `resident_waiting` | `label`, `needed_gib`, `free_gib`; added: `after: "hold" \| "brake" \| "apply" \| "boot" \| "restart" \| "crash"`, since *after the hold ended* is false in the other cases Tasks 15 and 17 send it |
@@ -1444,7 +1454,7 @@ true sentence in every case the gate sends it, can be built.)*
 | `load_started` | `label`, `key_label`, `last_s: float \| None` (`key_label` None for a resident's reload or one of Dan's commands) |
 | `loaded` | `label`, `seconds` |
 | `unloaded` | `label`, `why: "idle" \| "make-room" \| "unload"`, `idle_min` |
-| `waiting` | `label`, `key_label`, `why: "memory" \| "brake" \| "slot" \| "dan"`, `wait_s`, `needed_gib`, `free_gib` (for `memory`); added: `command`, for `dan` (*`spark load coder`*) |
+| `waiting` | `label`, `key_label`, `why: "memory" \| "brake" \| "slot" \| "dan"`, `wait_s`, `needed_gib`, `free_gib` (for `memory`); added: `command`, for `dan` (*`spark load coder`*); `loading_label`, for `slot` (*Gemma is loading, and one model loads at a time.*); `release_waits_for_dan` and, unless it waits for Dan, `release_after_s`, for `brake`, which then says the pause ends by itself, in `held_by_brake`'s words |
 | `pin_ended` | `label`, `at`, `idle_min` (None for an always-loaded model) |
 | `memory_warning` | `available_gib`, `warn_gib`, `brake_gib` |
 
@@ -1464,9 +1474,14 @@ true sentence in every case the gate sends it, can be built.)*
 - `test_each_confirmation_reads_word_for_word` — parametrized over the plan's command table: each
   confirmation function's text equals its row's *What it says*.
 - `test_no_message_says_free_alone` — over every refusal, notification and confirmation the
-  tests build, "free" never appears but in "free for a load".
+  tests build, "free" never appears but in "free for a load" ~~.~~ *(corrected 2026-10-07, at Task
+  7's review: and in the verb phrases the plan's and Task 6's own words use, "Free space with
+  `spark make-room`", "Only Dan can free memory for it", "The Spark can never free that much" and
+  "Free <n> and hold it?", the controller's ruling; "frees" and "freed" count as "free".)*
 - `test_models_are_named_by_label` — no refusal or notification built in these tests holds a
-  model's registry name, but `model_not_found`'s list.
+  model's registry name, but `model_not_found`'s list ~~.~~ *(corrected 2026-10-07, at Task 7's
+  review: and its notification, which may name the name asked for; the confirmations aren't
+  checked, since make-room's list brackets the chat models' names.)*
 - In `test_scenarios.py`: `test_the_notifications_page_is_generated_from_the_registry` —
   `render_notifications_page(the stack registry)` has twenty rows, each type's priority the
   registry's, and the `make install-units` line for the four `*_down` types;
@@ -2160,10 +2175,19 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   a different code goes at once. *(Added 2026-10-07, at Task 7, the controller's ruling: the burst
   goes on the refusal's own type, with `model_label`, `key_label`, `count`, `since` and `code`, so
   it keeps that type's priority and its `off`; a refusal that never got as far as a load
-  (`FRONT_CODES`) reads *Refused … 4 more times …*.)*
+  (`FRONT_CODES`) reads *Refused … 4 more times …*.)* *(Corrected 2026-10-07, at Task 7's review,
+  the controller's ruling: a front refusal's burst passes as `model_label` the model it named, the
+  registry's label for a model the gate knows, else, for `model_not_found`, the name the client
+  asked for, which the words show only when it reads as a model's name, and nothing for
+  `route_not_served`. `load_failed` bursts per model, not per key.)*
 - The event keys, each built from the event's own identity, so one model loading twice sends two
   `loaded` and a restart never repeats one: `load_started` and `loaded`, `load:<ticket id>`;
-  `waiting`, `wait:<request id>`; a refusal's three types, `refusal:<request id>`; `unloaded`,
+  `waiting`, `wait:<request id>`; a refusal's three types, `refusal:<request id>` *(corrected
+  2026-10-07, at Task 7's review, the controller's ruling: but `load_failed`, `load-failed:<ticket
+  id>`, once per failed load, both from `messages.refusal_notification`; a prefix of its own, since
+  `notified` is keyed by the event key alone and `load_started` has sent `load:<ticket id>` for that
+  load; `loaded` shares `load:<ticket id>` with `load_started` the same way, which this task
+  settles, with a prefix per type or `notified` keyed by type and key)*; `unloaded`,
   `drain:<drain id>`; `brake_fired`, `brake:<boot id>:<episode>:<seq>`; `brake_needs_release`,
   `brake-needs:<boot id>:<episode>`; `brake_released`, `release:<boot id>:<episode>`;
   `room_hold_ended`, `room:<created_at>`; `resident_waiting`, `resident:<model>:<wait's start>`;
@@ -2184,9 +2208,9 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   and `back_up`'s `unit` is `gate`, `front`, `llama-swap` or `brake`.)* *(Added 2026-10-07, at
   Task 7, the controller's ruling on rule 5: an episode's `brake_fired` carries
   `release_waits_for_dan`, Task 13's `hold.release_waits_for_dan` for its hold with
-  `state.last_auto_release_at`, so a brake within the hour after an automatic release says in that
-  one alert that new loads stay paused until Dan releases them; no `brake_needs_release` follows
-  it.)*
+  `state.last_auto_release_at`, and that time as `released_at`, so a brake within the hour after
+  an automatic release says in that one alert why new loads stay paused until Dan releases them; no
+  `brake_needs_release` follows it.)*
 - `MemoryWarning` — `check(available_gib, warn_gib) -> bool`: true once per fall under the warn
   line, re-armed only above it.
 - `gate/units.py`: `unit_state(unit: str, run=subprocess.run) -> UnitState(active: bool,
@@ -2318,6 +2342,10 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     refusal's own `Moment` for `refused`; `load_failed`'s with `command` (`Moment.model_command`:
     its first role, else its name); `footprint_suspect`'s with `key_label`; `waiting` for Dan with
     `command`; and `load_started` with no `key_label` for a reload or one of Dan's commands.)*
+    *(Corrected 2026-10-07, at Task 7's review, the controller's ruling: a failed load sends one
+    `load_failed`, keyed by its ticket (`messages.refusal_notification`), however many requests
+    joined it; each of them still gets the `load_failed` refusal. `waiting` for the slot names the
+    model loading; for the brake, whether the pause waits for Dan and, if not, `RELEASE_AFTER_S`.)*
   - *owed* — `budget.owed_gib`, each model's `held_now` its load's fall, plus its engine's
     `RssAnon` growth since the load only when `registry.gate.owed_reads_rss` is on for that
     engine's kind. *held* — the room hold, not counted for a request whose privileges have
@@ -2582,8 +2610,9 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
 - `brake_release_due(now, above_since: float | None, hold: Hold, state, *, reloads_fit: bool,
   boot_id: str) -> "release" | "wait" | "needs_dan"` — `needs_dan` when Task 13's
   `hold.release_waits_for_dan` says so: a hold from another boot, or within the hour after an
-  automatic release (`brake_needs_release`, high, once); else `release` only when memory has been
-  above the warn line for `RELEASE_AFTER_S` and the reloads fit; else `wait`. A
+  automatic release ~~(`brake_needs_release`, high, once)~~ (`brake_needs_release`, high, once,
+  only for a hold from another boot: *corrected 2026-10-07, at Task 7's review*, as the note below
+  says); else `release` only when memory has been above the warn line for `RELEASE_AFTER_S` and the reloads fit; else `wait`. A
   release removes the hold, sends `brake_released` naming what reloads, and reloads the residents
   the brake unloaded, never the model that was loading when it fired. *(Added 2026-10-07, at Task 7,
   the controller's ruling: `brake_needs_release` is sent only for a hold from another boot; a brake
@@ -3229,8 +3258,9 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   `unloaded` names each model in its state, `starting`, `idle` or `answering`, or None without the
   gate's record.)* *(Added 2026-10-07, at Task 7, the controller's ruling on rule 5: and
   `release_waits_for_dan`, Task 13's `hold.release_waits_for_dan` for the hold it wrote, with the
-  last automatic release read from the gate's saved state, so its own alert for a brake within the
-  hour says new loads stay paused until Dan releases them.)*
+  last automatic release read from the gate's saved state, passed as `released_at`, so its own
+  alert for a brake within the hour says why new loads stay paused until Dan releases them; and
+  `release_after_s`, required, `RELEASE_AFTER_S`.)*
 - `spark brake --key-credential llamaswap-key` (the unit's): the key from
   `read_credential(name)`; the start check records `credential llamaswap-key` as its source, never
   the value. `--key-env` stays, for drills.
@@ -5179,8 +5209,9 @@ sudo -k
   - memory back above the warn line for 5 minutes: the gate releases, `brake_released`, and the
     residents reload one at a time;
   - a second brake within the hour (the drill's brake again, its copy written afresh): no automatic
-    release, ~~`brake_needs_release`~~ its `brake_fired` ending *New loads stay paused until you
-    release them: on the Spark, `make brake-release`.*, and nothing more on the phone *(corrected
+    release, ~~`brake_needs_release`~~ its `brake_fired` ending *It fired within an hour of the
+    automatic release at <the release's time>, so they stay paused until you release them: on the
+    Spark, `make brake-release`.*, and nothing more on the phone *(corrected
     2026-10-07, at Task 7, the controller's ruling)*, and `agent`'s requests meanwhile read
     `held_by_brake`'s words;
   - a hold left across a reboot (**[Dan]** reboots while it stands): it waits for Dan, with
@@ -5495,6 +5526,11 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   file. Whichever task first loads `keys.yaml` at run time, the front's (Task 20) or the gate's,
   refuses at startup a label that `messages.pi_retry_match` matches, with a plain error naming the
   key, as `render.check_words` does for the registry.
+- **A brake with nothing loaded needs words** (added 2026-10-07, at Task 7's review, the
+  controller's ruling), for Tasks 13 and 23. `brake_fired` refuses `unloaded=[]`, so a brake that
+  pauses new loads with no model to unload (memory taken by something outside the stack) has no
+  alert today. Whichever of the two first meets that case words it in `messages.py`, with its test:
+  the reading, the line, *nothing of the stack's was loaded*, and the pause.
 - **CI checks the notifications page** (added 2026-10-07, at Task 7, the controller's ruling). Task
   7's `website/reference/notifications.md` is generated from the registry; `make docs` writes it,
   and `test_the_committed_notifications_page_is_current` fails while it is stale. Task 52, on the

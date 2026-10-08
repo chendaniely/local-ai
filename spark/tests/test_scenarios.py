@@ -71,6 +71,10 @@ def test_the_notifications_page_is_generated_from_the_registry():
     page = docs.render_notifications_page(registry)
     assert page.startswith('---\ntitle: "Notifications"\n')
     assert "generated from `stack/models.yaml` by `spark docs notifications --write`" in page
+    # Where each part comes from, and where the commands run (the review's minor 9).
+    prose = " ".join(page.split("| Type |")[0].split())
+    assert "the words from `spark/src/spark/messages.py`" in prose
+    assert "then `make apply` on the Spark" in prose
     assert "| Type | Priority | When | Example |" in page
     rows = _rows(page)
     assert len(rows) == 20
@@ -84,7 +88,7 @@ def test_the_notifications_page_is_generated_from_the_registry():
     after = page.split("| `memory_warning`")[1]
     line = " ".join(after.split())
     assert all(f"`{kind}`" in line for kind in DOWN_TYPES)
-    assert re.search(r"needs `make install-units` after `make apply`", line)
+    assert re.search(r"needs `make install-units` after `make apply`, both on the Spark", line)
 
 
 def test_spark_docs_notifications_check_finds_a_stale_page(tmp_path, monkeypatch, capsys):

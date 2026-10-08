@@ -346,15 +346,22 @@ def _no_fit(m: Moment) -> str:
         words.append(f"Using memory now: {', '.join(_holder(h, m.names_processes) for h in m.holders)}.")
     if need > _TOO_BIG_GIB:  # more than the box has: no command can make that much room
         words.append("The Spark can never free that much.")
-    elif held and m.words == "dan":
+    elif held and _hold_is_the_way(m) and m.words == "dan":
         words.append("On the Spark, `spark make-room --done` ends the hold.")
-    elif held:  # the hold is Dan's to end (the controller's ruling, Task 6's fix round 2)
+    elif held and _hold_is_the_way(m):  # the hold is Dan's to end (the controller's ruling, Task 6's fix round 2)
         words.append("The hold ends when Dan runs `spark make-room --done` on the Spark.")
     elif m.words == "dan":
         words.append(f"Free space with `spark make-room {need}G` on the Spark, then try again.")
     else:  # make-room is Dan's alone, and its hold would bar agent anyway (rule 4)
         words.append("Only Dan can free memory for it, on the Spark; try again after that.")
     return " ".join(words)
+
+
+def _hold_is_the_way(m: Moment) -> bool:
+    """Whether ending make-room's hold would let the load fit: free for a load with the hold counted, and the hold. Only
+    then is the hold's end the step (the controller's ruling on Task 7's review); with Dan's job in the hold, ending it
+    can still leave too little."""
+    return _gib(m.free_gib) + _gib(m.held_gib) >= _gib(m.needed_gib)
 
 
 def _breakdown(start: float | Decimal, items: list[tuple[float | Decimal, str]], held: float | Decimal,
@@ -467,9 +474,17 @@ def _model_not_found(m: Moment) -> str:
     asked = _outside(m.asked_name)  # the client's own text
     none = f"There's no model called {asked} here." if asked is not None else "There's no model by that name here."
     listed = _and([f"{label} ({name})" for label, name in m.models])
-    update = ("On the Mac, `make clients` updates pi's list." if m.words == "dan"
-              else f"On the Spark, as `agent`, `{_AGENTS_CLIENTS}` updates pi's list.")
-    return f"{none} The models are {listed}. {update}"
+    update = _pi_step(m, "updates pi's list")
+    return f"{none} The models are {listed}.{update}"
+
+
+def _pi_step(m: Moment, does: str) -> str:
+    """The step that updates a pi's model list, with a space before it: the Mac's for a pi key of Dan's (its label
+    starts with "pi"), agent's own for agent; none for another key, such as the web UI's, whose list isn't pi's (the
+    controller's ruling on Task 7's review)."""
+    if m.words == "dan":
+        return f" On the Mac, `make clients` {does}." if m.key_label.startswith("pi") else ""
+    return f" On the Spark, as `agent`, `{_AGENTS_CLIENTS}` {does}."
 
 
 def _too_many_requests(m: Moment) -> str:
@@ -514,8 +529,11 @@ class Notification:
 # `refused`. gate_down sends none (the failure notifier's alert says it), nor does the front's 401 (its journal has it).
 REFUSAL_NOTIFICATION = {"footprint_suspect": "footprint_suspect", "load_failed": "load_failed"}
 _NOT_SENT = ("gate_down",)
-_BURST_TYPES = ("refused", "footprint_suspect", "load_failed")
-_BURST = ("model_label", "key_label", "count", "since", "code")
+# A burst's fields, by type: a refusal's, per model, key and code; a failed load's, per model, since one failed load is
+# one event, whoever was waiting on it (the controller's ruling on Task 7's review).
+_BURST = {"refused": ("model_label", "key_label", "count", "since", "code"),
+          "footprint_suspect": ("model_label", "key_label", "count", "since", "code"),
+          "load_failed": ("model_label", "count", "since", "code")}
 
 # Each type's *When* and *Example*, from plan.md's table, for the notifications page (`spark docs notifications`). The
 # tests hold each example to what `notification` builds from the plan's moment.
@@ -528,8 +546,9 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it "
         "must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* Sent by the brake while "
         "the gate is down, it ends *They resume once the gate is back and memory has stayed above 28 GiB available "
-        "for 5 min.* Within the hour after an automatic release, the hold waits for Dan, and it ends *New loads stay "
-        "paused until you release them: on the Spark, `make brake-release`.*"),
+        "for 5 min.* Within the hour after an automatic release, the hold waits for Dan, and it ends *It fired within "
+        "an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, "
+        "`make brake-release`.*"),
     "brake_needs_release": (
         "a hold found after a reboot",
         "*After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
@@ -578,7 +597,7 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "all 40 GiB of it unused. Reloading Gemma.*"),
     "resident_waiting": (
         "an always-loaded model didn't fit when it was to reload: after a hold ended, at boot, after the brake's "
-        "release or a restart",
+        "release, after `make apply`'s restart or the model service's, or after it stopped outside the gate",
         "*Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself "
         "once there's room.*"),
     "apply_restarted": (
@@ -600,6 +619,24 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
 }
 
 
+def refusal_notification(code: str, *, request_id: str, ticket_id: str | None = None) -> tuple[str, str] | None:
+    """The notification a refusal sends, as (type, event key), or None for gate_down, whose alert is the failure
+    notifier's. Each refusal is its request's own (`refusal:<request id>`), but load_failed: one failed load is one
+    event, whoever was waiting on it, so it is keyed by the load's ticket, `load-failed:<ticket id>`, and the requests
+    that joined that load share it (the controller's ruling on Task 7's review). Its prefix is its own, since
+    `load_started` sends `load:<ticket id>` for the same load."""
+    if code not in _STATUS:
+        raise ValueError(f"{code!r} isn't a refusal with words; the codes are {', '.join(_STATUS)}")
+    if code in _NOT_SENT:
+        return None
+    kind = REFUSAL_NOTIFICATION.get(code, "refused")
+    if kind == "load_failed":
+        if not ticket_id:
+            raise ValueError("load_failed's notification is its load's: it needs ticket_id")
+        return kind, f"load-failed:{ticket_id}"
+    return kind, f"refusal:{request_id}"
+
+
 def notification(type: str, registry: Registry, **fields: Any) -> Notification | None:  # noqa: A002 (the plan's name)
     """The notification `type`, in Dan's words, from `fields` (phase-2a.md, Task 7's *The notifications' fields*), at
     the registry's priority; None when the registry has the type `off`. Its words are built either way, so a field
@@ -616,8 +653,8 @@ def notification(type: str, registry: Registry, **fields: Any) -> Notification |
 def _fields(kind: str, given: dict[str, Any]) -> dict[str, Any]:
     """`given`, with each field `kind` takes and wasn't given set to None (or its default); a field it doesn't take
     is refused. A refusal's type with `count` is its burst, which takes the burst's fields only."""
-    if kind in _BURST_TYPES and "count" in given:
-        takes: dict[str, Any] = dict.fromkeys(_BURST)
+    if kind in _BURST and "count" in given:
+        takes: dict[str, Any] = dict.fromkeys(_BURST[kind])
     else:
         takes = dict(_TAKES[kind])
     for name in given:
@@ -707,14 +744,18 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     unloaded = _brake_unloaded(f["unloaded"])
     if f["follow_up"]:
         return f"Brake, {_clock(f['at'])}: also unloaded {unloaded}."
-    _needs("brake_fired", f, "available_gib", "line_gib")
-    warn, after = _line(registry.brake.warn_gib), _brief(f["release_after_s"])
-    if f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself
-        resume = "New loads stay paused until you release them: on the Spark, `make brake-release`."
-    elif f["by_brake"]:  # nothing resumes without the gate
-        resume = f"They resume once the gate is back and memory has stayed above {warn} available for {after}."
+    _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
+    if f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself,
+        _needs("brake_fired", f, "released_at")  # and why, since the last one resumed by itself (the review's I-2)
+        resume = (f"It fired within an hour of the automatic release at {_clock(f['released_at'])}, so they stay "
+                  "paused until you release them: on the Spark, `make brake-release`.")
     else:
-        resume = f"They resume by themselves after {after} above {warn} available."
+        _needs("brake_fired", f, "release_after_s")
+        warn, after = _line(registry.brake.warn_gib), _brief(f["release_after_s"])
+        if f["by_brake"]:  # nothing resumes without the gate
+            resume = f"They resume once the gate is back and memory has stayed above {warn} available for {after}."
+        else:
+            resume = f"They resume by themselves after {after} above {warn} available."
     return (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
             f"{_line(f['line_gib'])} line. Unloaded {unloaded}; new loads are paused. {resume}")
 
@@ -765,19 +806,32 @@ def _back_up(registry: Registry, f: dict[str, Any]) -> str:
 
 
 def _burst(kind: str, f: dict[str, Any]) -> str:
-    """The repeats of one refusal (the same model, key and code) within 10 minutes, as one (Task 14)."""
-    _needs(kind, f, "key_label", "count", "since", "code")
+    """The repeats within 10 minutes, as one (Task 14): of one refusal, the same model, key and code; of a failed load,
+    the same model. The model passes the single form's gate: on one line, and a client's name only when it reads as
+    a model's (the review's I-1), else, or with none, the burst names the request."""
+    _needs(kind, f, *(name for name in _BURST[kind] if name != "model_label"))
     _sent_as(kind, f["code"])
-    if f["code"] != "route_not_served":
-        _needs(kind, f, "model_label")
     if not isinstance(f["count"], int) or f["count"] < 1:
         raise ValueError(f"{kind}'s words need count to be 1 or more")
-    when = f"{_times(f['count'])} since {_clock(f['since'])}: same reason."
-    if not f["model_label"]:
-        return f"Refused {f['key_label']} {when}"
+    since = f"{_times(f['count'])} since {_clock(f['since'])}"
+    model = _shown_model(f["code"], f["model_label"])
+    if kind == "load_failed":  # each a load of its own: the engine's line may differ, so no "same reason"
+        _needs(kind, f, "model_label")
+        return f"{_start(_one_line(f['model_label']))} failed to load {since}."
+    if not model:
+        return f"Refused a request from {f['key_label']} {since}: same reason."
     # A refusal that never got as far as a load (FRONT_CODES: no such model, a key's cap, an address) wasn't one.
     did = "Didn't load" if f["code"] in CODES_409 else "Refused"
-    return f"{did} {f['model_label']} for {f['key_label']} {when}"
+    return f"{did} {model} for {f['key_label']} {since}: same reason."
+
+
+def _shown_model(code: str, text: str | None) -> str:
+    """A model as the phone may show it: on one line; for model_not_found, the name a client asked for, only when it
+    reads as a model's name, else nothing."""
+    line = _one_line(text or "")
+    if code == "model_not_found" and not _is_model_name(line):
+        return ""
+    return line
 
 
 def _sent_as(kind: str, code: str) -> None:
@@ -833,7 +887,7 @@ def _phone_no_fit(registry: Registry, m: Moment) -> str:
     holds = "; " + _and([f"{_one_line(h.name)} holds {_bare(_near(h.gib))}" for h in outside]) if outside else ""
     if need > _TOO_BIG_GIB:
         step = "The Spark can never free that much."
-    elif held:
+    elif held and _hold_is_the_way(m):
         step = "On the Spark, `spark make-room --done` ends the hold."
     elif m.words == "dan":
         step = f"Free space with `spark make-room {need}G` on the Spark, then try again."
@@ -882,19 +936,22 @@ def _phone_draining(registry: Registry, m: Moment) -> str:
     return f"{base}{_again(m, 'Try again in a minute.')}"
 
 
-# A client's model name reaches the lock screen only when it reads as one: never a sentence a client wrote.
+# A client's model name reaches the lock screen only when it reads as one: never a sentence a client wrote, and never
+# a web address, which a phone may make a link (the review's minor 4). Real ids pass: Qwen/Qwen3-8B, qwen3:8b.
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,79}")
 
 
+def _is_model_name(text: str) -> bool:
+    return _MODEL_NAME.fullmatch(text) is not None and "://" not in text
+
+
 def _phone_model_not_found(registry: Registry, m: Moment) -> str:
-    asked = _one_line(m.asked_name or "")
-    if _MODEL_NAME.fullmatch(asked):
+    asked = _shown_model("model_not_found", m.asked_name)
+    if asked:
         said = f"{_lead(m, asked)}there's no model by that name."
     else:
         said = f"{_lead(m, '')}it named no model the Spark has."
-    update = ("On the Mac, `make clients` updates pi's list." if m.words == "dan"
-              else f"On the Spark, as `agent`, `{_AGENTS_CLIENTS}` updates agent's pi list.")
-    return f"{said} {update}"
+    return said + _pi_step(m, "updates pi's list" if m.words == "dan" else "updates agent's pi list")
 
 
 def _phone_too_many_requests(registry: Registry, m: Moment) -> str:
@@ -1039,10 +1096,19 @@ def _waiting(registry: Registry, f: dict[str, Any]) -> str:
         _needs("waiting", f, "needed_gib", "free_gib")
         return (f"Waiting for memory: {who}. It needs {_size(_up(f['needed_gib']))}, and "
                 f"{_room_words(f['free_gib'])}.")
-    if f["why"] == "brake":
-        return f"Waiting while new loads are paused: {who}. On the Spark, `make brake-release` resumes them."
+    if f["why"] == "brake":  # as held_by_brake says it: by itself, unless the pause waits for Dan
+        _needs("waiting", f, "release_waits_for_dan")
+        if f["release_waits_for_dan"]:
+            return (f"Waiting while new loads are paused: {who}. They stay paused until you release them: on the "
+                    "Spark, `make brake-release`.")
+        _needs("waiting", f, "release_after_s")
+        return (f"Waiting while new loads are paused: {who}. They resume by themselves after "
+                f"{_brief(f['release_after_s'])} above {_line(registry.brake.warn_gib)} available, if what would "
+                "reload fits; on the Spark, `make brake-release` resumes them now.")
     if f["why"] == "slot":
-        return f"Waiting its turn to load: {who}, since one model loads at a time."
+        _needs("waiting", f, "loading_label")
+        return (f"Waiting its turn to load: {who}. {_start(f['loading_label'])} is loading, and one model loads at a "
+                "time.")
     _needs("waiting", f, "command")
     return (f"Waiting for you: {who}. It was loading when the brake fired; on the Spark, `spark load {f['command']}` "
             "allows it again.")
@@ -1070,7 +1136,7 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 # controller's additions of 2026-10-07). A refusal's type also takes the burst's fields, _BURST, with `count`.
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
-                    "by_brake": False, "release_waits_for_dan": False, "release_after_s": 300},
+                    "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None},
     "brake_needs_release": {"fired_at": None},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
     "back_up": dict.fromkeys(("unit", "down_s")),
@@ -1084,7 +1150,8 @@ _TAKES: dict[str, dict[str, Any]] = {
     "load_started": dict.fromkeys(("label", "key_label", "last_s")),
     "loaded": dict.fromkeys(("label", "seconds")),
     "unloaded": dict.fromkeys(("label", "why", "idle_min")),
-    "waiting": dict.fromkeys(("label", "key_label", "why", "wait_s", "needed_gib", "free_gib", "command")),
+    "waiting": dict.fromkeys(("label", "key_label", "why", "wait_s", "needed_gib", "free_gib", "command",
+                              "loading_label", "release_waits_for_dan", "release_after_s")),
     "pin_ended": dict.fromkeys(("label", "at", "idle_min")),
     "memory_warning": dict.fromkeys(("available_gib", "warn_gib", "brake_gib")),
 }
@@ -1156,8 +1223,10 @@ def room_list(target_gib: float | Decimal | None, free_now_gib: float | Decimal,
     candidate: its label, its name in brackets for a chat model only, its size, *always loaded* or *loads when asked*,
     then what uses a resident, a pin, a session, its requests in flight and how long the oldest has run, or, for an
     on-demand model with none, how long it has been idle. When unloading every one can't reach the target, the list
-    ends at its rows, and room_too_much asks the question."""
+    ends at its rows, and room_too_much asks the question; with nothing loaded, it says so."""
     now = _down(free_now_gib)
+    if not candidates and (target_gib is None or _gib(free_now_gib) < _gib(target_gib)):
+        return "Nothing is loaded, so there is nothing to unload."
     if target_gib is None:
         now_words = f"{_size(now)} free for a load now" if now >= 1 else "nothing free for a load now"
         lines = [f"To unload everything ({now_words}):"]
@@ -1273,5 +1342,6 @@ def apply_now_confirm(inflight: list[str]) -> str:
     if not inflight:
         return "This restarts the model service now; nothing is in flight. Continue? [y/N]"
     count = "the 1 request" if len(inflight) == 1 else f"the {len(inflight)} requests"
-    return (f"This restarts the model service now and cuts off {count} in flight ({', '.join(inflight)}). "
-            "Continue? [y/N]")
+    askers = {label: inflight.count(label) for label in inflight}  # each once, in order, with its count past one
+    named = ", ".join(label if n == 1 else f"{label} ×{n}" for label, n in askers.items())
+    return f"This restarts the model service now and cuts off {count} in flight ({named}). Continue? [y/N]"

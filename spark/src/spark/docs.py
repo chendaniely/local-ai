@@ -83,22 +83,24 @@ def render_notifications_page(registry: Registry) -> str:
         'description: "Every notification type on Dan\'s phone, with its priority."',
         "---",
         "",
-        "This page is generated from `stack/models.yaml` by `spark docs notifications --write`. Edit that",
-        "file, not this one.",
+        "This page is generated from `stack/models.yaml` by `spark docs notifications --write`: the list of",
+        "types and their priorities from there, and the words from `spark/src/spark/messages.py`. Edit",
+        "those, not this page.",
         "",
         "Phase 2a's gate, brake and failure notifier send these to Dan's phone, through ntfy, once they are",
         "deployed (Task 38 of the [implementation plan](../design/phase-2a.md)). Each type's priority is",
-        "`high`, `default` or `low`, or `off`, which sends none; changing one is a one-line edit in that",
-        "file's `notifications` section, then `make apply`. The examples share the moments of the plan's",
-        "[*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a).",
+        "`high`, `default` or `low`, or `off`, which sends none; changing one is a one-line edit in",
+        "`stack/models.yaml`'s `notifications` section, then `make apply` on the Spark. The examples share",
+        "the moments of the plan's [*What you see in",
+        "Phase 2a*](../design/plan.md#what-you-see-in-phase-2a).",
         "",
         "| Type | Priority | When | Example |",
         "|---|---|---|---|",
         *rows,
         "",
         f"A change to the priority of {four}",
-        "needs `make install-units` after `make apply`, since the failure notifier's unit carries those",
-        "four (Task 25 of the implementation plan).",
+        "needs `make install-units` after `make apply`, both on the Spark, since the failure notifier's",
+        "unit carries those four (Task 25 of the implementation plan).",
         "",
     ])
 
@@ -144,8 +146,8 @@ def run_notifications(args: argparse.Namespace) -> int:
         NOTIFICATIONS_PAGE.write_text(page)
         return 0
     if not NOTIFICATIONS_PAGE.exists() or NOTIFICATIONS_PAGE.read_text() != page:
-        print(f"docs: {NOTIFICATIONS_PAGE} is stale — run `make docs`, or `spark docs notifications --write`",
-              file=sys.stderr)
+        print(f"docs: {NOTIFICATIONS_PAGE} is stale — run `spark docs notifications --write` (or `make docs`, "
+              "which also renders the site, on the Mac)", file=sys.stderr)
         return 1
     return 0
 

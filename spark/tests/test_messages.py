@@ -1,5 +1,5 @@
 """Dan's words (website/design/plan.md, *What you see in Phase 2a*): the refusals, each with its status and headers,
-what pi and the web UI show when the gate or the front says no; the notifications on his phone; and what each command
+what pi and the web UI show when the gate or the front says no; the notifications on Dan's phone; and what each command
 says in the terminal."""
 
 import json
@@ -55,7 +55,7 @@ NO_FIT_DAN = Moment(needed_gib=41, free_gib=Decimal(18), available_gib=48, reser
 NO_FIT_AGENT = Moment(needed_gib=41, free_gib=Decimal(12), available_gib=106, reserve_gib=24, owed_gib=0, held_gib=70,
                       hold_counted=True, holders=[Holder("the embeddings", 8, False), Holder("whisper", 3, False)],
                       **CODER, **AGENT)
-# Dan's job running in his hold: free for a load, 36 − 24 − 70, is below 0.
+# Dan's job running in Dan's own hold: free for a load, 36 − 24 − 70, is below 0.
 NO_FIT_AGENT_CLAMPED = replace(NO_FIT_AGENT, free_gib=Decimal(-58), available_gib=36,
                                holders=[Holder("python3 (chendaniely)", 70, True), Holder("the embeddings", 8, False)])
 LOADING = Moment(loading_label="Gemma", **CODER, **DAN)
@@ -78,7 +78,7 @@ NO_FIT_DAN_BREAKDOWN = ("18 GiB is free for a load (48 GiB available, less the 2
 NO_FIT_CLAMPED_TEXT = (
     "The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan "
     "(36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. "
-    "The hold ends when Dan runs `spark make-room --done` on the Spark."
+    "Only Dan can free memory for it, on the Spark; try again after that."
 )
 LOADING_TEXT = (
     "The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and "
@@ -487,7 +487,7 @@ def test_agent_is_never_told_to_run_what_only_dan_can():
 
 
 def test_dans_own_hold_is_never_counted_against_him():
-    # make-room's hold is Dan's to load into (rule 4): a hold standing changes nothing in his key's no_fit.
+    # make-room's hold is Dan's to load into (rule 4): a hold standing changes nothing in a no_fit for Dan's key.
     assert refusal("no_fit", replace(NO_FIT_DAN, held_gib=41, hold_counted=False)).message == NO_FIT_DAN_TEXT
 
 
@@ -616,8 +616,8 @@ def test_the_front_builds_its_own_refusals_with_defaults():
     assert refusal("restarting", Moment(model_label="the coder", wait_s=30)).message == RESTARTING_TEXT
     assert refusal("draining", Moment(model_label="the coder", wait_s=30, inflight=1, drain_for="unload",
                                       words="dan", key_label="pi on the Mac")).message == DRAINING_UNLOAD_TEXT
-    assert refusal("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, words="dan")).message == (
-        MODEL_NOT_FOUND_TEXT)
+    assert refusal("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, words="dan",
+                                             key_label="pi on the Mac")).message == MODEL_NOT_FOUND_TEXT
     assert refusal("concurrency_limit", Moment(model_label="the coder")).message == CONCURRENCY_TEXT
     assert refusal("gate_down", Moment(words="dan")).message == GATE_DOWN_TEXT
 
@@ -659,7 +659,8 @@ def say(kind: str, **given) -> str:
     return messages.notification(kind, REGISTRY, **given).message
 
 
-FIRED = {"at": AT_0312, "available_gib": 19.6, "line_gib": 20, "unloaded": [("the coder", "starting")]}
+FIRED = {"at": AT_0312, "available_gib": 19.6, "line_gib": 20, "unloaded": [("the coder", "starting")],
+         "release_waits_for_dan": False, "release_after_s": 300}
 DOWN = {"at": at(9, 14), "result_words": "it crashed"}
 SUSPECT_FIELDS = {"model_label": "the coder", "key_label": "agent", "fired_at": AT_0312, "command": "coder"}
 FAILED_FIELDS = {"model_label": "the coder", "command": "coder", "engine_said": "failed to load model"}
@@ -732,8 +733,9 @@ NOTIFICATION_ROWS = [
 # The variants phase-2a.md and plan.md give in full elsewhere: the brake's own alert, the second brake within the hour
 # (rule 5: its own alert says it waits for Dan; the controller's ruling, 2026-10-07), and the burst (*One notification
 # per event*).
-WITHIN_THE_HOUR = {**FIRED, "at": at(3, 50), "release_waits_for_dan": True}
-DANS_RELEASE = "New loads stay paused until you release them: on the Spark, `make brake-release`."
+WITHIN_THE_HOUR = {**FIRED, "at": at(3, 50), "release_waits_for_dan": True, "released_at": at(3, 40)}
+DANS_RELEASE = ("It fired within an hour of the automatic release at 03:40, so they stay paused until you release "
+                "them: on the Spark, `make brake-release`.")
 PLAN_VARIANTS = [
     ("brake_fired", {**FIRED, "by_brake": True},
      "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; "
@@ -775,9 +777,13 @@ def test_a_brake_within_the_hour_of_an_automatic_release_sends_one_alert_for_dan
         assert built.priority == "high"
         assert built.message.endswith(f"new loads are paused. {DANS_RELEASE}")
         assert "resume by themselves" not in built.message and "once the gate is back" not in built.message
-    # The same words as held_by_brake's for Dan, there mid-sentence.
-    assert refusal("held_by_brake", replace(HELD, release_waits_for_dan=True)).message.endswith(
-        "and n" + DANS_RELEASE[1:])
+    # It says why this hold waits, unlike the last (the review's wording, the controller's ruling), and ends with
+    # held_by_brake's words for Dan.
+    tail = "stay paused until you release them: on the Spark, `make brake-release`."
+    assert DANS_RELEASE.endswith(tail)
+    assert refusal("held_by_brake", replace(HELD, release_waits_for_dan=True)).message.endswith(tail)
+    with pytest.raises(ValueError, match="^brake_fired's words need released_at"):
+        say("brake_fired", **{**WITHIN_THE_HOUR, "released_at": None})
     # brake_needs_release is sent only for a hold found after a reboot: it no longer words the second brake.
     with pytest.raises(ValueError, match="^brake_needs_release's words take no why"):
         say("brake_needs_release", fired_at=at(3, 50), why="again", released_at=at(3, 40))
@@ -795,6 +801,28 @@ def test_a_load_failed_notification_quotes_the_engine_either_way():
     for line in ("CUDA error: operation timed out", "failed to load model"):
         assert f'the engine stopped with "{line}".' in say("load_failed", **{**FAILED_FIELDS, "engine_said": line})
     assert say("load_failed", **{**FAILED_FIELDS, "engine_said": "failed to load\nmodel\t"}) == NOTIFICATION_ROWS[10][2]
+
+
+def test_two_requests_joined_to_one_failed_start_send_one_load_failed():
+    # One failed load is one event: every request that was waiting on it gets the load_failed refusal, and the phone
+    # gets one load_failed, keyed by the load's ticket (the controller's ruling on the review's I-3). Every other
+    # refusal is its request's own.
+    joined = {messages.refusal_notification("load_failed", request_id=r, ticket_id="t1") for r in ("r1", "r2")}
+    assert joined == {("load_failed", "load-failed:t1")}
+    assert messages.refusal_notification("load_failed", request_id="r3", ticket_id="t2") == (
+        "load_failed", "load-failed:t2")
+    assert {messages.refusal_notification("no_fit", request_id=r) for r in ("r1", "r2")} == {
+        ("refused", "refusal:r1"), ("refused", "refusal:r2")}
+    assert messages.refusal_notification("footprint_suspect", request_id="r1") == (
+        "footprint_suspect", "refusal:r1")
+    assert messages.refusal_notification("gate_down", request_id="r1") is None  # the failure notifier's alert says it
+    with pytest.raises(ValueError, match="^load_failed's notification is its load's: it needs ticket_id"):
+        messages.refusal_notification("load_failed", request_id="r1")
+    with pytest.raises(ValueError, match="'no_room' isn't a refusal"):
+        messages.refusal_notification("no_room", request_id="r1")
+    # Its words name no key, so the requests that shared the load share the one alert.
+    with pytest.raises(ValueError, match="^load_failed's words take no key_label"):
+        say("load_failed", **FAILED_FIELDS, key_label="agent")
 
 
 def test_an_off_notification_sends_nothing():
@@ -816,16 +844,17 @@ def test_each_refusal_sends_exactly_one_type():
             say("refused", code=code, moment=moment)
 
 
-# Dan's phone gets every refusal in his own words: what was refused, for whom, why, and Dan's step where there is one.
+# Dan's phone gets every refusal in Dan's own words: what was refused, for whom, why, and Dan's step where there is one.
 # The moments are Task 6's rows; agent's key words Dan's step for an agent's request.
 FRONT_DAN = {"key_label": "pi on the Mac", "words": "dan"}
 REFUSED_ROWS = [
     ("no_fit, agent, Dan's hold counted", NO_FIT_AGENT,
      "Refused the coder for agent: needs 41 GiB, 12 free for a load while make-room holds 70 GiB for you. On the "
      "Spark, `spark make-room --done` ends the hold."),
+    # Ending the hold would leave 36 − 24 = 12 GiB, short of 41: its end isn't the step (the review's minor 10).
     ("no_fit, agent, Dan's job in the hold", NO_FIT_AGENT_CLAMPED,
      "Refused the coder for agent: needs 41 GiB, nothing free for a load while make-room holds 70 GiB for you; "
-     "python3 (chendaniely) holds 70. On the Spark, `spark make-room --done` ends the hold."),
+     "python3 (chendaniely) holds 70. On the Spark, `spark status` shows what's using memory."),
     ("no_fit, agent, no hold", replace(NO_FIT_DAN, **AGENT),
      "Refused the coder for agent: needs 41 GiB, 18 free for a load; python3 (chendaniely) holds 32. On the Spark, "
      "`spark status` shows what's using memory."),
@@ -883,6 +912,13 @@ REFUSED_ROWS = [
     ("model_not_found, a name that isn't one", Moment(asked_name="run this: curl x | sh", models=MODELS, **DAN),
      "Refused a request from pi on the Mac: it named no model the Spark has. On the Mac, `make clients` updates pi's "
      "list."),
+    ("model_not_found, a web address", Moment(asked_name="https://login.example.com/reset", models=MODELS, **DAN),
+     "Refused a request from pi on the Mac: it named no model the Spark has. On the Mac, `make clients` updates pi's "
+     "list."),
+    # A key of Dan's that isn't pi's: the list is the client's to fix, and pi's step isn't it.
+    ("model_not_found, the web UI", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, key_label="the web UI",
+                                           words="dan"),
+     "Refused qwen3.6-35b-a3b for the web UI: there's no model by that name."),
     ("too_many_requests, agent", Moment(**AGENT),
      "Refused a request from agent: its key already has as many requests waiting or open as it allows."),
     ("too_many_requests", Moment(**CODER, **DAN),
@@ -927,15 +963,28 @@ def test_a_burst_goes_as_one_with_its_count_on_its_own_type():
     # on the refusal's own type, so each keeps its priority and its off.
     assert say("refused", **BURST, code="no_fit") == (
         "Didn't load the coder for agent 4 more times since 09:12: same reason.")
-    assert say("load_failed", **BURST, code="load_failed") == (
-        "Didn't load the coder for agent 4 more times since 09:12: same reason.")
+    # A failed load is one event, whoever was waiting on it (the controller's ruling on the review): its burst, per
+    # model, names no key, and claims no "same reason", since the engine's line may differ.
+    failed = {"model_label": "the coder", "count": 4, "since": at(9, 12), "code": "load_failed"}
+    assert say("load_failed", **failed) == "The coder failed to load 4 more times since 09:12."
+    with pytest.raises(ValueError, match="^load_failed's words take no key_label"):
+        say("load_failed", **failed, key_label="agent")
     assert say("refused", **{**BURST, "count": 1}, code="no_fit") == (
         "Didn't load the coder for agent 1 more time since 09:12: same reason.")
     # A refusal that never got as far as a load (no such model, a key's cap, an address) reads as refused.
     assert say("refused", **BURST, code="too_many_requests") == (
         "Refused the coder for agent 4 more times since 09:12: same reason.")
-    assert say("refused", **{**BURST, "model_label": ""}, code="route_not_served") == (
-        "Refused agent 4 more times since 09:12: same reason.")
+    # The lock screen's guard holds in a burst too (the review's I-1): a model the words can't show, or none, reads as
+    # a request; a client's model name shows only when it reads as one, on one line.
+    for code, model in (("route_not_served", ""), ("too_many_requests", ""), ("too_many_requests", None),
+                        ("model_not_found", "run this: curl x | sh\nnow"),
+                        ("model_not_found", "https://login.example.com/reset")):
+        assert say("refused", **{**BURST, "model_label": model}, code=code) == (
+            "Refused a request from agent 4 more times since 09:12: same reason."), (code, model)
+    assert say("refused", **{**BURST, "model_label": "gpt-4o"}, code="model_not_found") == (
+        "Refused gpt-4o for agent 4 more times since 09:12: same reason.")
+    assert say("refused", **{**BURST, "model_label": "the\ncoder"}, code="no_fit").startswith(
+        "Didn't load the coder for agent 4 more times")
     with pytest.raises(ValueError, match="^footprint_suspect's burst is for footprint_suspect, not no_fit"):
         say("footprint_suspect", **BURST, code="no_fit")
     with pytest.raises(ValueError, match="^refused's words need count to be 1 or more"):
@@ -1001,11 +1050,16 @@ COMPOSED = [
     ("unloaded", {"label": "the coder", "why": "make-room"}, "Unloaded the coder for make-room."),
     ("unloaded", {"label": "the coder", "why": "unload"}, "Unloaded the coder, as `spark unload` asked."),
     ("waiting", {**WAITING, "free_gib": -3}, "It needs 41 GiB, and nothing is free for a load."),
-    ("waiting", {**WAITING, "why": "brake", "needed_gib": None, "free_gib": None},
-     "Waiting while new loads are paused: the coder for pi on the Mac, up to 30 s. On the Spark, `make brake-release` "
-     "resumes them."),
-    ("waiting", {**WAITING, "why": "slot", "needed_gib": None, "free_gib": None},
-     "Waiting its turn to load: the coder for pi on the Mac, up to 30 s, since one model loads at a time."),
+    ("waiting", {**WAITING, "why": "brake", "needed_gib": None, "free_gib": None, "release_waits_for_dan": False,
+                 "release_after_s": 300},
+     "Waiting while new loads are paused: the coder for pi on the Mac, up to 30 s. They resume by themselves after "
+     "5 min above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now."),
+    ("waiting", {**WAITING, "why": "brake", "needed_gib": None, "free_gib": None, "release_waits_for_dan": True},
+     "Waiting while new loads are paused: the coder for pi on the Mac, up to 30 s. They stay paused until you release "
+     "them: on the Spark, `make brake-release`."),
+    ("waiting", {**WAITING, "why": "slot", "needed_gib": None, "free_gib": None, "loading_label": "Gemma"},
+     "Waiting its turn to load: the coder for pi on the Mac, up to 30 s. Gemma is loading, and one model loads at a "
+     "time."),
     ("waiting", {**WAITING, "key_label": "agent", "why": "dan", "wait_s": 600, "needed_gib": None, "free_gib": None,
                  "command": "coder"},
      "Waiting for you: the coder for agent, up to 10 min. It was loading when the brake fired; on the Spark, "
@@ -1026,7 +1080,8 @@ def test_each_composed_notification_reads_as_built(kind, given, text):
 
 # What each notification type needs: a field left out, or None, an empty text or an empty list, is refused by name.
 NOTIFICATION_NEEDS = {
-    "brake_fired": (FIRED, ("at", "unloaded", "available_gib", "line_gib")),
+    "brake_fired": (FIRED, ("at", "unloaded", "available_gib", "line_gib", "release_waits_for_dan",
+                            "release_after_s")),
     "brake_needs_release": (NOTIFICATION_ROWS[2][1], ("fired_at",)),
     "gate_down": (DOWN, ("at",)),
     "back_up": ({"unit": "gate", "down_s": 12}, ("unit", "down_s")),
@@ -1058,6 +1113,14 @@ def test_each_notification_refuses_a_missing_field_by_name(kind, name):
 def test_a_field_needed_only_in_one_form_is_needed_there():
     with pytest.raises(ValueError, match="^waiting's words need command"):
         say("waiting", **{**WAITING, "why": "dan"})
+    with pytest.raises(ValueError, match="^waiting's words need loading_label"):
+        say("waiting", **{**WAITING, "why": "slot"})
+    with pytest.raises(ValueError, match="^waiting's words need release_waits_for_dan"):
+        say("waiting", **{**WAITING, "why": "brake"})
+    with pytest.raises(ValueError, match="^waiting's words need release_after_s"):
+        say("waiting", **{**WAITING, "why": "brake", "release_waits_for_dan": False})
+    assert say("waiting", **{**WAITING, "why": "brake", "release_waits_for_dan": True})  # no time when it waits for Dan
+    assert say("brake_fired", **{**WITHIN_THE_HOUR, "release_after_s": None})  # the same for the brake's alert
     assert say("brake_fired", **NOTIFICATION_ROWS[1][1]).startswith("Brake, 03:13:")  # a follow-up has no reading
     assert say("unloaded", label="the coder", why="unload")  # only an idle unload names its minutes
 
@@ -1245,6 +1308,7 @@ def _every_text() -> list[tuple[str, str]]:
 
 # "free" as a word: as an adjective only in "free for a load" (plan.md, *Two numbers, two words*); as a verb,
 # make-room's action, only in the phrases the plan's and Task 6's own words use (the controller's ruling, 2026-10-07).
+FREE_WORD = re.compile(r"\bfree[sd]?\b", re.IGNORECASE)  # "frees" and "freed" too (the review's minor 3)
 FREE_ALLOWED = re.compile(r"free for a load|Free space with `spark make-room|Only Dan can free memory for it"
                           r"|The Spark can never free that much|Free \d+ and hold it\?")
 
@@ -1252,13 +1316,13 @@ FREE_ALLOWED = re.compile(r"free for a load|Free space with `spark make-room|Onl
 def test_no_message_says_free_alone():
     checked = 0
     for source, text in _every_text():
-        assert not re.search(r"\bfree\b", FREE_ALLOWED.sub("", text), re.IGNORECASE), (source, text)
+        assert not re.search(FREE_WORD, FREE_ALLOWED.sub("", text)), (source, text)
         checked += 1
     assert checked == (len(EVERY_ROW) + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED) + len(REFUSED_ROWS)
                        + len(CONFIRMATIONS) + len(COMPOSED_CONFIRMATIONS) + 2)
     # The test can fail: "free" alone, and a verb phrase outside the allowance.
-    assert re.search(r"\bfree\b", FREE_ALLOWED.sub("", "18 GiB free now"), re.IGNORECASE)
-    assert re.search(r"\bfree\b", FREE_ALLOWED.sub("", "Free 61 GiB"), re.IGNORECASE)
+    for stray in ("18 GiB free now", "Free 61 GiB", "once memory frees", "18 GiB freed"):
+        assert re.search(FREE_WORD, FREE_ALLOWED.sub("", stray)), stray
 
 
 # Every model's registry name, today's and the plan's: refusals and notifications name models by their labels.
@@ -1272,7 +1336,43 @@ def test_models_are_named_by_label():
             continue  # make-room's list brackets the chat models' names; model_not_found lists them, and the asked one
         assert not any(name in text for name in NAMES), (source, text)
         checked += 1
-    # Every refusal row but model_not_found's two, and every refused row but its three.
-    assert checked == (len(EVERY_ROW) - 2 + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED)
-                       + len(REFUSED_ROWS) - 3)
+    # Every refusal row but model_not_found's two, and every refused row but model_not_found's.
+    refused = sum(1 for row_id, _, _ in REFUSED_ROWS if not row_id.startswith("model_not_found"))
+    assert checked == len(EVERY_ROW) - 2 + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED) + refused
     assert any(name in say("refused", code="model_not_found", moment=REFUSED_ROWS[18][1]) for name in NAMES)
+
+
+def test_agents_no_fit_names_the_holds_end_only_when_that_makes_room():
+    # The hold's end is agent's step only when ending it would let the load fit: free for a load and the hold, 41 or
+    # more here (the controller's ruling on the review's minor 10). Short of that, the no-hold words.
+    holds_end = "The hold ends when Dan runs `spark make-room --done` on the Spark."
+    no_hold = "Only Dan can free memory for it, on the Spark; try again after that."
+    assert refusal("no_fit", replace(NO_FIT_AGENT, free_gib=Decimal(12), held_gib=29)).message.endswith(holds_end)
+    assert refusal("no_fit", replace(NO_FIT_AGENT, free_gib=Decimal(12), held_gib=28.9)).message.endswith(no_hold)
+    assert refusal("no_fit", NO_FIT_AGENT_CLAMPED).message.endswith(no_hold)
+    # A group with Dan's words whose hold is counted: the same test, then Dan's own no-hold step.
+    assert refusal("no_fit", replace(NO_FIT_AGENT_CLAMPED, words="dan")).message.endswith(
+        "Free space with `spark make-room 41G` on the Spark, then try again.")
+
+
+def test_model_not_found_names_pis_step_only_for_a_pi_key():
+    # Dan's keys: pi's step for pi's key ("pi on the Mac", "pi in Orca"); for any other key, the web UI's, the list
+    # alone, since `make clients` updates pi's list only (the controller's ruling on the review's minor 10).
+    web_ui = Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, key_label="the web UI", words="dan")
+    assert refusal("model_not_found", web_ui).message == MODEL_NOT_FOUND_TEXT.replace(
+        " On the Mac, `make clients` updates pi's list.", "")
+    orca = replace(web_ui, key_label="pi in Orca")
+    assert refusal("model_not_found", orca).message == MODEL_NOT_FOUND_TEXT
+
+
+def test_make_room_all_with_nothing_loaded_says_so():
+    assert messages.room_list(None, 93, [], [], 93, registry=PLAN_REGISTRY) == (
+        "Nothing is loaded, so there is nothing to unload.")
+    assert messages.room_list(100, 93, [], [], 93, registry=PLAN_REGISTRY) == (
+        "Nothing is loaded, so there is nothing to unload.")
+
+
+def test_apply_now_names_each_asker_once_with_its_count():
+    assert messages.apply_now_confirm(["pi on the Mac", "agent", "pi on the Mac"]) == (
+        "This restarts the model service now and cuts off the 3 requests in flight (pi on the Mac ×2, agent). "
+        "Continue? [y/N]")

@@ -46,9 +46,11 @@ free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-
 Using memory now: the embeddings 8 GiB, whisper 3 GiB. The hold ends when Dan runs `spark make-room
 --done` on the Spark.* Once my job has taken the room, it reads *The coder didn't load: it needs 41
 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the
-24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. The hold ends
-when Dan runs `spark make-room --done` on the Spark.* (both from the [implementation
-plan](../design/phase-2a.md)'s words). *(Corrected 2026-10-07, at the implementation plan's Task 6:
+24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. ~~The hold ends
+when Dan runs `spark make-room --done` on the Spark.~~ Only Dan can free memory for it, on the Spark;
+try again after that.* (both from the [implementation plan](../design/phase-2a.md)'s words). *(Corrected
+2026-10-07, at the implementation plan's Task 7's review: ending the hold would leave only 12 GiB
+then, so its end is no longer the step.)* *(Corrected 2026-10-07, at the implementation plan's Task 6:
 both ended *On the Spark, `spark make-room --done` ends the hold.*, which didn't say whose step it
 is.)* `spark make-room --done` says how much of the hold went unused and what reloads (*… Reloading
 Gemma.*), and my phone gets the same as *make-room's hold for you ended*. The plan's [*What you see
