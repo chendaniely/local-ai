@@ -1,7 +1,9 @@
 """ntfy's records: the Compose file that deploys it on the Synology, and the list of its variables.
 
-The file is public, so everything private (the NAS's address, the topic names, the users' hashes and the tokens)
-arrives as a variable its Compose helper sets; each is required, so a missing one stops the deploy and names itself.
+The file is public, so everything private (the NAS's address, the topic names, the users' hashes, the tokens and the
+timezone) arrives as a variable its Compose helper sets; each is required, so a missing one stops the deploy and names
+itself. It follows Marius Hosting's Synology ntfy guide in its container name, folders, healthcheck, TZ and port, and
+keeps the login, the tailnet-only path and the pin (Dan's decision, 2026-10-08), with `unless-stopped` for its restart.
 """
 
 import os
@@ -22,17 +24,27 @@ COMPOSE = ROOT / "stack/synology/ntfy/compose.yaml"
 EXAMPLE = ROOT / "stack/synology/ntfy/variables.example"
 RUNBOOK = ROOT / "website/how-to/ntfy.md"
 VARIABLES = {"NTFY_BASE_URL", "NTFY_AUTH_USERS", "NTFY_AUTH_ACCESS", "NTFY_AUTH_TOKENS", "NTFY_DATA_DIR",
-             "NTFY_PORT"}
+             "NTFY_PORT", "NTFY_TZ"}
+# Marius Hosting's healthcheck, byte for byte as his guide and ntfy v2.28.0's docs/install.md give it.
+HEALTHCHECK = {
+    "test": ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O - "
+                          "| grep -Eo '\"healthy\"\\s*:\\s*true' || exit 1"],
+    "interval": "60s",
+    "timeout": "10s",
+    "retries": 3,
+    "start_period": "40s",
+}
 # Stand-ins, shaped like the real values: a bcrypt hash whose `$` is followed by a letter, which Compose expands
-# unless the value is single-quoted, and a token. Neither is real.
+# unless the value is single-quoted, and a token. Neither is real. The timezone is one that names no place.
 HASH = "$2a$10$" + "standinstandinstandin." + "standinstandinstandinstandinsta"  # 22-character salt, 31 of hash
 STAND_INS = {
-    "NTFY_BASE_URL": "http://nas.example.invalid:8090",
+    "NTFY_BASE_URL": "http://nas.example.invalid:6741",
     "NTFY_AUTH_USERS": f"'spark-gate:{HASH}:user'",
     "NTFY_AUTH_ACCESS": "spark-gate:standin-topic:wo",
     "NTFY_AUTH_TOKENS": "spark-gate:tk_standin",
     "NTFY_DATA_DIR": "/volume1/docker/ntfy",
-    "NTFY_PORT": "8090",
+    "NTFY_PORT": "6741",
+    "NTFY_TZ": "Etc/UTC",
 }
 
 
@@ -52,7 +64,8 @@ def test_ntfy_compose_holds_no_private_value():
         text = path.read_text()
         assert scan_text(path.name, text, []) == [], path.name
         assert "tk_" not in text and "$2a$" not in text, path.name
-    # Every reference Compose would fill in is one of the six, required: no default, no bare ${NAME} or $NAME.
+    # Every reference Compose would fill in is one of the seven, required: no default, TZ's included, and no bare
+    # ${NAME} or $NAME.
     required = {"${%s:?set %s}" % (name, name) for name in VARIABLES}
     references = re.findall(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*", COMPOSE.read_text())
     assert set(references) == required
@@ -69,13 +82,32 @@ def test_every_variable_is_named_in_the_example():
 def test_ntfy_denies_by_default_and_reaches_no_relay():
     ntfy = service()
     assert ntfy["command"] == "serve"
+    # Never Marius's on-failure:5: Docker doesn't restart an on-failure container when its daemon restarts, so a
+    # NAS reboot or a DSM update would leave ntfy down (the controller's ruling, 2026-10-08).
     assert ntfy["restart"] == "unless-stopped"
     environment = ntfy["environment"]
     assert environment["NTFY_AUTH_DEFAULT_ACCESS"] == "deny-all"
     assert environment["NTFY_BEHIND_PROXY"] == "false"
-    assert not [key for key in environment if re.search("UPSTREAM|FIREBASE|WEB_PUSH", key)]
-    # An env_file would bring in settings this file doesn't show, a relay or a Firebase key among them.
+    assert not [key for key in environment if re.search("UPSTREAM|FIREBASE|WEB_PUSH|ATTACHMENT", key)]
+    # An env_file, or a folder at /etc/ntfy where a server.yml would be read, would bring in settings this file
+    # doesn't show, a relay or a Firebase key among them.
     assert "env_file" not in ntfy
+    assert not [volume for volume in ntfy["volumes"] if volume.split(":")[-1].startswith("/etc/ntfy")]
+
+
+def test_ntfy_follows_marius_hostings_synology_layout():
+    # Dan's decision, 2026-10-08: his container name, his folder with its cache subfolder at ntfy's cache path,
+    # his healthcheck and TZ; the port stays a variable, and the auth database stays where Task 1 put it.
+    ntfy = service()
+    assert ntfy["container_name"] == "ntfy"
+    data = "${NTFY_DATA_DIR:?set NTFY_DATA_DIR}"
+    assert ntfy["volumes"] == [f"{data}:/var/lib/ntfy", f"{data}/cache:/var/cache/ntfy"]
+    environment = ntfy["environment"]
+    assert environment["NTFY_AUTH_FILE"] == "/var/lib/ntfy/user.db"
+    assert environment["NTFY_CACHE_FILE"] == "/var/cache/ntfy/cache.db"
+    assert environment["TZ"] == "${NTFY_TZ:?set NTFY_TZ}"
+    assert ntfy["healthcheck"] == HEALTHCHECK
+    assert ntfy["ports"] == ["${NTFY_PORT:?set NTFY_PORT}:80"]
 
 
 def compose_config(env_file: Path) -> subprocess.CompletedProcess:
@@ -100,12 +132,18 @@ def has_docker_compose() -> bool:
 @pytest.mark.skipif(not has_docker_compose(), reason="docker compose not installed")
 def test_docker_compose_reads_the_file(tmp_path, monkeypatch):
     # A variable in the runner's own environment would satisfy ${NAME:?…} and hide the one left out, so the runner
-    # here holds all six, and compose_config must not hand them on.
+    # here holds all seven, and compose_config must not hand them on.
     for name in VARIABLES:
         monkeypatch.setenv(name, "from-the-runner")
     done = compose_config(write_stand_ins(tmp_path / "stand-ins"))
     assert done.returncode == 0, done.stderr
     assert HASH.replace("$", "$$") in done.stdout  # the single-quoted hash arrives whole, its `$` escaped as `$$`
+    # The folder and its cache subfolder, as Compose resolves them, and the healthcheck as Docker will get it.
+    resolved = yaml.safe_load(done.stdout)["services"]["ntfy"]
+    assert [(v["source"], v["target"]) for v in resolved["volumes"]] == [
+        ("/volume1/docker/ntfy", "/var/lib/ntfy"), ("/volume1/docker/ntfy/cache", "/var/cache/ntfy")]
+    assert resolved["healthcheck"]["test"] == HEALTHCHECK["test"]
+    assert resolved["environment"]["TZ"] == "Etc/UTC"
 
     (tmp_path / "none").write_text("")
     done = compose_config(tmp_path / "none")

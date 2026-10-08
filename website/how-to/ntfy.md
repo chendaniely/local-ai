@@ -11,9 +11,19 @@ the brake read.
 ntfy deploys from one Compose file, `stack/synology/ntfy/compose.yaml`, as every app on the
 Synology does, so any Compose helper deploys it: Portainer's stacks today (§4), plain
 `docker compose` or another helper (§5). The file is public and holds nothing private. The NAS's
-address, the topic names, the users' hashes and the tokens reach it as six variables, which
-`stack/synology/ntfy/variables.example` names. Each is required, so a deploy that lacks one stops
-and names it.
+address, the topic names, the users' hashes ~~and the tokens reach it as six variables~~, the
+tokens and the timezone reach it as seven variables, which `stack/synology/ntfy/variables.example`
+names. Each is required, so a deploy that lacks one stops and names it. *(Corrected 2026-10-08:
+Marius Hosting's style, below, added the timezone, `NTFY_TZ`.)*
+
+**If you know Marius Hosting's Synology guides** (Dan's decision, 2026-10-08): this is his ntfy
+guide's stack, with his container name (in lower case, `ntfy`), his folder `/volume1/docker/ntfy`
+and its `cache` subfolder, his healthcheck, `TZ`, his port 6741 and a Portainer stack; it differs
+in a login for every reader and a token for each publisher, in having no path from the internet
+(no reverse proxy or DDNS name, only the tailnet and the home LAN), in its image pinned by digest,
+and in `restart: unless-stopped` for his `on-failure:5`, since Docker doesn't restart an
+`on-failure` container when its daemon restarts, and a NAS reboot or a DSM update would leave ntfy
+down and your alerts silent.
 
 Each step says where it runs: DSM on the Synology, Portainer, Tailscale's admin console, the phone,
 the Spark, or the Mac.
@@ -25,6 +35,19 @@ place of `/etc/local-ai`, and that server; §5's check and §6's digest as writt
 Mac's clipboard commands, §5's `docker compose up -d`, and every step in DSM, Portainer, Tailscale's
 console and the phone. Portainer's steps are written from its documentation and its source
 (2.39.8); Task 2 runs them on the NAS and corrects this page.
+
+*(Added 2026-10-08, for the file in Marius Hosting's style:)* §3's blocks ran again on stand-ins,
+the timezone line with a stand-in `timedatectl` (the Spark's own was checked only for giving an
+`Area/City` name, never shown), and §5's check with their seven values, given with `--env-file`
+rather than as a `.env`: silent, and naming `NTFY_TZ` once its line was taken out. The healthcheck
+ran against the pinned image's own files, fetched from Docker Hub by its digest: its arm64 build's
+`ntfy` (byte for byte the release binary) served the environment `docker compose config` resolved
+from stand-ins, with the folder and its `cache` subfolder in a scratch folder, on 127.0.0.1; and
+the check itself ran in that build's busybox (`sh`, `wget` and `grep`). It passed with ntfy up and
+failed with ntfy stopped, and `/v1/health` answered without a login while a topic refused reads
+and publishes without one. Docker itself didn't run the container, since the session had no access
+to Docker's daemon, so the port was a free one in place of 80, and Task 2 sees the container's
+health on the NAS. The amd64 build was read, not run: it has busybox's `wget` and `grep` too.
 
 ## 1. The NAS on the tailnet
 
@@ -48,7 +71,8 @@ grant names `tag:nas` as a source; if something on the NAS reached another machi
 ## 2. The grant
 
 Pick ntfy's port on the NAS now, one nothing else on the NAS uses (DSM itself has 5000 and 5001);
-§3 asks for the same one. It stands in for `<ntfy-port>` below. The Compose file publishes it on
+§3 asks for the same one. Marius Hosting's guide uses 6741, which suits unless another app on the
+NAS has it. It stands in for `<ntfy-port>` below. The Compose file publishes it on
 every one of the NAS's interfaces, so it is your router that keeps it off the internet: never
 forward it there. Don't count on DSM's firewall to narrow it instead: reports differ on whether
 DSM's rules reach a port that Docker publishes for a container.
@@ -80,13 +104,15 @@ and widen nothing else. The policy itself stays in the vault.
 
 ## 3. The values
 
-What the six variables hold, and where each value is kept:
+What the ~~six~~ seven variables hold, and where each value is kept *(corrected 2026-10-08: Marius
+Hosting's style added `NTFY_TZ`, and moved the message cache into the folder's `cache` subfolder)*:
 
 | Variable | What it holds | Kept in |
 |---|---|---|
 | `NTFY_BASE_URL` | ntfy's address as the phone and the Spark reach it: `http://`, the NAS's tailnet name, `:` and the port | the helper; the vault; the Spark's `values.env`, as `NTFY_URL` |
-| `NTFY_PORT` | ntfy's port on the NAS, published to the container's 80 | the helper; the vault |
-| `NTFY_DATA_DIR` | the folder on the NAS for ntfy's two databases | the helper; the vault |
+| `NTFY_PORT` | ntfy's port on the NAS, published to the container's 80; 6741 in Marius Hosting's guide | the helper; the vault |
+| `NTFY_DATA_DIR` | the folder on the NAS for ~~ntfy's two databases~~ ntfy's auth database, such as `/volume1/docker/ntfy`; its `cache` subfolder holds the message cache | the helper; the vault |
+| `NTFY_TZ` | the timezone ntfy's log lines use, as `Area/City`: step 5 takes the Spark's own | the helper |
 | `NTFY_AUTH_USERS` | the four users as `name:hash:role`, comma-separated: `spark-gate`, `spark-notify`, `spark-brake` and `phone`, each a `user` | the helper |
 | `NTFY_AUTH_ACCESS` | the grants as `user:topic:permission`, comma-separated: each publisher write-only (`wo`) to its own topic, and `phone` read-only (`ro`) to all three | the helper; the topic names also in the vault and the Spark's `values.env` |
 | `NTFY_AUTH_TOKENS` | the tokens as `user:token`, comma-separated, one for each publisher | the helper; the Spark's three header files |
@@ -97,6 +123,12 @@ phone's password is yours to choose: keep it where you keep passwords, never in 
 names a credential and never holds it (`CLAUDE.md`). The vault holds the address, the port, the
 folder and the topic names, which are private but not credentials. None of it goes in this repo or
 a chat.
+
+The timezone needs no other home: it is the Spark's own, and the Spark gives it again whenever §3
+runs. It sets the times on ntfy's log lines, and what a delayed message's time of day means, which
+no publisher here sends. It works only where the image carries timezone data: its amd64 build
+does, but its arm64 build has none (no `/usr/share/zoneinfo`, and ntfy embeds none), so on a NAS
+with an ARM processor ntfy stays on UTC whatever `TZ` says.
 
 The steps below make every value in a working folder on the Spark, `~/ntfy-setup`, with nothing
 displayed. §10 deletes it. Each block on the Spark runs in a subshell, `( … )`, so its `cd` and
@@ -130,20 +162,22 @@ shows as you type. **On the Spark:**
 
 **4. The NAS's address, port and folder.** It asks three questions: the NAS's full tailnet name,
 from *Machines* in Tailscale's admin console; the port picked in §2; and the folder §4 makes on the
-NAS, such as `/volume1/docker/ntfy`. **On the Spark:**
+NAS, such as `/volume1/docker/ntfy`, Marius Hosting's (§4 makes its `cache` subfolder too, which
+the Compose file finds by itself). **On the Spark:**
 
 ```bash
 ( cd ~/ntfy-setup && umask 077 && read -rp "The NAS's tailnet name: " nas && read -rp "ntfy's port on the NAS: " port && read -rp "ntfy's folder on the NAS: " dir && printf 'http://%s:%s\n' "$nas" "$port" > address && printf '%s\n' "$port" > port && printf '%s\n' "$dir" > folder )
 ```
 
-**5. The files.** This writes `ntfy.env`, the six variables for the Compose helper, its three
-`NTFY_AUTH_` values single-quoted, since every hash holds `$`; `values.env`, for the Spark; and the
-three header files, each one line, `Authorization: Bearer <token>`. Run again, it writes them all
-afresh from the steps above. **On the Spark:**
+**5. The files.** This writes `ntfy.env`, the ~~six~~ seven variables for the Compose helper, its
+three `NTFY_AUTH_` values single-quoted, since every hash holds `$`, and its timezone the Spark's
+own, from `timedatectl`; `values.env`, for the Spark; and the three header files, each one line,
+`Authorization: Bearer <token>`. Run again, it writes them all afresh from the steps above.
+*(Corrected 2026-10-08: the timezone line came with Marius Hosting's style.)* **On the Spark:**
 
 ```bash
 ( cd ~/ntfy-setup && umask 077 && {
-  printf 'NTFY_BASE_URL=%s\nNTFY_PORT=%s\nNTFY_DATA_DIR=%s\n' "$(cat address)" "$(cat port)" "$(cat folder)"
+  printf 'NTFY_BASE_URL=%s\nNTFY_PORT=%s\nNTFY_DATA_DIR=%s\nNTFY_TZ=%s\n' "$(cat address)" "$(cat port)" "$(cat folder)" "$(timedatectl show -p Timezone --value)"
   printf "NTFY_AUTH_USERS='spark-gate:%s:user,spark-notify:%s:user,spark-brake:%s:user,phone:%s:user'\n" "$(cat spark-gate.hash)" "$(cat spark-notify.hash)" "$(cat spark-brake.hash)" "$(cat phone.hash)"
   printf "NTFY_AUTH_ACCESS='spark-gate:%s:wo,spark-notify:%s:wo,spark-brake:%s:wo,phone:%s:ro,phone:%s:ro,phone:%s:ro'\n" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)" "$(cat spark-gate.topic)" "$(cat spark-notify.topic)" "$(cat spark-brake.topic)"
   printf "NTFY_AUTH_TOKENS='spark-gate:%s,spark-notify:%s,spark-brake:%s'\n" "$(cat spark-gate.token)" "$(cat spark-notify.token)" "$(cat spark-brake.token)"
@@ -156,7 +190,7 @@ afresh from the steps above. **On the Spark:**
 ( cd ~/ntfy-setup && sed -n 's/=.*//p' ntfy.env values.env && grep -o ':\$2a\$10\$' ntfy.env | wc -l && wc -c ntfy-gate.header ntfy-notify.header ntfy-brake.header )
 ```
 
-Expected: the names `NTFY_BASE_URL`, `NTFY_PORT`, `NTFY_DATA_DIR`, `NTFY_AUTH_USERS`,
+Expected: the names `NTFY_BASE_URL`, `NTFY_PORT`, `NTFY_DATA_DIR`, `NTFY_TZ`, `NTFY_AUTH_USERS`,
 `NTFY_AUTH_ACCESS`, `NTFY_AUTH_TOKENS`, `NTFY_URL`, `NTFY_TOPIC_GATE`, `NTFY_TOPIC_NOTIFY` and
 `NTFY_TOPIC_BRAKE`; then `4`, one hash for each user; then `55` beside each header file, which is
 `Authorization: Bearer `, a 32-character token and the line's end. Anything else: run the step it
@@ -183,7 +217,10 @@ Written from Portainer's documentation and its source (2.39.8), since Portainer 
 Spark. Task 2 runs these steps on the NAS and corrects them here.
 
 1. **In DSM's File Station**, make the data folder, the one `NTFY_DATA_DIR` names, such as `ntfy`
-   inside the shared folder `docker` (`/volume1/docker/ntfy`).
+   inside the shared folder `docker` (`/volume1/docker/ntfy`), then a folder `cache` inside it
+   (`/volume1/docker/ntfy/cache`), both names in lower case, as in Marius Hosting's guide. ntfy
+   keeps its auth database in the first and its message cache in the second. *(Corrected
+   2026-10-08: the `cache` subfolder came with Marius Hosting's style.)*
 2. **In Portainer**: *Stacks* → *Add stack*, name it `ntfy`, and choose a build method:
    - *Web editor*: paste `stack/synology/ntfy/compose.yaml`, as it is at the commit you deploy.
      ~~Phase 2a's Task 2 uses this one, since the file reaches GitHub only with the push after
@@ -194,10 +231,11 @@ Spark. Task 2 runs these steps on the NAS and corrects them here.
      `refs/heads/phase-2a`, which goes away after the merge, so switch the stack to `main` then);
      *Compose path* `stack/synology/ntfy/compose.yaml`; *Authentication* off, since the repo is
      public. Leave *GitOps updates* off: the pin moves by hand on upgrade day (§6).
-3. Under *Environment variables*, choose *Advanced mode* and paste the six lines of `ntfy.env`, as
-   they are, single quotes included. They hold the tokens, and macOS's Universal Clipboard copies
-   the clipboard to your other Apple devices: switch Handoff off (*System Settings* → *General* →
-   *AirDrop & Handoff*) and pause any clipboard manager until the clipboard is emptied again.
+3. Under *Environment variables*, choose *Advanced mode* and paste the ~~six~~ seven lines of
+   `ntfy.env`, as they are, single quotes included. They hold the tokens, and macOS's Universal
+   Clipboard copies the clipboard to your other Apple devices: switch Handoff off (*System
+   Settings* → *General* → *AirDrop & Handoff*) and pause any clipboard manager until the clipboard
+   is emptied again.
    **On the Mac**, this puts them on the clipboard without showing them:
 
    ```bash
@@ -212,7 +250,11 @@ Spark. Task 2 runs these steps on the NAS and corrects them here.
 4. *Deploy the stack*.
 
 Expected: the container runs, and its log (*Containers* → the ntfy container → *Logs*) has a line
-`Listening on :80[http], ntfy 2.28.0, …`. From the phone, with Tailscale on, the address opens
+`Listening on :80[http], ntfy 2.28.0, …`. In File Station, `user.db` is in the data folder and
+`cache.db` in its `cache` subfolder. Within about two minutes the container's health reads
+`healthy` (`starting` until the first check, a minute after it starts): the healthcheck reached
+`/v1/health` inside the container. `unhealthy` means three checks in a row failed; Docker only
+reports it, and restarts nothing for it. From the phone, with Tailscale on, the address opens
 ntfy's web page, and a topic there answers only after a login. If the deploy stops with
 `required variable … is missing a value`, that variable is missing from the stack's environment. If
 the container keeps restarting (`restart: unless-stopped` starts it again each time it stops) and
@@ -222,12 +264,13 @@ its log says `invalid auth-users`, a hash has lost its `$` signs: check its quot
 
 Any helper that reads a Compose file and its variables deploys it the same way. With plain Docker
 Compose, on the machine that runs ntfy (the Synology over SSH, or another host): make the data
-folder; put `compose.yaml` from this repo, at the commit you deploy, in a folder of its own; and put
-`~/ntfy-setup/ntfy.env` beside it as `.env`, copied without opening it (with `scp`, say) and
-readable by you alone (`chmod 600 .env`). Compose reads a `.env` beside the file by itself.
+folder and its `cache` subfolder; put `compose.yaml` from this repo, at the commit you deploy, in a
+folder of its own; and put `~/ntfy-setup/ntfy.env` beside it as `.env`, copied without opening it
+(with `scp`, say) and readable by you alone (`chmod 600 .env`). Compose reads a `.env` beside the
+file by itself.
 
-Then, in that folder, check the file and its six variables. This prints nothing when they're in
-order, and names any variable that is missing. **On the host that runs ntfy:**
+Then, in that folder, check the file and its ~~six~~ seven variables. This prints nothing when
+they're in order, and names any variable that is missing. **On the host that runs ntfy:**
 
 ```bash
 docker compose config --quiet
@@ -273,8 +316,9 @@ file as it was). The data folder stays through both: a redeploy doesn't touch it
 its users, their access and the tokens again from the variables each time it starts. One exception:
 a newer ntfy may migrate its databases when it starts, and an older one then refuses them, its log
 saying `unexpected … schema version` (ntfy v2.28.0's `db/schema`). Then, **in DSM's File Station**,
-rename the data folder, make an empty one in its place, and redeploy: ntfy starts with new
-databases and loses only the messages it had cached, 12 hours' worth at most by default.
+rename the data folder, its `cache` subfolder going with it; make an empty one in its place, with
+an empty `cache` folder inside, as §4 did; and redeploy: ntfy starts with new databases and loses
+only the messages it had cached, 12 hours' worth at most by default.
 
 ## 7. The phone
 

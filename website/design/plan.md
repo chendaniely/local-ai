@@ -3267,6 +3267,19 @@ Each item gets its own design pass when its turn comes.
     progress line, notification and status row.
   - A brake hold that doesn't record when it fired or how low memory ran is worded as the gate saw
     it, never as fired, with no reading the hold didn't record.
+- **2026-10-08** — ntfy's Compose file follows Marius Hosting's Synology style (Dan's decision,
+  2026-10-08: his style, our safety), with dated notes in the implementation plan's Tasks 1 and 2
+  and on [ntfy on the Synology](../how-to/ntfy.md). From his ntfy guide: `container_name: ntfy`;
+  the folder `/volume1/docker/ntfy`, where the auth database stays, with a `cache` subfolder at
+  ntfy's cache path, where the message cache moves; his healthcheck, which is also ntfy's own docs',
+  checked against the pinned image's own files; `TZ`, as a seventh required variable, so no
+  timezone is written in the repo; port 6741, suggested; and a Portainer stack. Kept: a login, with
+  a token for each publisher (`deny-all`, the users and the per-topic grants); the tailnet and the
+  home LAN only, with no reverse proxy or DDNS name; and the image pinned at v2.28.0 by its digest.
+  The settings stay in the helper's variables, with no `server.yml`. The controller kept
+  `restart: unless-stopped`, not his `on-failure:5`: Docker doesn't restart an `on-failure`
+  container when its daemon restarts, so a NAS reboot or a DSM update would leave ntfy down and the
+  alerts silent.
 
 ## Sources
 

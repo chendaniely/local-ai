@@ -384,7 +384,7 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | Path | Responsibility |
 |---|---|
 | `stack/synology/ntfy/compose.yaml` (new) | ntfy on the Synology as a Compose file, pinned by its index digest; every private value a named variable |
-| `stack/synology/ntfy/variables.example` (new) | The six variables by name, with placeholders, never values |
+| `stack/synology/ntfy/variables.example` (new) | The ~~six~~ seven variables by name, with placeholders, never values *(corrected 2026-10-08: Marius Hosting's style added `NTFY_TZ`; Task 1)* |
 | `stack/models.yaml` | The registry: gains each model's `label`, the `key_groups`, `notifications`, `gate` settings and the budget's measured values; whisper's tmp-dir moves; the coder becomes Qwen3.8-27B (Task 42) |
 | `stack/keys.example.yaml` (new) | The private key list's shape, with placeholder names; the real one is `/etc/local-ai/keys.yaml`, never in the repo |
 | `stack/versions.yaml` | Gains ntfy's row (`where: [synology]`) |
@@ -543,14 +543,30 @@ follows the same pattern, under `stack/synology/watchdog/`.
   (the `versions.yaml` row's `image`, `version` and `pin`, in render's `_image` form),
   `command: serve`, `restart: unless-stopped`. It holds no secret and no private value. Its fixed
   environment: `NTFY_AUTH_DEFAULT_ACCESS: deny-all`, `NTFY_AUTH_FILE: /var/lib/ntfy/user.db`,
-  `NTFY_CACHE_FILE: /var/lib/ntfy/cache.db`, `NTFY_BEHIND_PROXY: "false"`. What is private arrives
+  ~~`NTFY_CACHE_FILE: /var/lib/ntfy/cache.db`~~ `NTFY_CACHE_FILE: /var/cache/ntfy/cache.db` (see
+  the 2026-10-08 note below), `NTFY_BEHIND_PROXY: "false"`. What is private arrives
   as a variable, each required with Compose's `${NAME:?set NAME}` so a missing one stops the
   deploy with its name: `NTFY_BASE_URL` (the NAS's address as the phone and the Spark reach it),
   `NTFY_AUTH_USERS`, `NTFY_AUTH_ACCESS` and `NTFY_AUTH_TOKENS` (ntfy v2.28.0's declarative users,
   access and tokens, which hold the topic names and the tokens: `docs/config.md` at that tag),
   `NTFY_DATA_DIR` (the host folder, bound to `/var/lib/ntfy`) and `NTFY_PORT` (published to the
   container's 80). No `NTFY_UPSTREAM_BASE_URL`, no Firebase key, no web push.
-- `stack/synology/ntfy/variables.example`: each of the six variables, one per line, as
+  *(Dan's decision, 2026-10-08: Marius Hosting's Synology style, keeping the login, the
+  tailnet-only path and the pin; the controller kept `unless-stopped`.)* From his ntfy guide the
+  file takes `container_name: ntfy`; the folder `NTFY_DATA_DIR` names (`/volume1/docker/ntfy`,
+  suggested) bound to `/var/lib/ntfy`, where the auth database stays, and its `cache` subfolder
+  bound to `/var/cache/ntfy`, which holds the message cache, `NTFY_CACHE_FILE:
+  /var/cache/ntfy/cache.db`; his healthcheck, which is also ntfy v2.28.0's
+  `docs/install.md`'s (`wget -q --tries=1 http://localhost:80/v1/health -O - | grep -Eo
+  '"healthy"\s*:\s*true' || exit 1`, every 60 s, timeout 10 s, 3 retries, a 40 s start period),
+  checked in the pinned image; `TZ` as a seventh required variable, `NTFY_TZ`, so no timezone is
+  written in the repo; and port 6741, suggested in the runbook, with `NTFY_PORT` still a variable.
+  Nothing is mounted at `/etc/ntfy`, where his guide keeps a `server.yml`: there is none, and
+  attachments stay off. His `restart: on-failure:5` isn't taken: Docker doesn't restart an
+  `on-failure` container when its daemon restarts, so a NAS reboot or a DSM update would leave
+  ntfy down.
+- `stack/synology/ntfy/variables.example`: each of the ~~six~~ seven variables *(corrected
+  2026-10-08: `NTFY_TZ`, from Marius Hosting's style)*, one per line, as
   `NAME=<what goes here>`, with no value; a comment says the values live in the helper (in
   Portainer, the stack's environment variables) or in a `.env` beside the file, never in the repo,
   and that a value holding a `$` (a bcrypt hash) is single-quoted in a `.env`. (Not
@@ -579,11 +595,16 @@ follows the same pattern, under `stack/synology/watchdog/`.
      credentials in the vault by reference only, and its rule wins.)*
   4. *Deploy it — Portainer today*: a stack from the web editor (the file pasted in) or from a Git
      repository (this repo's URL, its branch, the compose path `stack/synology/ntfy/compose.yaml`;
-     the branch is `main` once 2a merges, since `phase-2a` goes away), the six variables in the
-     stack's environment, then deploy.
-  5. *Deploy it — any other Compose helper*: the file beside a `.env` holding the six variables,
-     then `docker compose up -d`; any helper that reads a Compose file and its variables works
-     the same way.
+     the branch is `main` once 2a merges, since `phase-2a` goes away), the ~~six~~ seven variables
+     in the stack's environment, then deploy. *(Dan's decision, 2026-10-08: Marius Hosting's
+     Synology style, keeping the login, the tailnet-only path and the pin; the controller kept
+     `unless-stopped`.)* File Station makes both folders first, `/volume1/docker/ntfy` and its
+     `cache` subfolder, and the Expected gains the container's health. The page's opening says, in
+     one sentence for readers who know his guides, what is the same, what differs (the login, no
+     internet path, the pin) and why the restart policy differs.
+  5. *Deploy it — any other Compose helper*: the file beside a `.env` holding the ~~six~~ seven
+     variables, then `docker compose up -d`; any helper that reads a Compose file and its variables
+     works the same way.
   6. *Moving the pin, and rolling back*: the digest changes in `compose.yaml` and
      `versions.yaml` in one commit, a week after the release (`CLAUDE.md`'s seven-day rule), then
      a redeploy (Portainer's *Pull and redeploy*, or `docker compose pull && docker compose up -d`);
@@ -625,6 +646,17 @@ follows the same pattern, under `stack/synology/watchdog/`.
   non-zero, naming ~~`NTFY_BASE_URL`~~ one of the six, and with each one left out in turn it
   names that one. *(Corrected 2026-10-07, in Task 1: Compose names whichever missing variable it
   reaches first, which varies from run to run.)*
+
+*(Dan's decision, 2026-10-08: Marius Hosting's Synology style, keeping the login, the tailnet-only
+path and the pin; the controller kept `unless-stopped`.)* The tests follow the new file: the six
+are seven, `NTFY_TZ` among them, and the stand-ins add `NTFY_TZ=Etc/UTC`, a timezone that names no
+place, with port ~~8090~~ 6741; `test_ntfy_denies_by_default_and_reaches_no_relay` also refuses an
+`ATTACHMENT` key and any volume at `/etc/ntfy`, and pins `restart: unless-stopped` with its reason;
+`test_docker_compose_reads_the_file` also checks the folder and its `cache` subfolder and the
+healthcheck as Compose resolves them; and a new test,
+`test_ntfy_follows_marius_hostings_synology_layout`, pins `container_name: ntfy`, the two volumes,
+the auth and cache files' paths, `TZ: "${NTFY_TZ:?set NTFY_TZ}"`, his healthcheck byte for byte
+and the port as a variable.
 
 **Steps:**
 
@@ -703,6 +735,15 @@ header files, as `ntfy.md` §8 writes them.
   from the phone, ~~asking for a login~~ loading (`200`), and only a topic there asks for a login.
   *(Corrected 2026-10-07, after Task 1's review: the Compose file sets no `NTFY_ENABLE_LOGIN` or
   `NTFY_REQUIRE_LOGIN`, so the page itself loads; `deny-all` refuses a topic without one.)*
+  *(Dan's decision, 2026-10-08: Marius Hosting's Synology style, keeping the login, the
+  tailnet-only path and the pin; the controller kept `unless-stopped`.)* File Station makes both
+  folders first, `/volume1/docker/ntfy` (or the folder Dan picks) and its `cache` subfolder, and
+  the stack gets seven variables, `NTFY_TZ` among them. Expected also: the container's health reads
+  `healthy` within about two minutes, which Task 1 checked only outside Docker, with the image's
+  own files; `user.db` is in the folder and `cache.db` in its `cache` subfolder; and the log's
+  times are local if `TZ` took effect, as on an amd64 NAS, or UTC on an arm64 one, whose image has
+  no timezone data. The session records which, and corrects `ntfy.md` if the health or the folders
+  differ.
 - [ ] **Step 4 [Dan, on the phone]:** `ntfy.md` §7.
 - [ ] **Step 5 [Dan, on the Spark]:** `ntfy.md` §8 and §9. Expected: each test message arrives;
   `high` sounds and `low` arrives silently; with Do Not Disturb switched on by hand, only `high`

@@ -2,18 +2,27 @@
 # helper: as a Portainer stack (from its web editor, or this repo as a Git-repository stack), or with
 # `docker compose up -d` beside a .env file. The runbook is website/how-to/ntfy.md.
 #
-# This file is public and holds nothing private. The NAS's address, the topic names, the users' hashes and the
-# tokens arrive as the six variables below, each required, so a missing one stops the deploy and is named;
-# variables.example lists them. The image is pinned by its index digest, the one stack/versions.yaml records.
+# It follows Marius Hosting's Synology ntfy guide (mariushosting.com) in its container name, its folder and that
+# folder's cache subfolder, its healthcheck, TZ and the port it suggests, and keeps three things his guide
+# doesn't have: a login for every reader and publisher, no path from the internet, and the image pinned by digest.
+#
+# This file is public and holds nothing private. The NAS's address, the topic names, the users' hashes, the
+# tokens and the timezone arrive as the seven variables below, each required, so a missing one stops the deploy
+# and is named; variables.example lists them. The image is pinned by its index digest, the one
+# stack/versions.yaml records.
 services:
   ntfy:
     image: docker.io/binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
+    container_name: ntfy
     command: serve
+    # Not Marius's on-failure:5: Docker doesn't restart an on-failure container when its daemon restarts, so a
+    # NAS reboot or a DSM update would leave ntfy down, and the alerts would stop without a word.
     restart: unless-stopped
     environment:
+      TZ: "${NTFY_TZ:?set NTFY_TZ}"
       NTFY_BASE_URL: "${NTFY_BASE_URL:?set NTFY_BASE_URL}"
       NTFY_AUTH_FILE: /var/lib/ntfy/user.db
-      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
       # Nobody reads or publishes without a login. The users, their access and the tokens are declared here and
       # set again each time ntfy starts (ntfy v2.28.0's auth-users, auth-access and auth-tokens).
       NTFY_AUTH_DEFAULT_ACCESS: deny-all
@@ -21,8 +30,22 @@ services:
       NTFY_AUTH_ACCESS: "${NTFY_AUTH_ACCESS:?set NTFY_AUTH_ACCESS}"
       NTFY_AUTH_TOKENS: "${NTFY_AUTH_TOKENS:?set NTFY_AUTH_TOKENS}"
       NTFY_BEHIND_PROXY: "false"
-      # Reached over the tailnet or the home LAN only: no upstream server, no Firebase, no web push.
+      # Reached over the tailnet or the home LAN only: no upstream server, no Firebase, no web push, and no
+      # attachments (no attachment-cache-dir).
+    # The folder holds the auth database; its cache subfolder, at ntfy's cache path, holds the message cache.
+    # Nothing is mounted at /etc/ntfy, where Marius's guide keeps its server.yml: there is none, and one put
+    # there later would bring in settings this file doesn't show.
     volumes:
       - "${NTFY_DATA_DIR:?set NTFY_DATA_DIR}:/var/lib/ntfy"
+      - "${NTFY_DATA_DIR:?set NTFY_DATA_DIR}/cache:/var/cache/ntfy"
+    # Marius's healthcheck, which is also ntfy's own docs': the image is Alpine, so busybox's wget and grep are in
+    # it, and /v1/health answers without a login under deny-all. Docker only reports the result; it restarts
+    # nothing on its own.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O - | grep -Eo '\"healthy\"\\s*:\\s*true' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     ports:
       - "${NTFY_PORT:?set NTFY_PORT}:80"
