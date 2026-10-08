@@ -80,13 +80,14 @@ ROUTES: tuple[Route, ...] = (
     Route("status", "POST", "/v1/sessions/{id}/renew", "owner"),  # → SessionGranted
     Route("status", "DELETE", "/v1/sessions/{id}", "owner"),
     Route("control", "GET", "/v1/status", "admin"),  # the full StatusView
-    # ModelRequest → NDJSON (the controller's ruling at Task 10's re-review): its head at once, a LoadProgress as the
-    # load starts, then LoadConfirmation; held up to LOAD_CALL_TIMEOUT_S.
+    # ModelRequest → NDJSON (the controller's rulings at Task 10's re-reviews): its head at once, a WaitProgress as it
+    # starts waiting for the slot or for memory, a LoadProgress as the load starts, then LoadConfirmation; held up to
+    # LOAD_CALL_TIMEOUT_S.
     Route("control", "POST", "/v1/load", "admin"),
     Route("control", "POST", "/v1/unload", "admin"),  # ModelRequest → NDJSON: UnloadCount at once, then UnloadDone
     # PinRequest → PinConfirmation for a model already loaded; a pin that loads first streams as /v1/load does: its
-    # head at once, a LoadProgress as the load starts, then PinConfirmation; held up to LOAD_CALL_TIMEOUT_S. (The
-    # controller's ruling at Task 10's re-review.)
+    # head at once, any WaitProgress, a LoadProgress as the load starts, then PinConfirmation; held up to
+    # LOAD_CALL_TIMEOUT_S. (The controller's rulings at Task 10's re-reviews.)
     Route("control", "POST", "/v1/pin", "admin"),
     Route("control", "DELETE", "/v1/pin/{model}", "admin"),
     Route("control", "POST", "/v1/make-room/plan", "admin"),  # RoomPlanRequest → RoomPlanAnswer
@@ -269,6 +270,23 @@ class ModelRequest(TypedDict):
     model: str
 
 
+class WaitProgress(TypedDict):
+    """A line of /v1/load's stream, and of a pin that loads, as the request starts waiting, and again whenever its
+    reason changes, before its LoadProgress: so a queued load is never silent (the controller's ruling at Task 10's
+    second re-review). The fields Task 7's `waiting` words its reason with: *Waiting its turn to load: … Gemma is
+    loading, and one model loads at a time.*, *Waiting for memory: … It needs 41 GiB, and 18 GiB is free for a load.*
+    Those a reason doesn't use are None."""
+
+    model: str
+    label: str
+    why: WaitingWhy
+    needed_gib: float | None  # memory: what the load needs
+    free_gib: float | None  # memory: free for a load now
+    loading_label: str | None  # slot: the model that holds the one-load slot
+    release_waits_for_dan: bool | None  # brake: the pause lifts only when Dan releases it
+    release_after_s: float | None  # brake: how long memory must stay above the warn line, when it lifts by itself
+
+
 class LoadProgress(TypedDict):
     """A line of /v1/load's stream, as the load starts (none for a model already loaded): Task 7's `load_started`
     words it, *Loading the coder (24 s last time)…*."""
@@ -280,7 +298,7 @@ class LoadProgress(TypedDict):
 
 class LoadConfirmation(TypedDict):
     label: str
-    seconds: float
+    seconds: float | None  # None for a model already loaded, as `messages.loaded` takes it
     idle_min: int | None  # None for an always-loaded model
     command: str
 

@@ -1866,6 +1866,13 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     `gateproto.PinConfirmation` (`{label, until, loaded_s, command}`, which Task 7's `pinned`
     words). A pin on a model already loaded answers once, with `PinConfirmation` alone. The CLI
     reads both through `stream()`, which reads a single answer as its one line.
+  - *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* a load, or a pin that loads, that waits for the slot or for
+    memory sends a `gateproto.WaitProgress` line as it starts waiting, and again whenever its
+    reason changes, before its `LoadProgress`. The line carries the fields Task 7's `waiting` words
+    its reason with: `{model, label, why, needed_gib, free_gib, loading_label,
+    release_waits_for_dan, release_after_s}`, None where a reason has no use for one. So a queued
+    load is never silent. `LoadConfirmation.seconds` is None for a model already loaded, as
+    `messages.loaded` takes it.
 
 - `StatusView` (also `--json`'s shape, for 2b's menu bar): `schema` (1, raised when a field's
   meaning changes), `host`, `at`; `memory` (`total_gib`,
@@ -1919,7 +1926,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
       `GateInputError`, a `ValueError` too, worded as the name given at fault, before any
       connection.
     - The body is made before any connection, so one that can't be sent leaves none open.
-    - A single answer over 1 MiB, or a stream's line over 64 KiB, reads as `GateUnavailable`.
+    - A single answer over 1 MiB, or a stream's line over 64 KiB, ~~reads as `GateUnavailable`~~
+      is a plain `GateError` *(corrected 2026-10-08, at Task 10's re-review, N5: the note below)*.
     - A 2xx answer with nothing in it reads as `{}`.
     - `GateForbidden` names the next step, by whether this account is in the socket's group (the
       group database) and whether this login has the group yet:
@@ -1937,6 +1945,9 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
       does.
     - An answer or a line past its bound is a plain `GateError`, not `GateUnavailable`: the gate
       is up and answering, so Task 23's direct release of the brake's hold never fires for it.
+  - *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* an answer `http.client` can't parse (a status line that isn't
+    HTTP, a header or chunk-size line too long) reads *… its answer wasn't one the client could
+    read*, never an exception's class name.
 
 **Tests** (`spark/tests/test_gateclient.py`; a standard-library stand-in server on a short
 `AF_UNIX` path):
@@ -1981,7 +1992,11 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     object short of its length, half a body, half a refusal) and
     `test_a_stream_cut_off_partway_reads_as_gate_unavailable_not_its_end` (no last chunk, a chunk cut
     short, a length cut short); the routes test pins `MakeRoomProgress`'s and `LoadProgress`'s
-    keys.
+    keys, and since the fix for the pin's ruling `PinConfirmation`'s.
+  - *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)*
+    `test_an_answer_the_client_cant_read_is_worded_never_named`; the routes test pins
+    `WaitProgress`'s keys and `LoadConfirmation.seconds`' type; the bounds test's over-long line is
+    exactly one byte past the bound, so an off-by-one fails it.
   - In `test_cli.py`: `test_a_gate_error_is_one_plain_line_never_a_traceback`, for each of the
     three errors.
   - In `test_doctor.py`: the stand-in's address follows `paths.LLAMASWAP_URL`.
@@ -2691,7 +2706,9 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   model already loaded, `PinConfirmation`'s fields alone; a refusal on the way, as a
   `gateproto.GateRefusalBody`, last. Its test: `test_a_pin_that_loads_yields_its_start_first`, the
   coder not loaded → the `LoadProgress`, then the confirmation with `loaded_s`; loaded → the
-  confirmation alone, `loaded_s` None.
+  confirmation alone, `loaded_s` None. *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* a pin whose load waits for
+  the slot or for memory yields a `gateproto.WaitProgress` as it starts waiting, and again
+  whenever its reason changes, before its `LoadProgress`, as Task 17's `Room.load` does.
 - `Sessions(state, clock, *, proc: Path, may_hold: Callable[[int], bool])`: `register(uid, pid,
   model, label) -> Session | Refusal` — the pid alive and the caller's (its `/proc` `Uid:`);
   at most `SESSIONS_PER_UID` per uid; `renew(id, uid)`; `end(id, uid, *, admin: bool)` — the
@@ -2720,6 +2737,10 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
 - `test_pins_are_dans_only` — `pin` from `agent`'s uid → refused.
 - `test_pinning_a_model_that_isnt_loaded_loads_it_first` — the coder not loaded → admission called
   with `kind: "command"`, then the pin set.
+- *(Added 2026-10-08, at Task 10's re-reviews:)* `test_a_pin_that_loads_yields_its_start_first` —
+  the coder not loaded → its `LoadProgress`, then `PinConfirmation` with `loaded_s`; the coder
+  loaded → `PinConfirmation` alone, `loaded_s` None; the coder's load waiting for Gemma's → a
+  `WaitProgress` with `why: "slot"` and `loading_label: "Gemma"` first.
 - `test_a_drain_waits_for_requests_in_flight_however_long` — 1 in flight for an hour: no unload;
   `drained` → unload, `unloaded` sent, True.
 - `test_the_unload_comes_only_after_drained` — no `drained` → no unload call.
@@ -2759,8 +2780,10 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
     `RoomPlan`, as `/v1/make-room/plan` answers them; every candidate marked:
     its pin, the session using it, its requests in flight and their age, its idle time; from
     `budget.make_room_plan`, the free-now figure the admission one for Dan.
-  - `async execute(plan_id, for_s: float | None, uid) -> RoomResult(unloaded: list[str], free_gib,
-    hold_gib, until, ended: list[str])` — drains and unloads each, in order; a pin it unloads ends,
+  - `async execute(plan_id, for_s: float | None, uid)` ~~`-> RoomResult(unloaded: list[str], free_gib,
+    hold_gib, until, ended: list[str])`~~ *(corrected 2026-10-08, at Task 10's re-review: it yields
+    its progress, then `RoomResult(unloaded: list[str], free_gib, hold_gib, until, ended: list[str])`'s
+    fields as its last line, as the note below says)* — drains and unloads each, in order; a pin it unloads ends,
     and a session loses its model, each named in `ended` and in `spark status`'s *recent*; sets
     `RoomHold(size = the target, or every GiB free for a load with ALL; until = now + for_s, or
     none; this boot)`.
@@ -2784,8 +2807,14 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
       (`{model, label, last_s}`) as the load starts (none for a model already loaded), then the
       confirmation's fields.
     - A refusal on the way is the last line, as a `gateproto.GateRefusalBody`.
-    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* a pin that loads first yields the same `LoadProgress` before its
-      result; Task 16's `Pins.pin`, which loads it, has the note, since Task 16 comes first.
+    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* a
+      pin that loads first yields the same `LoadProgress` before its result; Task 16's `Pins.pin`,
+      which loads it, has the note, since Task 16 comes first.
+    - *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* `load` yields a `gateproto.WaitProgress` as its request starts
+      waiting for the slot or for memory, and again whenever its reason changes, before its
+      `LoadProgress`. Its test: `test_load_yields_its_wait_before_its_start` — the coder's load
+      queued behind Gemma's → `{why: "slot", loading_label: "Gemma", …}` while Gemma loads, then
+      the coder's `LoadProgress`, then its result.
   - `expire(now)` — a hold whose `until` has passed ends (`room_hold_ended`, *its time ran out*).
 - `Preloader(admitter, registry, emit, clock)`: `async run(models)` — the residents, one at a time,
   each through `admitter.reload(model)` (Task 15: ahead of the queue, every hold counted, no
@@ -2871,6 +2900,10 @@ and the drainer):
   coder not loaded, its last load 24 s → `{model: "qwen3.8-27b", label: "the coder", last_s: 24}`
   as the load starts, then the confirmation's fields once it is ready; the coder already loaded →
   the confirmation alone.
+- *(Added 2026-10-08, at Task 10's second re-review:)* `test_load_yields_its_wait_before_its_start`
+  — the coder's load queued behind Gemma's → `{model: "qwen3.8-27b", label: "the coder", why:
+  "slot", loading_label: "Gemma", …}` while Gemma loads, then the coder's `LoadProgress`, then its
+  result.
 
 **Steps:**
 
@@ -3013,8 +3046,8 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   - `/v1/make-room` streams too: its head at once, a `gateproto.MakeRoomProgress` line as each
     model's drain begins, then its result. So the CLI bounds the head and waits for the drains
     (Task 30).
-  - The gate's every answer with a status other than 2xx, the 403 that says who may and a refused
-    `/v1/load` among them, and a refusal sent as a stream's line, is
+  - The gate's every answer with a status other than 2xx, the 403 that says who may ~~and a refused
+    `/v1/load`~~ among them, and a refusal sent as a stream's line, is
     `gateproto.GateRefusalBody`: a top-level `message`, one plain line the CLI shows as it is,
     and `code`, None where there is none. It is never the front's `{"error": {…}}` shape, whose
     reason the CLI wouldn't show. `/v1/admit` alone answers 200 with `ok: false`.
@@ -3025,11 +3058,19 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
       `LOAD_CALL_TIMEOUT_S` here.
     - Every stream (`/v1/unload`, `/v1/make-room`, `/v1/load`) ends with its result line, or with a
       refusal line in `GateRefusalBody`'s shape (`message` and `code`), and then its last chunk.
-    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* `/v1/pin` on a model that isn't loaded streams as `/v1/load`
-      does, from `Pins.pin`'s iterator (Task 16): its head at once, the `LoadProgress` line as the
-      load starts, then `PinConfirmation`, held up to `LOAD_CALL_TIMEOUT_S`. A pin on a model
-      already loaded answers once, with `PinConfirmation` alone, and so does `DELETE /v1/pin/{model}`
-      with its own answer.
+    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)*
+      `/v1/pin` on a model that isn't loaded streams as `/v1/load` does, from `Pins.pin`'s iterator
+      (Task 16): its head at once, the `LoadProgress` line as the load starts, then
+      `PinConfirmation`, held up to `LOAD_CALL_TIMEOUT_S`. A pin on a model already loaded answers
+      once, with `PinConfirmation` alone, and so does `DELETE /v1/pin/{model}` with its own answer.
+  - *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)*
+    - *(Corrected:)* the first note above listed *a refused `/v1/load`* among the answers with a
+      status other than 2xx. With its head sent at once, a refusal after a wait (`no_fit`,
+      `loading`, `held_by_brake`) is a refusal line in a 200 stream. Only a refusal decided before
+      the head, such as the 403 that says who may or a 413, is an error status.
+    - `/v1/load`, and a pin that loads, send a `gateproto.WaitProgress` line as the request starts
+      waiting for the slot or for memory, and again whenever its reason changes, before its
+      `LoadProgress`, from `Room.load`'s and `Pins.pin`'s iterators.
 - `GET /v1/status` through the status socket — the refusals the caller may see: those whose key's
   `account` (Task 4) is the caller's user name, and those whose record's `uid` is the caller's;
   Dan's processes only as *a process of Dan's*. Through the control socket, everything.
@@ -3090,6 +3131,15 @@ off Linux with Task 9's reason, and the rest run everywhere):
 - `test_a_held_load_outlasts_the_request_timeout` — over a real socket, the timeout 0.3 s, a load
   the stand-in llama-swap holds for 1 s → `/v1/load` answers with the confirmation's fields after
   it; `/v1/unload` streams `{inflight: 1}` at once and its result after the drain.
+- *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* `test_a_streams_head_goes_at_once_even_behind_another_load` —
+  over a real socket, with Gemma's load held by the stand-in llama-swap for 2 s:
+  - `/v1/load` for the coder, which queues behind Gemma's, sends its head and its `WaitProgress`
+    (`why: "slot"`) within 0.5 s, and its `LoadProgress` only once Gemma's load is done;
+  - `/v1/pin` for the coder does the same;
+  - `/v1/make-room`, its drain waiting on a request in flight, sends its head and its first
+    `MakeRoomProgress` within 0.5 s.
+  A handler that sends its head only with its first line, or with its result, fails it: the CLI
+  would read a gate queued behind a load as a gate that is down.
 - `test_the_gate_keeps_serving_while_ntfy_hangs` — a publish that hangs: `GET /v1/status` answers
   within 0.5 s.
 - `test_logs_reads_the_engines_last_lines_with_the_gates_key` — the stand-in llama-swap's lines:
@@ -4226,8 +4276,10 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
   registers its own pid, renews every 60 s, and ends the session when its stdin closes, or on
   SIGTERM or SIGHUP; a Mac hook runs `ssh brightroar spark session hold …` in the background, and
   the session ends when pi exits or the Mac sleeps.
-- Each command's client timeout: `GateClient`'s 5 s for `make-room`'s plan, `--done`, `logs`, the
-  pins without a load and the sessions; ~~the load call's 200 s plus 10 for `load` and for a `pin`
+- Each command's client timeout: `GateClient`'s 5 s for `make-room`'s plan, `--done`, `logs`, ~~the
+  pins without a load~~ `unpin` *(corrected 2026-10-08, at Task 10's second re-review: every
+  `spark pin` now reads `/v1/pin` as a stream, since the CLI can't tell beforehand whether it loads)*
+  and the sessions; ~~the load call's 200 s plus 10 for `load` and for a `pin`
   that loads;~~ ~~none for `unload` and for `make-room`'s unloads, whose drains wait for their requests~~
   — `unload` reads `/v1/unload`'s stream, printing the count's sentence at once and the result when
   it comes.
@@ -4262,6 +4314,16 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     *Loading the coder (24 s last time)…*, before `pinned`'s. A pin on a model already loaded
     answers once, which `stream()` reads as its one line, and `pin` prints `pinned`'s words alone.
     Either way a gate that is down shows within 5 s.
+  *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)*
+  - **A queued load says what it waits for.** `load`, and a `pin` that loads, print a line for
+    each `WaitProgress`, in Task 7's `waiting` words for its reason, as Dan's own command words
+    them (no key, and no wait to give). For example, *The coder is waiting its turn to load: Gemma
+    is loading, and one model loads at a time…* or *The coder is waiting for memory: it needs
+    41 GiB, and 18 GiB is free for a load…*. The brake's reason takes `held_by_brake`'s words for
+    Dan. A `messages` function of Task 30's own holds them, with its test.
+  - **The result line ends it.** Each streamed command stops reading at its result line, or a
+    refusal line, and closes the stream there. So a cut after the result is never shown as an
+    error after a success.
 - A question (`make-room`'s confirmation) is asked only on a terminal: without one it exits 2,
   saying to run it in a terminal or add `--yes`; `--yes` answers yes.
 - `parse_size(text) -> Decimal` — `41G`, `41GiB`, `41` → 41; `parse_duration(text) -> int` — `8h`
@@ -4305,7 +4367,18 @@ it):
 - `test_make_room_all_and_done` — `--all` → `{all: true}`, the plan's `--all` sentence after one
   question; `--done` → `POST /v1/release` with `{room: true}` only, and from its answer's `room`
   fields, *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next
-  request.*
+  request.* *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* the stand-in streams a `MakeRoomProgress` for each
+  model `--all` unloads, and an *Unloading …* line comes for each before *Unloaded everything. …*,
+  as plan.md's `--all` row now shows.
+- *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* `test_a_cut_after_the_result_is_never_shown_as_an_error` — the
+  stand-in streams `{inflight: 1}`, `{unloaded: true}`, then cuts the connection with no last chunk
+  → *Unloading the coder once its 1 request in flight finishes…*, *Unloaded the coder.*, exit 0,
+  and no error line.
+- *(Added 2026-10-08, the controller's rulings, at Task 10's second re-review:)* `test_a_queued_load_says_what_it_waits_for` — the stand-in streams a
+  `WaitProgress` (`why: "slot"`, `loading_label: "Gemma"`), then a `WaitProgress` (`why:
+  "memory"`, 41 needed, 18 free), then the `LoadProgress`, then the result → *The coder is waiting
+  its turn to load: Gemma is loading, …*, *The coder is waiting for memory: …*, *Loading the coder
+  (24 s last time)…*, *Loaded the coder in 24 s. …*, in that order.
 - `test_a_question_without_a_terminal_refuses_without_yes` — stdin not a terminal → exit 2 and the
   sentence; `--yes` → proceeds.
 - `test_logs_reads_through_the_control_socket` — `logs coder -n 5` → `GET /v1/logs/coder?n=5`, each

@@ -5,7 +5,7 @@ and their messages are gateproto's.
 
 A call that gets no usable answer raises a GateError whose text is a sentence:
 - GateUnavailable when there is no socket, nothing listening on it, no answer within the timeout, as when systemd
-  holds the socket while the gate is down, or an answer that broke off partway;
+  holds the socket while the gate is down, or an answer that broke off partway or isn't HTTP at all;
 - GateForbidden when the socket refuses this login, naming the group it is for and the next step;
 - GateRefused when the gate answers with a status other than 2xx, carrying the status and the answer's body;
 - GateInputError, a ValueError too, for a route that can't be sent: the caller's input is at fault, not the gate;
@@ -75,8 +75,8 @@ class GateError(Exception):
 
 
 class GateUnavailable(GateError):
-    """No socket, nothing listening on it, no answer within the timeout, or an answer that broke off partway: the gate
-    isn't there to ask, or stopped answering."""
+    """No socket, nothing listening on it, no answer within the timeout, or an answer that broke off partway or isn't
+    HTTP at all (worded, never named by http.client's class): the gate isn't there to ask, or stopped answering."""
 
 
 class GateForbidden(GateError):
@@ -345,6 +345,8 @@ def _reason(err: BaseException) -> str:
         return "it closed the connection without answering"
     if isinstance(err, http.client.IncompleteRead):
         return "its answer broke off"
+    if isinstance(err, http.client.HTTPException):  # BadStatusLine, LineTooLong and the rest: worded, never named
+        return "its answer wasn't one the client could read"
     if isinstance(err, OSError) and err.strerror:
         return err.strerror
     return type(err).__name__

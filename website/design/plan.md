@@ -1118,12 +1118,12 @@ account.
 
 | Command | What it says | Undo |
 |---|---|---|
-| `spark load coder` | *Loading the coder (24 s last time)…* as the load starts, then *Loaded the coder in 24 s. It unloads after 60 min idle; `spark pin coder` keeps it.* Or the refusal's message. (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling: a load that waits minutes says it has started.) | `spark unload coder` |
+| `spark load coder` | *The coder is waiting its turn to load: Gemma is loading, and one model loads at a time…* or *The coder is waiting for memory: it needs 41 GiB, and 18 GiB is free for a load…* while it waits for either (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling: a queued load is never silent), *Loading the coder (24 s last time)…* as the load starts, then *Loaded the coder in 24 s. It unloads after 60 min idle; `spark pin coder` keeps it.* Or the refusal's message. (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling: a load that waits minutes says it has started.) | `spark unload coder` |
 | `spark unload coder` | *Unloading the coder once its 1 request in flight finishes…*, then *Unloaded the coder.* | `spark load coder` |
-| `spark pin coder 8h` | *Loading the coder (24 s last time)…* as the load starts, when the pin loads it first, then *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling.) | `spark unpin coder` |
+| `spark pin coder 8h` | *Loading the coder (24 s last time)…* as the load starts, when the pin loads it first (after a *… waiting …* line, as `spark load`'s, while its load waits), then *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling.) | `spark unpin coder` |
 | `spark unpin coder` | *The pin on the coder ended; it unloads after 60 min idle.* | `spark pin coder` |
 | `spark make-room 40G` | the list below, one confirmation, then *Unloading the coder…* as each model's drain begins (*Unloading the coder once its 1 request in flight finishes…* while one is in flight; added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling), then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
-| `spark make-room --all` | the full list, one confirmation, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
+| `spark make-room --all` | the full list, one confirmation, then an *Unloading …* line as each model's drain begins, as above (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling), then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
 | `spark make-room --done` | *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* | `spark make-room` again |
 | `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* When the gate isn't answering: *The gate isn't answering, so the hold file was removed directly; nothing reloads until the gate is back.* | none needed: the brake fires again if memory falls |
 | `spark session hold --model coder --label "pi in Orca"` | nothing while it runs: the session keeps the coder loaded, and ends when the command's stdin closes, or on SIGTERM or SIGHUP, as when pi exits or the Mac sleeps (2b's Mac hooks run it over SSH; Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council) | end the command |
@@ -3103,13 +3103,15 @@ Each item gets its own design pass when its turn comes.
   - `model_not_found` names pi's step only for a key of Dan's that is pi's; the web UI's gets the
     list alone.
   - `resident_waiting`'s *When* names every case the residents reload in.
-- **2026-10-08** — Phase 2a's Task 10 review and re-review, the controller's rulings. Dated notes are
-  in *What you see in Phase 2a* (the command table) and the implementation plan's Tasks 10, 17, 19,
-  30 and 33.
+- **2026-10-08** — Phase 2a's Task 10 review and re-reviews, the controller's rulings. Dated notes
+  are in *What you see in Phase 2a* (the command table) and the implementation plan's Tasks 10, 16,
+  17, 19, 30 and 33.
   - `spark make-room`, `spark load` and a `spark pin` that loads say what they are doing while they
     wait. make-room prints *Unloading the coder…* as each model's drain begins, before what it
-    freed. `spark load`, and `spark pin` on a model not loaded, print *Loading the coder (24 s last
-    time)…* as the load starts, before their confirmation.
+    freed, `--all` included. `spark load`, and `spark pin` on a model not loaded, print *Loading the
+    coder (24 s last time)…* as the load starts, before their confirmation; and while their load
+    waits for its turn or for memory, a line saying which, in Task 7's `waiting` words, so a
+    queued load is never silent.
     The words are Task 7's `unloading` and `load_started`. So a drain behind a long request, or a
     load of a few minutes, is never minutes of silence.
   - The gate streams `/v1/make-room`, `/v1/load` and a `/v1/pin` that loads as it streams

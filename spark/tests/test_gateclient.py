@@ -110,9 +110,16 @@ class _Gate(BaseHTTPRequestHandler):
                 self.wfile.write(b"14\r\n" + b'{"unl')  # a 20-byte chunk, 5 of them sent
         self.close_connection = True
 
+    def _garbled(self) -> None:
+        """Bytes that aren't an HTTP answer at all, as the test gives them."""
+        self.wfile.write(self.server.garbled)
+        self.close_connection = True
+
     def do_GET(self):
         if self.path == "/v1/status":
             self._json(200, {"ok": True})
+        elif self.path == "/v1/garbled":
+            self._garbled()
         elif self.path == "/v1/canned":
             self._canned()
         elif self.path == "/v1/short":
@@ -191,6 +198,7 @@ def _serving(path: Path):
     server.gap_s = 0.9
     server.short = (200, 40, b"")
     server.cut = "no last chunk"
+    server.garbled = b"HELLO\r\n\r\n"
     server.client_gone = threading.Event()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
@@ -392,6 +400,25 @@ def test_a_stream_cut_off_partway_reads_as_gate_unavailable_not_its_end(how, soc
         assert str(raised.value) == f"The gate stopped answering on {path}: its answer broke off. {DAN_STEP}"
 
 
+@pytest.mark.parametrize("garbled", [
+    pytest.param(b"HELLO\r\n\r\n", id="a-status-line-that-isnt-http"),
+    pytest.param(b"HTTP/1.1 200 OK\r\n" + b"X" * 70000 + b"\r\n\r\n", id="a-header-line-too-long"),
+    pytest.param(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + b"f" * 70000 + b"\r\n",
+                 id="a-chunk-size-line-too-long"),
+])
+def test_an_answer_the_client_cant_read_is_worded_never_named(garbled, sockdir):
+    # http.client's own errors for an answer that isn't HTTP read as plain words, never a class name.
+    path = sockdir / "g.sock"
+    with _serving(path) as server:
+        server.garbled = garbled
+        client = GateClient(path, 5)
+        for call in (lambda: client.get("/v1/garbled"), lambda: list(client.stream("/v1/garbled"))):
+            with pytest.raises(GateUnavailable) as raised:
+                call()
+            assert str(raised.value) == (f"The gate stopped answering on {path}: its answer wasn't one the client "
+                                         f"could read. {DAN_STEP}")
+
+
 @pytest.mark.parametrize(("route", "holds"), [
     pytest.param("/v1/logs/my model", "a space", id="space"),
     pytest.param("/v1/logs/modèle", "'è'", id="beyond-ascii"),
@@ -435,7 +462,9 @@ def test_an_answer_or_a_line_past_its_bound_is_a_gate_error_not_a_gate_thats_dow
         assert str(raised.value) == (f"The gate's answer on {path} was larger than 1 MiB, more than any of its answers "
                                      f"holds. {DAN_STEP}")
         line = json.dumps({"a": "x" * (LINE_BOUND - len('{"a": ""}\n'))}).encode() + b"\n"  # exactly 64 KiB: read
-        server.canned = (200, line + json.dumps({"a": "y" * LINE_BOUND}).encode() + b"\n")
+        over = json.dumps({"a": "y" * (LINE_BOUND + 1 - len('{"a": ""}\n'))}).encode() + b"\n"
+        assert len(over) == LINE_BOUND + 1  # exactly one byte past the bound, so an off-by-one fails this
+        server.canned = (200, line + over)
         lines = client.stream("/v1/canned")
         assert next(lines) == json.loads(line)
         with pytest.raises(GateError) as raised:
@@ -639,6 +668,12 @@ def test_every_route_names_its_socket_and_callers():
     assert gateproto.LoadProgress.__required_keys__ == {"model", "label", "last_s"}
     # A pin's result, as Task 7's `pinned` words it; a pin that loads streams a LoadProgress before it.
     assert gateproto.PinConfirmation.__required_keys__ == {"label", "until", "loaded_s", "command"}
+    # A load, or a pin that loads, that waits for the slot or for memory says so before it starts (the controller's
+    # ruling at Task 10's second re-review): the fields Task 7's `waiting` words a reason with.
+    assert gateproto.WaitProgress.__required_keys__ == {
+        "model", "label", "why", "needed_gib", "free_gib", "loading_label", "release_waits_for_dan", "release_after_s"}
+    # seconds None for a model already loaded, as `messages.loaded` takes it.
+    assert typing.get_type_hints(gateproto.LoadConfirmation)["seconds"] == float | None
 
 
 def test_the_status_view_carries_the_plans_fields():
