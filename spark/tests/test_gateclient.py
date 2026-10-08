@@ -575,6 +575,10 @@ def test_a_stream_yields_each_line_as_json(sockdir):
         assert server.saw_first_read  # the first line came while the stand-in still held the rest
         # Without a body it is a GET, and an answer's last line needs no newline.
         assert list(client.stream("/v1/status")) == [{"ok": True}]
+        # A route that answers once, as a pin on a model already loaded does, reads through stream() as its one line,
+        # so the CLI reads /v1/pin through stream() whether or not the pin loads first.
+        assert list(client.stream("/v1/load", {"model": "coder"})) == [
+            {"method": "POST", "got": {"model": "coder"}, "content_type": "application/json"}]
         # A refusal comes before any line.
         with pytest.raises(GateRefused) as raised:
             client.stream("/v1/pin", {"model": "coder"})
@@ -633,6 +637,8 @@ def test_every_route_names_its_socket_and_callers():
     # controller's rulings at Task 10's review and re-review), each worded by Task 7's `unloading` and `load_started`.
     assert gateproto.MakeRoomProgress.__required_keys__ == {"model", "label", "inflight"}
     assert gateproto.LoadProgress.__required_keys__ == {"model", "label", "last_s"}
+    # A pin's result, as Task 7's `pinned` words it; a pin that loads streams a LoadProgress before it.
+    assert gateproto.PinConfirmation.__required_keys__ == {"label", "until", "loaded_s", "command"}
 
 
 def test_the_status_view_carries_the_plans_fields():

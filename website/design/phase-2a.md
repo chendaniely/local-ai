@@ -1861,6 +1861,11 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
     `{model, label, last_s}` (`gateproto.LoadProgress`, which Task 7's `load_started` words); a
     model already loaded sends none. The confirmation's fields come last. A gate that is down
     then shows within the CLI's 5 s, not after the load call's 210.
+  - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* `POST /v1/pin` on a model that isn't loaded streams as `/v1/load`
+    does: its head at once, the same `LoadProgress` line as the load starts, then
+    `gateproto.PinConfirmation` (`{label, until, loaded_s, command}`, which Task 7's `pinned`
+    words). A pin on a model already loaded answers once, with `PinConfirmation` alone. The CLI
+    reads both through `stream()`, which reads a single answer as its one line.
 
 - `StatusView` (also `--json`'s shape, for 2b's menu bar): `schema` (1, raised when a field's
   meaning changes), `host`, `at`; `memory` (`total_gib`,
@@ -2680,6 +2685,13 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   uid); a model not loaded is loaded first, through admission as one of his commands (`kind:
   "command"`); `unpin(model, uid)`;
   `expire(now)` — `pin_ended` for each that ran out.
+  *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* a pin that loads first reports its load, as `/v1/pin` streams it
+  (Task 19): `pin(model, until, uid) -> AsyncIterator[dict]` yields a `gateproto.LoadProgress`
+  (`{model, label, last_s}`) as the load starts, then `gateproto.PinConfirmation`'s fields; for a
+  model already loaded, `PinConfirmation`'s fields alone; a refusal on the way, as a
+  `gateproto.GateRefusalBody`, last. Its test: `test_a_pin_that_loads_yields_its_start_first`, the
+  coder not loaded → the `LoadProgress`, then the confirmation with `loaded_s`; loaded → the
+  confirmation alone, `loaded_s` None.
 - `Sessions(state, clock, *, proc: Path, may_hold: Callable[[int], bool])`: `register(uid, pid,
   model, label) -> Session | Refusal` — the pid alive and the caller's (its `/proc` `Uid:`);
   at most `SESSIONS_PER_UID` per uid; `renew(id, uid)`; `end(id, uid, *, admin: bool)` — the
@@ -2772,6 +2784,8 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
       (`{model, label, last_s}`) as the load starts (none for a model already loaded), then the
       confirmation's fields.
     - A refusal on the way is the last line, as a `gateproto.GateRefusalBody`.
+    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* a pin that loads first yields the same `LoadProgress` before its
+      result; Task 16's `Pins.pin`, which loads it, has the note, since Task 16 comes first.
   - `expire(now)` — a hold whose `until` has passed ends (`room_hold_ended`, *its time ran out*).
 - `Preloader(admitter, registry, emit, clock)`: `async run(models)` — the residents, one at a time,
   each through `admitter.reload(model)` (Task 15: ahead of the queue, every hold counted, no
@@ -3011,6 +3025,11 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
       `LOAD_CALL_TIMEOUT_S` here.
     - Every stream (`/v1/unload`, `/v1/make-room`, `/v1/load`) ends with its result line, or with a
       refusal line in `GateRefusalBody`'s shape (`message` and `code`), and then its last chunk.
+    - *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)* `/v1/pin` on a model that isn't loaded streams as `/v1/load`
+      does, from `Pins.pin`'s iterator (Task 16): its head at once, the `LoadProgress` line as the
+      load starts, then `PinConfirmation`, held up to `LOAD_CALL_TIMEOUT_S`. A pin on a model
+      already loaded answers once, with `PinConfirmation` alone, and so does `DELETE /v1/pin/{model}`
+      with its own answer.
 - `GET /v1/status` through the status socket — the refusals the caller may see: those whose key's
   `account` (Task 4) is the caller's user name, and those whose record's `uid` is the caller's;
   Dan's processes only as *a process of Dan's*. Through the control socket, everything.
@@ -4208,8 +4227,8 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
   SIGTERM or SIGHUP; a Mac hook runs `ssh brightroar spark session hold …` in the background, and
   the session ends when pi exits or the Mac sleeps.
 - Each command's client timeout: `GateClient`'s 5 s for `make-room`'s plan, `--done`, `logs`, the
-  pins without a load and the sessions; the load call's 200 s plus 10 ~~for `load` and~~ for a `pin`
-  that loads; ~~none for `unload` and for `make-room`'s unloads, whose drains wait for their requests~~
+  pins without a load and the sessions; ~~the load call's 200 s plus 10 for `load` and for a `pin`
+  that loads;~~ ~~none for `unload` and for `make-room`'s unloads, whose drains wait for their requests~~
   — `unload` reads `/v1/unload`'s stream, printing the count's sentence at once and the result when
   it comes.
   *(Corrected 2026-10-08, the controller's rulings, at Task 10's review:)*
@@ -4236,6 +4255,13 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     `GateUnavailable`; this covers one the gate ended cleanly but short.
   - **A refusal sent as a stream line** is recognized by `GateRefusalBody`'s shape (`message` and
     `code`), raised as `GateRefused`, and printed as the refusal, exit 1.
+  *(Added 2026-10-08, the controller's ruling, at Task 10's re-review, on its fix round 2:)*
+  - **`pin`** calls `GateClient(GATE_CONTROL_SOCKET, REQUEST_TIMEOUT_S).stream("/v1/pin", …,
+    then_s=LOAD_CALL_TIMEOUT_S + 10)`, as `load` does, since it can't know beforehand whether the
+    pin loads. A pin that loads streams its `LoadProgress`, and `pin` prints `load_started`'s words,
+    *Loading the coder (24 s last time)…*, before `pinned`'s. A pin on a model already loaded
+    answers once, which `stream()` reads as its one line, and `pin` prints `pinned`'s words alone.
+    Either way a gate that is down shows within 5 s.
 - A question (`make-room`'s confirmation) is asked only on a terminal: without one it exits 2,
   saying to run it in a terminal or add `--yes`; `--yes` answers yes.
 - `parse_size(text) -> Decimal` — `41G`, `41GiB`, `41` → 41; `parse_duration(text) -> int` — `8h`
@@ -4259,7 +4285,13 @@ it):
   in flight finishes…*, then *Unloaded the coder.*
 - `test_pin_with_a_duration_says_until_when_and_how_to_end_it` — `pin coder 8h` at 10:00 → the
   stand-in got `until` 18:00; *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark
-  unpin coder` ends the pin.*
+  unpin coder` ends the pin.* *(Added 2026-10-08, at Task 10's re-review:)* the stand-in streams
+  `{model, label, last_s: 24}` first, and *Loading the coder (24 s last time)…* comes before the
+  pin's sentence.
+- *(Added 2026-10-08, at Task 10's re-review:)* `test_a_pin_on_a_model_already_loaded_says_only_the_pin`
+  — the stand-in answers once, `{label, until, loaded_s: null, command}` → *The coder stays loaded
+  until 18:00. `spark unpin coder` ends the pin.*, with no *Loading* line; the gate down →
+  `GateUnavailable`'s sentence within 5 s, exit 1.
 - `test_unpin_says_when_it_unloads` — *The pin on the coder ended; it unloads after 60 min idle.*
 - `test_make_room_shows_the_list_and_asks_once` — the plan's make-room example → the plan's list
   block, word for word, then `Unload 1? [y/N]`; `y` → `POST /v1/make-room`, then the plan's

@@ -1120,7 +1120,7 @@ account.
 |---|---|---|
 | `spark load coder` | *Loading the coder (24 s last time)…* as the load starts, then *Loaded the coder in 24 s. It unloads after 60 min idle; `spark pin coder` keeps it.* Or the refusal's message. (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling: a load that waits minutes says it has started.) | `spark unload coder` |
 | `spark unload coder` | *Unloading the coder once its 1 request in flight finishes…*, then *Unloaded the coder.* | `spark load coder` |
-| `spark pin coder 8h` | *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* | `spark unpin coder` |
+| `spark pin coder 8h` | *Loading the coder (24 s last time)…* as the load starts, when the pin loads it first, then *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling.) | `spark unpin coder` |
 | `spark unpin coder` | *The pin on the coder ended; it unloads after 60 min idle.* | `spark pin coder` |
 | `spark make-room 40G` | the list below, one confirmation, then *Unloading the coder…* as each model's drain begins (*Unloading the coder once its 1 request in flight finishes…* while one is in flight; added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling), then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
 | `spark make-room --all` | the full list, one confirmation, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
@@ -3106,13 +3106,14 @@ Each item gets its own design pass when its turn comes.
 - **2026-10-08** — Phase 2a's Task 10 review and re-review, the controller's rulings. Dated notes are
   in *What you see in Phase 2a* (the command table) and the implementation plan's Tasks 10, 17, 19,
   30 and 33.
-  - `spark make-room` and `spark load` say what they are doing while they wait. make-room prints
-    *Unloading the coder…* as each model's drain begins, before what it freed. `spark load` prints
-    *Loading the coder (24 s last time)…* as the load starts, before *Loaded the coder in 24 s. …*.
+  - `spark make-room`, `spark load` and a `spark pin` that loads say what they are doing while they
+    wait. make-room prints *Unloading the coder…* as each model's drain begins, before what it
+    freed. `spark load`, and `spark pin` on a model not loaded, print *Loading the coder (24 s last
+    time)…* as the load starts, before their confirmation.
     The words are Task 7's `unloading` and `load_started`. So a drain behind a long request, or a
     load of a few minutes, is never minutes of silence.
-  - The gate streams `/v1/make-room` and `/v1/load` as it streams `/v1/unload`: the head at once,
-    progress lines, then the result. The CLI bounds the head at 5 s, so a gate that is down says so
+  - The gate streams `/v1/make-room`, `/v1/load` and a `/v1/pin` that loads as it streams
+    `/v1/unload`: the head at once, progress lines, then the result. The CLI bounds the head at 5 s, so a gate that is down says so
     within 5 s, and waits for the lines after it as long as the work takes.
   - Each error the CLI meets with the gate is one plain line, never a traceback. A socket that
     refuses this login says who it is for and the next step. An answer cut off partway is the gate
