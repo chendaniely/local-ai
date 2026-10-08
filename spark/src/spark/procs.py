@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from spark.memory import KIB_PER_GIB
-from spark.messages import Holder
+from spark.messages import Holder, _one_line
 
 PROC = Path("/proc")
 ENGINES = ("llama-server", "whisper-server")  # the comm of every engine render starts
@@ -84,8 +84,9 @@ def top_holders(loaded: dict[str, tuple[str, float]], nvidia: dict[int, float | 
     {name: (label, GiB it holds now)}, gives the stack's, each by its label. Every other process holding at least
     HOLDER_MIN_GIB is named `<comm> (<user>)`, at the larger of its nvidia-smi figure (`nvidia`, by pid) and its
     RssAnon, and is Dan's when its real uid is in `dan_uids`. `engine_pids`, the engines' own, are left out: they are
-    the models."""
-    holders = [Holder(label, gib, False) for label, gib in loaded.values()]
+    the models. Every name is put on one line as messages puts it, with no control character, since comm is the
+    process's own raw text and a holder's name reaches a terminal (`spark status`) as well as the messages."""
+    holders = [Holder(_one_line(label), gib, False) for label, gib in loaded.values()]
     for pid in _pids(proc):
         if pid in engine_pids:
             continue
@@ -97,7 +98,7 @@ def top_holders(loaded: dict[str, tuple[str, float]], nvidia: dict[int, float | 
             continue
         comm = _comm(pid, proc)
         if comm is not None:
-            holders.append(Holder(f"{comm} ({_user(uid)})", max(figures), uid in dan_uids))
+            holders.append(Holder(_one_line(f"{comm} ({_user(uid)})"), max(figures), uid in dan_uids))
     holders.sort(key=lambda h: (-h.gib, h.name))
     return holders[:limit]
 
@@ -142,7 +143,7 @@ def _real_uid(status: dict[str, str]) -> int | None:
 
 def _comm(pid: int, proc: Path) -> str | None:
     """The process's short name, as `comm` holds it, without the kernel's newline; None for a process gone. Read as
-    bytes, so no \\r in it is turned into a line break; messages puts every name on one line."""
+    bytes, so no \\r in it is turned into a line break; top_holders puts every name on one line."""
     try:
         return (proc / str(pid) / "comm").read_bytes().decode(errors="replace").removesuffix("\n")
     except _GONE:

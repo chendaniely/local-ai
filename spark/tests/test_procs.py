@@ -32,11 +32,13 @@ def proc(tmp_path, monkeypatch):
 def process(proc: Path, pid: int, comm: str, *, uid: int | tuple[int, int, int, int], argv: tuple[str, ...] = (),
             rss_anon_kib: int | None = None, vm_rss_kib: int | None = None, state: str = "S (sleeping)") -> None:
     """A process in `proc`, its files as the kernel writes them. With no rss_anon_kib it has no memory lines at all,
-    as a kernel thread's status hasn't."""
+    as a kernel thread's status hasn't. status's Name escapes only a backslash and a line break, as the kernel's does
+    (checked on the Spark, 2026-10-08); comm holds the name raw."""
     uids = uid if isinstance(uid, tuple) else (uid,) * 4
     folder = proc / str(pid)
     folder.mkdir()
-    lines = [f"Name:\t{comm}", "Umask:\t0022", f"State:\t{state}", f"Tgid:\t{pid}", "Ngid:\t0", f"Pid:\t{pid}",
+    name = comm.replace("\\", "\\\\").replace("\n", "\\n")
+    lines = [f"Name:\t{name}", "Umask:\t0022", f"State:\t{state}", f"Tgid:\t{pid}", "Ngid:\t0", f"Pid:\t{pid}",
              "PPid:\t1", "TracerPid:\t0", "Uid:\t" + "\t".join(map(str, uids)),
              "Gid:\t" + "\t".join(map(str, uids)), "FDSize:\t64", "Groups:\t4 27 ", f"NStgid:\t{pid}",
              f"NSpid:\t{pid}", f"NSpgid:\t{pid}", f"NSsid:\t{pid}", "Kthread:\t0"]
@@ -178,6 +180,55 @@ def test_holders_are_the_largest_first_from_1_gib_and_limit_of_them(proc):
     assert everyone == [Holder("Gemma", 27.0, False), Holder("java (agent)", 9.0, False),
                         Holder("the embedder", 4.0, False), Holder("python3 (chendaniely)", 1.0, True)]
     assert procs.top_holders(loaded, {}, engine_pids=set(), dan_uids={DAN}, proc=proc) == everyone[:3]
+
+
+def test_a_holder_name_holds_no_control_character(proc):
+    # comm is raw: any user can name a process with a line break or a terminal's escape sequence (15 bytes at most).
+    process(proc, 400, "py\nthon\x1b[2J", uid=DAN, rss_anon_kib=gib(2), argv=("python3",))
+    # The registry refuses such a label, but top_holders takes whatever it is given.
+    loaded = {"gemma": ("Gemma", 27.0), "odd": ("an\x1b[1modd\tlabel", 5.0)}
+    holders = procs.top_holders(loaded, {}, engine_pids=set(), dan_uids={DAN}, proc=proc)
+    assert [h.name for h in holders] == ["Gemma", "an [1modd label", "py thon [2J (chendaniely)"]
+    assert all(c.isprintable() for h in holders for c in h.name)
+
+
+def unreadable(monkeypatch, pid: int, error: type[OSError]) -> None:
+    """Every file of `pid`'s raises `error` when read: PermissionError as a /proc mounted hidepid=noaccess gives for
+    another user's process, ProcessLookupError (ESRCH) as a read gives once the process has exited."""
+    real = Path.read_bytes
+
+    def read_bytes(self):
+        if self.parent.name == str(pid):
+            raise error(f"stand-in {error.__name__}: {self.name}")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+
+def test_a_process_proc_wont_let_us_read_is_an_error_not_a_silence(proc, monkeypatch):
+    process(proc, 150, "python3", uid=DAN, rss_anon_kib=gib(30), argv=("python3",))
+    engine(proc, 200, 801)
+    unreadable(monkeypatch, 150, PermissionError)
+    with pytest.raises(PermissionError):
+        procs.rss_anon_gib(150, proc=proc)
+    with pytest.raises(PermissionError):
+        procs.top_holders({}, {}, engine_pids={200}, dan_uids={DAN}, proc=proc)
+    with pytest.raises(PermissionError):
+        procs.engine_pid(801, spark_uid=SPARK, proc=proc)
+    with pytest.raises(PermissionError):
+        procs.engine_pid(801, spark_uid=SPARK, recorded=150, proc=proc)
+
+
+def test_a_process_that_exits_mid_read_is_passed_over(proc, monkeypatch):
+    process(proc, 150, "python3", uid=DAN, rss_anon_kib=gib(30), argv=("python3",))
+    process(proc, 400, "java", uid=AGENT, rss_anon_kib=gib(9), argv=("java",))
+    engine(proc, 200, 801)
+    unreadable(monkeypatch, 150, ProcessLookupError)
+    assert procs.rss_anon_gib(150, proc=proc) is None
+    assert procs.top_holders({}, {}, engine_pids={200}, dan_uids={DAN}, proc=proc) == [
+        Holder("java (agent)", 9.0, False)]
+    assert procs.engine_pid(801, spark_uid=SPARK, proc=proc) == 200
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=150, proc=proc) == 200
 
 
 def test_a_holder_whose_uid_has_no_name_shows_its_uid(proc, monkeypatch):

@@ -11,9 +11,12 @@ KIB_PER_GIB = 1024 * 1024
 
 @dataclass(frozen=True)
 class MemInfo:
+    """/proc/meminfo's figures, in GiB. `memfree_gib` is MemFree, never *free for a load*, which is rule 9's admission
+    figure and is called `free_gib` everywhere else."""
+
     total_gib: float
     available_gib: float
-    free_gib: float | None = None  # MemFree, when /proc/meminfo has it
+    memfree_gib: float | None = None  # MemFree, when /proc/meminfo has it
     cached_gib: float | None = None  # Cached, the page cache, when /proc/meminfo has it
 
 

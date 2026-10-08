@@ -39,10 +39,10 @@ def test_meminfo_reads_memfree_and_cached():
     text = ("MemTotal:       127622144 kB\nMemFree:         2097152 kB\nMemAvailable:   73400320 kB\n"
             "Buffers:           65536 kB\nCached:         62914560 kB\nSwapCached:            0 kB\n")
     mem = parse_meminfo(text)
-    assert (mem.free_gib, mem.cached_gib) == (2.0, 60.0)
+    assert (mem.memfree_gib, mem.cached_gib) == (2.0, 60.0)
     assert mem.available_gib == 70.0
     bare = parse_meminfo("MemTotal:       127622144 kB\nMemAvailable:   73400320 kB\n")
-    assert (bare.free_gib, bare.cached_gib) == (None, None)
+    assert (bare.memfree_gib, bare.cached_gib) == (None, None)
     assert round(bare.total_gib, 1) == 121.7
     assert bare.available_gib == 70.0
 

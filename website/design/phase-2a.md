@@ -1520,8 +1520,10 @@ git commit -m "feat(spark): 🤖 every notification and confirmation in Dan's wo
 
 **Interfaces:**
 
-- `MemInfo` gains `free_gib: float | None = None` and `cached_gib: float | None = None`
-  (`MemFree`, `Cached`), read when present; Phase 1's two fields unchanged.
+- `MemInfo` gains ~~`free_gib: float | None = None`~~ `memfree_gib: float | None = None` and
+  `cached_gib: float | None = None` (`MemFree`, `Cached`), read when present; Phase 1's two fields
+  unchanged. *(Renamed 2026-10-08, at Task 8's review: `free_gib` means free for a load everywhere
+  else.)*
 - `boot_id(path: Path = Path("/proc/sys/kernel/random/boot_id")) -> str` — its text, stripped.
 - `procs.rss_anon_gib(pid: int, *, proc: Path = Path("/proc")) -> float | None` — `RssAnon` from
   `<proc>/<pid>/status`, in GiB; None for a process gone or a file without it. Never `VmRSS`.
@@ -1542,7 +1544,12 @@ git commit -m "feat(spark): 🤖 every notification and confirmation in Dan's wo
   list[messages.Holder]` — each loaded model by its label at what it holds now; each other process
   holding at least 1 GiB, by `<comm> (<user>)`, at the larger of its `nvidia-smi` figure and its
   `RssAnon`; the engines' own pids left out (they are the models); `dans` true for a process whose
-  uid is in `dan_uids`; largest first, `limit` of them.
+  uid is in `dan_uids`; largest first, `limit` of them. *(Added 2026-10-08, at Task 8's review, the
+  controller's ruling: every name is put on one line with no control character, as
+  `messages._one_line` puts it, since `comm` is the process's own raw text and Task 29 prints the
+  holders to a terminal. A process gone mid-read is passed over, but a `PermissionError` from
+  `/proc` propagates, so the holders never silently leave out a process that `/proc` lists but
+  won't let the gate read.)*
 
 **Tests** (`spark/tests/test_procs.py`, unless named; `/proc` is a tree the test builds):
 
@@ -1571,7 +1578,8 @@ git commit -m "feat(spark): 🤖 every notification and confirmation in Dan's wo
 
 **Steps:**
 
-- [ ] **Step 1:** the failing tests; run them: they fail (`spark.procs` missing; no `free_gib`).
+- [ ] **Step 1:** the failing tests; run them: they fail (`spark.procs` missing; no ~~`free_gib`~~
+  `memfree_gib`, *renamed 2026-10-08, at Task 8's review*).
 - [ ] **Step 2:** `memory.py` and `procs.py`; the tests pass; `make test lint`.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
@@ -5562,6 +5570,22 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   and `test_the_committed_notifications_page_is_current` fails while it is stale. Task 52, on the
   Mac (a workflow change the Spark's token can't push), adds `uv run --frozen --project spark spark
   docs notifications --check` to `.github/workflows/ci.yml`, beside the Stack page's check.
+- **A recorded pid is checked by its start time** (added 2026-10-08, at Task 8's review, the
+  controller's ruling), for Task 13. Task 8's `procs.engine_pid` takes a `recorded` pid that is
+  alive and runs as `spark` as it is, so a pid the kernel handed to another `spark` process after
+  the engine died would be read as the engine, and its `RssAnon` as the engine's growth. `Ticketed`
+  records the engine's start time, `/proc/<pid>/stat` field 22, read after the line's last `)`
+  (the name in parentheses before it can hold spaces and brackets; field 3 comes first after it,
+  so field 22 is the 20th word, checked on the Spark, 2026-10-08), and `engine_pid` checks that it
+  matches, so a reused pid is never read as the engine.
+- **An `RssAnon` the gate can't read credits no growth** (added 2026-10-08, at Task 8's review, the
+  controller's ruling), for Tasks 15 and 18. `procs.rss_anon_gib` gives None for a process gone or
+  a status without the line, and a `PermissionError` from `/proc` propagates. A None at either end
+  (`ModelRecord.rss_anon_at_load_gib` at the load, or the reading now), or an exception reading
+  it, credits **no** growth: *owed* stays the footprint less the load's fall, which errs safe.
+  None is never read as 0, which would count the engine's whole `RssAnon` as growth on top of the
+  fall that already measured it. Task 18's background read catches `PermissionError` and `OSError`
+  on each read and reports it under `health`, so a failed read never ends its loop.
 
 ### Minors the forward-and-back council left for the tasks that meet them
 
