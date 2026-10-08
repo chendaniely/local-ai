@@ -753,7 +753,10 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
                 else "Nothing of the stack's was loaded, so there was nothing to unload")
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
-    if f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself,
+    if f["release_waits_for_dan"] and f["release_assumed"]:  # no real release to name (Task 13's re-review)
+        resume = ("New loads stay paused until you release them: the gate's saved state was damaged, so it can't tell "
+                  "when the last automatic release was. On the Spark, `make brake-release` resumes them.")
+    elif f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself,
         _needs("brake_fired", f, "released_at")  # and why, since the last one resumed by itself (the review's I-2)
         resume = (f"It fired within an hour of the automatic release at {_clock(f['released_at'])}, so they stay "
                   "paused until you release them: on the Spark, `make brake-release`.")
@@ -1148,7 +1151,8 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 # controller's additions of 2026-10-07). A refusal's type also takes the burst's fields, _BURST, with `count`.
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
-                    "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None},
+                    "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
+                    "release_assumed": False},
     "brake_needs_release": {"fired_at": None},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
     "back_up": dict.fromkeys(("unit", "down_s")),

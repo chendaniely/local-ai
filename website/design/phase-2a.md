@@ -1863,7 +1863,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only → `{room: {unused_gib, total_gib, next_label} \| null, brake: bool, reloading: [labels]}`, what each ended, with the fields its confirmation needs |
   | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) |
   | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 13), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by any of the ends the next rows name, each doing the same work |
-  | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
+  | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again *(corrected 2026-10-08, the controller's ruling, at Task 13's re-review: never starts again a hold that has ended; a renewal of a hold the gate doesn't know at all, as after a start fresh from a damaged state file, re-creates it: Task 18)*; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
   | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`, persisted with the hold, before the first restart; *end*, posted once llama-swap answers again, ends the hold. Every end — *end*, `undrain-all`, the gate seeing llama-swap answer again after a restart `begin` named, and a hold not renewed for `APPLY_LAPSE_S` (60 s), before `begin` as after — takes one path, once: it re-reads the registry, releases the hold (`release_all`), then queues the residents' reload ahead of anything else, in one step of the gate's loop, so no held request takes the load slot first, and sends `apply_restarted` when llama-swap did restart; a second end does nothing. So a `make apply` that died holds new requests for at most `APPLY_LAPSE_S` past its last renewal |
   | control | `GET /v1/logs/{model}?n=` | admin | `{lines: [...]}`, the engine's last lines, read with the gate's key; `{model}` a model's name or one of its roles, resolved as `spark load`'s argument is (*added 2026-10-07, at Task 6's re-review: the refusals name the role*) |
   | control | `POST /v1/canary` | admin | `{needle}` → `{found: [where]}`: whether the string is in the gate's state, its refusal history or launch's records, never what surrounds it (doctor's `--full`) |
@@ -2398,7 +2398,8 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   str, message: str)`.
 - `GateState(models: dict[str, ModelRecord], pins: dict[str, Pin], sessions: dict[str, Session],
   room_hold: RoomHold | None, brake_marks: dict[str, BrakeMark], last_auto_release_at: float | None,
-  brake_events_after: tuple[str, int] | None, notified: dict[str, float], notify_failing_since:
+  brake_events_after: tuple[str, int] | None *(a (boot id, seq, at) since 2026-10-08, the controller's ruling,
+  at Task 13's review; annotated here at its re-review)*, notified: dict[str, float], notify_failing_since:
   float | None, refusals: deque[RefusalRecord] (maxlen REFUSAL_HISTORY), applying: ApplyHold | None,
   ticketed: dict[str, Ticketed], clean_shutdown: bool, saved_at: float, boot_id: str)`;
   `ApplyHold(since: float, by_uid: int, renewed_at: float, begun_at: float | None, restarting:
@@ -2511,7 +2512,7 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
     safe, and `spark status` names it (Tasks 18 and 29).
   - **A model restored ready with its unload requested** is left for the drainer, `draining`, not
     `stopping`. At start the gate re-runs that unload through the drainer, drain first, so the
-    requests in flight finish, and then Task 16's rule for a sent unload applies. A model counts
+    requests in flight finish, and then the sent-unload rule (Task 16) applies. A model counts
     as `stopping` only once its unload call is actually sent (Tasks 16 and 18).
   - **Drains across a restart.** `ModelRecord` gains `drain_id: str | None` and `drain_why`,
     saved with `unload_requested_at`. On restart the gate resumes, under its saved id, each drain
@@ -2539,12 +2540,28 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
     footprint, never as ready, and is logged.
   - **Each drain's why is its origin's**: `make-room`, `unload`, `idle`, or `late_start`, Task
     15's abort of a start past its deadline. `gateproto.DrainWhy` gains `late_start` and `unknown`.
-    A drain saved with no why (an older file) resumes as `unknown` (`resumable_drains`), worded
-    neutrally, naming no command: `messages`' `unloaded` gains *Unloaded the coder.* for `unknown`
+    A drain saved with no why ~~(an older file)~~ *(corrected 2026-10-08, the controller's ruling, at
+    Task 13's re-review: an unload with no why of the gate's, one `restore` found `stopping` with no
+    record of it, the brake's or one after damage; a file older than schema 1 is damage)* resumes as
+    `unknown` (`resumable_drains`), worded neutrally, naming no command: `messages`' `unloaded` gains *Unloaded the coder.* for `unknown`
     and *Unloaded the coder: its start ran past its deadline.* for `late_start`, and the
     `draining` refusal's words name make-room only for make-room's drains.
   - **Every record keeps the fields this version doesn't know** (`extra`), and the file's schema
     is `STATE_SCHEMA`.
+- *(Added 2026-10-08, the controller's rulings, at Task 13's re-review:)*
+  - **The damage survives a restart before the first save.** With `set_aside`, `load_state` saves
+    the fail-safe state, whole, as soon as the damaged file has moved aside, before anything else
+    runs, so a second start finds `fresh_after_damage`, `last_auto_release_at` and `clean_shutdown`
+    false again. A save that fails is named in the problem.
+  - **`release_assumed`**: a damaged file's fresh state marks its `last_auto_release_at` assumed,
+    not real, so `brake_fired`'s words never name it as a release (Tasks 14, 17 and 23).
+  - **Once moved, the file is kept**: a mode that can't be set is named in the problem, never read
+    as a failed move. The cap goes by when each damaged file was last written, and never removes the
+    one just moved, so a clock behind the older stamps can't.
+  - **A model in an unknown state with its unload requested** stays `starting`, and isn't resumed
+    until `/running` shows a state the gate knows (`resumable_drains` leaves it out; Task 18).
+  - **The frozen records hash again**: `extra` is compared but not hashed.
+  - **A schema is the whole number 1**: `1.0` is damage.
 
 **Tests** (`spark/tests/test_gate_state.py`):
 
@@ -2678,7 +2695,13 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   `back_up` for the gate `BACK_UP_AFTER_S` after start, its downtime `now − saved_at`. *(Added
   2026-10-08, at Task 13's review, following the controller's ruling there that a fresh state
   after damage has `clean_shutdown` false: its `saved_at` is 0, unknown, so that `back_up` gives no
-  downtime rather than `now − 0`; its words, for the controller to settle, go with this task.)*
+  downtime rather than `now − 0`; ~~its words, for the controller to settle, go with this task.~~)*
+  *(Settled 2026-10-08, the controller's ruling, at Task 13's re-review: its words say *how long it
+  was down isn't known: its saved state was damaged.*, which this task adds to `messages`, with its
+  test. And an episode's `brake_fired` passes `release_assumed`, `state.release_assumed`, so that
+  after damage it says *New loads stay paused until you release them: the gate's saved state was
+  damaged, so it can't tell when the last automatic release was.*, never *the automatic release at
+  …* (Task 13 adds the words).)*
   `LlamaSwapWatch` — `llama_swap_down` once per outage, when llama-swap hasn't answered for
   `LLAMA_SWAP_HUNG_S` (10 s, this plan's value) while its unit stays active with no new restart
   (a crash is the notifier's to report), and never while apply's hold stands (a restart it
@@ -3038,7 +3061,9 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   with `/running` showing `stopping` for 100 s sends no `undrain` until it shows the model gone.~~
   *(Corrected 2026-10-08, at Task 12's re-review, the controller's ruling: v257 never takes back an
   accepted unload, and a stopping model never returns to ready.)*
-  - **Once the unload call is sent, the drain ends only when `/running` shows the model gone**:
+  - **Once the unload call is sent, the drain ends only when `/running` shows the model gone**
+    *(named 2026-10-08, the controller's ruling, at Task 13's re-review: **the sent-unload rule**,
+    by which the plan's other tasks refer to it)*:
     then `unloaded`, and True. It never ends with `undrain`. v257 runs an unload it has taken to the
     end, whatever happens to the call (`internal/server/apigroup.go:161`,
     `internal/router/base.go:432-440`). And a stop ends only in `stopped`
@@ -3126,7 +3151,8 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   - *(Added 2026-10-08, the controller's ruling, at Task 13's review:)* every origin saves its own
     why: make-room's `make-room`, `spark unload`'s `unload`, the idle check's `idle`, and Task 15's
     late-start abort's `late_start`. A resumed drain with no why saved sends `unknown`, whose words
-    name no command (`gateproto.DrainWhy`, Task 13).
+    name no command (`gateproto.DrainWhy`, Task 13). *(Added 2026-10-08, the controller's ruling, at
+    Task 13's re-review: so does each drain the gate finishes at a start after damage, Task 18.)*
 
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
@@ -3292,7 +3318,9 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
   the brake unloaded, never the model that was loading when it fired. *(Added 2026-10-07, at Task 7,
   the controller's ruling: `brake_needs_release` is sent only for a hold from another boot; a brake
   within the hour after an automatic release has already said it waits for Dan, in its own
-  `brake_fired`, Task 14's.)*
+  `brake_fired`, Task 14's.)* *(Added 2026-10-08, the controller's ruling, at Task 13's re-review: an
+  automatic release sets `state.last_auto_release_at` to its own time and clears
+  `state.release_assumed`, since that release is real.)*
 
 **Tests** (`spark/tests/test_gate_room.py`; an injected clock; stand-ins for the admitter's loads
 and the drainer):
@@ -3448,14 +3476,44 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
     `drained` with its id (Task 22), while an `undrain` it doesn't hold changes nothing.
   - The gate loads its state with `load_state(GATE_STATE, now=…, set_aside=True)`. **At a start
     with `fresh_after_damage`**, it reads `/running`, then:
-    - sends the front `undrain` for every model `/running` shows `ready` that the front holds
+    - ~~sends the front `undrain` for every model `/running` shows `ready` that the front holds
       drained (its snapshot's `draining`), with `drain_id` None, since the ids were lost: the front
-      releases whatever drain it holds for that model (Task 22);
-    - keeps holding every model `/running` shows `stopping` until it shows it gone, then sends
-      `unloaded`. Under N-1, it never undrains a model that may have an unload in flight;
+      releases whatever drain it holds for that model (Task 22);~~
+    - ~~keeps holding every model `/running` shows `stopping` until it shows it gone, then sends
+      `unloaded`. Under the sent-unload rule, it never undrains a model that may have an unload in flight;~~
     - sends Task 17's `room_hold_ended` with why `damaged`;
     - then clears `fresh_after_damage`, and saves.
-    `gateproto.UndrainEvent.drain_id` becomes `str | None` for it.
+    ~~`gateproto.UndrainEvent.drain_id` becomes `str | None` for it.~~
+  - *(Corrected 2026-10-08, the controller's rulings, at Task 13's re-review: an `undrain` of a model
+    `/running` shows `ready` could cut a request, since v257 may hold its unload queued while it
+    still shows `ready`, and the record that would show it is what the damage lost; and a drain for
+    a model gone or `starting` was never settled. The struck lines are replaced by these:)* **for
+    every model the front holds drained** (its first snapshot's `draining` since the start), the gate
+    finishes it as a drain with why `unknown`, then unloads it, and never undrains it:
+    - `ready`: drained, under a new id the front adopts (Task 22), then unloaded;
+    - `stopping`: held until `/running` shows it gone, then `unloaded`;
+    - gone: `unloaded` at once, which releases the front's hold;
+    - `starting`: held until `/running` shows it `ready` (then as `ready`) or gone (then as gone).
+    The sent-unload rule (Task 16) applies to each. A resident unloaded this way is reloaded by the
+    residents' rule, since `unknown` isn't Dan's `spark unload`. `UndrainEvent.drain_id` stays a
+    string. Its tests, one per case:
+    `test_after_damage_a_drained_ready_model_is_drained_again_then_unloaded`,
+    `test_after_damage_a_drained_stopping_model_is_held_until_gone`,
+    `test_after_damage_a_drained_model_gone_is_released_with_unloaded`, and
+    `test_after_damage_a_drained_starting_model_waits_for_ready_or_gone`.
+  - **A model `restore` left `starting` with its unload requested** (a state the gate didn't know)
+    is resumed once `/running` shows it `ready` (drained, then unloaded) or `stopping` (held until
+    gone), and dropped when gone; until then the admitter's ready-or-gone path never makes it
+    servable.
+  - **A renewal of an apply hold the gate doesn't know** (no `state.applying` at all, as after a
+    start fresh from a damaged state file) re-creates the hold, `since` the renewal's, so the
+    restart stays held; one that has ended still answers `{ended: true}`. Its test:
+    `test_a_renewal_of_an_unknown_apply_hold_recreates_it`. (Moved here from Task 32's note.)
+  - **The brake's events after damage**: `state.brake_events_after` was lost, so the core starts
+    `ingest_brake_events` at the events file's current end (its last event's key), and past alerts
+    aren't sent again. `spark status` notes that the brake's events before the damage weren't read.
+  - **The bypass check after damage**: `ticketed` and `issued` were lost, so the engines already
+    running at that start aren't reported as unticketed; each is logged as found after damage.
   - `StatusView.health` carries the damage while `damaged_at` is set, for Task 29's line.
 
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
@@ -4040,11 +4098,18 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
       ignored: the front marks the model drained, lets its requests in flight finish, and answers
       `drained` with that id. So every drain the gate sends gets an answer. Only an `undrain` under
       an id it doesn't hold is ignored.
-    - An `undrain` with `drain_id` None, which the gate sends only at a start fresh from a damaged
+    - ~~An `undrain` with `drain_id` None, which the gate sends only at a start fresh from a damaged
       state (Task 18), releases whatever drain the front holds for that model. The gate never sends
-      one for a model `/running` shows `stopping`: that one stays held until `unloaded` (N-1).
-    - Its tests gain both: a resumed `drain` after the front's own restart answered `drained` with
-      its id, and an `undrain` with no id releasing a held model.
+      one for a model `/running` shows `stopping`: that one stays held until `unloaded` (the sent-unload rule).~~
+    - Its tests gain ~~both~~: a resumed `drain` after the front's own restart answered `drained`
+      with its id~~, and an `undrain` with no id releasing a held model~~.
+    - *(Corrected 2026-10-08, the controller's rulings, at Task 13's re-review: the gate never
+      undrains after damage.)* At a start fresh from a damaged state file, the gate finishes every
+      drain the front holds as a drain with why `unknown` (Task 18): for a model `/running` shows
+      `ready`, a `drain` under a new id, which the front adopts as above, answering `drained` once
+      its requests in flight finish, then `unloaded`; for one `stopping` or gone, `unloaded`, which
+      releases the hold. The front never undrains on its own, and the sent-unload rule (Task 16)
+      holds. Its test: a held model released by `unloaded` after the gate's damaged start.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
   apply holds again: every new request is held, as for a draining model; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through
@@ -4200,7 +4265,9 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   `release_waits_for_dan`, Task 13's `hold.release_waits_for_dan` for the hold it wrote, with the
   last automatic release read from the gate's saved state, passed as `released_at`, so its own
   alert for a brake within the hour says why new loads stay paused until Dan releases them; and
-  `release_after_s`, required, `RELEASE_AFTER_S`.)*
+  `release_after_s`, required, `RELEASE_AFTER_S`.)* *(Added 2026-10-08, the controller's ruling, at
+  Task 13's re-review: and `release_assumed`, read from the same saved state, so after damage its
+  alert says it can't tell when the last automatic release was, never names one.)*
 - `spark brake --key-credential llamaswap-key` (the unit's): the key from
   `read_credential(name)`; the start check records `credential llamaswap-key` as its source, never
   the value. `--key-env` stays, for drills.
@@ -5155,6 +5222,8 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   ruling, at Task 13's review: a renewal of an apply hold the gate doesn't know, as after a start
   fresh from a damaged state file, re-creates the hold, `since` the renewal's, so the restart stays
   held. One the gate knows has ended still answers `{ended: true}` (Task 18 answers both).)*
+  *(Moved 2026-10-08, the controller's ruling, at Task 13's re-review: that rule is the gate's, and
+  is now in Task 18's text, with its test; `spark apply` needs no change for it.)*
 - `--now` (`make apply-now`) — asks Task 7's *This restarts the model service now and cuts off the
   2 requests in flight (pi on the Mac, agent). Continue? [y/N]*, naming each from `/v1/quiet`;
   without requests in flight it doesn't ask.

@@ -1135,6 +1135,30 @@ def test_a_field_needed_only_in_one_form_is_needed_there():
         say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "unloaded": []})
 
 
+def test_a_brake_after_a_damaged_start_never_names_an_automatic_release():
+    # After the gate's saved state was damaged, the last automatic release is assumed, not real: the alert says why
+    # the pause waits for Dan, never "the automatic release at …" (the controller's ruling at Task 13's re-review).
+    text = say("brake_fired", **{**FIRED, "release_waits_for_dan": True, "release_assumed": True})
+    assert text.endswith("new loads are paused. New loads stay paused until you release them: the gate's saved state "
+                         "was damaged, so it can't tell when the last automatic release was. On the Spark, "
+                         "`make brake-release` resumes them.")
+    assert "automatic release at" not in text
+    assert say("brake_fired", **WITHIN_THE_HOUR).endswith(DANS_RELEASE)  # a real release keeps its words
+
+
+def test_the_unloaded_whys_and_drain_for_are_gateprotos():
+    # messages can't import gateproto (it stays light), so this ties the two lists together.
+    from typing import get_args, get_type_hints
+
+    from spark.gateproto import DRAIN_WHY
+    drain_for = get_type_hints(Moment)["drain_for"]
+    assert set(get_args(get_args(drain_for)[0])) == set(DRAIN_WHY)
+    for why in DRAIN_WHY:
+        assert say("unloaded", label="the coder", why=why, idle_min=60).startswith("Unloaded the coder")
+    with pytest.raises(ValueError, match="^unloaded's why must be one of "):
+        say("unloaded", label="the coder", why="brake")
+
+
 def test_an_unload_whose_why_is_unknown_is_worded_neutrally():
     # A drain saved without its why (an older state file) reads as unknown: no words name `spark unload` or make-room
     # for it, and Task 15's abort of a start past its deadline says what it was (the controller's ruling at Task 13's

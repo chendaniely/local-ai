@@ -163,6 +163,25 @@ def test_another_boots_record_is_never_carried_onto_this_boots_engine():
     assert resumable_drains(restored) == [] and restored.undrains == {}
 
 
+def test_an_unknown_state_with_its_unload_requested_waits_for_a_known_one(caplog):
+    # Not resumed until /running shows a state the gate knows (the controller's ruling at Task 13's re-review).
+    state = GateState(boot_id=BOOT, models={CODER: record(CODER, state="draining", unload_requested_at=T - 3,
+                                                           drain_id="d1", drain_why="unload")})
+    with caplog.at_level(logging.WARNING, logger="spark.gate.state"):
+        restored, _ = restore(state, [Running(CODER, "shutdown")], now=T, boot_id=BOOT, registry=REGISTRY)
+    coder = restored.models[CODER]
+    assert (coder.state, coder.unload_requested_at, coder.drain_id) == ("starting", T - 3, "d1")
+    assert resumable_drains(restored) == [] and restored.undrains == {} and "'shutdown'" in caplog.text
+
+
+def test_the_frozen_records_hash():
+    # The fields kept from a later version don't stop a frozen record hashing (the controller's ruling at Task 13's
+    # re-review), and two records that differ only there are still told apart by ==.
+    pin = Pin(CODER, T, DAN)
+    assert {pin, BrakeMark(CODER, T, 26.0), refusal(1), Ticketed(GEMMA, 4300, "t", T, 1)}
+    assert hash(pin) == hash(Pin(CODER, T, DAN, extra={"later": 1})) and pin != Pin(CODER, T, DAN, extra={"later": 1})
+
+
 def test_a_running_state_the_gate_doesnt_know_counts_as_starting_and_is_logged(caplog):
     # Not served and not read as ready: counted as starting at its footprint until /running shows it ready or gone
     # (the controller's ruling at Task 13's review).
@@ -313,7 +332,8 @@ def test_a_session_is_live_only_in_its_boot_while_its_pid_is_the_process_recorde
 def fresh_after_damage(at: float) -> GateState:
     """What a damaged file leaves the gate: a fresh state that errs safe (the controller's ruling at Task 13's
     review)."""
-    return GateState(last_auto_release_at=at, clean_shutdown=False, fresh_after_damage=True, damaged_at=at)
+    return GateState(last_auto_release_at=at, release_assumed=True, clean_shutdown=False, fresh_after_damage=True,
+                     damaged_at=at)
 
 
 @pytest.mark.parametrize("damage", ["{", "[]", "{}", '{"schema": 1, "models": 5}', '{"schema": 1, "saved_at": NaN}',
@@ -322,7 +342,8 @@ def fresh_after_damage(at: float) -> GateState:
                                     '{"schema": 1, "brake_events_after": ["b1", 3]}',
                                     '{"schema": 1, "pins": {"coder": {"model": "gemma", "until": null, "by_uid": 1}}}',
                                     '{"schema": 1, "models": {"coder": {"name": "coder"}}}',
-                                    '{"schema": 1, "undrains": {"coder": ""}}', "[" * 100_000, "\udcff"])
+                                    '{"schema": 1, "undrains": {"coder": ""}}', '{"schema": 1.0}', "[" * 100_000,
+                                    "\udcff"])
 def test_a_damaged_state_file_starts_fresh_and_says_so(tmp_path, damage):
     (tmp_path / STATE_FILE).write_text(damage, errors="surrogateescape")
     fresh, problem = load_state(tmp_path, now=T)
@@ -331,11 +352,13 @@ def test_a_damaged_state_file_starts_fresh_and_says_so(tmp_path, damage):
     assert (tmp_path / STATE_FILE).exists()  # left where it is unless the gate asks for it to be set aside
 
 
-def test_a_fresh_state_after_damage_errs_safe():
+def test_a_fresh_state_after_damage_errs_safe(tmp_path):
     # Rule 5's once an hour holds: any brake within the hour waits for Dan. The unclean stop is announced, and the
     # gate settles the front's drains from /running at start (Tasks 18 and 22).
-    fresh = fresh_after_damage(T)
+    (tmp_path / STATE_FILE).write_text("{ damaged")
+    fresh, _ = load_state(tmp_path, now=T)
     assert fresh.last_auto_release_at == T and fresh.clean_shutdown is False and fresh.fresh_after_damage
+    assert fresh.release_assumed  # that release is assumed, not real: brake_fired's words say so (Task 13's re-review)
     within = Hold(local(T + 20 * 60), "19.6 GiB available", (), boot_id=BOOT, episode=1)
     assert release_waits_for_dan(within, boot_id=BOOT, last_auto_release_at=fresh.last_auto_release_at,
                                  now=T + 25 * 60)
@@ -353,21 +376,63 @@ def utc(at: float) -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(at))
 
 
+def older_damaged(folder: Path, stamp_at: float, modified_at: float) -> Path:
+    """A damaged file an earlier start kept: its name stamped `stamp_at`, last written at `modified_at`."""
+    path = folder / f"{STATE_FILE}.damaged-{utc(stamp_at)}"
+    path.write_text("old")
+    os.utime(path, (modified_at, modified_at))
+    return path
+
+
 def test_a_damaged_state_file_is_set_aside_for_diagnosis_and_only_the_newest_kept(tmp_path):
-    for n in range(DAMAGED_KEEP + 1):  # older damaged files, left by earlier starts
-        (tmp_path / f"{STATE_FILE}.damaged-{utc(T - 3600 * (n + 1))}").write_text("old")
+    older = [older_damaged(tmp_path, T - 3600 * (n + 1), T - 3600 * (n + 1)) for n in range(DAMAGED_KEEP + 1)]
     (tmp_path / STATE_FILE).write_text("{ damaged")
     os.chmod(tmp_path / STATE_FILE, 0o644)
     fresh, problem = load_state(tmp_path, now=T, set_aside=True)
     kept = tmp_path / f"{STATE_FILE}.damaged-{utc(T)}"
-    assert fresh == replace(fresh_after_damage(T), damaged_kept_as=str(kept))
-    assert kept.read_text() == "{ damaged" and stat.S_IMODE(kept.stat().st_mode) == 0o600
-    assert not (tmp_path / STATE_FILE).exists() and str(kept) in problem
+    assert fresh == replace(fresh_after_damage(T), damaged_kept_as=str(kept), saved_at=T)
+    assert kept.read_text() == "{ damaged" and stat.S_IMODE(kept.stat().st_mode) == 0o600 and str(kept) in problem
     left = sorted(p.name for p in tmp_path.iterdir())
-    assert left == sorted([kept.name] + [f"{STATE_FILE}.damaged-{utc(T - 3600 * (n + 1))}"
-                                         for n in range(DAMAGED_KEEP - 1)])
-    save_state(tmp_path, fresh, now=T + 1)  # the first save writes a whole file, and the damaged one stays kept
+    assert left == sorted([STATE_FILE, kept.name] + [path.name for path in older[:DAMAGED_KEEP - 1]])
     assert load_state(tmp_path)[0].damaged_kept_as == str(kept) and kept.read_text() == "{ damaged"
+
+
+def test_a_restart_before_the_first_save_still_knows_the_damage(tmp_path):
+    # The fail-safe state is saved, whole, as soon as the damaged file is moved aside, so a gate that stops before
+    # anything else runs finds it again, never a new box's state (the controller's ruling at Task 13's re-review).
+    (tmp_path / STATE_FILE).write_text("{ damaged")
+    first, _ = load_state(tmp_path, now=T, set_aside=True)
+    again, problem = load_state(tmp_path, now=T + 5, set_aside=True)
+    assert problem is None and again == first
+    assert again.fresh_after_damage and again.last_auto_release_at == T and again.clean_shutdown is False
+    assert again.release_assumed and again.damaged_kept_as == first.damaged_kept_as
+
+
+def test_the_cap_never_removes_the_file_it_just_moved(tmp_path):
+    # The clock behind the older files' stamps (set back, or an RTC before NTP): the cap goes by when each was last
+    # written, and the file just moved is always kept (the controller's ruling at Task 13's re-review).
+    older = [older_damaged(tmp_path, T + 3600 * (n + 1), T - 3600 * (n + 1)) for n in range(DAMAGED_KEEP + 1)]
+    (tmp_path / STATE_FILE).write_text("{ damaged")
+    os.utime(tmp_path / STATE_FILE, (T - 10 * 3600, T - 10 * 3600))  # written before every older one
+    fresh, problem = load_state(tmp_path, now=T, set_aside=True)
+    kept = Path(fresh.damaged_kept_as)
+    assert kept.exists() and str(kept) in problem
+    damaged = sorted(p.name for p in tmp_path.iterdir() if p.name != STATE_FILE)
+    assert damaged == sorted([kept.name] + [path.name for path in older[:DAMAGED_KEEP - 1]])
+
+
+def test_a_mode_that_cant_be_set_still_leaves_the_file_kept(tmp_path, monkeypatch):
+    # Once it has moved, the file is kept, whatever follows: the problem says where, and that its mode couldn't be set.
+    (tmp_path / STATE_FILE).write_text("{ damaged")
+
+    def refuse(fd, mode):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(gate_state.os, "fchmod", refuse)
+    fresh, problem = load_state(tmp_path, now=T, set_aside=True)
+    kept = tmp_path / f"{STATE_FILE}.damaged-{utc(T)}"
+    assert fresh.damaged_kept_as == str(kept) and kept.read_text() == "{ damaged"
+    assert f"kept as {kept}, but its mode couldn't be set (Operation not permitted)" in problem
 
 
 def test_two_damaged_files_in_one_second_are_both_kept(tmp_path):

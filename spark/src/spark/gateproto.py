@@ -135,8 +135,8 @@ class GateRefusalBody(TypedDict):
 
 # Why a model is being unloaded, which each origin saves with its drain (the controller's rulings at Task 13's review):
 # make-room, `spark unload`, an idle unload, or the gate's abort of a start past its deadline (late_start, Task 15).
-# unknown: a drain a restarted gate resumes with no why saved (an older state file), worded neutrally, naming no
-# command.
+# unknown: an unload with no why of the gate's, worded neutrally, naming no command: one restore found stopping with no
+# record of it (the brake's, or one after damage), and the drains the gate finishes at a start after damage.
 DrainWhy = Literal["make-room", "unload", "idle", "late_start", "unknown"]
 DRAIN_WHY: tuple[str, ...] = get_args(DrainWhy)
 FrontRefusalCode = Literal["model_not_found", "too_many_requests", "route_not_served", "draining"]

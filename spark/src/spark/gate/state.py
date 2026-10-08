@@ -55,7 +55,9 @@ _log = logging.getLogger(__name__)
 # Each record keeps the fields of its file this version doesn't know (a later version's, after a rollback), and writes
 # them back as they were (the controller's ruling at Task 13's review).
 def _extra() -> Any:
-    return field(default_factory=dict, repr=False)  # a field of its own for each class: dataclass fills in its name
+    # A field of its own for each class, since dataclass fills in its name. Compared, so a record that differs only
+    # there isn't equal; not hashed, so a frozen record still hashes (the controller's ruling at Task 13's re-review).
+    return field(default_factory=dict, repr=False, hash=False)
 
 
 @dataclass
@@ -76,7 +78,8 @@ class ModelRecord:
     unload_requested_at: float | None = None
     # The drain under way, saved before the drainer sends `drain` (Task 16), so a restarted gate resumes it under its id
     # or sends the front `undrain` under it (the controller's rulings at Task 13 and its review). Each origin saves its
-    # own why; None from an older file reads as unknown.
+    # own why. None, for an unload with no why of the gate's (restore found the model stopping with no record of it:
+    # the brake's unload, or one after damage), reads as unknown.
     drain_id: str | None = None
     drain_why: DrainWhy | None = None
     extra: dict[str, Any] = _extra()
@@ -177,6 +180,9 @@ class GateState:
     room_hold: RoomHold | None = None
     brake_marks: dict[str, BrakeMark] = field(default_factory=dict)
     last_auto_release_at: float | None = None
+    # last_auto_release_at is assumed, not real: a damaged file's fresh state sets it to its start, so no automatic
+    # release comes for an hour, and brake_fired's words never name it as a release (Task 13's re-review).
+    release_assumed: bool = False
     brake_events_after: tuple[str, int, float] | None = None  # the (boot id, seq, at) of the last brake event read
     # When each notification was sent, keyed by its type and its event key together (notified_key): the controller's
     # ruling after Task 7's fix round, so two types never share a key. Pruned on every save.
@@ -228,10 +234,12 @@ class SavedDrain:
 def resumable_drains(state: GateState) -> list[SavedDrain]:
     """The drains the gate resumes at start, on the state restore returned: each model whose unload it requested. One
     left `draining` is drained again, so the requests in flight finish, then unloaded; one `stopping` waits for
-    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`. A drain saved with no why reads
-    as `unknown`, worded neutrally (the controller's ruling at Task 13's review)."""
+    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`. A model in a state the gate
+    doesn't know waits until /running shows one it knows (Task 18). An unload with no why of the gate's (restore found
+    the model stopping with no record of it) reads as `unknown`, worded neutrally (the controller's rulings at Task 13's
+    review and re-review)."""
     return [SavedDrain(record.name, record.drain_id, record.drain_why or "unknown") for record in state.models.values()
-            if record.unload_requested_at is not None]
+            if record.unload_requested_at is not None and record.state in ("draining", "stopping")]
 
 
 def session_live(session: Session, *, boot_id: str, proc: Path = procs.PROC) -> bool:
@@ -256,7 +264,7 @@ _TABLES: tuple[tuple[str, type, str], ...] = (  # each table of records, and the
 _POSITIVE = ("pid",)  # a pid of 0 or below names a process group, never a process
 _SCALARS: dict[str, Any] = {"last_auto_release_at": float | None, "notify_failing_since": float | None,
                             "clean_shutdown": bool, "saved_at": float, "boot_id": str, "fresh_after_damage": bool,
-                            "damaged_at": float | None, "damaged_kept_as": str | None}
+                            "damaged_at": float | None, "damaged_kept_as": str | None, "release_assumed": bool}
 # Every part of the file this version reads; any other is kept as it was (GateState.extra).
 _KNOWN = {"schema", "room_hold", "applying", "brake_events_after", "notified", "issued", "undrains", "refusals",
           *(section for section, _, _ in _TABLES), *_SCALARS}
@@ -341,7 +349,7 @@ def _decode(data: Any) -> GateState:
     schema = data.get("schema")
     if isinstance(schema, int) and not isinstance(schema, bool) and schema > STATE_SCHEMA:
         raise ValueError(f"written by a newer version of the gate (schema {schema}; this one reads {STATE_SCHEMA})")
-    if schema != STATE_SCHEMA or isinstance(schema, bool):
+    if type(schema) is not int or schema != STATE_SCHEMA:  # 1.0 and true aren't 1
         raise ValueError(f"its schema isn't {STATE_SCHEMA}")
     state = GateState(extra={key: value for key, value in data.items() if key not in _KNOWN})
     for section, cls, key in _TABLES:
@@ -430,10 +438,12 @@ def load_state(folder: Path, *, now: float | None = None, set_aside: bool = Fals
 
     For a file that can't be read, isn't the gate's whole state, or is a newer version's (its schema higher): a fresh
     state that errs safe, and a problem naming the file, for `spark status` (the controller's rulings at Task 13's
-    review). Its `last_auto_release_at` is `now` (time.time() by default), so no automatic release of the brake's hold
-    comes for an hour; its `clean_shutdown` is false; and `fresh_after_damage` asks the gate to settle the front's
-    drains from `/running` at start (Tasks 18 and 22). With `set_aside`, which only the gate passes, the damaged file is
-    first moved aside, before any save can replace it (set_aside_damaged), and the state records where."""
+    review). Its `last_auto_release_at` is `now` (time.time() by default), assumed (`release_assumed`), so no
+    automatic release of the brake's hold comes for an hour; its `clean_shutdown` is false; and `fresh_after_damage`
+    asks the gate to settle the front's drains from `/running` at start (Tasks 18 and 22). With `set_aside`, which only
+    the gate passes, the damaged file is first moved aside (set_aside_damaged), the state records where, and the state
+    is saved at once, whole, so a gate that stops before anything else runs finds the damage again (the controller's
+    ruling at Task 13's re-review)."""
     path = Path(folder) / STATE_FILE
     now = time.time() if now is None else now
     try:
@@ -449,22 +459,33 @@ def load_state(folder: Path, *, now: float | None = None, set_aside: bool = Fals
 
 
 def _damaged(path: Path, err: BaseException, *, now: float, set_aside: bool) -> tuple[GateState, str]:
-    state = GateState(last_auto_release_at=now, clean_shutdown=False, fresh_after_damage=True, damaged_at=now)
+    state = GateState(last_auto_release_at=now, release_assumed=True, clean_shutdown=False, fresh_after_damage=True,
+                      damaged_at=now)
     kept = ""
     if set_aside:
         try:
-            state.damaged_kept_as = str(set_aside_damaged(path, now=now))
-            kept = f"; the damaged file is kept as {state.damaged_kept_as}"
+            moved, trouble = set_aside_damaged(path, now=now)
         except OSError as move:
             kept = f"; the damaged file couldn't be kept ({_why(move)}), so the next save replaces it"
+        else:
+            state.damaged_kept_as = str(moved)
+            kept = f"; the damaged file is kept as {moved}" + (f", but {trouble}" if trouble else "")
+            try:
+                save_state(path.parent, state, now=now)
+            except (OSError, ValueError) as save:
+                kept += (f"; the fresh state couldn't be saved ({_why(save)}), so a restart before the next save "
+                         "starts as a new box would")
     return state, (f"the gate's state {path} can't be read ({_why(err)}), so the gate starts from a fresh state: the "
                    f"pins, sessions, make-room hold and brake marks it kept are gone{kept}")
 
 
-def set_aside_damaged(path: Path, *, now: float) -> Path:
+def set_aside_damaged(path: Path, *, now: float) -> tuple[Path, str | None]:
     """Move the damaged state file at `path` aside, as `<path>.damaged-<UTC time>` (with -2, -3 … should that name be
     taken), mode 0600 when it is a regular file, never changed through a link; then remove all but the newest
-    DAMAGED_KEEP of them. Returns where it went. Root is refused (PermissionError): the gate's folder is spark's."""
+    DAMAGED_KEEP of them, by when each was last written, never the one just moved, so a clock set back can't remove it.
+    Returns where it went, and what couldn't be done once it had moved (its mode), or None: the move is what counts
+    (the controller's rulings at Task 13's re-review). Root is refused (PermissionError): the gate's folder is
+    spark's."""
     if os.geteuid() == 0:
         raise PermissionError(f"root never writes in the gate's folder, so {path} isn't moved")
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
@@ -472,6 +493,7 @@ def set_aside_damaged(path: Path, *, now: float) -> Path:
     while os.path.lexists(kept):
         kept, n = path.with_name(f"{path.name}{DAMAGED_SUFFIX}{stamp}-{n}"), n + 1
     os.rename(path, kept)
+    trouble = None
     try:
         fd = os.open(kept, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError:
@@ -480,11 +502,11 @@ def set_aside_damaged(path: Path, *, now: float) -> Path:
         try:
             if stat.S_ISREG(os.fstat(fd).st_mode):
                 os.fchmod(fd, 0o600)
+        except OSError as err:
+            trouble = f"its mode couldn't be set ({_why(err)})"
         finally:
             os.close(fd)
-    older = sorted(entry for entry in os.listdir(path.parent) if entry.startswith(f"{path.name}{DAMAGED_SUFFIX}"))
-    for name in older[:-DAMAGED_KEEP]:
-        old = path.parent / name
+    for old in _older_damaged(path, kept)[DAMAGED_KEEP - 1:]:
         try:
             old.unlink()
         except OSError:
@@ -492,7 +514,24 @@ def set_aside_damaged(path: Path, *, now: float) -> Path:
                 old.rmdir()  # a folder someone left under that name: removed only when empty
             except OSError:
                 pass
-    return kept
+    return kept, trouble
+
+
+def _older_damaged(path: Path, kept: Path) -> list[Path]:
+    """The damaged files kept beside `path` but `kept`, the last written first; none when the folder can't be read."""
+    def written(old: Path) -> float:
+        try:
+            return old.lstat().st_mtime
+        except OSError:
+            return float("-inf")  # gone meanwhile: nothing to keep
+
+    try:
+        names = os.listdir(path.parent)
+    except OSError:
+        return []
+    older = [path.parent / name for name in names
+             if name.startswith(f"{path.name}{DAMAGED_SUFFIX}") and name != kept.name]
+    return sorted(older, key=written, reverse=True)
 
 
 def save_state(folder: Path, state: GateState, *, now: float | None = None) -> None:
@@ -555,7 +594,8 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
       leaving the gate's own unload, never a crash (the controller's rulings at Task 12's re-reviews). One found
       stopping with no request recorded gets one, at `now`.
     - One in a state other than starting, ready or stopping is `starting` at its footprint, never served, until
-      `/running` shows it ready or gone, and is logged (the controller's ruling at Task 13's review).
+      `/running` shows it ready or gone, and is logged (the controller's ruling at Task 13's review). If its unload was
+      requested, it isn't resumed until `/running` shows a state the gate knows (Task 13's re-review; Task 18).
     - One whose unload was requested and that `/running` still shows ready (or starting) is `draining`, left for the
       drainer: the call may never have gone out, so the drainer drains it again, so the requests in flight finish,
       then unloads it; it counts as `stopping` only once that call is sent, never while it serves. Its leaving is
@@ -596,6 +636,7 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
             if record.unload_requested_at is None:
                 record.unload_requested_at = now
         elif shown not in ("starting", "ready"):
+            # Counted, never served; an unload requested waits for a state the gate knows (resumable_drains, Task 18).
             _log.warning("llama-swap's /running shows %r as %r, a state the gate doesn't know: counted as starting, "
                          "at %s GiB, until it shows it ready or gone", name, shown, record.footprint_gib)
             record.state = "starting"
