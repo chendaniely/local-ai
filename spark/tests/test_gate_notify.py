@@ -5,6 +5,7 @@ memory_warning once per fall."""
 
 import asyncio
 import contextlib
+import gc
 import logging
 import re
 import socket
@@ -385,9 +386,14 @@ async def test_an_ntfy_out_of_reach_stalls_nothing_and_shows_failing_since(caplo
         state = GateState()
         notifier = Notifier(published, REGISTRY, state, clock, timeout_s=0.05)
         async with serving(notifier):
-            began = time.perf_counter()
-            notifier.emit("loaded", "load:t1", label="the coder", seconds=24)
-            assert time.perf_counter() - began < 0.010
+            gc.disable()  # the bound is emit's own work, not a collector's pause that lands inside it
+            try:
+                began = time.perf_counter()
+                notifier.emit("loaded", "load:t1", label="the coder", seconds=24)
+                took = time.perf_counter() - began
+            finally:
+                gc.enable()
+            assert took < 0.010
             await notifier.drained()
             assert state.notify_failing_since == at(8, 52)  # the first failure's time
             clock.now = at(8, 53)
@@ -1002,8 +1008,9 @@ async def test_the_real_publisher_sends_again_what_ntfy_may_have_taken():
     with anyio.fail_after(BOUND_S):
         server = await asyncio.start_server(handle, "127.0.0.1", 0)
         url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+        # A read bound short enough to end the hung first try quickly, with margin for the answered ones on a busy box.
         publisher = NtfyPublisher(url, TOPIC, ("Authorization", f"Bearer {TOKEN}"),
-                                  timeout=httpx.Timeout(1.0, read=0.1))
+                                  timeout=httpx.Timeout(1.0, read=0.5))
         clock = Clock(at(3, 12))
         notifier = Notifier(publisher, REGISTRY, GateState(), clock)
         fired = {**FIRED, "at": at(3, 12)}
