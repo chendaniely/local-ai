@@ -65,6 +65,21 @@ def test_a_file_started_again_still_reads(path):
     assert read_events(path, (B1, 3)) == [again]
 
 
+def test_a_file_started_again_within_a_boot_still_reads(path):
+    # The gate keeps each event's `at` with its key (the controller's ruling at Task 13's review): a file removed by
+    # hand within a boot starts its seq from 1 again, and an event of the new file that comes to the same seq isn't
+    # taken for the gate's place, so none of the new file's events is hidden.
+    for n in range(3):
+        append_event(path, event(at=T + n))
+    place = read_events(path, None)[-1]
+    assert read_events(path, (B1, 3, place.at)) == []
+    path.unlink()
+    again = [append_event(path, event(at=T + 100 + n)) for n in range(3)]
+    assert [e.seq for e in again] == [1, 2, 3]
+    assert read_events(path, (B1, 3, place.at)) == again
+    assert keys(read_events(path, (B1, 2, again[1].at))) == [(B1, 3)]
+
+
 def test_seq_continues_across_boots_in_one_file(path):
     append_event(path, event(boot=B1))
     later = append_event(path, event(boot=B2))

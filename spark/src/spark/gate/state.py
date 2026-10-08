@@ -5,19 +5,25 @@ notified, and the refusal history. A restart must never lose a hold, a ticket in
 so the state is saved whole on every change (Task 18), in `GATE_STATE/state.json`, the file and its folder fsynced
 before save_state returns, as the brake's hold is: a reader finds the old file or the new one, never part of one.
 
-At start the gate loads it (load_state, which never raises: a damaged file is a fresh state and a problem for `spark
-status`) and settles it against llama-swap's `/running` and this boot (restore). What belongs to a boot ends with it:
-make-room's hold, apply's hold, the sessions, the engines ticketed, the tickets issued and the drains. Pins, the
-brake's marks and the refusal history stay. A drain the gate saved is resumed under its id, or the front is owed an
-`undrain` under it, never left (the controller's rulings at Task 13).
+At start the gate loads it (load_state, which never raises) and settles it against llama-swap's `/running` and this
+boot (restore). A damaged file, or one from a newer version, gives a fresh state that errs safe, and a problem for
+`spark status`: no automatic release of the brake's hold for an hour, the stop counted unclean, the front's drains
+settled from `/running` at start (Tasks 18 and 22), and the file kept aside for diagnosis (the controller's rulings at
+Task 13's review). A field this version doesn't know is kept, and written back as it was.
 
-The standard library only, and nothing heavy at import: the brake reads the last automatic release from it too (Task
-23)."""
+What belongs to a boot ends with it: make-room's hold, apply's hold, the sessions, the model records, the engines
+ticketed, the tickets issued and the drains. Pins, the brake's marks and the refusal history stay. A drain the gate
+saved is resumed under its id, or the front is owed an `undrain` under it, never left (the controller's rulings at
+Task 13).
+
+Nothing heavy at import (no uvicorn, Starlette or httpx), since the brake reads the last automatic release from it too
+(Task 23)."""
 
 from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import os
 import secrets
@@ -25,7 +31,7 @@ import stat
 import time
 import types
 from collections import deque
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
@@ -36,12 +42,20 @@ from spark.llamaswap import Running
 from spark.registry import Registry
 
 STATE_FILE = "state.json"
+STATE_SCHEMA = 1  # raised when a field's meaning changes; a file with a higher one is a newer version's: damaged
+DAMAGED_SUFFIX = ".damaged-"  # a damaged state file is kept as state.json.damaged-<UTC time>
+DAMAGED_KEEP = 3  # the newest damaged files kept
 STATE_MAX_BYTES = 16 << 20  # far more than 50 refusals and a day of notifications: a larger file isn't the gate's
 # A loaded model's state in the gate's record. stopping: from the moment its unload call is sent until /running shows
 # it gone, its memory not yet freed (gateproto.ModelState's, the controller's rulings at Task 12's re-reviews and at
 # Task 13: never before the call is sent, so a model never sits stopping while it serves).
 RecordState = Literal["starting", "ready", "draining", "stopping"]
 RECORD_STATES: tuple[str, ...] = get_args(RecordState)
+_log = logging.getLogger(__name__)
+# Each record keeps the fields of its file this version doesn't know (a later version's, after a rollback), and writes
+# them back as they were (the controller's ruling at Task 13's review).
+def _extra() -> Any:
+    return field(default_factory=dict, repr=False)  # a field of its own for each class: dataclass fills in its name
 
 
 @dataclass
@@ -60,10 +74,12 @@ class ModelRecord:
     # so its leaving /running is the gate's own unload, never a crash for the residents' rule. It goes with the record
     # once /running shows the model gone, and the drain clears it when it undrains (Task 16).
     unload_requested_at: float | None = None
-    # The drain under way, saved when the drainer sends `drain` (Task 16), so a restarted gate resumes it under its id
-    # or sends the front `undrain` under it (the controller's ruling at Task 13).
+    # The drain under way, saved before the drainer sends `drain` (Task 16), so a restarted gate resumes it under its id
+    # or sends the front `undrain` under it (the controller's rulings at Task 13 and its review). Each origin saves its
+    # own why; None from an older file reads as unknown.
     drain_id: str | None = None
     drain_why: DrainWhy | None = None
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass(frozen=True)
@@ -71,6 +87,7 @@ class Pin:
     model: str
     until: float | None  # None: no end
     by_uid: int
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass
@@ -86,6 +103,7 @@ class Session:
     renewed_at: float
     boot_id: str  # the boot it was recorded on: a reboot ends it
     start_time: int | None  # its pid's procs.start_time when it was recorded; None: never live
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass
@@ -98,6 +116,7 @@ class RoomHold:
     boot_id: str
     created_at: float
     unloaded: list[str]  # what make-room unloaded, for the reloads when it ends
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass(frozen=True)
@@ -107,6 +126,7 @@ class BrakeMark:
     model: str
     at: float
     seen_gib: float  # what it was seen using
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass(frozen=True)
@@ -117,6 +137,7 @@ class RefusalRecord:
     uid: int | None
     code: str
     message: str
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass
@@ -129,6 +150,7 @@ class ApplyHold:
     begun_at: float | None  # apply/begin's time; None before it
     restarting: list[str]  # the units apply/begin named
     ended: bool  # a second end does nothing
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass(frozen=True)
@@ -142,6 +164,7 @@ class Ticketed:
     # procs.start_time's ticks, so a pid handed out again is never read as the engine (the controller's ruling at
     # Task 8's review); None when it couldn't be read, and then procs.engine_pid trusts the pid not at all.
     start_time: int | None
+    extra: dict[str, Any] = _extra()
 
 
 @dataclass
@@ -154,7 +177,7 @@ class GateState:
     room_hold: RoomHold | None = None
     brake_marks: dict[str, BrakeMark] = field(default_factory=dict)
     last_auto_release_at: float | None = None
-    brake_events_after: tuple[str, int] | None = None  # the (boot id, seq) of the last brake event read
+    brake_events_after: tuple[str, int, float] | None = None  # the (boot id, seq, at) of the last brake event read
     # When each notification was sent, keyed by its type and its event key together (notified_key): the controller's
     # ruling after Task 7's fix round, so two types never share a key. Pruned on every save.
     notified: dict[str, float] = field(default_factory=dict)
@@ -173,6 +196,12 @@ class GateState:
     clean_shutdown: bool = True  # a fresh state had no run to end
     saved_at: float = 0.0
     boot_id: str = ""  # the boot it was last settled on (restore)
+    # A damaged file's fresh state (load_state): the gate settles the front's drains from /running at start, then
+    # clears it (Tasks 18 and 22).
+    fresh_after_damage: bool = False
+    damaged_at: float | None = None  # when the gate started fresh after damage, until the next boot: `spark status`
+    damaged_kept_as: str | None = None  # where the damaged file was kept, for `spark status`
+    extra: dict[str, Any] = _extra()  # the parts of the file this version doesn't know
 
     def __post_init__(self) -> None:
         self.refusals = deque(self.refusals, maxlen=REFUSAL_HISTORY)
@@ -199,8 +228,9 @@ class SavedDrain:
 def resumable_drains(state: GateState) -> list[SavedDrain]:
     """The drains the gate resumes at start, on the state restore returned: each model whose unload it requested. One
     left `draining` is drained again, so the requests in flight finish, then unloaded; one `stopping` waits for
-    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`."""
-    return [SavedDrain(record.name, record.drain_id, record.drain_why) for record in state.models.values()
+    /running to show it gone (Task 16). Every other drain saved is in `state.undrains`. A drain saved with no why reads
+    as `unknown`, worded neutrally (the controller's ruling at Task 13's review)."""
+    return [SavedDrain(record.name, record.drain_id, record.drain_why or "unknown") for record in state.models.values()
             if record.unload_requested_at is not None]
 
 
@@ -225,7 +255,11 @@ _TABLES: tuple[tuple[str, type, str], ...] = (  # each table of records, and the
     ("brake_marks", BrakeMark, "model"), ("ticketed", Ticketed, "model"))
 _POSITIVE = ("pid",)  # a pid of 0 or below names a process group, never a process
 _SCALARS: dict[str, Any] = {"last_auto_release_at": float | None, "notify_failing_since": float | None,
-                            "clean_shutdown": bool, "saved_at": float, "boot_id": str}
+                            "clean_shutdown": bool, "saved_at": float, "boot_id": str, "fresh_after_damage": bool,
+                            "damaged_at": float | None, "damaged_kept_as": str | None}
+# Every part of the file this version reads; any other is kept as it was (GateState.extra).
+_KNOWN = {"schema", "room_hold", "applying", "brake_events_after", "notified", "issued", "undrains", "refusals",
+          *(section for section, _, _ in _TABLES), *_SCALARS}
 
 
 def _finite(value: Any) -> bool:
@@ -277,8 +311,9 @@ def _hints(cls: type) -> dict[str, Any]:
 def _record(cls: type, raw: Any, section: str) -> Any:
     if not isinstance(raw, dict):
         raise ValueError(f"{section} holds something that isn't an object")
-    given = {}
-    for f in fields(cls):
+    known = [f for f in fields(cls) if f.name != "extra"]
+    given: dict[str, Any] = {"extra": {key: value for key, value in raw.items() if key not in {f.name for f in known}}}
+    for f in known:
         where = f"{section}.{f.name}"
         if f.name in raw:
             given[f.name] = _value(_hints(cls)[f.name], raw[f.name], where)
@@ -303,7 +338,12 @@ def _decode(data: Any) -> GateState:
     but wrong is a ValueError naming it."""
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")
-    state = GateState()
+    schema = data.get("schema")
+    if isinstance(schema, int) and not isinstance(schema, bool) and schema > STATE_SCHEMA:
+        raise ValueError(f"written by a newer version of the gate (schema {schema}; this one reads {STATE_SCHEMA})")
+    if schema != STATE_SCHEMA or isinstance(schema, bool):
+        raise ValueError(f"its schema isn't {STATE_SCHEMA}")
+    state = GateState(extra={key: value for key, value in data.items() if key not in _KNOWN})
     for section, cls, key in _TABLES:
         if section in data:
             setattr(state, section, _table(data[section], cls, key, section))
@@ -315,10 +355,11 @@ def _decode(data: Any) -> GateState:
             setattr(state, name, _record(cls, data[name], name))
     after = data.get("brake_events_after")
     if after is not None:
-        if not (isinstance(after, list) and len(after) == 2 and isinstance(after[0], str) and after[0]
-                and isinstance(after[1], int) and not isinstance(after[1], bool) and after[1] >= 1):
-            raise ValueError("brake_events_after must be a boot id and a seq")
-        state.brake_events_after = (after[0], after[1])
+        if not (isinstance(after, list) and len(after) == 3 and isinstance(after[0], str) and after[0]
+                and isinstance(after[1], int) and not isinstance(after[1], bool) and after[1] >= 1
+                and _finite(after[2])):
+            raise ValueError("brake_events_after must be a boot id, a seq and a time")
+        state.brake_events_after = (after[0], after[1], float(after[2]))
     notified = data.get("notified", {})
     if not (isinstance(notified, dict) and all(_finite(sent) for sent in notified.values())):
         raise ValueError("notified must map each notification to a finite time")
@@ -335,16 +376,23 @@ def _decode(data: Any) -> GateState:
     return state
 
 
+def _plain(item: Any) -> dict[str, Any]:
+    """A record as its file holds it: its fields, and those of its file this version didn't know, as they were."""
+    known = {f.name: copy.deepcopy(getattr(item, f.name)) for f in fields(item) if f.name != "extra"}
+    return {**copy.deepcopy(item.extra), **known}
+
+
 def _encode(state: GateState) -> dict[str, Any]:
-    data: dict[str, Any] = {section: {name: asdict(item) for name, item in getattr(state, section).items()}
-                            for section, _, _ in _TABLES}
+    data: dict[str, Any] = {"schema": STATE_SCHEMA}
+    data |= {section: {name: _plain(item) for name, item in getattr(state, section).items()}
+             for section, _, _ in _TABLES}
     data |= {name: getattr(state, name) for name in _SCALARS}
-    data |= {"room_hold": None if state.room_hold is None else asdict(state.room_hold),
-             "applying": None if state.applying is None else asdict(state.applying),
+    data |= {"room_hold": None if state.room_hold is None else _plain(state.room_hold),
+             "applying": None if state.applying is None else _plain(state.applying),
              "brake_events_after": None if state.brake_events_after is None else list(state.brake_events_after),
              "notified": dict(state.notified), "issued": dict(state.issued), "undrains": dict(state.undrains),
-             "refusals": [asdict(item) for item in state.refusals]}
-    return data
+             "refusals": [_plain(item) for item in state.refusals]}
+    return copy.deepcopy(state.extra) | data
 
 
 def _not_a_number(name: str) -> None:
@@ -377,26 +425,74 @@ def _why(err: BaseException) -> str:
     return " ".join(str(err).split()) or type(err).__name__
 
 
-def load_state(folder: Path) -> tuple[GateState, str | None]:
-    """The state saved in `folder`, and None; a fresh state and None when there is none; and for a file that can't be
-    read or isn't the gate's whole state, a fresh state and a problem naming the file, for `spark status`. Never
-    raises."""
+def load_state(folder: Path, *, now: float | None = None, set_aside: bool = False) -> tuple[GateState, str | None]:
+    """The state saved in `folder`, and None; a fresh state and None when there is none. Never raises.
+
+    For a file that can't be read, isn't the gate's whole state, or is a newer version's (its schema higher): a fresh
+    state that errs safe, and a problem naming the file, for `spark status` (the controller's rulings at Task 13's
+    review). Its `last_auto_release_at` is `now` (time.time() by default), so no automatic release of the brake's hold
+    comes for an hour; its `clean_shutdown` is false; and `fresh_after_damage` asks the gate to settle the front's
+    drains from `/running` at start (Tasks 18 and 22). With `set_aside`, which only the gate passes, the damaged file is
+    first moved aside, before any save can replace it (set_aside_damaged), and the state records where."""
     path = Path(folder) / STATE_FILE
+    now = time.time() if now is None else now
     try:
         raw = _read(path)
     except FileNotFoundError:
         return GateState(), None
     except Exception as err:  # noqa: BLE001 (it never raises: a gate that can't start keeps nothing either)
-        return GateState(), _problem(path, err)
+        return _damaged(path, err, now=now, set_aside=set_aside)
     try:
         return _decode(json.loads(raw, parse_constant=_not_a_number)), None
     except Exception as err:  # noqa: BLE001
-        return GateState(), _problem(path, err)
+        return _damaged(path, err, now=now, set_aside=set_aside)
 
 
-def _problem(path: Path, err: BaseException) -> str:
-    return (f"the gate's state {path} can't be read ({_why(err)}), so the gate starts from a fresh state: the pins, "
-            "sessions, make-room hold and brake marks it kept are gone")
+def _damaged(path: Path, err: BaseException, *, now: float, set_aside: bool) -> tuple[GateState, str]:
+    state = GateState(last_auto_release_at=now, clean_shutdown=False, fresh_after_damage=True, damaged_at=now)
+    kept = ""
+    if set_aside:
+        try:
+            state.damaged_kept_as = str(set_aside_damaged(path, now=now))
+            kept = f"; the damaged file is kept as {state.damaged_kept_as}"
+        except OSError as move:
+            kept = f"; the damaged file couldn't be kept ({_why(move)}), so the next save replaces it"
+    return state, (f"the gate's state {path} can't be read ({_why(err)}), so the gate starts from a fresh state: the "
+                   f"pins, sessions, make-room hold and brake marks it kept are gone{kept}")
+
+
+def set_aside_damaged(path: Path, *, now: float) -> Path:
+    """Move the damaged state file at `path` aside, as `<path>.damaged-<UTC time>` (with -2, -3 … should that name be
+    taken), mode 0600 when it is a regular file, never changed through a link; then remove all but the newest
+    DAMAGED_KEEP of them. Returns where it went. Root is refused (PermissionError): the gate's folder is spark's."""
+    if os.geteuid() == 0:
+        raise PermissionError(f"root never writes in the gate's folder, so {path} isn't moved")
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
+    kept, n = path.with_name(f"{path.name}{DAMAGED_SUFFIX}{stamp}"), 2
+    while os.path.lexists(kept):
+        kept, n = path.with_name(f"{path.name}{DAMAGED_SUFFIX}{stamp}-{n}"), n + 1
+    os.rename(path, kept)
+    try:
+        fd = os.open(kept, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        fd = None  # a link, or something it can't open: left as it is
+    if fd is not None:
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+    older = sorted(entry for entry in os.listdir(path.parent) if entry.startswith(f"{path.name}{DAMAGED_SUFFIX}"))
+    for name in older[:-DAMAGED_KEEP]:
+        old = path.parent / name
+        try:
+            old.unlink()
+        except OSError:
+            try:
+                old.rmdir()  # a folder someone left under that name: removed only when empty
+            except OSError:
+                pass
+    return kept
 
 
 def save_state(folder: Path, state: GateState, *, now: float | None = None) -> None:
@@ -452,10 +548,14 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
     was. Returns the settled state, and the room hold it ended, if any, so the caller sends room_hold_ended.
 
     - Each model `/running` lists keeps its record, footprint included, or gets one at the registry's footprint (with
-      no fall and no RssAnon, so *owed* errs safe). Its `last_use` is `now`, so a restart can't cause an idle unload.
+      no fall and no RssAnon, so *owed* errs safe), as does every model on another boot's state, since no engine
+      outlives a boot (the controller's ruling at Task 13's review). Its `last_use` is `now`, so a restart can't cause
+      an idle unload.
     - One `/running` shows stopping is `stopping`: its memory not freed until `/running` shows it gone, and its
       leaving the gate's own unload, never a crash (the controller's rulings at Task 12's re-reviews). One found
       stopping with no request recorded gets one, at `now`.
+    - One in a state other than starting, ready or stopping is `starting` at its footprint, never served, until
+      `/running` shows it ready or gone, and is logged (the controller's ruling at Task 13's review).
     - One whose unload was requested and that `/running` still shows ready (or starting) is `draining`, left for the
       drainer: the call may never have gone out, so the drainer drains it again, so the requests in flight finish,
       then unloads it; it counts as `stopping` only once that call is sent, never while it serves. Its leaving is
@@ -464,14 +564,15 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
       in `issued` and not yet in `ticketed`) that finished while the gate was away: each takes Task 15's ready-or-gone
       path, so its started/ record moves into `ticketed` once it is ready.
     - Any other is `ready`.
-    - A model `/running` doesn't list is dropped, with its ticketed engine.
+    - A model `/running` doesn't list is dropped, with its ticketed engine and its ticket id in `issued`.
     - Every drain saved is resumed (resumable_drains: each model whose unload was requested and that `/running` still
       lists) or owed an `undrain` under its id (`state.undrains`): one whose unload wasn't requested, and one whose
       model is gone. The front holds a drained model until the gate says `unloaded` or `undrain` (Task 12's R-3), so
       no drain is left (the controller's ruling at Task 13).
     - A room hold from another boot ends. If the state is another boot's, so do apply's hold, the sessions, `ticketed`,
       `issued`, the drains and the undrains owed: none of their processes outlives the boot, and the front starts
-      afresh. Pins, the brake's marks, the refusals and the rest stay."""
+      afresh. So does a damage noted in an earlier boot, but not one noted at this start (`fresh_after_damage`). Pins,
+      the brake's marks, the refusals and the rest stay."""
     state = copy.deepcopy(state)
     ended = None
     if state.room_hold is not None and state.room_hold.boot_id != boot_id:
@@ -479,10 +580,12 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
     other_boot = state.boot_id != boot_id
     if other_boot:
         state.applying, state.sessions, state.ticketed, state.issued, state.undrains = None, {}, {}, {}, {}
+        if not state.fresh_after_damage:  # a damage noted in an earlier boot is no longer news
+            state.damaged_at = state.damaged_kept_as = None
     listed = {entry.model: entry.state for entry in running}
     models: dict[str, ModelRecord] = {}
     for name, shown in listed.items():
-        old = state.models.get(name)
+        old = None if other_boot else state.models.get(name)  # no engine outlives a boot
         record = old or ModelRecord(name=name, footprint_gib=_footprint(registry, name), loaded_at=now,
                                     load_fall_gib=None, fall_flagged=False, rss_anon_at_load_gib=None, last_use=now,
                                     state="starting")
@@ -492,14 +595,16 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
             record.state = "stopping"
             if record.unload_requested_at is None:
                 record.unload_requested_at = now
+        elif shown not in ("starting", "ready"):
+            _log.warning("llama-swap's /running shows %r as %r, a state the gate doesn't know: counted as starting, "
+                         "at %s GiB, until it shows it ready or gone", name, shown, record.footprint_gib)
+            record.state = "starting"
         elif record.unload_requested_at is not None:
             record.state = "draining"  # left for the drainer, which drains it, then unloads it
         elif shown == "starting" or (old is not None and old.state == "starting") or unsettled:
             record.state = "starting"
         else:
             record.state = "ready"
-        if other_boot:
-            record.drain_id = record.drain_why = None  # the front starts afresh with the boot, holding nothing
         if record.unload_requested_at is None and record.drain_id is not None:
             state.undrains[name] = record.drain_id  # a drain not resumed: the front is told to serve it again
             record.drain_id = record.drain_why = None
@@ -510,5 +615,8 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
             state.undrains[name] = gone.drain_id
     state.models = models
     state.ticketed = {name: engine for name, engine in state.ticketed.items() if name in listed}
+    # A model gone from /running: its load has gone, so its ticket id goes (the controller's ruling at Task 13's
+    # review), and a later load around the gate is never taken for the one it was issued for.
+    state.issued = {name: ticket for name, ticket in state.issued.items() if name in listed}
     state.boot_id = boot_id
     return state, ended

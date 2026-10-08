@@ -1083,7 +1083,7 @@ notifications:
 | `apply_restarted` | default | `make apply` restarted the model service | *make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads on its next request.* |
 | `load_started` | low | a cold load started | *Loading the coder for pi on the Mac (24 s last time)…* |
 | `loaded` | low | a load finished | *Loaded the coder in 24 s.* |
-| `unloaded` | low | an idle unload, make-room or `spark unload` | *Unloaded the coder after 60 min idle.* |
+| `unloaded` | low | an idle unload, make-room or `spark unload` (and, added 2026-10-08, the controller's ruling at the implementation plan's Task 13's review, the gate's own: a start past its deadline, *Unloaded the coder: its start ran past its deadline.*, or an unload it resumed with no why saved, *Unloaded the coder.*) | *Unloaded the coder after 60 min idle.* |
 | `waiting` | low | a request started waiting for memory, the brake, the load slot, or Dan (`footprint_suspect`) | *Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a load.* |
 | `pin_ended` | low | a pin's time ran out | *The pin on the coder ended at 18:00; it unloads after 60 min idle.* |
 | `memory_warning` | low | available memory fell under the warn line, 28 GiB (rule 5's warning), once per fall | *Memory is getting low on brightroar: 27.4 GiB available, under the 28 GiB warning line. The brake acts at 20.* |

@@ -166,7 +166,8 @@ class Moment:
     deadline_s: float | None = None  # load_failed: the deadline the load passed
     download_gib: float | None = None  # not_downloaded: the model's files
     inflight: int = 0  # draining: the model's requests in flight
-    drain_for: Literal["make-room", "unload", "idle"] | None = None  # draining: why the model is being unloaded
+    # draining: why the model is being unloaded (gateproto.DrainWhy); only make-room's changes the words
+    drain_for: Literal["make-room", "unload", "idle", "late_start", "unknown"] | None = None
     asked_name: str | None = None  # model_not_found: the name the request asked for, as the client sent it
     models: list[tuple[str, str]] = field(default_factory=list)  # model_not_found: each (label, name), in list order
 
@@ -606,7 +607,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "on its next request.*"),
     "load_started": ("a cold load started", "*Loading the coder for pi on the Mac (24 s last time)…*"),
     "loaded": ("a load finished", "*Loaded the coder in 24 s.*"),
-    "unloaded": ("an idle unload, make-room or `spark unload`", "*Unloaded the coder after 60 min idle.*"),
+    "unloaded": ("an idle unload, make-room or `spark unload`; or the gate's own: a start past its deadline, or an "
+                 "unload it resumed with no why saved", "*Unloaded the coder after 60 min idle.*"),
     "waiting": (
         "a request started waiting for memory, the brake, the load slot, or Dan (`footprint_suspect`)",
         "*Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a "
@@ -1085,12 +1087,16 @@ def _loaded(registry: Registry, f: dict[str, Any]) -> str:
 
 def _unloaded(registry: Registry, f: dict[str, Any]) -> str:
     _needs("unloaded", f, "label", "why")
-    _one_of("unloaded", "why", f["why"], ("idle", "make-room", "unload"))
+    _one_of("unloaded", "why", f["why"], ("idle", "make-room", "unload", "late_start", "unknown"))
     if f["why"] == "idle":
         _needs("unloaded", f, "idle_min")
         return f"Unloaded {f['label']} after {_minutes(f['idle_min'])} idle."
     if f["why"] == "make-room":
         return f"Unloaded {f['label']} for make-room."
+    if f["why"] == "late_start":  # Task 15's abort of a start past its deadline
+        return f"Unloaded {f['label']}: its start ran past its deadline."
+    if f["why"] == "unknown":  # resumed with no why saved: no command is named for it (Task 13's review)
+        return f"Unloaded {f['label']}."
     return f"Unloaded {f['label']}, as `spark unload` asked."
 
 

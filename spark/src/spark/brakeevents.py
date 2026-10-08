@@ -5,11 +5,11 @@ file and goes on.
 
 Each event is keyed by the boot it was written on and its sequence number, `seq`, which comes from the file itself,
 read under an exclusive `fcntl.flock`, so two writers (the brake and the S05 drill's `--once`, Task 25) never share
-one, and `seq` goes on across the brake's restarts and across boots. The gate keeps the key of the last event it read
-(GateState.brake_events_after) and reads the events after it, by their place in the file: a file removed, trimmed or
-started again no longer holds that event, and then every event it holds is new to the gate, so none is hidden. The one
-exception: a file removed within a boot starts its seq again from 1, and if it reaches the gate's key before the gate
-reads it, the events up to that key are taken as read.
+one, and `seq` goes on across the brake's restarts and across boots. The gate keeps the key of the last event it read,
+with that event's `at` (GateState.brake_events_after), and reads the events after it, by their place in the file: a
+file removed, trimmed or started again no longer holds that event, and then every event it holds is new to the gate,
+so none is hidden. A file removed within a boot starts its seq from 1 again, so it can come to the gate's seq: the
+`at` tells its event from the gate's (the controller's ruling at Task 13's review).
 
 A line is written whole, with its newline, and fsynced before append_event returns, as the hold is: the brake writes
 as memory runs out, when a GB10 can hard-freeze. The gate reads without the lock, so a last line with no newline is a
@@ -174,11 +174,12 @@ def episode_for(path: Path, hold: Hold | None, *, boot_id: str) -> int:
     return max((event.episode for event in events if event.boot_id == boot_id), default=0) + 1
 
 
-def read_events(path: Path, after: tuple[str, int] | None) -> list[BrakeEvent]:
-    """The events after `after`, a (boot id, seq) key, in the file's order; every event for None. When no event in the
-    file has that key (the file was removed, trimmed, or started again), every event in it is after it. Read without
-    the lock: a last line with no newline is a write in progress, never returned, and never read past. A file that
-    isn't there holds none; one that can't be read raises OSError, or ValueError when it isn't a regular file."""
+def read_events(path: Path, after: tuple[str, int] | tuple[str, int, float] | None) -> list[BrakeEvent]:
+    """The events after `after`, in the file's order; every event for None. `after` is the last event read: its (boot
+    id, seq, at), as the gate keeps it, or its (boot id, seq), which matches on those two alone. When no event in the
+    file matches (the file was removed, trimmed, or started again), every event in it is after it. Read without the
+    lock: a last line with no newline is a write in progress, never returned, and never read past. A file that isn't
+    there holds none; one that can't be read raises OSError, or ValueError when it isn't a regular file."""
     try:
         fd = os.open(path, os.O_RDONLY | _OPEN_FLAGS)
     except FileNotFoundError:
@@ -190,6 +191,7 @@ def read_events(path: Path, after: tuple[str, int] | None) -> list[BrakeEvent]:
     if after is None:
         return events
     for place in range(len(events) - 1, -1, -1):
-        if (events[place].boot_id, events[place].seq) == tuple(after):
+        found = events[place]
+        if (found.boot_id, found.seq, found.at)[:len(after)] == tuple(after):
             return events[place + 1:]
     return events

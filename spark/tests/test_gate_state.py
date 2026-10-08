@@ -3,8 +3,10 @@ Every time, boot id, pid and uid here is a stand-in; none was read from the box.
 
 import errno
 import json
+import logging
 import os
 import stat
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -13,9 +15,9 @@ import pytest
 
 from spark import hold
 from spark.gate import state as gate_state
-from spark.gate.state import (STATE_FILE, ApplyHold, BrakeMark, GateState, ModelRecord, Pin, RefusalRecord, RoomHold,
-                              SavedDrain, Session, Ticketed, load_state, notified_key, restore, resumable_drains,
-                              save_state, session_live)
+from spark.gate.state import (DAMAGED_KEEP, STATE_FILE, STATE_SCHEMA, ApplyHold, BrakeMark, GateState, ModelRecord,
+                              Pin, RefusalRecord, RoomHold, SavedDrain, Session, Ticketed, load_state, notified_key,
+                              restore, resumable_drains, save_state, session_live)
 from spark.gateproto import AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, REFUSAL_HISTORY
 from spark.hold import Hold, read_hold, release_waits_for_dan, write_hold
 from spark.llamaswap import Running
@@ -58,7 +60,7 @@ def full_state() -> GateState:
     state.room_hold = RoomHold(size_gib=40.0, until=None, boot_id=BOOT, created_at=T - 300, unloaded=[CODER])
     state.brake_marks = {CODER: BrakeMark(model=CODER, at=T - 3 * 3600, seen_gib=26.0)}
     state.last_auto_release_at = T - 1800
-    state.brake_events_after = (BOOT, 7)
+    state.brake_events_after = (BOOT, 7, T - 100)
     state.notified = {notified_key("loaded", "load:abc"): T - 10}
     state.notify_failing_since = T - 20
     state.refusals.extend(refusal(n) for n in range(3))
@@ -77,7 +79,7 @@ def test_pins_sessions_holds_and_marks_survive_a_restart(tmp_path):
     loaded, problem = load_state(tmp_path)
     assert problem is None
     assert loaded == state
-    assert loaded.saved_at == T and loaded.brake_events_after == (BOOT, 7)
+    assert loaded.saved_at == T and loaded.brake_events_after == (BOOT, 7, T - 100)
     assert loaded.pins[CODER].until == T and loaded.room_hold.until is None and loaded.room_hold.size_gib == 40
     assert loaded.brake_marks[CODER] == BrakeMark(CODER, T - 3 * 3600, 26.0)
     assert list(loaded.refusals) == [refusal(0), refusal(1), refusal(2)]
@@ -86,6 +88,25 @@ def test_pins_sessions_holds_and_marks_survive_a_restart(tmp_path):
 def test_a_missing_state_file_is_a_fresh_state_and_no_problem(tmp_path):
     assert load_state(tmp_path) == (GateState(), None)
     assert load_state(tmp_path / "nowhere") == (GateState(), None)
+
+
+def test_the_state_file_carries_its_schema_and_keeps_fields_it_doesnt_know(tmp_path):
+    # A later version's field, read by this one after a rollback, is written back as it was, never dropped silently
+    # (the controller's ruling at Task 13's review).
+    save_state(tmp_path, full_state(), now=T)
+    data = json.loads((tmp_path / STATE_FILE).read_text())
+    assert data["schema"] == STATE_SCHEMA == 1
+    data["later_part"] = {"kept": [1, 2]}
+    data["models"][CODER]["later_field"] = "as it was"
+    data["pins"][CODER]["note"] = None
+    (tmp_path / STATE_FILE).write_text(json.dumps(data))
+    loaded, problem = load_state(tmp_path)
+    assert problem is None and loaded.models[CODER].extra == {"later_field": "as it was"}
+    save_state(tmp_path, loaded, now=T + 1)
+    again = json.loads((tmp_path / STATE_FILE).read_text())
+    assert again["later_part"] == {"kept": [1, 2]} and again["models"][CODER]["later_field"] == "as it was"
+    assert "note" in again["pins"][CODER] and again["pins"][CODER]["note"] is None
+    assert load_state(tmp_path)[0] == loaded
 
 
 def test_after_a_restart_every_loaded_models_last_use_is_now():
@@ -125,6 +146,32 @@ def test_a_model_running_that_the_state_doesnt_know_is_counted():
     assert (gemma.state, gemma.footprint_gib, gemma.load_fall_gib) == ("ready", 32, None)
     largest = max(model.footprint_gib for model in REGISTRY.models.values())
     assert restored.models["mystery-model"].footprint_gib == largest
+
+
+def test_another_boots_record_is_never_carried_onto_this_boots_engine():
+    # No engine outlives a boot: a model listed on another boot is a new process, so it gets a fresh record, with no
+    # unload of the old boot's to resume and no old fall or RssAnon to credit growth from (the controller's ruling at
+    # Task 13's review).
+    old = record(CODER, footprint=30.0, state="draining", unload_requested_at=T - 3, drain_id="d1",
+                 drain_why="unload")
+    state = GateState(boot_id=BOOT, models={CODER: old})
+    restored, _ = restore(state, [Running(CODER, "ready")], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)
+    coder = restored.models[CODER]
+    assert coder == ModelRecord(name=CODER, footprint_gib=REGISTRY.models[CODER].footprint_gib, loaded_at=T,
+                                load_fall_gib=None, fall_flagged=False, rss_anon_at_load_gib=None, last_use=T,
+                                state="ready")
+    assert resumable_drains(restored) == [] and restored.undrains == {}
+
+
+def test_a_running_state_the_gate_doesnt_know_counts_as_starting_and_is_logged(caplog):
+    # Not served and not read as ready: counted as starting at its footprint until /running shows it ready or gone
+    # (the controller's ruling at Task 13's review).
+    with caplog.at_level(logging.WARNING, logger="spark.gate.state"):
+        restored, _ = restore(GateState(boot_id=BOOT), [Running(CODER, "shutdown")], now=T, boot_id=BOOT,
+                              registry=REGISTRY)
+    coder = restored.models[CODER]
+    assert coder.state == "starting" and coder.footprint_gib == REGISTRY.models[CODER].footprint_gib
+    assert "'shutdown'" in caplog.text and CODER in caplog.text
 
 
 def test_a_model_gone_from_running_is_dropped():
@@ -171,7 +218,7 @@ def test_a_model_still_ready_with_its_unload_requested_is_left_for_the_drainer()
     state.models[CODER] = record(CODER, state="starting", unload_requested_at=T - 3)
     restored, _ = restore(state, [Running(CODER, "ready")], now=T, boot_id=BOOT, registry=REGISTRY)
     assert restored.models[CODER].state == "draining"
-    assert resumable_drains(restored) == [SavedDrain(CODER, None, None)]
+    assert resumable_drains(restored) == [SavedDrain(CODER, None, "unknown")]  # no why saved: neutral words
 
 
 @pytest.mark.parametrize("shown, requested, resumed", [
@@ -237,7 +284,8 @@ def a_process(proc: Path, pid: int, start: int, state: str = "S (sleeping)") -> 
     """A stand-in /proc/<pid>, its status and stat as the kernel writes them, as far as liveness reads them."""
     folder = proc / str(pid)
     folder.mkdir(parents=True)
-    (folder / "status").write_text(f"Name:\tpi\nState:\t{state}\nPid:\t{pid}\nUid:\t{AGENT}\t{AGENT}\t{AGENT}\t{AGENT}\n")
+    uids = "\t".join([str(AGENT)] * 4)
+    (folder / "status").write_text(f"Name:\tpi\nState:\t{state}\nPid:\t{pid}\nUid:\t{uids}\n")
     rest = [state[0], "1", str(pid), str(pid), "0", "-1", "4194560"] + ["0"] * 12 + [str(start)] + ["0"] * 30
     (folder / "stat").write_text(f"{pid} (pi) " + " ".join(rest) + "\n")
 
@@ -262,22 +310,96 @@ def test_a_session_is_live_only_in_its_boot_while_its_pid_is_the_process_recorde
     assert not session_live(replace(session, pid=4243), boot_id=BOOT, proc=proc)
 
 
-@pytest.mark.parametrize("damage", ["{", "[]", '{"models": 5}', '{"saved_at": NaN}', '{"saved_at": 1e999}',
-                                    '{"last_auto_release_at": true}', '{"brake_events_after": ["b1"]}',
-                                    '{"pins": {"coder": {"model": "gemma", "until": null, "by_uid": 1000}}}',
-                                    '{"models": {"coder": {"name": "coder"}}}', '{"undrains": {"coder": ""}}',
-                                    "[" * 100_000, "\udcff"])
+def fresh_after_damage(at: float) -> GateState:
+    """What a damaged file leaves the gate: a fresh state that errs safe (the controller's ruling at Task 13's
+    review)."""
+    return GateState(last_auto_release_at=at, clean_shutdown=False, fresh_after_damage=True, damaged_at=at)
+
+
+@pytest.mark.parametrize("damage", ["{", "[]", "{}", '{"schema": 1, "models": 5}', '{"schema": 1, "saved_at": NaN}',
+                                    '{"schema": 1, "saved_at": 1e999}', '{"schema": "1"}', '{"schema": 0}',
+                                    '{"schema": 1, "last_auto_release_at": true}',
+                                    '{"schema": 1, "brake_events_after": ["b1", 3]}',
+                                    '{"schema": 1, "pins": {"coder": {"model": "gemma", "until": null, "by_uid": 1}}}',
+                                    '{"schema": 1, "models": {"coder": {"name": "coder"}}}',
+                                    '{"schema": 1, "undrains": {"coder": ""}}', "[" * 100_000, "\udcff"])
 def test_a_damaged_state_file_starts_fresh_and_says_so(tmp_path, damage):
     (tmp_path / STATE_FILE).write_text(damage, errors="surrogateescape")
-    fresh, problem = load_state(tmp_path)
-    assert fresh == GateState()
+    fresh, problem = load_state(tmp_path, now=T)
+    assert fresh == fresh_after_damage(T)
     assert "state.json" in problem and problem.startswith("the gate's state ")
+    assert (tmp_path / STATE_FILE).exists()  # left where it is unless the gate asks for it to be set aside
+
+
+def test_a_fresh_state_after_damage_errs_safe():
+    # Rule 5's once an hour holds: any brake within the hour waits for Dan. The unclean stop is announced, and the
+    # gate settles the front's drains from /running at start (Tasks 18 and 22).
+    fresh = fresh_after_damage(T)
+    assert fresh.last_auto_release_at == T and fresh.clean_shutdown is False and fresh.fresh_after_damage
+    within = Hold(local(T + 20 * 60), "19.6 GiB available", (), boot_id=BOOT, episode=1)
+    assert release_waits_for_dan(within, boot_id=BOOT, last_auto_release_at=fresh.last_auto_release_at,
+                                 now=T + 25 * 60)
+
+
+def test_a_state_file_from_a_newer_version_is_damaged_and_kept(tmp_path):
+    (tmp_path / STATE_FILE).write_text(json.dumps({"schema": STATE_SCHEMA + 1, "models": {}}))
+    fresh, problem = load_state(tmp_path, now=T, set_aside=True)
+    assert "(written by a newer version of the gate (schema 2; this one reads 1))" in problem
+    assert fresh.fresh_after_damage and fresh.damaged_kept_as
+    assert json.loads(Path(fresh.damaged_kept_as).read_text())["schema"] == STATE_SCHEMA + 1
+
+
+def utc(at: float) -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(at))
+
+
+def test_a_damaged_state_file_is_set_aside_for_diagnosis_and_only_the_newest_kept(tmp_path):
+    for n in range(DAMAGED_KEEP + 1):  # older damaged files, left by earlier starts
+        (tmp_path / f"{STATE_FILE}.damaged-{utc(T - 3600 * (n + 1))}").write_text("old")
+    (tmp_path / STATE_FILE).write_text("{ damaged")
+    os.chmod(tmp_path / STATE_FILE, 0o644)
+    fresh, problem = load_state(tmp_path, now=T, set_aside=True)
+    kept = tmp_path / f"{STATE_FILE}.damaged-{utc(T)}"
+    assert fresh == replace(fresh_after_damage(T), damaged_kept_as=str(kept))
+    assert kept.read_text() == "{ damaged" and stat.S_IMODE(kept.stat().st_mode) == 0o600
+    assert not (tmp_path / STATE_FILE).exists() and str(kept) in problem
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert left == sorted([kept.name] + [f"{STATE_FILE}.damaged-{utc(T - 3600 * (n + 1))}"
+                                         for n in range(DAMAGED_KEEP - 1)])
+    save_state(tmp_path, fresh, now=T + 1)  # the first save writes a whole file, and the damaged one stays kept
+    assert load_state(tmp_path)[0].damaged_kept_as == str(kept) and kept.read_text() == "{ damaged"
+
+
+def test_two_damaged_files_in_one_second_are_both_kept(tmp_path):
+    (tmp_path / f"{STATE_FILE}.damaged-{utc(T)}").write_text("the first")
+    (tmp_path / STATE_FILE).write_text("{ the second")
+    fresh, _ = load_state(tmp_path, now=T, set_aside=True)
+    assert fresh.damaged_kept_as == str(tmp_path / f"{STATE_FILE}.damaged-{utc(T)}-2")
+    assert (tmp_path / f"{STATE_FILE}.damaged-{utc(T)}").read_text() == "the first"
+
+
+def test_a_damaged_name_that_is_a_link_is_set_aside_without_following_it(tmp_path):
+    target = tmp_path / "elsewhere"
+    target.write_text("not the gate's")
+    os.chmod(target, 0o644)
+    (tmp_path / STATE_FILE).symlink_to(target)
+    fresh, _ = load_state(tmp_path, now=T, set_aside=True)
+    assert Path(fresh.damaged_kept_as).is_symlink() and stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_a_damage_noted_shows_until_the_next_boot():
+    noted = GateState(boot_id=BOOT, damaged_at=T - 60, damaged_kept_as="/kept")
+    assert restore(noted, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].damaged_at == T - 60  # a restart
+    later = restore(noted, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)[0]
+    assert (later.damaged_at, later.damaged_kept_as) == (None, None)
+    # The start it happens in: a fresh state's boot is no boot's, and the damage it notes stays.
+    assert restore(fresh_after_damage(T), [], now=T, boot_id=BOOT, registry=REGISTRY)[0].damaged_at == T
 
 
 def test_a_state_file_that_isnt_a_regular_file_starts_fresh_and_says_so(tmp_path):
     os.mkfifo(tmp_path / STATE_FILE)  # opened without waiting for a writer, then refused
-    fresh, problem = load_state(tmp_path)
-    assert fresh == GateState() and "state.json" in problem
+    fresh, problem = load_state(tmp_path, now=T)
+    assert fresh == fresh_after_damage(T) and "state.json" in problem
 
 
 def test_each_loaded_model_keeps_the_footprint_it_was_loaded_with():
@@ -408,8 +530,12 @@ def test_issued_tickets_survive_a_restart_but_not_a_reboot():
     # The ticket ids the gate issued (the controller's ruling at Task 11's review): Task 18's bypass check counts a
     # started/ record as ticketed only when its id is one of them.
     state = GateState(boot_id=BOOT, issued={CODER: "t-coder"})
-    assert restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].issued == {CODER: "t-coder"}
-    assert restore(state, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)[0].issued == {}
+    starting = [Running(CODER, "starting")]
+    assert restore(state, starting, now=T, boot_id=BOOT, registry=REGISTRY)[0].issued == {CODER: "t-coder"}
+    assert restore(state, starting, now=T, boot_id=NEXT_BOOT, registry=REGISTRY)[0].issued == {}
+    # Its model gone from /running on a restart: its load has gone, and the id goes with it (the controller's ruling
+    # at Task 13's review), so a later load around the gate isn't taken for this one.
+    assert restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].issued == {}
 
 
 def test_a_ticketed_engine_keeps_its_start_time(tmp_path):

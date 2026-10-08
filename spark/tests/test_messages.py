@@ -1133,6 +1133,21 @@ def test_a_field_needed_only_in_one_form_is_needed_there():
     assert say("brake_fired", **NOTIFICATION_ROWS[1][1]).startswith("Brake, 03:13:")  # a follow-up has no reading
     with pytest.raises(ValueError, match="^brake_fired's words need unloaded"):  # a follow-up is always an unload
         say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "unloaded": []})
+
+
+def test_an_unload_whose_why_is_unknown_is_worded_neutrally():
+    # A drain saved without its why (an older state file) reads as unknown: no words name `spark unload` or make-room
+    # for it, and Task 15's abort of a start past its deadline says what it was (the controller's ruling at Task 13's
+    # review).
+    assert say("unloaded", label="the coder", why="unknown") == "Unloaded the coder."
+    late = say("unloaded", label="the coder", why="late_start")
+    assert late == "Unloaded the coder: its start ran past its deadline."
+    for why in ("unknown", "late_start"):
+        for words in (DAN, AGENT):
+            moment = Moment(inflight=1, drain_for=why, **CODER, **words)
+            for text in (refusal("draining", moment).message, say("refused", code="draining", moment=moment)):
+                assert "is being unloaded" in text and "make-room" not in text and "spark unload" not in text
+    assert messages.unloading("the coder", 0) == "Unloading the coder…"
     assert say("unloaded", label="the coder", why="unload")  # only an idle unload names its minutes
 
 
