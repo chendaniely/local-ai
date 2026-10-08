@@ -168,9 +168,15 @@ class _Gate(BaseHTTPRequestHandler):
         elif self.path == "/v1/held":
             # Its head and a line, then it waits for the client to close the connection, and says when it has. With
             # Connection: close, http.client hands the socket to the answer, which the client must close as well.
-            self._stream_head(close=body.get("close", False))
-            self._chunk(b'{"inflight": 1}\n')
-            while self.rfile.read(1):
+            # A client that closes straight after the head can be gone before the line is written: under load the
+            # write then meets a closed peer. That is the client gone too, so it is said then as well as at the end of
+            # input; any other error leaves it unsaid, so the test fails rather than passes for the wrong reason.
+            try:
+                self._stream_head(close=body.get("close", False))
+                self._chunk(b'{"inflight": 1}\n')
+                while self.rfile.read(1):
+                    pass
+            except (BrokenPipeError, ConnectionResetError):
                 pass
             self.server.client_gone.set()
         elif self.path == "/v1/unload":
