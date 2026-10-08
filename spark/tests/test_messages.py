@@ -1621,7 +1621,7 @@ def test_waiting_on_a_model_being_unloaded_has_its_own_words():
     assert say("waiting", **draining) == (
         "Waiting while the coder finishes unloading, for pi on the Mac, up to 30 s. It loads again once the unload is "
         "done, if it fits.")
-    assert "or a model being unloaded" in messages.NOTIFICATION_DOC["waiting"][0]
+    assert "a model being unloaded" in messages.NOTIFICATION_DOC["waiting"][0]
 
 
 # The controller's rulings at Task 15's review: a hold dated by its since whatever else it lacks, and the gate's own
@@ -1639,19 +1639,40 @@ def test_a_hold_with_its_time_and_no_reading_is_dated_by_its_time():
 
 
 def test_the_gates_own_ticket_errors_say_what_happened():
+    # Their reason is in the gate's journal (the controller's ruling at Task 15's re-review: not `make doctor`).
     unwritten = replace(LOAD_FAILED, engine_said=None, ticket_unwritten=True)
     assert refusal("load_failed", unwritten).message == (
-        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.")
+        "The gate couldn't write the coder's load ticket: `make logs s=gate` on the Spark shows why.")
     assert refusal("load_failed", replace(unwritten, **AGENT)).message == (
-        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows Dan why.")
+        "The gate couldn't write the coder's load ticket: Dan can see why with `make logs s=gate` on the Spark.")
     unconfirmed = replace(LOAD_FAILED, engine_said=None, ticket_unconfirmed=True)
     assert refusal("load_failed", unconfirmed).message == (
-        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor` shows why.")
+        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make logs s=gate` shows why.")
     assert refusal("load_failed", replace(unconfirmed, **AGENT)).message == (
-        "The gate couldn't confirm the coder's load ticket was withdrawn; `make doctor` on the Spark shows Dan why.")
+        "The gate couldn't confirm the coder's load ticket was withdrawn; Dan can see why with `make logs s=gate` on "
+        "the Spark.")
     for moment in (unwritten, unconfirmed, replace(unwritten, **AGENT), replace(unconfirmed, **AGENT)):
         assert not pi_retries(pi_shows(409, "load_failed", moment))
     assert say("load_failed", model_label="the coder", command="coder", ticket_unwritten=True) == (
-        "The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.")
+        "The gate couldn't write the coder's load ticket: `make logs s=gate` on the Spark shows why.")
     assert say("load_failed", model_label="the coder", command="coder", ticket_unconfirmed=True) == (
-        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor` shows why.")
+        "The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make logs s=gate` shows why.")
+
+
+def test_a_turn_held_by_a_ticket_the_gate_couldnt_withdraw_says_so():
+    # The controller's ruling at Task 15's re-review: behind a ticket the gate is settling, never "while Gemma loads".
+    behind = replace(LOADING, loading_label="", slot_ticket=True)
+    assert refusal("loading", behind).message == (
+        "The coder didn't start in time: it was waiting its turn while the gate settles a load ticket it couldn't "
+        "withdraw, and your 30 s ran out. On the Spark, `make logs s=gate` shows why.")
+    assert refusal("loading", replace(behind, **AGENT)).message == (
+        "The coder didn't start in time: it was waiting its turn while the gate settles a load ticket it couldn't "
+        "withdraw, and your 10 minutes ran out. Dan can see why with `make logs s=gate` on the Spark.")
+    assert say("refused", code="loading", moment=behind) == (
+        "Refused the coder for pi on the Mac: the 30 s wait ran out while the gate settles a load ticket it couldn't "
+        "withdraw. On the Spark, `make logs s=gate` shows why.")
+    for moment in (behind, replace(behind, **AGENT)):
+        assert not pi_retries(pi_shows(409, "loading", moment))
+    assert say("waiting", **{**WAITING, "why": "ticket", "needed_gib": None, "free_gib": None}) == (
+        "Waiting its turn: the coder for pi on the Mac, up to 30 s. The gate is settling a load ticket it couldn't "
+        "withdraw.")

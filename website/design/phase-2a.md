@@ -1972,7 +1972,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `seen_gib` (None without a reading: the controller's ruling, at Task 14)); `waiting` (`key_label`, `model`, `waited_s`, `wait_s`, `why` — one of `WAITING_WHY =
   ("memory", "brake", "slot", "dan", "restart", "llama_swap")` (and `draining`, since 2026-10-08,
   the controller's ruling, at Task 15; and `swap_refused`, the controller's ruling, at Task 15's review, a wait to try again after
-  llama-swap refused the load); `paused` (`since`, `available_gib`,
+  llama-swap refused the load; and `ticket`, the controller's ruling, at Task 15's re-review, a wait while the gate settles a load ticket it
+  couldn't withdraw); `paused` (`since`, `available_gib`,
   `releases_at`, `waits_for_dan`, `last_fired`, `last_released`) or null; `held` (`size_gib`,
   `until`) or null; `pins`; `sessions`; `recent` (`at`, `text`, `code`, `model`, `key_label`);
   `health` (`front`, `gate`, `brake` with `key_checked_at`, `llama_swap`, `ntfy` with
@@ -2619,6 +2620,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   - **The frozen records hash again**: `extra` is compared but not hashed.
   - **A schema is the whole number 1**: `1.0` is damage.
 
+- *(Added 2026-10-08, the controller's ruling, at Task 15's re-review:)* a late unload found across a restart, its model `/running` shows
+  starting, is `draining` here, not `starting`. It still holds the one-load slot: the admitter counts
+  as holding it any model `/running` shows starting, whatever its record reads (Task 15).
+
 **Tests** (`spark/tests/test_gate_state.py`):
 
 - `test_pins_sessions_holds_and_marks_survive_a_restart` — a state with a pin on the coder until
@@ -3174,13 +3179,18 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     is held until the ticket's deadline has passed (launch refuses `deadline < now`), or until
     `/running` shows the model, which is then settled as a start. A request whose load ends that
     way, with nothing ever shown in `/running`, is never told a start stopped: `load_failed`,
-    *The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, `make doctor`
-    shows why.* (`agent`'s: *… `make doctor` on the Spark shows Dan why.*). After an end its
-    requests already heard (a start that stopped, the drainer's unload), a ticket it can't withdraw
-    holds the slot the same way.
+    *The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, ~~`make doctor`~~
+    `make logs s=gate` shows why.* (`agent`'s: ~~*… `make doctor` on the Spark shows Dan why.*~~ *…
+    Dan can see why with `make logs s=gate` on the Spark.*) *(the controller's ruling, at Task 15's re-review: `make doctor` doesn't read
+    launch's folder; the reason is in the gate's journal.)* ~~After an end its requests already heard
+    (a start that stopped, the drainer's unload), a ticket it can't withdraw holds the slot the same
+    way.~~ *(Corrected 2026-10-08, the controller's ruling, at Task 15's re-review: after an end, a ticket it can't withdraw holds the slot the
+    same way, and the load's requests were either answered (a start that stopped) or sent back to the
+    queue (the brake's abort, the drainer's unload, a restart), where each waits on its own blocker,
+    to its own deadline.)*
   - **A ticket that can't be written** is refused at once as the gate's own error, `load_failed`,
-    *The gate couldn't write the coder's load ticket: `make doctor` on the Spark shows why.*, never
-    `loading`.
+    *The gate couldn't write the coder's load ticket: ~~`make doctor`~~ `make logs s=gate` on the
+    Spark shows why.* *(corrected 2026-10-08, the controller's ruling, at Task 15's re-review)*, never `loading`.
   - **A wait to try again after llama-swap refused** has a reason of its own, `swap_refused`, in
     `gateproto.WAITING_WHY`: its `WaitProgress` (the other fields None) and its `waiting` row, and
     no `waiting` notification, since the phone gets `load_failed` if the refusals last (Tasks 10, 29
@@ -3204,6 +3214,42 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     `test_a_starting_record_with_no_load_holds_the_slot`, `test_a_model_stopping_still_counts_against_the_ceiling`
     and `test_a_model_being_unloaded_is_still_owed_its_growth`; and in `test_registry.py`, the cap in
     `test_a_cold_load_is_optional_and_positive`.
+- *(Added 2026-10-08, the controller's rulings, at Task 15's re-review:)*
+  - **A ticket watch never frees the slot blind.** Past the ticket's deadline it frees the slot only
+    on a `/running` read that answered and doesn't list the model. While `/running` can't be read
+    it holds on, and leaves `started/` alone, as every settle path does: launch may have claimed the
+    ticket after the last read it saw.
+  - **A watch of the constructor's settles as a start only a model with no record.** A model that
+    already has one (`ready`, `draining`, `stopping`, or `starting` with its unload requested) keeps
+    its record whole: the watch holds the slot until the ticket's deadline, and frees it then on a
+    `/running` read that answered. A watch that sees a start of a model with no record records it
+    `starting` at its footprint, as `restore` records one, so `starting_gib()` counts it and a late
+    unload from there saves `unload_requested_at`. `_ticket_deadline` caps a ticket's deadline at
+    `LOAD_CALL_TIMEOUT_S` from the gate's start, the most a ticket it issued lives.
+  - **A watch has no requests of its own.** A request for the watched model never joins it: it
+    waits in the queue, on its own blocker, to its own key's deadline, and is refused then with the
+    *couldn't confirm* words, or by its own blocker first (the brake's `held_by_brake`, at its own
+    time). A request for another model, behind a slot only a watch holds, waits as `ticket`, a
+    reason added to `gateproto.WAITING_WHY` (its `WaitProgress` with the other fields None, its row,
+    and a `waiting` notification, *Waiting its turn: the embeddings for pi on the Mac, up to 30 s. The
+    gate is settling a load ticket it couldn't withdraw.*), and is refused `loading` in words of its
+    own (`Moment.slot_ticket`): *The embeddings didn't start in time: it was waiting its turn while
+    the gate settles a load ticket it couldn't withdraw, and your 30 s ran out. On the Spark, `make
+    logs s=gate` shows why.* (`agent`'s: *… Dan can see why with `make logs s=gate` on the Spark.*),
+    checked against pi's list. A watched model's own record stays `starting`, counted in the
+    figures, but no words name it as loading.
+  - **A model `/running` shows starting holds the one-load slot, whatever its record reads**, a
+    late unload found across a restart (`draining`) among them. The admitter keeps the last read's
+    starting models: `Admitter(…, running=None)`, `restore`'s own read; `observe_running(running)`,
+    each read of the core's (Task 18); and its own reads.
+  - Its tests: `test_a_watch_never_frees_the_slot_while_running_cant_be_read` (the re-review's P4),
+    `test_a_restarted_gates_ticket_it_cant_withdraw_holds_the_slot_until_its_deadline` (the
+    constructor's `OSError` path), `test_a_restarted_gates_watch_keeps_a_loaded_models_record_whole`
+    (P2), `test_a_restarted_gates_watch_never_serves_a_model_being_drained` (P3),
+    `test_a_watch_that_sees_a_start_records_it_starting` (P8),
+    `test_a_request_beside_a_watch_keeps_its_own_deadline_and_its_own_blocker` (P6),
+    `test_another_models_request_behind_a_watch_hears_why` (P7) and
+    `test_a_model_running_shows_starting_holds_the_slot_whatever_its_record`.
 
 **Tests** (`spark/tests/test_gate_admission.py`; an injected clock; a stand-in llama-swap whose
 loads, `/running` and log lines the test scripts; memory from a list; a temporary `launch` and
@@ -3472,6 +3518,15 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
   `starting` record, and the admitter's own `_ready` and `_undo_unload` handle it. A record `restore`
   left `starting` with its unload requested has no load of the admitter's, so `_ready` never meets
   it.
+- *(Added 2026-10-08, the controller's rulings, at Task 15's re-review:)*
+  - **A `draining` model still starting holds the one-load slot.** A late unload found across a
+    restart is `draining` (Task 13's `restore`), not `starting`; the admitter counts as holding the
+    slot any model `/running` last showed starting, whatever its record reads (Task 15), so no second
+    start runs beside it while the drainer finishes the unload.
+  - **The admitter's branch for an unload of the drainer's that ends a start** (Task 15's review,
+    Minor 3: the requests read `draining`) is defensive. With the rule above, that the drainer never
+    marks a model the admitter has `starting`, the gate's own drainer never reaches it; it stays for
+    a record changed some other way.
 
 **Tests** (`spark/tests/test_gate_policy.py`; an injected clock; a `/proc` the test builds):
 
@@ -3864,6 +3919,12 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
     running at that start aren't reported as unticketed; each is logged as found after damage.
   - `StatusView.health` carries the damage while `damaged_at` is set, for Task 29's line.
 
+- *(Added 2026-10-08, the controller's rulings, at Task 15's re-review:)* the core builds the Admitter right after `restore`'s `/running`
+  read, with nothing awaited in between, passing that read as `Admitter(…, running=…)`, and records as
+  `starting`, at the registry's footprint, any model `/running` lists that the state lacks. So no
+  claim lands unseen between the read and the constructor's withdraw. It passes every later
+  `/running` read to `admitter.observe_running(running)`, so a model `/running` shows starting holds
+  the one-load slot whatever its record reads (a late unload found across a restart).
 - *(Added 2026-10-08, the controller's ruling, at Task 15's review:)* the admitter's `read_hold` reads the hold file fresh on every pass,
   never a cached copy older than a pass: after a `group: model unloaded` abort a request tries again
   in 1 s, and only the brake's hold, read then, stops it reloading the model the brake just aborted
@@ -5242,6 +5303,7 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     the model service's restart`; `llama_swap` → `waiting for the model service to answer`;
     `draining` → `waiting while the coder finishes unloading` *(added 2026-10-08, the controller's ruling, at Task 15)*;
     `swap_refused` → `waiting to try again: llama-swap refused the load` *(added 2026-10-08, the controller's ruling, at Task 15's review)*;
+    `ticket` → `waiting its turn: the gate is settling a load ticket it couldn't withdraw` *(added 2026-10-08, the controller's ruling, at Task 15's re-review)*;
   - a pin, in the `held` row: `pins the coder until 18:00` (`pins none` without one).
 - The gate not answering: the header from `/proc/meminfo` (the brake line from the deployed
   registry), then `gate        not answering: what's loaded, waiting, held or paused is unknown
@@ -5398,9 +5460,12 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     is loading, and one model loads at a time…* or *The coder is waiting for memory: it needs
     41 GiB, and 18 GiB is free for a load…*. The brake's reason takes `held_by_brake`'s words for
     Dan. A `messages` function of Task 30's own holds them, with its test. *(Added 2026-10-08,
-    the controller's rulings, at Task 15's review:)* `draining` reads *The coder is waiting while it finishes unloading…*, and
-    `swap_refused` *Waiting to try again: llama-swap refused to load the coder, and the gate asks
-    again within your wait.*, which matches nothing on pi's list.
+    the controller's rulings, at Task 15's review:)* `draining` reads ~~*The coder is waiting while it finishes unloading…*~~
+    *Waiting while the gate unloads the coder…* *(reworded 2026-10-08, the controller's ruling, at Task 15's re-review: the coder isn't
+    waiting on itself)*, and `swap_refused` *Waiting to try again: llama-swap refused to load the
+    coder, and the gate asks again within your wait.*, which matches nothing on pi's list.
+    *(Added 2026-10-08, the controller's ruling, at Task 15's re-review:)* `ticket` reads *The coder is waiting its turn: the gate is settling
+    a load ticket it couldn't withdraw…*.
   - **The result line ends it.** Each streamed command stops reading at its result line, or a
     refusal line, and closes the stream there. So a cut after the result is never shown as an
     error after a success.
@@ -7028,7 +7093,7 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   put both on the row, apply's first, and add the case to its test.
 - **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`
   (seven since 2026-10-08, the controller's ruling, at Task 15: `draining`; eight since
-  the controller's ruling, at Task 15's review: `swap_refused`);
+  the controller's ruling, at Task 15's review: `swap_refused`; nine since the controller's ruling, at Task 15's re-review: `ticket`);
   a reason added later needs its line, and Task 29's test reads the tuple, so it fails until the
   line is written.
 - **make-room starts from the gate's own figure** (added 2026-10-07, at Task 6's fix round 1, the

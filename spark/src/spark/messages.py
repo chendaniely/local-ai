@@ -157,6 +157,9 @@ class Moment:
     words: Literal["dan", "agent"] | None = None  # the asking key's group's: whose wording
     names_processes: bool = False  # the asking key's group's: whether Dan's processes are named
     loading_label: str = ""  # loading: the model that holds the one-load slot
+    # loading, the controller's ruling at Task 15's re-review: the slot is held only by a load ticket the gate couldn't
+    # withdraw, which it is settling; no model loads.
+    slot_ticket: bool = False
     brake_at: datetime | None = None  # held_by_brake, footprint_suspect: when the brake fired, an aware datetime
     brake_available_gib: float | None = None  # held_by_brake: MemAvailable when it fired
     release_waits_for_dan: bool = False  # held_by_brake: the hold lifts only when Dan releases it
@@ -400,6 +403,12 @@ def _breakdown(start: float | Decimal, items: list[tuple[float | Decimal, str]],
 
 
 def _loading(m: Moment) -> str:
+    if m.slot_ticket:  # the gate's own fault holds the slot: its journal says why (Task 15's re-review)
+        _need("loading", m, "model_label", "wait_s", "words")
+        why = ("On the Spark, `make logs s=gate` shows why." if m.words == "dan"
+               else "Dan can see why with `make logs s=gate` on the Spark.")
+        return (f"{_start(m.model_label)} didn't start in time: it was waiting its turn while the gate settles a load "
+                f"ticket it couldn't withdraw, and your {duration(m.wait_s)} ran out. {why}")
     _need("loading", m, "model_label", "loading_label", "wait_s")
     return (f"{_start(m.model_label)} didn't start in time: it was waiting its turn while {m.loading_label} loads, "
             f"since one model loads at a time, and your {duration(m.wait_s)} ran out. Try again in a minute.")
@@ -481,12 +490,14 @@ def _load_failed(m: Moment) -> str:
 
 
 def _ticket_error(label: str, unwritten: bool, words: str | None) -> str:
-    """The gate's own error with a load's ticket (the controller's ruling at Task 15's review): `make doctor` is
-    Dan's."""
+    """The gate's own error with a load's ticket (the controller's ruling at Task 15's review). Its reason is in the
+    gate's journal, which Dan reads (the controller's ruling at Task 15's re-review: not `make doctor`, which doesn't
+    read launch's folder)."""
+    dans = "`make logs s=gate` on the Spark shows why."
+    agents = "Dan can see why with `make logs s=gate` on the Spark."
     if unwritten:
-        why = "`make doctor` on the Spark shows why." if words == "dan" else "`make doctor` on the Spark shows Dan why."
-        return f"The gate couldn't write {label}'s load ticket: {why}"
-    why = "on the Spark, `make doctor` shows why." if words == "dan" else "`make doctor` on the Spark shows Dan why."
+        return f"The gate couldn't write {label}'s load ticket: {dans if words == 'dan' else agents}"
+    why = "on the Spark, `make logs s=gate` shows why." if words == "dan" else agents
     return f"The gate couldn't confirm {label}'s load ticket was withdrawn; {why}"
 
 
@@ -694,8 +705,8 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
     "unloaded": ("an idle unload, make-room or `spark unload`; or the gate's own: a start past its deadline, or an "
                  "unload it resumed with no why saved", "*Unloaded the coder after 60 min idle.*"),
     "waiting": (
-        "a request started waiting for memory, the brake, the load slot, Dan (`footprint_suspect`), or a model being "
-        "unloaded",
+        "a request started waiting for memory, the brake, the load slot, Dan (`footprint_suspect`), a model being "
+        "unloaded, or a load ticket the gate is settling",
         "*Waiting for memory: the coder for pi on the Mac, up to 30 s. It needs 41 GiB, and 18 GiB is free for a "
         "load.*"),
     "pin_ended": ("a pin's time ran out", "*The pin on the coder ended at 18:00; it unloads after 60 min idle.*"),
@@ -1025,6 +1036,9 @@ def _phone_no_fit(registry: Registry, m: Moment) -> str:
 
 
 def _phone_loading(registry: Registry, m: Moment) -> str:
+    if m.slot_ticket:
+        return (f"{_lead(m)}{_ran_out(m)} while the gate settles a load ticket it couldn't withdraw. On the Spark, "
+                "`make logs s=gate` shows why.")
     return (f"{_lead(m)}{_ran_out(m)} while {m.loading_label} loads, since one model loads at a time."
             f"{_again(m, 'Try again in a minute.')}")
 
@@ -1237,7 +1251,7 @@ def _unloaded(registry: Registry, f: dict[str, Any]) -> str:
 
 def _waiting(registry: Registry, f: dict[str, Any]) -> str:
     _needs("waiting", f, "label", "key_label", "why", "wait_s")
-    _one_of("waiting", "why", f["why"], ("memory", "brake", "slot", "dan", "draining"))
+    _one_of("waiting", "why", f["why"], ("memory", "brake", "slot", "dan", "draining", "ticket"))
     who = f"{f['label']} for {f['key_label']}, up to {_brief(f['wait_s'])}"
     if f["why"] == "memory":
         _needs("waiting", f, "needed_gib", "free_gib")
@@ -1256,6 +1270,8 @@ def _waiting(registry: Registry, f: dict[str, Any]) -> str:
         _needs("waiting", f, "loading_label")
         return (f"Waiting its turn to load: {who}. {_start(f['loading_label'])} is loading, and one model loads at a "
                 "time.")
+    if f["why"] == "ticket":  # the slot held by a ticket the gate couldn't withdraw (Task 15's re-review)
+        return f"Waiting its turn: {who}. The gate is settling a load ticket it couldn't withdraw."
     if f["why"] == "draining":  # its model being unloaded (the controller's ruling at Task 15)
         return (f"Waiting while {f['label']} finishes unloading, for {f['key_label']}, up to {_brief(f['wait_s'])}. "
                 "It loads again once the unload is done, if it fits.")
