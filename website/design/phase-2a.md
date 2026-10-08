@@ -2069,9 +2069,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   `ticketed` once it is ready; every loaded model's `last_use` is `now`; a model `/running` doesn't
   list is dropped; a room hold from another boot ends, and is returned so the caller sends
   `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins, sessions, marks
-  and refusals stay. `notified` (~~an event key~~ a type and an event key, and when it was sent) drops keys older than
-  `NOTIFIED_KEEP_S` (86,400, this plan's value) on every save, so it never grows for the life of
-  the box.
+  and refusals stay. `notified` (~~an event key~~ a type and an event key, and when it was sent)
+  drops keys older than `NOTIFIED_KEEP_S` (86,400, this plan's value) on every save, so it never
+  grows for the life of the box. *(Corrected 2026-10-07, after Task 7's fix round, the controller's
+  ruling: keyed by type and event key together; Task 14 has why.)*
 - `Emit` — the protocol every gate module notifies through: `emit(type: str, event_key: str,
   **fields) -> None`.
 - The hold (`hold.py`) gains `boot_id: str | None`, `episode: int | None`, `loading: str | None`
@@ -2169,8 +2170,9 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   ~~`event_key` already in `state.notified`~~ event already in `state.notified`, which is keyed by
   the type and the event key together (`<type> <event_key>`), is dropped, so a restart never
   repeats one and two types never share a key *(corrected 2026-10-07, after Task 7's fix round,
-  the controller's ruling: keyed by the event key alone, `loaded` and `load_failed` would have
-  been dropped as repeats of `load_started`, which sends `load:<ticket id>` for the same load)*. A queue,
+  the controller's ruling: keyed by the event key alone, `loaded` would have been dropped as a
+  repeat of `load_started`, which sends `load:<ticket id>` for the same load, and every type's key
+  would have needed a prefix of its own to stay apart)*. A queue,
   served by a task of its own, publishes each, bounded by `NTFY_TIMEOUT_S`; a failure sets
   `state.notify_failing_since` to the first failure's time, and the next success clears it. Every
   type that carries a refusal (`refused`, `footprint_suspect`, `load_failed`) collapses: per
@@ -2188,9 +2190,9 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   `loaded` and a restart never repeats one: `load_started` and `loaded`, `load:<ticket id>`;
   `waiting`, `wait:<request id>`; a refusal's three types, `refusal:<request id>` *(corrected
   2026-10-07, at Task 7's review, the controller's ruling: but `load_failed`, `load-failed:<ticket
-  id>`, once per failed load, both from `messages.refusal_notification`; a prefix of its own, since
+  id>`, once per failed load, both from `messages.refusal_notification`; a prefix of its own~~, since
   `notified` is keyed by the event key alone and `load_started` has sent `load:<ticket id>` for that
-  load; `loaded` shares `load:<ticket id>` with `load_started` the same way, which this task
+  load~~; `loaded` shares `load:<ticket id>` with `load_started` the same way, which this task
   settles, with a prefix per type or `notified` keyed by type and key; *settled the same day*:
   `notified` is keyed by type and key, above)*; `unloaded`,
   `drain:<drain id>`; `brake_fired`, `brake:<boot id>:<episode>:<seq>`; `brake_needs_release`,
@@ -2247,6 +2249,12 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
   `load_failed` collapses the same way.
 - `test_one_model_loading_twice_sends_two_loaded` — `loaded` for the coder with tickets `t1` and
   `t2` → two publishes; `t1` again → none.
+- `test_two_types_never_share_a_key` — `load_started` then `loaded`, both with `load:t1` → two
+  publishes; each again → none. *(Added 2026-10-07, after Task 7's fix round: it fails if
+  `notified` drops the type.)*
+- `test_one_failed_load_sends_one_alert` — two requests joined to one start that fails, each
+  emitting `load_failed` with `load-failed:t1` inside one open burst window → one publish, and the
+  burst counts the load once, not per request. *(Added 2026-10-07, after Task 7's re-review.)*
 - `test_an_ntfy_out_of_reach_stalls_nothing_and_shows_failing_since` — a `publish` that hangs:
   `emit` returns within 10 ms; after the (injected) timeout, `notify_failing_since` holds the
   first failure's time; a later success clears it.
@@ -5536,6 +5544,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   pauses new loads with no model to unload (memory taken by something outside the stack) has no
   alert today. Whichever of the two first meets that case words it in `messages.py`, with its test:
   the reading, the line, *nothing of the stack's was loaded*, and the pause.
+- **`model_not_found` bursts key on the shown model** (added 2026-10-07, at Task 7's re-review),
+  for Task 14. Keyed on the client's raw name, each varied unknown name would go at once and
+  never collapse; key the burst on the model the words show (`_shown_model`'s, nothing for a name
+  they don't show), so a stream of bad names collapses into one notification with a count.
+- **make-room with nothing loaded stops there** (added 2026-10-07, at Task 7's re-review), for
+  Task 19. After *Nothing is loaded, so there is nothing to unload.*, the command ends: no
+  `room_too_much` question and no `room_all` confirmation (*Unloaded everything …*) follow it.
 - **CI checks the notifications page** (added 2026-10-07, at Task 7, the controller's ruling). Task
   7's `website/reference/notifications.md` is generated from the registry; `make docs` writes it,
   and `test_the_committed_notifications_page_is_current` fails while it is stale. Task 52, on the

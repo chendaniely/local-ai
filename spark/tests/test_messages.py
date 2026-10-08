@@ -486,7 +486,7 @@ def test_agent_is_never_told_to_run_what_only_dan_can():
     assert len(checked) == 7
 
 
-def test_dans_own_hold_is_never_counted_against_him():
+def test_dans_own_hold_is_never_counted_against_dan():
     # make-room's hold is Dan's to load into (rule 4): a hold standing changes nothing in a no_fit for Dan's key.
     assert refusal("no_fit", replace(NO_FIT_DAN, held_gib=41, hold_counted=False)).message == NO_FIT_DAN_TEXT
 
@@ -1363,6 +1363,9 @@ def test_model_not_found_names_pis_step_only_for_a_pi_key():
         " On the Mac, `make clients` updates pi's list.", "")
     orca = replace(web_ui, key_label="pi in Orca")
     assert refusal("model_not_found", orca).message == MODEL_NOT_FOUND_TEXT
+    # The first word, not a prefix: a key labelled "pipelines" isn't pi's.
+    pipelines = replace(web_ui, key_label="pipelines")
+    assert refusal("model_not_found", pipelines).message == refusal("model_not_found", web_ui).message
 
 
 def test_make_room_all_with_nothing_loaded_says_so():

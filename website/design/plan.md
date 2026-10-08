@@ -3088,9 +3088,17 @@ Each item gets its own design pass when its turn comes.
     loads stay paused until Dan releases them, and why, as rule 5 asks, and `brake_needs_release` is
     sent only for a hold found after a reboot: one event, one notification.
 - **2026-10-07** — Phase 2a's Task 7 review, the controller's rulings. Dated notes are in *What you
-  see in Phase 2a*, S02, and the implementation plan's Tasks 6, 7, 14, 15 and 17 and its *Deferred
-  notes for implementers*.
+  see in Phase 2a*, S02, S05, and the implementation plan's Tasks 6, 7, 13, 14, 15, 17, 23 and 48
+  and its *Deferred notes for implementers*.
   - A failed load sends one `load_failed`, however many requests were waiting on it.
+  - A burst of refusals shows a model's name only as a single refusal would, and one it can't
+    show reads *Refused a request from <key> … more times*; a web address never reads as a
+    model's name.
+  - The within-the-hour brake alert, first worded at Task 7's fix before review as *New loads stay
+    paused until you release them …*, now says why: *It fired within an hour of the automatic
+    release at 03:40, so they stay paused until you release them …*.
+  - The gate's record of what it has notified is keyed by type and event key together, so
+    `loaded` is never dropped as a repeat of `load_started`.
   - `agent`'s `no_fit` names the hold's end only when ending it would let the load fit.
   - `model_not_found` names pi's step only for a key of Dan's that is pi's; the web UI's gets the
     list alone.

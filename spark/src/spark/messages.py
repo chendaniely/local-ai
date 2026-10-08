@@ -479,11 +479,11 @@ def _model_not_found(m: Moment) -> str:
 
 
 def _pi_step(m: Moment, does: str) -> str:
-    """The step that updates a pi's model list, with a space before it: the Mac's for a pi key of Dan's (its label
-    starts with "pi"), agent's own for agent; none for another key, such as the web UI's, whose list isn't pi's (the
+    """The step that updates a pi's model list, with a space before it: the Mac's for a pi key of Dan's (its label's
+    first word is "pi"), agent's own for agent; none for another key, such as the web UI's, whose list isn't pi's (the
     controller's ruling on Task 7's review)."""
     if m.words == "dan":
-        return f" On the Mac, `make clients` {does}." if m.key_label.startswith("pi") else ""
+        return f" On the Mac, `make clients` {does}." if m.key_label.split()[:1] == ["pi"] else ""
     return f" On the Spark, as `agent`, `{_AGENTS_CLIENTS}` {does}."
 
 
