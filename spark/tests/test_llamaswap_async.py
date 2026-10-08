@@ -16,7 +16,7 @@ import pytest
 from fake_llamaswap import FakeLlamaSwap, serve_fake
 from spark import gateproto, render
 from spark.llamaswap import LlamaSwapAnswered, LlamaSwapError, LlamaSwapUnreachable, Running
-from spark.llamaswap_async import AsyncLlamaSwap, LoadOutcome, load_timeout_for
+from spark.llamaswap_async import AsyncLlamaSwap, LlamaSwapNotSent, LoadOutcome, load_timeout_for
 
 KEY = "INTERNAL-KEY-STANDIN"  # stands for the gate's internal key, wherever one might travel
 GEMMA = "gemma-4-26b-a4b"
@@ -121,7 +121,8 @@ async def test_a_load_call_that_times_out_reads_as_unknown_not_failed(fake):
             began = time.monotonic()
             assert await llamaswap.load(CODER) == LoadOutcome.unknown("timeout")
             assert 0.2 <= time.monotonic() - began < 0.9
-            # Which is the truth: v257's start goes on without its caller, so the caller keeps it counted as starting.
+            # Which is the truth: v257's start goes on without its caller, so an unknown load may be under way, and
+            # the gate settles it with the load's ticket (Task 15).
             assert await llamaswap.running() == [Running(CODER, "starting")]
 
             async def ready():
@@ -184,6 +185,8 @@ async def test_unload_waits_its_own_bound(fake, monkeypatch):
     # A stuck engine's stop takes v257's unloadTimeout, 10 s, then its kill, and stops queue in its one run loop:
     # the unload gets a bound of its own, the controller's ruling at Task 12's review.
     assert gateproto.UNLOAD_CALL_TIMEOUT_S == 60
+    # A drain's grace bounds only a drain whose unload was never sent, so it outlasts an unload call that was (Task 16).
+    assert gateproto.DRAIN_GRACE_S > gateproto.UNLOAD_CALL_TIMEOUT_S
     with anyio.fail_after(BOUND_S):
         async with serve_fake(fake) as url, \
                 AsyncLlamaSwap(url, KEY, load_timeout_s=0.2, call_timeout_s=0.2) as llamaswap:
@@ -199,8 +202,9 @@ async def test_unload_waits_its_own_bound(fake, monkeypatch):
             fake.set_state(CODER, "ready")
             fake.script_stop(CODER, delay_s=1.0)
             began = time.monotonic()
-            with pytest.raises(LlamaSwapUnreachable, match="no answer within 0.3 s$"):
+            with pytest.raises(LlamaSwapUnreachable, match="no answer within 0.3 s$") as caught:
                 await llamaswap.unload(CODER)
+            assert not isinstance(caught.value, LlamaSwapNotSent)  # sent: v257 never takes back an unload it took
             assert 0.3 <= time.monotonic() - began < 0.9
             # What the gate does then (Tasks 16 and 17): read /running, where the stop goes on, and count the model
             # stopping until it is gone; never llama_swap_down.
@@ -334,11 +338,14 @@ async def test_a_call_nothing_answers_is_unreachable_and_a_load_is_unknown():
             probe.bind(("127.0.0.1", 0))
             closed = f"http://127.0.0.1:{probe.getsockname()[1]}"
         async with AsyncLlamaSwap(closed, KEY, load_timeout_s=5) as llamaswap:
+            # Nothing was sent, which a drain needs to know: an unload never sent leaves the model loaded, so the
+            # drain goes back to serving rather than waiting for it to go (Task 16).
             for call in (llamaswap.running(), llamaswap.unload(CODER), llamaswap.last_lines(CODER, read_s=0.1)):
-                with pytest.raises(LlamaSwapUnreachable, match=f"^llama-swap unreachable at {closed}: "):
+                with pytest.raises(LlamaSwapNotSent, match=f"^llama-swap unreachable at {closed}: ConnectError$"):
                     await call
-            # plan.md: on any timeout or error the gate keeps the load counted as starting, never freeing the one-load
-            # slot early; so a load is UNKNOWN even when nothing was sent. Its reason is for the gate's journal.
+            assert issubclass(LlamaSwapNotSent, LlamaSwapUnreachable)
+            # A load is unknown even when nothing was sent: the gate settles every unknown load with its ticket
+            # (Task 15). Its reason is for the gate's journal.
             assert await llamaswap.load(CODER) == LoadOutcome.unknown("refused")
 
         # Sent, then dropped unanswered: the load may be under way.

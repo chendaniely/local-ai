@@ -672,6 +672,11 @@ def test_every_route_names_its_socket_and_callers():
     # ruling at Task 10's second re-review): the fields Task 7's `waiting` words a reason with.
     assert gateproto.WaitProgress.__required_keys__ == {
         "model", "label", "why", "needed_gib", "free_gib", "loading_label", "release_waits_for_dan", "release_after_s"}
+    # An unload sent whose model stays stopping says so every 15 s, so Dan never waits in silence (the controller's
+    # ruling at Task 12's re-review): Task 30 words it, *Still stopping the coder: llama-swap hasn't finished its
+    # unload…*.
+    assert gateproto.StoppingProgress.__required_keys__ == {"model", "label"}
+    assert gateproto.STOPPING_EVERY_S == 15
     # seconds None for a model already loaded, as `messages.loaded` takes it.
     assert typing.get_type_hints(gateproto.LoadConfirmation)["seconds"] == float | None
 

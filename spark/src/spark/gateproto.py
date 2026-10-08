@@ -32,9 +32,13 @@ PING_EVERY_S = 1.0  # /v1/front/events sends {op: "ping", at} this often
 # The front counts the gate down once its events call has dropped and a new one hasn't been answered within this, and
 # only then refuses new loads with gate_down.
 GATE_DOWN_AFTER_S = 5.0
-# Past UNLOAD_CALL_TIMEOUT_S: a drain not done this long after "drained", its model no longer stopping, goes back
-# to serving; never while /running shows the model stopping (phase-2a.md, Task 16).
+# Bounds only a drain whose unload call was never sent: one not sent this long after the front's "drained" goes back
+# to serving. Once its unload is sent, a drain ends only when /running shows the model gone, since v257 never takes
+# back an unload it took; so this outlasts UNLOAD_CALL_TIMEOUT_S, which a test checks (the controller's ruling at
+# Task 12's re-review; phase-2a.md, Task 16).
 DRAIN_GRACE_S = 90.0
+# While an unload sent leaves its model stopping, /v1/unload and /v1/make-room send a StoppingProgress this often.
+STOPPING_EVERY_S = 15
 QUIET_S = 60  # make apply waits until no request has been in flight this long, by the front's counts
 APPLY_DEADLINE_S = 900  # make apply's wait for quiet lasts at most this, then it offers "drain now"
 ACTIVITY_EVERY_S = 1.0  # the gate writes its activity record, which the brake reads, this often
@@ -354,6 +358,15 @@ class MakeRoomProgress(TypedDict):
     model: str
     label: str
     inflight: int
+
+
+class StoppingProgress(TypedDict):
+    """A line of /v1/unload's and /v1/make-room's streams, every STOPPING_EVERY_S while a model whose unload was sent
+    stays stopping, so Dan never waits in silence (the controller's ruling at Task 12's re-review): Task 30 words it,
+    *Still stopping the coder: llama-swap hasn't finished its unload…*. Ctrl-C ends the wait, never the unload."""
+
+    model: str
+    label: str
 
 
 class MakeRoomRequest(TypedDict):

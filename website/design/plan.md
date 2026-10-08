@@ -328,17 +328,19 @@ are already locked, through huggingface_hub, which keeps httpx below 1. FastAPI,
 row named, would add nine, the compiled pydantic-core among them. httpx runs with
 `trust_env=False`, follows no redirect, and sets no read timeout on a forwarded request, since a
 long prefill can be silent for minutes. The gate's load call waits at least `healthCheckTimeout`
-plus the 5 s llama-swap takes to kill a stuck start, plus a margin, never Phase 1's 10 s; on any
+plus the 5 s llama-swap takes to kill a stuck start, plus a margin, never Phase 1's 10 s; ~~on any
 timeout or error it keeps the load counted as starting until `/running` shows it ready or gone, so
-it never frees the one-load slot early. *(Refined 2026-10-08, at the implementation plan's Task 12
+it never frees the one-load slot early.~~ *(Refined 2026-10-08, at the implementation plan's Task 12
 review, the controller's rulings. The load's admission ticket settles it: on an unknown outcome, or
 a `failed` that isn't a 500, which is llama-swap refusing the call rather than a start that ended,
 the gate withdraws the ticket first. A ticket still there means no start used it, and the slot is
 freed. One already claimed holds the slot until `/running` shows the model ready or gone, and a
-model still starting 20 s past its ticket's deadline is unloaded, since v257's health poll can
-outlast `healthCheckTimeout`. Only a 500 is `load_failed`. The gate's unload call waits up to 60 s,
-and its timeout isn't `llama_swap_down`: the model stays counted as stopping, its memory not freed,
-until `/running` shows it gone.)* Blocking work in the gate, such as `nvidia-smi` and file
+model still starting 20 s past ~~its ticket's deadline~~ its own start's (corrected at the
+re-review, 2026-10-08: the claimed ticket's `started/` time plus `healthCheckTimeout`) is
+unloaded, since v257's health poll can outlast `healthCheckTimeout`. Only a 500 is `load_failed`.
+The gate's unload call waits up to 60 s, and its timeout isn't `llama_swap_down`: the model stays
+counted as stopping, its memory not freed, until `/running` shows it gone.)* Blocking work in the
+gate, such as `nvidia-smi` and file
 reads, runs off its event loop. The CLI talks to the gate with the standard library (`http.client`
 over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SSH, and
 `spark launch` never import uvicorn or httpx. It stays one uv project and one lock, deployed to
@@ -483,12 +485,22 @@ model, over a call the front keeps open on the status socket, a Unix socket, so 
 answer for the front. The front, under one lock, checks the model's in-flight count and marks it
 draining, so new requests for it wait, as they would for a load; it answers "drained" once the count
 reaches 0. The gate then unloads it and tells the front, whose waiting requests go through
-admission like any other. A drain the gate doesn't finish within 30 s goes back to serving, and so
-does every drain if the front's call to the gate drops. `spark status` shows each model's oldest
-request in flight, so a count that leaked would show. *(Corrected 2026-10-07, after the re-review:
-the 30 s run from the front's "drained", not from the start of the drain, which waits as long as
-the requests in flight take, as rule 4 promises. A request that arrives for a draining model and
-outlasts its key's wait is refused with `draining`.)*
+admission like any other. A drain the gate doesn't finish within ~~30 s~~ 90 s goes back to serving,
+and so does every drain if the front's call to the gate drops. `spark status` shows each model's
+oldest request in flight, so a count that leaked would show. *(Corrected 2026-10-07, after the
+re-review: the ~~30 s~~ 90 s run from the front's "drained", not from the start of the drain, which
+waits as long as the requests in flight take, as rule 4 promises. A request that arrives for a
+draining model and outlasts its key's wait is refused with `draining`.)* *(Corrected 2026-10-08, at
+the implementation plan's Task 12 re-review, the controller's ruling: v257 never takes back an
+unload it has taken, and a stopping model never returns to ready. So the grace, 90 s, bounds only a
+drain whose unload was never sent. Once the unload is sent, the drain ends only when `/running`
+shows the model gone, and the gate never sends it back to serving, since a request let through then
+would wait in llama-swap behind the stop, or be cut by it. A drop of the front's call ends, on the
+gate's side, only a drain whose unload wasn't sent. The front still undrains on its own; a request
+it then forwards for a model llama-swap is stopping waits out the stop, finds its start refused for
+want of a ticket, and goes through admission once, which costs it time, not memory. While a model
+stays stopping, `spark unload` and `spark make-room` say so every 15 s, and Ctrl-C ends the wait,
+not the unload.)*
 
 The rules for what unloads, and when, are rules 3–5 below; the budget is rule 9; what Dan sees is
 under *Visibility and notifications*; and `make apply`'s wait is under *Deploy workflow*.
@@ -1147,11 +1159,11 @@ account.
 | Command | What it says | Undo |
 |---|---|---|
 | `spark load coder` | *The coder is waiting its turn to load: Gemma is loading, and one model loads at a time…* or *The coder is waiting for memory: it needs 41 GiB, and 18 GiB is free for a load…* while it waits for either (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling: a queued load is never silent), *Loading the coder (24 s last time)…* as the load starts, then *Loaded the coder in 24 s. It unloads after 60 min idle; `spark pin coder` keeps it.* Or the refusal's message. (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling: a load that waits minutes says it has started.) | `spark unload coder` |
-| `spark unload coder` | *Unloading the coder once its 1 request in flight finishes…*, then *Unloaded the coder.* | `spark load coder` |
+| `spark unload coder` | *Unloading the coder once its 1 request in flight finishes…*, then *Unloaded the coder.* (added 2026-10-08, at the implementation plan's Task 12 re-review, the controller's ruling: while llama-swap hasn't finished the unload, every 15 s *Still stopping the coder: llama-swap hasn't finished its unload…*; Ctrl-C ends the wait, not the unload) | `spark load coder` |
 | `spark pin coder 8h` | *Loading the coder (24 s last time)…* as the load starts, when the pin loads it first (after a *… waiting …* line, as `spark load`'s, while its load waits), then *The coder stays loaded until 18:00 (loaded it first, 24 s). `spark unpin coder` ends the pin.* (The first line added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling.) | `spark unpin coder` |
 | `spark unpin coder` | *The pin on the coder ended; it unloads after 60 min idle.* | `spark pin coder` |
-| `spark make-room 40G` | the list below, one confirmation, then *Unloading the coder…* as each model's drain begins (*Unloading the coder once its 1 request in flight finishes…* while one is in flight; added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling), then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
-| `spark make-room --all` | the full list, one confirmation, then an *Unloading …* line as each model's drain begins, as above (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling), then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
+| `spark make-room 40G` | the list below, one confirmation, then *Unloading the coder…* as each model's drain begins (*Unloading the coder once its 1 request in flight finishes…* while one is in flight; added 2026-10-08, at the implementation plan's Task 10 re-review, the controller's ruling), and its *Still stopping …* lines (added 2026-10-08, at the implementation plan's Task 12 re-review, the controller's ruling: while llama-swap hasn't finished a model's unload, every 15 s *Still stopping the coder: llama-swap hasn't finished its unload…*; Ctrl-C ends the wait, not the unload), then *Unloaded the coder. 50 GiB is free for a load, and 40 GiB of it is held for you until `spark make-room --done` or a reboot; your own requests can load into it, agent's and automatic reloads can't.* (`--for 8h` sets a time.) Asked for more than it can free, say 70 GiB with the 32 GiB python job running: *Unloading everything leaves 61 GiB free for a load, not 70. Free 61 and hold it? [y/N]* | `spark make-room --done` |
+| `spark make-room --all` | the full list, one confirmation, then an *Unloading …* line as each model's drain begins, as above (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling), and its *Still stopping …* lines as above, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
 | `spark make-room --done` | *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* | `spark make-room` again |
 | `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* When the gate isn't answering: *The gate isn't answering, so the hold file was removed directly; nothing reloads until the gate is back.* | none needed: the brake fires again if memory falls |
 | `spark session hold --model coder --label "pi in Orca"` | nothing while it runs: the session keeps the coder loaded, and ends when the command's stdin closes, or on SIGTERM or SIGHUP, as when pi exits or the Mac sleeps (2b's Mac hooks run it over SSH; Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council) | end the command |
@@ -3165,9 +3177,22 @@ Each item gets its own design pass when its turn comes.
   12, 15, 16, 17, 21, 22 and 50.
   - An unknown load, or llama-swap refusing one, withdraws its ticket first, and the one-load slot
     is freed only when no start used it. Only a 500 is `load_failed`. A start still running 20 s
-    past its ticket's deadline is unloaded.
+    past ~~its ticket's deadline~~ its own start's deadline is unloaded (corrected at the re-review,
+    below).
   - The gate's unload call waits up to 60 s, and its timeout isn't `llama_swap_down`.
   - A stream cut upstream reaches the client as a cut, never as a finish.
+- **2026-10-08** — Phase 2a's Task 12 re-review, the controller's rulings, correcting one of its own
+  from the same day. Dated notes are in *The front and the gate* (*What they're built on* and
+  *Draining a model*) and *What you see in Phase 2a* (the `spark unload` and `spark make-room`
+  rows), and in the implementation plan's Global Constraints and Tasks 10, 12, 13, 15, 16, 17, 19,
+  21, 22 and 30.
+  - Once a drain's unload call is sent, the drain ends only when `/running` shows the model gone:
+    v257 never takes back an unload it has taken, and a stopping model never returns to ready. The
+    grace, now 90 s (`DRAIN_GRACE_S`, was 30 s), bounds only a drain whose unload was never sent.
+  - While a model stays stopping, `spark unload` and `spark make-room` say so every 15 s, and
+    Ctrl-C ends the wait, not the unload.
+  - A start unloaded 20 s past its deadline counts that deadline from its own start. A 500 from an
+    unload or a restart, not a failed start, isn't `load_failed`.
 
 ## Sources
 

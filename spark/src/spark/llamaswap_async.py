@@ -9,10 +9,10 @@ but healthCheckTimeout, and that only once a health poll returns: the poll has n
 (internal/config/model_config.go:181), and the deadline is checked between polls
 (internal/process/process_command.go:587-596). `POST /api/models/unload/<model>` answers `OK` once the engine has
 stopped. `GET /logs/stream/<model>` sends the model's log so far, then each new line, until the client closes it. Its
-errors are Phase 1's (spark.llamaswap): a call nothing answered in time is LlamaSwapUnreachable, and one answered
-with an error or with something it can't read is LlamaSwapAnswered; a load raises neither, and comes to a
-LoadOutcome. No error's text holds the key, and each is raised from None, so a traceback never shows httpx's own,
-whose request holds it."""
+errors are Phase 1's (spark.llamaswap): a call nothing answered in time is LlamaSwapUnreachable (LlamaSwapNotSent,
+its subclass, when it never had a connection), and one answered with an error or with something it can't read is
+LlamaSwapAnswered; a load raises neither, and comes to a LoadOutcome. No error's text holds the key, and each is
+raised from None, so a traceback never shows httpx's own, whose request holds it."""
 
 from __future__ import annotations
 
@@ -44,6 +44,8 @@ FAILED_TEXT_MAX = 2048
 # connection dropped after the call was sent; an answer over ANSWER_MAX; an answer it couldn't decode.
 UnknownWhy = Literal["timeout", "refused", "dropped", "too big", "unreadable"]
 UNKNOWN_WHY: tuple[str, ...] = get_args(UnknownWhy)
+# httpx's errors for a call that never had a connection, so sent nothing: LlamaSwapNotSent.
+_NO_CONNECTION = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 def load_timeout_for(health_check_timeout_s: float) -> float:
@@ -84,6 +86,13 @@ def printable(text: str) -> str:
     """`text` with every non-printable character escaped as Python writes it (ESC as \\x1b, a tab as \\t), so what
     llama-swap or an engine wrote reaches a terminal, a phone or the journal as one line of plain text."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
+
+
+class LlamaSwapNotSent(LlamaSwapUnreachable):
+    """Nothing was sent: no connection to llama-swap, refused or not made in time. Still a LlamaSwapUnreachable, so a
+    caller that doesn't care tells no difference. A drain does: an unload never sent leaves the model loaded, so the
+    drain goes back to serving, whereas one sent waits for the model to go, since v257 never takes back an unload it
+    took (the controller's ruling at Task 12's re-review; Task 16)."""
 
 
 class _TooBig(Exception):
@@ -139,6 +148,9 @@ class AsyncLlamaSwap:
     def _unreachable(self, what: str) -> LlamaSwapUnreachable:
         return LlamaSwapUnreachable(f"llama-swap unreachable at {self.base_url}: {what}")
 
+    def _not_sent(self, err: httpx.HTTPError) -> LlamaSwapNotSent:
+        return LlamaSwapNotSent(f"llama-swap unreachable at {self.base_url}: {type(err).__name__}")
+
     async def _call(self, method: str, path: str, bound_s: float) -> bytes:
         """The answer's body to `method path`, all of it within `bound_s`, or one of Phase 1's errors."""
         where = f"llama-swap {method} {path}"
@@ -151,8 +163,10 @@ class AsyncLlamaSwap:
                     body = await _read(response)
         except TimeoutError:
             raise self._unreachable(f"no answer within {bound_s:g} s") from None
+        except _NO_CONNECTION as err:
+            raise self._not_sent(err) from None
         except httpx.TransportError as err:
-            # Refused, reset or dropped before its head, or too slow at any point: nothing answered in time.
+            # Reset or dropped before its head, or too slow at any point: nothing answered in time.
             if not answered or isinstance(err, httpx.TimeoutException):
                 raise self._unreachable(type(err).__name__) from None
             raise LlamaSwapAnswered(f"{where}: an answer that broke off ({type(err).__name__})") from None
@@ -184,7 +198,8 @@ class AsyncLlamaSwap:
         """Loads `model`, or joins its load under way, and waits for it up to `load_timeout_s`. Any timeout or error
         is unknown, a call never sent included: the gate settles each the same way, with the load's ticket (plan.md),
         so the one-load slot is never freed while a start may be under way, and the start, if it began, goes on in
-        llama-swap without its caller."""
+        llama-swap without its caller. On an open client only: a closed one raises httpx's RuntimeError, so the gate
+        cancels its load tasks before `aclose()` (Task 19)."""
         path = f"/upstream/{_quoted(model)}/health"
         try:
             async with asyncio.timeout(self.load_timeout_s):
@@ -241,8 +256,10 @@ class AsyncLlamaSwap:
                         pass  # read_s is up, or nothing more came: the stream stays open until this closes it
         except TimeoutError:
             raise self._unreachable(f"no answer within {self.call_timeout_s + read_s:g} s") from None
+        except _NO_CONNECTION as err:
+            raise self._not_sent(err) from None
         except httpx.TransportError as err:
-            if not answered:  # refused, reset, dropped or too slow before its head
+            if not answered:  # reset, dropped or too slow before its head
                 raise self._unreachable(type(err).__name__) from None
             # The stream broke off: what came before it is still the log's tail.
         except httpx.RequestError as err:  # one it can't decode, such as a body its Content-Encoding doesn't fit
