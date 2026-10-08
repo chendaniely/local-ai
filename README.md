@@ -198,6 +198,12 @@ when that file was retired on 2026-09-23.
   `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
   footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
   which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
+  *(2026-10-08, committed but not yet deployed: by Dan's decision the registry's coder becomes
+  `qwen3.8-27b`, Qwen3.8-27B, at 163,840 of its 262,144 tokens, with a footprint estimated at
+  35 GiB, so the footprints sum to all 78 GiB the budget allows. `qwen3.6-35b-a3b` leaves the
+  registry, and its files stay on disk. Phase 2a's Task 42 gives the coder its full context. The
+  box serves the coder above until Dan runs `make apply`, and Qwen3.8-27B once `make pull` has
+  fetched its file; this section changes then.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for

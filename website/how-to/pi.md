@@ -223,11 +223,14 @@ in.
 
 The Spark sets each model's context, not pi. It comes from `ctx` in `stack/models.yaml`, llama-server
 reserves it when the model loads, and no request can go past it. Every model runs at its full
-context (Dan's decision, 2026-09-28): 262,144 tokens for Gemma and for the coder. Gemma has two
-slots, and they share that context, so one request can use all of it. Requests running at the same
-time share it too: a pi session near the end of Gemma's window and a long phone chat can't both
-fit, and llama-server makes room by dropping the cache of whichever is idle, which then has to be
-read again.
+context (Dan's decision, 2026-09-28): 262,144 tokens for Gemma and for the coder. *(Changed
+2026-10-08, Dan's decision: the registry's coder is now Qwen3.8-27B, `qwen3.8-27b`, at 163,840 of
+its 262,144 tokens, so the model set fits the budget, and Phase 2a's Task 42 gives it all of them.
+pi learns the new name and window from the clients step below, once the change is deployed.)*
+Gemma has two slots, and they share its context, so one request can use all of it. Requests
+running at the same time share it too: a pi session near the end of Gemma's window and a long
+phone chat can't both fit, and llama-server makes room by dropping the cache of whichever is idle,
+which then has to be read again.
 
 pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`, which
 `make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on

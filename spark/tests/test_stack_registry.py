@@ -9,7 +9,8 @@ LLAMA_CPP_BATCH_DEFAULT = 2048  # llama-server b11146's --batch-size default; it
 LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
 # Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
 # at its maximum (Dan's decision, 2026-09-28): a model added, swapped or moved to a new revision needs its entry here,
-# read the same way.
+# read the same way. Qwen3.8-27B's was read from its header by Phase 2a's council, on 2026-10-07. Qwen3.6-35B-A3B left
+# the registry on 2026-10-08, and its entry stays for the way back.
 NATIVE_CTX = {
     ("google/gemma-4-26B-A4B-it-qat-q4_0-gguf", "d1c082be9cf3c8a514acf63b8761f4b41935842e",
      "gemma-4-26B_q4_0-it.gguf"): 262144,
@@ -17,6 +18,15 @@ NATIVE_CTX = {
      "Qwen3-Embedding-0.6B-Q8_0.gguf"): 32768,
     ("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
      "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"): 262144,
+    ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+     "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
+}
+# A model Dan holds below its native context, by (repo, revision, file), at exactly this many tokens. Qwen3.8-27B, the
+# coder, runs at 163,840 (Dan's decision, 2026-10-08), so the set fits Phase 1's budget, which sums every listed model;
+# Phase 2a's Task 42 gives it all 262,144, and its entry here goes then.
+BELOW_NATIVE_CTX = {
+    ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+     "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 163840,
 }
 
 
@@ -53,7 +63,10 @@ def test_every_llama_cpp_model_runs_at_its_full_context():
     llama = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "llama.cpp"]
     assert llama
     for model in llama:
-        assert model.ctx == NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)], model.name
+        native = NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)]
+        held = BELOW_NATIVE_CTX.get((model.source.repo, model.source.revision, model.source.file))
+        assert held is None or held < native, model.name
+        assert model.ctx == (native if held is None else held), model.name
 
 
 def test_an_embedding_model_pools_its_last_token_or_holds_its_whole_context_in_one_ubatch():
