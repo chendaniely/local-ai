@@ -344,7 +344,7 @@ brainstorm's scenario questions and the council's decisions, as questions and an
    behind it, so every client hangs in the backlog. Expected: the rollback to Phase 1's layout
    (llama-swap on 9100 with the client keys) is written and its render checked before anything
    moves; the crash-loop check as `agent` shows 9100 never answers as anyone else, and binding it
-   always fails; the notifier pages once per 5 minutes, not every 2 s. *(Tasks 25, 38, 49.)*
+   always fails; the notifier pages once per 5 minutes, not every 2 s. *(Tasks 25, 26, 38, 49.)*
 6. **A refusal in pi** — pi 0.85.1 (and 0.87.1) retries a failed turn by itself, up to three times,
    2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429" but
    not "409"; it reads neither `x-should-retry` nor `Retry-After` at that level (*Before Task 1*).
@@ -4198,8 +4198,24 @@ git merge --no-ff main -m "chore(repo): 🤖 merge main's cap_drop into phase-2a
 git worktree remove ../local-ai-main
 ```
 
-  A conflict in `test_render.py`, which `phase-2a` has changed too, keeps both sides' tests; then
-  `make test lint`.
+  The merge can conflict in four files, since `phase-2a` changes each of them too (a stand-in merge
+  at 65edda5 conflicted in the first two; the plan review's council-fix check, 2026-10-07). Resolve
+  each, **on the Spark**, before committing:
+  - `changelog.md`: keep both entries, `main`'s `cap_drop` entry and `phase-2a`'s, newest first.
+  - `website/architecture.qmd`: keep `phase-2a`'s text and diagrams, and make the `cap_drop` part
+    that `main` built read as built (solid, not planned), so the page stays true.
+  - `README.md`: keep both sides' lines in §Current state (likely only once Tasks 2 and 36 have run).
+  - `spark/tests/test_render.py`: keep both sides' tests.
+
+  Then stage those files by name, finish the merge without editing its message, and run the tests:
+
+```bash
+git add changelog.md website/architecture.qmd README.md spark/tests/test_render.py
+git commit --no-edit
+make test lint
+```
+
+  With no conflict, `git merge` commits by itself and only `make test lint` is needed.
 
 ***
 

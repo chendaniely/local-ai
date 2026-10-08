@@ -21,7 +21,7 @@ whose key llama-swap refuses can unload nothing.)*
 *Until Phase 2 (added 2026-09-28, from Phase 1's council):* nothing notifies me. The warning at
 28 GiB is a line in the brake's journal (`make logs s=brake`), and the hold shows on `make status`'s
 `brake` line, on the Spark. earlyoom, the last resort, chooses among the engines by their RSS,
-which leaves out the models' GPU memory, and its dry run in Task 13, with every engine at the same
+which leaves out the models' GPU memory, and its dry run in Phase 1's Task 13, with every engine at the same
 `oom_score_adj`, picked Gemma, a resident, before the on-demand coder. *(Corrected 2026-09-28, from
 Phase 1's council: `spark launch` now gives a resident engine `oom_score_adj` 900 and an on-demand
 one 1000, so earlyoom picks the on-demand coder first, as the brake does. Checked after that day's
@@ -33,7 +33,7 @@ on my PATH, and the target runs it through uv.)*
 Thresholds live in `stack/models.yaml`.
 
 *Status: built, 2026-09-28 (Phase 1). Phase 1's minimal brake unloads the on-demand models first:
-Task 16's drill, at raised thresholds, held new loads and unloaded the coder while the residents
+Phase 1's Task 16 drill, at raised thresholds, held new loads and unloaded the coder while the residents
 stayed. The idle-first order and the notifications arrive in Phase 2.*
 
 **Phase 2a, as designed (2026-10-07): what happens and what I see.** The brake stays a unit of its
