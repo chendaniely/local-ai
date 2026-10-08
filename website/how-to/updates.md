@@ -423,6 +423,35 @@ A fix you need sooner, such as a security release, gets an exception for that on
 old; before then, a plain `uv lock` would move the package back. Dependabot's security PRs don't
 wait, so one for a release younger than a week fails to lock until then.
 
+### Versions the code was written for
+
+*(Added 2026-10-07, Phase 2a's Task 3.)* Some modules rely on one release of a component: its API,
+its config, its options or its internals. Each names it in a `TESTED_AGAINST` constant, a
+component of `stack/versions.yaml` by its name and a Python package as `pypi:<name>`.
+`spark/tests/test_tested_against.py` checks every one against `stack/versions.yaml` and against
+the installed packages, which `uv run --frozen` installs at the lock's versions, so a bump that
+leaves one behind fails `make test`, and CI. Today `llamaswap.py` names llama-swap v257, and
+`render.py` llama-swap v257, llama.cpp b11146 and whisper.cpp v1.9.4. Moving one of those in
+`stack/versions.yaml` means checking the module against the new release, then moving its constant
+with it. `test_tested_against.py` also holds the lock's list of packages, so a PR that adds a
+package to the lock or drops one fails CI until that list changes too, a decision of its own.
+
+**uvicorn is pinned exactly**, `uvicorn==0.54.0` without extras, where every other dependency
+takes a range (Starlette's, `>=1.3.1,<2`, starts at 1.3.1, which fixed the last advisory against
+1.x as of 2026-10-07). From Phase 2a's Task 9, `spark/src/spark/protocols.py`, which the front and
+the gate serve through, subclasses uvicorn's internals, its h11 protocol, which no release promises
+to keep; so only the uvicorn it was tested with may run, and the pin is the release that task is
+written for. A uvicorn bump, Dependabot's or by hand, changes these together, in one commit with
+the lock: the pin in `spark/pyproject.toml`, `pypi:uvicorn` in `protocols.TESTED_AGAINST`, and the
+version `test_uvicorn_is_pinned_exactly` expects. A PR that moves the pin alone fails CI, on
+purpose. Lock it with the `uv lock` above, then, **on the Spark**, in the clone, run
+`test_protocols.py` before anything else, and the rest after it:
+
+```bash
+uv run --frozen --project spark pytest spark/tests/test_protocols.py
+make test
+```
+
 ## Upgrade day: gitleaks
 
 gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its

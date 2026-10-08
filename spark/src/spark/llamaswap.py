@@ -10,6 +10,10 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+# The llama-swap whose API this client was written for: its paths and /running's shape. test_tested_against.py
+# fails once stack/versions.yaml moves on without it: check this code against the new release, then move it.
+TESTED_AGAINST = {"llama-swap": "v257"}
+
 
 class LlamaSwapError(RuntimeError):
     pass

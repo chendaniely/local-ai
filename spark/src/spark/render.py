@@ -15,6 +15,10 @@ import yaml
 from spark.registry import Model, Registry, Source, load_registry
 from spark.versions import Component, load_versions
 
+# The releases render's output was written for: llama-swap's config, and each engine's options (SPELLINGS and
+# REFUSED, below). test_tested_against.py fails once stack/versions.yaml moves one on without this: check render
+# against the new release, then move it.
+TESTED_AGAINST = {"llama-swap": "v257", "llama.cpp": "b11146", "whisper.cpp": "v1.9.4"}
 TEMPLATES = Path("stack/templates")
 DEPLOY = "/opt/local-ai"
 HF_HOME = "/var/lib/local-ai/hf"

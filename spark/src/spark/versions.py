@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import yaml
 
@@ -75,6 +78,30 @@ def load_versions(path: Path) -> dict[str, Component]:
             image=raw.get("image"),
         )
     return components
+
+
+def tested_against_problems(modules: Iterable[ModuleType], components: dict[str, Component],
+                            installed: Callable[[str], str] = importlib.metadata.version) -> list[str]:
+    """Each module whose code relies on a component's version says which, in TESTED_AGAINST: a versions.yaml
+    component by its name, or a Python distribution as pypi:<name>. One line for each that disagrees."""
+    problems = []
+    for module in modules:
+        for key, value in getattr(module, "TESTED_AGAINST", {}).items():
+            said = f"{module.__name__}: TESTED_AGAINST {key} {value}, but"
+            if key in components:
+                actual = components[key].version
+                if value != actual:
+                    problems.append(f"{said} stack/versions.yaml has {actual}")
+            elif key.startswith("pypi:"):
+                try:
+                    actual = installed(key.removeprefix("pypi:"))
+                except importlib.metadata.PackageNotFoundError:
+                    actual = "none"
+                if value != actual:
+                    problems.append(f"{said} the environment has {actual}")
+            else:
+                problems.append(f"{said} stack/versions.yaml has no component {key}, and it isn't pypi:<distribution>")
+    return problems
 
 
 def unpinned(components: dict[str, Component]) -> list[str]:
