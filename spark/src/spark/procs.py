@@ -41,14 +41,34 @@ def port_of(proxy: str) -> int | None:
         return None
 
 
-def engine_pid(port: int, *, spark_uid: int, recorded: int | None = None, proc: Path = PROC) -> int | None:
-    """The engine serving `port`. A `recorded` pid (launch's, which the gate keeps in state.ticketed) that is alive and
-    runs as spark is taken as it is, whatever its comm, so a later engine kind isn't counted as an outside holder.
+def start_time(pid: int, *, proc: Path = PROC) -> int | None:
+    """When the process started, in clock ticks since boot: field 22 of `<proc>/<pid>/stat`. None for a process gone,
+    or a stat with no such field. The name, in parentheses, comes second and can hold spaces and parentheses of its
+    own, so the fields are read after its last `)`: field 3 first, field 22 the 20th word (checked on the Spark,
+    2026-10-08). With the pid, it names one process for the life of the boot, since a pid can be handed out again."""
+    try:
+        text = (proc / str(pid) / "stat").read_bytes()
+    except _GONE:
+        return None
+    words = text[text.rfind(b")") + 1:].split()
+    if b")" not in text or len(words) < 20 or not words[19].isdigit():
+        return None
+    return int(words[19])
+
+
+def engine_pid(port: int, *, spark_uid: int, recorded: int | None = None, recorded_start: int | None = None,
+               proc: Path = PROC) -> int | None:
+    """The engine serving `port`. A `recorded` pid (launch's, which the gate keeps in state.ticketed) is taken as it
+    is, whatever its comm, so a later engine kind isn't counted as an outside holder, but only while it is alive, runs
+    as spark, and started at `recorded_start` (its Ticketed.start_time, start_time's ticks): a pid the kernel handed to
+    another process of spark's after the engine died is never read as the engine, nor its RssAnon as the engine's
+    growth (the controller's ruling at Task 8's review). With no `recorded_start`, no recorded pid is trusted.
     Otherwise the process whose real uid is spark's, whose comm is an engine's, and whose argv holds `--port` and then
     the port; None when there is none."""
-    if recorded is not None:
+    if recorded is not None and recorded_start is not None:
         status = _status(recorded, proc)
-        if status is not None and _alive(status) and _real_uid(status) == spark_uid:
+        if (status is not None and _alive(status) and _real_uid(status) == spark_uid
+                and start_time(recorded, proc=proc) == recorded_start):
             return recorded
     wanted = [b"--port", str(port).encode()]
     for pid in _pids(proc):

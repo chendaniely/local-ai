@@ -1,8 +1,9 @@
-"""Task 8's /proc readers, on /proc trees the tests build. Every file is in the kernel's own format, as
-/proc/<pid>/status, comm and cmdline read on the Spark (fs/proc/array.c, task_mmu.c): status's fields tab-separated,
-its sizes right-aligned in 8 columns with " kB", Uid's four ids (real, effective, saved, filesystem); comm the short
-name and a newline; cmdline each argument and a NUL. A kernel thread's status has no Vm or Rss lines and its cmdline is
-empty. Every pid, uid, size and name here is a stand-in; none was read from the box."""
+"""Task 8's /proc readers, and Task 13's start time, on /proc trees the tests build. Every file is in the kernel's own
+format, as /proc/<pid>/status, stat, comm and cmdline read on the Spark (fs/proc/array.c, task_mmu.c): status's fields
+tab-separated, its sizes right-aligned in 8 columns with " kB", Uid's four ids (real, effective, saved, filesystem);
+stat one line, the pid, the name in parentheses, then the rest space-separated; comm the short name and a newline;
+cmdline each argument and a NUL. A kernel thread's status has no Vm or Rss lines and its cmdline is empty. Every pid,
+uid, start time, size and name here is a stand-in; none was read from the box."""
 
 from pathlib import Path
 
@@ -29,11 +30,18 @@ def proc(tmp_path, monkeypatch):
     return root
 
 
+def start_of(pid: int) -> int:
+    """A stand-in process's start time, in clock ticks since boot, unless the test gives one."""
+    return 50_000 + pid
+
+
 def process(proc: Path, pid: int, comm: str, *, uid: int | tuple[int, int, int, int], argv: tuple[str, ...] = (),
-            rss_anon_kib: int | None = None, vm_rss_kib: int | None = None, state: str = "S (sleeping)") -> None:
+            rss_anon_kib: int | None = None, vm_rss_kib: int | None = None, state: str = "S (sleeping)",
+            start: int | None = None) -> None:
     """A process in `proc`, its files as the kernel writes them. With no rss_anon_kib it has no memory lines at all,
     as a kernel thread's status hasn't. status's Name escapes only a backslash and a line break, as the kernel's does
-    (checked on the Spark, 2026-10-08); comm holds the name raw."""
+    (checked on the Spark, 2026-10-08); comm holds the name raw, and so does stat, in parentheses, its 52 fields
+    space-separated, the start time the 22nd (fs/proc/array.c, do_task_stat)."""
     uids = uid if isinstance(uid, tuple) else (uid,) * 4
     folder = proc / str(pid)
     folder.mkdir()
@@ -53,6 +61,11 @@ def process(proc: Path, pid: int, comm: str, *, uid: int | tuple[int, int, int, 
     lines += ["Threads:\t1", "SigQ:\t0/481234", "Cpus_allowed_list:\t0-19", "voluntary_ctxt_switches:\t10",
               "nonvoluntary_ctxt_switches:\t2"]
     (folder / "status").write_text("\n".join(lines) + "\n")
+    # Fields 3 to 52: the state's letter, ppid, pgrp, session, tty, tpgid, flags, four fault counts, four times,
+    # priority, nice, threads, itrealvalue, then the start time (22), and 30 more.
+    after = [state[0], "1", str(pid), str(pid), "0", "-1", "4194560", "100", "0", "0", "0", "10", "5", "0", "0", "20",
+             "0", "1", "0", str(start_of(pid) if start is None else start)] + ["0"] * 30
+    (folder / "stat").write_bytes(f"{pid} ({comm}) ".encode() + " ".join(after).encode() + b"\n")
     (folder / "comm").write_text(comm + "\n")
     (folder / "cmdline").write_bytes(b"".join(arg.encode() + b"\0" for arg in argv))
 
@@ -105,16 +118,39 @@ def test_engine_pid_finds_the_engine_by_its_port_among_sparks_processes(proc):
     assert procs.engine_pid(802, spark_uid=SPARK, proc=proc) is None
     process(proc, 300, "python3", uid=SPARK, rss_anon_kib=gib(0.1),  # spark launch, before its exec
             argv=("/opt/local-ai/app/.venv/bin/python3", "/opt/local-ai/app/.venv/bin/spark", "launch", "coder"))
-    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, proc=proc) == 300
-    assert procs.engine_pid(801, spark_uid=SPARK, recorded=301, proc=proc) == 200  # 301 is gone: the scan's answer
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, recorded_start=start_of(300), proc=proc) == 300
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=301, recorded_start=start_of(301),
+                            proc=proc) == 200  # 301 is gone: the scan's answer
 
 
 def test_a_recorded_pid_that_isnt_a_live_process_of_sparks_is_not_taken(proc):
     engine(proc, 200, 801)
     process(proc, 300, "python3", uid=DAN, rss_anon_kib=gib(1), argv=("python3",))
     process(proc, 310, "llama-server", uid=SPARK, state="Z (zombie)")  # exited, not yet reaped
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, recorded_start=start_of(300), proc=proc) == 200
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=310, recorded_start=start_of(310), proc=proc) == 200
+
+
+def test_a_recorded_pid_is_taken_only_at_the_start_time_recorded_for_it(proc):
+    # The engine died and the kernel handed its pid to another process of spark's: its start time differs, so it is
+    # never read as the engine, nor its RssAnon as the engine's growth (the controller's ruling at Task 8's review).
+    engine(proc, 200, 801)
+    process(proc, 300, "python3", uid=SPARK, rss_anon_kib=gib(5), argv=("python3",), start=777_000)
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, recorded_start=777_000, proc=proc) == 300
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, recorded_start=123_456, proc=proc) == 200
+    # A start time the gate couldn't record trusts no recorded pid: the scan's answer.
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, recorded_start=None, proc=proc) == 200
     assert procs.engine_pid(801, spark_uid=SPARK, recorded=300, proc=proc) == 200
-    assert procs.engine_pid(801, spark_uid=SPARK, recorded=310, proc=proc) == 200
+
+
+def test_start_time_is_stats_22nd_field_read_after_the_names_last_parenthesis(proc):
+    # The name, in parentheses, can hold spaces and parentheses of its own: field 3 comes first after the last ")",
+    # so field 22 is the 20th word there (checked on the Spark, 2026-10-08).
+    process(proc, 300, "a) (b c) 9", uid=SPARK, start=4_242_424)
+    assert procs.start_time(300, proc=proc) == 4_242_424
+    assert procs.start_time(301, proc=proc) is None  # gone
+    (proc / "300" / "stat").write_bytes(b"300 (python3) S 1 300")  # cut short: no start time to read
+    assert procs.start_time(300, proc=proc) is None
 
 
 def test_whisper_server_is_an_engine_too(proc):
@@ -216,7 +252,9 @@ def test_a_process_proc_wont_let_us_read_is_an_error_not_a_silence(proc, monkeyp
     with pytest.raises(PermissionError):
         procs.engine_pid(801, spark_uid=SPARK, proc=proc)
     with pytest.raises(PermissionError):
-        procs.engine_pid(801, spark_uid=SPARK, recorded=150, proc=proc)
+        procs.engine_pid(801, spark_uid=SPARK, recorded=150, recorded_start=start_of(150), proc=proc)
+    with pytest.raises(PermissionError):
+        procs.start_time(150, proc=proc)
 
 
 def test_a_process_that_exits_mid_read_is_passed_over(proc, monkeypatch):
@@ -228,7 +266,8 @@ def test_a_process_that_exits_mid_read_is_passed_over(proc, monkeypatch):
     assert procs.top_holders({}, {}, engine_pids={200}, dan_uids={DAN}, proc=proc) == [
         Holder("java (agent)", 9.0, False)]
     assert procs.engine_pid(801, spark_uid=SPARK, proc=proc) == 200
-    assert procs.engine_pid(801, spark_uid=SPARK, recorded=150, proc=proc) == 200
+    assert procs.engine_pid(801, spark_uid=SPARK, recorded=150, recorded_start=start_of(150), proc=proc) == 200
+    assert procs.start_time(150, proc=proc) is None
 
 
 def test_a_holder_whose_uid_has_no_name_shows_its_uid(proc, monkeypatch):

@@ -740,10 +740,16 @@ def _brake_unloaded(unloaded: list[tuple[str, str | None]]) -> str:
 
 
 def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
-    _needs("brake_fired", f, "at", "unloaded")
-    unloaded = _brake_unloaded(f["unloaded"])
-    if f["follow_up"]:
-        return f"Brake, {_clock(f['at'])}: also unloaded {unloaded}."
+    _needs("brake_fired", f, "at")
+    if f["follow_up"]:  # always an unload: an empty list is a field left out
+        _needs("brake_fired", f, "unloaded")
+        return f"Brake, {_clock(f['at'])}: also unloaded {_brake_unloaded(f['unloaded'])}."
+    if f["unloaded"] is None:
+        raise ValueError("brake_fired's words need unloaded")
+    # An empty list: the brake paused new loads with nothing of the stack's loaded, the memory taken by something
+    # outside it (the controller's ruling at Task 7's review, worded at Task 13).
+    unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
+                else "Nothing of the stack's was loaded, so there was nothing to unload")
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
     if f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself,
         _needs("brake_fired", f, "released_at")  # and why, since the last one resumed by itself (the review's I-2)
@@ -757,7 +763,7 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
         else:
             resume = f"They resume by themselves after {after} above {warn} available."
     return (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
-            f"{_line(f['line_gib'])} line. Unloaded {unloaded}; new loads are paused. {resume}")
+            f"{_line(f['line_gib'])} line. {unloaded}; new loads are paused. {resume}")
 
 
 def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:

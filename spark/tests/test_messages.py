@@ -1002,6 +1002,15 @@ COMPOSED = [
     ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle")], "follow_up": True},
      "Brake, 03:13: also unloaded Gemma, which was idle."),
     ("brake_fired", {**FIRED, "unloaded": [("Gemma", None)]}, "Unloaded Gemma; new loads are paused."),
+    # A brake with nothing of the stack's loaded (the memory is taken by something outside it) still pauses new loads,
+    # and says so (the controller's ruling at Task 7's review, worded at Task 13).
+    ("brake_fired", {**FIRED, "unloaded": []},
+     "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Nothing of the stack's was loaded, so "
+     "there was nothing to unload; new loads are paused. They resume by themselves after 5 min above 28 GiB "
+     "available."),
+    ("brake_fired", {**FIRED, "unloaded": [], "by_brake": True},
+     "Nothing of the stack's was loaded, so there was nothing to unload; new loads are paused. They resume once the "
+     "gate is back and memory has stayed above 28 GiB available for 5 min."),
     # A drill's raised line is worded as itself, and the release time is the gate's.
     ("brake_fired", {**FIRED, "available_gib": 52.3, "line_gib": 56, "release_after_s": 600},
      "52.3 GiB available, under the 56 GiB line. Unloaded the coder, which was loading; new loads are paused. They "
@@ -1122,6 +1131,8 @@ def test_a_field_needed_only_in_one_form_is_needed_there():
     assert say("waiting", **{**WAITING, "why": "brake", "release_waits_for_dan": True})  # no time when it waits for Dan
     assert say("brake_fired", **{**WITHIN_THE_HOUR, "release_after_s": None})  # the same for the brake's alert
     assert say("brake_fired", **NOTIFICATION_ROWS[1][1]).startswith("Brake, 03:13:")  # a follow-up has no reading
+    with pytest.raises(ValueError, match="^brake_fired's words need unloaded"):  # a follow-up is always an unload
+        say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "unloaded": []})
     assert say("unloaded", label="the coder", why="unload")  # only an idle unload names its minutes
 
 

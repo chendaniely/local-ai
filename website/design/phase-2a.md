@@ -1553,7 +1553,9 @@ git commit -m "feat(spark): 🤖 every notification and confirmation in Dan's wo
   `state.ticketed`) that is alive and runs as `spark` is taken as it is, whatever its `comm`, so a
   later engine kind isn't counted as an outside holder; otherwise the process whose real uid is
   `spark_uid`, whose `comm` is `llama-server` or `whisper-server`, and whose argv holds `--port`
-  followed by `port`.
+  followed by `port`. *(Corrected 2026-10-08, at Task 13, as the deferred notes' ruling asks: it
+  gains `recorded_start: int | None = None` and takes a recorded pid only when its start time,
+  `procs.start_time`, matches that too; with no `recorded_start`, it trusts none.)*
 - `procs.NVIDIA_APPS = ["nvidia-smi", "--query-compute-apps=pid,used_memory",
   "--format=csv,noheader,nounits"]`; `parse_nvidia_apps(text: str) -> dict[int, float | None]` —
   MiB to GiB; `[N/A]` reads as None.
@@ -2454,6 +2456,34 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   seq), so a file that was removed or started again never hides the events written after it
   (`brake/events.jsonl`). It reads without the lock, so it skips a last line with no newline (a
   write in progress), and never returns or advances past it.
+- *(Added 2026-10-08, at Task 13, what its code gives beyond the lines above, for the tasks that
+  use it:)*
+  - `ModelRecord` gains `unload_requested_at: float | None = None`, the "unload requested" record
+    (the unload call's start, saved before the call), and its `state` takes `stopping` too, as
+    `gateproto.ModelState` does. `restore` counts a model `stopping` while that record stands or
+    `/running` shows it stopping (one found stopping with no record gets one, at `now`), a load not
+    yet settled (its ticket in `issued` and not in `ticketed`, or recorded `starting`) as
+    `starting`, and a `draining` model whose unload wasn't requested as `ready`. A model `/running`
+    lists with no record gets one at the registry's footprint, or the registry's largest for a model
+    it doesn't know, with no fall and no `RssAnon`; `ticketed` drops a model `/running` no longer
+    lists.
+  - `Ticketed` gains `start_time: int | None`, `procs.start_time`'s ticks (`/proc/<pid>/stat` field
+    22), and `procs.engine_pid` gains `recorded_start`, as the deferred notes say.
+  - `RefusalRecord.model` is `str | None`, for a refusal of the front's that named no model.
+  - `save_state(folder, state, *, now=None)`: `now`, the gate's clock (`time.time()` by default),
+    prunes `notified` in place and sets `saved_at`; root is refused. `notified_key(type,
+    event_key)` gives `notified`'s key, `<type> <event_key>`. A fresh state's `clean_shutdown` is
+    true.
+  - `brakeevents.EVENTS_FILE = "events.jsonl"`; `append_event` returns the event as written, and
+    refuses one the reader would pass over; a line a crash cut short is ended by the next append.
+    `read_events` finds `after` by its place in the file, and takes every event as new when no
+    line has that key. One edge stays: a file removed by hand within a boot starts its `seq` from
+    1 again, and if it reaches the gate's key before the gate reads it, the events up to that key
+    are taken as read. A trim that keeps this boot's lines (the deferred notes) never does that.
+  - `write_hold` writes the four new fields only when set, so a hold without them is Phase 1's,
+    byte for byte.
+  - `messages`' `brake_fired` with `unloaded=[]` words a brake with nothing loaded (the deferred
+    notes).
 
 **Tests** (`spark/tests/test_gate_state.py`):
 
@@ -3269,7 +3299,9 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   idle check, the pins' and the hold's expiry, and the brake's release check every 5 s; saves the
   state on every change; sets `clean_shutdown` false at start and true on a clean stop. An
   engine's pid is `procs.engine_pid(port, recorded=<its state.ticketed pid>)`, so the holders and
-  the bypass check never count the stack's own engine as an outside process.
+  the bypass check never count the stack's own engine as an outside process. *(Added 2026-10-08,
+  at Task 13: with `recorded_start=<its Ticketed.start_time>` too, without which no recorded pid
+  is trusted.)*
 - The activity record, `GATE_STATE/activity.json`, written whole every second: `{written_at,
   boot_id, models: {name: {state, inflight, last_use}}}`, and for a model `starting`, its
   `admitted_gib`, `started_at` and `available_at_start` from its ticket — what the brake reads
@@ -6404,7 +6436,10 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   controller's ruling), for Tasks 13 and 23. `brake_fired` refuses `unloaded=[]`, so a brake that
   pauses new loads with no model to unload (memory taken by something outside the stack) has no
   alert today. Whichever of the two first meets that case words it in `messages.py`, with its test:
-  the reading, the line, *nothing of the stack's was loaded*, and the pause.
+  the reading, the line, *nothing of the stack's was loaded*, and the pause. *(Worded 2026-10-08, at
+  Task 13: `brake_fired` with `unloaded=[]`, its first alert only, reads *… under the 20 GiB line.
+  Nothing of the stack's was loaded, so there was nothing to unload; new loads are paused. …*; a
+  follow-up still needs an unload.)*
 - **`model_not_found` bursts key on the shown model** (added 2026-10-07, at Task 7's re-review),
   for Task 14. Keyed on the client's raw name, each varied unknown name would go at once and
   never collapse; key the burst on the model the words show (`_shown_model`'s, nothing for a name
@@ -6424,7 +6459,8 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   records the engine's start time, `/proc/<pid>/stat` field 22, read after the line's last `)`
   (the name in parentheses before it can hold spaces and brackets; field 3 comes first after it,
   so field 22 is the 20th word, checked on the Spark, 2026-10-08), and `engine_pid` checks that it
-  matches, so a reused pid is never read as the engine.
+  matches, so a reused pid is never read as the engine. *(Done 2026-10-08, at Task 13:
+  `procs.start_time`, `Ticketed.start_time`, and `engine_pid`'s `recorded_start`.)*
 - **An `RssAnon` the gate can't read credits no growth** (added 2026-10-08, at Task 8's review, the
   controller's ruling), for Tasks 15 and 18. `procs.rss_anon_gib` gives None for a process gone or
   a status without the line, and a `PermissionError` from `/proc` propagates. A None at either end
