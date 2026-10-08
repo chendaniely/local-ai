@@ -1,0 +1,490 @@
+"""The gate's protocol (Phase 2a; plan.md, *The front and the gate*), shared by the gate, the front and the CLI: the
+gate's constants, its routes, each with the socket it is on and who may call it, and its messages' shapes.
+
+JSON over HTTP/1.1 on the gate's two Unix sockets, which systemd holds (sockets.py): the status socket, for group
+spark-users, and the control socket, for spark-admin. Every request body and every answer is a JSON object, and a
+stream (`GET /v1/front/events`, `POST /v1/unload`) is NDJSON, one object a line. Every time in a message is in Unix
+seconds, as time.time() gives it. A key appears only by its name in the private key list, never as the key itself.
+
+The standard library only, and nothing but definitions at import: the CLI imports it through gateclient, and
+`spark status` and `spark launch` stay light (test_tested_against.py)."""
+
+from __future__ import annotations
+
+from typing import Any, Literal, NamedTuple, TypedDict, get_args
+
+# The gate's constants: the values of website/design/phase-2a.md's Global Constraints, and that plan's own.
+MAX_REQUEST_BYTES = 65536  # a request body above 64 KiB is answered 413, never parsed
+# Every request is bounded by this, but the routes that wait: /v1/admit (its key's wait), /v1/front/events (kept
+# open), /v1/load and /v1/pin (LOAD_CALL_TIMEOUT_S), and /v1/unload and /v1/make-room (as long as their drains take).
+REQUEST_TIMEOUT_S = 5.0
+# The gate's load call: 2a's healthCheckTimeout for llama-swap, 180 s, plus 20: the 5 s llama-swap takes to kill a
+# stuck start, and a margin.
+LOAD_CALL_TIMEOUT_S = 200.0
+PING_EVERY_S = 1.0  # /v1/front/events sends {op: "ping", at} this often
+# The front counts the gate down once its events call has dropped and a new one hasn't been answered within this, and
+# only then refuses new loads with gate_down.
+GATE_DOWN_AFTER_S = 5.0
+DRAIN_GRACE_S = 30.0  # a drain not done this long after the front's "drained" goes back to serving
+QUIET_S = 60  # make apply waits until no request has been in flight this long, by the front's counts
+APPLY_DEADLINE_S = 900  # make apply's wait for quiet lasts at most this, then it offers "drain now"
+ACTIVITY_EVERY_S = 1.0  # the gate writes its activity record, which the brake reads, this often
+ACTIVITY_STALE_S = 3.0  # the brake takes an activity record older than this as missing
+SESSIONS_PER_UID = 8  # the sessions one uid may hold at once
+SESSION_TTL_S = 43200  # a session not renewed for 12 h ends, as one does when its process exits
+REFUSAL_HISTORY = 50  # the refusals the gate keeps, for status's *recent*
+NTFY_TIMEOUT_S = 5.0  # a publish to ntfy
+BURST_WINDOW_S = 600  # of identical refusals the first goes at once, and the repeats within this go as one
+BACK_UP_AFTER_S = 60  # back_up once a unit that was down has stayed up this long
+# The brake's hold lifts by itself once memory has stayed above the warn line this long, if the reloads fit.
+RELEASE_AFTER_S = 300
+AUTO_RELEASE_EVERY_S = 3600  # at most one automatic release of the brake's hold in this long
+NOTIFIER_EVERY_S = 300  # the failure notifier sends at most one alert per unit in this long
+APPLY_RENEW_S = 15  # make apply renews its hold this often, from drain-all to the hold's end
+# The gate ends an apply hold not renewed for this long, before begin as after; and the front drops the hold once
+# the gate has been gone this long.
+APPLY_LAPSE_S = 60
+NOTIFIED_KEEP_S = 86400  # the gate's record of what it has notified drops what is older than this on every save
+SESSION_HOLD_RENEW_S = 60  # `spark session hold` renews its session this often
+GRACEFUL_S = 20  # uvicorn's graceful shutdown in the front and the gate, below their units' TimeoutStopSec=30
+LLAMA_SWAP_HUNG_S = 10  # llama_swap_down once llama-swap hasn't answered this long while its unit stays active
+
+Socket = Literal["status", "control"]
+Callers = Literal["front", "users", "owner", "admin"]
+SOCKETS: tuple[str, ...] = get_args(Socket)
+# Who may call a route: `front` the front's uid only; `users` anyone the socket lets in (its group already limits who
+# connects); `owner` a session's own uid, or a spark-admin uid to end one; `admin` a spark-admin uid, or root.
+CALLERS: tuple[str, ...] = get_args(Callers)
+SOCKET_GROUPS: dict[str, str] = {"status": "spark-users", "control": "spark-admin"}  # a socket's group: who connects
+
+
+class Route(NamedTuple):
+    socket: Socket
+    method: str
+    path: str  # Starlette's form: {id} and {model} are path parameters
+    callers: Callers
+
+
+ROUTES: tuple[Route, ...] = (
+    Route("status", "POST", "/v1/admit", "front"),  # AdmitRequest → AdmitAnswer, always 200
+    Route("status", "GET", "/v1/front/events", "front"),  # NDJSON, kept open: FrontEvent
+    Route("status", "POST", "/v1/front/inflight", "front"),  # InflightSnapshot
+    Route("status", "POST", "/v1/front/drained", "front"),  # DrainReport
+    Route("status", "POST", "/v1/front/busy", "front"),  # DrainReport: an idle drain found a request in flight
+    Route("status", "POST", "/v1/front/refused", "front"),  # FrontRefusal
+    Route("status", "GET", "/v1/status", "users"),  # StatusView, filtered for the caller
+    Route("status", "POST", "/v1/sessions", "owner"),  # SessionRequest → SessionGranted
+    Route("status", "POST", "/v1/sessions/{id}/renew", "owner"),  # → SessionGranted
+    Route("status", "DELETE", "/v1/sessions/{id}", "owner"),
+    Route("control", "GET", "/v1/status", "admin"),  # the full StatusView
+    Route("control", "POST", "/v1/load", "admin"),  # ModelRequest → LoadConfirmation, held up to LOAD_CALL_TIMEOUT_S
+    Route("control", "POST", "/v1/unload", "admin"),  # ModelRequest → NDJSON: UnloadCount at once, then UnloadDone
+    Route("control", "POST", "/v1/pin", "admin"),  # PinRequest; one that loads first, held up to LOAD_CALL_TIMEOUT_S
+    Route("control", "DELETE", "/v1/pin/{model}", "admin"),
+    Route("control", "POST", "/v1/make-room/plan", "admin"),  # RoomPlanRequest → RoomPlanAnswer
+    Route("control", "POST", "/v1/make-room", "admin"),  # MakeRoomRequest → MakeRoomAnswer, as long as its drains take
+    Route("control", "POST", "/v1/release", "admin"),  # ReleaseRequest → ReleaseAnswer
+    Route("control", "GET", "/v1/quiet", "admin"),  # QuietAnswer
+    Route("control", "POST", "/v1/drain-all", "admin"),  # apply's hold begins, persisted
+    Route("control", "POST", "/v1/undrain-all", "admin"),  # one of the hold's ends
+    Route("control", "POST", "/v1/apply/renew", "admin"),  # ApplyRenew → ApplyRenewed or ApplyEnded
+    Route("control", "POST", "/v1/apply/begin", "admin"),  # ApplyBegin, before the first restart
+    Route("control", "POST", "/v1/apply/end", "admin"),  # once llama-swap answers again: the hold's end
+    Route("control", "GET", "/v1/logs/{model}", "admin"),  # ?n= → LogsAnswer; {model} a name or one of its roles
+    Route("control", "POST", "/v1/canary", "admin"),  # CanaryRequest → CanaryAnswer
+)
+
+# There is no cancel route: the front drops its admit call when its client goes, and the gate takes the dropped call
+# as the cancel.
+
+DrainWhy = Literal["make-room", "unload", "idle"]
+DRAIN_WHY: tuple[str, ...] = get_args(DrainWhy)
+FrontRefusalCode = Literal["model_not_found", "too_many_requests", "route_not_served", "draining"]
+FRONT_REFUSAL_CODES: tuple[str, ...] = get_args(FrontRefusalCode)
+
+
+# The status socket, the front's routes.
+
+class AdmitRequest(TypedDict):
+    model: str
+    key: str  # the asking key's name
+    deadline: float  # when the front received the request, plus the asking key's wait
+    request_id: str
+
+
+class Admitted(TypedDict):
+    ok: Literal[True]
+    model: str
+
+
+class AdmitRefused(TypedDict):
+    ok: Literal[False]
+    code: str  # a refusal code of messages', and status and retry_after_s are that code's
+    status: int
+    message: str
+    retry_after_s: int | None
+
+
+AdmitAnswer = Admitted | AdmitRefused
+
+
+class ModelEntry(TypedDict):
+    """One model in the gate's model list, which the front serves from (Dan's decision of 2026-10-07)."""
+
+    name: str
+    roles: list[str]
+    label: str
+    resident: bool
+
+
+class HelloEvent(TypedDict):
+    op: Literal["hello"]
+    gate_started_at: float
+    applying: bool  # true: the front holds every new request, as on hold_all, so a restarted front holds again
+    lapse_s: float  # the hold's bound, APPLY_LAPSE_S
+    models: list[ModelEntry]
+
+
+class StateEvent(TypedDict):
+    """Sent with hello and on every change, a registry re-read among them."""
+
+    op: Literal["state"]
+    ready: list[str]  # model names
+    starting: list[str]
+    draining: list[str]
+    models: list[ModelEntry]
+
+
+class DrainEvent(TypedDict):
+    op: Literal["drain"]
+    model: str
+    drain_id: str
+    why: DrainWhy
+
+
+class UndrainEvent(TypedDict):
+    op: Literal["undrain"]
+    model: str
+    drain_id: str
+
+
+class UnloadedEvent(TypedDict):
+    op: Literal["unloaded"]
+    model: str
+
+
+class HoldAllEvent(TypedDict):
+    """Apply's hold: the front holds every new request until release_all, or until the gate has been gone lapse_s."""
+
+    op: Literal["hold_all"]
+    lapse_s: float
+
+
+class ReleaseAllEvent(TypedDict):
+    op: Literal["release_all"]
+
+
+class PingEvent(TypedDict):
+    op: Literal["ping"]
+    at: float
+
+
+FrontEvent = (HelloEvent | StateEvent | DrainEvent | UndrainEvent | UnloadedEvent | HoldAllEvent | ReleaseAllEvent
+              | PingEvent)
+
+
+class InflightRequest(TypedDict):
+    key: str  # the asking key's name
+    started_at: float
+
+
+class ModelInflight(TypedDict):
+    count: int
+    oldest_started_at: float | None
+    last_end_at: float | None
+    requests: list[InflightRequest]
+
+
+class InflightSnapshot(TypedDict):
+    """A whole snapshot, never a delta, so /v1/quiet and apply's question can name each request's asker."""
+
+    seq: int
+    front_started_at: float
+    models: dict[str, ModelInflight]
+    draining: list[str]  # the models the front holds as draining
+
+
+class DrainReport(TypedDict):
+    model: str
+    drain_id: str
+
+
+class FrontRefusal(TypedDict):
+    """A refusal of the front's own, for status's *recent* and the refused notification."""
+
+    at: float
+    code: FrontRefusalCode
+    model: str | None  # as the client asked for it; None where the request named none
+    key: str  # the asking key's name
+    message: str
+
+
+# The status socket, everyone's.
+
+class SessionRequest(TypedDict):
+    model: str
+    pid: int  # a live process of the caller's
+    label: str
+
+
+class SessionGranted(TypedDict):
+    id: str
+    expires_at: float
+
+
+# The control socket, spark-admin's.
+
+class ModelRequest(TypedDict):
+    model: str
+
+
+class LoadConfirmation(TypedDict):
+    label: str
+    seconds: float
+    idle_min: int | None  # None for an always-loaded model
+    command: str
+
+
+class UnloadCount(TypedDict):
+    inflight: int
+
+
+class UnloadDone(TypedDict):
+    unloaded: Literal[True]
+
+
+class PinRequest(TypedDict):
+    model: str
+    until: float | None  # None: no end
+
+
+class RoomBySize(TypedDict):
+    size_gib: float
+
+
+class RoomForAll(TypedDict):
+    all: Literal[True]
+
+
+RoomPlanRequest = RoomBySize | RoomForAll
+
+
+class RoomPlanAnswer(TypedDict):
+    plan_id: str
+    plan: dict[str, Any]  # budget.RoomPlan, as JSON
+
+
+class MakeRoomRequest(TypedDict):
+    plan_id: str
+    for_s: float | None  # None: until --done or a reboot
+
+
+class MakeRoomAnswer(TypedDict):
+    unloaded: list[str]
+    free_gib: float
+    hold_gib: float
+    until: float | None
+
+
+class ReleaseRequest(TypedDict):
+    room: bool  # `spark make-room --done`
+    brake: bool  # `make brake-release`
+
+
+class RoomReleased(TypedDict):
+    unused_gib: float
+    total_gib: float
+    next_label: str | None
+
+
+class ReleaseAnswer(TypedDict):
+    room: RoomReleased | None
+    brake: bool
+    reloading: list[str]  # labels
+
+
+class QuietRequest(TypedDict):
+    model: str
+    model_label: str
+    key_label: str
+    age_s: float
+
+
+class QuietAnswer(TypedDict):
+    quiet_for_s: float
+    last_label: str | None  # the model that answered last
+    inflight: list[QuietRequest]
+
+
+class ApplyRenew(TypedDict):
+    since: float  # the hold's own start, so a renewal never starts a hold again
+
+
+class ApplyRenewed(TypedDict):
+    ok: Literal[True]
+
+
+class ApplyEnded(TypedDict):
+    ended: Literal[True]
+
+
+class ApplyBegin(TypedDict):
+    restarting: list[str]  # units
+
+
+class LogsAnswer(TypedDict):
+    lines: list[str]
+
+
+class CanaryRequest(TypedDict):
+    needle: str
+
+
+class CanaryAnswer(TypedDict):
+    found: list[str]  # where the needle is, never what surrounds it
+
+
+# StatusView: `GET /v1/status` on either socket, and `spark status --json`'s shape, for 2b's menu bar.
+
+STATUS_SCHEMA = 1  # raised when a field's meaning changes
+ModelState = Literal["ready", "starting", "draining", "not_loaded"]
+MODEL_STATES: tuple[str, ...] = get_args(ModelState)
+WaitingWhy = Literal["memory", "brake", "slot", "dan", "restart", "llama_swap"]
+WAITING_WHY: tuple[str, ...] = get_args(WaitingWhy)
+
+
+class MemoryView(TypedDict):
+    total_gib: float
+    available_gib: float  # MemAvailable
+    brake_gib: float
+    warn_gib: float
+    above_brake_gib: float
+    reserve_gib: float
+    owed_gib: float
+    held_gib: float
+    free_for_a_load_gib: float  # rule 9's figure, for the caller
+    unaccounted_gib: float  # idle MemAvailable, less available, less the loaded models' footprints
+
+
+class BrakeMarkView(TypedDict):
+    at: float
+    seen_gib: float
+
+
+class ModelView(TypedDict):
+    name: str
+    label: str
+    resident: bool
+    footprint_gib: float
+    state: ModelState
+    inflight: int
+    oldest_request_s: float | None
+    last_use: float | None
+    pinned_until: float | None  # the pin's end; None with no pin, and with a pin that has no end: `pins` says which
+    sessions: list[str]  # the labels of the sessions that keep it
+    brake_mark: BrakeMarkView | None
+
+
+class WaitingView(TypedDict):
+    key_label: str
+    model: str
+    waited_s: float
+    wait_s: float
+    why: WaitingWhy
+
+
+class PausedView(TypedDict):
+    since: float
+    available_gib: float
+    releases_at: float | None
+    waits_for_dan: bool
+    last_fired: float | None
+    last_released: float | None
+
+
+class HeldView(TypedDict):
+    size_gib: float
+    until: float | None  # None: until --done or a reboot
+
+
+class PinView(TypedDict):
+    model: str
+    label: str
+    until: float | None  # None: no end
+
+
+class SessionView(TypedDict):
+    id: str
+    model: str
+    label: str
+    started_at: float
+    expires_at: float
+
+
+class RecentView(TypedDict):
+    at: float
+    text: str
+    code: str | None
+    model: str | None
+    key_label: str | None
+
+
+class BrakeHealth(TypedDict):
+    status: str
+    key_checked_at: float | None
+
+
+class NtfyHealth(TypedDict):
+    status: str
+    failing_since: float | None
+
+
+class EngineView(TypedDict):
+    model: str
+    port: int
+    pid: int
+
+
+class HealthView(TypedDict):
+    front: str  # "ok", or what is wrong, in words; so are gate, llama_swap and the status of brake and ntfy
+    gate: str
+    brake: BrakeHealth
+    llama_swap: str
+    ntfy: NtfyHealth
+    activity_age_s: float | None
+    # Each engine on an engine port whose pid no ticket's start recorded this boot: the evidence of a load around the
+    # gate.
+    unticketed_engines: list[EngineView]
+    no_ticket_refusals: int  # starts launch refused for want of a ticket since this boot: the backstop working
+
+
+class ApplyingView(TypedDict):
+    since: float
+    restarting: list[str]
+
+
+class StatusView(TypedDict):
+    schema: int  # STATUS_SCHEMA
+    host: str
+    at: float
+    memory: MemoryView
+    models: list[ModelView]
+    waiting: list[WaitingView]
+    paused: PausedView | None
+    held: HeldView | None
+    pins: list[PinView]
+    sessions: list[SessionView]
+    recent: list[RecentView]
+    health: HealthView
+    applying: ApplyingView | None
+    problems: list[str]

@@ -92,7 +92,7 @@ def test_the_lock_adds_only_uvicorn_and_starlette():
 CLI_PATH = textwrap.dedent(
     """
     import sys
-    from spark import cli
+    from spark import cli, gateclient
     p = cli.build_parser()
     p.parse_args(["launch", "m", "--", "/bin/x"])
     p.parse_args(["status", "--json"])
@@ -104,7 +104,8 @@ CLI_PATH = textwrap.dedent(
 
 def test_the_cli_status_and_launch_import_neither_uvicorn_nor_httpx(tmp_path):
     # Every spark command runs build_parser(), which imports every command's module: so each registers with its heavy
-    # imports inside its handler (Tasks 19, 21 and 30), and `spark launch` and `spark status --json` stay light.
+    # imports inside its handler (Tasks 19, 21 and 30), and `spark launch` and `spark status --json` stay light. The
+    # commands that ask the gate do it through gateclient (Task 10), so it stays light too.
     result = subprocess.run([sys.executable, "-c", CLI_PATH], cwd=tmp_path, capture_output=True, text=True,
                             timeout=60, check=False)
     assert result.returncode == 0, result.stderr

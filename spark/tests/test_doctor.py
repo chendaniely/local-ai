@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REG = load_registry(Path(__file__).parent / "fixtures" / "models.yaml")
 KEY = "doctor-test-key"
 KERNEL = "7.0.0-1019-nvidia"
-URL = "http://127.0.0.1:9100"
+URL = doctor.paths.LLAMASWAP_URL  # where doctor asks llama-swap; 127.0.0.1:900 by default since Phase 2a's Task 10
 REPO_ARGS = earlyoom_args((ROOT / "stack/host/earlyoom.default").read_text())
 MODULES_QUERY = ("dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\n", f"linux-modules-nvidia-*-{KERNEL}")
 HOLD_DRY_RUN = tuple(doctor.HOLD_DRY_RUN)
