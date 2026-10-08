@@ -690,15 +690,19 @@ def test_every_route_names_its_socket_and_callers():
     # Every progress line names its kind, and the CLI tells lines apart by it, never by their keys: a
     # StoppingProgress's keys are a subset of a MakeRoomProgress's (the controller's ruling at Task 12's second
     # re-review). A line without one is the result, or a refusal.
-    assert gateproto.PROGRESS_KINDS == ("waiting", "loading", "unloading", "stopping")
+    # An unload, or make-room's, that waits for its model's load to end says so first (the controller's ruling at
+    # Task 16's review): Task 30 words it, *Waiting for the coder to finish loading before unloading it…*.
+    assert gateproto.AfterLoadProgress.__required_keys__ == {"kind", "model", "label"}
+    assert gateproto.PROGRESS_KINDS == ("waiting", "loading", "unloading", "stopping", "after_load")
     kinds = {shape: typing.get_type_hints(shape)["kind"] for shape in (
         gateproto.WaitProgress, gateproto.LoadProgress, gateproto.UnloadCount, gateproto.MakeRoomProgress,
-        gateproto.StoppingProgress)}
+        gateproto.StoppingProgress, gateproto.AfterLoadProgress)}
     assert kinds == {gateproto.WaitProgress: typing.Literal["waiting"],
                      gateproto.LoadProgress: typing.Literal["loading"],
                      gateproto.UnloadCount: typing.Literal["unloading"],
                      gateproto.MakeRoomProgress: typing.Literal["unloading"],
-                     gateproto.StoppingProgress: typing.Literal["stopping"]}
+                     gateproto.StoppingProgress: typing.Literal["stopping"],
+                     gateproto.AfterLoadProgress: typing.Literal["after_load"]}
     for result in (gateproto.UnloadDone, gateproto.LoadConfirmation, gateproto.PinConfirmation,
                    gateproto.MakeRoomAnswer, gateproto.GateRefusalBody):
         assert "kind" not in result.__required_keys__, result

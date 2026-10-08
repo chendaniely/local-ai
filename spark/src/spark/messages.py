@@ -1419,6 +1419,27 @@ def unloaded(label: str) -> str:
     return f"Unloaded {label}."
 
 
+def unload_after_load(label: str) -> str:
+    """The line of `spark unload` and make-room while the model's load is still under way, for its drain waits for
+    the load to end (gateproto.AfterLoadProgress; the controller's ruling at Task 16's review)."""
+    return f"Waiting for {label} to finish loading before unloading it…"
+
+
+def state_not_saved(label: str) -> str:
+    """`spark unload`'s and make-room's refusal for a drain that ended `not_saved`: the gate couldn't save the drain
+    before sending it, so it sent nothing (the controller's ruling at Task 16's review)."""
+    return (f"{_start(label)} wasn't unloaded: the gate couldn't save its state. On the Spark, `make logs s=gate` "
+            "shows why.")
+
+
+def gate_stopping(label: str) -> str:
+    """`spark unload`'s and make-room's refusal for a drain that ended `gate_stopping`. A drain whose unload was
+    requested is resumed by the restarted gate, and one that wasn't goes back to serving, so the words promise
+    neither (the controller's ruling at Task 16's review)."""
+    return (f"The gate is stopping, so it can't finish unloading {label} now. Once it's back, `spark status` on the "
+            f"Spark shows whether {label} is still loaded.")
+
+
 def front_not_connected(label: str) -> str:
     """`spark unload`'s and make-room's refusal for a model whose drain couldn't begin, or went back to serving before
     its unload was sent, because the front's call to the gate isn't open (the controller's ruling at Task 16): the

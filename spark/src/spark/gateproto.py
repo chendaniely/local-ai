@@ -303,7 +303,7 @@ class ModelRequest(TypedDict):
 # Every progress line of a stream names its kind, and the CLI tells lines apart by it, never by their keys: a
 # StoppingProgress's keys are a subset of a MakeRoomProgress's, in the same stream. A line without one is the result,
 # or a refusal (GateRefusalBody). (The controller's ruling at Task 12's second re-review.)
-ProgressKind = Literal["waiting", "loading", "unloading", "stopping"]
+ProgressKind = Literal["waiting", "loading", "unloading", "stopping", "after_load"]
 PROGRESS_KINDS: tuple[str, ...] = get_args(ProgressKind)
 
 
@@ -403,6 +403,16 @@ class StoppingProgress(TypedDict):
     llama-swap hasn't finished its unload…*. Ctrl-C ends the wait, never the unload."""
 
     kind: Literal["stopping"]
+    model: str
+    label: str
+
+
+class AfterLoadProgress(TypedDict):
+    """A line of /v1/unload's and /v1/make-room's streams, once, while the model's load is still under way, since the
+    drain waits for that load to end before it marks the model (the controller's ruling at Task 16's review): Task 30
+    words it, *Waiting for the coder to finish loading before unloading it…*."""
+
+    kind: Literal["after_load"]
     model: str
     label: str
 

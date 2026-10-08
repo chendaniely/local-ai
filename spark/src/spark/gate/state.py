@@ -82,6 +82,11 @@ class ModelRecord:
     # the brake's unload, or one after damage), reads as unknown.
     drain_id: str | None = None
     drain_why: DrainWhy | None = None
+    # When the gate's unload call for it began, saved as it begins: the stop's own identity, which keys its stuck alert
+    # (`stuck:<model>:<this>`), so a restarted gate never sends a second one for the same stop (the controller's ruling
+    # at Task 16's review). None before the call, and when the gate didn't make it (the admitter's late-start abort,
+    # the brake's).
+    unload_call_at: float | None = None
     extra: dict[str, Any] = _extra()
 
 

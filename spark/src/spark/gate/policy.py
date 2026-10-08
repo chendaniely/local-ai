@@ -26,23 +26,32 @@ flight have finished, however long they take. Only then does the gate unload it,
 - From the call's start, each caller waiting on the drain gets a StoppingProgress every STOPPING_EVERY_S, and at
   STUCK_STOPPING_S one `llama_swap_down` alert goes, with why `stuck_stopping`, keyed by the model and the call's start:
   v257 waits on a killed engine's exit with no bound (process_command.go:710-712), while `/running` still answers.
+  The stop's identity is its call's start, saved with the record (`unload_call_at`), so a restarted gate sends the
+  same key, and the Notifier never a second alert for the same stop (the controller's ruling at Task 16's review).
 
 A drain runs in a task of its own, so a caller that goes (Dan's Ctrl-C) ends its wait, never the drain or its unload; a
 second drain asked of a model joins the one under way (but an idle one the front found busy, after which a drain that
-isn't idle drains for itself). Its id and why are saved on the model's record before `drain` is sent, and
-`unload_requested_at` before the unload call; the record turns `stopping` as that call begins; an undrain clears all
-three. Each origin saves its own why: make-room's `make-room`, `spark unload`'s `unload`, the idle check's `idle`; a
-resumed drain keeps the why it saved, Task 15's `late_start` among them, and one with none is `unknown`, as are the
-drains the gate finishes after damage (Task 18), whose words name no command. A drain never marks a model the admitter
-has `starting`, since the admitter's `_ready` replaces that record whole: it waits until that load ends, ready (then it
-drains the ready record) or gone (then there is nothing to unload). A word the front is owed and can't take now
-(`undrain`, `unloaded`) is saved in GateState.undrains and sent once its call is open again (send_owed).
+isn't idle drains for itself), and Dan's command joining an idle drain gives it its why, the stronger reason. Its id and
+why are saved on the model's record before `drain` is sent, within SAVE_BOUND_S, or the drain ends with nothing sent
+(`not_saved`); `unload_requested_at` before the unload call; the record turns `stopping` as that call begins, the call's
+start saved; an undrain clears them all. Each origin saves its own why: make-room's `make-room`, `spark unload`'s
+`unload`, the idle check's `idle`; a resumed drain keeps the why it saved, Task 15's `late_start` among them, and one
+with none is `unknown`, as are the drains the gate finishes after damage (Task 18), whose words name no command. A
+drain never marks a model the admitter has `starting`, since the admitter's `_ready` replaces that record whole: it
+waits until that load ends, ready (then it drains the ready record) or gone (then there is nothing to unload), each
+caller hearing so once (AfterLoadProgress). A drain that found the admitter's own abort stopping, a stop not its
+own, goes back through its steps should that stop be undone while `/running` still lists the model, so it never waits
+for ever on a stop that ended in `ready` (the controller's ruling at Task 16's review). A word the front is owed and
+can't take now (`undrain`, `unloaded`) is saved in GateState.undrains and sent once its call is open again, and ahead
+of any new `drain` (send_owed).
 
 With the front's call closed a drain sends nothing and ends False, `front_away`, which Dan's commands word with
 messages.front_not_connected (Tasks 17 and 30); an idle one skips, with one journal line while the front stays away.
-Each caller hears how its drain ended (`ended`, a DrainEnd), so Room words it. A resumed `late_start` drain, Task 15's
-abort of a start past its deadline, never waits on the front, as the admitter's own abort doesn't: no request can be
-in flight to a model that never became ready (the controller's ruling at Task 16; Drainer._late_start).
+Each caller hears how its drain ended (`ended`, a DrainEnd), so Room words it, `gate_stopping` too when the gate stops
+under it. A fresh idle drain checks again, right before it marks the model, that no pin, live session or use came since
+idle_due named it; one that did ends it as `busy`, nothing marked. A resumed `late_start` drain, Task 15's abort of a
+start past its deadline, never waits on the front, as the admitter's own abort doesn't: no request can be in flight to
+a model that never became ready (the controller's ruling at Task 16; Drainer._late_start).
 
 **The idle unload** (rule 3): idle_due names each on-demand model with no request in flight, no live session and no
 pin standing, idle at least the registry's idle_unload_min; never a resident. The core drains each with why `idle`.
@@ -50,9 +59,10 @@ pin standing, idle at least the registry's idle_unload_min; never a resident. Th
 **Pins** (Pins) are Dan's alone: a pin keeps its model loaded until its time; a model not loaded is loaded first,
 through admission as one of his commands, its progress streamed as `/v1/load`'s is. **Sessions** (Sessions) are each
 uid's own, tied to one of its live processes (procs.owner_uid), SESSIONS_PER_UID at most, each ending with its process
-or SESSION_TTL_S after its last renewal; `spark` and `spark-front` hold none; a session's label is one line of at most
-LABEL_MAX characters. A pin's or a session's end counts as its model's last use, so the model unloads idle_unload_min
-after it, as `pin_ended` and `unpinned` say (both accepted, the controller's ruling at Task 16)."""
+or SESSION_TTL_S after its last renewal; `spark` and `spark-front` hold none; a session names a model the registry has,
+by its name, and its label is one line of at most LABEL_MAX characters. A pin's or a session's end counts as its
+model's last use, so the model unloads idle_unload_min after it, as `pin_ended` and `unpinned` say (both accepted, the
+controller's ruling at Task 16)."""
 
 from __future__ import annotations
 
@@ -80,15 +90,21 @@ _log = logging.getLogger(__name__)
 POLL_S = 1.0  # a drain reads /running, and rechecks its clock, at least this often without a changed()
 FINAL_WORDS = ("undrain", "unloaded")  # the words that end a drain the front may hold: owed until it takes them
 LABEL_MAX = 80  # a session's label, on one line, in Dan's terminal (`spark status`, make-room's list)
+# The save of a drain's id and why before `drain` is sent is bounded by this; unsaved, nothing is sent and the drain
+# ends (the controller's ruling at Task 16's review).
+SAVE_BOUND_S = 5.0
 Answer = Literal["drained", "busy", "dropped"]
 # How a drain ended, which `ended` hears as drain() or resume() returns, so Room words it (Task 17; the controller's
 # ruling at Task 16): unloaded (its unload done, the model gone); not_loaded (nothing to unload); gone (it left /running
 # meanwhile: the brake, a crash); front_away (the front's call wasn't open, so nothing was sent); front_dropped (that
 # call dropped before the unload was sent); busy (an idle drain found a request in flight); not_taken (an unload
 # llama-swap never took); held (the gate's step before the call held past DRAIN_GRACE_S); loaded_again (loaded anew
-# meanwhile); broke (the drain broke before its unload call, and went back to serving).
+# meanwhile); broke (the drain broke before its unload call, and went back to serving). Added at Task 16's review, the
+# controller's rulings: not_saved (the drain's id couldn't be saved within SAVE_BOUND_S, so nothing was sent); and
+# gate_stopping (the gate stopped under it, or was stopping when it was asked); `busy` also ends an idle drain that a
+# pin, a live session or a use reached before it marked the model.
 DrainEnd = Literal["unloaded", "not_loaded", "gone", "front_away", "front_dropped", "busy", "not_taken", "held",
-                   "loaded_again", "broke"]
+                   "loaded_again", "broke", "not_saved", "gate_stopping"]
 DRAIN_ENDS: tuple[str, ...] = get_args(DrainEnd)
 _UNREAD = object()  # /running couldn't be read
 
@@ -239,6 +255,8 @@ class _Drain:
     call_started_at: float | None = None
     lines_sent: int = 0
     end: DrainEnd | None = None
+    after_load: bool = False  # its line that it waits for the model's load was sent
+    settling: bool = False  # it waits now for the model's load to end
 
 
 class Drainer:
@@ -247,12 +265,14 @@ class Drainer:
     which hears of every change (`changed`, `observe_running` with each `/running` read that answered); `emit` the
     Notifier; `clock` gives Unix seconds. Beside the plan's interface: `on_change` is called after every change to the
     state, so the core saves it; it may return an awaitable, which the drainer awaits where a save must come first
-    (before `drain` is sent, and before the unload call, bounded there by DRAIN_GRACE_S from `drained`); `poll_s`
-    bounds how long a drain goes without reading /running or its clock when no `changed()` comes."""
+    (before `drain` is sent, bounded by SAVE_BOUND_S, and before the unload call, bounded there by DRAIN_GRACE_S from
+    `drained`); `poll_s` bounds how long a drain goes without reading /running or its clock when no `changed()` comes;
+    `live` is Sessions.live, with which an idle drain checks again, right before it marks the model, that it is still
+    idle (the controller's ruling at Task 16's review)."""
 
     def __init__(self, front: FrontChannel, llamaswap: AsyncLlamaSwap, admitter: Admitter, emit: Emit,
                  clock: Callable[[], float], *, on_change: Callable[[], Awaitable[None] | None] | None = None,
-                 poll_s: float = POLL_S):
+                 poll_s: float = POLL_S, live: Callable[[Session], bool] | None = None):
         self._front = front
         self._swap = llamaswap
         self._admitter = admitter
@@ -260,6 +280,7 @@ class Drainer:
         self._clock = clock
         self._on_change = on_change or (lambda: None)
         self._poll_s = poll_s
+        self._live = live or (lambda session: True)  # with no Sessions.live, every session counts as live
         self._drains: dict[str, _Drain] = {}
         self._gone_own: dict[str, float] = {}  # each model the gate's own unload took, and when /running showed it gone
         self._owed_unloaded: dict[str, str] = {}  # the undrains owed (GateState.undrains) that are an `unloaded`
@@ -284,16 +305,24 @@ class Drainer:
         """Drains `model`, then unloads it: True once /running shows it gone (or it was never loaded), False when it
         went back to serving. `progress` is given each StoppingProgress line; `ended`, as it returns, how it ended
         (DrainEnd). A drain of the model already under way is joined, but an idle one the front found busy, which a
-        drain that isn't idle then follows with its own. With the front's call closed nothing is sent (`front_away`);
-        an idle one skips, with a journal line, once while the front stays away."""
+        drain that isn't idle then follows with its own; an idle one joined by Dan's command takes the command's why,
+        the stronger reason. With the front's call closed nothing is sent (`front_away`); an idle one skips, with a
+        journal line, once while the front stays away. With the gate stopping, False, `gate_stopping`."""
         if why not in DRAIN_WHY:
             raise ValueError(f"a drain's why is one of {', '.join(DRAIN_WHY)}, not {why!r}")
         while not self._stopped:
-            current = self._drains.get(model) or self._start(model, why, None, resume=False)
+            current = self._drains.get(model)
+            if current is None:
+                current = self._start(model, why, None, resume=False)
+            elif current.why == "idle" and why != "idle":
+                self._upgrade(current, why)
             result = await self._wait(current, progress)
+            if result is None:  # the gate stopped under it
+                break
             if result or not current.busy or why == "idle":
                 self._tell(ended, current)
                 return result
+        self._tell_end(ended, "gate_stopping")
         return False
 
     async def resume(self, model: str, drain_id: str | None, why: DrainWhy | None, *,
@@ -306,9 +335,13 @@ class Drainer:
         request can be in flight to a model that never became ready (the controller's ruling at Task 16;
         _late_start)."""
         if self._stopped:
+            self._tell_end(ended, "gate_stopping")
             return False
         current = self._drains.get(model) or self._start(model, why or "unknown", drain_id, resume=True)
         result = await self._wait(current, progress)
+        if result is None:
+            self._tell_end(ended, "gate_stopping")
+            return False
         self._tell(ended, current)
         return result
 
@@ -377,19 +410,40 @@ class Drainer:
         box = [progress] if progress is not None else None
         if box is not None:
             d.listeners.append(box)
+            if d.settling:  # it waits for the model's load: so does this caller, and hears so
+                self._progress(d, self._after_load_line(d.model), only=box)
         try:
             return await asyncio.shield(d.task)
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if d.task.cancelled() and self._stopped and not (caller is not None and caller.cancelling()):
+                return None  # the gate stopped under the drain, not the caller going: drain() says so
+            raise
         finally:
             if box is not None:
                 d.listeners = [other for other in d.listeners if other is not box]
 
+    @classmethod
+    def _tell(cls, ended: Callable[[DrainEnd], Any] | None, d: _Drain) -> None:
+        if d.end is not None:
+            cls._tell_end(ended, d.end)
+
     @staticmethod
-    def _tell(ended: Callable[[DrainEnd], Any] | None, d: _Drain) -> None:
-        if ended is not None and d.end is not None:
+    def _tell_end(ended: Callable[[DrainEnd], Any] | None, end: DrainEnd) -> None:
+        if ended is not None:
             try:
-                ended(d.end)
+                ended(end)
             except Exception as err:
-                _log.warning("how the drain of %s ended couldn't be passed on (%s)", d.model, err)
+                _log.warning("how a drain ended (%s) couldn't be passed on (%s)", end, err)
+
+    def _upgrade(self, d: _Drain, why: DrainWhy) -> None:
+        """Dan's command joining an idle drain is the stronger reason: the drain takes its why, which its record and
+        its `unloaded` notification then carry (the controller's ruling at Task 16's review)."""
+        d.why = why
+        record = self.state.models.get(d.model)
+        if record is not None and record is d.record and record.drain_why == "idle":
+            record.drain_why = why
+            self._note()
 
     async def _run(self, d: _Drain) -> bool:
         try:
@@ -405,21 +459,38 @@ class Drainer:
                 del self._drains[d.model]
 
     async def _steps(self, d: _Drain) -> bool:
-        record = await self._settled(d.model)
-        if record is None:
-            return self._not_loaded(d)
-        d.record = record
-        saved = record.unload_requested_at is not None and (record.state == "draining" or record.drain_id is not None)
-        if saved and not d.resume:
-            # A drain restore saved (Task 13), which nothing has resumed yet: this is that drain, under its id and why.
-            d.resume, d.drain_id, d.why = True, record.drain_id, record.drain_why or "unknown"
-        if record.state == "stopping":  # its unload already under way: a resumed one, or the admitter's late start's
+        while True:
+            record = await self._settled(d)
+            if record is None:
+                return self._not_loaded(d)
+            d.record = record
+            saved = record.unload_requested_at is not None and (record.state == "draining"
+                                                                or record.drain_id is not None)
+            if saved and not d.resume:
+                # A drain restore saved (Task 13), which nothing has resumed yet: this is that drain, under its id
+                # and why.
+                d.resume, d.drain_id, d.why = True, record.drain_id, record.drain_why or "unknown"
+            if record.state != "stopping":
+                break
+            # Its unload already under way: a resumed one, or the admitter's late start's. Dated from its call's start
+            # as saved (unload_call_at), so its stuck alert keeps its key across a restart.
             d.ours = d.resume
             d.drain_id = d.drain_id or record.drain_id or _new_id()
-            started = record.unload_requested_at
-            d.call_started_at = started if started is not None else self._clock()
+            d.call_started_at = self._stop_started(record)
+            d.lines_sent = 0
             self._start_ticker(d)
-            return await self._until_gone(d)
+            if d.resume:
+                return await self._until_gone(d)
+            done = await self._until_gone(d, own=False)
+            if done is not None:
+                return done
+            # A stop that wasn't the drainer's own was undone (the admitter's abort, never taken): no more lines and no
+            # stuck alert; back through its steps, and drained as any drain (the controller's ruling at Task 16's
+            # review). No `drain` was sent, so the sent-unload rule doesn't bind it.
+            self._stop_ticker(d)
+            d.call_started_at = None
+            _log.warning("the stop of %s that its drain waited on was undone, and /running still lists it: it is "
+                         "drained as any other", d.model)
         if d.resume and d.why == "late_start" and record.state == "draining":
             done = await self._late_start(d, record)
             if done is not None:
@@ -438,10 +509,20 @@ class Drainer:
                 _log.warning("not idle-unloading %s: the front's call to the gate isn't open, so nothing can drain it; "
                              "it is tried again once the front is back", d.model)
             return False
+        if d.why == "idle" and not d.resume and not self._still_idle(d.model):
+            # A pin, a live session or a use came between idle_due and here: nothing is marked or unloaded (the
+            # controller's ruling at Task 16's review).
+            _log.info("not idle-unloading %s: a pin, a session or a request came since it was found idle", d.model)
+            d.busy, d.end = True, "busy"
+            return False
         d.drain_id = d.drain_id or _new_id()
         d.ours = True
         record.drain_id, record.drain_why, record.state = d.drain_id, d.why, "draining"
-        await self._guarded_save()  # saved before `drain` is sent (the controller's ruling at Task 13's review)
+        # Saved before `drain` is sent (the controller's ruling at Task 13's review), within SAVE_BOUND_S, or nothing is
+        # sent (at Task 16's review).
+        if not await self._saved_first():
+            _log.error("the gate couldn't save its state before draining %s, so no drain was sent", d.model)
+            return self._undo(d, undrain=d.resume, end="not_saved")
         if self.state.models.get(d.model) is not record:
             return self._lost(d)
         self.send_owed()  # an owed undrain goes ahead of this drain
@@ -500,16 +581,37 @@ class Drainer:
                 return await self._until_gone(d)
             if await self._call(d, record):
                 return await self._until_gone(d)
-            record.state = "draining"  # its unload still requested: never ready while it starts
+            # Its unload still requested: never ready while it starts.
+            record.state, record.unload_call_at = "draining", None
             self._note()
             self._admitter.changed()
             await self._sleep(self._poll_s)
 
-    async def _settled(self, model: str) -> ModelRecord | None:
-        """The model's record once no load of the admitter's has it starting; None when there is none."""
-        while (record := self.state.models.get(model)) is not None and record.state == "starting":
-            await self._sleep(self._poll_s)
+    async def _settled(self, d: _Drain) -> ModelRecord | None:
+        """The model's record once no load of the admitter's has it starting; None when there is none. While it waits,
+        each caller hears so, once: an AfterLoadProgress (the controller's ruling at Task 16's review)."""
+        try:
+            while (record := self.state.models.get(d.model)) is not None and record.state == "starting":
+                d.settling = True
+                if not d.after_load:
+                    d.after_load = True
+                    self._progress(d, self._after_load_line(d.model))
+                await self._sleep(self._poll_s)
+        finally:
+            d.settling = False
         return record
+
+    def _after_load_line(self, model: str) -> dict:
+        return {"kind": "after_load", "model": model, "label": self._label(model)}
+
+    @staticmethod
+    def _stop_started(record: ModelRecord) -> float | None:
+        """When the stop under way began: its call's start as saved, else when its unload was requested."""
+        return record.unload_call_at if record.unload_call_at is not None else record.unload_requested_at
+
+    def _still_idle(self, model: str) -> bool:
+        """idle_due's rule, for one model, now: no request, pin, live session or use since it was found idle."""
+        return _idle(self._clock(), self.state, self.registry, self._front.snapshot, self._live, model)
 
     async def _before_call(self, d: _Drain, drained_at: float, dropped: asyncio.Event) -> bool:
         """The gate's own step between `drained` and the unload call, saving the unload as requested: True once done
@@ -549,7 +651,8 @@ class Drainer:
         /running shows it stopping is an unload under way, which is never undone (the controller's ruling at Task
         16)."""
         d.call_started_at = self._clock()
-        record.state = "stopping"  # from the moment its unload call begins (gateproto.ModelState)
+        # From the moment its unload call begins (gateproto.ModelState), and that moment saved, the stop's identity.
+        record.state, record.unload_call_at = "stopping", d.call_started_at
         self._note()
         self._admitter.changed()
         d.lines_sent = 0
@@ -577,8 +680,15 @@ class Drainer:
                          type(err).__name__)
         return True
 
-    async def _until_gone(self, d: _Drain) -> bool:
-        while await self._shown(d.model) is not None:  # never decided on a read that failed
+    async def _until_gone(self, d: _Drain, *, own: bool = True) -> bool | None:
+        """Until /running shows the model gone, never decided on a read that failed. For a stop that isn't the
+        drainer's own (`own` false: the admitter's abort), None once the record it marked leaves `stopping` while
+        /running still lists the model: that stop was undone."""
+        while (shown := await self._shown(d.model)) is not None:
+            if not own and shown is not _UNREAD:
+                record = self.state.models.get(d.model)
+                if record is not d.record or record.state != "stopping":
+                    return None
             await self._sleep(self._poll_s)
         return self._gone(d)
 
@@ -627,7 +737,7 @@ class Drainer:
         record = self.state.models.get(d.model)
         if record is not None and record is d.record:
             record.state = "ready"
-            record.unload_requested_at = record.drain_id = record.drain_why = None
+            record.unload_requested_at = record.drain_id = record.drain_why = record.unload_call_at = None
             self._note()
         if undrain and d.drain_id is not None:
             self._final({"op": "undrain", "model": d.model, "drain_id": d.drain_id}, d.drain_id)
@@ -739,11 +849,28 @@ class Drainer:
             return None
         return result if inspect.isawaitable(result) else None
 
-    async def _guarded_save(self) -> None:
-        """on_change, and its awaitable, if any, awaited: a save that must come first. Its failure is logged."""
-        step = self._save()
-        if step is not None:
-            await asyncio.wait([self._saving(step)])
+    async def _saved_first(self) -> bool:
+        """on_change, and its awaitable, if any, awaited, within SAVE_BOUND_S: a save that must come first. False when
+        it raised, failed, or didn't end in time (cancelled then)."""
+        try:
+            step = self._on_change()
+        except Exception:
+            _log.exception("saving the gate's state after a change in a drain failed")
+            return False
+        if not inspect.isawaitable(step):
+            return True
+        saving = self._saving(step)
+        deadline = self._clock() + SAVE_BOUND_S
+        try:
+            while not saving.done():
+                left = deadline - self._clock()
+                if left <= 0:
+                    return False
+                await self._wait_any(left, [saving], [])
+        finally:
+            if not saving.done():
+                saving.cancel()
+        return not saving.cancelled() and saving.exception() is None
 
     def _note(self) -> None:
         """A change whose save needn't come first: on_change, its awaitable, if any, left to finish by itself."""
@@ -773,8 +900,8 @@ class Drainer:
         known = self.registry.models.get(model)
         return known.label if known else model
 
-    def _progress(self, d: _Drain, line: dict) -> None:
-        for box in list(d.listeners):
+    def _progress(self, d: _Drain, line: dict, *, only: list | None = None) -> None:
+        for box in [only] if only is not None else list(d.listeners):
             try:
                 box[0](line)
             except Exception as err:  # a stream that went: the drain goes on
@@ -801,30 +928,30 @@ def idle_due(now: float, state: GateState, registry: Registry, snapshot: Infligh
     isn't known."""
     if snapshot is None:
         return []
-    idle_s = registry.gate.idle_unload_min * 60
-    inflight = snapshot.get("models") or {}
-    held = set(snapshot.get("draining") or ())
-    due = []
-    for name, model in registry.models.items():
-        record = state.models.get(name)
-        if model.resident or record is None or record.state != "ready" or name in held:
-            continue
-        if record.unload_requested_at is not None or record.drain_id is not None:
-            continue
-        counts = inflight.get(name) or {}
-        if (counts.get("count") or 0) > 0:
-            continue
-        pin = state.pins.get(name)
-        if pin is not None and (pin.until is None or pin.until > now):
-            continue
-        if any(session.model == name and _live(live, session) for session in state.sessions.values()):
-            continue
-        last = record.last_use
-        if counts.get("last_end_at") is not None:
-            last = max(last, counts["last_end_at"])
-        if now - last >= idle_s:
-            due.append(name)
-    return due
+    return [name for name, model in registry.models.items()
+            if not model.resident and _idle(now, state, registry, snapshot, live, name)]
+
+
+def _idle(now: float, state: GateState, registry: Registry, snapshot: InflightSnapshot | None,
+          live: Callable[[Session], bool], name: str) -> bool:
+    """idle_due's rule for one model, which a fresh idle drain checks again before it marks the model."""
+    record = state.models.get(name)
+    if snapshot is None or record is None or record.state != "ready" or name in (snapshot.get("draining") or ()):
+        return False
+    if record.unload_requested_at is not None or record.drain_id is not None:
+        return False
+    counts = (snapshot.get("models") or {}).get(name) or {}
+    if (counts.get("count") or 0) > 0:
+        return False
+    pin = state.pins.get(name)
+    if pin is not None and (pin.until is None or pin.until > now):
+        return False
+    if any(session.model == name and _live(live, session) for session in state.sessions.values()):
+        return False
+    last = record.last_use
+    if counts.get("last_end_at") is not None:
+        last = max(last, counts["last_end_at"])
+    return now - last >= registry.gate.idle_unload_min * 60
 
 
 def _live(live: Callable[[Session], bool], session: Session) -> bool:
@@ -981,25 +1108,32 @@ class Sessions:
     """Each uid's sessions (*The front and the gate*): a session keeps its model loaded while it is live, tied to one
     of its uid's live processes, recorded this boot with its pid's start time, so a pid handed out again keeps
     nothing (gate.state.session_live). `proc` is where processes are read (a tree the tests build); `may_hold(uid)` is
-    false for `spark` and `spark-front`, which run the stack itself; `on_change` is called after every change to the
-    state, so the core saves it."""
+    false for `spark` and `spark-front`, which run the stack itself; `is_model(name)` is true for a model the registry
+    has, the only names a session may name (the controller's ruling at Task 16's review); `on_change` is called after
+    every change to the state, so the core saves it."""
 
     def __init__(self, state: GateState, clock: Callable[[], float], *, proc: Path = procs.PROC,
-                 may_hold: Callable[[int], bool], on_change: Callable[[], Any] | None = None):
+                 may_hold: Callable[[int], bool], is_model: Callable[[str], bool],
+                 on_change: Callable[[], Any] | None = None):
         self.state = state
         self._clock = clock
         self._proc = Path(proc)
         self._may_hold = may_hold
+        self._is_model = is_model
         self._on_change = on_change or (lambda: None)
 
     def register(self, uid: int, pid: int, model: str, label: str) -> Session | Refusal:
-        """A new session for `uid` on `model`, held by its process `pid`: one that is running, and the caller's by its
-        real uid (its `/proc` `Uid:`, procs.owner_uid). At most SESSIONS_PER_UID per uid, counted once the uid's ended
-        ones are gone. The label goes on one line of at most LABEL_MAX characters, since Dan's terminal shows it."""
+        """A new session for `uid` on `model`, a model the registry has by its name, held by its process `pid`: one
+        that is running, and the caller's by its real uid (its `/proc` `Uid:`, procs.owner_uid). At most
+        SESSIONS_PER_UID per uid, counted once the uid's ended ones are gone. The label goes on one line of at most
+        LABEL_MAX characters, since Dan's terminal shows it."""
         now = self._clock()
         if not self._may_hold(uid):
             return Refusal(403, "This account runs the stack itself, so it can't hold a session: a session keeps a "
                                 "model loaded for an agent's own process.")
+        if not (isinstance(model, str) and self._is_model(model)):
+            return Refusal(409, f"There's no model {_shown_id(str(model))!r} in the registry, so no session can "
+                                "keep it loaded.")
         whole = isinstance(pid, int) and not isinstance(pid, bool)
         owner = self._owner(pid) if whole and pid >= 1 else None
         if owner is None:
@@ -1012,7 +1146,7 @@ class Sessions:
             return Refusal(409, f"This account already holds {SESSIONS_PER_UID} sessions, the most one account "
                                 "may. End one with `spark session end <id>`; each also ends with its process, or "
                                 f"{messages.duration(SESSION_TTL_S)} after its last renewal.")
-        session = Session(id=_new_id(), uid=uid, pid=pid, model=messages._one_line(model), label=_label(label),
+        session = Session(id=_new_id(), uid=uid, pid=pid, model=model, label=_label(label),
                           started_at=now, renewed_at=now, boot_id=self.state.boot_id, start_time=started)
         self.state.sessions[session.id] = session
         self._changed()
@@ -1094,9 +1228,9 @@ def _label(label: str) -> str:
     return line if len(line) <= LABEL_MAX else line[:LABEL_MAX - 1] + "…"
 
 
-def _shown_id(session_id: str) -> str:
-    """A session id as a refusal shows it: the caller's text, on one line and short."""
-    return messages._one_line(session_id)[:64]
+def _shown_id(text: str) -> str:
+    """A session id, or a model name, as a refusal shows it: the caller's text, on one line and short."""
+    return messages._one_line(text)[:64]
 
 
 def _no_session(session_id: str) -> Refusal:

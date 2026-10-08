@@ -1236,6 +1236,24 @@ def test_an_unload_the_front_cant_drain_says_why_and_where_to_look():
     assert "*) journalctl -u local-ai-$(s).service" in recipe and "front)" not in recipe
 
 
+def test_a_drains_other_waits_and_ends_say_why_in_dans_words():
+    # The controller's rulings at Task 16's review: Dan's command hears why an unload waits for a load, and why it
+    # ended when the gate couldn't save its state or is stopping (Room sends each, Task 17).
+    waits = messages.unload_after_load("the coder")
+    unsaved = messages.state_not_saved("the coder")
+    stopping = messages.gate_stopping("the coder")
+    assert waits == "Waiting for the coder to finish loading before unloading it…"
+    assert unsaved == ("The coder wasn't unloaded: the gate couldn't save its state. On the Spark, `make logs s=gate` "
+                       "shows why.")
+    assert stopping == ("The gate is stopping, so it can't finish unloading the coder now. Once it's back, `spark "
+                        "status` on the Spark shows whether the coder is still loaded.")
+    assert messages.state_not_saved("Gemma").startswith("Gemma wasn't unloaded: ")
+    assert [messages.pi_retry_match(text) for text in (waits, unsaved, stopping)] == [None, None, None]
+    makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
+    recipe = makefile[makefile.index("\nlogs:"):makefile.index("\ntunnel:")]
+    assert "*) journalctl -u local-ai-$(s).service" in recipe and "gate)" not in recipe  # s=gate: the gate's unit
+
+
 STUCK = {"at": at(9, 19), "why": "stuck_stopping", "model_label": "the coder", "since": at(9, 14)}
 STUCK_TEXT = ("llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, "
               "`make logs s=llama-swap` shows why.")
