@@ -25,14 +25,16 @@ def test_no_command_prints_help(capsys):
 def test_a_refusal_says_why_in_one_line(tmp_path, capsys):
     # RegistryError, RenderError and VersionsError are ValueErrors whose message is the reason.
     data = yaml.safe_load((FIX / "models.yaml").read_text())
-    data["models"]["coder"]["footprint_gib"] = 70
+    data["models"]["coder"]["footprint_gib"] = 72
     registry = tmp_path / "models.yaml"
     registry.write_text(yaml.safe_dump(data))
     out = tmp_path / "out"
     code = cli.main(["render", "--out", str(out), "--registry", str(registry), "--versions", str(FIX / "versions.yaml")])
     assert code == 1
-    assert capsys.readouterr().err == ("spark render: the model set needs 92.0 GiB but the budget allows 78.0 GiB "
-                                       "(allocatable 102 − reserve 24)\n")
+    assert capsys.readouterr().err == ("spark render: coder: needs 72.0 GiB, but 71.0 GiB is free for a load beside "
+                                       "the always-loaded models with nothing else running, so the gate would refuse "
+                                       "it even then (needs_room: true marks a model that loads only once make-room "
+                                       "has freed room for it)\n")
     assert not out.exists()  # a refused render writes nothing
 
 

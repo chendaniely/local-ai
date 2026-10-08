@@ -7,11 +7,11 @@ import os
 import re
 import secrets
 import stat
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 from pathlib import Path
 
 import yaml
 
+from spark.budget import check_set
 from spark.registry import Model, Registry, Source, load_registry
 from spark.versions import Component, load_versions
 
@@ -90,7 +90,6 @@ _UNLISTED = ("render allows only the engine options on its list (ALLOWED, in spa
 # llama-swap splits a command as a POSIX shell does, so a word with one of these reaches the engine as other words:
 # `--ho\st` as --host, `a.bin --host 0.0.0.0` as three.
 _SPLITS = re.compile(r"[\s'\"\\]")
-TENTH = Decimal("0.1")
 
 
 class RenderError(ValueError):
@@ -173,23 +172,13 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
     return cmd + list(model.args)
 
 
-def _gib(value: float) -> Decimal:
-    """The number as the registry gave it. In binary floats 72.1 − 22.1 is 49.99999999999999, which would refuse a
-    50 GiB set that fits exactly."""
-    return Decimal(repr(value))
-
-
-def check_budget(registry: Registry) -> None:
-    budget = registry.budget
-    with localcontext(prec=400):  # every digit of any finite float, so even an absurd number sums and rounds exactly
-        allocatable, reserve = _gib(budget.allocatable_gib), _gib(budget.reserve_gib)
-        room = allocatable - reserve
-        total = sum((_gib(m.footprint_gib) for m in registry.models.values()), Decimal(0))
-        if total > room:
-            # One decimal, each rounded against the set: the need up, the room down. So the two can't read as a fit.
-            raise RenderError(f"the model set needs {total.quantize(TENTH, ROUND_CEILING):f} GiB but the budget "
-                              f"allows {room.quantize(TENTH, ROUND_FLOOR):f} GiB "
-                              f"(allocatable {allocatable:f} − reserve {reserve:f})")
+def check_budget(registry: Registry) -> list[str]:
+    """Rule 9's checks of the registry (budget.check_set): the first error refuses it, as a RenderError; the warnings
+    come back, for `spark render` to say."""
+    check = check_set(registry)
+    if check.errors:
+        raise RenderError(check.errors[0])
+    return check.warnings
 
 
 def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
@@ -336,4 +325,6 @@ def run(args: argparse.Namespace) -> int:
     files = render(registry, versions, _load("registry", args.registry, Path.read_text))
     write_tree(files, args.out)
     print(f"render: {len(files)} files → {args.out}")
+    for warning in check_budget(registry):  # render() refused the registry on any error, so only the warnings are left
+        print(f"render: warning — {warning}")
     return 0

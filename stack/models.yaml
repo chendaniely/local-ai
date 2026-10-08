@@ -1,5 +1,8 @@
 # The one file to edit to add, swap or retire a model. `spark render` refuses anything invalid,
-# including a model set that doesn't fit allocatable − reserve.
+# including always-loaded models that, with the reserve, don't fit idle MemAvailable, and an
+# on-demand model that can't load beside them with the reserve kept (plan.md's rule 9); it warns
+# when every model loaded at once would pass the CUDA-allocatable ceiling, or leave memory under the
+# brake's warn line.
 # A model's `args` may set only the engine options on render's list, ALLOWED in
 # spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
 # An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).
@@ -19,7 +22,8 @@
 #                  (idle_unload_min), and, per engine kind, whether the gate counts an engine's RssAnon growth as
 #                  memory its model already holds (owed_reads_rss).
 # Each model has a label, its plain-words name in messages; a resident may say what uses it (used_by), for
-# make-room's list; and an on-demand model that loads only after make-room frees room for it sets needs_room.
+# make-room's list; and an on-demand model that loads only after make-room frees room for it sets needs_room, and
+# render checks it against idle MemAvailable less the reserve, within the ceiling, not beside the always-loaded ones.
 budget:
   allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
   allocatable_measured: false  # true once the ceiling above is measured on this box (plan.md, rule 9)

@@ -210,13 +210,24 @@ def test_root_runs_compose_in_its_own_copy_of_the_project():
     assert f"\nWorkingDirectory={COMPOSE_DIR}\n" in unit and "/opt/local-ai" not in unit
 
 
-def test_a_set_that_breaks_the_budget_is_refused(tmp_path):
-    data = yaml.safe_load((FIX / "models.yaml").read_text())
-    data["models"]["coder"]["footprint_gib"] = 70
+def test_a_model_that_cant_load_beside_the_residents_is_refused(tmp_path):
+    # Rule 9: the gate's formula at idle with the fixture's residents loaded, min(117 − 22 − 24, 102 − 22) = 71.
+    path = registry_with(tmp_path, lambda d: d["models"]["coder"].update(footprint_gib=72))
+    with pytest.raises(RenderError, match=r"^coder: needs 72\.0 GiB, but 71\.0 GiB is free for a load beside the "):
+        rendered(path)
+
+
+def test_the_2a_set_renders_where_phase_1s_check_refused_it(tmp_path):
+    # Phase 1's check summed every footprint against allocatable − reserve, 102 − 24 = 78, which counted the reserve
+    # twice (plan.md, rule 9, corrected 2026-10-07). With 2a's coder at its ~41 the set comes to 84, within the
+    # ceiling, and the coder fits beside the residents with the reserve kept: 41 of 117 − 43 − 24 = 50.
+    data = yaml.safe_load((ROOT / "stack/models.yaml").read_text())
+    coder = next(name for name, m in data["models"].items() if "coder" in m["roles"])
+    data["models"][coder]["footprint_gib"] = 41
     path = tmp_path / "models.yaml"
     path.write_text(yaml.safe_dump(data))
-    with pytest.raises(RenderError, match="budget"):
-        rendered(path)
+    assert spark.render.check_budget(load_registry(path)) == []  # and no warning: 117 − 84 leaves 33, above 28
+    assert "llama-swap.yaml" in rendered(path, ROOT / "stack/versions.yaml")
 
 
 def test_the_real_registry_renders():
@@ -469,33 +480,37 @@ def test_open_webui_needs_exactly_one_model_for_each_job(tmp_path, change, refus
 
 
 @pytest.mark.parametrize("allocatable, coder, refusal", [
-    pytest.param(102, 56.4, "needs 78.4 GiB but the budget allows 78.0 GiB (allocatable 102 − reserve 24)",
-                 id="78.4 against 78"),
-    pytest.param(102, 56.01, "needs 78.1 GiB but the budget allows 78.0 GiB (allocatable 102 − reserve 24)",
-                 id="78.01 against 78"),
-    pytest.param(102.05, 56.06, "needs 78.1 GiB but the budget allows 78.0 GiB (allocatable 102.05 − reserve 24)",
-                 id="78.06 against 78.05"),
+    pytest.param(102, 71.4, "needs 71.4 GiB, but 71.0 GiB", id="71.4 against 71"),
+    pytest.param(102, 71.01, "needs 71.1 GiB, but 71.0 GiB", id="71.01 against 71"),
+    # The ceiling term binds: 72.05 − 22 leaves 50.05.
+    pytest.param(72.05, 50.06, "needs 50.1 GiB, but 50.0 GiB", id="50.06 against 50.05"),
 ])
 def test_a_refused_budget_never_reads_as_a_fit(tmp_path, allocatable, coder, refusal):
-    # The fixture's other models take 22 GiB, and ":.0f" showed 78.4 against 78 GiB of room (102 − 24) as "needs ~78
-    # GiB but the budget allows 78 GiB". Now one decimal, each rounded against the set: the need up, the room down.
+    # Phase 1's ":.0f" showed 78.4 against 78 GiB of room as "needs ~78 GiB but the budget allows 78 GiB". One decimal,
+    # each rounded against the load: the need up, the room down. The fixture's residents take 22 GiB.
     path = registry_with(tmp_path, lambda d: (d["budget"].update(allocatable_gib=allocatable),
                                               d["models"]["coder"].update(footprint_gib=coder)))
     with pytest.raises(RenderError) as err:
         rendered(path)
-    assert str(err.value) == f"the model set {refusal}"
+    assert str(err.value).startswith(f"coder: {refusal} is free for a load beside the always-loaded models ")
 
 
-def test_a_set_that_fits_exactly_renders(tmp_path):
-    # In binary floats 72.1 − 22.1 is 49.99999999999999, which refused the fixture's 50 GiB though it fits exactly.
-    path = registry_with(tmp_path, lambda d: d["budget"].update(allocatable_gib=72.1, reserve_gib=22.1))
+@pytest.mark.parametrize("term, coder", [({"allocatable_gib": 72.1}, 50.1), ({"idle_available_gib": 102.1}, 56.1)],
+                         ids=["ceiling", "idle"])
+def test_a_model_that_fits_exactly_renders(tmp_path, term, coder):
+    # Beside the fixture's 22 GiB of residents, in binary floats 72.1 − 22 is 50.099999999999994 and 102.1 − 22 − 24 is
+    # 56.099999999999994, which would refuse a coder of 50.1 or 56.1 GiB, though each fits exactly.
+    path = registry_with(tmp_path, lambda d: (d["budget"].update(term),
+                                              d["models"]["coder"].update(footprint_gib=coder)))
     assert "llama-swap.yaml" in rendered(path)
 
 
 def test_an_absurd_footprint_is_still_refused_with_its_numbers(tmp_path):
-    # Decimal's default 28 digits can't hold 1e30 to a tenth, and the refusal would crash instead of saying why.
-    path = registry_with(tmp_path, lambda d: d["models"]["coder"].update(footprint_gib=1e30))
-    with pytest.raises(RenderError, match=r"^the model set needs 1000000000000000000000000000022\.0 GiB "):
+    # Decimal's default 28 digits can't hold 1e30 to a tenth, and the refusal would crash instead of saying why. Nor
+    # could they hold the sum: 1e30 + 1.5 + 2.5 + the 24 GiB reserve.
+    path = registry_with(tmp_path, lambda d: d["models"]["vision-chat"].update(footprint_gib=1e30))
+    with pytest.raises(RenderError, match=r"^the always-loaded models and the reserve need "
+                                          r"1000000000000000000000000000028\.0 GiB together"):
         rendered(path)
 
 
@@ -567,6 +582,19 @@ def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, 
     assert cli.main(["render", "--out", str(out), *files]) == 0
     assert capsys.readouterr().out == f"render: 8 files → {out}\n"
     assert tree(out) == (rendered() if given else real())
+
+
+def test_spark_render_prints_its_warnings(tmp_path, monkeypatch, capsys):
+    # A warning doesn't refuse the set: render writes it, says what it found, and exits 0. Here every model loaded
+    # leaves 117 − 50 = 67 GiB available, under a warn line of 70.
+    monkeypatch.chdir(ROOT)
+    out, registry = tmp_path / "out", registry_with(tmp_path, lambda d: d["brake"].update(warn_gib=70))
+    assert cli.main(["render", "--out", str(out), "--registry", str(registry),
+                     "--versions", str(FIX / "versions.yaml")]) == 0
+    assert capsys.readouterr().out == (f"render: 8 files → {out}\n"
+                                       "render: warning — every model loaded at once would leave 67.0 GiB available, "
+                                       "under the brake's warn line, 70.0 GiB\n")
+    assert tree(out) == rendered(registry)
 
 
 @pytest.mark.parametrize("path", [FIX / "models.yaml", ROOT / "stack/models.yaml"], ids=["fixture", "real"])
