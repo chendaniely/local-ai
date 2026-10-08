@@ -1297,7 +1297,7 @@ def test_make_rooms_own_words_for_a_run_refused_part_way_and_its_other_refusals(
         "reboot.")
     assert messages.room_partly_held(["the coder", "whisper"], refused, at(18, 0), now=at(9, 0)).endswith(
         "stays held for you until 18:00, `spark make-room --done` or a reboot.")
-    texts = [messages.room_plan_gone(), messages.room_not_saved(), messages.room_for_s(),
+    texts = [messages.room_plan_gone(), messages.room_not_saved(had_hold=False), messages.room_for_s(),
              messages.not_loaded("the coder"), messages.no_such_model("nope", "unload"),
              messages.no_such_model("nope", "load")]
     assert texts == [
@@ -1365,6 +1365,36 @@ def test_brake_released_says_the_reloads_are_under_way_not_done():
     assert "Reloaded" not in _plain(messages.NOTIFICATION_DOC["brake_released"][1])
     with pytest.raises(ValueError, match="^brake_released's words take no reloaded"):
         say("brake_released", at=at(3, 40), available_gib=64, reloaded=["Gemma"])
+
+
+def test_fix_round_1s_words_at_task_17s_review():
+    # The controller's rulings at Task 17's review.
+    # A release with no MemAvailable reading is still sent, and says so.
+    assert say("brake_released", at=at(3, 40), available_unknown=True, reloading=["Gemma"]) == (
+        "Brake released at 03:40; what was available couldn't be read. Reloading Gemma.")
+    with pytest.raises(ValueError, match="^brake_released's available_unknown is for no reading"):
+        say("brake_released", at=at(3, 40), available_gib=64, available_unknown=True)
+    # A run whose hold couldn't be saved: true whether or not a hold stood before.
+    assert messages.room_not_saved(had_hold=False) == (
+        "make-room held nothing and unloaded nothing: the gate couldn't save its state. On the Spark, `make logs "
+        "s=gate` shows why.")
+    assert messages.room_not_saved(had_hold=True) == (
+        "make-room unloaded nothing and held no more: the gate couldn't save its state, so the hold you had stands as "
+        "it was. On the Spark, `make logs s=gate` shows why.")
+    # `spark unload` of a pinned model ends the pin, and says so.
+    assert messages.unloaded("the coder", pin_ended=True) == "Unloaded the coder; the pin on it ended."
+    assert messages.room_ended("the coder", pinned=True, sessions=["agent's pi"], by="unload") == (
+        "`spark unload` unloaded the coder: your pin on it ended, and agent's pi lost it.")
+    # Two unplanned restarts within the hour: one notification, naming each `spark load`.
+    restart = {"after": "restart", "again": True, "labels": ["Gemma"], "commands": ["small"]}
+    assert say("resident_waiting", **restart) == (
+        "The model service restarted again within an hour of its last unplanned restart, so Gemma won't reload by "
+        "itself. On the Spark, `spark load small` loads it.")
+    with pytest.raises(ValueError, match="^resident_waiting's labels and commands are for after restart"):
+        say("resident_waiting", label="Gemma", after="crash", again=True, command="small", labels=["Gemma"])
+    texts = [say("brake_released", at=at(3, 40), available_unknown=True), messages.room_not_saved(had_hold=True),
+             messages.unloaded("the coder", pin_ended=True), say("resident_waiting", **restart)]
+    assert [messages.pi_retry_match(text) for text in texts] == [None] * len(texts)
 
 
 STUCK = {"at": at(9, 19), "why": "stuck_stopping", "model_label": "the coder", "since": at(9, 14)}

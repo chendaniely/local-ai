@@ -29,7 +29,8 @@ from spark.budget import ALL, Candidate
 from spark.gate.admission import Admitted, Admitter
 from spark.gate.policy import Drainer, FrontChannel
 from spark.gate.room import Preloader, ReleaseResult, Room, RoomDone, backoff, brake_release_due
-from spark.gate.state import BrakeMark, GateState, ModelRecord, Pin, RoomHold, Session
+from spark.gate.state import (BrakeMark, GateState, ModelRecord, Pin, RoomHold, Session, load_state, restore,
+                              save_state)
 from spark.gateproto import (AUTO_RELEASE_EVERY_S, LOAD_CALL_TIMEOUT_S, PROGRESS_KINDS, RELEASE_AFTER_S,
                              RESIDENT_RELOAD_EVERY_S, STOPPING_EVERY_S)
 from spark.hold import Hold, read_hold, release_hold, write_hold
@@ -224,6 +225,12 @@ class Swap:
     def drops(self, model: str) -> None:
         """The load call ends unknown (the client's timeout, say); v257 goes on with the start."""
         self._loads.pop(model).set_result(LoadOutcome.unknown("timeout"))
+
+    def exits(self, model: str) -> None:
+        """The start ends by itself, its command exited (process_command.go:556-559): v257's 500."""
+        self._stopped(model)
+        self._loads.pop(model).set_result(LoadOutcome.failed(500, "unspecific error: upstream command exited "
+                                                                  "prematurely"))
 
     async def last_lines(self, model: str, n: int = 20, read_s: float = 1.0) -> list[str]:
         return []
@@ -428,8 +435,8 @@ def test_make_room_starts_from_the_gates_own_figure_not_memavailable_less_the_re
     # from rule 9's figure (the controller's ruling at Task 6), so its retry isn't refused again.
     ceiling = replace(REGISTRY, budget=replace(REGISTRY.budget, allocatable_gib=90))
     world = World(tmp_path, models=all_loaded())
-    world.admitter.registry = ceiling
-    world.room.registry = ceiling
+    world.admitter.registry = ceiling  # Room and Preloader read the admitter's, as last read
+    assert world.room.registry is ceiling
     assert world.admitter.free_for_a_load(uses_hold=True) == 6  # 90 − 84, not 33 − 24
     _, plan = world.room.plan(Decimal(40), DAN)
     assert plan.free_after_gib == 47 and plan.unload == [CODER]
@@ -551,10 +558,16 @@ async def test_the_hold_is_set_and_saved_before_the_first_drain_so_no_reload_tak
         assert world.swap.loads() == []
         plan_id, plan = world.room.plan(Decimal(42), DAN)
         assert plan.unload == [CODER]
+        drains_at_save: list[tuple[float | None, int]] = []
+        world.on_save = lambda: drains_at_save.append(
+            (None if world.state.room_hold is None else world.state.room_hold.size_gib, len(world.front.drains())))
         task = world.task(collect(world.room.execute(plan_id, None, DAN)))
         await settle(world)
         [drain] = world.front.drains()
-        assert world.saves and world.saves[-1] is not None and world.saves[-1].size_gib == 42.0
+        # The first save that holds the room came before any drain was sent (the controller's ruling at Task 17's
+        # review: the order, not only the save).
+        first = next(entry for entry in drains_at_save if entry[0] is not None)
+        assert first == (42.0, 0)
         world.channel.drained(CODER, drain["drain_id"])
         await settle(world)
         assert task.done() and CODER not in world.state.models
@@ -572,7 +585,8 @@ async def test_no_automatic_reload_takes_the_held_room(tmp_path):
         world = World(tmp_path, other=11)
         world.state.room_hold = room_hold(70)
         assert world.admitter.free_for_a_load(uses_hold=True) == 82
-        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
         run = world.task(preloader.run([GEMMA], "boot"))
         await settle(world)
         await world.at(T + 30)
@@ -680,8 +694,11 @@ async def test_a_run_refused_part_way_keeps_the_hold_and_says_what_it_unloaded(t
             "On the Spark, `make logs s=llama-swap` shows why. The room freed so far stays held for you until "
             "`spark make-room --done` or a reboot.")}
         assert set(lines[-1]) == set(gateproto.GateRefusalBody.__annotations__)
+        # Resized as a full run is (the controller's ruling at Task 17's review): the room freed so far, 50 GiB free
+        # for a load, of the 60 asked for.
         hold = world.state.room_hold
-        assert (hold.size_gib, hold.unloaded) == (60.0, [CODER]) and GEMMA in world.state.models
+        assert (hold.size_gib, hold.total_gib, hold.unloaded) == (50.0, 50.0, [CODER]) and GEMMA in world.state.models
+        assert world.admitter.free_for_a_load(uses_hold=True) == 50
 
 
 @pytest.mark.anyio
@@ -742,7 +759,7 @@ async def test_unload_yields_the_count_first(tmp_path):
         assert drain["why"] == "unload"
         world.channel.drained(CODER, drain["drain_id"])
         await settle(world)
-        assert task.done() and lines[-1] == {"unloaded": True} and CODER not in world.state.models
+        assert task.done() and lines[-1] == {"unloaded": True, "pin_ended": False} and CODER not in world.state.models
         assert set(lines[-1]) == set(gateproto.UnloadDone.__annotations__)
 
 
@@ -771,7 +788,7 @@ async def test_an_unload_left_stopping_says_so_every_15_s(tmp_path):
         await world.at(T + 39)
         world.swap.stop_done(CODER)
         await world.at(T + 40)
-        assert task.done() and lines[1:] == [stopping, stopping, {"unloaded": True}]
+        assert task.done() and lines[1:] == [stopping, stopping, {"unloaded": True, "pin_ended": False}]
         assert world.emitted.of("llama_swap_down") == []
 
 
@@ -917,7 +934,8 @@ async def test_the_preload_waits_for_llama_swap_then_loads_one_at_a_time(tmp_pat
                 world.swap.down = False  # llama-swap answers on the fourth try
             await asyncio.sleep(0)
 
-        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap, sleep=sleep)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap, sleep=sleep,
+                              read_hold=lambda: read_hold(world.brake))
         run = world.task(preloader.run(RESIDENTS, "boot"))
         await settle(world)
         assert slept == [1, 2, 4] and world.swap.probes == 4
@@ -945,7 +963,8 @@ async def test_the_preload_skips_the_model_the_brake_marked(tmp_path):
         # the queue for ever, so the preload leaves it out.
         world = World(tmp_path)
         world.state.brake_marks[GEMMA] = BrakeMark(GEMMA, T - 3600, 26.0)
-        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
         run = world.task(preloader.run(RESIDENTS, "boot"))
         await settle(world)
         assert world.swap.loads() == [EMBED]
@@ -962,7 +981,8 @@ async def test_a_preload_that_goes_leaves_its_reloads_queued_and_ends_quietly_wh
         # Its caller going ends only its wait: the reload stays queued. The gate stopping cancels the reloads
         # themselves, and the preload ends with what it has, never raising the gate's own cancellation.
         world = World(tmp_path, other=100)  # nothing fits: Gemma waits for memory
-        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
         run = world.task(preloader.run([GEMMA], "boot"))
         await settle(world)
         run.cancel()
@@ -1021,7 +1041,8 @@ async def test_the_residents_come_back_after_an_unplanned_llama_swap_restart(tmp
                 except LlamaSwapNotSent:
                     break
                 await asyncio.sleep(0.01)
-            preloader = Preloader(admitter, REGISTRY, emitted, time.time, llamaswap=swap, sleep=sleep)
+            preloader = Preloader(admitter, REGISTRY, emitted, time.time, llamaswap=swap, sleep=sleep,
+                                  read_hold=lambda: None)
             results = await preloader.run(RESIDENTS, "restart")
             await restart
             assert slept[:2] == [1, 2]  # it waited for llama-swap to answer again, backing off
@@ -1062,8 +1083,9 @@ async def test_a_resident_killed_outside_the_gate_reloads(tmp_path):
         result = await world.room.release(DAN, room=False, brake=True)
         assert result == ReleaseResult(None, True, ["the embeddings", "whisper"])
         assert world.released == [None] and read_hold(world.brake) is None
+        # A system event: empty uids, so every caller sees it (the controller's ruling at Task 17's review).
         assert [(e.kind, e.text, e.uids) for e in world.state.recent] == [
-            ("brake_released", "brake released with `make brake-release`; reloading the embeddings and whisper", [DAN])]
+            ("brake_released", "brake released with `make brake-release`; reloading the embeddings and whisper", [])]
         await settle(world)
         assert world.swap.loads() == [GEMMA, EMBED]
         assert messages.brake_released_by_dan(result.reloading) == (
@@ -1188,6 +1210,7 @@ def test_brake_release_due_decides_by_rule_5():
 async def test_the_brake_releases_after_5_minutes_above_28_if_the_reloads_fit(tmp_path):
     with anyio.fail_after(BOUND_S):
         world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)  # admission's pass sees the hold: the gate first saw it at T
         # The last automatic release was assumed, after a damaged state: a real one clears that (Task 13's re-review).
         world.state.last_auto_release_at, world.state.release_assumed = T - 7200, True
         world.clock.now = T + 299
@@ -1203,8 +1226,8 @@ async def test_the_brake_releases_after_5_minutes_above_28_if_the_reloads_fit(tm
             "Brake released at 09:05, 114 GiB available. Reloading Gemma, then the embeddings."]
         # *recent* says so, as plan.md's `spark status` example has it (the controller's ruling at Task 17).
         [event] = world.state.recent
-        assert (event.at, event.kind, event.text) == (T + 300, "brake_released",
-                                                      "brake released; reloading Gemma and the embeddings")
+        assert (event.at, event.kind, event.text, event.uids) == (
+            T + 300, "brake_released", "brake released; reloading Gemma and the embeddings", [])
         await settle(world)
         assert world.swap.loads() == [GEMMA]
         world.swap.ready(GEMMA)
@@ -1217,6 +1240,7 @@ async def test_the_brake_releases_after_5_minutes_above_28_if_the_reloads_fit(tm
 async def test_the_brake_waits_while_the_reloads_wouldnt_fit(tmp_path):
     with anyio.fail_after(BOUND_S):
         world = World(tmp_path, models={WHISPER: record(WHISPER)}, other=74, hold=fired_hold(T - 600))
+        await world.at(T)
         assert world.admitter.free_for_a_load(uses_hold=False) == 16  # 117 − 3 − 74 − 24: Gemma is 32
         world.clock.now = T + 300
         assert await world.room.check_brake(T + 300, above_since=T) == "wait"
@@ -1273,6 +1297,7 @@ async def test_the_model_loading_when_the_brake_fired_isnt_reloaded(tmp_path):
     with anyio.fail_after(BOUND_S):
         world = World(tmp_path, models={WHISPER: record(WHISPER)},
                       hold=fired_hold(T - 600, unloaded=(CODER, GEMMA, EMBED), loading=CODER))
+        await world.at(T)
         world.clock.now = T + 300
         assert await world.room.check_brake(T + 300, above_since=T) == "release"
         assert world.emitted.texts("brake_released") == [
@@ -1287,6 +1312,7 @@ async def test_the_model_loading_when_the_brake_fired_isnt_reloaded(tmp_path):
         # A resident that was loading is left out too, and so is any model the brake marked.
         world2 = World(tmp_path / "2", hold=fired_hold(T - 600, unloaded=(GEMMA, EMBED, WHISPER), loading=GEMMA))
         world2.state.brake_marks[EMBED] = BrakeMark(EMBED, T - 7200, None)
+        await world2.at(T)
         world2.clock.now = T + 300
         assert await world2.room.check_brake(T + 300, above_since=T) == "release"
         await settle(world2)
@@ -1301,6 +1327,7 @@ async def test_the_release_never_lifts_a_newer_brakes_hold(tmp_path):
         # The brake fires again between the gate's judgement and its removal of the hold: the new hold stands, the
         # release counts as none, and nothing reloads.
         world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)
         newer = fired_hold(T + 299, episode=2, unloaded=(WHISPER,))
 
         def brake_fires_again():
@@ -1320,6 +1347,7 @@ async def test_the_release_never_lifts_a_newer_brakes_hold(tmp_path):
 async def test_a_release_whose_save_fails_lifts_nothing(tmp_path, caplog):
     with anyio.fail_after(BOUND_S):
         world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)
 
         def fails():
             raise OSError("disk full")
@@ -1362,3 +1390,325 @@ async def test_brake_release_ends_only_the_brakes_hold(tmp_path):
         assert fields["after"] == "brake"
         # Nothing held: a release changes nothing and says so.
         assert await world.room.release(DAN, room=False, brake=True) == ReleaseResult(None, False, [])
+
+
+# Fix round 1 (the controller's rulings at Task 17's review).
+
+@pytest.mark.anyio
+async def test_a_resident_whose_start_ended_by_itself_isnt_reloaded(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Q1's clause: last shown starting, with no unload of the gate's, a start that ended by itself is its load's
+        # outcome, whose load_failed already told Dan: never a crash's reload.
+        world = World(tmp_path, models={EMBED: record(EMBED), WHISPER: record(WHISPER)})
+        gemma = world.admitter.reload(GEMMA, "boot")
+        await settle(world)
+        world.swap.exits(GEMMA)
+        await settle(world)
+        assert gemma.result().code == "load_failed"
+        assert world.room.resident_left(GEMMA, shown="starting", since=T - 1) is False
+        await settle(world)
+        assert world.swap.loads() == [GEMMA] and world.state.resident_reloads == {}
+
+
+@pytest.mark.anyio
+async def test_a_run_whose_caller_goes_puts_back_the_earlier_hold(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The caller goes at the first line, before any drain: nothing unloaded, so the hold that stood before stands.
+        world = World(tmp_path, models=all_loaded())
+        before = room_hold(20, unloaded=[EMBED], created=T - 600)
+        world.state.room_hold = before
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        lines = world.room.execute(plan_id, None, DAN)
+        assert (await lines.__anext__())["kind"] == "unloading"
+        await lines.aclose()
+        await settle(world)
+        assert world.state.room_hold is before and world.swap.unloads() == []
+        assert world.saves[-1] == before
+
+
+@pytest.mark.anyio
+async def test_a_run_whose_caller_goes_mid_drain_is_settled_when_the_drain_ends(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The caller goes while a drain runs: the drain goes on. One that then leaves its model loaded puts back the
+        # hold that stood before; one that unloads it keeps the hold, resized, with the model in it.
+        for how, unloads in (("not_sent", False), ("stops", True)):
+            world = World(tmp_path / how, models=all_loaded(), auto=False)
+            before = room_hold(20, unloaded=[EMBED], created=T - 600)
+            world.state.room_hold = before
+            world.swap.unload_as(CODER, how)
+            plan_id, _ = world.room.plan(Decimal(40), DAN)
+            task = world.task(collect(world.room.execute(plan_id, None, DAN)))
+            await settle(world)
+            [drain] = world.front.drains()
+            task.cancel()
+            await settle(world)
+            assert task.cancelled() and world.state.room_hold is not before  # the drain is still under way
+            world.channel.drained(CODER, drain["drain_id"])
+            await settle(world)
+            if unloads:
+                hold = world.state.room_hold
+                assert CODER not in world.state.models and hold is not before
+                assert (hold.size_gib, hold.unloaded) == (40.0, [EMBED, CODER])
+            else:
+                assert world.state.room_hold is before and CODER in world.state.models
+
+
+@pytest.mark.anyio
+async def test_a_resident_unloaded_on_a_hold_since_replaced_reloads_at_done(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # make-room's run unloads Gemma while another hold has replaced its own: Gemma goes on the hold that stands, so
+        # that one's --done reloads it, and the replaced hold is never written.
+        world = World(tmp_path, models=residents(), auto=False)
+        plan_id, plan = world.room.plan(Decimal(60), DAN)
+        assert plan.unload == [GEMMA]
+        task = world.task(collect(world.room.execute(plan_id, None, DAN)))
+        await settle(world)
+        [drain] = world.front.drains()
+        replaced = world.state.room_hold
+        replacement = room_hold(10, created=T + 5)
+        world.state.room_hold = replacement
+        world.channel.drained(GEMMA, drain["drain_id"])
+        await settle(world)
+        assert task.done() and GEMMA not in world.state.models
+        assert replacement.unloaded == [GEMMA] and replaced.unloaded == []
+        assert world.state.room_hold is replacement and replacement.size_gib == 10.0
+        result = await world.room.release(DAN, room=True, brake=False)
+        assert result.reloading == ["Gemma"]
+        await settle(world)
+        assert world.swap.loads() == [GEMMA]
+
+
+@pytest.mark.anyio
+async def test_a_target_hold_is_capped_at_what_is_free_after_the_run(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Memory moved between the plan and the run (a job of Dan's grew): the hold is what is free for a load after,
+        # never more, so *… free for a load, and … of it is held* stays true.
+        world = World(tmp_path, models=all_loaded())
+        plan_id, plan = world.room.plan(Decimal(40), DAN)
+        assert plan.enough and plan.free_after_gib == 50
+        world.other = 15
+        lines = await collect(world.room.execute(plan_id, None, DAN))
+        assert (lines[-1]["free_gib"], lines[-1]["hold_gib"]) == (35.0, 35.0)
+        assert (world.state.room_hold.size_gib, world.state.room_hold.total_gib) == (35.0, 35.0)
+
+
+def test_the_five_minutes_count_from_no_earlier_than_the_gate_first_saw_the_hold():
+    # The brake's naive local time can read an hour early across a clock going back: the count is also floored at when
+    # the gate first saw the hold (the controller's ruling at Task 17's review).
+    state = GateState(boot_id=BOOT)
+    hold = fired_hold(T - 600)
+    assert brake_release_due(T + 300, T, hold, state, reloads_fit=True, boot_id=BOOT, seen_at=T + 100) == "wait"
+    assert brake_release_due(T + 400, T, hold, state, reloads_fit=True, boot_id=BOOT, seen_at=T + 100) == "release"
+
+
+@pytest.mark.anyio
+async def test_the_gate_counts_from_when_its_admission_first_saw_the_hold(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T + 100)  # admission's first pass with the hold standing
+        world.clock.now = T + 300
+        assert await world.room.check_brake(T + 300, above_since=T) == "wait"
+        world.clock.now = T + 400
+        assert await world.room.check_brake(T + 400, above_since=T) == "release"
+        # A hold admission hasn't seen yet counts from the check itself.
+        write_hold(world.brake, fired_hold(T + 500, episode=2, unloaded=()))
+        world.state.last_auto_release_at = None
+        world.clock.now = T + 4600
+        assert await world.room.check_brake(T + 4600, above_since=T) == "wait"
+
+
+@pytest.mark.anyio
+async def test_the_preload_leaves_out_the_model_the_standing_hold_was_loading(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Its mark may not be read in yet (Task 14): the standing hold's own `loading` is left out too.
+        world = World(tmp_path, hold=fired_hold(T - 60, unloaded=(GEMMA,), loading=GEMMA))
+        asked: list[str] = []
+        reload = world.admitter.reload
+        world.admitter.reload = lambda model, after: (asked.append(model), reload(model, after))[1]
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+        run = world.task(preloader.run(RESIDENTS, "boot"))
+        await settle(world)
+        assert asked == [EMBED, WHISPER]
+        run.cancel()
+
+
+@pytest.mark.anyio
+async def test_a_hold_lifted_outside_the_gate_reloads_what_left_but_never_its_loading_model(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # make brake-release's fallback, the gate down, removed the hold: once back, the gate reloads the residents that
+        # left while it stood, never the model it was loading (the controller's ruling at Task 17's review).
+        world = World(tmp_path, models=residents(), hold=fired_hold(T - 60, unloaded=(), loading=GEMMA))
+        for name in (GEMMA, EMBED):
+            world.swap._stopped(name)
+            del world.state.models[name]
+            assert world.room.resident_left(name, shown="ready", since=T - 1) is False
+        release_hold(world.brake)
+        assert await world.room.check_brake(T + 10, above_since=None) is None
+        await settle(world)
+        assert world.swap.loads() == [EMBED]
+
+
+@pytest.mark.anyio
+async def test_brake_released_says_so_when_memavailable_cant_be_read(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models=residents(), hold=fired_hold(T - 600, unloaded=()))
+        await world.at(T)
+
+        def unread() -> MemInfo:
+            raise OSError("no /proc/meminfo")
+
+        world.room._read_mem = unread
+        world.clock.now = T + 300
+        assert await world.room.check_brake(T + 300, above_since=T) == "release"
+        assert world.emitted.texts("brake_released") == [
+            "Brake released at 09:05; what was available couldn't be read. Nothing to reload."]
+
+
+@pytest.mark.anyio
+async def test_a_rolled_back_release_is_saved_before_it_counts_as_none(tmp_path, caplog):
+    with anyio.fail_after(BOUND_S):
+        # The release found a newer hold: rolled back, and that save awaited; one that fails says so in the journal.
+        world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)
+        newer = fired_hold(T + 299, episode=2, unloaded=(WHISPER,))
+        saves = []
+
+        def on_save():
+            saves.append(world.state.last_auto_release_at)
+            if len(saves) == 1:
+                write_hold(world.brake, newer)
+            else:
+                raise OSError("disk full")
+
+        world.on_save = on_save
+        world.clock.now = T + 300
+        assert await world.room.check_brake(T + 300, above_since=T) == "wait"
+        assert saves == [T + 300, None] and world.state.last_auto_release_at is None
+        assert any("rolled-back release" in r.getMessage() for r in caplog.records
+                   if r.name == "spark.gate.room" and r.levelno >= logging.ERROR)
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_a_run_whose_hold_cant_be_saved_says_the_earlier_hold_stands(tmp_path, caplog):
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models=all_loaded())
+        before = room_hold(20, created=T - 600)
+        world.state.room_hold = before
+
+        def fails():
+            raise OSError("disk full")
+
+        world.room._on_change = fails
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        assert await collect(world.room.execute(plan_id, None, DAN)) == [
+            {"code": None, "message": messages.room_not_saved(had_hold=True)}]
+        assert world.state.room_hold is before and world.swap.unloads() == []
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_two_unplanned_restarts_in_an_hour_leave_the_residents_for_dan(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The hourly bound counts llama-swap's unplanned restarts: the first reloads the residents, a second within the
+        # hour doesn't, and one resident_waiting says so and names `spark load`. Boot and make apply reload as normal.
+        world = World(tmp_path)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+
+        async def all_ready(run):
+            for name in RESIDENTS:
+                await settle(world)
+                world.swap.ready(name)
+            await settle(world)
+            return run.result()
+
+        first = await all_ready(world.task(preloader.run(RESIDENTS, "restart")))
+        assert list(first) == RESIDENTS and world.state.resident_reloads == dict.fromkeys(RESIDENTS, T)
+        for name in RESIDENTS:  # llama-swap restarts again: every engine gone
+            world.swap._stopped(name)
+            del world.state.models[name]
+        world.clock.now = T + 600
+        assert await preloader.run(RESIDENTS, "restart") == {}
+        await settle(world)
+        assert world.swap.loads() == RESIDENTS
+        [(key, fields)] = world.emitted.of("resident_waiting")
+        assert key == f"resident-again:restart:{T}"
+        text = messages.notification("resident_waiting", REGISTRY, **fields).message
+        assert text == ("The model service restarted again within an hour of its last unplanned restart, so Gemma, the "
+                        "embeddings and whisper won't reload by themselves. On the Spark, `spark load small`, `spark "
+                        "load embed` and `spark load stt` load them.")
+        assert messages.pi_retry_match(text) is None
+        # make apply's planned restart reloads as normal.
+        again = await all_ready(world.task(preloader.run(RESIDENTS, "apply")))
+        assert list(again) == RESIDENTS and world.swap.loads() == RESIDENTS * 2
+
+
+@pytest.mark.anyio
+async def test_dans_unload_of_a_resident_lasts_across_a_gate_restart_until_spark_load(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models=residents())
+        assert (await collect(world.room.unload(GEMMA, DAN)))[-1]["unloaded"] is True
+        assert world.state.dans_unloads == {GEMMA: BOOT}
+        # The gate restarts within the boot: the mark is saved, and the boot preload honours it.
+        save_state(tmp_path / "gate", world.state, now=T)
+        restored, _ = restore(load_state(tmp_path / "gate")[0], [Running(EMBED, "ready"), Running(WHISPER, "ready")],
+                              now=T + 1, boot_id=BOOT, registry=REGISTRY)
+        assert restored.dans_unloads == {GEMMA: BOOT}
+        world.state.models.pop(GEMMA, None)
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+        assert list(await preloader.run(RESIDENTS, "boot")) == [EMBED, WHISPER]
+        assert world.swap.loads() == []
+        # Dan's spark load clears it; a reboot does too.
+        lines = world.task(collect(world.room.load(GEMMA, DAN)))
+        await settle(world)
+        world.swap.ready(GEMMA)
+        await settle(world)
+        assert lines.result()[-1]["label"] == "Gemma" and world.state.dans_unloads == {}
+        rebooted, _ = restore(restored, [], now=T + 2, boot_id="b2", registry=REGISTRY)
+        assert rebooted.dans_unloads == {}
+
+
+@pytest.mark.anyio
+async def test_unloading_a_pinned_model_ends_its_pin_and_says_so(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A pin on a model Dan unloads ends there, so a later pin_ended never speaks of a model that isn't loaded (the
+        # controller's ruling at Task 17's review).
+        world = World(tmp_path, models=all_loaded())
+        world.state.pins[CODER] = Pin(model=CODER, until=None, by_uid=DAN)
+        lines = await collect(world.room.unload(CODER, DAN))
+        assert lines[-1] == {"unloaded": True, "pin_ended": True}
+        assert set(lines[-1]) == set(gateproto.UnloadDone.__annotations__)
+        assert world.state.pins == {}
+        [event] = world.state.recent
+        assert (event.kind, event.model, event.text, event.uids) == (
+            "unload", CODER, "`spark unload` unloaded the coder: your pin on it ended.", [DAN])
+        assert messages.unloaded("the coder", pin_ended=True) == "Unloaded the coder; the pin on it ended."
+        assert messages.unloaded("the coder") == "Unloaded the coder."
+
+
+def test_room_and_preloader_read_the_admitters_registry(tmp_path):
+    world = World(tmp_path)
+    preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                          read_hold=lambda: None)
+    newer = replace(REGISTRY, models=dict(REGISTRY.models))
+    world.admitter.registry = newer
+    assert world.room.registry is newer and preloader.registry is newer
+
+
+@pytest.mark.anyio
+async def test_the_result_never_misses_the_last_model_whatever_order_the_callbacks_run_in(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The drain's done-callback may run after the run has read its end (the controller's ruling at Task 17's
+        # review): the run counts the model itself, once, so its result names it, and the late callback adds nothing.
+        world = World(tmp_path, models=all_loaded())
+        real = world.room._room_drain_done
+        loop = asyncio.get_running_loop()
+        world.room._room_drain_done = lambda task, name, ends, run: loop.call_later(0.05, real, task, name, ends, run)
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        lines = await collect(world.room.execute(plan_id, None, DAN))
+        assert lines[-1]["unloaded"] == ["the coder"]
+        await asyncio.sleep(0.1)
+        assert world.state.room_hold.unloaded == [CODER]

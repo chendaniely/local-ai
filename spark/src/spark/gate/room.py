@@ -12,8 +12,10 @@ drain begins and the drainer's own lines as they come, then its result. A pin on
 session using it loses it: each is named in the result's `ended` and in `spark status`'s *recent*. A drain that ends
 with its model still loaded ends the run with a refusal line in Dan's words. With something already unloaded, the hold
 stays and the line says what was unloaded; with nothing, the hold that stood before is put back (the controller's
-ruling at Task 17). The hold's size is the target; asked for more than unloading everything frees, it is what is free
-for a load once the unloads are done, at most the target; for everything, all of that.
+ruling at Task 17). A caller that goes is the same: a run whose drain under way then ends with its model loaded, or
+that hadn't begun one, puts back the earlier hold; one that unloaded something keeps its hold (the controller's rulings
+at Task 17's review). The hold's size, once the run ends, is the target or what is free for a load then, whichever is
+less; for everything, all of what is free for a load then.
 
 **The hold's end.** `release(room=True)` (`spark make-room --done`), `expire` (its time) and `at_start` (a reboot, or a
 start fresh after damage, when one may have stood) end it with `room_hold_ended`. The residents it unloaded reload
@@ -22,20 +24,24 @@ up end it in admission.
 
 **The brake's hold** (rule 5). `brake_release_due` decides, and `check_brake`, which the core calls every 5 s with when
 memory last rose above the warn line, acts. The hold lifts by itself only once memory has stayed above the warn line for
-RELEASE_AFTER_S, counted from no earlier than the brake fired (one can fire above it, on the rate of fall), and only if
-the residents it would reload fit by rule 9's formula, every hold counted. At most one automatic release in
+RELEASE_AFTER_S, counted from no earlier than the brake fired (one can fire above it, on the rate of fall) and no
+earlier than the gate first saw the hold (the brake's time may read an hour early across a clock going back), and only
+if the residents it would reload fit by rule 9's formula, every hold counted. At most one automatic release in
 AUTO_RELEASE_EVERY_S; never a hold from another boot, which waits for Dan with one `brake_needs_release`; never
 reloading the model that was loading when it fired, or any model the brake marked. The release is saved before the
 hold file goes, and removes only the hold it judged, so a newer brake's hold stands. `release(brake=True)` is `make
 brake-release`, which lifts whatever stands.
 
 **The residents.** `Preloader.run` waits for llama-swap, then queues the residents' reloads in one step, so they load
-one at a time, in order, ahead of any request. `resident_left` is the residents' rule for one that left `/running`
-(Tasks 17 and 18; the controller's rulings at Task 17): not while the brake's hold stands (its release reloads it); not
-after the gate's own unload that was Dan's choice (`spark unload`, make-room) or the idle policy's; but after an
-`unknown` unload (after damage) or a start the gate aborted (`late_start`), and after a crash or an earlyoom kill. Those
-reload at most once in RESIDENT_RELOAD_EVERY_S each; a second within it sends `resident_waiting` saying the model won't
-reload by itself, until Dan's `spark load` clears the bound."""
+one at a time, in order, ahead of any request; never a model the brake marked or the standing hold was loading, nor a
+resident Dan unloaded with `spark unload` this boot. `resident_left` is the residents' rule for one that left
+`/running` (Tasks 17 and 18; the controller's rulings at Task 17 and its review): not while the brake's hold stands
+(its release reloads it); not after the gate's own unload that was Dan's choice (`spark unload`, make-room) or the idle
+policy's; not for a start that ended by itself, last shown `starting` with no unload of the gate's, whose `load_failed`
+already told Dan; but after an `unknown` unload (after damage) or a start the gate aborted (`late_start`), and after a
+crash or an earlyoom kill. Those reload at most once in RESIDENT_RELOAD_EVERY_S each, and llama-swap's unplanned
+restarts count in the same bound; a second within it sends `resident_waiting` saying the model won't reload by itself,
+until Dan's `spark load` clears the bound."""
 
 from __future__ import annotations
 
@@ -114,12 +120,20 @@ class _Plan:
 
 @dataclass
 class _Run:
-    """One make-room run: the caller, and what its drains unloaded and ended so far."""
+    """One make-room run: the caller, its hold and the one before, and what its drains unloaded and ended so far."""
 
     uid: int
     hold: RoomHold
+    before: RoomHold | None
+    target: Any  # ALL, or the GiB asked for
     labels: list[str] = field(default_factory=list)
     ended: list[str] = field(default_factory=list)
+    recorded: set[str] = field(default_factory=set)  # the models whose drain has been counted
+    drain: asyncio.Task | None = None  # the drain under way, or the last one
+    current: tuple[str, list] | None = None  # that drain's model and its ends
+    finished: bool = False  # the run reached its result or its refusal
+    abandoned: bool = False  # its caller went before then
+    settled: bool = False  # its hold was settled after it ended short
 
 
 def _gib(value: float | Decimal) -> Decimal:
@@ -141,12 +155,14 @@ def fired_at(hold: Hold) -> float | None:
 
 
 def brake_release_due(now: float, above_since: float | None, hold: Hold, state: GateState, *, reloads_fit: bool,
-                      boot_id: str) -> Due:
+                      boot_id: str, seen_at: float | None = None) -> Due:
     """Rule 5, for the brake's hold `hold`. `needs_dan` when hold.release_waits_for_dan says so (a hold from another
     boot, Phase 1's and an unreadable one's among them, or one that fired within AUTO_RELEASE_EVERY_S of the last
     automatic release), or when its time doesn't parse, since nothing can be counted from it; `release` only when
     memory has been above the warn line since `above_since` (None: not above it now) for RELEASE_AFTER_S, counted from
-    no earlier than the brake fired, and the reloads fit; else `wait`."""
+    no earlier than the brake fired and no earlier than `seen_at`, when the gate first saw the hold (the controller's
+    ruling at Task 17's review: a time with no zone reads an hour early across a clock going back), and the reloads
+    fit; else `wait`."""
     if release_waits_for_dan(hold, boot_id=boot_id, last_auto_release_at=state.last_auto_release_at, now=now):
         return "needs_dan"
     fired = fired_at(hold)
@@ -155,7 +171,23 @@ def brake_release_due(now: float, above_since: float | None, hold: Hold, state: 
     if above_since is None or not reloads_fit:
         return "wait"
     since = max(above_since, min(fired, now))  # one ahead of now (a clock set back) counts from now
+    if seen_at is not None:
+        since = max(since, min(seen_at, now))
     return "release" if now - since >= RELEASE_AFTER_S else "wait"
+
+
+def kept_out(name: str, state: GateState, registry: Registry, hold: Hold | None) -> str | None:
+    """Why the gate's own reload leaves `name` out, or None: a model the registry doesn't have; the model the brake
+    marked, or the one `hold` (the brake's, standing or last seen) was loading when it fired, which loads only when Dan
+    asks (rule 5; its mark may not be read in yet); or a resident Dan unloaded with `spark unload` this boot, until his
+    `spark load` (the controller's rulings at Task 17's review)."""
+    if name not in registry.models:
+        return "the registry has no such model"
+    if name in state.brake_marks or (hold is not None and hold.loading == name):
+        return "it was loading when the brake fired, so it loads only when Dan asks"
+    if state.dans_unloads.get(name) == state.boot_id:
+        return "Dan unloaded it with `spark unload`, so it loads only when he asks"
+    return None
 
 
 def backoff(n: int | None = None) -> Iterator[float]:
@@ -189,36 +221,56 @@ class Preloader:
     hold ends, after apply's restart, after llama-swap restarted unannounced, and for a resident that left `/running`
     by itself. `admitter` is Task 15's, whose `reload` queues each ahead of every request, every hold counted, with no
     deadline; a resident that doesn't fit waits in its queue, shows as waiting, and sends `resident_waiting` once,
-    worded by `after`: the admitter's own notification, so `emit`, the plan's, sends nothing of the preload's. Beside
-    the plan's interface: `llamaswap` is the gate's AsyncLlamaSwap, whose `/running` the preload waits on; `sleep`
-    waits that long (the tests' own); `registry` is replaced when the registry is read again."""
+    worded by `after` (the admitter's own notification). `emit` is the Notifier, for the one `resident_waiting` of a
+    second unplanned restart within the hour. Beside the plan's interface: `llamaswap` is the gate's AsyncLlamaSwap,
+    whose `/running` the preload waits on; `read_hold` reads the brake's hold, whose `loading` model is left out;
+    `on_change` is called when the preload changes the state (the residents' reload times), so the core saves it;
+    `sleep` waits that long (the tests' own). `registry` is the admitter's, as last read."""
 
     def __init__(self, admitter: Admitter, registry: Registry, emit: Emit, clock: Callable[[], float], *,
-                 llamaswap: Any, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+                 llamaswap: Any, read_hold: Callable[[], Hold | None],
+                 on_change: Callable[[], Awaitable[None] | None] | None = None,
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
         self._admitter = admitter
-        self.registry = registry
         self._emitter = emit
         self._clock = clock
         self._swap = llamaswap
+        self._read_hold = read_hold
+        self._on_change = on_change or (lambda: None)
         self._sleep = sleep
+        self._said: set[str] = set()
+        self._tasks: set[asyncio.Future] = set()
+
+    @property
+    def registry(self) -> Registry:
+        return self._admitter.registry
 
     async def run(self, models: Iterable[str], after: str) -> dict[str, Admitted | messages.Refusal]:
         """Waits for llama-swap to answer (`/running`), backing off 1, 2, 4 … s up to 30 s; then queues each of
-        `models` the registry has, in one step, so they load one at a time in this order, and returns what each came
-        to. A model the brake marked is left out: rule 5 says it doesn't reload by itself, and its reload would wait
-        in the queue for ever. Cancelling this ends only its wait: the reloads go on."""
+        `models` in one step, so they load one at a time in this order, and returns what each came to. Left out
+        (kept_out): a model the brake marked, or the standing hold was loading, whose reload would wait in the queue
+        for ever, and a resident Dan unloaded this boot. After an unplanned restart (`after: "restart"`), the hourly
+        bound counts it: a resident reloaded by itself within RESIDENT_RELOAD_EVERY_S is left for Dan's `spark load`,
+        and one `resident_waiting` names them; each reloaded is stamped. Boot and apply's planned restart reload as
+        normal. Cancelling this ends only its wait: the reloads go on."""
         if after not in RELOAD_AFTER:
             raise ValueError(f"a reload's after is one of {', '.join(RELOAD_AFTER)}, not {after!r}")
         await self._wait_for_llama_swap()
+        state = self._admitter.state
+        try:
+            hold = self._read_hold()
+        except Exception as err:  # a hold that can't be read stands, but names no loading model
+            _log.warning("the brake's hold can't be read (%s)", err)
+            hold = None
         names: list[str] = []
         for name in dict.fromkeys(models):
-            if name not in self.registry.models:
-                _log.warning("not reloading %s: the registry has no such model", name)
-            elif name in self._admitter.state.brake_marks:
-                _log.info("not reloading %s: it was loading when the brake fired, so it loads only when Dan asks",
-                          name)
-            else:
+            why = kept_out(name, state, self.registry, hold)
+            if why is None:
                 names.append(name)
+            else:
+                _log.info("not reloading %s: %s", name, why)
+        if after == "restart":
+            names = self._restart_bound(names)
         futures = {name: self._admitter.reload(name, after) for name in names}
         results: dict[str, Admitted | messages.Refusal] = {}
         for name, future in futures.items():
@@ -230,6 +282,42 @@ class Preloader:
             except Exception as err:  # the registry read again without it, say
                 _log.warning("the reload of %s came to nothing: %s", name, err)
         return results
+
+    def _restart_bound(self, names: list[str]) -> list[str]:
+        """An unplanned restart's reloads, under the residents' hourly bound (the controller's ruling at Task 17's
+        review): those reloaded by themselves within the hour wait for Dan, in one `resident_waiting`."""
+        state = self._admitter.state
+        now = self._clock()
+        held = [name for name in names if (last := state.resident_reloads.get(name)) is not None
+                and now - last < RESIDENT_RELOAD_EVERY_S]
+        go = [name for name in names if name not in held]
+        for name in go:
+            state.resident_reloads[name] = now
+        if held:
+            key = f"resident-again:restart:{max(state.resident_reloads[name] for name in held)}"
+            _log.warning("llama-swap restarted again within an hour: %s wait for Dan's spark load", ", ".join(held))
+            if key not in self._said:
+                self._said.add(key)
+                known = [self.registry.models[name] for name in held]
+                try:
+                    self._emitter.emit("resident_waiting", key, after="restart", again=True,
+                                       labels=[model.label for model in known],
+                                       commands=[model.roles[0] if model.roles else model.name for model in known])
+                except ValueError as err:
+                    _log.error("the resident_waiting notification couldn't be made: %s", err)
+                except Exception:
+                    _log.exception("the resident_waiting notification couldn't be sent")
+        if go or held:
+            try:
+                step = self._on_change()
+            except Exception:
+                _log.exception("saving the gate's state after the preload changed it failed")
+            else:
+                if inspect.isawaitable(step):
+                    saving = asyncio.ensure_future(step)
+                    self._tasks.add(saving)
+                    saving.add_done_callback(self._tasks.discard)
+        return go
 
     async def _wait_for_llama_swap(self) -> None:
         waits = backoff()
@@ -245,14 +333,15 @@ class Preloader:
 
 class Room:
     """make-room, its hold and release, Dan's load and unload, the brake's release, and the residents' rule. `state`
-    and `registry` are the gate's (`registry` replaced when it is read again); `admitter` is Task 15's and `drainer`
-    Task 16's; `emit` the Notifier; `clock` gives Unix seconds. `read_mem` reads MemAvailable; `read_hold` the brake's
-    hold, fresh, on every call; `release_hold(expected)` removes it, only if it is still `expected`, or whatever stands
-    when `expected` is None (hold.release_hold). `boot_id` is this boot's. Beside the plan's interface: `front` is the
-    FrontChannel, whose snapshot gives each model's requests in flight; `live` is Sessions.live, so a session that has
-    ended marks nothing; `on_change` is called after every change to the state, so the core saves it, and may return an
-    awaitable, awaited where a save must come first (make-room's hold before its first drain, the brake's release
-    before its hold file goes), bounded by SAVE_BOUND_S."""
+    is the gate's, and `registry` the admitter's, as last read (the argument is the plan's interface's); `admitter` is
+    Task 15's and `drainer` Task 16's; `emit` the Notifier; `clock` gives Unix seconds. `read_mem` reads MemAvailable;
+    `read_hold` the brake's hold, fresh, on every call; `release_hold(expected)` removes it, only if it is still
+    `expected`, or whatever stands when `expected` is None (hold.release_hold). `boot_id` is this boot's. Beside the
+    plan's interface: `front` is the FrontChannel, whose snapshot gives each model's requests in flight; `live` is
+    Sessions.live, so a session that has ended marks nothing; `on_change` is called after every change to the state,
+    so the core saves it, and may return an awaitable, awaited where a save must come first (make-room's hold before
+    its first drain, the brake's release before its hold file goes, and a release rolled back), bounded by
+    SAVE_BOUND_S."""
 
     def __init__(self, state: GateState, registry: Registry, admitter: Admitter, drainer: Drainer, emit: Emit,
                  clock: Callable[[], float], *, read_mem: Callable[[], MemInfo], read_hold: Callable[[], Hold | None],
@@ -260,7 +349,6 @@ class Room:
                  live: Callable[[Session], bool] | None = None,
                  on_change: Callable[[], Awaitable[None] | None] | None = None):
         self.state = state
-        self.registry = registry
         self._admitter = admitter
         self._drainer = drainer
         self._emitter = emit
@@ -278,7 +366,12 @@ class Room:
         self._left_while_held: set[str] = set()
         self._said: set[str] = set()  # the notifications sent once each, by their event key
         self._undated_logged = False
+        self._last_hold: Hold | None = None  # the brake's hold as last read standing
         self._tasks: set[asyncio.Future] = set()
+
+    @property
+    def registry(self) -> Registry:
+        return self._admitter.registry
 
     # make-room.
 
@@ -309,7 +402,8 @@ class Room:
         gateproto.MakeRoomProgress as each begins and the drainer's StoppingProgress and AfterLoadProgress lines as
         they come; then RoomResult's fields. A refusal on the way is the last line (GateRefusalBody). `for_s` ends the
         hold that long from now; None, at `--done` or the next boot. A caller that goes ends this iterator: the drain
-        under way goes on, and what it unloads is held and recorded."""
+        under way goes on, and what it unloads is held and recorded; the run is then settled as a refused one, so with
+        nothing unloaded the earlier hold is put back (the controller's rulings at Task 17's review)."""
         entry = self._plans.pop(plan_id, None) if isinstance(plan_id, str) else None
         if entry is None:
             yield _refusal(messages.room_plan_gone())
@@ -331,66 +425,124 @@ class Room:
             _log.error("the gate couldn't save make-room's hold before its first drain, so nothing was unloaded")
             if self.state.room_hold is hold:
                 self.state.room_hold = before
-            yield _refusal(messages.room_not_saved())
+            yield _refusal(messages.room_not_saved(had_hold=before is not None))
             return
         self._admitter.changed()  # the hold counts from now, before any room is freed
-        run = _Run(uid, hold)
-        for name in plan.unload:
-            if name not in self.state.models:
-                continue  # gone since the plan: its room is free already
-            label = self._label(name)
-            yield {"kind": "unloading", "model": name, "label": label, "inflight": self._inflight(name)}
-            lines: asyncio.Queue = asyncio.Queue()
-            ends: list[DrainEnd] = []
-            drain = self._spawn(self._drainer.drain(name, "make-room", progress=lines.put_nowait, ended=ends.append))
-            drain.add_done_callback(
-                lambda task, name=name, ends=ends: self._room_unload_done(task, name, ends, run))
-            async for line in _lines_until(lines, drain):
-                yield line
-            if not self._drained(drain):
-                yield self._room_refused(run, before, ends, label)
-                return
-        free_after = self._admitter.free_for_a_load(uses_hold=True)
-        if self.state.room_hold is hold and (target is ALL or not plan.enough):
-            room = max(Decimal(0), free_after)
-            hold.size_gib = hold.total_gib = float(room if target is ALL else min(target, room))
-        self._note()
-        self._admitter.changed()
-        yield asdict(RoomResult(run.labels, float(free_after), hold.size_gib, hold.until, run.ended))
+        run = _Run(uid, hold, before, target)
+        try:
+            for name in plan.unload:
+                if name not in self.state.models:
+                    continue  # gone since the plan: its room is free already
+                label = self._label(name)
+                yield {"kind": "unloading", "model": name, "label": label, "inflight": self._inflight(name)}
+                lines: asyncio.Queue = asyncio.Queue()
+                ends: list[DrainEnd] = []
+                drain = self._spawn(self._drainer.drain(name, "make-room", progress=lines.put_nowait,
+                                                        ended=ends.append))
+                run.drain, run.current = drain, (name, ends)
+                drain.add_done_callback(
+                    lambda task, name=name, ends=ends: self._room_drain_done(task, name, ends, run))
+                async for line in _lines_until(lines, drain):
+                    yield line
+                self._room_record(run, name, ends, drain)  # inline too, so the result never misses it
+                if not self._drained(drain):
+                    run.finished = True
+                    yield self._room_refused(run, ends, label)
+                    return
+            run.finished = True
+            free_after = self._admitter.free_for_a_load(uses_hold=True)
+            self._resize(run, free_after)
+            self._note()
+            self._admitter.changed()
+            yield asdict(RoomResult(run.labels, float(free_after), hold.size_gib, hold.until, run.ended))
+        finally:
+            if not run.finished:
+                # The caller went (Dan's Ctrl-C), or the gate is stopping: the drain under way goes on, and its
+                # callback settles the run when it ends; with none under way, it is settled now.
+                run.abandoned = True
+                if run.drain is None or run.drain.done():
+                    if run.current is not None:  # a drain that ended as the caller went: counted first
+                        self._room_record(run, *run.current, run.drain)
+                    self._settle(run)
 
-    def _room_unload_done(self, task: asyncio.Future, name: str, ends: list[DrainEnd], run: _Run) -> None:
-        """A make-room drain that ended with its model gone: held for Dan, its pin ended and its sessions told, in
-        *recent* (rule 4: `spark status` says whose they were). Runs whether or not its caller is still there."""
-        if not self._drained(task) or not ends or ends[-1] not in ("unloaded", "gone"):
+    def _room_drain_done(self, task: asyncio.Future, name: str, ends: list[DrainEnd], run: _Run) -> None:
+        """A make-room drain's end, whether or not its caller is still there: its model counted, and, for a run whose
+        caller went, the run settled."""
+        self._room_record(run, name, ends, task)
+        if run.abandoned:
+            self._settle(run)
+
+    def _room_record(self, run: _Run, name: str, ends: list[DrainEnd], task: asyncio.Future) -> None:
+        """A make-room drain that ended with its model gone, counted once: on the hold that stands, its pin ended and
+        its sessions told, in *recent* (rule 4: `spark status` says whose they were). The hold that stands may not be
+        this run's (another replaced it), and its --done then reloads it; with none standing, a resident reloads now,
+        as the hold's end would have (the controller's ruling at Task 17's review)."""
+        if name in run.recorded or not task.done() or not self._succeeded(task):
             return
-        now = self._clock()
+        if not ends or ends[-1] not in ("unloaded", "gone"):
+            return
+        run.recorded.add(name)
         label = self._label(name)
         run.labels.append(label)
-        if name not in run.hold.unloaded:
-            run.hold.unloaded.append(name)
+        current = self.state.room_hold
+        if current is not None and current.boot_id == self._boot_id:
+            if name not in current.unloaded:
+                current.unloaded.append(name)
+        elif name in self.registry.models and self.registry.models[name].resident:
+            self._reload([name], "hold")
+        run.ended += self._ends_with_unload(name, label, run.uid, by="make-room")
+        self._note()
+
+    def _ends_with_unload(self, name: str, label: str, uid: int, *, by: str) -> list[str]:
+        """A model `by` unloaded: its pin ends, and each live session using it loses it, both in *recent*, by whose they
+        were; the phrases for make-room's `ended`."""
+        now = self._clock()
         pin = self.state.pins.pop(name, None)
         pinned = pin is not None and (pin.until is None or pin.until > now)
         sessions = [session for session in self.state.sessions.values()
                     if session.model == name and self._is_live(session)]
-        if pinned or sessions:
-            labels = [session.label for session in sessions]
-            run.ended += messages.room_ended_parts(label, pinned=pinned, sessions=labels)
-            uids = [run.uid, *([pin.by_uid] if pinned else []), *(session.uid for session in sessions)]
-            self.state.recent.append(RecentRecord(at=now, kind="make-room", model=name, uids=list(dict.fromkeys(uids)),
-                                                  text=messages.room_ended(label, pinned=pinned, sessions=labels)))
-        self._note()
+        if not pinned and not sessions:
+            return []
+        labels = [session.label for session in sessions]
+        uids = [uid, *([pin.by_uid] if pinned else []), *(session.uid for session in sessions)]
+        self.state.recent.append(RecentRecord(at=now, kind=by, model=name, uids=list(dict.fromkeys(uids)),
+                                              text=messages.room_ended(label, pinned=pinned, sessions=labels, by=by)))
+        return messages.room_ended_parts(label, pinned=pinned, sessions=labels)
 
-    def _room_refused(self, run: _Run, before: RoomHold | None, ends: list[DrainEnd], label: str) -> dict:
-        """A drain that left its model loaded ends the run (the controller's ruling at Task 17): with something
-        unloaded, the hold stays, and the line says what was unloaded; with nothing, the hold that stood before."""
+    def _settle(self, run: _Run) -> None:
+        """A run that ended short, refused or its caller gone (the controller's rulings at Task 17 and its review): with
+        nothing unloaded, the hold that stood before is put back; with something, the hold stays, sized as a full run's,
+        so it holds the room freed. Nothing, if another hold has replaced this run's."""
+        if run.settled:
+            return
+        run.settled = True
+        if self.state.room_hold is not run.hold:
+            return
+        if not run.labels:
+            self.state.room_hold = run.before
+        else:
+            try:
+                self._resize(run, self._admitter.free_for_a_load(uses_hold=True))
+            except Exception as err:  # MemAvailable unread: the hold stays as set, which errs safe
+                _log.warning("make-room's hold keeps its size: what is free for a load can't be read (%s)", err)
+        self._note()
+        self._admitter.changed()
+
+    def _resize(self, run: _Run, free_after: Decimal) -> None:
+        """The run's hold, once its unloads are done: the target or what is free for a load, whichever is less; for
+        ALL, every GiB free for a load (the controller's rulings at Task 17's review)."""
+        if self.state.room_hold is not run.hold:
+            return
+        room = max(Decimal(0), free_after)
+        run.hold.size_gib = run.hold.total_gib = float(room if run.target is ALL else min(run.target, room))
+
+    def _room_refused(self, run: _Run, ends: list[DrainEnd], label: str) -> dict:
+        """A drain that left its model loaded ends the run: settled, and the line says what was unloaded, if anything,
+        and that the room freed so far stays held."""
         refused = self._not_unloaded(ends, label)
+        self._settle(run)
         if run.labels:
-            self._note()
             return _refusal(messages.room_partly_held(run.labels, refused, run.hold.until))
-        if self.state.room_hold is run.hold:
-            self.state.room_hold = before
-            self._note()
-            self._admitter.changed()
         return _refusal(refused)
 
     def expire(self, now: float) -> RoomHold | None:
@@ -438,7 +590,8 @@ class Room:
                 self._left_while_held.clear()
                 labels = self._reload(names, "brake")
                 reloading += [label for label in labels if label not in reloading]
-                self.state.recent.append(RecentRecord(at=self._clock(), kind="brake_released", model=None, uids=[uid],
+                # A system event: empty uids, so every caller sees it (the controller's ruling at Task 17's review).
+                self.state.recent.append(RecentRecord(at=self._clock(), kind="brake_released", model=None, uids=[],
                                                       text=messages.recent_brake_released(labels, by_dan=True)))
                 self._note()
                 self._admitter.changed()
@@ -465,8 +618,8 @@ class Room:
         """`spark load`: admission as one of Dan's commands (`kind: "command"`, held up to LOAD_CALL_TIMEOUT_S), into
         his make-room hold if there is one. A WaitProgress as it starts waiting and whenever its reason changes, a
         LoadProgress as its load starts (none for a model already loaded), then gateproto.LoadConfirmation's fields; a
-        refusal is the last line. It clears the residents' bound for `model`. A caller that goes takes its request out
-        of the queue; a load already started goes on."""
+        refusal is the last line. It clears the residents' bound for `model`, and the mark of Dan's own `spark
+        unload`. A caller that goes takes its request out of the queue; a load already started goes on."""
         if model not in self.registry.models:
             yield _refusal(messages.no_such_model(str(model), "load"))
             return
@@ -485,7 +638,9 @@ class Room:
         if isinstance(result, messages.Refusal):
             yield {"message": result.message, "code": result.code}
             return
-        if self.state.resident_reloads.pop(model, None) is not None:
+        cleared = self.state.resident_reloads.pop(model, None) is not None
+        cleared = self.state.dans_unloads.pop(model, None) is not None or cleared
+        if cleared:  # Dan's own load clears the residents' bound and his own unload's mark
             self._note()
         known = self.registry.models[model]
         yield {"label": known.label, "seconds": result.seconds if result.loaded_now else None,
@@ -495,7 +650,10 @@ class Room:
     async def unload(self, model: str, uid: int) -> AsyncIterator[dict]:
         """`spark unload`: a drain, why `unload`. gateproto.UnloadCount at once, the drainer's StoppingProgress and
         AfterLoadProgress lines as they come, then UnloadDone once /running shows the model gone; or a refusal line,
-        in Dan's words for how the drain ended. A caller that goes ends this iterator, never the unload."""
+        in Dan's words for how the drain ended. A pin on the model ends with it, and its sessions lose it, in *recent*;
+        a resident stays unloaded until Dan's `spark load` or the next boot, across a gate restart (the controller's
+        rulings at Task 17's review). A caller that goes ends this iterator, never the unload, whose end is recorded
+        all the same."""
         if model not in self.registry.models and model not in self.state.models:
             yield _refusal(messages.no_such_model(str(model), "unload"))
             return
@@ -506,31 +664,51 @@ class Room:
         yield {"kind": "unloading", "inflight": self._inflight(model)}
         lines: asyncio.Queue = asyncio.Queue()
         ends: list[DrainEnd] = []
+        pinned: list[bool] = []
         drain = self._spawn(self._drainer.drain(model, "unload", progress=lines.put_nowait, ended=ends.append))
+        drain.add_done_callback(lambda task: self._unload_done(task, model, label, ends, uid, pinned))
         async for line in _lines_until(lines, drain):
             yield line
+        self._unload_done(drain, model, label, ends, uid, pinned)  # inline too, so the answer never misses it
         if self._drained(drain):
-            yield {"unloaded": True}
+            yield {"unloaded": True, "pin_ended": bool(pinned and pinned[0])}
             return
         yield _refusal(self._not_unloaded(ends, label))
+
+    def _unload_done(self, task: asyncio.Future, model: str, label: str, ends: list[DrainEnd], uid: int,
+                     pinned: list[bool]) -> None:
+        """`spark unload`'s drain, once it ended with its model gone, recorded once: its pin ended, its sessions told,
+        and a resident marked as Dan's to load again."""
+        if pinned or not task.done() or not self._succeeded(task) or not ends or ends[-1] not in ("unloaded", "gone"):
+            return
+        pin = self.state.pins.get(model)
+        pinned.append(pin is not None and (pin.until is None or pin.until > self._clock()))
+        self._ends_with_unload(model, label, uid, by="unload")
+        known = self.registry.models.get(model)
+        if known is not None and known.resident:
+            self.state.dans_unloads[model] = self._boot_id
+        self._note()
 
     # The brake's release (rule 5).
 
     async def check_brake(self, now: float, *, above_since: float | None) -> Due | None:
         """The brake's release check, which the core runs every 5 s: `above_since` is when MemAvailable last rose above
         the warn line, None while it is under it. None with no hold. `release`: lifted, `brake_released`, and the
-        residents it unloaded reload. `needs_dan`: for a hold from another boot, one `brake_needs_release`. With no
-        hold, a resident that left while one stood reloads now."""
+        residents it unloaded reload. `needs_dan`: for a hold from another boot, one `brake_needs_release`. The five
+        minutes count from no earlier than admission first saw the hold, or than this check when it hasn't. With no
+        hold, a resident that left while one stood reloads now, never the model that hold was loading."""
+        last = self._last_hold
         hold = self._hold()
         if hold is None:
             if self._left_while_held:  # the hold went some other way: the brake-release fallback, say
-                names = self._brake_reloads(Hold("", "", ()))
+                names = self._brake_reloads(Hold("", "", (), loading=last.loading if last is not None else None))
                 self._left_while_held.clear()
                 self._reload(names, "brake")
             return None
         names = self._brake_reloads(hold)
+        seen = self._admitter.hold_seen_at(hold)
         due = brake_release_due(now, above_since, hold, self.state, reloads_fit=self._fits(names),
-                                boot_id=self._boot_id)
+                                boot_id=self._boot_id, seen_at=now if seen is None else seen)
         if due == "needs_dan":
             self._needs_release(hold)
         elif due == "release" and not await self._auto_release(hold, names, now):
@@ -556,23 +734,25 @@ class Room:
             _log.warning("the brake's hold the gate judged no longer stands as it was (the brake fired again, or it "
                          "was released meanwhile): nothing lifted")
             self.state.last_auto_release_at, self.state.release_assumed = before
-            self._note()
+            if not await self._saved_first():  # awaited, so no release that never happened stays recorded unseen
+                _log.error("the gate couldn't save its rolled-back release: until its next save, its saved state names "
+                           "an automatic release at %s that didn't happen", now)
             return False
         self._left_while_held.clear()
         self._admitter.changed()
         labels = self._reload(names, "brake")
-        self.state.recent.append(RecentRecord(at=now, kind="brake_released", model=None,
+        self.state.recent.append(RecentRecord(at=now, kind="brake_released", model=None, uids=[],
                                               text=messages.recent_brake_released(labels, by_dan=False)))
         self._note()
+        reading: dict[str, Any]
         try:
-            available: float | None = self._read_mem().available_gib
-        except OSError as err:
-            _log.error("MemAvailable can't be read (%s), so brake_released can't say what was available", err)
-            available = None
-        if available is not None:
-            episode = hold.episode if hold.episode is not None else hold.since
-            self._emit("brake_released", f"release:{hold.boot_id}:{episode}", at=now, available_gib=available,
-                       reloading=labels, loading_label=self._label(hold.loading) if hold.loading else None)
+            reading = {"available_gib": self._read_mem().available_gib}
+        except OSError as err:  # sent all the same, saying so (the controller's ruling at Task 17's review)
+            _log.warning("MemAvailable can't be read (%s): brake_released says so", err)
+            reading = {"available_unknown": True}
+        episode = hold.episode if hold.episode is not None else hold.since
+        self._emit("brake_released", f"release:{hold.boot_id}:{episode}", at=now, reloading=labels,
+                   loading_label=self._label(hold.loading) if hold.loading else None, **reading)
         return True
 
     def _needs_release(self, hold: Hold) -> None:
@@ -618,9 +798,10 @@ class Room:
         """A resident `/running` listed, as `shown`, in the read at `since` and no longer lists: the core asks this
         once for each. True when its reload was queued. Not while the brake's hold stands: its release reloads it.
         Not after the gate's own unload that was Dan's choice (`unload`, make-room's) or the idle policy's, nor for a
-        model the brake marked. After an `unknown` unload or a start the gate aborted (`after: "gate"`), or a crash
-        (`"crash"`), at most once in RESIDENT_RELOAD_EVERY_S: a second within it sends `resident_waiting` saying it
-        won't reload by itself, until Dan's `spark load`."""
+        model the brake marked, nor for a start that ended by itself (last shown `starting`, no unload of the gate's),
+        whose load_failed already told Dan (Q1, the controller's ruling at Task 17's review). After an `unknown` unload
+        or a start the gate aborted (`after: "gate"`), or a crash (`"crash"`), at most once in RESIDENT_RELOAD_EVERY_S:
+        a second within it sends `resident_waiting` saying it won't reload by itself, until Dan's `spark load`."""
         known = self.registry.models.get(model)
         if known is None or not known.resident or model in self.state.brake_marks:
             return False
@@ -629,6 +810,10 @@ class Room:
             return False
         why = self._drainer.unloaded_why(model, since)
         if why is not None and why not in _RELOADS_AFTER:
+            return False
+        if why is None and shown == "starting":
+            _log.info("%s's start ended by itself, with no unload of the gate's: its load_failed said so, and the "
+                      "residents' rule doesn't reload it", model)
             return False
         after = "gate" if why is not None else "crash"
         _log.info("%s left /running (last shown %s), %s: the residents' rule reloads it", model, shown,
@@ -653,9 +838,15 @@ class Room:
     # Small things.
 
     def _reload(self, names: list[str], after: str) -> list[str]:
-        """Each of `names` queued for the gate's own reload, in this order (Task 15), and their labels."""
+        """Each of `names` queued for the gate's own reload, in this order (Task 15), and their labels; none that
+        kept_out leaves out, with the brake's hold that stands."""
         labels = []
+        hold = self._hold()
         for name in names:
+            why = kept_out(name, self.state, self.registry, hold)
+            if why is not None:
+                _log.info("not reloading %s: %s", name, why)
+                continue
             future = self._admitter.reload(name, after)
             future.add_done_callback(self._reloaded)
             labels.append(self._label(name))
@@ -672,12 +863,21 @@ class Room:
             _log.info("a resident's reload was refused (%s); admission has said why", future.result().code)
 
     def _hold(self) -> Hold | None:
-        """The brake's hold, read fresh; one that can't be read still holds (hold.read_hold fails closed)."""
+        """The brake's hold, read fresh; one that can't be read still holds (hold.read_hold fails closed). The last one
+        read standing is kept, for the model it was loading."""
         try:
-            return self._read_hold()
+            hold = self._read_hold()
         except Exception as err:
             _log.warning("the brake's hold can't be read (%s): taken as standing", err)
-            return Hold("an unknown time", f"the hold can't be read: {err}", ())
+            hold = Hold("an unknown time", f"the hold can't be read: {err}", ())
+        if hold is not None:
+            self._last_hold = hold
+        return hold
+
+    @staticmethod
+    def _succeeded(task: asyncio.Future) -> bool:
+        """A drain's result, quietly: True once its model is gone."""
+        return not task.cancelled() and task.exception() is None and bool(task.result())
 
     @staticmethod
     def _not_unloaded(ends: list[DrainEnd], label: str) -> str:

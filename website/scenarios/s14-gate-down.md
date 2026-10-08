@@ -32,7 +32,9 @@ always-loaded models by themselves, one at a time, as it does for one that early
 decision, 2026-10-07). *(Added 2026-10-08, at the implementation plan's Task 17, the controller's
 ruling: one that earlyoom kills, or whose start keeps hanging, reloads by itself at most once an
 hour; a second time within the hour, my phone says it won't reload by itself, and `spark load`
-loads it.)* ntfy reaches me over the tailnet or the home LAN only, so out of reach means
+loads it.)* *(Added 2026-10-08, at its review, the controller's ruling: llama-swap restarting
+unplanned counts in that hour too, so after a second unplanned restart within the hour the
+always-loaded models wait for me, and one notification names each `spark load`.)* ntfy reaches me over the tailnet or the home LAN only, so out of reach means
 no alert, for now.
 
 In the plan's words: a high-priority *The gate on brightroar stopped at 09:14 (it crashed; it is

@@ -158,9 +158,10 @@ class RefusalRecord:
 @dataclass(frozen=True)
 class RecentRecord:
     """An event for `spark status`'s *recent* that isn't a refusal (the controller's ruling at Task 17): a pin make-room
-    ended, a session that lost its model, and the like. `kind` names what happened (`make-room`); `text` is Dan's
-    words; `uids` the accounts it concerns, for the status socket's filter (Task 19). Shown beside the refusals, by
-    time (Task 29)."""
+    or `spark unload` ended, a session that lost its model, a release of the brake's hold, and the like. `kind` names
+    what happened (`make-room`, `unload`, `brake_released`); `text` is Dan's words; `uids` the accounts it concerns,
+    for the status socket's filter (Task 19). Empty `uids` is a system event, which every caller sees (the
+    controller's ruling at Task 17's review). Shown beside the refusals, by time (Task 29)."""
 
     at: float
     kind: str
@@ -239,6 +240,9 @@ class GateState:
     # by itself at most once in RESIDENT_RELOAD_EVERY_S; dropped once that old on every save, and by Dan's `spark load`
     # (the controller's ruling at Task 17).
     resident_reloads: dict[str, float] = field(default_factory=dict)
+    # Each resident Dan unloaded with `spark unload`, and the boot he did it in: it stays unloaded across a gate restart
+    # until his `spark load` or the next boot (the controller's ruling at Task 17's review).
+    dans_unloads: dict[str, str] = field(default_factory=dict)
     applying: ApplyHold | None = None
     ticketed: dict[str, Ticketed] = field(default_factory=dict)  # by model
     # Each model's ticket id for the load the gate issued it for this boot, saved before the load call and dropped
@@ -323,7 +327,7 @@ _SCALARS: dict[str, Any] = {"last_auto_release_at": float | None, "notify_failin
                             "damaged_at": float | None, "damaged_kept_as": str | None, "release_assumed": bool}
 # Every part of the file this version reads; any other is kept as it was (GateState.extra).
 _KNOWN = {"schema", "room_hold", "applying", "brake_events_after", "notified", "issued", "undrains", "refusals",
-          "late_alerts", "recent", "resident_reloads",
+          "late_alerts", "recent", "resident_reloads", "dans_unloads",
           *(section for section, _, _ in _TABLES), *_SCALARS}
 
 
@@ -433,7 +437,7 @@ def _decode(data: Any) -> GateState:
     if not (isinstance(reloads, dict) and all(_finite(when) for when in reloads.values())):
         raise ValueError("resident_reloads must map each model to a finite time")
     state.resident_reloads = {name: float(when) for name, when in reloads.items()}
-    for name in ("issued", "undrains"):
+    for name in ("issued", "undrains", "dans_unloads"):
         ids = data.get(name, {})
         if not (isinstance(ids, dict) and all(isinstance(value, str) and value for value in ids.values())):
             raise ValueError(f"{name} must map each model to an id")
@@ -470,7 +474,7 @@ def _encode(state: GateState) -> dict[str, Any]:
              "notified": dict(state.notified), "issued": dict(state.issued), "undrains": dict(state.undrains),
              "refusals": [_plain(item) for item in state.refusals],
              "recent": [_plain(item) for item in state.recent],
-             "resident_reloads": dict(state.resident_reloads),
+             "resident_reloads": dict(state.resident_reloads), "dans_unloads": dict(state.dans_unloads),
              "late_alerts": [_plain(item) for item in state.late_alerts]}
     return copy.deepcopy(state.extra) | data
 
@@ -702,6 +706,7 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
     other_boot = state.boot_id != boot_id
     if other_boot:
         state.applying, state.sessions, state.ticketed, state.issued, state.undrains = None, {}, {}, {}, {}
+        state.dans_unloads = {}  # Dan's `spark unload` of a resident lasts the boot (Task 17's review)
         if not state.fresh_after_damage:  # a damage noted in an earlier boot is no longer news
             state.damaged_at = state.damaged_kept_as = None
     listed = {entry.model: entry.state for entry in running}

@@ -138,6 +138,43 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
     return released
 
 
+def recover_release(state_dir: Path) -> bool:
+    """At the gate's start, before anything reads the hold (Task 18; the controller's ruling at Task 17's review): a
+    hold a crash left aside in release_hold's window, between its rename and its link back or its removal, is put back
+    when no hold file stands, which fails safe: loads stay paused until the hold is judged again. With a hold file
+    standing, that one, the newer, stays, and what is aside goes. True when one was put back."""
+    folder = Path(state_dir)
+    path = folder / FILE
+
+    def written(aside: Path) -> float:
+        try:
+            return aside.lstat().st_mtime
+        except OSError:
+            return float("-inf")
+
+    asides = sorted(folder.glob(f"{FILE}.releasing-*"), key=written)  # the newest last
+    if not asides:
+        return False
+    restored = False
+    if not os.path.lexists(path):
+        newest = asides[-1]
+        try:
+            os.link(newest, path)
+        except FileExistsError:  # the brake wrote one meanwhile: it stands
+            pass
+        except OSError:
+            os.rename(newest, path)
+            asides.pop()
+        restored = True
+    for aside in asides:
+        aside.unlink(missing_ok=True)
+    try:
+        _fsync_folder(state_dir)
+    except OSError:
+        pass
+    return restored
+
+
 def _fsync_folder(state_dir: Path) -> None:
     folder = os.open(state_dir, os.O_RDONLY)
     try:

@@ -361,6 +361,7 @@ class UnloadCount(TypedDict):
 
 class UnloadDone(TypedDict):
     unloaded: Literal[True]
+    pin_ended: bool  # it ended a pin on the model: *Unloaded the coder; the pin on it ended.* (Task 17's review)
 
 
 class PinRequest(TypedDict):

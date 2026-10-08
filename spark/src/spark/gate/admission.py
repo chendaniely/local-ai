@@ -367,6 +367,13 @@ class Admitter:
             waiter.future.cancel()
         self._queue.clear()
 
+    def hold_seen_at(self, hold: Hold) -> float | None:
+        """When admission first saw the brake's hold `hold` standing (its passes read the hold fresh, each memory
+        reading), or None when it hasn't: the floor of rule 5's five minutes (Task 17, the controller's ruling at its
+        review)."""
+        seen = self._hold_seen
+        return seen[1] if seen is not None and seen[0] == hold else None
+
     def free_for_a_load(self, *, uses_hold: bool) -> Decimal:
         """Rule 9's figure now, for a group that does or doesn't load into make-room's hold."""
         return self._figures(self._read_mem().available_gib).free(uses_hold)

@@ -396,7 +396,7 @@ over a Unix socket), so `spark status --json`, which 2b's menu bar polls over SS
 |---|---|---|---|
 | The front crashes or restarts | 9100 stays held, and new connections wait in the backlog, through a crash loop too, since neither the socket nor the front ever gives up | every request in flight, streams and waiting requests included | the notifier, on a crash; a hang trips the watchdog first |
 | The gate is down | the models already loaded, through the front; the brake, which then sends its own alerts | every load (`gate_down`), idle unloads, make-room, the brake's release, every notification but the notifier's and the brake's. At boot, or after a restart that stopped every engine, nothing can load, so the API is down in effect (the session's ruling; rule 8) | the notifier; the brake's own "brake fired" |
-| llama-swap is down, outside `apply`'s restart | the front and the gate; once it answers again, the gate reloads the residents by themselves, one at a time (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council; the same for a resident lost to an earlyoom kill or a crash, which reloads by itself at most once an hour, and a second within the hour waits for `spark load`: the controller's ruling, 2026-10-08, at the implementation plan's Task 17) | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
+| llama-swap is down, outside `apply`'s restart | the front and the gate; once it answers again, the gate reloads the residents by themselves, one at a time (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council; the same for a resident lost to an earlyoom kill or a crash, which reloads by itself at most once an hour, and a second within the hour waits for `spark load`: the controller's ruling, 2026-10-08, at the implementation plan's Task 17; and, at its review the same day, an unplanned restart counts in that hour too: a second within it reloads none, and one notification says so and names `spark load`) | every model: requests wait for their key's wait, then are refused with `llama_swap_down`; the brake can hold new loads but not unload (*The minimal brake's reach*) | the notifier, on a crash; the gate, when it stops answering |
 | The brake is down | everything else; earlyoom | freeze protection, for the 2 s its restart takes | the notifier |
 
 A deploy restarts each of them only as *Deploy workflow* says, and never cuts off a request in
@@ -3354,6 +3354,20 @@ Each item gets its own design pass when its turn comes.
     *Reloading*, since the reloads are queued, not done.
   - `spark status`'s *recent* gains the gate's events that aren't refusals, newest 50, each kept
     a day.
+- **2026-10-08** — Phase 2a's Task 17 review, the controller's rulings. Dated notes are in *The
+  front and the gate* (the failures table) and in the implementation plan's Tasks 13, 15, 17, 18,
+  19, 23, 29 and 30, and on the S14 scenario page.
+  - A make-room run whose caller goes is settled as a refused one: with nothing unloaded, the hold
+    that stood before is put back. A run that ends short keeps a hold sized to what is free for a
+    load, at most its target, and so does a full one.
+  - A crash while the gate lifts the brake's hold, between moving the hold file aside and putting
+    it back, left no hold: the gate puts it back at its start, which fails safe. The five minutes
+    also count from when the gate first saw the hold, and the brake writes its time with its zone.
+  - A resident whose start ended by itself isn't reloaded by the gate. A second unplanned restart
+    of llama-swap within the hour reloads no resident, and says so. A resident Dan unloaded stays
+    unloaded across a gate restart until his `spark load` or a reboot, and `spark unload` of a
+    pinned model ends the pin.
+  - The brake's releases show in *recent* to every caller.
 
 ## Sources
 

@@ -73,6 +73,7 @@ def full_state() -> GateState:
     state.refusals.extend(refusal(n) for n in range(3))
     state.recent.extend(event(n) for n in range(2))
     state.resident_reloads = {GEMMA: T - 600}
+    state.dans_unloads = {GEMMA: BOOT}
     state.applying = ApplyHold(since=T - 30, by_uid=DAN, renewed_at=T - 15, begun_at=T - 10,
                                restarting=["local-ai-gate.service", "local-ai-llama-swap.service"], ended=False)
     state.ticketed = {GEMMA: Ticketed(model=GEMMA, pid=4300, ticket_id="t-gemma", at=T - 7000, start_time=123456)}
@@ -94,6 +95,15 @@ def test_pins_sessions_holds_and_marks_survive_a_restart(tmp_path):
     assert loaded.brake_marks[CODER] == BrakeMark(CODER, T - 3 * 3600, 26.0)
     assert list(loaded.refusals) == [refusal(0), refusal(1), refusal(2)]
     assert list(loaded.recent) == [event(0), event(1)] and loaded.resident_reloads == {GEMMA: T - 600}
+    assert loaded.dans_unloads == {GEMMA: BOOT}
+
+
+def test_dans_unloads_last_the_boot_and_no_longer():
+    # Dan's `spark unload` of a resident lasts across a gate restart within the boot, and ends with it (the
+    # controller's ruling at Task 17's review).
+    state = GateState(boot_id=BOOT, dans_unloads={GEMMA: BOOT})
+    assert restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].dans_unloads == {GEMMA: BOOT}
+    assert restore(state, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)[0].dans_unloads == {}
 
 
 def test_a_room_hold_saved_before_its_total_reads_as_its_size(tmp_path):
@@ -761,6 +771,40 @@ def test_release_hold_with_the_hold_it_judged_lifts_only_that_hold(tmp_path):
         assert release_hold(tmp_path, replace(judged, episode=9)) is False
     finally:
         os.rename = real_rename
+    assert read_hold(tmp_path) == newer and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
+
+
+def test_a_crash_between_release_holds_rename_and_its_link_back_leaves_a_hold_the_start_puts_back(tmp_path):
+    # The controller's ruling at Task 17's review (Minor 11, promoted): a crash in release_hold's window, the hold moved
+    # aside and not yet linked back, leaves no hold file. At the gate's start the hold found aside is put back, which
+    # fails safe; with a newer hold standing, that one stays and the one aside goes.
+    judged = Hold(local(T), "19.6 GiB available", (CODER,), boot_id=BOOT, episode=1, available_gib=19.6)
+    standing = replace(judged, since=local(T + 60), episode=2)
+    write_hold(tmp_path, standing)
+
+    class Died(BaseException):
+        pass
+
+    real_link = os.link
+
+    def dies(src, dst):
+        raise Died
+
+    os.link = dies
+    try:
+        with pytest.raises(Died):
+            release_hold(tmp_path, judged)
+    finally:
+        os.link = real_link
+    assert read_hold(tmp_path) is None and len(list(tmp_path.glob(f"{hold.FILE}.releasing-*"))) == 1
+    assert hold.recover_release(tmp_path) is True
+    assert read_hold(tmp_path) == standing and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
+    assert hold.recover_release(tmp_path) is False  # nothing aside: nothing to do
+    # A newer hold written since stands; the one left aside goes.
+    (tmp_path / f"{hold.FILE}.releasing-1-ab").write_text((tmp_path / hold.FILE).read_text())
+    newer = replace(judged, since=local(T + 120), episode=3)
+    write_hold(tmp_path, newer)
+    assert hold.recover_release(tmp_path) is False
     assert read_hold(tmp_path) == newer and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
 
 
