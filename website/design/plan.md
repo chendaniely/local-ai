@@ -1606,7 +1606,9 @@ council, with Dan's fourteen decisions (Revisions).*
   row, and a test that the compose file's digest is the pin. No address, token or hostname goes in.
   *(Dan, 2026-10-07: the file is `stack/synology/ntfy/compose.yaml`, deployed with any Compose
   helper, Portainer's stacks today, or plain `docker compose up -d`; the NAS's address, the topic
-  names and the tokens arrive as variables it names. 2b's watchdog follows the same pattern.)*
+  names and the tokens arrive as variables it names. 2b's watchdog follows the same pattern.
+  Dan's decision, 2026-10-08: they moved into ntfy's own `server.yml` on the NAS, as Marius
+  Hosting's guide keeps it, and the Compose file holds no variable.)*
 - [Spark] **the front and the gate** (*The front and the gate*): the front as `spark-front` on the
   socket-activated 127.0.0.1:9100, with the key digests, the route list and its limits; the gate on
   its two socket-activated sockets, with SO_PEERCRED; `local-ai-brake` kept, reading the gate's
@@ -3312,6 +3314,18 @@ Each item gets its own design pass when its turn comes.
   `restart: unless-stopped`, not his `on-failure:5`: Docker doesn't restart an `on-failure`
   container when its daemon restarts, so a NAS reboot or a DSM update would leave ntfy down and the
   alerts silent.
+- **2026-10-08** — ntfy's private values move into its own `server.yml` (Dan's decision, the same
+  day: Marius Hosting's full `server.yml`, the easiest to set up), correcting the entry above's
+  "with no `server.yml`". `ntfy.md` §3 writes it on the Spark and §4 uploads it to
+  `/volume1/docker/ntfy`, and `stack/synology/ntfy/server.example.yml` shows its shape, in place of
+  `variables.example`. The Compose file holds nothing private and no variable, so it pastes as it
+  is: it names the folder and port 6741, runs `serve --config /etc/ntfy/server.yml` (ntfy v2.28.0
+  refuses to start without the file), and keeps the settings that aren't private, among them the
+  auth database and `deny-all`, which ntfy takes over `server.yml`, so a `server.yml` that loses a
+  line leaves ntfy closed. `TZ` goes. The cost: the hashes and the tokens sit in a file in the NAS's
+  `docker` folder, which anyone who can read that folder can read; a token can only publish to its
+  own topic. Kept: the login, the tailnet and the home LAN only, and the pin. The runbook links his
+  guide as the reference, with what to skip in it.
 
 ## Sources
 

@@ -1,0 +1,26 @@
+# The shape of ntfy's server.yml on the Synology, /volume1/docker/ntfy/server.yml, with a placeholder in angle
+# brackets for every value. The real file is private and never goes in this repo: website/how-to/ntfy.md §3 writes
+# it on the Spark, from the hashes, tokens and topics it makes there, and §4 uploads it to that folder. It holds
+# only the private settings; the rest are in compose.yaml's environment, which ntfy takes over this file, so the
+# login stays on even if a line here is lost.
+#
+# It holds the users' bcrypt hashes and the publishers' tokens (Dan's decision, 2026-10-08: the whole of ntfy's
+# private configuration in one file, as Marius Hosting's guide keeps it). Anyone who can read the NAS's docker
+# folder can read them; a token can only publish to its own topic.
+base-url: "<http://NAS-TAILNET-NAME:6741, ntfy's address as the phone and the Spark reach it>"
+auth-users:
+  - "spark-gate:<bcrypt hash of a random password>:user"
+  - "spark-notify:<bcrypt hash of a random password>:user"
+  - "spark-brake:<bcrypt hash of a random password>:user"
+  - "phone:<bcrypt hash of the phone's password>:user"
+auth-access:
+  - "spark-gate:<the gate's topic>:wo"
+  - "spark-notify:<the notifier's topic>:wo"
+  - "spark-brake:<the brake's topic>:wo"
+  - "phone:<the gate's topic>:ro"
+  - "phone:<the notifier's topic>:ro"
+  - "phone:<the brake's topic>:ro"
+auth-tokens:
+  - "spark-gate:<the gate's token>"
+  - "spark-notify:<the notifier's token>"
+  - "spark-brake:<the brake's token>"

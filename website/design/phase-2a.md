@@ -192,7 +192,11 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   as a Git-repository stack), with plain `docker compose up -d`, or with another helper; nothing
   depends on Portainer. It holds no secret and no private value: the NAS's address, the topic
   names and the tokens arrive as variables the file names. Phase 2b's watchdog follows the same
-  pattern.
+  pattern. *(Dan's decision, 2026-10-08: the private values moved from those variables into ntfy's
+  own `server.yml` on the NAS, Marius Hosting's way, which `ntfy.md` §3 writes and §4 uploads. The
+  Compose file still holds nothing private, and now no variable either: it pastes as it is, and
+  keeps the settings that aren't private, the login's two switches among them, which ntfy takes over
+  `server.yml`. `server.yml` keeps the hashes and the tokens in the NAS's `docker` folder.)*
 - **The failure notifier:** "`local-ai-notify@.service`, a template unit that `OnFailure=` starts
   for the front, the gate, the brake and llama-swap … runs Ubuntu's `/usr/bin/curl`, outside the
   app's venv, with `--max-time` and `--fail`, as a user of its own (`DynamicUser=yes`) … token …
@@ -383,8 +387,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 
 | Path | Responsibility |
 |---|---|
-| `stack/synology/ntfy/compose.yaml` (new) | ntfy on the Synology as a Compose file, pinned by its index digest; every private value a named variable |
-| `stack/synology/ntfy/variables.example` (new) | The ~~six~~ seven variables by name, with placeholders, never values *(corrected 2026-10-08: Marius Hosting's style added `NTFY_TZ`; Task 1)* |
+| `stack/synology/ntfy/compose.yaml` (new) | ntfy on the Synology as a Compose file, pinned by its index digest; ~~every private value a named variable~~ nothing private and no variable, its private values in ntfy's `server.yml` on the NAS *(Dan's decision, 2026-10-08)* |
+| ~~`stack/synology/ntfy/variables.example` (new)~~ | The ~~six~~ seven variables by name, with placeholders, never values *(corrected 2026-10-08: Marius Hosting's style added `NTFY_TZ`; Task 1. Replaced the same day by `server.example.yml`, Dan's decision)* |
+| `stack/synology/ntfy/server.example.yml` (new, 2026-10-08) | The shape of ntfy's private `server.yml` on the NAS, with a placeholder for every value |
 | `stack/models.yaml` | The registry: gains each model's `label`, the `key_groups`, `notifications`, `gate` settings and the budget's measured values; whisper's tmp-dir moves; the coder becomes Qwen3.8-27B (Task 42) |
 | `stack/keys.example.yaml` (new) | The private key list's shape, with placeholder names; the real one is `/etc/local-ai/keys.yaml`, never in the repo |
 | `stack/versions.yaml` | Gains ntfy's row (`where: [synology]`) |
@@ -658,6 +663,18 @@ healthcheck as Compose resolves them; and a new test,
 the auth and cache files' paths, `TZ: "${NTFY_TZ:?set NTFY_TZ}"`, his healthcheck byte for byte
 and the port as a variable.
 
+*(Dan's decision, 2026-10-08, after the Marius Hosting style: the full `server.yml`. Every private value moved out of the Compose variables into ntfy's `server.yml` in `/volume1/docker/ntfy` on the NAS, which `ntfy.md` §3 writes on the Spark and §4 uploads, as Marius Hosting's guide keeps it; `stack/synology/ntfy/server.example.yml` shows its shape, and replaces `variables.example`.)* The Compose file has no variable and no `TZ`; it names the folder, bound to `/etc/ntfy`
+(where `server.yml` and `user.db` are) with its `cache` subfolder at `/var/cache/ntfy`, and port
+`6741:80`; its command is `serve --config /etc/ntfy/server.yml`, so ntfy v2.28.0 refuses to start
+without the file; and its environment keeps the settings that aren't private, `NTFY_AUTH_FILE:
+/etc/ntfy/user.db` and `NTFY_AUTH_DEFAULT_ACCESS: deny-all` among them, which ntfy takes over
+`server.yml`. `server.yml` holds only `base-url`, `auth-users`, `auth-access` and `auth-tokens`. The
+tests follow: no variable in the Compose file; `test_every_variable_is_named_in_the_example` became
+`test_server_example_holds_only_the_private_settings`; a new
+`test_the_runbook_writes_server_yml_in_the_examples_shape` runs §3's step 5 on stand-ins;
+`test_docker_compose_reads_the_file` reads the file with an empty `--env-file`; and the runbook has
+18 command blocks.
+
 **Steps:**
 
 - [ ] **Step 1: Confirm the digest.** **On the Spark** (an anonymous token for Docker Hub's public
@@ -704,7 +721,8 @@ git commit -m "build(stack): 🤖 ntfy v2.28.0 as a Compose file for the Synolog
 **Files (the session's record, once Dan's steps are done):**
 
 - Modify: `CLAUDE.md` (*Where that material goes instead*: the values file, and that ntfy's
-  values live in its Compose helper ~~and the vault~~, its address, port, folder and topic names
+  values live in ~~its Compose helper~~ its `server.yml` on the NAS *(Dan's decision, 2026-10-08)*
+  ~~and the vault~~, its address, port, folder and topic names
   also in the vault, and its hashes and tokens never there, only in the helper and (the tokens)
   the Spark's root-only header files, the vault recording where; *corrected 2026-10-07, after
   Task 1's review: `CLAUDE.md` keeps credentials in the vault by reference only*), `README.md`
@@ -738,7 +756,9 @@ header files, as `ntfy.md` §8 writes them.
   *(Dan's decision, 2026-10-08: Marius Hosting's Synology style, keeping the login, the
   tailnet-only path and the pin; the controller kept `unless-stopped`.)* File Station makes both
   folders first, `/volume1/docker/ntfy` (or the folder Dan picks) and its `cache` subfolder, and
-  the stack gets seven variables, `NTFY_TZ` among them. Expected also: the container's health reads
+  the stack gets seven variables, `NTFY_TZ` among them. *(Dan's decision, 2026-10-08, later the
+  same day: no variables and no `TZ`; `server.yml`, which `ntfy.md` §3 writes, is uploaded to the
+  folder before the stack deploys, §4's step 2, and the log's times are UTC.)* Expected also: the container's health reads
   `healthy` within about two minutes, which Task 1 checked only outside Docker, with the image's
   own files; `user.db` is in the folder and `cache.db` in its `cache` subfolder; and the log's
   times are local if `TZ` took effect, as on an amd64 NAS, or UTC on an arm64 one, whose image has
