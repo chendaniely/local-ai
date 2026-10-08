@@ -379,6 +379,11 @@ def test_a_malformed_model_names_the_model_and_the_field(tmp_path, change, messa
             id="idle-quoted",
         ),
         pytest.param(
+            lambda d: d["gate"].pop("owed_reads_rss"),
+            "gate: owed_reads_rss is required",
+            id="owed-missing",
+        ),
+        pytest.param(
             lambda d: d["gate"].update(owed_reads_rss=False),
             "gate: owed_reads_rss must be a mapping of each engine kind to true or false",
             id="owed-a-flag",

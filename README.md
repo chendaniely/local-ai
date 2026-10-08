@@ -32,7 +32,7 @@ this line, was parked on 2026-09-23.)
 | [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
 | [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
-| [`stack/`](stack) | The model registry (`models.yaml`), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`), the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule) and the Synology's Compose files (`synology/`: ntfy's, with its variables by name). |
+| [`stack/`](stack) | The model registry (`models.yaml`), the private key list's shape with placeholder names (`keys.example.yaml`; the real list is `/etc/local-ai/keys.yaml`, never in the repo), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`), the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule) and the Synology's Compose files (`synology/`: ntfy's, with its variables by name). |
 | [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack page. |
 
 ## Hosts

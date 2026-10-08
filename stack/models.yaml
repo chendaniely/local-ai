@@ -126,7 +126,7 @@ models:
     # back in a pi session re-reads the prompt (Phase 1's council, 2026-09-28).
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]
 key_groups:
-  dan:                   # Dan's keys: pi on the Mac, the web UI
+  dan:                   # Dan's keys, such as pi on the Mac's and the web UI's
     wait_s: 30
     queue: 0
     uses_hold: true

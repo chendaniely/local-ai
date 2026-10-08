@@ -26,10 +26,9 @@ date: 2026-10-07
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
 > same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
-> 1.**~~ **Task 1 is done** (2026-10-07: ntfy's Compose file and runbook, reviewed, with a fix round).
-> **Next: Task 2 [Dan] and Task 3, side by side**: no task before Task 27 reads what Task 2
-> makes, so the Spark tasks go on while Dan sets ntfy up, and Task 2 has to be done before Task 27
-> starts. Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> 1.**~~ **Done (2026-10-07):** Tasks 1, 3 and 4, each reviewed. **Task 2 [Dan]** runs side by
+> side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
+> before Task 27 starts. **Next: Task 5.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`.
 
 **Goal:** Requests reach a new front on 127.0.0.1:9100, which checks the same client keys (held
@@ -53,7 +52,9 @@ loop of its own. llama-swap v257 moves to 127.0.0.1:900 and its engines to 800 a
 `CAP_NET_BIND_SERVICE`, internal keys only and a sandbox; every engine still starts through
 `spark launch`, which now needs the gate's admission ticket. `local-ai-notify@.service` runs
 Ubuntu's `/usr/bin/curl` when any of the four fails. The registry (`stack/models.yaml`) gains each
-model's label, the client keys and their groups, the notification list and the gate's settings;
+model's label, ~~the client keys and their groups~~ the key groups, the notification list and the
+gate's settings (the keys themselves are in the private `/etc/local-ai/keys.yaml`, by Dan's decision
+after the forward-and-back council; *corrected 2026-10-07, at Task 4*);
 `spark render` writes every unit from it, and `make install-units` installs root's copies. The CLI
 reaches the gate with the standard library only.
 
