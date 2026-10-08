@@ -3,9 +3,29 @@
 # A model's `args` may set only the engine options on render's list, ALLOWED in
 # spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
 # An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).
+# Phase 2a's sections, after the models, are for its gate and its front:
+#   key_groups     what each group of client keys may do: how long a request may wait, from when the front
+#                  receives it, for its model's load to start before it is refused (wait_s), its place in the
+#                  gate's queue (queue, lower goes first), whether it may load into make-room's hold (uses_hold) or
+#                  load the model the brake marked (reloads_marked), whose wording its refusals use (words: dan or
+#                  agent), whether its refusals and status name Dan's processes (names_processes), and its caps per
+#                  key: requests waiting (max_waiting, below llama-swap's 10 per model) and open connections
+#                  (max_open). The keys themselves, each with its group, the label messages name it by and the
+#                  account that owns it, are in the private key list, /etc/local-ai/keys.yaml, on the Spark only
+#                  and never in this repo; stack/keys.example.yaml shows its shape.
+#   notifications  each notification type's priority on Dan's phone: high, default, low, or "off" (quoted, since
+#                  YAML reads a bare off as false) to send none.
+#   gate           how many minutes an on-demand model stays loaded with no request and no session
+#                  (idle_unload_min), and, per engine kind, whether the gate counts an engine's RssAnon growth as
+#                  memory its model already holds (owed_reads_rss).
+# Each model has a label, its plain-words name in messages; a resident may say what uses it (used_by), for
+# make-room's list; and an on-demand model that loads only after make-room frees room for it sets needs_room.
 budget:
   allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
+  allocatable_measured: false  # true once the ceiling above is measured on this box (plan.md, rule 9)
   reserve_gib: 24        # a load must leave this much MemAvailable free
+  # MemAvailable with no model loaded: 117.8 GiB before Phase 1's first load (changelog.md, 2026-09-28), rounded down.
+  idle_available_gib: 117
 brake:
   warn_gib: 28
   brake_gib: 20
@@ -15,9 +35,11 @@ engines:
   whisper.cpp: /opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server
 models:
   gemma-4-26b-a4b:
+    label: Gemma
     capability: chat
     roles: [small, vision]
     resident: true
+    used_by: the web UI and photos use it
     engine: llama.cpp
     source:
       repo: google/gemma-4-26B-A4B-it-qat-q4_0-gguf
@@ -42,6 +64,7 @@ models:
     # cap them at 4 per slot, 8 in all (~5 GiB).
     args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4"]
   qwen3-embedding-0.6b:
+    label: the embeddings
     capability: embeddings
     roles: [embed]
     resident: true
@@ -62,6 +85,7 @@ models:
     # llama-server's batch size, 2048, which caps --ubatch-size. (This said 8192 until 2026-09-28, capped the same way.)
     args: [--pooling, last, --ubatch-size, "2048"]
   whisper-large-v3-turbo:
+    label: whisper
     capability: transcription
     roles: [stt]
     resident: true
@@ -77,6 +101,7 @@ models:
     footprint_measured: false
     args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp, --threads, "8"]
   qwen3.6-35b-a3b:
+    label: the coder
     capability: chat
     roles: [coder]
     resident: false
@@ -100,3 +125,51 @@ models:
     # would be ~2 GiB, so cap them at 8 (~0.5 GiB of it), counted in the footprint: an edit or a regenerate further
     # back in a pi session re-reads the prompt (Phase 1's council, 2026-09-28).
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]
+key_groups:
+  dan:                   # Dan's keys: pi on the Mac, the web UI
+    wait_s: 30
+    queue: 0
+    uses_hold: true
+    reloads_marked: true
+    words: dan
+    names_processes: true
+    max_waiting: 8
+    max_open: 32
+  agent:                 # agent's key
+    wait_s: 600
+    queue: 1
+    uses_hold: false
+    reloads_marked: false
+    words: agent
+    names_processes: false
+    max_waiting: 4
+    max_open: 32
+notifications:
+  brake_fired: high
+  brake_needs_release: high
+  gate_down: high
+  front_down: high
+  llama_swap_down: high
+  brake_down: high
+  back_up: default
+  refused: default
+  footprint_suspect: default
+  load_failed: default
+  brake_released: default
+  room_hold_ended: default
+  resident_waiting: default
+  apply_restarted: default
+  load_started: low
+  loaded: low
+  unloaded: low
+  waiting: low
+  pin_ended: low
+  memory_warning: low
+gate:
+  idle_unload_min: 60
+  # Off for each engine until 2a's soak shows that RssAnon follows that engine's growth (plan.md, rule 9). Until then,
+  # what a model is still owed is its footprint less what its load took, however much it has grown since: that errs
+  # safe.
+  owed_reads_rss:
+    llama.cpp: false
+    whisper.cpp: false

@@ -1,0 +1,6 @@
+# A stand-in for the private key list, /etc/local-ai/keys.yaml, shaped as stack/keys.example.yaml shows: names,
+# groups, labels and accounts only, never a key or a digest.
+keys:
+  dan-mac: {group: dan, label: pi on the Mac}
+  open-webui: {group: dan, label: the web UI}
+  agent: {group: agent, label: agent, account: agent}

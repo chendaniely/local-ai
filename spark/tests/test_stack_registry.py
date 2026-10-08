@@ -1,10 +1,11 @@
 from pathlib import Path
 
-from spark.registry import load_registry
+from spark.registry import ClientKey, load_keys, load_registry
 from spark.versions import load_versions
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 STACK_VERSIONS = STACK_REGISTRY.with_name("versions.yaml")
+STACK_KEYS_EXAMPLE = STACK_REGISTRY.with_name("keys.example.yaml")
 LLAMA_CPP_BATCH_DEFAULT = 2048  # llama-server b11146's --batch-size default; it caps --ubatch-size
 LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
 # Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
@@ -88,3 +89,83 @@ def test_every_chat_model_caps_its_context_checkpoints():
     assert chat
     for model in chat:
         assert flag(model.args, "-ctxcp", "--ctx-checkpoints", "--swa-checkpoints") is not None, model.name
+
+
+# Phase 2a's Task 4: the values the plan's Global Constraints rule, in the deployed registry.
+
+def test_the_stack_registrys_waits_are_30s_for_dan_and_10_minutes_for_agent():
+    groups = load_registry(STACK_REGISTRY).key_groups
+    assert set(groups) == {"dan", "agent"}
+    assert groups["dan"].wait_s == 30 and groups["agent"].wait_s == 600
+
+
+def test_the_stack_registrys_groups_give_2as_behaviour():
+    # The design's one `dan` flag, as five settings apart (Dan's decision, 2026-10-07): today's two groups give 2a's
+    # behaviour exactly.
+    groups = load_registry(STACK_REGISTRY).key_groups
+
+    def behaviour(name):
+        g = groups[name]
+        return g.queue, g.uses_hold, g.reloads_marked, g.words, g.names_processes
+
+    assert behaviour("dan") == (0, True, True, "dan", True)
+    assert behaviour("agent") == (1, False, False, "agent", False)
+
+
+def test_the_stack_registrys_caps_are_the_rulings():
+    groups = load_registry(STACK_REGISTRY).key_groups
+    assert (groups["dan"].max_waiting, groups["dan"].max_open) == (8, 32)
+    assert (groups["agent"].max_waiting, groups["agent"].max_open) == (4, 32)
+
+
+def test_on_demand_models_idle_unload_after_60_minutes():
+    assert load_registry(STACK_REGISTRY).gate.idle_unload_min == 60
+
+
+def test_owed_reads_rss_stays_off_until_the_soak():
+    # The gate counts an engine's RssAnon growth as memory a model already holds only once the soak has shown that it
+    # follows that engine's growth (plan.md, rule 9). Task 45 changes this test, with the soak's evidence.
+    registry = load_registry(STACK_REGISTRY)
+    assert registry.gate.owed_reads_rss == {engine: False for engine in registry.engines}
+
+
+PLAN_PRIORITIES = {  # the Global Constraints' list, all on
+    "brake_fired": "high", "brake_needs_release": "high", "gate_down": "high", "front_down": "high",
+    "llama_swap_down": "high", "brake_down": "high", "back_up": "default", "refused": "default",
+    "footprint_suspect": "default", "load_failed": "default", "brake_released": "default",
+    "room_hold_ended": "default", "resident_waiting": "default", "apply_restarted": "default", "load_started": "low",
+    "loaded": "low", "unloaded": "low", "waiting": "low", "pin_ended": "low", "memory_warning": "low",
+}
+
+
+def test_every_notification_is_on_at_the_plans_priority():
+    notifications = load_registry(STACK_REGISTRY).notifications
+    assert notifications == PLAN_PRIORITIES
+    assert "off" not in notifications.values()
+
+
+def test_the_stack_registrys_labels_are_the_plans_words():
+    models = load_registry(STACK_REGISTRY).models
+    assert {name: m.label for name, m in models.items()} == {
+        "gemma-4-26b-a4b": "Gemma",
+        "qwen3-embedding-0.6b": "the embeddings",
+        "whisper-large-v3-turbo": "whisper",
+        "qwen3.6-35b-a3b": "the coder",
+    }
+    assert {name: m.used_by for name, m in models.items() if m.used_by} == {
+        "gemma-4-26b-a4b": "the web UI and photos use it"}
+
+
+def test_the_budget_records_idle_memavailable():
+    budget = load_registry(STACK_REGISTRY).budget
+    assert budget.idle_available_gib == 117
+    assert budget.allocatable_measured is False
+
+
+def test_the_example_key_list_loads_and_names_no_real_key():
+    # The real list is /etc/local-ai/keys.yaml, on the Spark only; the example shows its shape with placeholder names.
+    keys = load_keys(STACK_KEYS_EXAMPLE, load_registry(STACK_REGISTRY).key_groups)
+    assert keys and all(name.startswith("example-") for name in keys)
+    assert keys["example-mac"] == ClientKey("example-mac", "dan", "pi on the Mac", None)
+    assert keys["example-web-ui"] == ClientKey("example-web-ui", "dan", "the web UI", None)
+    assert keys["example-agent"] == ClientKey("example-agent", "agent", "agent", "agent")

@@ -1,10 +1,11 @@
-budget: {allocatable_gib: 102, reserve_gib: 24}
+budget: {allocatable_gib: 102, reserve_gib: 24, idle_available_gib: 117}
 brake: {warn_gib: 28, brake_gib: 20, poll_ms: 250}
 engines:
   llama.cpp: /opt/local-ai/bin/llama.cpp/b11146/llama-server
   whisper.cpp: /opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server
 models:
   vision-chat:
+    label: the vision model
     capability: chat
     roles: [small, vision]
     resident: true
@@ -17,6 +18,7 @@ models:
     footprint_measured: false
     args: [--load-mode, none]
   embed:
+    label: the embeddings
     capability: embeddings
     roles: [embed]
     resident: true
@@ -29,6 +31,7 @@ models:
     footprint_measured: false
     args: [--pooling, last, --ubatch-size, "8192"]
   stt:
+    label: whisper
     capability: transcription
     roles: [stt]
     resident: true
@@ -41,6 +44,7 @@ models:
     footprint_measured: false
     args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp]
   coder:
+    label: the coder
     capability: chat
     roles: [coder]
     resident: false
@@ -52,3 +56,30 @@ models:
     footprint_gib: 28
     footprint_measured: false
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3"]
+key_groups:
+  dan: {wait_s: 30, queue: 0, uses_hold: true, reloads_marked: true, words: dan, names_processes: true, max_waiting: 8, max_open: 32}
+  agent: {wait_s: 600, queue: 1, uses_hold: false, reloads_marked: false, words: agent, names_processes: false, max_waiting: 4, max_open: 32}
+notifications:
+  brake_fired: high
+  brake_needs_release: high
+  gate_down: high
+  front_down: high
+  llama_swap_down: high
+  brake_down: high
+  back_up: default
+  refused: default
+  footprint_suspect: default
+  load_failed: default
+  brake_released: default
+  room_hold_ended: default
+  resident_waiting: default
+  apply_restarted: default
+  load_started: low
+  loaded: low
+  unloaded: low
+  waiting: low
+  pin_ended: low
+  memory_warning: low
+gate:
+  idle_unload_min: 60
+  owed_reads_rss: {llama.cpp: false, whisper.cpp: false}

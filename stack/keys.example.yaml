@@ -1,0 +1,18 @@
+# The shape of the private key list, with placeholder names. The real list is /etc/local-ai/keys.yaml, on the Spark,
+# root:spark-admin 0640, and it never goes in this repo: its names are private, though not secret.
+# Each name must be the name its key has in the digests file, /etc/local-ai/secrets/client-keys.sha256: lowercase
+# letters, digits and '-'. No key or digest goes in this list.
+#   group    one of the registry's key_groups (stack/models.yaml), which decides what the key may do
+#   label    how messages name the asker
+#   account  the Unix user whose own refusals this key's are; left out for a key no account owns
+keys:
+  example-mac:
+    group: dan
+    label: pi on the Mac
+  example-web-ui:
+    group: dan
+    label: the web UI
+  example-agent:
+    group: agent
+    label: agent
+    account: agent

@@ -5,9 +5,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-from spark.registry import RegistryError, load_registry
+from spark.registry import (
+    NOTIFICATION_TYPES,
+    PRIORITIES,
+    ClientKey,
+    GateSettings,
+    KeyGroup,
+    RegistryError,
+    load_keys,
+    load_registry,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "models.yaml"
+KEYS = Path(__file__).parent / "fixtures" / "keys.yaml"
 
 
 def mutated(tmp_path, change) -> Path:
@@ -305,6 +315,79 @@ def test_a_malformed_model_names_the_model_and_the_field(tmp_path, change, messa
             "'Coder': names are lowercase letters, digits, '.' and '-'",
             id="name-uppercase",
         ),
+        # Phase 2a's sections (Task 4): each value of the type its field has, and nothing the section doesn't hold.
+        pytest.param(
+            lambda d: d["budget"].pop("idle_available_gib"),
+            "budget: idle_available_gib is required",
+            id="idle-available-missing",
+        ),
+        pytest.param(
+            lambda d: d["budget"].update(allocatable_measured="no"),
+            "budget: allocatable_measured must be true or false",
+            id="measured-quoted",
+        ),
+        pytest.param(lambda d: d.update(key_groups=["dan"]), "key_groups: must be a mapping", id="groups-a-list"),
+        pytest.param(
+            lambda d: d["key_groups"].update(dan="30"),
+            "key_groups: dan: a group must be a mapping",
+            id="group-a-string",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"].update(Robots=d["key_groups"].pop("agent")),
+            "key_groups: 'Robots': names are lowercase letters, digits and '-'",
+            id="group-name-uppercase",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"]["agent"].update(wait=600),
+            "key_groups: agent: 'wait' is not one of",
+            id="group-key-misspelled",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"]["agent"].pop("uses_hold"),
+            "key_groups: agent: uses_hold is required",
+            id="group-flag-missing",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"]["agent"].update(reloads_marked="false"),
+            "key_groups: agent: reloads_marked must be true or false",
+            id="group-flag-quoted",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"]["agent"].update(queue=1.5),
+            "key_groups: agent: queue must be a whole number",
+            id="queue-a-fraction",
+        ),
+        pytest.param(
+            lambda d: d["key_groups"]["agent"].update(max_open="32"),
+            "key_groups: agent: max_open must be a whole number",
+            id="max-open-quoted",
+        ),
+        pytest.param(lambda d: d.update(notifications=None), "notifications: must be a mapping", id="notify-null"),
+        pytest.param(lambda d: d.update(gate=60), "gate: must be a mapping", id="gate-a-number"),
+        pytest.param(lambda d: d["gate"].update(idle_min=60), "gate: 'idle_min' is not one of", id="gate-key-unknown"),
+        pytest.param(
+            lambda d: d["gate"].pop("idle_unload_min"), "gate: idle_unload_min is required", id="idle-missing"
+        ),
+        pytest.param(
+            lambda d: d["gate"].update(idle_unload_min=0),
+            "gate: idle_unload_min must be a positive whole number of minutes",
+            id="idle-zero",
+        ),
+        pytest.param(
+            lambda d: d["gate"].update(idle_unload_min="60"),
+            "gate: idle_unload_min must be a whole number",
+            id="idle-quoted",
+        ),
+        pytest.param(
+            lambda d: d["gate"].update(owed_reads_rss=False),
+            "gate: owed_reads_rss must be a mapping of each engine kind to true or false",
+            id="owed-a-flag",
+        ),
+        pytest.param(
+            lambda d: d["gate"]["owed_reads_rss"].update({"llama.cpp": "no"}),
+            "gate: owed_reads_rss: llama.cpp must be true or false",
+            id="owed-quoted",
+        ),
     ],
 )
 def test_a_malformed_section_names_the_section_and_the_field(tmp_path, change, message):
@@ -364,10 +447,10 @@ def test_a_quoted_boolean_or_a_bare_number_in_args_loads_as_text(tmp_path):
 @pytest.mark.parametrize(
     ("swaps", "message"),
     [
-        pytest.param([("  stt:\n", "  embed:\n")], "'embed' is repeated on line 31", id="model-twice"),
+        pytest.param([("  stt:\n", "  embed:\n")], "'embed' is repeated on line 33", id="model-twice"),
         pytest.param(
             [("    ctx: 131072\n", "    ctx: 131072\n    ctx: 8192\n")],
-            "'ctx' is repeated on line 50",
+            "'ctx' is repeated on line 54",
             id="field-twice",
         ),
         pytest.param([("  coder:\n", "  2024:\n")], "2024: names are lowercase", id="name-a-number"),
@@ -471,3 +554,260 @@ def test_a_trailing_newline_never_passes(tmp_path, change, message):
     # A pattern's `$` matches just before a final newline, so each is matched whole.
     with pytest.raises(RegistryError, match=f"^{re.escape(message)}"):
         load_registry(mutated(tmp_path, change))
+
+
+# Phase 2a's Task 4: each model's label, the key groups, the notifications, the gate's settings, and the key list,
+# which lives in a private file of its own.
+
+def refused(path: Path, message: str) -> None:
+    """load_registry refuses the registry at `path` with a message that starts with `message`."""
+    with pytest.raises(RegistryError, match="^" + re.escape(message)):
+        load_registry(path)
+
+
+def test_the_fixture_loads_its_2a_sections():
+    registry = load_registry(FIXTURE)
+    assert registry.key_groups["agent"] == KeyGroup("agent", 600, 1, False, False, "agent", False, 4, 32)
+    assert registry.gate == GateSettings(60, {"llama.cpp": False, "whisper.cpp": False})
+    assert registry.budget.idle_available_gib == 117
+    assert registry.budget.allocatable_measured is False  # the fixture leaves it out: false by default
+    assert registry.notifications["brake_fired"] == "high"
+    assert registry.models["coder"].label == "the coder"
+    assert registry.models["coder"].needs_room is False
+
+
+def keys_mutated(tmp_path, change) -> Path:
+    data = yaml.safe_load(KEYS.read_text())
+    change(data)
+    path = tmp_path / "keys.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return path
+
+
+def test_the_key_list_loads_from_its_own_file():
+    keys = load_keys(KEYS, load_registry(FIXTURE).key_groups)
+    assert set(keys) == {"dan-mac", "open-webui", "agent"}
+    assert keys["dan-mac"] == ClientKey("dan-mac", "dan", "pi on the Mac", None)
+    assert keys["agent"].account == "agent"
+
+
+def test_a_key_must_name_a_group_that_exists(tmp_path):
+    path = keys_mutated(tmp_path, lambda d: d["keys"]["agent"].update(group="robots"))
+    with pytest.raises(RegistryError, match="^" + re.escape("keys: agent: group 'robots' is not one of dan, agent")):
+        load_keys(path, load_registry(FIXTURE).key_groups)
+
+
+# The key list is written by hand on the box, as the registry is: a slip comes back naming the key and the field.
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        pytest.param(lambda d: d["keys"]["agent"].pop("label"), "keys: agent: label is required", id="no-label"),
+        pytest.param(
+            lambda d: d["keys"]["agent"].update(label=""),
+            "keys: agent: label must be text on one line, not ''",
+            id="label-empty",
+        ),
+        pytest.param(lambda d: d["keys"]["agent"].pop("group"), "keys: agent: group is required", id="no-group"),
+        pytest.param(
+            lambda d: d["keys"]["agent"].update(account=""),
+            "keys: agent: account must be text on one line, not ''",
+            id="account-empty",
+        ),
+        pytest.param(
+            lambda d: d["keys"]["agent"].update(acount="agent"),
+            "keys: agent: 'acount' is not one of group, label, account",
+            id="key-field-misspelled",
+        ),
+        pytest.param(
+            lambda d: d["keys"].update({"Dan-Mac": d["keys"].pop("dan-mac")}),
+            "keys: 'Dan-Mac': names are lowercase letters, digits and '-'",
+            id="name-uppercase",
+        ),
+        pytest.param(
+            lambda d: d["keys"].update({"dan.mac": d["keys"].pop("dan-mac")}),
+            "keys: 'dan.mac': names are lowercase letters, digits and '-'",
+            id="name-a-dot",
+        ),
+        pytest.param(
+            lambda d: d["keys"].update({2024: d["keys"].pop("dan-mac")}),
+            "keys: 2024: names are lowercase letters, digits and '-'",
+            id="name-a-number",
+        ),
+        pytest.param(
+            lambda d: d["keys"].update(agent="agent"),
+            "keys: agent: a key must be a mapping of group, label, account",
+            id="key-a-string",
+        ),
+        pytest.param(lambda d: d.update(keys=["agent"]), "keys: must be a mapping", id="keys-a-list"),
+        pytest.param(lambda d: d.pop("keys"), "keys: the list is required", id="no-keys"),
+        pytest.param(
+            lambda d: d.update(key_groups={}),
+            "the key list: 'key_groups' is not one of keys",
+            id="groups-in-the-key-list",
+        ),
+    ],
+)
+def test_a_malformed_key_list_names_the_key_and_the_field(tmp_path, change, message):
+    with pytest.raises(RegistryError, match="^" + re.escape(message)):
+        load_keys(keys_mutated(tmp_path, change), load_registry(FIXTURE).key_groups)
+
+
+def test_a_key_list_that_isnt_a_mapping_or_repeats_a_name_is_refused(tmp_path):
+    path = tmp_path / "keys.yaml"
+    path.write_text("- dan-mac\n")
+    with pytest.raises(RegistryError, match="^the key list must be a mapping"):
+        load_keys(path, load_registry(FIXTURE).key_groups)
+    text = KEYS.read_text()
+    assert text.count("  agent:") == 1
+    path.write_text(text.replace("  agent:", "  dan-mac:"))  # YAML would keep the second dan-mac alone
+    with pytest.raises(RegistryError, match="^'dan-mac' is repeated on line"):
+        load_keys(path, load_registry(FIXTURE).key_groups)
+
+
+def test_the_key_list_loader_refuses_python_tags_rather_than_running_them(tmp_path):
+    # As the registry's: under yaml's unsafe loaders this harmless call would run, and load as the label 2.
+    path = tmp_path / "keys.yaml"
+    path.write_text("keys:\n  agent: {group: agent, label: !!python/object/apply:builtins.len [[1, 2]]}\n")
+    with pytest.raises(yaml.YAMLError, match="python/object/apply"):
+        load_keys(path, load_registry(FIXTURE).key_groups)
+
+
+def test_the_registry_holds_no_key_list(tmp_path):
+    keys = {"dan-mac": {"group": "dan", "label": "pi on the Mac"}}
+    with pytest.raises(RegistryError, match=re.escape("/etc/local-ai/keys.yaml")):
+        load_registry(mutated(tmp_path, lambda d: d.update(keys=keys)))
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        pytest.param(lambda m: m.pop("label"), "coder: label is required", id="absent"),
+        pytest.param(lambda m: m.update(label=""), "coder: label must be text on one line, not ''", id="empty"),
+        pytest.param(lambda m: m.update(label="  "), "coder: label must be text on one line, not '  '", id="blank"),
+        pytest.param(lambda m: m.update(label=3), "coder: label must be text on one line, not 3", id="a-number"),
+        pytest.param(
+            lambda m: m.update(label="the\ncoder"),
+            "coder: label must be text on one line, not 'the\\ncoder'",
+            id="two-lines",
+        ),
+    ],
+)
+def test_every_model_needs_a_plain_words_label(tmp_path, change, message):
+    refused(mutated(tmp_path, lambda d: change(d["models"]["coder"])), message)
+
+
+def group_changed(tmp_path, **change) -> Path:
+    return mutated(tmp_path, lambda d: d["key_groups"]["agent"].update(change))
+
+
+def test_a_groups_words_are_dan_or_agent(tmp_path):
+    refused(group_changed(tmp_path, words="guest"), "key_groups: agent: words must be dan or agent, not 'guest'")
+
+
+@pytest.mark.parametrize(
+    ("queue", "message"),
+    [
+        pytest.param(-1, "key_groups: agent: queue must be a whole number from 0, not -1", id="negative"),
+        pytest.param("0", "key_groups: agent: queue must be a whole number, not '0'", id="quoted"),
+    ],
+)
+def test_a_groups_queue_is_a_whole_number(tmp_path, queue, message):
+    refused(group_changed(tmp_path, queue=queue), message)
+
+
+@pytest.mark.parametrize("waiting", [10, 0])
+def test_waiting_caps_stay_below_llama_swaps_ten(tmp_path, waiting):
+    refused(group_changed(tmp_path, max_waiting=waiting),
+            f"key_groups: agent: max_waiting must be from 1 to 9, below llama-swap's 10 per model, not {waiting}")
+    assert load_registry(group_changed(tmp_path, max_waiting=9)).key_groups["agent"].max_waiting == 9
+
+
+def test_open_connections_cover_the_waiting_ones(tmp_path):
+    refused(group_changed(tmp_path, max_open=3, max_waiting=4),
+            "key_groups: agent: max_open must be at least max_waiting (4), not 3")
+    assert load_registry(group_changed(tmp_path, max_open=4, max_waiting=4)).key_groups["agent"].max_open == 4
+
+
+@pytest.mark.parametrize(
+    ("wait", "message"),
+    [
+        pytest.param(0, "key_groups: agent: wait_s must be a positive whole number of seconds, not 0", id="zero"),
+        pytest.param("30", "key_groups: agent: wait_s must be a whole number, not '30'", id="quoted"),
+    ],
+)
+def test_a_wait_must_be_positive(tmp_path, wait, message):
+    refused(group_changed(tmp_path, wait_s=wait), message)
+
+
+def test_the_notification_list_names_every_type_once(tmp_path):
+    refused(mutated(tmp_path, lambda d: d["notifications"].pop("waiting")),
+            "notifications: waiting is missing; every notification type is listed, with its priority")
+    refused(mutated(tmp_path, lambda d: d["notifications"].update(coffee="low")),
+            "notifications: 'coffee' is not one of brake_fired, ")
+    refused(mutated(tmp_path, lambda d: d["notifications"].update(refused="loud")),
+            "notifications: refused must be high, default, low or off, not 'loud'")
+    refused(replaced(tmp_path, ("  waiting: low\n", "  waiting: low\n  waiting: high\n")),
+            "'waiting' is repeated on line")
+
+
+def test_an_unquoted_off_is_refused_and_a_quoted_one_turns_a_notification_off(tmp_path):
+    # YAML 1.1 reads an unquoted off as false.
+    refused(replaced(tmp_path, ("  pin_ended: low\n", "  pin_ended: off\n")),
+            'notifications: pin_ended must be high, default, low or off, not False; quote it: "off"')
+    path = replaced(tmp_path, ("  pin_ended: low\n", '  pin_ended: "off"\n'))
+    assert load_registry(path).notifications["pin_ended"] == "off"
+
+
+def test_notification_types_are_the_twenty_in_the_plans_order():
+    assert NOTIFICATION_TYPES == (
+        "brake_fired", "brake_needs_release", "gate_down", "front_down", "llama_swap_down", "brake_down", "back_up",
+        "refused", "footprint_suspect", "load_failed", "brake_released", "room_hold_ended", "resident_waiting",
+        "apply_restarted", "load_started", "loaded", "unloaded", "waiting", "pin_ended", "memory_warning",
+    )
+    assert PRIORITIES == ("high", "default", "low", "off")
+
+
+def test_idle_available_must_exceed_the_reserve(tmp_path):
+    refused(mutated(tmp_path, lambda d: d["budget"].update(idle_available_gib=24, reserve_gib=24)),
+            "budget: idle_available_gib (24) must exceed reserve_gib (24)")
+
+
+def test_used_by_is_optional_text(tmp_path):
+    assert load_registry(FIXTURE).models["vision-chat"].used_by is None
+    path = mutated(tmp_path, lambda d: d["models"]["vision-chat"].update(used_by="the web UI uses it"))
+    assert load_registry(path).models["vision-chat"].used_by == "the web UI uses it"
+    refused(mutated(tmp_path, lambda d: d["models"]["vision-chat"].update(used_by=3)),
+            "vision-chat: used_by must be text on one line, not 3")
+
+
+def test_needs_room_is_for_on_demand_models_only(tmp_path):
+    refused(mutated(tmp_path, lambda d: d["models"]["vision-chat"].update(needs_room=True)),
+            "vision-chat: needs_room is only for an on-demand model, and vision-chat is resident")
+    refused(mutated(tmp_path, lambda d: d["models"]["coder"].update(needs_room="yes")),
+            "coder: needs_room must be true or false")
+    coder = load_registry(mutated(tmp_path, lambda d: d["models"]["coder"].update(needs_room=True))).models["coder"]
+    assert coder.needs_room is True
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        pytest.param(
+            lambda owed: owed.pop("whisper.cpp"),
+            "gate: owed_reads_rss must name every engine kind; whisper.cpp is missing",
+            id="one-missing",
+        ),
+        pytest.param(
+            lambda owed: owed.update(vllm=False),
+            "gate: owed_reads_rss: 'vllm' is not one of llama.cpp, whisper.cpp",
+            id="one-no-model-uses",
+        ),
+    ],
+)
+def test_owed_reads_rss_names_each_engine_kind(tmp_path, change, message):
+    refused(mutated(tmp_path, lambda d: change(d["gate"]["owed_reads_rss"])), message)
+
+
+@pytest.mark.parametrize("section", ["key_groups", "notifications", "gate"])
+def test_a_new_section_may_not_be_missing(tmp_path, section):
+    refused(mutated(tmp_path, lambda d: d.pop(section)), f"{section}: the section is required")
