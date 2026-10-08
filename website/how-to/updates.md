@@ -476,19 +476,22 @@ above).
 
 **uvicorn is pinned exactly**, `uvicorn==0.54.0` without extras, where every other dependency
 takes a range (Starlette's, `>=1.3.1,<2`, starts at 1.3.1, which fixed the last advisory against
-1.x as of 2026-10-07). From Phase 2a's Task 9, `spark/src/spark/protocols.py`, which the front and
-the gate serve through, subclasses uvicorn's internals, its h11 protocol, which no release promises
-to keep; so only the uvicorn it was tested with may run, and the pin is the release that task is
-written for. A uvicorn bump changes three things together: the pin in `spark/pyproject.toml`,
-`pypi:uvicorn` in `protocols.TESTED_AGAINST`, and the version `test_uvicorn_is_pinned_exactly`
-expects. By hand, all three go in one commit with the lock, made with the `uv lock` above.
-Dependabot's PR brings the pin and the lock, so the other two go on its branch, in the same PR
-(step 2 above); a PR that moves the pin alone fails CI, on purpose. Either way, **on the Spark**, in
-the clone, with the bump checked out, run `test_protocols.py` before anything else, and the rest
-after it:
+1.x as of 2026-10-07). The front and the gate are to serve through two modules that rely on
+uvicorn's internals, which no release promises to keep (since Phase 2a's Task 9):
+`spark/src/spark/protocols.py` subclasses its h11 protocol, and `spark/src/spark/serve.py` replaces
+its server's signal handling and uses the server's `started` and `should_exit` flags. Each module's
+docstring names what it relies on. So only the uvicorn they were tested with may run, and the pin
+is that release. A uvicorn bump changes four things together: the pin in `spark/pyproject.toml`,
+`pypi:uvicorn` in `protocols.TESTED_AGAINST` and in `serve.TESTED_AGAINST`, and the version
+`test_uvicorn_is_pinned_exactly` expects. By hand, all four go in one commit with the lock, made
+with the `uv lock` above. Dependabot's PR brings the pin and the lock, so the other three go on its
+branch, in the same PR (step 2 above); a PR that moves the pin alone fails CI, on purpose. Either
+way, **on the Spark**, in the clone, with the bump checked out, run `test_protocols.py` and
+`test_sockets.py`, which run a real uvicorn through both modules, before anything else, and the
+rest after them:
 
 ```bash
-uv run --frozen --project spark pytest spark/tests/test_protocols.py
+uv run --frozen --project spark pytest spark/tests/test_protocols.py spark/tests/test_sockets.py
 make test
 ```
 
