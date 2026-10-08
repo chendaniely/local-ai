@@ -12,3 +12,5 @@ machines added; this is a separate mode.
   each is built and verified yet.
 - **[How-to](how-to/index.qmd)** — runbooks for the steps a person has to do.
 - **[Stack](reference/stack.md)** — every pinned component, with docs and advisories.
+- **[Notifications](reference/notifications.md)** — every notification type on my phone, with
+  its priority, generated from the registry.

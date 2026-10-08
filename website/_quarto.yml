@@ -20,6 +20,8 @@ website:
         href: how-to/index.qmd
       - text: Stack
         href: reference/stack.md
+      - text: Notifications
+        href: reference/notifications.md
 
 format:
   html:

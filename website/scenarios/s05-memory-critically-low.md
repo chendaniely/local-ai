@@ -64,9 +64,12 @@ loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loa
 They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on
 the Spark, `make brake-release` resumes them now.*, and `spark status` shows *paused*. On release,
 at default priority: *Brake released at 03:40, 64 GiB available. Reloaded Gemma and the
-embeddings. The coder was loading when it fired, so it loads again only when you ask.* A hold that
-waits for me sends, at high priority, *After the reboot, new loads are still paused from the brake
-at 02:58. On the Spark, `make brake-release` resumes them.* `agent`'s request for the coder
+embeddings. The coder was loading when it fired, so it loads again only when you ask.* ~~A hold that
+waits for me sends~~ A hold found after a reboot sends, at high priority, *After the reboot, new
+loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.*;
+a brake within the hour after an automatic release says so in its own alert, which ends *New loads
+stay paused until you release them: on the Spark, `make brake-release`.* *(Corrected 2026-10-07, at
+the implementation plan's Task 7: one alert per brake, as rule 5 has it.)* `agent`'s request for the coder
 afterwards reads *Not loading the coder for agent: it was loading when the brake fired at 03:12, so
 only Dan can load it again: `spark load coder` on the Spark, or one of Dan's requests from pi on
 the Mac or the web UI, which loads it if it fits.* *(corrected 2026-10-07, at the implementation

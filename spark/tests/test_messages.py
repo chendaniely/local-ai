@@ -676,7 +676,7 @@ NOTIFICATION_ROWS = [
      "new loads are paused. They resume by themselves after 5 min above 28 GiB available."),
     ("brake_fired", {"at": at(3, 13), "unloaded": [("Gemma", "idle"), ("the embeddings", "idle")], "follow_up": True},
      "Brake, 03:13: also unloaded Gemma and the embeddings, both idle."),
-    ("brake_needs_release", {"fired_at": at(2, 58), "why": "reboot"},
+    ("brake_needs_release", {"fired_at": at(2, 58)},
      "After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
      "resumes them."),
     ("gate_down", DOWN,
@@ -729,16 +729,19 @@ NOTIFICATION_ROWS = [
     ("memory_warning", {"available_gib": 27.4, "warn_gib": 28, "brake_gib": 20},
      "Memory is getting low on brightroar: 27.4 GiB available, under the 28 GiB warning line. The brake acts at 20."),
 ]
-# The variants phase-2a.md and plan.md give in full elsewhere: the brake's own alert, the second brake within the hour,
-# and the burst (*One notification per event*).
+# The variants phase-2a.md and plan.md give in full elsewhere: the brake's own alert, the second brake within the hour
+# (rule 5: its own alert says it waits for Dan; the controller's ruling, 2026-10-07), and the burst (*One notification
+# per event*).
+WITHIN_THE_HOUR = {**FIRED, "at": at(3, 50), "release_waits_for_dan": True}
+DANS_RELEASE = "New loads stay paused until you release them: on the Spark, `make brake-release`."
 PLAN_VARIANTS = [
     ("brake_fired", {**FIRED, "by_brake": True},
      "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; "
      "new loads are paused. They resume once the gate is back and memory has stayed above 28 GiB available for "
      "5 min."),
-    ("brake_needs_release", {"fired_at": at(3, 50), "why": "again", "released_at": at(3, 40)},
-     "The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until "
-     "you release them: on the Spark, `make brake-release`."),
+    ("brake_fired", WITHIN_THE_HOUR,
+     "Brake on brightroar at 03:50: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; "
+     f"new loads are paused. {DANS_RELEASE}"),
     ("footprint_suspect", {**BURST, "code": "footprint_suspect"},
      "Didn't load the coder for agent 4 more times since 09:12: same reason."),
 ]
@@ -762,6 +765,24 @@ def test_each_notification_reads_word_for_word(kind, given, text):
                          [pytest.param(k, g, t, id=f"{k}-{i}") for i, (k, g, t) in enumerate(PLAN_VARIANTS)])
 def test_the_plans_other_variants_read_word_for_word(kind, given, text):
     assert say(kind, **given) == text
+
+
+def test_a_brake_within_the_hour_of_an_automatic_release_sends_one_alert_for_dans_release():
+    # Rule 5: a brake within the hour after an automatic release holds until Dan releases it, and its high-priority
+    # alert says so: brake_fired itself, one event, one notification, in held_by_brake's words for Dan.
+    for given in (WITHIN_THE_HOUR, {**WITHIN_THE_HOUR, "by_brake": True}):
+        built = messages.notification("brake_fired", REGISTRY, **given)
+        assert built.priority == "high"
+        assert built.message.endswith(f"new loads are paused. {DANS_RELEASE}")
+        assert "resume by themselves" not in built.message and "once the gate is back" not in built.message
+    # The same words as held_by_brake's for Dan, there mid-sentence.
+    assert refusal("held_by_brake", replace(HELD, release_waits_for_dan=True)).message.endswith(
+        "and n" + DANS_RELEASE[1:])
+    # brake_needs_release is sent only for a hold found after a reboot: it no longer words the second brake.
+    with pytest.raises(ValueError, match="^brake_needs_release's words take no why"):
+        say("brake_needs_release", fired_at=at(3, 50), why="again", released_at=at(3, 40))
+    assert DANS_RELEASE in _plain(messages.NOTIFICATION_DOC["brake_fired"][1])
+    assert "within an hour" not in messages.NOTIFICATION_DOC["brake_needs_release"][1]
 
 
 def test_notification_doc_has_each_type_once_with_its_when_and_example():
@@ -1006,7 +1027,7 @@ def test_each_composed_notification_reads_as_built(kind, given, text):
 # What each notification type needs: a field left out, or None, an empty text or an empty list, is refused by name.
 NOTIFICATION_NEEDS = {
     "brake_fired": (FIRED, ("at", "unloaded", "available_gib", "line_gib")),
-    "brake_needs_release": (PLAN_VARIANTS[1][1], ("fired_at", "why", "released_at")),
+    "brake_needs_release": (NOTIFICATION_ROWS[2][1], ("fired_at",)),
     "gate_down": (DOWN, ("at",)),
     "back_up": ({"unit": "gate", "down_s": 12}, ("unit", "down_s")),
     "refused": ({"code": "no_fit", "moment": NO_FIT_DAN}, ("code", "moment")),

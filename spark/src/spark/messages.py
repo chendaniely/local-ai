@@ -528,12 +528,12 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it "
         "must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* Sent by the brake while "
         "the gate is down, it ends *They resume once the gate is back and memory has stayed above 28 GiB available "
-        "for 5 min.*"),
+        "for 5 min.* Within the hour after an automatic release, the hold waits for Dan, and it ends *New loads stay "
+        "paused until you release them: on the Spark, `make brake-release`.*"),
     "brake_needs_release": (
-        "a brake within the hour after an automatic release, or a hold found after a reboot",
+        "a hold found after a reboot",
         "*After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
-        "resumes them.* Within the hour: *The brake fired again at 03:50, within an hour of its automatic release at "
-        "03:40, so new loads stay paused until you release them: on the Spark, `make brake-release`.*"),
+        "resumes them.*"),
     "gate_down": (
         "the failure notifier: the gate stopped",
         "*The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new "
@@ -709,7 +709,9 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
         return f"Brake, {_clock(f['at'])}: also unloaded {unloaded}."
     _needs("brake_fired", f, "available_gib", "line_gib")
     warn, after = _line(registry.brake.warn_gib), _brief(f["release_after_s"])
-    if f["by_brake"]:  # nothing resumes without the gate
+    if f["release_waits_for_dan"]:  # a brake within the hour after an automatic release (rule 5): it says so itself
+        resume = "New loads stay paused until you release them: on the Spark, `make brake-release`."
+    elif f["by_brake"]:  # nothing resumes without the gate
         resume = f"They resume once the gate is back and memory has stayed above {warn} available for {after}."
     else:
         resume = f"They resume by themselves after {after} above {warn} available."
@@ -718,15 +720,12 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
 
 
 def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
-    _needs("brake_needs_release", f, "fired_at", "why")
-    _one_of("brake_needs_release", "why", f["why"], ("reboot", "again"))
-    if f["why"] == "reboot":
-        return (f"After the reboot, new loads are still paused from the brake at {_clock(f['fired_at'])}. On the "
-                "Spark, `make brake-release` resumes them.")
-    _needs("brake_needs_release", f, "released_at")
-    return (f"The brake fired again at {_clock(f['fired_at'])}, within an hour of its automatic release at "
-            f"{_clock(f['released_at'])}, so new loads stay paused until you release them: on the Spark, "
-            "`make brake-release`.")
+    """A hold found after a reboot, which waits for Dan. A brake within the hour after an automatic release says the
+    same in its own brake_fired (release_waits_for_dan), so it sends no second alert (the controller's ruling,
+    2026-10-07)."""
+    _needs("brake_needs_release", f, "fired_at")
+    return (f"After the reboot, new loads are still paused from the brake at {_clock(f['fired_at'])}. On the Spark, "
+            "`make brake-release` resumes them.")
 
 
 # The four the failure notifier sends: what stopped, what that means, and how soon systemd starts it again (the brake's
@@ -1071,8 +1070,8 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 # controller's additions of 2026-10-07). A refusal's type also takes the burst's fields, _BURST, with `count`.
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
-                    "by_brake": False, "release_after_s": 300},
-    "brake_needs_release": dict.fromkeys(("fired_at", "why", "released_at")),
+                    "by_brake": False, "release_waits_for_dan": False, "release_after_s": 300},
+    "brake_needs_release": {"fired_at": None},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
     "back_up": dict.fromkeys(("unit", "down_s")),
     "refused": dict.fromkeys(("code", "moment")),

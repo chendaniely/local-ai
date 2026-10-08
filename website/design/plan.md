@@ -1015,8 +1015,8 @@ notifications:
 
 | Type | Priority | When | Example |
 |---|---|---|---|
-| `brake_fired` | high | the brake fired: it names what it unloaded, and each further unload in the same episode sends a short follow-up; while the gate is down, the brake sends it itself, and the gate, once back, skips what the brake already sent | *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* |
-| `brake_needs_release` | high | a brake within the hour after an automatic release, or a hold found after a reboot | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* |
+| `brake_fired` | high | the brake fired: it names what it unloaded, and each further unload in the same episode sends a short follow-up; while the gate is down, the brake sends it itself, and the gate, once back, skips what the brake already sent | *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, which was loading; new loads are paused. They resume by themselves after 5 min above 28 GiB available.* Then, if it must unload more: *Brake, 03:13: also unloaded Gemma and the embeddings, both idle.* A brake within the hour after an automatic release, whose hold waits for Dan (rule 5), ends *New loads stay paused until you release them: on the Spark, `make brake-release`.* in place of *They resume by themselves …* (added 2026-10-07, at the implementation plan's Task 7, the controller's ruling: rule 5's "its high-priority alert says so" is this alert, so one event sends one notification). |
+| `brake_needs_release` | high | ~~a brake within the hour after an automatic release, or~~ a hold found after a reboot (corrected 2026-10-07, at the implementation plan's Task 7, the controller's ruling: a brake within the hour says it waits for Dan in its own `brake_fired`, above) | *After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` resumes them.* |
 | `gate_down` | high | the failure notifier: the gate stopped | *The gate on brightroar stopped at 09:14 (it crashed; it is restarting). Loaded models still answer; new loads are refused until it's back. On the Spark, `make doctor` shows what's wrong.* |
 | `front_down` | high | the failure notifier: the front stopped | *The front on brightroar stopped at 09:14 (it crashed; it is restarting). Requests wait for it, and any in flight were cut off. On the Spark, `make doctor` shows what's wrong.* |
 | `llama_swap_down` | high | the failure notifier, or the gate when it stops answering | *The model service on brightroar stopped at 09:14. No model answers until it's back; requests wait, then are refused. On the Spark, `make doctor` shows what's wrong.* |
@@ -3073,12 +3073,16 @@ Each item gets its own design pass when its turn comes.
   implementation plan's Task 7, the tasks that send or print its words (14, 15, 17, 19, 23, 26, 30
   and 32) and its *Deferred notes for implementers*.
   - The generated [Notifications page](../reference/notifications.md) is built; `make docs` writes
-    it, and a test fails while it is stale. CI's check comes with the next Mac step.
+    it, and a test fails while it is stale. CI's check comes with the next Mac step. The site's
+    navbar and home page list it beside the Stack page.
   - A refusal's body carries only `message` and `code` in `error`, as the check of pi and Open WebUI
     found.
   - `refused` words every code it carries for Dan's phone, from the refusal's own moment; a burst
     keeps its refusal's type; `resident_waiting` says when the model was to reload; the brake names
     each model's state; make-room's list marks pins, sessions and requests in flight.
+  - A brake within the hour after an automatic release says, in its own `brake_fired`, that new
+    loads stay paused until Dan releases them, as rule 5 asks, and `brake_needs_release` is sent
+    only for a hold found after a reboot: one event, one notification.
 
 ## Sources
 
