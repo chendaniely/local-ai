@@ -5,8 +5,13 @@ then the next step, naming where to act and the command when there is one.
 The front imports this module (Task 21's FRONT_MODULES), so at module level it may import spark.registry and nothing
 else of spark: were the budget pulled in, a change there would restart the front.
 
-Every size is an exact Decimal, a float as its repr reads, as the budget's are: in floats 42.3 − 24 − 0.3 is
-17.999999999999996, which would show 17 GiB free for a load where 18 is."""
+The words never work out admission's arithmetic: free for a load is the gate's own figure (Moment.free_gib), and the
+other memory numbers only make up the breakdown the plan's text shows. Each size is read exactly, a float as its repr
+reads, as the budget's are, then rounded as the plan says.
+
+Text from outside the registry and the key list (a process's name from /proc, the engine's line, the name a client
+asked for) goes in only on one line, and only when pi's retry list doesn't match it: otherwise pi would retry the
+refusal because of it."""
 
 from __future__ import annotations
 
@@ -105,9 +110,11 @@ class Moment:
     """What a refusal's words need, as the gate or the front saw it. Every field has a default, since the front builds
     its own refusals (draining, model_not_found, restarting, concurrency_limit, gate_down) with none of the memory
     numbers; a key's fields default to the least they promise, agent's wording with no process of Dan's named. Sizes
-    are GiB as measured, a float, an int or a Decimal: the words round them."""
+    are GiB as measured, a float, an int or a Decimal: the words round them. no_fit needs `free_gib`."""
 
     needed_gib: float = 0  # the model's footprint
+    free_gib: float | None = None  # no_fit: free for a load, the gate's own figure (budget.free_for_a_load's)
+    # The breakdown no_fit's words show after the figure, never used to work it out.
     available_gib: float = 0  # MemAvailable
     reserve_gib: float = 0
     owed_gib: float = 0  # the growth the loaded models are still owed
@@ -237,22 +244,33 @@ def _pi_would_retry(text: str) -> bool:
     return bool(_PI_RETRIES.search(text) or _PI_RETRIES.search(json.dumps(text)))
 
 
+def _outside(text: str | None) -> str | None:
+    """Text from outside the registry and the key list, as the words may hold it: on one line, or None when it is empty
+    or pi's list matches it. Every piece it goes into is fixed text that matches nothing (the tests show), and no
+    pattern spans the quote or the ", " around a piece, so a piece that passes alone passes in its sentence."""
+    line = _one_line(text or "")
+    return line if line and not _pi_would_retry(line) else None
+
+
 def _holder(h: Holder, names_processes: bool) -> str:
-    if h.dans and not names_processes:
-        return f"a process of Dan's, {_near(h.gib)} GiB"
-    return f"{h.name} {_near(h.gib)} GiB"
+    """A holder, named unless it is Dan's and the group doesn't name his processes. Its name goes through _outside,
+    since a process's comes from /proc; a model's is its label, which passes."""
+    name = _outside(h.name) if names_processes or not h.dans else None
+    if name is not None:
+        return f"{name} {_near(h.gib)} GiB"
+    return f"a process of Dan's, {_near(h.gib)} GiB" if h.dans else f"a process, {_near(h.gib)} GiB"
 
 
 def _no_fit(m: Moment) -> str:
-    need = _up(m.needed_gib)
-    hold = _gib(m.held_gib) if m.hold_counted else Decimal(0)
-    free = _gib(m.available_gib) - _gib(m.reserve_gib) - _gib(m.owed_gib) - hold
-    held, reserve, owed = _near(hold), _near(m.reserve_gib), _near(m.owed_gib)
+    if m.free_gib is None:
+        raise ValueError("no_fit's words need free_gib, the gate's own figure for free for a load")
+    need, free = _up(m.needed_gib), _down(m.free_gib)
+    held, reserve, owed = _near(m.held_gib) if m.hold_counted else 0, _near(m.reserve_gib), _near(m.owed_gib)
     less = [f"the {reserve} GiB reserve"] if reserve else []
     if owed:
         less.append(f"the {owed} GiB the loaded models may still grow into")
-    if _down(free) >= 1:
-        room = f"{_down(free)} GiB is free for a load"
+    if free >= 1:
+        room = f"{free} GiB is free for a load"
         if held:
             less.append(f"the {held} GiB make-room holds for Dan")
     elif held:
@@ -301,11 +319,10 @@ def _gate_down(m: Moment) -> str:
 def _load_failed(m: Moment) -> str:
     began = f"{_start(m.model_label)} started loading but"
     after = "On the Spark, `spark status` shows the engine's last lines."
-    said = _one_line(m.engine_said or "")
-    if said:
-        quoted = f'{began} failed: the engine stopped with "{said}". {after}'
-        if not _pi_would_retry(quoted):  # an engine's "timeout" or "terminated" would make pi repeat a whole load
-            return quoted
+    if _one_line(m.engine_said or ""):
+        said = _outside(m.engine_said)  # an engine's "timeout" or "terminated" would make pi repeat a whole load
+        if said is not None:
+            return f'{began} failed: the engine stopped with "{said}". {after}'
     elif m.deadline_s is not None:
         return f"{began} didn't finish within {_near(m.deadline_s)} s. {after}"
     return f"{began} failed: the engine stopped. {after}"
@@ -347,9 +364,14 @@ def _footprint_suspect(m: Moment) -> str:
 
 
 def _model_not_found(m: Moment) -> str:
+    asked = _outside(m.asked_name)  # the client's own text
+    none = f"There's no model called {asked} here." if asked is not None else "There's no model by that name here."
     listed = _and([f"{label} ({name})" for label, name in m.models])
-    return (f"There's no model called {m.asked_name} here. The models are {listed}. On the Mac, `make clients` "
-            "updates pi's list.")
+    if m.words == "dan":
+        update = "On the Mac, `make clients` updates pi's list."
+    else:  # agent's pi is on the Spark (website/how-to/pi.md): the controller's ruling, 2026-10-07, at Task 6
+        update = "On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to update pi's list."
+    return f"{none} The models are {listed}. {update}"
 
 
 def _too_many_requests(m: Moment) -> str:

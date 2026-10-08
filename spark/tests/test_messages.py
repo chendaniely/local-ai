@@ -9,6 +9,7 @@ import textwrap
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -38,12 +39,14 @@ CODER = {"model_label": "the coder", "model_command": "coder"}
 DAN = {"key_label": "pi on the Mac", "words": "dan", "names_processes": True, "wait_s": 30}
 AGENT = {"key_label": "agent", "words": "agent", "names_processes": False, "wait_s": 600}
 
-NO_FIT_DAN = Moment(needed_gib=41, available_gib=48, reserve_gib=24, owed_gib=6, held_gib=0, hold_counted=False,
-                    holders=[PYTHON, GEMMA], **CODER, **DAN)
-NO_FIT_AGENT = Moment(needed_gib=41, available_gib=106, reserve_gib=24, owed_gib=0, held_gib=70, hold_counted=True,
-                      holders=[Holder("the embeddings", 8, False), Holder("whisper", 3, False)], **CODER, **AGENT)
-# Dan's job running in his hold: what is free for a load, 36 − 24 − 70, is below 0.
-NO_FIT_AGENT_CLAMPED = replace(NO_FIT_AGENT, available_gib=36,
+# free_gib is the gate's own figure, budget.free_for_a_load's for the request: 48 − 24 − 6 here, the ceiling not binding
+NO_FIT_DAN = Moment(needed_gib=41, free_gib=Decimal(18), available_gib=48, reserve_gib=24, owed_gib=6, held_gib=0,
+                    hold_counted=False, holders=[PYTHON, GEMMA], **CODER, **DAN)
+NO_FIT_AGENT = Moment(needed_gib=41, free_gib=Decimal(12), available_gib=106, reserve_gib=24, owed_gib=0, held_gib=70,
+                      hold_counted=True, holders=[Holder("the embeddings", 8, False), Holder("whisper", 3, False)],
+                      **CODER, **AGENT)
+# Dan's job running in his hold: free for a load, 36 − 24 − 70, is below 0.
+NO_FIT_AGENT_CLAMPED = replace(NO_FIT_AGENT, free_gib=Decimal(-58), available_gib=36,
                                holders=[Holder("python3 (chendaniely)", 70, True), Holder("the embeddings", 8, False)])
 LOADING = Moment(loading_label="Gemma", **CODER, **DAN)
 HELD = Moment(brake_at=AT_0312, brake_available_gib=19.6, release_waits_for_dan=False, **CODER, **DAN)
@@ -131,6 +134,11 @@ ROWS = [
      "fits."),
     ("model_not_found", "model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **DAN),
      MODEL_NOT_FOUND_TEXT),
+    # agent's pi is on the Spark, and agent updates its list there (the controller's ruling, at Task 6).
+    ("model_not_found, agent", "model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **AGENT),
+     MODEL_NOT_FOUND_TEXT.replace("On the Mac, `make clients` updates pi's list.",
+                                  "On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to "
+                                  "update pi's list.")),
     ("too_many_requests", "too_many_requests", Moment(**AGENT),
      "agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when "
      "one finishes."),
@@ -253,22 +261,51 @@ def test_nothing_free_for_a_load_never_reads_negative():
     assert refusal("no_fit", NO_FIT_AGENT_CLAMPED).message == NO_FIT_CLAMPED_TEXT
     checked = 0
     for base in (NO_FIT_DAN, NO_FIT_AGENT):
-        for available in (0, 10, 23.5, 24, 24.9, 30, 36, 48, 90):
-            for owed in (0, 6):
+        for free in (Decimal(-58), -6, -0.1, 0, 0.4, Decimal("0.99")):
+            for available in (0, 24.9, 36, 90):
                 for held, counted in ((0, False), (70, False), (70, True)):
-                    free = available - 24 - owed - (held if counted else 0)
-                    if free >= 1:
-                        continue
-                    moment = replace(base, available_gib=available, owed_gib=owed, held_gib=held, hold_counted=counted)
+                    moment = replace(base, free_gib=free, available_gib=available, held_gib=held, hold_counted=counted)
                     message = refusal("no_fit", moment).message
                     assert "nothing is free for a load" in message, moment
                     assert not re.search(r"[-−]\s*\d", message), message
                     assert " 0 GiB is free" not in message, message
                     checked += 1
-    assert checked > 40
+    assert checked == 144
     # Below 1 GiB, but above 0: still nothing, never "0 GiB".
-    almost = refusal("no_fit", replace(NO_FIT_DAN, available_gib=30.9)).message
+    almost = refusal("no_fit", replace(NO_FIT_DAN, free_gib=0.9, available_gib=30.9)).message
     assert "and nothing is free for a load (30 GiB available, less the 24 GiB reserve and the 6 GiB" in almost
+
+
+def test_free_for_a_load_is_the_gates_own_figure():
+    # The ceiling binds: the gate's figure, min(48 − 24 − 6, ceiling − committed), is 10, below the breakdown's 18. The
+    # words show the gate's figure and never work out one of their own; the breakdown is the plan's, as it was.
+    ceiling = refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal(10))).message
+    assert ceiling == NO_FIT_DAN_TEXT.replace("and 18 GiB is free for a load", "and 10 GiB is free for a load")
+    # Rounded down, as admission's figure is: 17.99 never reads as 18.
+    assert "and 17 GiB is free for a load" in refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal("17.99"))).message
+    with pytest.raises(ValueError, match="free_gib"):
+        refusal("no_fit", replace(NO_FIT_DAN, free_gib=None))
+
+
+def test_no_outside_text_makes_pi_retry_a_refusal():
+    # A process's name comes from /proc, not the registry: one that pi's list matches is named only as a process, so pi
+    # never retries the refusal because of it. The guard is load_failed's, for the engine's line.
+    holders = [Holder("timeout (chendaniely)", 32, True), Holder("terminated (agent)", 8, False), GEMMA]
+    moment = replace(NO_FIT_DAN, holders=holders)
+    message = refusal("no_fit", moment).message
+    assert "Using memory now: a process of Dan's, 32 GiB, a process, 8 GiB, Gemma 27 GiB." in message
+    assert not pi_retries(pi_shows(409, "no_fit", moment))
+    # One that would match only as JSON writes it (U+2503 becomes ┃), and one with a line break in its name.
+    odd = replace(NO_FIT_DAN, holders=[Holder("┃top (agent)", 4, False), Holder("python3\n(chendaniely)", 32, True)])
+    assert "Using memory now: a process, 4 GiB, python3 (chendaniely) 32 GiB." in refusal("no_fit", odd).message
+    assert not pi_retries(pi_shows(409, "no_fit", odd))
+    # A client's own model name, in a 404 that pi would otherwise retry three times.
+    asked = Moment(asked_name="gpt-timeout", models=MODELS, **DAN)
+    assert refusal("model_not_found", asked).message == MODEL_NOT_FOUND_TEXT.replace(
+        "There's no model called qwen3.6-35b-a3b here.", "There's no model by that name here.")
+    assert not pi_retries(pi_shows(404, "model_not_found", asked))
+    assert refusal("model_not_found", replace(asked, asked_name="qwen3.6\n35b")).message.startswith(
+        "There's no model called qwen3.6 35b here.")
 
 
 def test_dans_own_hold_is_never_counted_against_him():
@@ -301,18 +338,21 @@ def test_the_wording_follows_the_groups_words():
 
 
 def test_sizes_round_against_the_load():
-    moment = replace(NO_FIT_DAN, needed_gib=40.2, available_gib=47.9, holders=[Holder("Gemma", 26.6, False)])
+    moment = replace(NO_FIT_DAN, needed_gib=40.2, free_gib=17.9, available_gib=47.9,
+                     holders=[Holder("Gemma", 26.6, False)])
     message = refusal("no_fit", moment).message
     assert "it needs 41 GiB" in message and "`spark make-room 41G`" in message
     assert "(47 GiB available" in message
-    assert "and 17 GiB is free for a load" in message  # 47.9 − 24 − 6 = 17.9, rounded down
+    assert "and 17 GiB is free for a load" in message  # the gate's 17.9, rounded down
     assert "Using memory now: Gemma 27 GiB." in message
     assert "(19.6 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=19.64)).message
     # A reading just under the brake's line rounds down, so it never reads as at the line.
     assert "(19.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=19.96)).message
-    # Exactly: in floats 42.3 − 24 − 0.3 is 17.999999999999996, which would show 17.
-    exact = refusal("no_fit", replace(NO_FIT_DAN, available_gib=42.3, owed_gib=0.3)).message
-    assert "and 18 GiB is free for a load (42 GiB available, less the 24 GiB reserve)." in exact
+    # Read exactly: as a binary float 19.7 is 19.69999…, which would round down to 19.6.
+    assert "(19.7 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=19.7)).message
+    # An owed growth that rounds to 0 is left out of the breakdown, never shown as "0 GiB".
+    small = refusal("no_fit", replace(NO_FIT_DAN, free_gib=17.7, owed_gib=0.3)).message
+    assert "and 17 GiB is free for a load (48 GiB available, less the 24 GiB reserve)." in small
 
 
 def test_held_by_brake_names_the_warn_line_and_the_release_time_it_is_given():
@@ -355,7 +395,7 @@ def test_the_front_builds_its_own_refusals_with_defaults():
     assert refusal("restarting", Moment(model_label="the coder", wait_s=30)).message == RESTARTING_TEXT
     assert refusal("draining", Moment(model_label="the coder", wait_s=30, inflight=1, drain_for="unload")).message == (
         DRAINING_UNLOAD_TEXT)
-    assert refusal("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS)).message == (
+    assert refusal("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, words="dan")).message == (
         MODEL_NOT_FOUND_TEXT)
     assert refusal("concurrency_limit", Moment(model_label="the coder")).message == CONCURRENCY_TEXT
     assert refusal("gate_down", Moment()).message == GATE_DOWN_TEXT

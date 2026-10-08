@@ -938,7 +938,7 @@ carries its mark (rule 5).
 | `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
 | `draining` | 409 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
 | `footprint_suspect` | 409 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
-| `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* |
+| `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* For `agent`'s key: *… On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to update pi's list.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: `agent`'s pi is on the Spark, and the Mac's `make clients` doesn't reach it.) |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
 | `invalid_api_key` | 401 | *That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.* (The controller's ruling, 2026-10-07; added to this table after the implementation plan's forward-and-back council.) |
@@ -957,7 +957,11 @@ comes only with a code's retry-after, 30 s for `no_fit`, `gate_down` and `llama_
 `restarting` and `draining`, 300 for `held_by_brake` and 10 for the `429`.)* A make-room hold is
 Dan's (rule 4): his keys may load into it, so his `no_fit` never counts it, while `agent`'s does and
 names it, with `spark make-room --done` as the next step (S02). For `agent`'s key a refusal names
-Dan's processes only as *a process of Dan's, 32 GiB*, as the status socket does. `loading` now means
+Dan's processes only as *a process of Dan's, 32 GiB*, as the status socket does. *(Added
+2026-10-07, at the implementation plan's Task 6, the controller's ruling: a process whose name pi's
+retry list matches is named only as *a process of Dan's* or *a process*, with its size. A name that
+a client asked for reads *There's no model by that name here.* in that case. pi then never retries
+a refusal because of a name it didn't choose.)* `loading` now means
 the key's wait ran out in the queue for the one-load slot; a request for a model that has started
 loading waits for it instead (*A request that needs a load*). `too_many_requests` and
 `route_not_served` are the front's per-key caps and its route list, worded. llama-swap's own `429`,
@@ -2964,6 +2968,16 @@ Each item gets its own design pass when its turn comes.
   counting what his job allocated (rule 4); the first formula shrank a 70 GiB hold to 7 for a
   5 GiB load. Rule 9's head, which still said render checks the footprints together against the
   ceiling, is corrected too.
+- **2026-10-07** — Phase 2a's Task 6, the controller's rulings on its concerns. Dated notes are in
+  *What you see in Phase 2a* and in the implementation plan's Tasks 6, 15 and 20.
+  - `model_not_found` gains `agent`'s next step, *On the Spark, as `agent`: pull its clone and run
+    `spark clients pi --write` to update pi's list.*, since `agent`'s pi is on the Spark.
+  - A refusal names a process whose name pi's retry list matches only as *a process*, so pi never
+    retries a refusal because of a process's name.
+  - A refusal's *free for a load* is the gate's own figure, ceiling term included, never one the
+    words work out.
+  - `held_by_brake`'s warn line and release time come from the registry and the gate, not from
+    the text.
 
 ## Sources
 

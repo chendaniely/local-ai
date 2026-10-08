@@ -1142,7 +1142,11 @@ currently experiencing high demand
   otherwise it reads *The coder started loading but failed: the engine stopped. On the Spark,
   `spark status` shows the engine's last lines.*, so an engine's `timeout` or `terminated` never
   makes pi repeat a full load. Its notification (Task 7), which pi never sees, quotes the line
-  either way.
+  either way. *(Added 2026-10-07, at Task 6, the controller's ruling: the same guard covers
+  every text from outside the registry and the key list. A holder's process name, from `/proc`,
+  that pi's list matches is named only as *a process of Dan's, <n> GiB* or *a process, <n> GiB*.
+  An asked name that it matches reads *There's no model by that name here.* Each is put on one
+  line first. Registry labels are Dan's own text.)*
 - `Holder(name: str, gib: float, dans: bool)` — a memory holder as messages name it, defined
   here; Task 8's `procs.top_holders` builds them.
 - `Moment` — what a message needs, every field with a default, since the front builds its own
@@ -1153,7 +1157,16 @@ currently experiencing high demand
   "agent"` and `names_processes: bool` (the asking key's group's, Task 4), and per code:
   `loading_label`, `brake_at: datetime`, `brake_available_gib`, `release_waits_for_dan: bool`,
   `engine_said: str | None`, `deadline_s`, `download_gib`, `inflight`, `drain_for: "make-room" |
-  "unload" | "idle"`, `asked_name`, `models: list[tuple[label, name]]`.
+  "unload" | "idle"`, `asked_name`, `models: list[tuple[label, name]]`. *(Added 2026-10-07, at
+  Task 6, the controller's rulings:*
+  - *`free_gib: float | None`, `no_fit`'s figure for free for a load. It is the gate's own,
+    what `budget.free_for_a_load` returned for the request, so its ceiling term counts. The words
+    never work it out, and `no_fit` without it is a `ValueError`. `available_gib`, `reserve_gib`,
+    `owed_gib` and `held_gib` only make up the breakdown in the parenthesis.*
+  - *`warn_gib` (28) and `release_after_s` (300), `held_by_brake`'s warn line and release time:
+    the registry's `brake.warn_gib` and `RELEASE_AFTER_S`, so the words stay true when either
+    changes.*
+  - *`words` also picks `model_not_found`'s next step, so the front passes it there too.)*
 - `refusal(code: str, m: Moment) -> Refusal` — one sentence a person reads, then the numbers, then
   one next step. The rules every message keeps:
   - a model by its label, and its label's first letter capitalised at the start of a sentence when
@@ -1167,7 +1180,8 @@ currently experiencing high demand
     render's words*);
     with a make-room hold counted, *nothing is free for a load while make-room holds <n> GiB for
     Dan*, and the parenthesis then lists the available memory and what else is taken from it (the
-    docs reviewer's I-4: once Dan's job runs in his hold, `agent`'s figure is 36 − 24 − 70);
+    docs reviewer's I-4: once Dan's job runs in his hold, `agent`'s figure is 36 − 24 − 70); the
+    figure is `free_gib`, the gate's own, rounded down (*added 2026-10-07, at Task 6*);
   - sizes in whole GiB (a need rounded up; *available* and *free for a load* rounded down; the
     rest to the nearest), but a reading near a line (the brake's, the warn line's) to one decimal
     (*19.6 GiB*);
@@ -1185,9 +1199,9 @@ the test's own time zone):
 
 | Code | Inputs |
 |---|---|
-| `no_fit` (Dan) | needed 41, available 48, reserve 24, owed 6, hold not counted, holders `python3 (chendaniely)` 32 and Gemma 27, key *pi on the Mac*, command `coder` |
-| `no_fit` (`agent`) | needed 41, available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the Spark, `spark make-room --done` ends the hold.* |
-| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. On the Spark, `spark make-room --done` ends the hold.* |
+| `no_fit` (Dan) | needed 41, free for a load 18 (the gate's `free_gib`, *added 2026-10-07, at Task 6*), available 48, reserve 24, owed 6, hold not counted, holders `python3 (chendaniely)` 32 and Gemma 27, key *pi on the Mac*, command `coder` |
+| `no_fit` (`agent`) | needed 41, free for a load 12 (*added 2026-10-07, at Task 6*), available 106, reserve 24, owed 0, hold 70 counted, holders the embeddings 8 and whisper 3, key *agent*: *The coder didn't load: it needs 41 GiB, and 12 GiB is free for a load (106 GiB available, less the 24 GiB reserve and the 70 GiB make-room holds for Dan). Using memory now: the embeddings 8 GiB, whisper 3 GiB. On the Spark, `spark make-room --done` ends the hold.* |
+| `no_fit` (`agent`, Dan's job running in the hold) | needed 41, free for a load −58 (*added 2026-10-07, at Task 6*), available 36, reserve 24, owed 0, hold 70 counted, holders a process of Dan's 70 and the embeddings 8, key *agent*: *The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. On the Spark, `spark make-room --done` ends the hold.* |
 | `loading` | loading Gemma, wait 30 s |
 | `held_by_brake` | brake at 03:12, 19.6 available, release automatic |
 | `held_by_brake` (waits for Dan) | the same, waiting for Dan: *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you release them: on the Spark, `make brake-release`.* |
@@ -1200,7 +1214,8 @@ the test's own time zone):
 | `draining` (Dan) | 1 in flight, for make-room, wait 30 s |
 | `draining` (`agent`) | 1 in flight, for make-room, wait 600 s: *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. It won't load for agent while make-room's hold stands.* |
 | `footprint_suspect` | brake at 03:12, command `coder` |
-| `model_not_found` | asked `qwen3.6-35b-a3b`; models the coder (`qwen3.8-27b`), Gemma, the embeddings, whisper — on-demand first, then residents, each in registry order |
+| `model_not_found` | asked `qwen3.6-35b-a3b`; models the coder (`qwen3.8-27b`), Gemma, the embeddings, whisper — on-demand first, then residents, each in registry order; key *pi on the Mac* (Dan's words) |
+| `model_not_found` (`agent`) | the same, key *agent*: *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to update pi's list.* (*Added 2026-10-07, at Task 6, the controller's ruling: `agent`'s pi is on the Spark, and `website/how-to/pi.md` says how `agent` updates it.*) |
 | `too_many_requests` | key *agent* |
 | `route_not_served` | none |
 | `draining` (not make-room) | 1 in flight, for an unload, wait 30 s: *The coder is being unloaded once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute.* |
@@ -1208,7 +1223,8 @@ the test's own time zone):
 
 **Tests** (`spark/tests/test_messages.py`):
 
-- `test_each_refusal_reads_word_for_word` — parametrized over the table's twenty rows:
+- `test_each_refusal_reads_word_for_word` — parametrized over the table's ~~twenty~~ twenty-one rows
+  (*`model_not_found` for `agent` added 2026-10-07, at Task 6*):
   `refusal(code, moment).message` equals the expected text exactly.
 - `test_every_code_has_its_status` — each of `CODES_409` gives 409, `gate_down` 503;
   `model_not_found` and `route_not_served` 404; `too_many_requests` and `concurrency_limit` 429,
@@ -1243,6 +1259,13 @@ the test's own time zone):
 - `test_messages_imports_no_more_than_the_registry` — a subprocess importing `spark.messages`
   leaves `spark.budget` out of `sys.modules`.
 - `test_the_unknown_key_text_is_the_rulings` — `UNKNOWN_KEY` is the ruling's sentence.
+- *Added 2026-10-07, at Task 6, with the controller's rulings:*
+  - `test_free_for_a_load_is_the_gates_own_figure` — where the ceiling binds, `free_gib` 10 is
+    below the breakdown's 48 − 24 − 6, and the message shows 10; 17.99 shows 17; `no_fit` without
+    `free_gib` is a `ValueError`.
+  - `test_no_outside_text_makes_pi_retry_a_refusal` — holders named `timeout (chendaniely)` and
+    `terminated (agent)` read *a process of Dan's, 32 GiB* and *a process, 8 GiB*, and pi's text
+    matches nothing. An asked name `gpt-timeout` reads *There's no model by that name here.*
 
 **Steps:**
 
@@ -2182,12 +2205,17 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     engine's kind. *held* — the room hold, not counted for a request whose privileges have
     `uses_hold`; such a load shrinks it with `budget.hold_after_dans_load`, and one that uses it up
     ends it (`room_hold_ended`, *used up by your own loads*). A refusal's `free for a load` is
-    passed to Task 6 as it is, which words 0 and below as *nothing is free for a load*.
+    passed to Task 6 as it is, which words 0 and below as *nothing is free for a load*. *(Added
+    2026-10-07, at Task 6: it goes in `Moment.free_gib`, what `free_for_a_load` returned for this
+    request, ceiling term included. `available_gib`, `reserve_gib`, `owed_gib`, `held_gib` and
+    `hold_counted` go with it, for the breakdown only.)*
   - The brake's mark: a request whose privileges lack `reloads_marked` waits its wait for a marked
     model, then `footprint_suspect`, with its notification; one that has it loads the model if it
     fits, and the mark goes.
   - `held_by_brake`'s words take the hold's `available_gib` and `since`, and whether it waits for
-    Dan from `hold.release_waits_for_dan` (Task 13).
+    Dan from `hold.release_waits_for_dan` (Task 13). *(Added 2026-10-07, at Task 6: and
+    `Moment.warn_gib`, the registry's `brake.warn_gib`, and `Moment.release_after_s`,
+    `RELEASE_AFTER_S`, so the words name the line and the time the release actually uses.)*
   - `cancel(request_id)` — a client gone: out of the queue at once, and nothing loads for it; a
     load already started finishes.
   - `set_restarting(on: bool)` (on while `state.applying` stands), `set_llamaswap_up(up: bool)`,
@@ -2230,7 +2258,8 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
   takes 50 s; Dan's request (wait 30 s) at 5 s → `Admitted` at 50 s.
 - `test_no_fit_after_the_keys_wait_carries_the_moments_numbers` — the examples' moment, Dan's key
   → at 30 s `no_fit`, its message Task 6's Dan text; recorded in `state.refusals`; `refused`
-  emitted.
+  emitted. *(Added 2026-10-07, at Task 6: with a ceiling that binds, the message's figure is the
+  admitter's own `free_for_a_load`, passed as `Moment.free_gib`, not available − reserve − owed.)*
 - `test_room_appearing_within_the_wait_loads_the_model` — available 48, then 90 at 10 s → loaded
   at 10 s.
 - `test_loading_means_the_wait_ran_out_in_the_queue_for_the_slot` — Gemma's load holds the slot
@@ -2774,7 +2803,9 @@ ASGI with a recording upstream stand-in, unless named):
 - `test_an_unparseable_request_gets_400_never_a_crash` — `{`, `[]`, `{"x": 1}` (no model), and a
   form with no boundary → 400 each; the next request is served.
 - `test_model_not_found_names_the_current_models` — `qwen3.6-35b-a3b` → 404 with Task 6's text,
-  listing the `ModelList`'s models.
+  listing the `ModelList`'s models. *(Added 2026-10-07, at Task 6: in the key's group's words. With
+  Dan's key, its next step is the Mac's `make clients`; with `agent`'s, the Spark's
+  `spark clients pi --write`, so the front passes `words` to `refusal`.)*
 - `test_too_many_requests_when_a_keys_caps_are_reached` — `agent`'s four requests held waiting →
   the fifth → 429, `Retry-After: 10`; 32 of a key's requests open → the 33rd → 429.
 - `test_journal_lines_carry_key_name_model_status_and_duration_only` — one request → one line
