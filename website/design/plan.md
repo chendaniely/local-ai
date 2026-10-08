@@ -1015,7 +1015,9 @@ health      front ok · gate ok · brake ok (key checked 09:00) · ntfy ok
 holds only `agent`'s own refusals, and other processes go unnamed. `--json` carries the same, for
 2b's menu bar. *Used by other processes* is the unaccounted memory, in plain words: idle
 `MemAvailable` (117), less what is available now (48) and the loaded models' footprints (43); here
-Dan's python job, less the growth the residents are still owed. It shows only when it isn't 0.
+Dan's python job, less the growth the residents are still owed. It shows only when it is above 0
+(corrected 2026-10-07, after the implementation plan's final check: this said "isn't 0", but cold
+residents hold less than their footprints, so at idle the formula goes below 0).
 *(Corrected 2026-10-07, after the implementation plan's re-check: this moment had no such line,
 though its formula gives 26.)* *(Corrected after the final re-review: the coder's brake mark and
 `agent`'s wait for Dan were missing from this moment, and its numbers now use the two words.)*
@@ -1159,7 +1161,12 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
     in a fixed order — the brake, the gate, the front only if its own files changed, llama-swap
     last. The restarting hold is kept in the gate's persisted state, so it survives the gate's own
     restart, and is released once llama-swap answers again; a request held through it reads
-    `restarting`, never `llama_swap_down`.)
+    `restarting`, never `llama_swap_down`. *(Added the same day, after the final check:* `make
+    apply` renews the hold every 15 s and the gate ends one not renewed for 60 s, so an apply that
+    died holds for about a minute at most; every end does the same work, the residents' reload
+    queued ahead of anything else; and the front drops the hold once the gate has been gone a
+    minute, so rule 8 holds. A front restart inside the apply, which comes only when its own files
+    change, cuts the requests it holds, as any front restart does.))
   - **The wait has a deadline:** up to 15 minutes for ~60 s with no request in flight, then apply
     offers "drain now", which holds new requests and lets those in flight finish, through the
     front's drain, and then `make apply-now` (the session's ruling). A request that arrives during
@@ -2810,6 +2817,10 @@ Each item gets its own design pass when its turn comes.
   again; the polkit rule's list grows to seven, with the S05 drill's oneshot unit, which runs
   `spark brake --once` against a drill copy of the registry; and swap is measured down to 24 GiB
   available only.
+- **2026-10-07** — The implementation plan's final check: apply's hold ends one way, whatever ends
+  it, with the residents' reload first; `make apply` renews it and the gate ends one that lapses;
+  the front drops it once the gate has been gone a minute; and *used by other processes* shows only
+  above 0.
 
 ## Sources
 

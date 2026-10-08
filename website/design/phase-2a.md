@@ -207,6 +207,14 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   front's counts"; "**The wait has a deadline:** up to 15 minutes … then apply offers 'drain now' …
   and then `make apply-now`"; "**Nothing is written until the drain is done**"; the front restarts
   "only when its own modules change", or the registry's model names and roles, or the key digests.
+- **Apply's hold** (the controller's rulings, 2026-10-07, after this plan's final check): from
+  `drain-all` to its end, `make apply` renews the hold every **15 s** (`APPLY_RENEW_S`), and the
+  gate ends a hold not renewed for **60 s** (`APPLY_LAPSE_S`), before `begin` as after. Every end
+  — `apply/end`, `undrain-all`, llama-swap answering again after its restart, a lapse — does the
+  same work, once: the hold released, then the residents' reload queued ahead of anything else.
+  `make apply` ends on SIGHUP and SIGTERM as on Ctrl-C, with the same cleanup. The front drops the
+  hold once the gate has been gone longer than `APPLY_LAPSE_S`, so a gate that doesn't come back
+  never takes the API down with it (rule 8).
 - **The coder:** "`unsloth/Qwen3.8-27B-GGUF`, at revision
   `4ca720788d1e01f1bff70c033e0d0028fd02e502` … the file `Qwen3.8-27B-UD-Q4_K_XL.gguf` (17.6 GB)";
   "`--spec-type draft-mtp`"; a native context of 262,144 with an f16 KV cache; "estimated at
@@ -1366,7 +1374,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | Socket | Route | Callers | Request → answer |
   |---|---|---|---|
   | status | `POST /v1/admit` | front | `{model, key, deadline, request_id}`, `deadline` in Unix seconds (`time.time()`), as every time in these messages → held until ready or refused; always `200`, `{ok: true, model}` or `{ok: false, code, status, message, retry_after_s}`; any other status is the gate's own failure |
-  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at, applying: bool}` (a front that gets `applying` true holds every new request, as on `hold_all`, so a restarted front holds again), `{op: "state", ready, starting, draining}`, `{op: "drain", model, drain_id, why}` (`why` one of `make-room`, `unload`, `idle`), `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "hold_all"}` and `{op: "release_all"}` (apply's restart), `{op: "ping", at}` every second |
+  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at, applying: bool, lapse_s}` (a front that gets `applying` true holds every new request, as on `hold_all`, so a restarted front holds again; `lapse_s` is the hold's bound, `APPLY_LAPSE_S`, which `hold_all` carries too), `{op: "state", ready, starting, draining}`, `{op: "drain", model, drain_id, why}` (`why` one of `make-room`, `unload`, `idle`), `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "hold_all"}` and `{op: "release_all"}` (apply's restart), `{op: "ping", at}` every second |
   | status | `POST /v1/front/inflight` | front | a whole snapshot, never a delta: `{seq, front_started_at, models: {name: {count, oldest_started_at, last_end_at}}, draining}` |
   | status | `POST /v1/front/drained` | front | `{model, drain_id}` |
   | status | `POST /v1/front/busy` | front | `{model, drain_id}` — the front's answer to an idle drain that finds a request in flight; the gate unloads nothing |
@@ -1379,8 +1387,9 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | control | `POST /v1/make-room/plan` · `POST /v1/make-room` | admin | `{size_gib}` or `{all: true}` → a `RoomPlan` with `plan_id`; `{plan_id, for_s}` → `{unloaded, free_gib, hold_gib, until}` |
   | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only → `{room, brake, reloading: [labels]}`, what each ended |
   | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) |
-  | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 12), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by `apply/end` (the held requests then go through admission) or `undrain-all` |
-  | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`, persisted with the hold, before the first restart; *end*, posted once llama-swap answers again, releases the hold (`release_all`), re-reads the registry, reloads the residents and sends `apply_restarted`. A gate that sees llama-swap answer again after a restart `begin` named releases the hold by itself, and so does a hold whose `begin` is 10 minutes old (`APPLY_HOLD_MAX_S`), so a `make apply` that died never holds forever |
+  | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 12), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by any of the ends the next rows name, each doing the same work |
+  | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
+  | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`, persisted with the hold, before the first restart; *end*, posted once llama-swap answers again, ends the hold. Every end — *end*, `undrain-all`, the gate seeing llama-swap answer again after a restart `begin` named, and a hold not renewed for `APPLY_LAPSE_S` (60 s), before `begin` as after — takes one path, once: it re-reads the registry, releases the hold (`release_all`), then queues the residents' reload ahead of anything else, in one step of the gate's loop, so no held request takes the load slot first, and sends `apply_restarted` when llama-swap did restart; a second end does nothing. So a `make apply` that died holds new requests for at most `APPLY_LAPSE_S` past its last renewal |
   | control | `GET /v1/logs/{model}?n=` | admin | `{lines: [...]}`, the engine's last lines, read with the gate's key |
   | control | `POST /v1/canary` | admin | `{needle}` → `{found: [where]}`: whether the string is in the gate's state, its refusal history or launch's records, never what surrounds it (doctor's `--full`) |
 
@@ -1648,19 +1657,21 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   brake_events_after: tuple[str, int] | None, notified: set[str], notify_failing_since: float |
   None, refusals: deque[RefusalRecord] (maxlen REFUSAL_HISTORY), applying: ApplyHold | None,
   ticketed: dict[str, Ticketed], clean_shutdown: bool, saved_at: float, boot_id: str)`;
-  `ApplyHold(since: float, by_uid: int, begun_at: float | None, restarting: list[str])` — apply's
-  hold, saved like the rest, so a gate restarted inside an apply still holds; `Ticketed(model:
+  `ApplyHold(since: float, by_uid: int, renewed_at: float, begun_at: float | None, restarting:
+  list[str], ended: bool)` — apply's hold, saved like the rest, so a gate restarted inside an apply
+  still holds; `ended` makes a second end do nothing; `Ticketed(model:
   str, pid: int, ticket_id: str, at: float)` — each engine a ticket started this boot.
 - `STATE_FILE = "state.json"`; `load_state(folder: Path) -> tuple[GateState, str | None]` — a
   missing file gives a fresh state and None; a damaged one, a fresh state and a problem naming the
   file (for `spark status`); never raises. `save_state(folder: Path, state: GateState) -> None` —
   written whole, the file and its folder fsynced, as `hold.write_hold` does.
-- `restore(state, running: list[Running], *, now: float, boot_id: str, registry) ->
-  tuple[GateState, RoomHold | None]` — a model `/running` shows starting is `starting`, at the
-  registry's footprint if it wasn't recorded; every loaded model's `last_use` is `now`; a model
-  `/running` doesn't list is dropped; a room hold from another boot ends, and is returned so the
-  caller sends `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins,
-  sessions, marks and refusals stay.
+- `restore(state, running: list[Running], *, now: float, boot_id: str, registry) -> tuple[GateState,
+  RoomHold | None]` — a model `/running` shows starting is `starting`, at the registry's footprint
+  if it wasn't recorded, and takes Task 14's ready-or-gone path, so its `started/` record moves into
+  `ticketed` once it is ready; every loaded model's `last_use` is `now`; a model `/running` doesn't
+  list is dropped; a room hold from another boot ends, and is returned so the caller sends
+  `room_hold_ended`; an apply hold and `ticketed` from another boot end too; pins, sessions, marks
+  and refusals stay.
 - `Emit` — the protocol every gate module notifies through: `emit(type: str, event_key: str,
   **fields) -> None`.
 - The hold (`hold.py`) gains `boot_id: str | None`, `episode: int | None` and `loading: str | None`
@@ -1673,7 +1684,8 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   `next_seq(path) -> int` — one past the file's last line, 1 for a missing file; `read_events(path,
   after: tuple[str, int] | None) -> list[BrakeEvent]` — the events after `after`, keyed on (boot id,
   seq), so a file that was removed or started again never hides the events written after it
-  (`brake/events.jsonl`).
+  (`brake/events.jsonl`). It reads without the lock, so it skips a last line with no newline (a
+  write in progress), and never returns or advances past it.
 
 **Tests** (`spark/tests/test_gate_state.py`):
 
@@ -1706,7 +1718,9 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   → seq 1, 2, 3; `next_seq` 4; `test_read_events_after_a_point` — after `(b, 2)` → the third only;
   `test_a_file_started_again_still_reads` — the file removed and one event appended with seq 1 on a
   new boot `b2` → read after `(b1, 3)` gives it; `test_two_writers_never_share_a_seq` — two
-  processes appending 50 events each to one file → 100 lines, seq 1 to 100, each once.
+  processes appending 50 events each to one file → 100 lines, seq 1 to 100, each once;
+  `test_a_half_written_last_line_is_left_for_next_time` — two whole lines and a third without its
+  newline → two events; the third completed → read after the second gives it.
 
 **Steps:**
 
@@ -1854,7 +1868,9 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     registry has one, else at its footprint, and flagged when capped. `UNKNOWN` → the slot stays
     held until `/running` shows it ready or gone. On every outcome the model's `started/` record
     is read, then cleared (`tickets.clear_started`): ready, its `pid` and ticket go into
-    `state.ticketed`, for the bypass check; failed, or gone, nothing is kept. `failed`
+    `state.ticketed`, for the bypass check; failed, or gone, nothing is kept. A model that a
+    restarted gate's `restore` found `starting` takes the same path once `/running` shows it ready
+    or gone. `failed`
     → `load_failed`, its text launch's
     refusal record for the model if there is one, else the engine's last line
     (`llamaswap.last_lines`), or the deadline's variant for `health check timed out`; the ticket
@@ -1937,6 +1953,9 @@ loads, `/running` and log lines the test scripts; memory from a list; a temporar
   `set_llamaswap_up(False)`: Dan's request → `restarting` at 30 s; no `llama_swap_down` emitted.
 - `test_every_outcome_clears_the_started_record` — ready → `started/` empty and the engine's pid in
   `state.ticketed`; failed → empty, nothing kept; `UNKNOWN`, then gone from `/running` → empty.
+- `test_a_load_restored_as_starting_is_ticketed_when_ready` — a new admitter on a state `restore`
+  marked the coder `starting`, its `started/` record on disk; `/running` shows it ready → its pid
+  in `state.ticketed`, the record gone; 400 s later, no `unticketed_engines`.
 - `test_owed_ignores_rss_growth_until_the_registry_turns_it_on` — Gemma 32, its load's fall 25,
   its `RssAnon` up 5 since: `owed_reads_rss` false → owed 7; true → 2.
 - `test_a_loads_fall_is_capped_and_flagged_when_other_memory_moved` — the coder's `cold_load_gib`
@@ -2163,11 +2182,16 @@ git commit -m "feat(spark): 🤖 make-room holds the room it frees; the gate rel
   `admitted_gib`, `started_at` and `available_at_start` from its ticket — what the brake reads
   (Task 21). A model is `starting` there from the moment its ticket is issued, not from when
   `/running` shows it, so a load's first second is never read as an unexplained fall.
-- The apply hold: `drain-all` writes `state.applying` and saves it before it answers; a gate that
-  starts with it set holds as before (admission restarting, `hello` with `applying` true); it ends
-  on `apply/end`, on `undrain-all`, when the unit watch sees llama-swap started after `begun_at`
-  with `/running` answering, or 10 minutes after `begun_at` (`APPLY_HOLD_MAX_S`, with a line in
-  *recent*); each end sends `release_all`.
+- The apply hold: `drain-all` writes `state.applying` and saves it before it answers; `apply/renew`
+  moves its `renewed_at`; a gate that starts with it set holds as before (admission restarting,
+  `hello` with `applying` true). `end_apply(why)` is its one end, whatever ends it: `apply/end`,
+  `undrain-all`, the unit watch seeing llama-swap started after `begun_at` with `/running`
+  answering, or the hold not renewed for `APPLY_LAPSE_S` (60 s), checked every second, before
+  `begin` as after. In one step of the event loop, with nothing admitted in between, it marks the
+  hold ended and saves it, re-reads the registry, sends `release_all`, and queues the residents'
+  reloads ahead of anything else (Task 14's order); then `apply_restarted` when llama-swap did
+  restart, and a line in *recent* naming why it ended. A second call finds `ended` and does
+  nothing.
 - The bypass check, every 5 s: Task 7's engines by port, each pid against `state.ticketed` and the
   live `started/` records → `health.unticketed_engines`; launch's `no_ticket` refusal records,
   each counted once as it appears this boot → `health.no_ticket_refusals`.
@@ -2238,8 +2262,8 @@ off Linux with Task 8's reason, and the rest run everywhere):
   its deadline, `hello` carries `applying: true`; `apply/end` to the new gate → `release_all`, and
   a held admit goes through.
 - `test_the_apply_hold_ends_once_llama_swap_answers_again` — `begin` naming llama-swap; the unit
-  watch's start time after `begun_at` and `/running` answering → `release_all` with no
-  `apply/end`; a `begin` 10 minutes old with neither → released, and a line in *recent*.
+  watch's start time after `begun_at` and `/running` answering → the one end, with no `apply/end`,
+  the residents' reload queued; the later `apply/end` → nothing.
 - `test_an_engine_without_a_ticket_is_reported` — an engine on 801, pid 4242, in neither
   `state.ticketed` nor a live `started/` record → `health.unticketed_engines` names it; with its pid
   in either → empty; three `no_ticket` refusals this boot, each counted as its record appears →
@@ -2247,6 +2271,13 @@ off Linux with Task 8's reason, and the rest run everywhere):
 - `test_drain_all_holds_and_unloads_nothing` — after `drain-all`: `hold_all` sent to the front, an
   admit call waits and gets `restarting` at its deadline, nothing unloads; after `apply/end`:
   `release_all` sent, and admission resumes.
+- `test_every_end_does_the_same_work_once` — parametrized over `apply/end`, `undrain-all`, the
+  automatic end and a lapse: Gemma not loaded and Dan's request for the coder held → the registry
+  re-read, `release_all`, and Gemma's reload takes the load slot before the coder's; then
+  `apply/end` again → nothing sent, nothing queued.
+- `test_a_hold_whose_renewal_lapses_ends_before_begin_too` — `drain-all`, no `begin`, no renewal
+  for 60 s → ended, its line in *recent*; renewed every 15 s for 10 minutes → still standing;
+  `apply/renew` after the end → `{ended: true}`, and no hold.
 - `test_a_front_refusal_is_recorded_and_sent` — `POST /v1/front/refused` with `model_not_found`
   → in *recent*, and one `refused` notification.
 - `test_the_canary_route_answers_found_or_not_only` — a needle in a refusal record → `{found:
@@ -2484,7 +2515,10 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   apply holds again: every new request is held, as for a draining model; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through
   admission; at a held request's deadline it gets `restarting`, from the gate, or from the front
-  itself while the gate isn't answering — never `gate_down` or `llama_swap_down`.
+  itself while the gate isn't answering — never `gate_down` or `llama_swap_down`. Once the gate has
+  been gone longer than the hold's `lapse_s` (from `hello` or `hold_all`), the front drops the hold
+  itself and falls back to rule 8: it forwards requests for loaded models, and answers `gate_down`
+  for loads. So a gate that fails at start inside an apply never holds the API.
 - A refusal of its own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`) is
   posted to `/v1/front/refused` when the gate is up; not when it is down.
 
@@ -2534,6 +2568,9 @@ speaking Task 9's routes):
   `applying: true` → a request is held; the gate's channel then gone for 10 s → at the request's
   deadline, 503 `restarting`, not `gate_down`; a `hello` with `applying: false` → it goes through
   `admit`.
+- `test_a_held_front_drops_the_hold_when_the_gate_stays_gone` — holding with `lapse_s` 60, the gate
+  failing at start (its channel refused for 61 s) → a request for a loaded model is forwarded, and
+  one for a model not loaded gets `gate_down`.
 - `test_the_fronts_own_refusals_reach_the_gate` — a `model_not_found` → one `/v1/front/refused`
   post; with the gate down, none.
 - `test_in_flight_snapshots_are_whole_never_deltas` — every posted snapshot names every model with
@@ -3108,9 +3145,11 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 - `format_status(view: dict, *, tz) -> str` — the plan's layout (*What you see in Phase 2a*), its
   rows in this order: the header (`<host> · <available> GiB available of <total> · <n> above the
   brake's <brake> GiB line`), `free for a load`, `loaded`, `not loaded` (with a model's brake mark
-  under it), `waiting`, `paused`, `held`, `recent`, `health`; and, when `unaccounted_gib` isn't 0,
-  `used by other processes: <n> GiB` under `free for a load`, as plan.md's example has it (`used by
-  other processes: 26 GiB`). The words for what the example doesn't show:
+  under it), `waiting`, `paused`, `held`, `recent`, `health`; and, only when `unaccounted_gib` is
+  above 0, `used by other processes: <n> GiB` under `free for a load`, as plan.md's example has it
+  (`used by other processes: 26 GiB`). Cold residents hold less than their footprints, so the
+  formula goes below 0 at idle; then there is no line, and `--json` keeps the formula's value. The
+  words for what the example doesn't show:
   - paused, automatic: `paused      since 03:12 (19.6 GiB available) · resumes by itself after 5
     min above 28 GiB available`; waiting for Dan: `paused      since 03:12 (19.6 GiB available) ·
     waits for you: make brake-release`;
@@ -3146,6 +3185,9 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
   above, word for word; so a reason added later fails until it has its own.
 - `test_unaccounted_memory_is_idle_less_available_less_footprints` — idle 117, 48 available, 64 of
   footprints → `used by other processes: 5 GiB`; 0 → no line.
+- `test_cold_residents_print_no_other_processes_line` — idle 117, 83.5 available, the residents'
+  43 of footprints holding 33.5, nothing else running → `unaccounted_gib` −9.5 in `--json`, and no
+  `used by other processes` line.
 - `test_the_oldest_request_shows_from_a_minute` — 3 min → `(oldest 3 min)`; 40 s → nothing added.
 - `test_notifications_failing_since_shows` — `failing_since` 08:52 → `ntfy failing since 08:52`.
 - `test_with_the_gate_down_status_says_so_and_shows_memory` — `GateUnavailable` → the header from
@@ -3339,8 +3381,12 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   `health.llama_swap` `ok` within 30 s, llama-swap answering again; `POST /v1/apply/end` (the hold
   released, the held requests through admission, the registry re-read, the residents reloaded,
   `apply_restarted` sent); on any failure after `drain-all`, Ctrl-C included, `POST
-  /v1/undrain-all`. A hold left by an apply that died ends as Task 17 says, or with the next `make
-  apply`.
+  /v1/undrain-all`. From `drain-all` to its end, `apply/renew` every `APPLY_RENEW_S` (15 s), from a
+  thread of its own, so a long wait or sync never lets it lapse. SIGHUP (a dropped SSH session)
+  and SIGTERM end it as Ctrl-C does, with the same cleanup and nothing more written, exiting 129
+  and 143. A gate that doesn't answer within 30 s of its restart stops apply, exit 1, naming the
+  gate; the hold then lapses at the gate, or the front drops it (Task 20). A hold whose apply died
+  some other way lapses 60 s after its last renewal (Task 17).
 - `--now` (`make apply-now`) — asks Task 6's *This restarts the model service now and cuts off the
   2 requests in flight (pi on the Mac, agent). Continue? [y/N]*, naming each from `/v1/quiet`;
   without requests in flight it doesn't ask.
@@ -3361,6 +3407,13 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   question; `y` → `drain-all`, then on with nothing in flight; `N` → exit 1, nothing changed.
 - `test_drain_now_holds_new_requests_until_those_in_flight_finish` — after `drain-all`, it waits
   for `/v1/quiet`'s `inflight` to empty; a failure after it → `undrain-all` posted.
+- `test_apply_renews_the_hold_while_it_runs` — a drain wait of 100 s (injected clock) →
+  `apply/renew` every 15 s from `drain-all` until `apply/end`, then none.
+- `test_sighup_and_sigterm_clean_up_like_ctrl_c` — `spark apply` in a subprocess against the gate
+  stand-in, sent SIGHUP during the drain wait → `undrain-all` posted, no file written, exit 129;
+  SIGTERM → the same, exit 143.
+- `test_a_gate_that_fails_at_start_stops_apply` — the gate's socket not answering for 30 s after
+  its restart → no further restart, exit 1, the gate named.
 - `test_the_quiet_path_holds_new_requests_too` — the quiet reading → `drain-all` posted before the
   sync, the files and the restart.
 - `test_root_files_pending_stage_before_any_gate_call` — root's files pending, llama-swap active,
@@ -4269,12 +4322,15 @@ date; `phase` stays 1), `changelog.md`, `website/design/plan.md` if anything dif
 ```bash
 a=$(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo)
 sed "s/warn_gib: 28/warn_gib: $((a + 10))/; s/brake_gib: 20/brake_gib: $((a + 5))/; s/reserve_gib: 24/reserve_gib: $((a + 6))/" /opt/local-ai/etc/models.yaml > /opt/local-ai/etc/brake-drill.yaml
+chmod 0644 /opt/local-ai/etc/brake-drill.yaml
+stat -c '%a' /opt/local-ai/etc/brake-drill.yaml
 grep -E '(warn|brake|reserve)_gib:' /opt/local-ai/etc/brake-drill.yaml
 systemctl start local-ai-brake-drill.service
 journalctl -u local-ai-brake-drill.service -n 5 -o cat
 ```
 
-  Expected: the three thresholds at `a + 10`, `a + 5` and `a + 6`, then the drill's lines, `brake:
+  Expected: `644`, so `spark` reads the copy whatever Dan's umask; the three thresholds at `a + 10`,
+  `a + 5` and `a + 6`; then the drill's lines, `brake:
   holding new loads …` and `brake: unloaded <model> at … GiB available`. After the drill, `rm
   /opt/local-ai/etc/brake-drill.yaml`, so the unit can't run again (`ConditionPathExists=`).
 - [ ] **Step 2: S05, message by message,** each checked word for word, on the phone, in pi and in
@@ -4509,8 +4565,8 @@ Every command block above was run on 2026-10-07, before it went in:
 - **With stand-ins that log their calls** for `sudo`, `systemctl`, `docker` and `make`, since the
   real ones would change the box: Task 34's rollback and cutover blocks; Task 36's container check;
   Task 47's crash-loop blocks; Task 46's drill block, against a copy of `stack/models.yaml` (the
-  three thresholds written at `a + 10`, `a + 5` and `a + 6`, and the copy loaded through the
-  registry's own loader), with the deployed registry's three threshold lines read on the box and
+  three thresholds written at `a + 10`, `a + 5` and `a + 6`, the copy `644` under a `0077` umask,
+  and the copy loaded through the registry's own loader), with the deployed registry's three threshold lines read on the box and
   `/opt/local-ai/etc` read as `root:spark-admin 2775`.
 - **Smaller, in the scratchpad:** Task 40's fill: its `MemFree` arithmetic on the box's own
   `/proc/meminfo` (`MemFree` read 9.3 GiB that day, so it would fill nothing: E.1's case held
@@ -4533,9 +4589,10 @@ Every command block above was run on 2026-10-07, before it went in:
 ## Deferred notes for implementers
 
 The plan review (2026-10-07) found 1 Critical, 18 Important and 24 Minor items, and its re-check
-5 Important and 11 Minor more. Every one is fixed above (one Minor of the re-check, n-9, needed no
-change) but part of one Minor, the first note here; the others are what the fixes leave for the
-tasks that meet them.
+5 Important and 11 Minor more, and its final check 2 Important and 5 Minor more. Every one is
+fixed above (one Minor of the re-check, n-9, needed no change) but part of one Minor, the first
+note here, and two of the final check's, f-2 and f-5, below; the others are what the fixes leave
+for the tasks that meet them.
 
 - **`brake/events.jsonl` grows.** The brake appends a few lines per brake episode and never trims
   the file (m-11). Keying on boot id and `seq` (Task 12) makes a removed or restarted file safe, so
@@ -4545,11 +4602,12 @@ tasks that meet them.
   constants. Their `test_its_pace_stays_under_the_rate_watch` tests import the brake's constants,
   so Task 45's new ones re-check them; if one then fails, the pace changes with the constants, in
   the same commit.
-- **An apply killed during its drain.** Ctrl-C and every error after `drain-all` post `undrain-all`
-  (Task 29), and the hold ends by itself 10 minutes after `apply/begin` (Task 17). A `make apply`
-  killed outright between `drain-all` and `apply/begin`, while it waits for the requests in
-  flight, leaves the hold until the next `make apply` ends it; `spark status`'s `held` row shows it
-  meanwhile. If that ever happens, a bound on the drain itself is the fix.
+- **A front restart inside apply cuts the requests it holds** (the final check's f-2). They are
+  open connections, so when the front itself restarts (only when its own files change), its held
+  requests are cut, not answered `restarting`: pi retries a connection error, and the web UI shows
+  one. plan.md says so; nothing more is planned for it.
+- **Apply's hold beside a make-room hold** (f-5). Task 26 doesn't word a `held` row when both stand;
+  put both on the row, apply's first, and add the case to its test.
 - **`spark status`'s `waiting` words** (Task 26) cover the six reasons in `gateproto.WAITING_WHY`;
   a reason added later needs its line, and Task 26's test reads the tuple, so it fails until the
   line is written.
