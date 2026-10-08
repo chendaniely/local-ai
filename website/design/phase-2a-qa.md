@@ -128,6 +128,22 @@ appears — "since everything is documented in this repository we could tear eve
 reinstall" ([S18](../scenarios/s18-rebuild.md)): the repo, not a container image, is what makes the
 box reproducible.
 
+**Q: Since the Spark is installed on bare metal, would Ansible be a good way to manage it?** (Dan,
+2026-10-07.)
+
+Not for the Spark, not now: the repo already does what Ansible would bring, shaped for this one box.
+`stack/host/bootstrap.sh` is idempotent (Phase 1's fresh-clone drill re-ran it and changed nothing),
+`make bootstrap-dry-run`, `make apply-dry-run` and `make install-units-dry-run` show a change before
+it's made, 82 bootstrap tests run it on stand-ins and in an `ubuntu:24.04` container, the registry is
+the declared state that `spark render` turns into root's own copies (installed with a diff shown
+first), and `make doctor` checks the box matches. Ansible would duplicate that, and it works by
+pushing from a control machine over SSH with sudo, where the repo runs work on the Spark itself and
+asks for Dan's password at each root step; it's also one more tool chain to pin and update. Where it
+would earn its place is **Dan's homelab as a whole** — users, SSH keys, Tailscale, Docker and Compose
+stacks kept the same across the Synology and his other machines — as a project of its own, which
+could include the Spark through a small role that runs this repo's `make bootstrap` and `make apply`
+rather than replacing them. **Dan: later.** The Spark keeps its bootstrap and the `spark` CLI.
+
 ## The numbers Dan set
 
 - **Quiet hours:** 00:00–05:00 — only high-priority alerts sound. *(They're set on the phone: ntfy has
