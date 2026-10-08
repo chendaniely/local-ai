@@ -794,6 +794,19 @@ def test_needs_room_is_for_on_demand_models_only(tmp_path):
     assert coder.needs_room is True
 
 
+def test_a_cold_load_is_optional_and_positive(tmp_path):
+    # What a model's cold load measured, which the soak records (Task 45): the gate caps a load's fall at it, plus a
+    # margin (Task 15). Absent until then.
+    assert load_registry(FIXTURE).models["coder"].cold_load_gib is None
+    coder = load_registry(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib=29.8))).models["coder"]
+    assert coder.cold_load_gib == 29.8
+    for value in (0, -1):
+        refused(mutated(tmp_path, lambda d, v=value: d["models"]["coder"].update(cold_load_gib=v)),
+                f"coder: cold_load_gib must be positive, not {value}")
+    refused(mutated(tmp_path, lambda d: d["models"]["coder"].update(cold_load_gib="30")),
+            "coder: cold_load_gib must be a number, not '30'")
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

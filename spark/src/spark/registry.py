@@ -84,6 +84,9 @@ class Model:
     label: str  # the plain-words name messages use: "the coder", "Gemma"
     used_by: str | None = None  # what make-room's list says uses a resident: "the web UI and photos use it"
     needs_room: bool = False  # an on-demand model that loads only after make-room frees room for it
+    # What its cold load was measured to take, which the soak records (Task 45): the gate caps a load's fall at it,
+    # plus a margin, and flags a fall past that (rule 9). None until measured: the cap is then the footprint.
+    cold_load_gib: float | None = None
 
 
 @dataclass(frozen=True)
@@ -307,9 +310,12 @@ def _model(name: str, raw: dict, engines: dict[str, str]) -> Model:
         label=_text(name, raw, "label"),
         used_by=_text(name, raw, "used_by", required=False),
         needs_room=_flag(name, raw, "needs_room"),
+        cold_load_gib=None if "cold_load_gib" not in raw else float(_number(name, raw, "cold_load_gib")),
     )
     if model.footprint_gib <= 0 or model.ctx <= 0 or model.parallel < 1 or model.cache_ram_mib < 0:
         raise RegistryError(f"{name}: footprint, ctx and parallel must be positive; cache_ram_mib ≥ 0")
+    if model.cold_load_gib is not None and model.cold_load_gib <= 0:
+        raise RegistryError(f"{name}: cold_load_gib must be positive, not {raw['cold_load_gib']!r}")
     if model.needs_room and model.resident:  # a resident is loaded from the start: there is no room to make for it
         raise RegistryError(f"{name}: needs_room is only for an on-demand model, and {name} is resident")
     return model
