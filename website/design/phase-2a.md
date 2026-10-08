@@ -1065,6 +1065,8 @@ git commit -m "feat(spark): 🤖 rule 9: render checks each model against the re
 **Files:**
 
 - Create: `spark/src/spark/messages.py`, `spark/tests/test_messages.py`
+- Modify: `spark/src/spark/render.py`, `spark/tests/test_render.py` (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings: render refuses registry
+  text that pi's retry list matches*)
 
 **Interfaces:**
 
@@ -1167,6 +1169,20 @@ currently experiencing high demand
     the registry's `brake.warn_gib` and `RELEASE_AFTER_S`, so the words stay true when either
     changes.*
   - *`words` also picks `model_not_found`'s next step, so the front passes it there too.)*
+
+  *(Added 2026-10-07, at Task 6's fix round 1, the controller's rulings:*
+  - *`ceiling_gib: float | None` and `committed_gib`, which the gate fills only when `ceiling −
+    committed` was the smaller term of rule 9's `min()`, and `starting_gib`, a model still
+    starting. The breakdown is then the term that gave `free_gib`, so it adds up: *(the 102 GiB
+    the GPU can allocate, less the 92 GiB the loaded models may grow to)*, and *… and the 27 GiB
+    the model still starting may take*. The words still compute nothing.*
+  - *Each code's words refuse a `Moment` that lacks a field they use, a `ValueError` naming the
+    code and the field (*`no_fit`'s words need free_gib*). So `needed_gib`, `available_gib`,
+    `reserve_gib`, `wait_s`, `words`, `drain_for` and `asked_name` default to None. `asked_name`
+    may be empty, since a client can send that, and then reads *There's no model by that name
+    here.* The front's own refusals need only what the front fills: `words` for `draining`,
+    `model_not_found` and `gate_down`, and `key_label` for `agent`'s `draining` for make-room.*
+  - *`duration(seconds)` and `pi_retry_match(text)` are public, for render's check.)*
 - `refusal(code: str, m: Moment) -> Refusal` — one sentence a person reads, then the numbers, then
   one next step. The rules every message keeps:
   - a model by its label, and its label's first letter capitalised at the start of a sentence when
@@ -1186,11 +1202,23 @@ currently experiencing high demand
     rest to the nearest), but a reading near a line (the brake's, the warn line's) to one decimal
     (*19.6 GiB*);
   - a time as the local 24-hour `HH:MM` of an aware `datetime`;
-  - a wait as `<n> s` under a minute, else `<n> minutes` (`1 minute`);
+  - a wait as `<n> s` under a minute, else `<n> minutes` (`1 minute`) (*corrected 2026-10-07, at
+    Task 6's fix round 1, the controller's ruling: every duration, a deadline included, from a minute
+    on, in minutes and seconds, `1 minute 30 s`, `3 minutes`, and from an hour, hours too, so none
+    prints as a bare 5xx*);
   - *no_fit*'s parenthesis lists the reserve, then the growth owed when it isn't 0, then the hold
-    when it is counted, joined "A and B" or "A, B and C";
+    when it is counted, joined "A and B" or "A, B and C". Where the ceiling binds, it starts from
+    the ceiling less the loaded models' footprints instead, and a model still starting comes
+    before the hold (*added 2026-10-07, at Task 6's fix round 1*);
   - the wording follows `words`: `dan`'s rows for `dan`, `agent`'s for `agent`; and unless
-    `names_processes`, a process of Dan's is named *a process of Dan's, <n> GiB*.
+    `names_processes`, a process of Dan's is named *a process of Dan's, <n> GiB*;
+  - in `agent`'s words, a step only Dan can take says it is Dan's, and `agent` is never told to
+    run a command only Dan can run. The plan's own *On the Spark, `spark make-room --done` ends
+    the hold.*, in `agent`'s `no_fit`, is the one exception (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings*);
+  - no refusal makes pi retry it. A size pi's list would match (429 GiB and up, past this box's
+    memory) moves a GiB or two against the load: a need up, a room down. The one exception is
+    `concurrency_limit`'s own *Too many requests*, a `429`, which pi retries by its status, as the
+    plan intends (*added 2026-10-07, at Task 6's fix round 1, the controller's rulings*).
 
 **The refusals, word for word.** Each test's expected text is plan.md's (*What you see in Phase
 2a*, the refusal table), its italics' asterisks dropped and its backticks kept, with these inputs
@@ -1205,17 +1233,17 @@ the test's own time zone):
 | `loading` | loading Gemma, wait 30 s |
 | `held_by_brake` | brake at 03:12, 19.6 available, release automatic |
 | `held_by_brake` (waits for Dan) | the same, waiting for Dan: *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you release them: on the Spark, `make brake-release`.* |
-| `gate_down` | none |
+| `gate_down` | key *pi on the Mac* (Dan's words; ~~none~~, *added 2026-10-07, at Task 6's fix round 1, the controller's rulings: `words` picks its last sentence*) |
 | `load_failed` | the engine said `failed to load model` |
-| `load_failed` (deadline) | no engine text, deadline 180: *The coder started loading but didn't finish within 180 s. On the Spark, `spark status` shows the engine's last lines.* |
+| `load_failed` (deadline) | no engine text, deadline 180: *The coder started loading but didn't finish within 3 minutes. On the Spark, `spark status` shows the engine's last lines.* (*Corrected 2026-10-07, at Task 6's fix round 1: it read "within 180 s".*) |
 | `not_downloaded` | download 16 |
 | `restarting` | wait 30 s |
 | `llama_swap_down` | wait 30 s |
 | `draining` (Dan) | 1 in flight, for make-room, wait 30 s |
-| `draining` (`agent`) | 1 in flight, for make-room, wait 600 s: *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. It won't load for agent while make-room's hold stands.* |
+| `draining` (`agent`) | 1 in flight, for make-room, wait 600 s: *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. It won't load for agent while make-room's hold stands. It ends when Dan runs `spark make-room --done` on the Spark.* (*The last sentence added 2026-10-07, at Task 6's fix round 1, the controller's rulings.*) |
 | `footprint_suspect` | brake at 03:12, command `coder` |
 | `model_not_found` | asked `qwen3.6-35b-a3b`; models the coder (`qwen3.8-27b`), Gemma, the embeddings, whisper — on-demand first, then residents, each in registry order; key *pi on the Mac* (Dan's words) |
-| `model_not_found` (`agent`) | the same, key *agent*: *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to update pi's list.* (*Added 2026-10-07, at Task 6, the controller's ruling: `agent`'s pi is on the Spark, and `website/how-to/pi.md` says how `agent` updates it.*) |
+| `model_not_found` (`agent`) | the same, key *agent*: *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates pi's list.* (*Added 2026-10-07, at Task 6, the controller's ruling: `agent`'s pi is on the Spark. Corrected at Task 6's fix round 1: the first correction named the procedure before 2a, pulling `agent`'s clone and running `spark clients pi --write`. After the cutover `agent` has no clone and runs Task 34's deployed CLI. The command is Task 34's, and the coder swap's (Task 42, Step 6), byte for byte, without `--http-idle-timeout-ms`, so pi's settings stay as they are.*) |
 | `too_many_requests` | key *agent* |
 | `route_not_served` | none |
 | `draining` (not make-room) | 1 in flight, for an unload, wait 30 s: *The coder is being unloaded once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute.* |
@@ -1255,7 +1283,9 @@ the test's own time zone):
   zone, shows *15:07*.
 - `test_the_front_builds_its_own_refusals_with_defaults` — `refusal("restarting",
   Moment(model_label="the coder", wait_s=30))` and the other four front-built codes need no other
-  field.
+  field. (*Corrected 2026-10-07, at Task 6's fix round 1: no field but those the front fills.
+  For `draining`, `model_not_found` and `gate_down` that includes `words`, the asking key's
+  group's, which picks `agent`'s forms.*)
 - `test_messages_imports_no_more_than_the_registry` — a subprocess importing `spark.messages`
   leaves `spark.budget` out of `sys.modules`.
 - `test_the_unknown_key_text_is_the_rulings` — `UNKNOWN_KEY` is the ruling's sentence.
@@ -1266,6 +1296,31 @@ the test's own time zone):
   - `test_no_outside_text_makes_pi_retry_a_refusal` — holders named `timeout (chendaniely)` and
     `terminated (agent)` read *a process of Dan's, 32 GiB* and *a process, 8 GiB*, and pi's text
     matches nothing. An asked name `gpt-timeout` reads *There's no model by that name here.*
+- *Added 2026-10-07, at Task 6's fix round 1, with the controller's rulings:*
+  - `test_agents_words_read_word_for_word` — `agent`'s forms in plan.md's table, each from its
+    Dan row's inputs with `agent`'s key: `no_fit` with no hold counted, `held_by_brake` (both
+    forms), `gate_down`, `load_failed`, `not_downloaded` and `llama_swap_down`;
+    `test_pi_wont_retry_a_refusal` covers them too.
+  - `test_the_breakdown_is_the_term_that_gave_the_figure` — the ceiling binding (10 GiB, *the 102
+    GiB the GPU can allocate, less the 92 GiB …*), a model starting (*… and the 27 GiB the model
+    still starting may take*), both, and `agent`'s counted hold under the ceiling, with its clamp.
+  - `test_agent_is_never_told_to_run_what_only_dan_can` — every refusal in `agent`'s words: a
+    sentence naming `spark make-room`, `make brake-release`, `spark load`, `make pull`, `make
+    doctor` or `make clients` names Dan, but the plan's own *On the Spark, `spark make-room --done`
+    ends the hold.*
+  - `test_no_refusal_makes_pi_retry_at_any_boundary` — every row, in both words, at sizes of 429
+    to 524 GiB, deadlines and waits of 500, 503, 520 and 529 s and of 500 to 520 minutes, and
+    names ending in `-500m`: no message matches pi's list, but `concurrency_limit`'s own *Too many
+    requests*, a `429`. `test_a_size_pi_would_match_moves_against_the_load` shows how each moves.
+  - `test_each_code_refuses_a_moment_without_the_fields_its_words_use` — for each code, each field
+    its words use, left at its default → a `ValueError` naming the code and the field;
+    `test_some_fields_are_needed_only_where_the_words_use_them` and
+    `test_the_front_builds_its_own_refusals_with_defaults` cover the rest.
+  - `test_durations_read_in_seconds_under_a_minute_then_in_minutes_and_seconds` — 59 → *59 s*, 90
+    → *1 minute 30 s*, 180 → *3 minutes*, 500 → *8 minutes 20 s*.
+  - In `test_render.py`: `test_registry_text_pi_would_retry_on_is_refused` — a label holding `500`,
+    a role `timeout`, a model named `coder-500m`, a key group named `agent-503`, and a wait that
+    reads *429 hours*: each refused by `render.check_words`, naming the field.
 
 **Steps:**
 
@@ -2205,10 +2260,17 @@ git commit -m "feat(spark): 🤖 the gate's notifications: one per event, at the
     engine's kind. *held* — the room hold, not counted for a request whose privileges have
     `uses_hold`; such a load shrinks it with `budget.hold_after_dans_load`, and one that uses it up
     ends it (`room_hold_ended`, *used up by your own loads*). A refusal's `free for a load` is
-    passed to Task 6 as it is, which words 0 and below as *nothing is free for a load*. *(Added
-    2026-10-07, at Task 6: it goes in `Moment.free_gib`, what `free_for_a_load` returned for this
-    request, ceiling term included. `available_gib`, `reserve_gib`, `owed_gib`, `held_gib` and
-    `hold_counted` go with it, for the breakdown only.)*
+    passed to Task 6 as it is, which words ~~0 and below~~ anything that rounds down to 0 as shown
+    as *nothing is free for a load* (*corrected 2026-10-07, at Task 6's fix round 1, to match Task
+    5's correction: 0.5 reads so too*). *(Added 2026-10-07, at Task 6: it goes in
+    `Moment.free_gib`, what `free_for_a_load` returned for this request, ceiling term included.
+    `available_gib`, `reserve_gib`, `owed_gib`, `held_gib` and `hold_counted` go with it, for the
+    breakdown only.)* *(Added at Task 6's fix round 1, the controller's ruling: the breakdown is the
+    term that gave the figure. Where `ceiling − committed` was the smaller term of `min()`, the
+    gate passes `ceiling_gib` and `committed_gib` too, and the words show that term in place of
+    `MemAvailable`'s. It passes `starting_gib` whenever a model is starting. Every field a code's
+    words use must be filled, or `refusal` raises a `ValueError` naming it, so this task's tests
+    compare each refusal's whole text.)*
   - The brake's mark: a request whose privileges lack `reloads_marked` waits its wait for a marked
     model, then `footprint_suspect`, with its notification; one that has it loads the model if it
     fits, and the mark goes.
@@ -2805,7 +2867,10 @@ ASGI with a recording upstream stand-in, unless named):
 - `test_model_not_found_names_the_current_models` — `qwen3.6-35b-a3b` → 404 with Task 6's text,
   listing the `ModelList`'s models. *(Added 2026-10-07, at Task 6: in the key's group's words. With
   Dan's key, its next step is the Mac's `make clients`; with `agent`'s, the Spark's
-  `spark clients pi --write`, so the front passes `words` to `refusal`.)*
+  `spark clients pi --write`, so the front passes `words` to `refusal`. Corrected at Task 6's fix
+  round 1: `agent`'s is the deployed CLI's, `/opt/local-ai/app/.venv/bin/spark clients pi --write
+  --registry /opt/local-ai/etc/models.yaml`, Task 34's. An empty asked name reads *There's no model
+  by that name here.*, never an error.)*
 - `test_too_many_requests_when_a_keys_caps_are_reached` — `agent`'s four requests held waiting →
   the fifth → 429, `Retry-After: 10`; 32 of a key's requests open → the 33rd → 429.
 - `test_journal_lines_carry_key_name_model_status_and_duration_only` — one request → one line
@@ -2930,7 +2995,9 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   second, while it's down.
 - A request's way: loaded → forwarded; not loaded → `admit`, with `deadline = received_at + the
   key's wait`, nothing sent to the client meanwhile; the gate down → forwarded if loaded, else 503
-  `gate_down`, the one refusal that stays a `503`; the gate restarting → each held admission asked
+  `gate_down`, the one refusal that stays a `503`, in the asking key's group's `words` (*added
+  2026-10-07, at Task 6's fix round 1: `agent`'s names Dan's phone and Dan's `make doctor`, so the
+  front passes `words`, and `key_label`, to every refusal it builds*); the gate restarting → each held admission asked
   again with its original deadline; llama-swap's 500 `upstream command exited prematurely` → asked
   again once and forwarded again from the held body, a second one reaching the client as 409
   `load_failed`. A refused connection, or one reset before the response's headers (llama-swap
@@ -5318,6 +5385,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
 - **`spark status`'s `waiting` words** (Task 29) cover the six reasons in `gateproto.WAITING_WHY`;
   a reason added later needs its line, and Task 29's test reads the tuple, so it fails until the
   line is written.
+
+- **make-room starts from the gate's own figure** (added 2026-10-07, at Task 6's fix round 1, the
+  controller's ruling; plan.md, rule 4's *What it frees*). Task 30's `spark make-room <size>`
+  takes *free for a load* from the gate, rule 9's figure with its ceiling and starting terms, as
+  `budget.make_room_plan`'s `free_now_gib`. It never works out `MemAvailable` less the reserve and
+  the growth owed: where the CUDA ceiling binds, that count could find nothing to unload, and Dan's
+  retry would be refused again.
 
 ### Minors the forward-and-back council left for the tasks that meet them
 

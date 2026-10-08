@@ -7,14 +7,14 @@ import subprocess
 import sys
 import textwrap
 import time
-from dataclasses import replace
+from dataclasses import MISSING, fields, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 
 from spark.messages import (CODES_409, CODES_503, FRONT_CODES, PI_RETRY_PATTERNS, RETRY_AFTER_S, UNKNOWN_KEY, Holder,
-                            Moment, Refusal, refusal)
+                            Moment, Refusal, duration, pi_retry_match, refusal)
 
 # The tests' own time zone, seven hours behind UTC: POSIX's TZ writes it "PDT+7", its sign the other way round.
 TZ = "PDT+7"
@@ -51,7 +51,10 @@ NO_FIT_AGENT_CLAMPED = replace(NO_FIT_AGENT, free_gib=Decimal(-58), available_gi
 LOADING = Moment(loading_label="Gemma", **CODER, **DAN)
 HELD = Moment(brake_at=AT_0312, brake_available_gib=19.6, release_waits_for_dan=False, **CODER, **DAN)
 LOAD_FAILED = Moment(engine_said="failed to load model", **CODER, **DAN)
+NOT_DOWNLOADED = Moment(download_gib=16, **CODER, **DAN)
 SUSPECT = Moment(brake_at=AT_0312, **CODER, **AGENT)
+DRAINING_DAN = Moment(inflight=1, drain_for="make-room", **CODER, **DAN)
+DRAINING_AGENT = Moment(inflight=1, drain_for="make-room", **CODER, **AGENT)
 MODELS = [("the coder", "qwen3.8-27b"), ("Gemma", "gemma-4-26b-a4b"), ("the embeddings", "qwen3-embedding-0.6b"),
           ("whisper", "whisper-large-v3-turbo")]
 
@@ -60,6 +63,8 @@ NO_FIT_DAN_TEXT = (
     "and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma "
     "27 GiB. Free space with `spark make-room 41G` on the Spark, then try again."
 )
+NO_FIT_DAN_BREAKDOWN = ("18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded "
+                        "models may still grow into)")
 NO_FIT_CLAMPED_TEXT = (
     "The coder didn't load: it needs 41 GiB, and nothing is free for a load while make-room holds 70 GiB for Dan "
     "(36 GiB available, less the 24 GiB reserve). Using memory now: a process of Dan's, 70 GiB, the embeddings 8 GiB. "
@@ -94,6 +99,7 @@ GATE_DOWN_TEXT = (
     "No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has "
     "the alert; on the Spark, `make doctor` shows what's wrong."
 )
+DANS_ALERT = "Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong."
 
 # plan.md's refusal table, each row with the inputs phase-2a.md's Task 6 gives it: (id, code, moment, the text).
 ROWS = [
@@ -111,34 +117,36 @@ ROWS = [
     ("held_by_brake, waits for Dan", "held_by_brake", replace(HELD, release_waits_for_dan=True),
      "Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until you "
      "release them: on the Spark, `make brake-release`."),
-    ("gate_down", "gate_down", Moment(), GATE_DOWN_TEXT),
+    ("gate_down", "gate_down", Moment(**DAN), GATE_DOWN_TEXT),
     ("load_failed", "load_failed", LOAD_FAILED, LOAD_FAILED_TEXT),
+    # A duration of a minute or more reads in minutes (the controller's ruling, fix round 1): never a bare 5xx.
     ("load_failed, deadline", "load_failed", replace(LOAD_FAILED, engine_said=None, deadline_s=180),
-     "The coder started loading but didn't finish within 180 s. On the Spark, `spark status` shows the engine's last "
-     "lines."),
-    ("not_downloaded", "not_downloaded", Moment(download_gib=16, **CODER, **DAN),
+     "The coder started loading but didn't finish within 3 minutes. On the Spark, `spark status` shows the engine's "
+     "last lines."),
+    ("not_downloaded", "not_downloaded", NOT_DOWNLOADED,
      "The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB)."),
     ("restarting", "restarting", Moment(**CODER, **DAN), RESTARTING_TEXT),
     ("llama_swap_down", "llama_swap_down", Moment(**CODER, **DAN),
      "The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, "
      "`make doctor` shows what's wrong."),
-    ("draining, Dan", "draining", Moment(inflight=1, drain_for="make-room", **CODER, **DAN),
+    ("draining, Dan", "draining", DRAINING_DAN,
      "The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try "
      "again in a minute: your request can load it again, into the room make-room holds for you, if it fits."),
-    ("draining, agent", "draining", Moment(inflight=1, drain_for="make-room", **CODER, **AGENT),
+    ("draining, agent", "draining", DRAINING_AGENT,
      "The coder is being unloaded for make-room once its 1 request in flight finishes, and your 10 minutes ran out. "
-     "It won't load for agent while make-room's hold stands."),
+     "It won't load for agent while make-room's hold stands. It ends when Dan runs `spark make-room --done` on the "
+     "Spark."),
     ("footprint_suspect", "footprint_suspect", SUSPECT,
      "Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: "
      "`spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it "
      "fits."),
     ("model_not_found", "model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **DAN),
      MODEL_NOT_FOUND_TEXT),
-    # agent's pi is on the Spark, and agent updates its list there (the controller's ruling, at Task 6).
+    # agent's pi is on the Spark, and after the cutover agent runs the deployed CLI (Task 34; the controller's ruling).
     ("model_not_found, agent", "model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, **AGENT),
      MODEL_NOT_FOUND_TEXT.replace("On the Mac, `make clients` updates pi's list.",
-                                  "On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to "
-                                  "update pi's list.")),
+                                  "On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write "
+                                  "--registry /opt/local-ai/etc/models.yaml` updates pi's list.")),
     ("too_many_requests", "too_many_requests", Moment(**AGENT),
      "agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when "
      "one finishes."),
@@ -149,6 +157,31 @@ ROWS = [
      DRAINING_UNLOAD_TEXT),
     ("concurrency_limit", "concurrency_limit", Moment(model_label="the coder"), CONCURRENCY_TEXT),
 ]
+# agent's words where the plan's table gives Dan's alone: each says whose step it is, and never asks agent to run what
+# only Dan can (the controller's rulings, fix round 1). Each is in plan.md's table, with a dated note.
+AGENT_ROWS = [
+    ("no_fit, agent, no hold of Dan's", "no_fit", replace(NO_FIT_DAN, **AGENT),
+     NO_FIT_DAN_TEXT.replace("python3 (chendaniely) 32 GiB", "a process of Dan's, 32 GiB").replace(
+         "Free space with `spark make-room 41G` on the Spark, then try again.",
+         "Only Dan can free memory for it, on the Spark; try again after that.")),
+    ("held_by_brake, agent", "held_by_brake", replace(HELD, **AGENT),
+     "Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume "
+     "by themselves after 5 minutes above 28 GiB available, if what would reload fits, or when Dan runs "
+     "`make brake-release` on the Spark."),
+    ("held_by_brake, agent, waits for Dan", "held_by_brake", replace(HELD, release_waits_for_dan=True, **AGENT),
+     "Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until Dan "
+     "releases them: on the Spark, `make brake-release`."),
+    ("gate_down, agent", "gate_down", Moment(**AGENT), GATE_DOWN_TEXT.replace(
+        "Your phone has the alert; on the Spark, `make doctor` shows what's wrong.", DANS_ALERT)),
+    ("load_failed, agent", "load_failed", replace(LOAD_FAILED, **AGENT), LOAD_FAILED_TEXT.replace(
+        "On the Spark, `spark status` shows the engine's last lines.",
+        "Dan can read the engine's last lines with `spark status` on the Spark.")),
+    ("not_downloaded, agent", "not_downloaded", replace(NOT_DOWNLOADED, **AGENT),
+     "The coder isn't downloaded yet. Dan can fetch it with `make pull` on the Spark (16 GiB)."),
+    ("llama_swap_down, agent", "llama_swap_down", Moment(**CODER, **AGENT),
+     f"The model service on the Spark isn't answering, and your 10 minutes ran out. {DANS_ALERT}"),
+]
+EVERY_ROW = ROWS + AGENT_ROWS
 EVERY_CODE = CODES_409 + CODES_503 + tuple(FRONT_CODES)
 MOMENT = {code: moment for _, code, moment, _ in reversed(ROWS)}  # each code's first row
 JSON_TYPE = (b"content-type", b"application/json")
@@ -171,6 +204,11 @@ def pi_shows(status: int, code: str, moment: Moment) -> str:
 
 @pytest.mark.parametrize("code, moment, text", [pytest.param(c, m, t, id=i) for i, c, m, t in ROWS])
 def test_each_refusal_reads_word_for_word(code, moment, text):
+    assert refusal(code, moment).message == text
+
+
+@pytest.mark.parametrize("code, moment, text", [pytest.param(c, m, t, id=i) for i, c, m, t in AGENT_ROWS])
+def test_agents_words_read_word_for_word(code, moment, text):
     assert refusal(code, moment).message == text
 
 
@@ -209,10 +247,54 @@ def test_an_unknown_code_is_refused_by_name():
         refusal("no_room", NO_FIT_DAN)
 
 
-@pytest.mark.parametrize("code, moment", [pytest.param(c, m, id=i) for i, c, m, _ in ROWS if c in CODES_409])
+@pytest.mark.parametrize("code, moment", [pytest.param(c, m, id=i) for i, c, m, _ in EVERY_ROW if c in CODES_409])
 def test_pi_wont_retry_a_refusal(code, moment):
     assert not pi_retries(pi_shows(409, code, moment))
     assert pi_retries(pi_shows(503, code, moment))  # so the test can fail
+
+
+def _boundaries() -> list[dict]:
+    """Every value at which a number or an outside name could put one of pi's patterns in a sentence: sizes of 429
+    and up (no memory on this box comes near them), durations of 500 s and up, and a name ending in -500m."""
+    sizes = {"needed_gib": 500, "free_gib": 503, "available_gib": 520, "reserve_gib": 524, "owed_gib": 429,
+             "held_gib": 502, "hold_counted": True, "starting_gib": 504, "download_gib": 500,
+             "brake_available_gib": 503, "warn_gib": 520, "inflight": 2,
+             "holders": [Holder("srv-500m (agent)", 500, False), Holder("python3 (chendaniely)", 503, True)]}
+    ceiling = {**sizes, "ceiling_gib": 524, "committed_gib": 500, "free_gib": Decimal("-0.5")}
+    waits = [{"wait_s": s, "release_after_s": s, "deadline_s": s, "engine_said": None} for s in (500, 503, 520, 529)]
+    hours = [{"wait_s": s, "release_after_s": s} for s in (30000, 30180, 31200)]  # 500, 503 and 520 minutes
+    names = [{"asked_name": "qwen-500m", "holders": [Holder("srv-500m (agent)", 8, False)]}]
+    return [sizes, ceiling, *waits, *hours, *names]
+
+
+# The one refusal whose own words hold one of pi's patterns: the plan's concurrency_limit, "Too many requests …". It
+# is a 429, which pi retries by its status alone, as the plan intends (llama-swap's cap frees in a moment).
+RETRIED_BY_STATUS = {"concurrency_limit"}
+
+
+@pytest.mark.parametrize("change", _boundaries())
+def test_no_refusal_makes_pi_retry_at_any_boundary(change):
+    checked = 0
+    for _, code, moment, _ in EVERY_ROW:
+        for words in ("dan", "agent"):
+            for names in (True, False):
+                message = refusal(code, replace(moment, words=words, names_processes=names, **change)).message
+                if code in RETRIED_BY_STATUS:
+                    assert pi_retry_match(message) == "Too many requests", message
+                    continue
+                assert not pi_retries(message) and not pi_retries(json.dumps(message)), message
+                checked += 1
+    assert checked == 4 * (len(EVERY_ROW) - 1)
+
+
+def test_a_size_pi_would_match_moves_against_the_load():
+    # A need moves up, a room down, any other size up, a reading down a tenth at a time: never more than a few GiB,
+    # and only at sizes past this box's memory. 502.9 still holds "502", so 503.0 reads 501.9.
+    big = replace(NO_FIT_DAN, needed_gib=500, free_gib=503, available_gib=520, holders=[Holder("Gemma", 502, False)])
+    message = refusal("no_fit", big).message
+    assert "it needs 501 GiB, and 501 GiB is free for a load (519 GiB available," in message
+    assert "Using memory now: Gemma 505 GiB." in message and "`spark make-room 501G`" in message
+    assert "(501.9 GiB available)" in refusal("held_by_brake", replace(HELD, brake_available_gib=503)).message
 
 
 def test_a_load_failed_never_quotes_words_pi_would_retry():
@@ -230,6 +312,12 @@ def test_a_load_failed_never_quotes_words_pi_would_retry():
     # Nothing the engine said, and no deadline: the plain variant.
     assert refusal("load_failed", replace(LOAD_FAILED, engine_said=None)).message == LOAD_FAILED_UNQUOTED_TEXT
     assert refusal("load_failed", replace(LOAD_FAILED, engine_said=" \n")).message == LOAD_FAILED_UNQUOTED_TEXT
+
+
+def test_pi_retry_match_names_what_pi_would_match():
+    assert pi_retry_match("the 500m model") == "500"
+    assert pi_retry_match("┃top") == "503"  # as JSON writes it: ┃top
+    assert pi_retry_match("the coder") is None
 
 
 def test_retry_after_follows_the_ruling():
@@ -277,14 +365,35 @@ def test_nothing_free_for_a_load_never_reads_negative():
 
 
 def test_free_for_a_load_is_the_gates_own_figure():
-    # The ceiling binds: the gate's figure, min(48 − 24 − 6, ceiling − committed), is 10, below the breakdown's 18. The
-    # words show the gate's figure and never work out one of their own; the breakdown is the plan's, as it was.
-    ceiling = refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal(10))).message
-    assert ceiling == NO_FIT_DAN_TEXT.replace("and 18 GiB is free for a load", "and 10 GiB is free for a load")
-    # Rounded down, as admission's figure is: 17.99 never reads as 18.
+    # The words never work out a figure of their own: 17.99 from the gate reads 17, rounded down as admission's is.
     assert "and 17 GiB is free for a load" in refusal("no_fit", replace(NO_FIT_DAN, free_gib=Decimal("17.99"))).message
-    with pytest.raises(ValueError, match="free_gib"):
-        refusal("no_fit", replace(NO_FIT_DAN, free_gib=None))
+
+
+def test_the_breakdown_is_the_term_that_gave_the_figure():
+    # The ceiling binds: free for a load is ceiling − committed, and the parenthesis shows that sum, not memory's.
+    ceiling = replace(NO_FIT_DAN, free_gib=Decimal(10), ceiling_gib=102, committed_gib=92)
+    assert refusal("no_fit", ceiling).message == NO_FIT_DAN_TEXT.replace(
+        NO_FIT_DAN_BREAKDOWN,
+        "10 GiB is free for a load (the 102 GiB the GPU can allocate, less the 92 GiB the loaded models may grow to)")
+    # A model still starting: its footprint comes off too (rule 9's − starting).
+    starting = replace(NO_FIT_DAN, free_gib=Decimal(17), available_gib=74, starting_gib=27)
+    assert refusal("no_fit", starting).message == NO_FIT_DAN_TEXT.replace(
+        NO_FIT_DAN_BREAKDOWN,
+        "17 GiB is free for a load (74 GiB available, less the 24 GiB reserve, the 6 GiB the loaded models may still "
+        "grow into and the 27 GiB the model still starting may take)")
+    # Both: the ceiling binds while a model is starting.
+    both = replace(ceiling, free_gib=Decimal(13), committed_gib=62, starting_gib=27)
+    assert refusal("no_fit", both).message == NO_FIT_DAN_TEXT.replace(
+        NO_FIT_DAN_BREAKDOWN,
+        "13 GiB is free for a load (the 102 GiB the GPU can allocate, less the 62 GiB the loaded models may grow to "
+        "and the 27 GiB the model still starting may take)")
+    # agent's counted hold under the ceiling, and that hold's clamp.
+    held = replace(NO_FIT_AGENT, free_gib=Decimal(10), ceiling_gib=102, committed_gib=62, held_gib=30)
+    assert ("10 GiB is free for a load (the 102 GiB the GPU can allocate, less the 62 GiB the loaded models may grow "
+            "to and the 30 GiB make-room holds for Dan)." in refusal("no_fit", held).message)
+    clamped = replace(held, free_gib=Decimal(-20), held_gib=60)
+    assert ("nothing is free for a load while make-room holds 60 GiB for Dan (the 102 GiB the GPU can allocate, less "
+            "the 62 GiB the loaded models may grow to)." in refusal("no_fit", clamped).message)
 
 
 def test_no_outside_text_makes_pi_retry_a_refusal():
@@ -306,6 +415,28 @@ def test_no_outside_text_makes_pi_retry_a_refusal():
     assert not pi_retries(pi_shows(404, "model_not_found", asked))
     assert refusal("model_not_found", replace(asked, asked_name="qwen3.6\n35b")).message.startswith(
         "There's no model called qwen3.6 35b here.")
+    # A client can send an empty name, or one of spaces: it is answered, never an error.
+    for empty in ("", " \n"):
+        assert refusal("model_not_found", replace(asked, asked_name=empty)).message.startswith(
+            "There's no model by that name here. The models are")
+
+
+# The commands only Dan can run, on the control socket or with Dan's account. agent's words may name one only in a
+# sentence that says it is Dan's step, but where the plan's own text does otherwise (listed in PLANS_OWN).
+DANS_COMMANDS = ("`spark make-room", "`make brake-release`", "`spark load", "`make pull`", "`make doctor`",
+                 "`make clients`")
+PLANS_OWN = {"On the Spark, `spark make-room --done` ends the hold."}  # no_fit's agent row in plan.md's table
+
+
+def test_agent_is_never_told_to_run_what_only_dan_can():
+    checked = set()
+    for _, code, moment, _ in EVERY_ROW:
+        message = refusal(code, replace(moment, words="agent", names_processes=False, key_label="agent")).message
+        for sentence in re.split(r"(?<=[.;])\s+", message):
+            if any(command in sentence for command in DANS_COMMANDS):
+                assert "Dan" in sentence or sentence in PLANS_OWN, sentence
+                checked.add(sentence)
+    assert len(checked) >= 7  # make-room's end, the brake's release, spark load, make pull and make doctor among them
 
 
 def test_dans_own_hold_is_never_counted_against_him():
@@ -320,21 +451,17 @@ def test_agent_names_dans_processes_only_as_a_process_of_dans():
 
 
 def test_the_wording_follows_the_groups_words():
-    # agent's words at the examples' moment, with no hold of Dan's to end: only Dan can make room.
+    # agent's words at the examples' moment, with no hold of Dan's to end: only Dan can make room, and make-room's
+    # hold would bar agent anyway (rule 4).
     assert refusal("no_fit", replace(NO_FIT_DAN, words="agent", names_processes=True)).message == (
         NO_FIT_DAN_TEXT.replace("Free space with `spark make-room 41G` on the Spark, then try again.",
-                                "Dan can free space with `spark make-room 41G` on the Spark; then try again."))
+                                "Only Dan can free memory for it, on the Spark; try again after that."))
     assert refusal("no_fit", replace(NO_FIT_DAN, words="dan", names_processes=False)).message == (
         NO_FIT_DAN_TEXT.replace("python3 (chendaniely) 32 GiB", "a process of Dan's, 32 GiB"))
     # agent's words beside Dan's hold, with Dan's processes named because the group's names_processes says so.
     held = refusal("no_fit", replace(NO_FIT_AGENT, holders=[PYTHON, GEMMA], names_processes=True)).message
     assert held.endswith("Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. On the Spark, "
                          "`spark make-room --done` ends the hold.")
-    # A hold that waits for Dan: agent can't release it, so agent's words say who can.
-    waits = replace(HELD, release_waits_for_dan=True, **AGENT)
-    assert refusal("held_by_brake", waits).message == (
-        "Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until "
-        "Dan releases them: on the Spark, `make brake-release`.")
 
 
 def test_sizes_round_against_the_load():
@@ -369,8 +496,10 @@ def test_times_are_the_local_24_hour_clock():
     assert "the brake fired at 15:07, so" in refusal("footprint_suspect", replace(SUSPECT, brake_at=tokyo)).message
 
 
-def test_waits_read_in_seconds_under_a_minute_and_in_minutes_from_one():
-    for seconds, words in ((30, "30 s"), (59, "59 s"), (60, "1 minute"), (90, "2 minutes"), (600, "10 minutes")):
+def test_durations_read_in_seconds_under_a_minute_then_in_minutes_and_seconds():
+    for seconds, words in ((30, "30 s"), (59, "59 s"), (59.6, "1 minute"), (60, "1 minute"), (90, "1 minute 30 s"),
+                           (180, "3 minutes"), (500, "8 minutes 20 s"), (600, "10 minutes")):
+        assert duration(seconds) == words
         assert f"and your {words} ran out." in refusal("restarting", replace(MOMENT["restarting"],
                                                                              wait_s=seconds)).message
 
@@ -378,7 +507,7 @@ def test_waits_read_in_seconds_under_a_minute_and_in_minutes_from_one():
 def test_a_label_starting_with_the_is_capitalised_only_at_a_sentences_start():
     web_ui = refusal("too_many_requests", Moment(key_label="the web UI")).message
     assert web_ui.startswith("The web UI already has as many requests")
-    assert refusal("not_downloaded", Moment(model_label="whisper", download_gib=2)).message.startswith(
+    assert refusal("not_downloaded", Moment(model_label="whisper", download_gib=2, words="dan")).message.startswith(
         "whisper isn't downloaded yet.")
     assert "Not loading Gemma for the web UI:" in refusal(
         "footprint_suspect", replace(SUSPECT, model_label="Gemma", key_label="the web UI")).message
@@ -391,14 +520,56 @@ def test_requests_in_flight_read_as_words():
     assert none == "The coder is being unloaded, and your 30 s ran out. Try again in a minute."
 
 
+# What each code's words use, which a Moment must carry: a field left at its default is refused, by code and name.
+NEEDS = {
+    "no_fit": ("model_label", "needed_gib", "free_gib", "available_gib", "reserve_gib", "words"),
+    "loading": ("model_label", "loading_label", "wait_s"),
+    "held_by_brake": ("model_label", "brake_at", "brake_available_gib", "words"),
+    "footprint_suspect": ("model_label", "key_label", "model_command", "brake_at"),
+    "load_failed": ("model_label", "words"),
+    "not_downloaded": ("model_label", "words"),
+    "restarting": ("wait_s",),
+    "llama_swap_down": ("wait_s", "words"),
+    "draining": ("model_label", "wait_s", "drain_for", "words"),
+    "gate_down": ("words",),
+    "model_not_found": ("asked_name", "models", "words"),
+    "too_many_requests": ("key_label",),
+    "route_not_served": (),
+    "concurrency_limit": ("model_label",),
+}
+
+
+def _left_out(name: str):
+    """What a Moment holds for a field nobody filled in: its default."""
+    field = next(f for f in fields(Moment) if f.name == name)
+    return field.default_factory() if field.default is MISSING else field.default
+
+
+@pytest.mark.parametrize("code, name", [(code, name) for code, names in NEEDS.items() for name in names])
+def test_each_code_refuses_a_moment_without_the_fields_its_words_use(code, name):
+    with pytest.raises(ValueError, match=rf"^{code}'s words need {name}\b"):
+        refusal(code, replace(MOMENT[code], **{name: _left_out(name)}))
+
+
+def test_some_fields_are_needed_only_where_the_words_use_them():
+    assert set(NEEDS) == set(EVERY_CODE)
+    # With the ceiling binding, the breakdown is the ceiling's: MemAvailable and the reserve aren't used.
+    ceiling = replace(NO_FIT_DAN, ceiling_gib=102, committed_gib=84, available_gib=None, reserve_gib=None)
+    assert "(the 102 GiB the GPU can allocate, less the 84 GiB" in refusal("no_fit", ceiling).message
+    # agent's draining for make-room names agent's key; any other drain doesn't.
+    with pytest.raises(ValueError, match="^draining's words need key_label"):
+        refusal("draining", replace(DRAINING_AGENT, key_label=""))
+    assert refusal("draining", replace(DRAINING_DAN, key_label="")).message.endswith("if it fits.")
+
+
 def test_the_front_builds_its_own_refusals_with_defaults():
     assert refusal("restarting", Moment(model_label="the coder", wait_s=30)).message == RESTARTING_TEXT
-    assert refusal("draining", Moment(model_label="the coder", wait_s=30, inflight=1, drain_for="unload")).message == (
-        DRAINING_UNLOAD_TEXT)
+    assert refusal("draining", Moment(model_label="the coder", wait_s=30, inflight=1, drain_for="unload",
+                                      words="dan", key_label="pi on the Mac")).message == DRAINING_UNLOAD_TEXT
     assert refusal("model_not_found", Moment(asked_name="qwen3.6-35b-a3b", models=MODELS, words="dan")).message == (
         MODEL_NOT_FOUND_TEXT)
     assert refusal("concurrency_limit", Moment(model_label="the coder")).message == CONCURRENCY_TEXT
-    assert refusal("gate_down", Moment()).message == GATE_DOWN_TEXT
+    assert refusal("gate_down", Moment(words="dan")).message == GATE_DOWN_TEXT
 
 
 IMPORTS = textwrap.dedent(

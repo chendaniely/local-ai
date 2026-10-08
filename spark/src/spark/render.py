@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from spark.budget import check_set
+from spark.messages import duration, pi_retry_match
 from spark.registry import Model, Registry, Source, load_registry
 from spark.versions import Component, load_versions
 
@@ -181,6 +182,26 @@ def check_budget(registry: Registry) -> list[str]:
     return check.warnings
 
 
+def check_words(registry: Registry) -> None:
+    """Refuse registry text that pi's retry list matches (messages.PI_RETRY_PATTERNS). Refusals show a model's name,
+    label and role, and a key group's wait, and pi retries every refusal whose text matches, three times, each retry
+    a new wait: the plan's 409s would reach Dan only after the retries. Key groups' names are checked too."""
+    def refuse(where: str, what: str, text: str) -> None:
+        if (found := pi_retry_match(text)) is not None:
+            raise RenderError(f"{where}: its {what} holds {found!r}: pi's retry list matches it, so pi would retry "
+                              "every refusal that shows it, three times; choose another")
+
+    for m in registry.models.values():
+        refuse(m.name, f"name {m.name!r}", m.name)
+        refuse(m.name, f"label {m.label!r}", m.label)
+        for role in m.roles:
+            refuse(m.name, f"role {role!r}", role)
+    for g in registry.key_groups.values():
+        refuse(f"key_groups: {g.name}", f"name {g.name!r}", g.name)
+        refuse(f"key_groups: {g.name}", f"wait, {g.wait_s} s, reads {duration(g.wait_s)!r}, which",
+               duration(g.wait_s))
+
+
 def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
     """`words`, once each is sure to reach the engine as itself: one word, with nothing for llama-swap to fill in but
     render's own ${PORT}. llama-swap v257 fills in ${env.…} anywhere in its config, a key included."""
@@ -253,6 +274,7 @@ def _image(c: Component) -> str:
 def render(registry: Registry, versions: dict[str, Component], registry_text: str,
            templates: Path = TEMPLATES) -> dict[str, str]:
     check_budget(registry)
+    check_words(registry)
     fields = {
         "llama_swap_version": _component(versions, "llama-swap").version,
         "open_webui_image": _image(_component(versions, "open-webui")),

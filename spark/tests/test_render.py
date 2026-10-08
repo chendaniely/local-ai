@@ -423,6 +423,33 @@ def test_a_role_is_never_filled_in(tmp_path):
         rendered(path)
 
 
+def _rename(table: dict, old: str, new: str) -> None:
+    table[new] = table.pop(old)
+
+
+PI_WOULD_RETRY = [
+    pytest.param(lambda d: d["models"]["coder"].update(label="the 500m coder"),
+                 r"^coder: its label 'the 500m coder' holds '500'", id="label"),
+    pytest.param(lambda d: d["models"]["coder"].update(roles=["coder", "timeout"]),
+                 r"^coder: its role 'timeout' holds 'timeout'", id="role"),
+    pytest.param(lambda d: _rename(d["models"], "coder", "coder-500m"),
+                 r"^coder-500m: its name 'coder-500m' holds '500'", id="name"),
+    pytest.param(lambda d: _rename(d["key_groups"], "agent", "agent-503"),
+                 r"^key_groups: agent-503: its name 'agent-503' holds '503'", id="group"),
+    pytest.param(lambda d: d["key_groups"]["agent"].update(wait_s=429 * 3600),
+                 r"^key_groups: agent: its wait, 1544400 s, reads '429 hours', which holds '429'", id="wait"),
+]
+
+
+@pytest.mark.parametrize("change, refusal", PI_WOULD_RETRY)
+def test_registry_text_pi_would_retry_on_is_refused(tmp_path, change, refusal):
+    # pi retries a turn three times when its error's text matches its list (messages.PI_RETRY_PATTERNS): a refusal
+    # naming such a model, role or wait would reach Dan only after the retries, each a new wait.
+    with pytest.raises(RenderError, match=refusal) as err:
+        rendered(registry_with(tmp_path, change))
+    assert "pi would retry every refusal" in str(err.value)
+
+
 SPLIT = [  # (the edit, the model it lands in): each word would reach the engine as other words. The registry refuses
     # these in a source file or projector (test_registry.py), so the engines' paths carry them here.
     pytest.param(lambda d: d["models"]["stt"]["args"].extend(["\\--host", "0.0.0.0"]), "stt",

@@ -513,7 +513,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    - **What it frees.** `spark make-room <size>` works out what must unload so that
      `MemAvailable`, less the reserve and the growth the loaded models are still owed (rule 9),
      reaches `<size>`, that is, until `<size>` is *free for a load*: Dan's job can then take all of it and leave the reserve free, above the
-     brake. It lists everything it could unload, pinned models and those an agent's session holds
+     brake. *(Corrected 2026-10-07, at the implementation plan's Task 6's review, the controller's
+     ruling: make-room starts from the gate's own figure for free for a load, rule 9's, which also
+     counts the CUDA ceiling and any model still starting. Counting `MemAvailable` alone, where the
+     ceiling binds, `spark make-room 41G` could find nothing to unload, and the retry would be
+     refused again.)* It lists everything it could unload, pinned models and those an agent's session holds
      included, each marked, largest first, with each one's requests in flight and how long they
      have run. Asked for more than unloading everything can free, it says so and shows the most
      it can free, and unloads nothing unless Dan confirms that (added after the re-review).
@@ -905,13 +909,21 @@ and in `model_not_found`, which lists them so a client's list can be fixed. *Alw
 sessions and apply's hold, each by name (added 2026-10-07, after the implementation plan's
 forward-and-back council). Sizes in whole GiB, times in his local time on a 24-hour clock, never a
 stack trace. Every message and notification names where to act, *on the Spark* or *on your phone*,
-and the command.
+and the command. *(Added 2026-10-07, at the implementation plan's Task 6, the controller's rulings:
+a duration of a minute or more reads in minutes and seconds, *3 minutes* or *8 minutes 20 s*, so no
+deadline prints as a bare 5xx, which pi's retry list matches. In `agent`'s words, a step only Dan
+can take says it is Dan's: `agent` is never told to run a command that only Dan can run.)*
 
 **Two numbers, two words, everywhere.** *Available* is always `MemAvailable`, the box's free
 memory: what the brake's lines (warn at 28 GiB, brake at 20) and the status header measure. *Free
 for a load* is always the admission figure: available, less the 24 GiB reserve, the growth the
 loaded models are still owed and any make-room hold that isn't the asker's (rule 9). No message,
-notification or status line says "free" alone.
+notification or status line says "free" alone. *(Added 2026-10-07, at the implementation plan's
+Task 6, the controller's ruling: or less, where the GPU's ceiling binds or a load is starting: rule
+9. A refusal shows the gate's own figure, with the breakdown of the term that gave it, so the sum
+adds up. Where the ceiling binds it reads *(the 102 GiB the GPU can allocate, less the 92 GiB the
+loaded models may grow to)*; with a model starting, *… and the 27 GiB the model still starting may
+take*.)*
 
 **Nothing is injected into a reply stream.** Gate text in a stream would read as the model's own
 words, so a request that waits shows in the client only as a slow reply, its usual "thinking", and
@@ -928,17 +940,17 @@ carries its mark (rule 5).
 
 | Code | HTTP | The message, as pi or the web UI shows it |
 |---|---|---|
-| `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* Once Dan's job has taken the room, below 0 is never shown: *… and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). …* |
+| `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. On the Spark, `spark make-room --done` ends the hold.* Once Dan's job has taken the room, below 0 is never shown: *… and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). …* For `agent`'s key with no hold of Dan's counted: *… Only Dan can free memory for it, on the Spark; try again after that.* Where the GPU's ceiling binds, the parenthesis is that term's: *… and 10 GiB is free for a load (the 102 GiB the GPU can allocate, less the 92 GiB the loaded models may grow to). …*; with a model still starting, *… and the 27 GiB the model still starting may take*. (Added 2026-10-07, at the implementation plan's Task 6, the controller's rulings: make-room is Dan's alone, and its hold would bar `agent` anyway; and the breakdown is the term that gave the figure, so it adds up.) |
 | `loading` | 409 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* |
-| `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* |
-| `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
-| `load_failed` | 409 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 180 s.* |
-| `not_downloaded` | 409 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* |
+| `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* For `agent`'s key: *… if what would reload fits, or when Dan runs `make brake-release` on the Spark.*, and when the hold waits for Dan, *… new loads stay paused until Dan releases them: on the Spark, `make brake-release`.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's rulings: only Dan can release the brake's hold.) |
+| `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6: the phone and `make doctor` are Dan's.) |
+| `load_failed` | 409 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark status` shows the engine's last lines.* Past its deadline: *… but didn't finish within 3 minutes.* For `agent`'s key: *… Dan can read the engine's last lines with `spark status` on the Spark.* (Corrected 2026-10-07, at the implementation plan's Task 6, the controller's rulings: the deadline read *within 180 s*, and a duration of a minute or more now reads in minutes, so none prints as a bare 5xx. `agent`'s form was added, since only Dan reads the engine's lines.) |
+| `not_downloaded` | 409 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* For `agent`'s key: *… Dan can fetch it with `make pull` on the Spark (16 GiB).* (Added 2026-10-07, at the implementation plan's Task 6: the pull is Dan's.) |
 | `restarting` | 409 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
-| `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* |
-| `draining` | 409 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands.* |
+| `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6.) |
+| `draining` | 409 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands. It ends when Dan runs `spark make-room --done` on the Spark.* (The last sentence added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: it says what ends the hold, and whose step that is.) |
 | `footprint_suspect` | 409 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or a request of his from pi on the Mac or the web UI, which loads it if it fits.* |
-| `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* For `agent`'s key: *… On the Spark, as `agent`: pull its clone and run `spark clients pi --write` to update pi's list.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: `agent`'s pi is on the Spark, and the Mac's `make clients` doesn't reach it.) |
+| `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* For `agent`'s key: *… On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates pi's list.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: `agent`'s pi is on the Spark, and the Mac's `make clients` doesn't reach it. Corrected at Task 6's review the same day: the first correction read *… pull its clone and run `spark clients pi --write` to update pi's list.*, the procedure before 2a. After the cutover `agent` has no clone and runs the deployed CLI, as Task 34 sets up.) |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
 | `invalid_api_key` | 401 | *That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.* (The controller's ruling, 2026-10-07; added to this table after the implementation plan's forward-and-back council.) |
@@ -2971,13 +2983,30 @@ Each item gets its own design pass when its turn comes.
 - **2026-10-07** — Phase 2a's Task 6, the controller's rulings on its concerns. Dated notes are in
   *What you see in Phase 2a* and in the implementation plan's Tasks 6, 15 and 20.
   - `model_not_found` gains `agent`'s next step, *On the Spark, as `agent`: pull its clone and run
-    `spark clients pi --write` to update pi's list.*, since `agent`'s pi is on the Spark.
+    `spark clients pi --write` to update pi's list.*, since `agent`'s pi is on the Spark. *(Corrected
+    at Task 6's review, the same day: see the next entry.)*
   - A refusal names a process whose name pi's retry list matches only as *a process*, so pi never
     retries a refusal because of a process's name.
   - A refusal's *free for a load* is the gate's own figure, ceiling term included, never one the
     words work out.
   - `held_by_brake`'s warn line and release time come from the registry and the gate, not from
     the text.
+- **2026-10-07** — Phase 2a's Task 6 review, the controller's rulings. Dated notes are in *What you
+  see in Phase 2a*, in rule 4's *What it frees*, and in the implementation plan's Tasks 6, 15, 20 and
+  22 and its *Deferred notes for implementers*.
+  - `agent`'s `model_not_found` names the deployed CLI, `/opt/local-ai/app/.venv/bin/spark clients
+    pi --write --registry /opt/local-ai/etc/models.yaml`. The entry above named the clone procedure
+    from before 2a, and after the cutover `agent` has no clone.
+  - In `agent`'s words, a step only Dan can take says it is Dan's. `agent`'s `no_fit` with no hold
+    of Dan's reads *Only Dan can free memory for it, on the Spark; try again after that.*, since
+    make-room's hold would bar `agent` anyway (rule 4). `held_by_brake`, `draining`, `gate_down`,
+    `llama_swap_down`, `load_failed` and `not_downloaded` gain `agent`'s forms.
+  - A refusal's breakdown is the term of rule 9 that gave the gate's figure, so it adds up where the
+    CUDA ceiling binds or a model is starting. *Free for a load* says it can be less for those, and
+    make-room starts from the gate's figure too.
+  - A duration of a minute or more reads in minutes and seconds, so `load_failed`'s deadline reads
+    *3 minutes*, not *180 s*. No refusal may make pi retry it: render refuses registry text pi's
+    list matches.
 
 ## Sources
 
