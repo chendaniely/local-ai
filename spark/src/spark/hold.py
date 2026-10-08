@@ -105,12 +105,15 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
     brake fired again between the gate's reading and now, or it can't be read) is put back, but never over a newer hold
     the brake wrote meanwhile, which then stands. The folder is fsynced, so what was done survives a power cycle."""
     path = Path(state_dir) / FILE
-    if expected is None:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            return False
-        return True
+    if expected is None:  # Dan's: whatever stands, and any hold left aside, so the gate's start never puts it back
+        lifted = False
+        for each in (path, *Path(state_dir).glob(f"{FILE}.releasing-*")):
+            try:
+                each.unlink()
+            except FileNotFoundError:
+                continue
+            lifted = True
+        return lifted
     aside = path.with_name(f"{FILE}.releasing-{os.getpid()}-{secrets.token_hex(4)}")
     try:
         os.rename(path, aside)
@@ -138,11 +141,13 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
     return released
 
 
-def recover_release(state_dir: Path) -> bool:
-    """At the gate's start, before anything reads the hold (Task 18; the controller's ruling at Task 17's review): a
-    hold a crash left aside in release_hold's window, between its rename and its link back or its removal, is put back
-    when no hold file stands, which fails safe: loads stay paused until the hold is judged again. With a hold file
-    standing, that one, the newer, stays, and what is aside goes. True when one was put back."""
+def recover_release(state_dir: Path) -> Hold | None:
+    """At the gate's start, before anything reads the hold (Task 18; the controller's rulings at Task 17's review and
+    re-review): a hold a crash left aside in release_hold's window, between its rename and its link back or its
+    removal, is put back when no hold file stands, which fails safe: loads stay paused. Rule 5 judges it again, and one
+    whose release was recorded waits for Dan, which the gate then says (Room.at_start's `recovered`). With a hold file
+    standing, the brake's newer one, that one stays, and what is aside goes. Returns the hold put back, None when none
+    was (nothing aside, or a hold standing)."""
     folder = Path(state_dir)
     path = folder / FILE
 
@@ -154,18 +159,20 @@ def recover_release(state_dir: Path) -> bool:
 
     asides = sorted(folder.glob(f"{FILE}.releasing-*"), key=written)  # the newest last
     if not asides:
-        return False
-    restored = False
+        return None
+    restored: Hold | None = None
     if not os.path.lexists(path):
         newest = asides[-1]
         try:
             os.link(newest, path)
-        except FileExistsError:  # the brake wrote one meanwhile: it stands
+        except FileExistsError:  # the brake wrote one meanwhile: it stands, and nothing was put back
             pass
         except OSError:
             os.rename(newest, path)
             asides.pop()
-        restored = True
+            restored = read_hold(Path(state_dir))
+        else:
+            restored = read_hold(Path(state_dir))
     for aside in asides:
         aside.unlink(missing_ok=True)
     try:

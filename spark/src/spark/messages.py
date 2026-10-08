@@ -643,7 +643,7 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, "
         "`make brake-release`.*"),
     "brake_needs_release": (
-        "a hold found after a reboot",
+        "a hold found after a reboot; or one the gate put back at its start, which waits for Dan",
         "*After the reboot, new loads are still paused from the brake at 02:58. On the Spark, `make brake-release` "
         "resumes them.* With what the gate knows of that brake: *After the reboot, new loads are still paused from the "
         "brake at 03:12 (19.6 GiB available; it unloaded the coder). …*"),
@@ -703,13 +703,13 @@ NOTIFICATION_DOC: dict[str, tuple[str, str]] = {
         "an always-loaded model didn't fit when it was to reload: after a hold ended, at boot, after the brake's "
         "release, after `make apply`'s restart or the model service's, after it stopped outside the gate, or after "
         "the gate unloaded it; or it stopped again within an hour of its last automatic reload, or the model service "
-        "restarted unplanned again within the hour, and it won't reload by itself",
+        "restarted unplanned within the hour after it reloaded by itself, and it won't reload by itself",
         "*Gemma didn't fit after the hold ended: it needs 32 GiB, and 9 GiB is free for a load. It loads by itself "
         "once there's room.* Stopped again within the hour: *Gemma stopped again within an hour of its last "
-        "automatic reload, so it won't reload by itself. On the Spark, `spark load small` loads it.* A second "
-        "unplanned restart within the hour: *The model service restarted again within an hour of its last unplanned "
-        "restart, so Gemma, the embeddings and whisper won't reload by themselves. On the Spark, `spark load small`, "
-        "`spark load embed` and `spark load stt` load them.*"),
+        "automatic reload, so it won't reload by itself. On the Spark, `spark load small` loads it.* An unplanned "
+        "restart of the model service within the hour after one: *Gemma, the embeddings and whisper already reloaded "
+        "by themselves within the hour, so they won't again by themselves after the model service's restart. On the "
+        "Spark, `spark load small`, `spark load embed` and `spark load stt` load them.*"),
     "apply_restarted": (
         "`make apply` restarted the model service",
         "*make apply restarted the model service at 14:02. Gemma, the embeddings and whisper reloaded; the coder loads "
@@ -902,6 +902,9 @@ def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
     if f["unloaded"]:
         known.append(f"it unloaded {_and(f['unloaded'])}")
     detail = f" ({'; '.join(known)})" if known else ""
+    if f["recovered"]:  # a hold the gate's start put back, which waits for Dan (Task 17's re-review)
+        return (f"New loads are still paused from the brake at {_clock(f['fired_at'])}{detail}: the gate stopped while "
+                "it was lifting that hold, so it waits for you. On the Spark, `make brake-release` resumes them.")
     return (f"After the reboot, new loads are still paused from the brake at {_clock(f['fired_at'])}{detail}. On the "
             "Spark, `make brake-release` resumes them.")
 
@@ -1266,12 +1269,14 @@ def _resident_waiting(registry: Registry, f: dict[str, Any]) -> str:
         _needs("resident_waiting", f, "labels", "commands")
         if len(f["labels"]) != len(f["commands"]):
             raise ValueError("resident_waiting's labels and commands go in pairs")
+        # Worded from the stamp: each already reloaded by itself within the hour, by a crash's reload or a restart's
+        # (the controller's ruling at Task 17's re-review).
         one = len(f["labels"]) == 1
         names = _and(list(f["labels"]))
         loads = _and([f"`spark load {command}`" for command in f["commands"]])
-        return (f"The model service restarted again within an hour of its last unplanned restart, so {names} won't "
-                f"reload by {'itself' if one else 'themselves'}. On the Spark, {loads} "
-                f"{'loads it' if one else 'load them'}.")
+        return (f"{_start(names)} already reloaded by {'itself' if one else 'themselves'} within the hour, so "
+                f"{'it' if one else 'they'} won't again by {'itself' if one else 'themselves'} after the model "
+                f"service's restart. On the Spark, {loads} {'loads it' if one else 'load them'}.")
     _needs("resident_waiting", f, "label", "after")
     _one_of("resident_waiting", "after", f["after"], _AFTER)
     if f["again"]:  # a second stop within the hour after its automatic reload (the controller's ruling at Task 17)
@@ -1377,7 +1382,7 @@ _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
                     "release_assumed": False, "unload_unanswered": False},
-    "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": []},
+    "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": [], "recovered": False},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},
     "llama_swap_down": dict.fromkeys(("at", "result_words", "why", "model_label", "since")),  # why: stuck_stopping
     "back_up": {"unit": None, "down_s": None, "state_damaged": False, "down_unknown": False},
@@ -1546,6 +1551,12 @@ def room_not_saved(*, had_hold: bool) -> str:
                 "stands as it was. On the Spark, `make logs s=gate` shows why.")
     return ("make-room held nothing and unloaded nothing: the gate couldn't save its state. On the Spark, `make logs "
             "s=gate` shows why.")
+
+
+def room_running() -> str:
+    """make-room asked again while a run is under way: one run at a time (the controller's ruling at Task 17's
+    re-review)."""
+    return "make-room is already running: wait for it, or `spark make-room --done` ends its hold."
 
 
 def room_for_s() -> str:

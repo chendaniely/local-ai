@@ -104,6 +104,9 @@ def test_dans_unloads_last_the_boot_and_no_longer():
     state = GateState(boot_id=BOOT, dans_unloads={GEMMA: BOOT})
     assert restore(state, [], now=T, boot_id=BOOT, registry=REGISTRY)[0].dans_unloads == {GEMMA: BOOT}
     assert restore(state, [], now=T, boot_id=NEXT_BOOT, registry=REGISTRY)[0].dans_unloads == {}
+    # Found running at the gate's start, loaded again around it or while it was away: the mark ends (the controller's
+    # ruling at Task 17's re-review).
+    assert restore(state, [Running(GEMMA, "ready")], now=T, boot_id=BOOT, registry=REGISTRY)[0].dans_unloads == {}
 
 
 def test_a_room_hold_saved_before_its_total_reads_as_its_size(tmp_path):
@@ -797,15 +800,49 @@ def test_a_crash_between_release_holds_rename_and_its_link_back_leaves_a_hold_th
     finally:
         os.link = real_link
     assert read_hold(tmp_path) is None and len(list(tmp_path.glob(f"{hold.FILE}.releasing-*"))) == 1
-    assert hold.recover_release(tmp_path) is True
+    assert hold.recover_release(tmp_path) == standing  # the hold it put back (the re-review's Minor 7)
     assert read_hold(tmp_path) == standing and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
-    assert hold.recover_release(tmp_path) is False  # nothing aside: nothing to do
+    assert hold.recover_release(tmp_path) is None  # nothing aside: nothing to do
     # A newer hold written since stands; the one left aside goes.
     (tmp_path / f"{hold.FILE}.releasing-1-ab").write_text((tmp_path / hold.FILE).read_text())
     newer = replace(judged, since=local(T + 120), episode=3)
     write_hold(tmp_path, newer)
-    assert hold.recover_release(tmp_path) is False
+    assert hold.recover_release(tmp_path) is None
     assert read_hold(tmp_path) == newer and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
+    # The brake writes its hold between the look and the link back: its hold stands, and nothing was put back (P4c).
+    (tmp_path / hold.FILE).rename(tmp_path / f"{hold.FILE}.releasing-1-cd")
+    real = os.path.lexists
+
+    def brake_writes(path):
+        found = real(path)
+        if str(path).endswith(hold.FILE):
+            write_hold(tmp_path, standing)
+        return found
+
+    os.path.lexists = brake_writes
+    try:
+        assert hold.recover_release(tmp_path) is None
+    finally:
+        os.path.lexists = real
+    assert read_hold(tmp_path) == standing and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
+
+
+def test_dans_release_also_lifts_a_hold_left_aside_so_it_never_comes_back(tmp_path):
+    # The controller's ruling at Task 17's re-review (its Minor 6): `make brake-release`, through the gate or its
+    # fallback with the gate down, removes the hold and any left aside, so the gate's start never puts back a hold Dan
+    # lifted.
+    older = Hold(local(T), "19.6 GiB available", (CODER,), boot_id=BOOT, episode=1, available_gib=19.6)
+    newer = replace(older, since=local(T + 60), episode=2)
+    write_hold(tmp_path, older)
+    (tmp_path / hold.FILE).rename(tmp_path / f"{hold.FILE}.releasing-1-aa")
+    assert release_hold(tmp_path) is True  # P4a: only an aside: lifted all the same
+    assert list(tmp_path.iterdir()) == [] and hold.recover_release(tmp_path) is None and read_hold(tmp_path) is None
+    write_hold(tmp_path, older)
+    (tmp_path / hold.FILE).rename(tmp_path / f"{hold.FILE}.releasing-1-bb")
+    write_hold(tmp_path, newer)
+    assert release_hold(tmp_path) is True  # P4b: the newer, and the older aside
+    assert list(tmp_path.iterdir()) == [] and hold.recover_release(tmp_path) is None and read_hold(tmp_path) is None
+    assert release_hold(tmp_path) is False  # nothing at all
 
 
 def test_release_waits_for_dan_after_a_reboot_or_a_second_brake_within_the_hour():

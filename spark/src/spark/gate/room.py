@@ -13,9 +13,10 @@ session using it loses it: each is named in the result's `ended` and in `spark s
 with its model still loaded ends the run with a refusal line in Dan's words. With something already unloaded, the hold
 stays and the line says what was unloaded; with nothing, the hold that stood before is put back (the controller's
 ruling at Task 17). A caller that goes is the same: a run whose drain under way then ends with its model loaded, or
-that hadn't begun one, puts back the earlier hold; one that unloaded something keeps its hold (the controller's rulings
-at Task 17's review). The hold's size, once the run ends, is the target or what is free for a load then, whichever is
-less; for everything, all of what is free for a load then.
+that hadn't begun one, or that went during the first save, puts back the earlier hold; one that unloaded something
+keeps its hold (the controller's rulings at Task 17's review and re-review). One run at a time: a second, while one
+runs, is refused at once. The hold's size, once the run ends, is the target or what is free for a load then, whichever
+is less; for everything, all of what is free for a load then.
 
 **The hold's end.** `release(room=True)` (`spark make-room --done`), `expire` (its time) and `at_start` (a reboot, or a
 start fresh after damage, when one may have stood) end it with `room_hold_ended`. The residents it unloaded reload
@@ -62,7 +63,7 @@ from spark.gate.admission import RELOAD_AFTER, AdmitRequest, Admitted, Admitter
 from spark.gate.policy import SAVE_BOUND_S, DrainEnd, Drainer, FrontChannel
 from spark.gate.state import Emit, GateState, ModelRecord, RecentRecord, RoomHold, Session
 from spark.gateproto import LOAD_CALL_TIMEOUT_S, RELEASE_AFTER_S, RESIDENT_RELOAD_EVERY_S, InflightSnapshot
-from spark.hold import Hold, release_waits_for_dan
+from spark.hold import UNREADABLE_SINCE, Hold, release_waits_for_dan
 from spark.llamaswap import LlamaSwapError
 from spark.memory import MemInfo
 from spark.registry import Registry
@@ -288,14 +289,19 @@ class Preloader:
         review): those reloaded by themselves within the hour wait for Dan, in one `resident_waiting`."""
         state = self._admitter.state
         now = self._clock()
-        held = [name for name in names if (last := state.resident_reloads.get(name)) is not None
+        # One already loaded or loading (a request beat the probe) isn't reloaded by this, so it is neither named nor
+        # stamped (the controller's ruling at Task 17's re-review).
+        out = [name for name in names if name not in state.models]
+        held = [name for name in out if (last := state.resident_reloads.get(name)) is not None
                 and now - last < RESIDENT_RELOAD_EVERY_S]
         go = [name for name in names if name not in held]
-        for name in go:
-            state.resident_reloads[name] = now
+        for name in out:
+            if name not in held:
+                state.resident_reloads[name] = now
         if held:
             key = f"resident-again:restart:{max(state.resident_reloads[name] for name in held)}"
-            _log.warning("llama-swap restarted again within an hour: %s wait for Dan's spark load", ", ".join(held))
+            _log.warning("llama-swap restarted unplanned, and %s already reloaded by itself within the hour: each "
+                         "waits for Dan's spark load", ", ".join(held))
             if key not in self._said:
                 self._said.add(key)
                 known = [self.registry.models[name] for name in held]
@@ -307,7 +313,7 @@ class Preloader:
                     _log.error("the resident_waiting notification couldn't be made: %s", err)
                 except Exception:
                     _log.exception("the resident_waiting notification couldn't be sent")
-        if go or held:
+        if out:
             try:
                 step = self._on_change()
             except Exception:
@@ -366,7 +372,9 @@ class Room:
         self._left_while_held: set[str] = set()
         self._said: set[str] = set()  # the notifications sent once each, by their event key
         self._undated_logged = False
-        self._last_hold: Hold | None = None  # the brake's hold as last read standing
+        self._last_hold: Hold | None = None  # the brake's hold as last read standing, and parsed
+        self._recovered: Hold | None = None  # a hold the gate's start put back (hold.recover_release)
+        self._run: _Run | None = None  # the make-room run under way, or the last
         self._tasks: set[asyncio.Future] = set()
 
     @property
@@ -403,7 +411,13 @@ class Room:
         they come; then RoomResult's fields. A refusal on the way is the last line (GateRefusalBody). `for_s` ends the
         hold that long from now; None, at `--done` or the next boot. A caller that goes ends this iterator: the drain
         under way goes on, and what it unloads is held and recorded; the run is then settled as a refused one, so with
-        nothing unloaded the earlier hold is put back (the controller's rulings at Task 17's review)."""
+        nothing unloaded the earlier hold is put back, also when the caller goes during the first save (the
+        controller's rulings at Task 17's review and re-review). One run at a time: a second, while one runs, is
+        refused at once, its plan left for later."""
+        if self._run is not None and not (self._run.finished or self._run.settled):
+            # One run at a time (the controller's ruling at Task 17's re-review).
+            yield _refusal(messages.room_running())
+            return
         entry = self._plans.pop(plan_id, None) if isinstance(plan_id, str) else None
         if entry is None:
             yield _refusal(messages.room_plan_gone())
@@ -421,15 +435,18 @@ class Room:
         hold = RoomHold(size_gib=max(0.0, size), until=None if for_s is None else now + float(for_s),
                         boot_id=self._boot_id, created_at=now, unloaded=carried, total_gib=max(0.0, size))
         self.state.room_hold = hold
-        if not await self._saved_first():
-            _log.error("the gate couldn't save make-room's hold before its first drain, so nothing was unloaded")
-            if self.state.room_hold is hold:
-                self.state.room_hold = before
-            yield _refusal(messages.room_not_saved(had_hold=before is not None))
-            return
-        self._admitter.changed()  # the hold counts from now, before any room is freed
-        run = _Run(uid, hold, before, target)
+        run = self._run = _Run(uid, hold, before, target)
         try:
+            # Inside the try, so a caller that goes while this save is under way leaves the earlier hold (the
+            # controller's ruling at Task 17's re-review).
+            if not await self._saved_first():
+                _log.error("the gate couldn't save make-room's hold before its first drain, so nothing was unloaded")
+                run.finished = True
+                if self.state.room_hold is hold:
+                    self.state.room_hold = before
+                yield _refusal(messages.room_not_saved(had_hold=before is not None))
+                return
+            self._admitter.changed()  # the hold counts from now, before any room is freed
             for name in plan.unload:
                 if name not in self.state.models:
                     continue  # gone since the plan: its room is free already
@@ -555,16 +572,30 @@ class Room:
         self._hold_ended(hold, "time")
         return hold
 
-    def at_start(self, ended: RoomHold | None) -> None:
+    def at_start(self, ended: RoomHold | None, *, recovered: Hold | None = None) -> None:
         """At the gate's start, after restore (Task 18 calls it): `room_hold_ended` for the hold another boot left,
         which restore ended (`reboot`; the boot's preload reloads the residents), and, at a start fresh after damage,
-        once, for a hold that may have stood (`damaged`: the controller's ruling at Task 13's review)."""
+        once, for a hold that may have stood (`damaged`: the controller's ruling at Task 13's review). `recovered` is
+        the brake's hold hold.recover_release put back: should it wait for Dan, `brake_needs_release` says so, once,
+        so it is never silent (the controller's ruling at Task 17's re-review)."""
+        self._recovered = recovered
         if ended is not None:
             total = ended.total_gib if ended.total_gib is not None else ended.size_gib
             self._emit_once("room_hold_ended", f"room:{ended.created_at}", why="reboot", unused_gib=ended.size_gib,
                             total_gib=total, reloading=[], next_label=None)
         if self.state.fresh_after_damage:
             self._emit_once("room_hold_ended", f"room:damaged:{self.state.damaged_at}", why="damaged")
+
+    def resumed_drain_ended(self, model: str, why: str | None, end: str) -> None:
+        """A make-room drain a restarted gate resumed (Task 18 passes each resumed drain's end): its model, once gone,
+        goes on the room hold that stands, so its `--done` reloads it, as the run killed with the gate would have
+        recorded it (the controller's ruling at Task 17's re-review). Any other drain changes nothing here."""
+        current = self.state.room_hold
+        if why != "make-room" or end not in ("unloaded", "gone") or current is None:
+            return
+        if current.boot_id == self._boot_id and model not in current.unloaded:
+            current.unloaded.append(model)
+            self._note()
 
     async def release(self, uid: int, *, room: bool, brake: bool) -> ReleaseResult:
         """`spark make-room --done` asks `room`: make-room's hold ends (`room_hold_ended`, *`--done`*), and the
@@ -759,7 +790,8 @@ class Room:
         """One `brake_needs_release`, high, for a hold from another boot (rule 5: it waits for Dan). A hold of this
         boot that waits for Dan is a brake within the hour after an automatic release, whose own `brake_fired` said so
         (Task 14). Keyed as Task 14 keys the same brake read from its events, so the two are one notification."""
-        if hold.boot_id is not None and hold.boot_id == self._boot_id:
+        recovered = self._recovered is not None and hold == self._recovered
+        if hold.boot_id is not None and hold.boot_id == self._boot_id and not recovered:
             return
         fired = fired_at(hold)
         if fired is None:  # an unreadable hold: held_by_brake's words and `spark status` say it waits for Dan
@@ -770,8 +802,11 @@ class Room:
             return
         key = (f"brake-needs:{hold.boot_id}:{hold.episode if hold.episode is not None else hold.since}"
                if hold.boot_id is not None else f"brake-needs:phase-1:{hold.since}")
+        if recovered:
+            key = key.replace("brake-needs:", "brake-needs:recovered:", 1)
         self._emit_once("brake_needs_release", key, fired_at=fired, available_gib=hold.available_gib,
-                        unloaded=[self._label(name) for name in dict.fromkeys(hold.unloaded)])
+                        unloaded=[self._label(name) for name in dict.fromkeys(hold.unloaded)],
+                        **({"recovered": True} if recovered else {}))
 
     def _brake_reloads(self, hold: Hold) -> list[str]:
         """The residents a release reloads, in the registry's order: those the brake unloaded and those that left while
@@ -821,6 +856,10 @@ class Room:
         return self._bounded_reload(model, after)
 
     def _bounded_reload(self, model: str, after: str) -> bool:
+        why = kept_out(model, self.state, self.registry, self._hold())
+        if why is not None:  # nothing is queued, so nothing is stamped (the controller's ruling at Task 17's re-review)
+            _log.info("not reloading %s: %s", model, why)
+            return False
         now = self._clock()
         last = self.state.resident_reloads.get(model)
         if last is not None and now - last < RESIDENT_RELOAD_EVERY_S:
@@ -869,9 +908,9 @@ class Room:
             hold = self._read_hold()
         except Exception as err:
             _log.warning("the brake's hold can't be read (%s): taken as standing", err)
-            hold = Hold("an unknown time", f"the hold can't be read: {err}", ())
-        if hold is not None:
-            self._last_hold = hold
+            hold = Hold(UNREADABLE_SINCE, f"the hold can't be read: {err}", ())
+        if hold is not None and hold.since != UNREADABLE_SINCE:  # an unreadable read never replaces the last that
+            self._last_hold = hold  # parsed, with its loading model (the controller's ruling at Task 17's re-review)
         return hold
 
     @staticmethod

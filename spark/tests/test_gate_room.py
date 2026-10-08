@@ -24,9 +24,9 @@ import anyio
 import pytest
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
-from spark import gateproto, messages, tickets
+from spark import gateproto, hold, messages, tickets
 from spark.budget import ALL, Candidate
-from spark.gate.admission import Admitted, Admitter
+from spark.gate.admission import Admitted, Admitter, AdmitRequest
 from spark.gate.policy import Drainer, FrontChannel
 from spark.gate.room import Preloader, ReleaseResult, Room, RoomDone, backoff, brake_release_due
 from spark.gate.state import (BrakeMark, GateState, ModelRecord, Pin, RoomHold, Session, load_state, restore,
@@ -1636,9 +1636,9 @@ async def test_two_unplanned_restarts_in_an_hour_leave_the_residents_for_dan(tmp
         [(key, fields)] = world.emitted.of("resident_waiting")
         assert key == f"resident-again:restart:{T}"
         text = messages.notification("resident_waiting", REGISTRY, **fields).message
-        assert text == ("The model service restarted again within an hour of its last unplanned restart, so Gemma, the "
-                        "embeddings and whisper won't reload by themselves. On the Spark, `spark load small`, `spark "
-                        "load embed` and `spark load stt` load them.")
+        assert text == ("Gemma, the embeddings and whisper already reloaded by themselves within the hour, so they "
+                        "won't again by themselves after the model service's restart. On the Spark, `spark load "
+                        "small`, `spark load embed` and `spark load stt` load them.")
         assert messages.pi_retry_match(text) is None
         # make apply's planned restart reloads as normal.
         again = await all_ready(world.task(preloader.run(RESIDENTS, "apply")))
@@ -1712,3 +1712,192 @@ async def test_the_result_never_misses_the_last_model_whatever_order_the_callbac
         assert lines[-1]["unloaded"] == ["the coder"]
         await asyncio.sleep(0.1)
         assert world.state.room_hold.unloaded == [CODER]
+
+
+
+# Fix round 2 (the controller's rulings at Task 17's re-review).
+
+@pytest.mark.anyio
+async def test_a_caller_that_goes_during_the_first_save_leaves_the_earlier_hold(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Dan's Ctrl-C right after he confirms, while the hold's save that must come first is under way (the
+        # re-review's P9): the run's hold is taken back and the earlier hold stands, saved again.
+        world = World(tmp_path, models=all_loaded())
+        before = room_hold(20, unloaded=[EMBED], created=T - 600)
+        world.state.room_hold = before
+        released = asyncio.Event()
+        saved: list = []
+
+        async def slow_save():
+            saved.append(world.state.room_hold)
+            await released.wait()
+
+        world.room._on_change = slow_save
+        plan_id, _ = world.room.plan(Decimal(40), DAN)
+        task = world.task(collect(world.room.execute(plan_id, None, DAN)))
+        await asyncio.sleep(0.01)
+        assert world.state.room_hold is not before  # the run's hold, its save under way
+        task.cancel()
+        await asyncio.sleep(0.01)
+        released.set()
+        await settle(world)
+        assert task.cancelled() and world.state.room_hold is before and world.swap.unloads() == []
+        assert saved[-1] is before  # saved again with the earlier hold
+        assert world.admitter.free_for_a_load(uses_hold=False) == -11  # 9 free, less the 20 of the earlier hold
+
+
+@pytest.mark.anyio
+async def test_the_restart_form_says_what_the_stamp_says(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Gemma crash-reloaded at T; at T + 30 min llama-swap restarts unplanned, the first of the hour (the re-review's
+        # P8): the words say Gemma already reloaded by itself within the hour, never that the service restarted again.
+        world = World(tmp_path, models=residents())
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        assert world.room.resident_left(GEMMA, shown="ready", since=T - 1) is True
+        await settle(world)
+        world.swap.ready(GEMMA)
+        await settle(world)
+        for name in RESIDENTS:
+            world.swap._stopped(name)
+            world.state.models.pop(name, None)
+        world.clock.now = T + 1800
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+        run = world.task(preloader.run(RESIDENTS, "restart"))
+        await settle(world)
+        assert world.emitted.texts("resident_waiting") == [
+            "Gemma already reloaded by itself within the hour, so it won't again by itself after the model service's "
+            "restart. On the Spark, `spark load small` loads it."]
+        assert world.swap.loads() == [GEMMA, EMBED]  # the embeddings and whisper reload, one at a time
+        run.cancel()
+
+
+@pytest.mark.anyio
+async def test_the_restart_bound_leaves_out_a_resident_already_loaded(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A request loaded Gemma before the preload's probe (the re-review's P6): it is neither named nor stamped.
+        world = World(tmp_path, models={GEMMA: record(GEMMA)})
+        world.state.resident_reloads[GEMMA] = T - 600
+        preloader = Preloader(world.admitter, REGISTRY, world.emitted, world.clock, llamaswap=world.swap,
+                              read_hold=lambda: read_hold(world.brake))
+        run = world.task(preloader.run(RESIDENTS, "restart"))
+        await settle(world)
+        assert world.emitted.of("resident_waiting") == [] and world.state.resident_reloads[GEMMA] == T - 600
+        assert world.swap.loads() == [EMBED]
+        run.cancel()
+
+
+@pytest.mark.anyio
+async def test_a_load_by_any_path_clears_dans_unload_mark(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Dan unloads Gemma; a request loads it again, and it then crashes (the re-review's P5): the mark went with
+        # that load, so the crash reloads it, and resident_left's True means a reload was queued.
+        world = World(tmp_path, models=residents())
+        await collect(world.room.unload(GEMMA, DAN))
+        assert world.state.dans_unloads == {GEMMA: BOOT}
+        asked = world.task(world.admitter.admit(AdmitRequest(id="r1", model=GEMMA, kind="command", key=None,
+                                                             deadline=T + 60, uid=AGENT)))
+        await settle(world)
+        world.swap.ready(GEMMA)
+        await settle(world)
+        assert isinstance(asked.result(), Admitted) and world.state.dans_unloads == {}
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        world.clock.now = T + 100
+        assert world.room.resident_left(GEMMA, shown="ready", since=T + 99) is True
+        await settle(world)
+        assert world.swap.loads() == [GEMMA, GEMMA] and world.state.resident_reloads == {GEMMA: T + 100}
+        # A reload kept_out leaves out isn't stamped, and isn't called queued.
+        world.swap.ready(GEMMA)
+        await settle(world)
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        world.state.resident_reloads.clear()
+        world.state.dans_unloads[GEMMA] = BOOT
+        assert world.room.resident_left(GEMMA, shown="ready", since=T + 99) is False
+        assert world.state.resident_reloads == {}
+
+
+@pytest.mark.anyio
+async def test_a_hold_put_back_at_start_that_waits_for_dan_says_so(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A crash between recording a release and removing the hold, then the gate's start puts the hold back (the
+        # re-review's P4d): it waits for Dan, and his phone hears so, once, never silently.
+        world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        world.state.last_auto_release_at = T + 300  # saved before release_hold, as _auto_release does
+        (world.brake / "hold.json").rename(world.brake / "hold.json.releasing-1-dd")
+        recovered = hold.recover_release(world.brake)
+        assert recovered == fired_hold(T - 600)
+        world.room.at_start(None, recovered=recovered)
+        await world.at(T + 310)
+        world.clock.now = T + 4000
+        for _ in range(2):
+            assert await world.room.check_brake(T + 4000, above_since=T + 310) == "needs_dan"
+        [(key, fields)] = world.emitted.of("brake_needs_release")
+        assert key == f"brake-needs:recovered:{BOOT}:1"
+        assert world.emitted.texts("brake_needs_release") == [
+            "New loads are still paused from the brake at 08:50 (19.6 GiB available; it unloaded Gemma and the "
+            "embeddings): the gate stopped while it was lifting that hold, so it waits for you. On the Spark, `make "
+            "brake-release` resumes them."]
+
+
+@pytest.mark.anyio
+async def test_one_unreadable_read_never_loses_the_loading_model(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The re-review's P7: the last hold that parsed is kept, so a hold lifted outside the gate after one unreadable
+        # read still leaves its loading model out.
+        world = World(tmp_path, models=residents(), hold=fired_hold(T - 60, unloaded=(), loading=GEMMA))
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        assert world.room.resident_left(GEMMA, shown="ready", since=T - 1) is False
+        (world.brake / "hold.json").write_text("{not json")
+        assert world.room.check_brake  # an unreadable read
+        await world.room.check_brake(T + 5, above_since=None)
+        (world.brake / "hold.json").unlink()
+        assert await world.room.check_brake(T + 10, above_since=None) is None
+        await settle(world)
+        assert world.swap.loads() == []
+
+
+@pytest.mark.anyio
+async def test_one_make_room_run_at_a_time(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A second run while one runs is refused at once, in plain words, and touches nothing (the controller's ruling
+        # at Task 17's re-review).
+        world = World(tmp_path, models=all_loaded(), auto=False)
+        first_id, _ = world.room.plan(Decimal(40), DAN)
+        second_id, _ = world.room.plan(Decimal(40), DAN)
+        first = world.task(collect(world.room.execute(first_id, None, DAN)))
+        await settle(world)
+        hold_of_the_first = world.state.room_hold
+        assert await collect(world.room.execute(second_id, None, DAN)) == [
+            {"code": None, "message": messages.room_running()}]
+        assert messages.room_running() == ("make-room is already running: wait for it, or `spark make-room --done` "
+                                           "ends its hold.")
+        assert messages.pi_retry_match(messages.room_running()) is None
+        assert world.state.room_hold is hold_of_the_first
+        [drain] = world.front.drains()
+        world.channel.drained(CODER, drain["drain_id"])
+        await settle(world)
+        assert first.done()
+        # Once it has ended, another may run, the refused one's plan included.
+        third_id, _ = world.room.plan(Decimal(40), DAN)
+        assert (await collect(world.room.execute(second_id, None, DAN)))[-1]["unloaded"] == []
+        assert (await collect(world.room.execute(third_id, None, DAN)))[-1]["unloaded"] == []
+
+
+@pytest.mark.anyio
+async def test_a_resumed_make_room_drain_puts_its_model_on_the_hold_that_stands(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # A gate killed mid-run: the restarted gate resumes the make-room drain (Task 18), whose model goes on the room
+        # hold that stands, so its --done reloads it (the controller's ruling at Task 17's re-review).
+        world = World(tmp_path, models=residents())
+        world.state.room_hold = room_hold(40)
+        world.swap._stopped(GEMMA)
+        del world.state.models[GEMMA]
+        world.room.resumed_drain_ended(GEMMA, "make-room", "unloaded")
+        world.room.resumed_drain_ended(EMBED, "unload", "unloaded")  # not make-room's
+        assert world.state.room_hold.unloaded == [GEMMA]
+        result = await world.room.release(DAN, room=True, brake=False)
+        assert result.reloading == ["Gemma"]

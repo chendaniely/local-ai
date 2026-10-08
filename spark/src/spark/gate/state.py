@@ -697,8 +697,10 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
       no drain is left (the controller's ruling at Task 13).
     - A room hold from another boot ends. If the state is another boot's, so do apply's hold, the sessions, `ticketed`,
       `issued`, the drains and the undrains owed: none of their processes outlives the boot, and the front starts
-      afresh. So does a damage noted in an earlier boot, but not one noted at this start (`fresh_after_damage`). Pins,
-      the brake's marks, the refusals and the rest stay."""
+      afresh. So does a damage noted in an earlier boot, but not one noted at this start (`fresh_after_damage`), and
+      every mark of Dan's `spark unload` (`dans_unloads`). Pins, the brake's marks, the refusals and the rest stay.
+    - A mark of Dan's `spark unload` ends for a model `/running` lists: it was loaded again (the controller's ruling at
+      Task 17's re-review)."""
     state = copy.deepcopy(state)
     ended = None
     if state.room_hold is not None and state.room_hold.boot_id != boot_id:
@@ -710,6 +712,8 @@ def restore(state: GateState, running: list[Running], *, now: float, boot_id: st
         if not state.fresh_after_damage:  # a damage noted in an earlier boot is no longer news
             state.damaged_at = state.damaged_kept_as = None
     listed = {entry.model: entry.state for entry in running}
+    for name in [name for name in state.dans_unloads if name in listed]:
+        del state.dans_unloads[name]  # loaded again, around the gate or while it was away: the mark ends
     models: dict[str, ModelRecord] = {}
     for name, shown in listed.items():
         old = None if other_boot else state.models.get(name)  # no engine outlives a boot

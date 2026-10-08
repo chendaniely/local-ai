@@ -1388,8 +1388,18 @@ def test_fix_round_1s_words_at_task_17s_review():
     # Two unplanned restarts within the hour: one notification, naming each `spark load`.
     restart = {"after": "restart", "again": True, "labels": ["Gemma"], "commands": ["small"]}
     assert say("resident_waiting", **restart) == (
-        "The model service restarted again within an hour of its last unplanned restart, so Gemma won't reload by "
-        "itself. On the Spark, `spark load small` loads it.")
+        "Gemma already reloaded by itself within the hour, so it won't again by itself after the model service's "
+        "restart. On the Spark, `spark load small` loads it.")  # worded from the stamp (Task 17's re-review)
+    assert say("resident_waiting", **{**restart, "labels": ["Gemma", "whisper"], "commands": ["small", "stt"]}) == (
+        "Gemma and whisper already reloaded by themselves within the hour, so they won't again by themselves after "
+        "the model service's restart. On the Spark, `spark load small` and `spark load stt` load them.")
+    # A hold the gate put back at its start, which waits for Dan: never silent (Task 17's re-review).
+    recovered = say("brake_needs_release", fired_at=at(3, 12), available_gib=19.6, unloaded=["the coder"],
+                    recovered=True)
+    assert recovered == ("New loads are still paused from the brake at 03:12 (19.6 GiB available; it unloaded the "
+                         "coder): the gate stopped while it was lifting that hold, so it waits for you. On the Spark, "
+                         "`make brake-release` resumes them.")
+    assert messages.pi_retry_match(recovered) is None
     with pytest.raises(ValueError, match="^resident_waiting's labels and commands are for after restart"):
         say("resident_waiting", label="Gemma", after="crash", again=True, command="small", labels=["Gemma"])
     texts = [say("brake_released", at=at(3, 40), available_unknown=True), messages.room_not_saved(had_hold=True),

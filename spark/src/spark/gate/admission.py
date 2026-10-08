@@ -967,6 +967,9 @@ class Admitter:
             self.state.ticketed[name] = Ticketed(model=name, pid=pid, ticket_id=load.ticket_id, at=now,
                                                  start_time=start_time)
         self.state.issued.pop(name, None)
+        # Loaded again, by whatever asked: Dan's `spark unload` mark on it ends (the controller's ruling at Task 17's
+        # re-review).
+        self.state.dans_unloads.pop(name, None)
         if load.clears_mark:
             self.state.brake_marks.pop(name, None)
         ended = self._shrink_hold(load)
