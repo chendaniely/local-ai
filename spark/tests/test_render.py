@@ -507,10 +507,10 @@ def test_a_model_that_fits_exactly_renders(tmp_path, term, coder):
 
 def test_an_absurd_footprint_is_still_refused_with_its_numbers(tmp_path):
     # Decimal's default 28 digits can't hold 1e30 to a tenth, and the refusal would crash instead of saying why. Nor
-    # could they hold the sum: 1e30 + 1.5 + 2.5 + the 24 GiB reserve.
+    # could they hold the residents' sum: 1e30 + 1.5 + 2.5.
     path = registry_with(tmp_path, lambda d: d["models"]["vision-chat"].update(footprint_gib=1e30))
-    with pytest.raises(RenderError, match=r"^the always-loaded models and the reserve need "
-                                          r"1000000000000000000000000000028\.0 GiB together"):
+    with pytest.raises(RenderError, match=r"^the always-loaded models need 1000000000000000000000000000004\.0 GiB "
+                                          r"together, but 93\.0 GiB is free for a load"):
         rendered(path)
 
 

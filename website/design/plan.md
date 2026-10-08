@@ -629,8 +629,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
 9. **The budget** (corrected 2026-10-07, for Phase 2a; Dan: "fix the check and lower the reserve a
    little"). Footprints fit the **CUDA-allocatable ceiling**, and **each load leaves the reserve
    free** at the moment it happens, which the gate checks against real `MemAvailable` (rule 1). So
-   `spark render` checks that the registry's footprints together fit the ceiling, and that the
-   residents leave the reserve free at idle; the gate keeps checking each load. Until 2a, render
+   `spark render` checks ~~that the registry's footprints together fit the ceiling, and that the
+   residents leave the reserve free at idle~~ that the residents fit idle `MemAvailable` less the
+   reserve, within the ceiling, and each on-demand model beside them, and only warns when the
+   footprints together pass the ceiling *(corrected 2026-10-07, at Task 5's review; the bullet
+   on `spark render` below has the checks)*; the gate keeps checking each load. Until 2a, render
    summed every model's footprint against `allocatable − reserve` (102 − 24 = 78), which counted
    the reserve twice: it kept the reserve free under the CUDA ceiling, which is itself about 15 GiB
    below idle `MemAvailable` on this box (117 GiB), and then the launch check kept it free again at
@@ -694,16 +697,19 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      running, against render's promise.)*
    - **`spark render`, on the registry,** checks ~~that the footprints together fit the ceiling;~~
      that the residents and the reserve fit idle `MemAvailable`, a measured value the registry
-     records; and that each on-demand model fits beside the residents with the reserve, so the gate
-     never has to refuse one with nothing else running. *(Revised 2026-10-07, Dan's decision after
+     records, and the residents the ceiling too *(corrected 2026-10-07, at Task 5's review, the
+     controller's ruling: they load together at boot, so they have to fit under both terms,
+     `min(idle MemAvailable − reserve, ceiling)`)*; and that each on-demand model fits beside the
+     residents with the reserve, so the gate never has to refuse one with nothing else running. *(Revised 2026-10-07, Dan's decision after
      the implementation plan's forward-and-back council: the whole set's fit to the ceiling is a
      warning, since the gate admits each load against live memory and later phases' registries (two
      coders, a fallback, a larger model) won't fit at once; and a model marked `needs_room`, which
      loads only after make-room has freed room for it, is checked against idle `MemAvailable` less
      the reserve and the ceiling, not beside the residents.)* That last check is the gate's formula,
      evaluated at idle with the residents loaded and nothing else running, so render and the gate
-     hold one formula between them. It warns when every model loaded at its footprint would leave
-     memory under the warn line, 28 GiB. With Phase 2a's coder at ~41, the set comes to ~84 of the
+     hold one formula between them. *(And since Task 5's review, 2026-10-07, the residents' check
+     and a `needs_room` model's are the gate's formula too, with nothing loaded.)* It warns when
+     every model loaded at its footprint would leave memory under the warn line, 28 GiB. With Phase 2a's coder at ~41, the set comes to ~84 of the
      102; the coder, the residents and the reserve to 108 of the 117; and everything loaded would
      leave about 33, 5 GiB above the warn line.
    - **The reserve stays ≥24 GiB,** above the brake line, 20, which the registry enforces, so that
@@ -2946,6 +2952,16 @@ Each item gets its own design pass when its turn comes.
   every member device's access to the tagged NAS; its Step 3 expects ntfy's web page to load,
   with only a topic asking for a login; and Compose, given no values, names whichever missing
   variable it reaches first, not always `NTFY_BASE_URL`.
+- **2026-10-07** — Phase 2a's Task 5 review: two rulings by the controller, since Dan defers
+  technical judgement here and each keeps his decisions' intent, with dated notes in rule 9 and
+  in the implementation plan's Task 5. Render's check of the residents gains the ceiling term:
+  they load together at boot, so together they fit `min(idle MemAvailable − reserve, ceiling)`,
+  where the first check left the ceiling out. And a load of Dan's into make-room's hold shrinks it
+  only by the part the room outside it couldn't cover, that room counting as none once his job has
+  taken it, `max(0, hold − max(0, footprint − max(0, free_outside_hold)))`, so the hold keeps
+  counting what his job allocated (rule 4); the first formula shrank a 70 GiB hold to 7 for a
+  5 GiB load. Rule 9's head, which still said render checks the footprints together against the
+  ceiling, is corrected too.
 
 ## Sources
 

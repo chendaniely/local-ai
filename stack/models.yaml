@@ -1,8 +1,8 @@
 # The one file to edit to add, swap or retire a model. `spark render` refuses anything invalid,
-# including always-loaded models that, with the reserve, don't fit idle MemAvailable, and an
-# on-demand model that can't load beside them with the reserve kept (plan.md's rule 9); it warns
-# when every model loaded at once would pass the CUDA-allocatable ceiling, or leave memory under the
-# brake's warn line.
+# including always-loaded models that don't fit idle MemAvailable less the reserve, within the
+# CUDA-allocatable ceiling, and an on-demand model that can't load beside them with the reserve
+# kept (plan.md's rule 9); it warns when every model loaded at once would pass the ceiling, or
+# leave memory under the brake's warn line.
 # A model's `args` may set only the engine options on render's list, ALLOWED in
 # spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
 # An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).

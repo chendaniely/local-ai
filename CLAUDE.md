@@ -143,15 +143,16 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be measured) and
   keeps ≥24 GiB free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day:
   the plan's rule 9. Render's half is built on the `phase-2a` branch (2026-10-07): `spark render`
-  refuses always-loaded models that, with the reserve, don't fit idle `MemAvailable`, and an
-  on-demand model that doesn't fit beside them by the gate's formula at idle (one marked
-  `needs_room`, the box less the reserve, within the ceiling), and only warns when the whole set
-  passes the ceiling. This note first said the check would become the set's footprints within the
-  ceiling; Dan made that a warning after the implementation plan's forward-and-back council, the
-  same day. Not yet built, the gate's half: each load keeping the reserve free and holding back the
-  growth the loaded models are still owed. The reserve stays ≥24 GiB. The design first lowered it to
-  22, and this note said so; after the design's council Dan put it back to 24 the same day, until
-  2a has measured the footprints.)*
+  refuses always-loaded models that don't fit idle `MemAvailable` less the reserve and, since Task
+  5's review, the ceiling too, and an on-demand model that doesn't fit beside them (one marked
+  `needs_room`, with nothing loaded), each by the gate's formula at idle; and it only warns when
+  every model loaded at once would pass the ceiling or leave memory under the warn line. This note
+  first said the check would become the set's footprints within the ceiling; Dan made that a
+  warning after the implementation plan's forward-and-back council, the same day. Not yet built,
+  the gate's half: each load keeping the reserve free and holding back the growth the loaded
+  models are still owed. The reserve stays ≥24 GiB. The design first lowered it to 22, and this
+  note said so; after the design's council Dan put it back to 24 the same day, until 2a has
+  measured the footprints.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.

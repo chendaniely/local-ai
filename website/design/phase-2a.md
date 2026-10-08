@@ -924,7 +924,8 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
   warnings), `spark/tests/test_render.py`, `CLAUDE.md` (the reserve gotcha's dated note)
 
 **Interfaces** (exact `Decimal` arithmetic throughout, from `Decimal(repr(x))`, as
-`admission._gib` does):
+`admission._gib` does; each public function in a decimal context of its own, whatever its
+caller's, *added 2026-10-07, at Task 5's review*):
 
 - `Loaded(name: str, footprint_gib: float, held_now_gib: float)` — `held_now` is what the model's
   load took (the fall in `MemAvailable` across it), plus its engine's `RssAnon` growth since, when
@@ -932,8 +933,13 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
 - `owed_gib(loaded: Iterable[Loaded]) -> Decimal` — Σ max(0, footprint − held_now).
 - `free_for_a_load(*, available, reserve, owed, ceiling, committed, starting, held) -> Decimal` —
   `min(available − reserve − owed, ceiling − committed) − starting − held`.
-- `hold_after_dans_load(*, free_outside_hold, hold, footprint) -> Decimal` — `max(0, hold −
-  max(0, footprint − free_outside_hold))`.
+- `hold_after_dans_load(*, free_outside_hold, hold, footprint) -> Decimal` — ~~`max(0, hold −
+  max(0, footprint − free_outside_hold))`~~ `max(0, hold − max(0, footprint − max(0,
+  free_outside_hold)))`: the hold shrinks only by the part of the load the room outside it
+  couldn't cover (rule 4), and that room, below 0 once Dan's job has taken it, counts as none, so
+  the hold keeps counting what his job allocated *(corrected 2026-10-07, at Task 5's review: the
+  first formula shrank a 70 GiB hold to 7 for a 5 GiB load with −58 outside it, the controller's
+  ruling)*.
 - `ALL` — a sentinel for make-room's `--all`.
 - `Candidate(model: str, label: str, gib: float, resident: bool, pinned: bool, session: str |
   None, inflight: int, oldest_s: float | None, idle_min: float | None)`.
@@ -944,16 +950,24 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
   them fall short, `enough` is false and `unload` is all of them; `most_gib` is `free_now + Σ` of
   every candidate.
 - `StaticCheck(errors: list[str], warnings: list[str])`; `check_set(registry) -> StaticCheck` —
-  errors: residents + reserve > `idle_available_gib`; an on-demand model without `needs_room` whose
-  footprint exceeds `free_for_a_load(available=idle_available − residents, reserve=reserve, owed=0,
+  errors: ~~residents + reserve > `idle_available_gib`~~ residents >
+  `free_for_a_load(available=idle_available, reserve=reserve, owed=0, ceiling=allocatable,
+  committed=0, starting=0, held=0)`, that is `min(idle_available − reserve, allocatable)`, 93 for
+  the 2a set, since the residents load together at boot and have to fit under both, worded with
+  no negative number *(corrected 2026-10-07, at Task 5's review: the first check had no ceiling
+  term, the controller's ruling)*; an on-demand model without `needs_room` whose footprint
+  exceeds `free_for_a_load(available=idle_available − residents, reserve=reserve, owed=0,
   ceiling=allocatable, committed=residents, starting=0, held=0)` — the gate's formula at idle with
   the residents loaded, `min(117 − 43 − 24, 102 − 43)`, 50 for the 2a set; a `needs_room` model
-  whose footprint exceeds `min(idle_available − reserve, allocatable)`, 93 for the 2a set, since it
-  loads only after make-room has freed room, residents included. Warnings: Σ footprints >
+  whose footprint exceeds `min(idle_available − reserve, allocatable)` (the residents' call, with
+  nothing loaded, *since Task 5's review*), 93 for the 2a set, since it loads only after
+  make-room has freed room, residents included. Warnings: Σ footprints >
   `allocatable_gib` (Dan's decision, 2026-10-07, after the forward-and-back council: the gate
   admits each load against live memory, so the whole registry needn't fit at once, and later
-  phases' registries won't); `idle_available − Σ footprints < brake.warn_gib`. Each line names its
-  numbers to one decimal, the need rounded up and the room down.
+  phases' registries won't); `idle_available − Σ footprints < brake.warn_gib`, which says by how
+  much Σ passes idle when it does, never a negative number (*added 2026-10-07, at Task 5's
+  review*). Each line names its numbers to one decimal, the need rounded up and the room down;
+  room below 0 reads *nothing is free for a load*.
 - `render.check_budget(registry) -> list[str]` raises `RenderError` on the first error and returns
   the warnings; `spark render` prints each as `render: warning — <text>` and still exits 0.
 
@@ -970,6 +984,8 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
   committed 43, starting 41, held 10 → 8.
 - `test_dans_load_draws_the_room_outside_the_hold_first` — `free_outside_hold` 9, hold 41:
   footprint 41 → 9; footprint 5 → 41; footprint 50 → 0.
+- `test_dans_load_takes_from_the_hold_only_what_the_room_outside_it_cant_cover` — −58, 70, 5 → 65
+  (*added 2026-10-07, at Task 5's review*).
 - `test_make_room_40_unloads_the_coder_and_leaves_50` — candidates the coder 41 (on demand),
   Gemma 32, the embeddings 8, whisper 3 (resident); free now 9; target 40 → `unload ==
   ["coder"]`, `free_after_gib == 50`, `enough`.
@@ -983,19 +999,36 @@ git commit -m "feat(spark): 🤖 the registry gains labels, key groups, notifica
 - `test_a_set_over_the_ceiling_is_a_warning` — the same plus a 20 GiB on-demand model → no error,
   and a warning holding `104.0` and `102.0`.
 - `test_residents_and_the_reserve_must_fit_idle_memavailable` — residents 32, 8, 3 and a 60 GiB
-  resident, reserve 24, idle 117 → an error holding `127.0` and `117.0`.
+  resident, reserve 24, idle 117 → an error holding ~~`127.0` and `117.0`~~ `103.0` and `93.0`
+  *(corrected 2026-10-07, at Task 5's review)*.
+- `test_the_residents_must_fit_under_the_ceiling_too` — residents 43, ceiling 40, with no on-demand
+  model, a `needs_room` one or a plain one → the first error is the residents', holding `43.0` and
+  `40.0`, and no line holds a negative number (*added 2026-10-07, at Task 5's review*).
 - `test_an_on_demand_model_that_cant_load_beside_the_residents_is_refused` — residents 43 in all,
   an on-demand model of 57 (Σ 100) → an error naming that model, `57.0` and `50.0`.
 - `test_a_model_that_needs_room_is_checked_against_the_box_less_the_reserve` — the same model with
   `needs_room: true` → no error; at 95 → an error naming it, `95.0` and `93.0`.
+- `test_a_model_that_needs_room_fits_under_the_ceiling_too` — ceiling 85, a `needs_room` model of
+  90 → an error naming it, `90.0` and `85.0` (*added 2026-10-07, at Task 5's review*).
 - `test_render_warns_when_everything_loaded_sits_under_the_warn_line` — residents 43, the coder 41
-  and a 10 GiB on-demand model → no error; one warning holding `23.0` and `28`.
+  and a 10 GiB on-demand model → no error; one warning holding `23.0` and ~~`28`~~ `28.0`.
+- `test_a_set_past_idle_memory_says_by_how_much_never_a_negative` — residents 43, the coder 41 and
+  a 45 GiB on-demand model (Σ 129) → no error; a warning holding `12.0` and `117.0`, and none a
+  negative number (*added 2026-10-07, at Task 5's review*).
 - `test_render_and_the_gate_share_one_formula` — `free_for_a_load` replaced with a spy:
-  `check_set` calls it once per on-demand model without `needs_room`, with available = idle less
+  `check_set` calls it ~~once per on-demand model without `needs_room`, with available = idle less
   the residents' sum,
-  owed 0, committed = the residents' sum, starting 0, held 0.
+  owed 0, committed = the residents' sum, starting 0, held 0~~ once for the residents and once per
+  on-demand model, in the registry's order: with nothing loaded (available = idle, committed 0) for
+  the residents and a `needs_room` model, beside the residents (available = idle less their sum,
+  committed = their sum) for any other, owed, starting and held 0 throughout; each check's room is
+  the spy's answer *(corrected 2026-10-07, at Task 5's review: all three checks share the
+  formula)*.
 - `test_the_numbers_add_up_exactly` — available 52.3, reserve 24, owed 0, ceiling 102, committed
   0, starting 0, held 0 → exactly `28.3`.
+- `test_each_formula_is_exact_on_its_own` — under the caller's default 28 digits, 1e30 less 0.1
+  stays exact in `free_for_a_load`, `owed_gib`, `hold_after_dans_load` and `make_room_plan`
+  (*added 2026-10-07, at Task 5's review*).
 - In `test_render.py`: Phase 1's budget tests rewritten to the new checks;
   `test_spark_render_prints_its_warnings` — a registry that warns: `spark render` prints
   `render: warning — …` and returns 0.

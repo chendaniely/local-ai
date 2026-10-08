@@ -2,11 +2,13 @@
 the loaded models are still owed, what a load of Dan's takes from make-room's hold, make-room's plan, and render's checks
 of the registry, which evaluate the gate's formula at idle, so that render and the gate hold one formula between them.
 
-Every number is an exact Decimal: a float or an int as its repr reads, as admission._gib does. In binary floats
-52.3 − 24 is 28.299999999999997, which would refuse a 28.3 GiB model that fits exactly."""
+Every number is an exact Decimal: a float or an int as its repr reads, as admission._gib does, and each function here
+does its arithmetic in a decimal context of its own, whatever its caller's. In binary floats 52.3 − 24 is
+28.299999999999997, which would refuse a 28.3 GiB model that fits exactly."""
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
@@ -19,8 +21,19 @@ Number = float | Decimal  # an int is welcome too
 TENTH = Decimal("0.1")
 ZERO = Decimal(0)
 # Decimal's default 28 digits can't hold an absurd registry number, 1e30 say, to a tenth, and a refusal would crash
-# instead of saying why. render's checks run with 400, which hold the largest float's (about 1.8e308) to a tenth.
+# instead of saying why. Each function here runs with 400, which hold the largest float's (about 1.8e308) to a tenth.
 DIGITS = 400
+
+
+def _exact(func):
+    """`func`, run in a decimal context of its own with DIGITS digits, never its caller's (28 digits by default)."""
+
+    @functools.wraps(func)
+    def exact(*args, **kwargs):
+        with localcontext(prec=DIGITS):
+            return func(*args, **kwargs)
+
+    return exact
 
 
 def _gib(value: Number) -> Decimal:
@@ -38,6 +51,12 @@ def _down(value: Decimal) -> str:
     return f"{value.quantize(TENTH, ROUND_FLOOR):f}"
 
 
+def _free(room: Decimal) -> str:
+    """What is free for a load, in plain words, which never show a negative number."""
+    shown = room.quantize(TENTH, ROUND_FLOOR)
+    return f"{shown:f} GiB is free for a load" if shown > 0 else "nothing is free for a load"
+
+
 @dataclass(frozen=True)
 class Loaded:
     """A loaded model, for *owed*. `held_now_gib` is what its load took, the fall in MemAvailable across it, plus its
@@ -49,11 +68,13 @@ class Loaded:
     held_now_gib: float
 
 
+@_exact
 def owed_gib(loaded: Iterable[Loaded]) -> Decimal:
     """The growth the loaded models are still owed: each one's footprint less what it holds now, never below 0."""
     return sum((max(ZERO, _gib(m.footprint_gib) - _gib(m.held_now_gib)) for m in loaded), ZERO)
 
 
+@_exact
 def free_for_a_load(*, available: Number, reserve: Number, owed: Number, ceiling: Number, committed: Number,
                     starting: Number, held: Number) -> Decimal:
     """Free for a load: min(available − reserve − owed, ceiling − committed) − starting − held. A model loads when its
@@ -64,10 +85,13 @@ def free_for_a_load(*, available: Number, reserve: Number, owed: Number, ceiling
     return room - _gib(starting) - _gib(held)
 
 
+@_exact
 def hold_after_dans_load(*, free_outside_hold: Number, hold: Number, footprint: Number) -> Decimal:
     """make-room's hold after a load into it (a key group with uses_hold): the load takes what is free for a load
-    outside the hold first, and only the rest from the hold."""
-    return max(ZERO, _gib(hold) - max(ZERO, _gib(footprint) - _gib(free_outside_hold)))
+    outside the hold first, and the hold shrinks only by the part of the load that room couldn't cover (rule 4). Once
+    Dan's job has taken the room, what's free outside the hold is below 0, and counts as none: the hold still counts what
+    his job allocated, until he ends it."""
+    return max(ZERO, _gib(hold) - max(ZERO, _gib(footprint) - max(ZERO, _gib(free_outside_hold))))
 
 
 class _All(Enum):
@@ -103,6 +127,7 @@ class RoomPlan:
     most_gib: Decimal  # free for a load with every candidate gone
 
 
+@_exact
 def make_room_plan(target: Decimal | Literal[_All.ALL], free_now_gib: Number,
                    candidates: Iterable[Candidate]) -> RoomPlan:
     """What make-room unloads to make `target` GiB free for a load: the fewest of the largest, in order. When even all
@@ -127,47 +152,54 @@ class StaticCheck:
     warnings: list[str]  # each is said, and the registry still renders
 
 
+@_exact
 def check_set(registry: Registry) -> StaticCheck:
-    """render's checks of the registry. Errors: the always-loaded models and the reserve don't fit idle MemAvailable;
-    an on-demand model doesn't fit beside them by the gate's own formula, at idle with them loaded, so the gate would
+    """render's checks of the registry. Each error is the gate's own formula, free_for_a_load, at idle with nothing else
+    running. Errors: the always-loaded models, which load together at boot, don't fit with nothing loaded (idle
+    MemAvailable less the reserve, within the ceiling); an on-demand model doesn't fit beside them, so the gate would
     refuse it with nothing else running; a model marked needs_room, which loads only once make-room has freed room for
-    it, the always-loaded models' included, doesn't fit the box less the reserve within the ceiling. Warnings (Dan's
-    decision, 2026-10-07: the gate admits each load against live memory, so the whole registry needn't fit at once):
-    every model loaded at once would pass the ceiling, or leave memory available under the brake's warn line."""
+    it, the always-loaded models' included, doesn't fit with nothing loaded. Warnings (Dan's decision, 2026-10-07: the
+    gate admits each load against live memory, so the whole registry needn't fit at once): every model loaded at once
+    would pass the ceiling, or leave memory available under the brake's warn line."""
     errors: list[str] = []
     warnings: list[str] = []
-    with localcontext(prec=DIGITS):
-        b = registry.budget
-        idle, reserve, ceiling = _gib(b.idle_available_gib), _gib(b.reserve_gib), _gib(b.allocatable_gib)
-        models = list(registry.models.values())
-        residents = sum((_gib(m.footprint_gib) for m in models if m.resident), ZERO)
-        everything = sum((_gib(m.footprint_gib) for m in models), ZERO)
-        if residents + reserve > idle:
-            errors.append(f"the always-loaded models and the reserve need {_up(residents + reserve)} GiB together, but "
-                          f"{_down(idle)} GiB is available with no model loaded, so they can't all load and leave the "
-                          "reserve free")
-        for m in models:
-            if m.resident:
-                continue
-            need = _gib(m.footprint_gib)
-            if m.needs_room:
-                room = min(idle - reserve, ceiling)
-                if need > room:
-                    errors.append(f"{m.name}: needs {_up(need)} GiB, but {_down(room)} GiB is free for a load with "
-                                  "nothing loaded at all, so even make-room can't free enough for it")
-                continue
-            room = free_for_a_load(available=idle - residents, reserve=reserve, owed=ZERO, ceiling=ceiling,
-                                   committed=residents, starting=ZERO, held=ZERO)
-            if need > room:
-                errors.append(f"{m.name}: needs {_up(need)} GiB, but {_down(room)} GiB is free for a load beside the "
-                              "always-loaded models with nothing else running, so the gate would refuse it even then "
-                              "(needs_room: true marks a model that loads only once make-room has freed room for it)")
-        if everything > ceiling:
-            warnings.append(f"every model loaded at once would take {_up(everything)} GiB, above the CUDA-allocatable "
-                            f"ceiling, {_down(ceiling)} GiB: they can't all be loaded together, and the gate admits "
-                            "each load only as memory allows")
-        warn = _gib(registry.brake.warn_gib)
-        if idle - everything < warn:
-            warnings.append(f"every model loaded at once would leave {_down(idle - everything)} GiB available, under "
-                            f"the brake's warn line, {_up(warn)} GiB")
+    b = registry.budget
+    idle, reserve, ceiling = _gib(b.idle_available_gib), _gib(b.reserve_gib), _gib(b.allocatable_gib)
+    models = list(registry.models.values())
+    residents = sum((_gib(m.footprint_gib) for m in models if m.resident), ZERO)
+    everything = sum((_gib(m.footprint_gib) for m in models), ZERO)
+
+    def free(*, beside_the_residents: bool) -> Decimal:
+        loaded = residents if beside_the_residents else ZERO
+        return free_for_a_load(available=idle - loaded, reserve=reserve, owed=ZERO, ceiling=ceiling, committed=loaded,
+                               starting=ZERO, held=ZERO)
+
+    room = free(beside_the_residents=False)
+    if residents > room:
+        errors.append(f"the always-loaded models need {_up(residents)} GiB together, but {_free(room)} with nothing "
+                      "loaded at all, so they can't all load")
+    for m in models:
+        if m.resident:
+            continue
+        need, room = _gib(m.footprint_gib), free(beside_the_residents=not m.needs_room)
+        if need <= room:
+            continue
+        if m.needs_room:
+            errors.append(f"{m.name}: needs {_up(need)} GiB, but {_free(room)} with nothing loaded at all, so even "
+                          "make-room can't free enough for it")
+        else:
+            errors.append(f"{m.name}: needs {_up(need)} GiB, but {_free(room)} beside the always-loaded models with "
+                          "nothing else running, so the gate would refuse it even then (needs_room: true marks a model "
+                          "that loads only once make-room has freed room for it)")
+    if everything > ceiling:
+        warnings.append(f"every model loaded at once would take {_up(everything)} GiB, above the CUDA-allocatable "
+                        f"ceiling, {_down(ceiling)} GiB: they can't all be loaded together, and the gate admits each "
+                        "load only as memory allows")
+    left, warn = idle - everything, _gib(registry.brake.warn_gib)
+    if left < 0:
+        warnings.append(f"every model loaded at once would need {_up(-left)} GiB more than the {_down(idle)} GiB "
+                        "available with no model loaded")
+    elif left < warn:
+        warnings.append(f"every model loaded at once would leave {_down(left)} GiB available, under the brake's warn "
+                        f"line, {_up(warn)} GiB")
     return StaticCheck(errors, warnings)
