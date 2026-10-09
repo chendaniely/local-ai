@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import socket
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -122,6 +123,7 @@ class Swap:
         self.hold_loads = False
         self.slow_stops: set[str] = set()
         self.pause_next = False
+        self.reads = 0  # /running calls, answered or not
         self._paused: asyncio.Future | None = None
         self._loads: dict[str, asyncio.Future] = {}
 
@@ -132,6 +134,7 @@ class Swap:
         return [model for kind, model in self.calls if kind == "unload"]
 
     async def running(self) -> list[Running]:
+        self.reads += 1
         if self.down:
             raise LlamaSwapNotSent("llama-swap unreachable at the stand-in: ConnectError")
         listed = [Running(model, state) for model, state in sorted(self.states.items()) if state != "stopped"]
@@ -187,9 +190,12 @@ class Units:
         self.states = {unit: UnitState(True, 0, T - 3600, None, "success") for unit in UNITS}
         self.broken: set[str] = set()
         self.reads: list[str] = []
+        self.block: threading.Event | None = None  # llama-swap's reading waits for it, in its thread
 
     def __call__(self, unit: str) -> UnitState:
         self.reads.append(unit)
+        if unit == "llama-swap" and self.block is not None:
+            assert self.block.wait(BOUND_S)
         if unit in self.broken:
             raise UnitStateError(f"systemctl show {UNITS[unit]} didn't answer (TimeoutExpired)")
         return self.states[unit]
@@ -535,6 +541,7 @@ async def test_drain_all_holds_and_unloads_nothing(tmp_path):
             gate.clock.now = base + t
             assert core.apply_renew(since, DAN) == {"ok": True}
             core.each_second()
+            await core.read_running()  # llama-swap answers: only the hold keeps the idle check from unloading
             await core.each_five_s()
         core.admitter.changed()
         assert (await held).code == "restarting"
@@ -861,7 +868,7 @@ async def test_a_model_restored_in_a_state_it_didnt_know_waits_for_one_it_does(t
     # Its unload requested, and /running showing it in a state the gate doesn't know: counted as starting, never
     # served, not resumed; then, once /running shows one it knows, drained and unloaded (ready), held until gone
     # (stopping), or released (gone), under its saved id (the controller's ruling at Task 13's review).
-    state = loaded(*RESIDENTS)
+    state = loaded(*RESIDENTS, issued={CODER: "t9"})
     state.models[CODER] = record(CODER, state="draining", unload_requested_at=T - 3, drain_id="d1",
                                  drain_why="unload")
     gate = Gate(tmp_path, state=state, shown=dict.fromkeys(RESIDENTS, "ready") | {CODER: "shutdown"})
@@ -892,6 +899,8 @@ async def test_a_model_restored_in_a_state_it_didnt_know_waits_for_one_it_does(t
                  "gone": [("unloaded", None)]}[then]
         assert front.about(CODER) == heard
         assert gate.swap.unloads() == ([CODER] if then == "ready" else [])
+        if then == "gone":
+            assert CODER not in core.state.issued  # its load has gone, and its ticket's id with it
         await core.stop()
 
 
@@ -1359,6 +1368,7 @@ async def test_the_five_second_checks_unload_the_idle_and_end_what_expired(tmp_p
         front = Front(core)
         front.report()
         gate.clock.now = T + 60 * 60 + 5  # the coder, an on-demand model, idle an hour
+        await core.read_running()  # as the loop reads it every second: llama-swap answers
         await core.each_five_s()
         await until(lambda: CODER not in core.state.models, core=core)
         assert [(d["model"], d["why"]) for d in front.ops("drain")] == [(CODER, "idle")]
@@ -1504,6 +1514,348 @@ async def test_the_gates_own_return_is_dated_from_its_last_activity_record(tmp_p
         await core.each_five_s()
         [words] = await published(gate, core, "back_up")
         assert words == messages.notification("back_up", REGISTRY, unit="gate", down_s=39.0).message
+        await core.stop()
+
+
+# The rulings at Task 18's review.
+
+def this_boots_hold(gate: Gate) -> None:
+    """The brake's hold of this boot, fired at T, reloading nothing: one rule 5 lets lift by itself."""
+    fired = datetime.fromtimestamp(T).isoformat(timespec="seconds")
+    write_hold(gate.brake, Hold(fired, "19.6 GiB available", (), BOOT, 1, None, 19.6))
+
+
+@pytest.mark.anyio
+async def test_no_automatic_release_while_llama_swap_isnt_answering(tmp_path):
+    # Memory above the warn line for more than five minutes, and the reloads fit, but llama-swap doesn't answer: the
+    # gate can't verify its reloads fit, so the hold stands (the controller's ruling at Task 18's review). Once
+    # /running answers again, the next check lifts it.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    this_boots_hold(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        gate.swap.down = True
+        for t in (0, 100, 200, 301, 306):
+            gate.clock.now = T + t
+            core.read_memory()
+            await settle()
+            await core.read_running()
+            await core.each_five_s()
+        assert read_hold(gate.brake) is not None and list(core.state.recent) == []
+        assert core.state.last_auto_release_at is None
+        gate.swap.down = False
+        gate.clock.now = T + 310
+        await core.read_running()
+        await core.each_five_s()
+        assert read_hold(gate.brake) is None
+        assert [r.kind for r in core.state.recent] == ["brake_released"]
+        assert len(await published(gate, core, "brake_released")) == 1
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_hung_read_never_counts_as_answering(tmp_path):
+    # /running answered at the start, then nothing more answered (a read that hangs): after LLAMA_SWAP_HUNG_S the
+    # gate counts llama-swap as not answering, and the hold stands; Dan's own release lifts it whatever llama-swap does.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    this_boots_hold(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        for t in (100, 200, 306):
+            gate.clock.now = T + t
+            core.read_memory()
+            await settle()
+            await core.each_five_s()
+        assert read_hold(gate.brake) is not None and list(core.state.recent) == []
+        released = await core.room.release(DAN, room=False, brake=True)  # make brake-release
+        assert released.brake is True and read_hold(gate.brake) is None
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_the_idle_check_waits_while_llama_swap_isnt_answering(tmp_path):
+    # No drain is begun that its unload couldn't follow: no drain and undrain every 5 s (the controller's ruling at
+    # Task 18's review).
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS, CODER), shown=dict.fromkeys([*RESIDENTS, CODER], "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        front = Front(core)
+        front.report()
+        gate.swap.down = True
+        gate.clock.now = T + 3605
+        await core.read_running()
+        await core.each_five_s()
+        await settle()
+        assert front.ops("drain") == [] and CODER in core.state.models
+        gate.swap.down = False
+        await core.read_running()
+        await core.each_five_s()
+        await until(lambda: CODER not in core.state.models, core=core)
+        assert [(d["model"], d["why"]) for d in front.ops("drain")] == [(CODER, "idle")]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_load_whose_ticket_cant_be_saved_is_never_sent(tmp_path, monkeypatch, caplog):
+    # A load call is never sent before its ticket's id is on disk: a save that fails refuses the load as the gate's
+    # own error (the controller's ruling at Task 18's review).
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        import spark.gate.core as core_module
+
+        def full(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        real = core_module.save_state
+        monkeypatch.setattr(core_module, "save_state", full)
+        asked = admit(core, "r1", CODER, T + 30, key="dan-mac")
+        result = await asked
+        assert (result.code, result.message) == (
+            "load_failed", "The gate couldn't save its state before loading the coder, so it didn't load it: "
+                           "`make logs s=gate` on the Spark shows why.")
+        assert gate.swap.loads() == [] and CODER not in core.state.models and core.state.issued == {}
+        assert not tickets.record_path(gate.launch, tickets.TICKETS, CODER).exists()  # withdrawn: nothing to claim
+        monkeypatch.setattr(core_module, "save_state", real)
+        caplog.clear()
+        await core.stop()
+
+
+def agents_pi(gate: Gate, pid: int = 6000) -> None:
+    """A live process of agent's, as a session needs one."""
+    process(gate.proc, pid, "pi", uid=AGENT, rss_anon_kib=gib(0.5))
+
+
+@pytest.mark.anyio
+async def test_the_idle_check_leaves_a_model_a_live_session_keeps(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS, CODER), shown=dict.fromkeys([*RESIDENTS, CODER], "ready"))
+    agents_pi(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        front = Front(core)
+        front.report()
+        session = core.sessions.register(AGENT, 6000, CODER, "agent's pi")
+        assert session.model == CODER
+        begun: list[tuple[str, str]] = []
+        drain = core.drainer.drain
+        core.drainer.drain = lambda model, why, **more: begun.append((model, why)) or drain(model, why, **more)
+        gate.clock.now = T + 3605  # the coder idle an hour, but agent's session is live: no drain is even begun
+        await core.read_running()
+        await core.each_five_s()
+        await settle()
+        assert begun == [] and front.ops("drain") == [] and CODER in core.state.models
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_an_idle_drain_checks_each_session_as_sessions_do(tmp_path):
+    # Right before it marks the model, an idle drain checks its sessions again with Sessions.live (Task 16's review):
+    # one whose process has exited keeps nothing loaded.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS, CODER), shown=dict.fromkeys([*RESIDENTS, CODER], "ready"))
+    agents_pi(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        front = Front(core)
+        front.report()
+        core.sessions.register(AGENT, 6000, CODER, "agent's pi")
+        for entry in (gate.proc / "6000").iterdir():
+            entry.unlink()
+        (gate.proc / "6000").rmdir()  # agent's pi exited; its session isn't pruned yet
+        gate.clock.now = T + 3605
+        core._idle_check(gate.clock())
+        await until(lambda: CODER not in core.state.models, core=core)
+        assert [(d["model"], d["why"]) for d in front.ops("drain")] == [(CODER, "idle")]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_sessions_name_only_the_registrys_models(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    agents_pi(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        refused = core.sessions.register(AGENT, 6000, "not-a-model", "agent's pi")
+        assert (refused.status, refused.message) == (
+            409, "There's no model 'not-a-model' in the registry, so no session can keep it loaded.")
+        assert core.sessions.register(AGENT, 6000, CODER, "agent's pi").model == CODER
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_stop_ends_every_drain_before_the_client_closes(tmp_path):
+    # Every task that uses llama-swap's client is cancelled before stop() returns, the drains among them (Task 19's
+    # shutdown; each stays saved, for the next start).
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS, CODER), shown=dict.fromkeys([*RESIDENTS, CODER], "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        Front(core, auto=False)  # its request in flight still runs
+        draining = task(core.drainer.drain(CODER, "unload"))
+        await settle()
+        assert core.drainer.draining(CODER) and not draining.done()
+        await core.stop()
+        assert draining.done() and draining.result() is False
+        assert gate.saved().models[CODER].drain_id is not None  # saved, to resume
+
+
+@pytest.mark.anyio
+async def test_a_loop_whose_step_breaks_runs_it_again(tmp_path, caplog):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = gate.core()
+        turns: list[float] = []
+        each_second = core.each_second
+
+        def flaky() -> None:
+            turns.append(gate.clock())
+            if len(turns) == 1:
+                raise RuntimeError("a bug of the gate's own")
+            each_second()
+
+        flaky.__name__ = "each_second"
+        core.each_second = flaky
+        await core.start(loops=True)
+        for _ in range(500):
+            if len(turns) >= 3:
+                break
+            await asyncio.sleep(0.002)
+        assert len(turns) >= 3 and (gate.state_dir / ACTIVITY_FILE).exists()
+        assert any("the gate's each_second step broke" in r.getMessage() for r in caplog.records)
+        caplog.clear()
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_each_seconds_duties_run_whichever_breaks(tmp_path, caplog):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        core.drain_all(DAN)
+
+        def broken() -> None:
+            raise RuntimeError("a bug of the gate's own")
+
+        core._ingest_brake = broken
+        gate.clock.now = T + APPLY_LAPSE_S
+        core.each_second()  # the brake's events break; apply's lapse and the activity record still run
+        assert core.state.applying.ended is True and gate.activity()["written_at"] == T + APPLY_LAPSE_S
+        assert any("the brake's events broke" in r.getMessage() for r in caplog.records)
+        caplog.clear()
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_reads_of_running_go_one_at_a_time(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        before = gate.swap.reads
+        gate.swap.pause_next = True
+        first = task(core.read_running())
+        await settle()
+        second = task(core.read_running())  # apply/end's, say, while the loop's is in flight: it waits for that one
+        await settle()
+        assert gate.swap.reads == before + 1 and not second.done()
+        gate.swap.release()
+        await first
+        await second
+        assert gate.swap.reads == before + 1
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_an_answer_that_comes_out_of_order_is_dropped(tmp_path):
+    # Should two reads ever overlap, an older one answering after a newer never puts back what the newer showed gone.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        gate.swap.hold_loads = True
+        gate.swap.pause_next = True
+        older = task(core._read_once())  # sent at T, listing whisper
+        await settle()
+        gate.swap.states.pop(WHISPER)
+        gate.clock.now = T + 1
+        await core._read_once()  # the newer read: whisper gone, the residents' rule asked
+        assert WHISPER not in core._listed and core.state.resident_reloads == {WHISPER: T + 1}
+        gate.swap.release()
+        await older  # the older answer comes last: dropped
+        assert WHISPER not in core._listed and core._answered_at == T + 1
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_the_engines_found_after_damage_are_those_of_the_start_that_found_it(tmp_path):
+    # A gate restarted before the front's first snapshot still has fresh_after_damage; an engine started around the
+    # gate between the two starts is never recorded as found after damage, and is reported.
+    gate = Gate(tmp_path, damaged=True, shown=dict.fromkeys(RESIDENTS, "ready"))
+    process(gate.proc, 4242, "llama-server", uid=SPARK, rss_anon_kib=gib(2), argv=("llama-server", "--port", "801"))
+    with anyio.fail_after(BOUND_S):
+        first = await gate.started()
+        assert first.state.ticketed[EMBED].ticket_id == FOUND_AFTER_DAMAGE
+        await first.stop()
+        process(gate.proc, 4343, "llama-server", uid=SPARK, rss_anon_kib=gib(2),
+                argv=("llama-server", "--port", "802"))
+        gate.swap.states[CODER] = "ready"
+        core = await gate.started()
+        assert core.state.fresh_after_damage is True and CODER not in core.state.ticketed
+        await core.each_five_s()
+        assert core.status_view()["health"]["unticketed_engines"] == [{"model": CODER, "port": 802, "pid": 4343}]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_the_status_view_changes_nothing(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    gate.other = 50.0  # under the warn line
+    with anyio.fail_after(BOUND_S):
+        core = gate.core()
+        await core.start(loops=False)
+        core._mem = None  # no reading yet
+        calls: list[str] = []
+        core.admitter.changed = lambda: calls.append("changed")
+        warned = len(core.state.notified)
+        view = core.status_view()
+        assert view["memory"]["available_gib"] == IDLE - 43 - 50
+        assert calls == [] and core._mem is None and len(core.state.notified) == warned
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_slow_save_is_said(tmp_path, monkeypatch, caplog):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        import spark.gate.core as core_module
+
+        monkeypatch.setattr(core_module, "SAVE_SLOW_S", -1.0)  # every save counts as slow
+        core.save()
+        assert any("saving the gate's state took" in r.getMessage() for r in caplog.records)
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_apply_restarted_waits_for_a_reload_queued_while_it_checks(tmp_path):
+    # A resident's reload queued while apply_restarted checks llama-swap's unit (one that left /running just then)
+    # settles before the report, which names it.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        core.drain_all(DAN)
+        core.apply_begin(["llama-swap"])
+        gate.swap.states.clear()
+        gate.units.started("llama-swap", T + 2)
+        gate.clock.now = T + 3
+        await core.read_running()  # every resident gone, its end to reload them
+        gate.units.block = threading.Event()
+        core.end_apply("end")
+        await until(lambda: len(gate.swap.loads()) == 3)  # each reload settled; the report checks the unit
+        late = asyncio.get_running_loop().create_future()
+        core._report_apply(core.state.applying, {"late": late})
+        gate.units.block.set()
+        for _ in range(50):
+            await asyncio.sleep(0.002)
+        assert gate.published.of("apply_restarted") == []  # one reload still to settle
+        late.set_result(Admitted(CODER, True, 1.0))
+        assert len(await published(gate, core, "apply_restarted")) == 1
         await core.stop()
 
 

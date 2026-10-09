@@ -183,6 +183,9 @@ class Moment:
     # that ticket (made exact at Task 15's second re-review).
     ticket_unwritten: bool = False
     ticket_unconfirmed: bool = False
+    # load_failed, the controller's ruling at Task 18's review: the gate couldn't save its state with the load's ticket
+    # id before the load call, so it sent none.
+    state_unsaved: bool = False
     download_gib: float | None = None  # not_downloaded: the model's files
     inflight: int = 0  # draining: the model's requests in flight
     # draining: why the model is being unloaded (gateproto.DrainWhy); only make-room's changes the words
@@ -467,8 +470,8 @@ _SWAP_WHY = {404: "its config may not match the registry", 401: "it didn't accep
 
 def _load_failed(m: Moment) -> str:
     _need("load_failed", m, "model_label", "model_command", "words")
-    if m.ticket_unwritten or m.ticket_unconfirmed:
-        return _ticket_error(m.model_label, m.ticket_unwritten, m.words)
+    if m.ticket_unwritten or m.ticket_unconfirmed or m.state_unsaved:
+        return _ticket_error(m.model_label, _ticket_kind(m.ticket_unwritten, m.state_unsaved), m.words)
     if m.swap_status is not None or m.swap_kept:
         return _swap_refused(m)
     # A start launch claimed that left /running without becoming ready (Task 15's ruling). Not "ended without":
@@ -490,14 +493,23 @@ def _load_failed(m: Moment) -> str:
     return f"{began} failed: the engine stopped. {after}"
 
 
-def _ticket_error(label: str, unwritten: bool, words: str | None) -> str:
-    """The gate's own error with a load's ticket (the controller's ruling at Task 15's review). Its reason is in the
-    gate's journal, which Dan reads (the controller's ruling at Task 15's re-review: not `make doctor`, which doesn't
-    read launch's folder)."""
+def _ticket_kind(unwritten: bool, unsaved: bool) -> str:
+    return "unwritten" if unwritten else "unsaved" if unsaved else "unconfirmed"
+
+
+def _ticket_error(label: str, kind: str, words: str | None) -> str:
+    """The gate's own error with a load's ticket (the controller's ruling at Task 15's review): one it couldn't write
+    (`unwritten`), couldn't confirm it withdrew (`unconfirmed`), or whose id it couldn't save before the load call, so
+    it sent none (`unsaved`, the controller's ruling at Task 18's review). Its reason is in the gate's journal, which
+    Dan reads (the controller's ruling at Task 15's re-review: not `make doctor`, which doesn't read launch's
+    folder)."""
     dans = "`make logs s=gate` on the Spark shows why."
     agents = "Dan can see why with `make logs s=gate` on the Spark."
-    if unwritten:
+    if kind == "unwritten":
         return f"The gate couldn't write {label}'s load ticket: {dans if words == 'dan' else agents}"
+    if kind == "unsaved":
+        return (f"The gate couldn't save its state before loading {label}, so it didn't load it: "
+                f"{dans if words == 'dan' else agents}")
     why = "on the Spark, `make logs s=gate` shows why." if words == "dan" else agents
     return f"The gate couldn't confirm {label}'s load ticket was withdrawn; {why}"
 
@@ -1183,8 +1195,8 @@ def _load_failed(registry: Registry, f: dict[str, Any]) -> str:
     if f.get("count") is not None:
         return _burst("load_failed", f)
     _needs("load_failed", f, "model_label", "command")
-    if f["ticket_unwritten"] or f["ticket_unconfirmed"]:  # the gate's own error: Dan's words
-        return _ticket_error(f["model_label"], f["ticket_unwritten"], "dan")
+    if f["ticket_unwritten"] or f["ticket_unconfirmed"] or f["state_unsaved"]:  # the gate's own error: Dan's words
+        return _ticket_error(f["model_label"], _ticket_kind(f["ticket_unwritten"], f["state_unsaved"]), "dan")
     if f["swap_status"] is not None or f["swap_kept"]:  # the phone shows the status: pi never sees it
         status = f" (HTTP {f['swap_status']})" if f["swap_status"] is not None else ""
         logs = "On the Spark, `make logs s=llama-swap` shows why."
@@ -1398,7 +1410,7 @@ _TAKES: dict[str, dict[str, Any]] = {
     "footprint_suspect": dict.fromkeys(("model_label", "key_label", "fired_at", "command")),
     "load_failed": {"model_label": None, "command": None, "engine_said": None, "deadline_s": None,
                     "start_ended": False, "swap_status": None, "swap_kept": False, "ticket_unwritten": False,
-                    "ticket_unconfirmed": False},
+                    "ticket_unconfirmed": False, "state_unsaved": False},
     "brake_released": {"at": None, "available_gib": None, "reloading": [], "loading_label": None,
                        "available_unknown": False},
     "room_hold_ended": {"why": None, "unused_gib": None, "total_gib": None, "reloading": [], "next_label": None},

@@ -1779,6 +1779,37 @@ async def test_a_ticket_that_cant_be_written_is_refused_as_the_gates_own_error(t
         caplog.clear()
 
 
+@pytest.mark.parametrize("withdraws", [True, False])
+@pytest.mark.anyio
+async def test_a_load_whose_ticket_id_cant_be_saved_is_never_sent(tmp_path, monkeypatch, caplog, withdraws):
+    # The save before the load call must land, its ticket's id in state.issued; one that raises sends no call (the
+    # controller's ruling at Task 18's review). Its ticket is withdrawn, or, when that fails too, held for.
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=74)
+
+        def full() -> None:
+            raise OSError(28, "No space left on device")
+
+        gate.admitter._on_change = full
+        if not withdraws:
+            def stuck(*args, **kwargs):
+                raise OSError(5, "Input/output error")
+
+            monkeypatch.setattr(tickets, "withdraw", stuck)
+        asked = gate.ask(PI, CODER)
+        await settle()
+        assert refused(asked, "load_failed") == (
+            "The gate couldn't save its state before loading the coder, so it didn't load it: `make logs s=gate` on "
+            "the Spark shows why.")
+        assert gate.swap.loads() == [] and CODER not in gate.state.models and gate.state.issued == {}
+        [(_, fields)] = gate.emitted.of("load_failed")
+        assert fields["state_unsaved"] is True
+        ticket = tickets.record_path(gate.launch, tickets.TICKETS, CODER)
+        assert ticket.exists() is not withdraws
+        assert gate.admitter.has_load(CODER) is not withdraws  # a ticket it couldn't withdraw holds the slot
+        caplog.clear()
+
+
 @pytest.mark.anyio
 async def test_a_starting_record_with_no_load_holds_the_slot(tmp_path):
     with anyio.fail_after(BOUND_S):

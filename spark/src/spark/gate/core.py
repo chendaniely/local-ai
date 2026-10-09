@@ -20,17 +20,22 @@ parts keep hold only as the core wires them, so each wire here names the rule it
 - the Notifier's task, the residents' preload (`boot`), and the loops.
 
 **The loops.** Memory every 250 ms (`read_memory`: when it last rose above the warn line, `memory_warning` once per
-fall, and `changed()` to the admitter and the drainer); `/running` every second (`read_running`: the brake's events
-ingested first, then each model's record settled against the read, which only a read that answered does, then
-`observe_running`, llama-swap's watch, the residents' rule and apply's automatic end); every second (`each_second`: the
-brake's events, apply's lapse, the activity record); every 5 s (`each_five_s`: the four units, the idle check, the
-pins', sessions' and room hold's ends, the brake's release check, then the holders and the bypass check, read off the
-event loop). A step that breaks is logged and runs again at its next turn; a reading that fails shows under `health`.
+fall, and `changed()` to the admitter and the drainer); `/running` every second, one read at a time (`read_running`:
+the brake's events ingested first, then each model's record settled against the read, which only a read that answered
+does, then `observe_running`, llama-swap's watch, the residents' rule and apply's automatic end); every second
+(`each_second`: the brake's events, apply's lapse, the activity record, each guarded on its own); every 5 s
+(`each_five_s`: the four units, the idle check, the pins', sessions' and room hold's ends, the brake's release check,
+then the holders and the bypass check, read off the event loop). The idle check, and the brake's automatic release, run
+only while llama-swap answers, its last read sent within LLAMA_SWAP_HUNG_S: without it no unload could follow a drain,
+and the gate can't verify a release's reloads fit (the controller's ruling at Task 18's review). Dan's own `make
+brake-release` lifts the hold whatever llama-swap does. A step that breaks is logged and runs again at its next turn; a
+reading that fails shows under `health`.
 
 **Saving.** Every part's `on_change` is `save`, which writes the whole state and its folder to disk before it returns.
 So saves land in the order they were made, each writing the state as it is then, and a caller that goes can't leave
-one landing after a later one (the controller's ruling at Task 17's second re-review); a load call is never sent before
-its ticket's id is on disk.
+one landing after a later one (the controller's ruling at Task 17's second re-review). A load call is never sent before
+its ticket's id is on disk: a save that fails there refuses the load as the gate's own error (the controller's ruling
+at Task 18's review). A save slower than SAVE_SLOW_S is logged with how long the loop waited.
 
 **Apply's hold** (`drain_all`, `apply_renew`, `apply_begin`, `apply_end`, `undrain_all`): saved, so a restarted gate
 holds as before. `end_apply` is its one end, however it ends, in one step of the event loop: the hold ended and saved,
@@ -71,7 +76,7 @@ from spark.gate.room import Preloader, Room, fired_at, kept_out
 from spark.gate.state import (ApplyHold, GateState, ModelRecord, RecentRecord, RefusalRecord, Session, Ticketed,
                               load_state, restore, resumable_drains, save_state)
 from spark.gate.units import BackUpWatch, LlamaSwapWatch, UnitState, UnitStateError
-from spark.gateproto import APPLY_LAPSE_S, RELEASE_AFTER_S, SESSION_TTL_S, STATUS_SCHEMA
+from spark.gateproto import APPLY_LAPSE_S, LLAMA_SWAP_HUNG_S, RELEASE_AFTER_S, SESSION_TTL_S, STATUS_SCHEMA
 from spark.llamaswap import LlamaSwapError, Running
 from spark.memory import MemInfo
 from spark.messages import Holder, Notification
@@ -95,6 +100,9 @@ FOUND_AFTER_DAMAGE = "found-after-damage"
 # read in a second or two, still finds where its load started (the controller's ruling at Task 14's review).
 STARTS_KEPT_S = 120.0
 NVIDIA_TIMEOUT_S = 5.0
+# A save is synchronous, its file and folder fsynced on the event loop; one that takes longer than this is logged, with
+# how long the loop waited (an fsync behind other writes on the NVMe, say), so a stall shows in the journal.
+SAVE_SLOW_S = 1.0
 BACKSTOP_CODES = (tickets.NO_TICKET, tickets.TICKET_EXPIRED)  # launch refusing a start made around the gate
 # apply_restarted's turns, each a reload settling or a second's wait for a /running read since llama-swap's start.
 REPORT_POLLS = 120
@@ -243,6 +251,9 @@ class GateCore:
         self._above_since: float | None = None  # when MemAvailable last rose above the warn line; None at or under
         self._answering = False  # whether /running answered at the last read
         self._answered_at: float | None = None  # when the last read that answered was sent
+        self._reading: asyncio.Task | None = None  # the /running read in flight, which every caller awaits
+        self._read_seq = 0  # each read's place, as it is sent
+        self._done_seq = 0  # the place of the last read whose answer, or failure, was taken
         self._listed: dict[str, tuple[str, float]] = {}  # each model the last answered read listed: its state, sent at
         self._units: dict[str, UnitState] = {}  # each unit's last reading
         self._apply_starts: dict[float, float] = {}  # each apply hold's (by its since) llama-swap start, once seen
@@ -320,7 +331,7 @@ class GateCore:
         self.room.at_start(ended, recovered=recovered)
         state.clean_shutdown = False
         if state.fresh_after_damage:
-            await self._after_damage()
+            await self._after_damage(found_here=self._state_problem is not None)
         self._save_quietly()
         for drain in resumable_drains(state):
             self._resume(drain.model, drain.drain_id, drain.why)
@@ -346,7 +357,8 @@ class GateCore:
             await self.admitter.stop()
         if self.drainer is not None:
             await self.drainer.stop()
-        await self._cancel([t for t in self._tasks if t is not self._notifier_task])
+        await self._cancel([t for t in self._tasks if t is not self._notifier_task]
+                           + ([self._reading] if self._reading is not None else []))
         if self.notifier is not None:
             self.notifier.flush()
             if not await self.notifier.drained():
@@ -365,18 +377,22 @@ class GateCore:
 
     def _as_counted(self, loaded: GateState) -> list[Running]:
         """What stands for a /running read that didn't answer at the start: each model the saved state of this boot
-        counts, as it counts it (a drain's model as still listed), so restore keeps every one; nothing for another
-        boot's state, since no engine outlives a boot."""
+        counts, as it counts it (a drain's model as still listed), so restore keeps every one. Nothing for another
+        boot's state, since no engine outlives a boot, nor for a fresh one after damage, whose boot isn't known (its
+        `boot_id` is empty): what runs is unknown then, which is safe only because admission waits for llama-swap,
+        and the first read that answers is reconciled, each model it lists counted, before llama-swap counts as up."""
         if loaded.boot_id != self.boot_id:
             return []
         shown = {"draining": "ready"}
         return [Running(name, shown.get(record.state, record.state)) for name, record in sorted(loaded.models.items())]
 
-    async def _after_damage(self) -> None:
+    async def _after_damage(self, *, found_here: bool) -> None:
         """A start fresh from a damaged state file (the controller's rulings at Task 13's review and re-review): the
-        brake's events are read from the file's end, since which were notified was lost, and each engine running now
-        is recorded as found after damage, since which tickets started them was lost. The front's drains are settled
-        from its first snapshot (`inflight`)."""
+        brake's events are read from the file's end, since which were notified was lost, and, at the start whose load
+        found the damage (`found_here`), each engine running then is recorded as found after damage, since which
+        tickets started them was lost. A later start before the front's first snapshot, the flag still set, records
+        none: an engine started around the gate meanwhile is reported (the controller's ruling at Task 18's review).
+        The front's drains are settled from its first snapshot (`inflight`)."""
         state = self.state
         if state.brake_events_after is None:  # set at the first start after the damage, kept by a second
             try:
@@ -389,7 +405,7 @@ class GateCore:
                 state.brake_events_after = (last.boot_id, last.seq, last.at)
                 _log.warning("the gate's state was damaged, so the brake's %d earlier events aren't read: any alert of "
                              "theirs that hadn't gone isn't sent", len(events))
-        found = await asyncio.to_thread(self._engines_running, engine_ports(self.registry))
+        found = await asyncio.to_thread(self._engines_running, engine_ports(self.registry)) if found_here else {}
         for model, (port, pid, started) in sorted(found.items()):
             if model in state.ticketed:
                 continue
@@ -446,13 +462,19 @@ class GateCore:
 
     def save(self) -> None:
         """Every part's on_change: the whole state written, and on disk, before this returns, so saves land in call
-        order (the module's docstring). A save that fails raises, so a part that must save first (a drain before
-        `drain`, make-room's hold before its first drain) sends nothing; it shows under `health` too."""
+        order (the module's docstring). A save that fails raises, so a part that must save first (a load before its
+        call, a drain before `drain`, make-room's hold before its first drain) sends nothing; it shows under `health`
+        too. One slower than SAVE_SLOW_S is logged with how long it took."""
+        began = time.monotonic()
         try:
             save_state(self.state_dir, self.state, now=self._clock())
         except (OSError, ValueError) as err:
             self._unread("state", f"the gate's state couldn't be saved in {self.state_dir} ({_said(err)})")
             raise
+        finally:
+            took = time.monotonic() - began
+            if took > SAVE_SLOW_S:
+                _log.warning("saving the gate's state took %.1f s, and the gate's event loop waited that long", took)
         self._read_ok("state")
         if self.admitter is not None:
             self._note_starts()
@@ -492,24 +514,42 @@ class GateCore:
         self.drainer.changed()
 
     async def read_running(self) -> None:
-        """llama-swap's /running, every second. A read that doesn't answer changes no record, and never reaches
-        `observe_running`, least of all as `[]`, which would free the one-load slot blind (the controller's ruling at
-        Task 15's second re-review): llama-swap counts as down. One that answers: the brake's events first, so a
-        starting model's reading is still there when its unload by the brake is read (Task 14's review); then each
-        record settled against the read (`_reconcile`); then the admitter and the drainer, llama-swap's watch, the
-        residents that left, and apply's automatic end."""
+        """llama-swap's /running, every second, one read at a time: a caller while one is in flight (apply's end,
+        beside the loop) awaits that one's answer (the controller's ruling at Task 18's review)."""
+        reading = self._reading
+        if reading is None or reading.done():
+            reading = self._reading = asyncio.get_running_loop().create_task(self._read_once())
+        await asyncio.shield(reading)
+
+    async def _read_once(self) -> None:
+        """One read. A read that doesn't answer changes no record, and never reaches `observe_running`, least of all
+        as `[]`, which would free the one-load slot blind (the controller's ruling at Task 15's second re-review):
+        llama-swap counts as down. One that answers: the brake's events first, so a starting model's reading is still
+        there when its unload by the brake is read (Task 14's review); then each record settled against the read
+        (`_reconcile`); then the admitter and the drainer, llama-swap's watch, the residents that left, and apply's
+        automatic end. An answer that comes after a newer read's is dropped, so what a newer read showed gone is
+        never put back."""
         before = {name: (record, record.state, record.unload_requested_at)
                   for name, record in self.state.models.items()}
         sent_at = self._clock()
+        self._read_seq += 1
+        seq = self._read_seq
         try:
             running = await self._swap.running()
         except LlamaSwapError as err:
+            if seq < self._done_seq:
+                return
+            self._done_seq = seq
             if self._answering:
                 _log.warning("llama-swap's /running doesn't answer (%s)", err)
             self._answering = False
             self.admitter.set_llamaswap_up(False)
             self._watch_llama_swap(False)
             return
+        if seq < self._done_seq:
+            _log.info("an answer of /running came after a newer read's, so it is dropped")
+            return
+        self._done_seq = seq
         self._ingest_brake()
         gone = self._reconcile(running, before, sent_at)
         self._answering = True
@@ -525,24 +565,36 @@ class GateCore:
         self._send_state_if_changed()
 
     def each_second(self) -> None:
-        """The brake's events (whatever /running does), apply's lapse, and the activity record."""
+        """The brake's events (whatever /running does), apply's lapse, and the activity record: each in turn, one
+        that breaks never keeping the others from running (the controller's ruling at Task 18's review)."""
         now = self._clock()
-        self._ingest_brake()
+        for name, duty in (("the brake's events", self._ingest_brake), ("apply's lapse", lambda: self._lapse(now)),
+                           ("the activity record", lambda: (self._note_starts(), self._write_activity(now))),
+                           ("the front's state", self._send_state_if_changed)):
+            try:
+                duty()
+            except Exception:
+                _log.exception("%s broke; it runs again in a second", name)
+
+    def _lapse(self, now: float) -> None:
         hold = self.state.applying
         if hold is not None and not hold.ended and now - hold.renewed_at >= APPLY_LAPSE_S:
             self.end_apply("lapsed")
-        self._note_starts()
-        self._write_activity(now)
-        self._send_state_if_changed()
 
     async def each_five_s(self) -> None:
-        """The four units; the idle check (never while apply's hold stands, under which nothing unloads); the pins',
-        sessions' and make-room hold's ends; the brake's release check, with when memory last rose above the warn
-        line; then the holders and the bypass check, read off the event loop."""
+        """The four units; the idle check (never while apply's hold stands, under which nothing unloads, nor while
+        llama-swap isn't answering, when no unload could follow a drain); the pins', sessions' and make-room hold's
+        ends; the brake's release check; then the holders and the bypass check, read off the event loop.
+
+        The brake's hold lifts by itself only while llama-swap answers (`_answering_now`): without it the gate can't
+        verify its reloads fit (the controller's ruling at Task 18's review). Otherwise the check is given no time
+        above the warn line, so Room never releases, and still says when a hold waits for Dan. Dan's own `make
+        brake-release` (Room.release) lifts it whatever llama-swap does."""
         await self._watch_units()
         now = self._clock()
+        answering = self._answering_now(now)
         hold = self.state.applying
-        if hold is None or hold.ended:
+        if (hold is None or hold.ended) and answering:
             self._idle_check(now)
         for step in (self.pins.expire, self.sessions.prune, self.room.expire):
             try:
@@ -550,7 +602,7 @@ class GateCore:
             except Exception:
                 _log.exception("the gate's %s broke; it runs again in 5 s", step.__name__)
         try:
-            await self.room.check_brake(now, above_since=self._above_since)
+            await self.room.check_brake(now, above_since=self._above_since if answering else None)
         except Exception:
             _log.exception("the brake's release check broke; it runs again in 5 s")
         await self._background()
@@ -595,6 +647,7 @@ class GateCore:
                 if shown is None:
                     del self.state.models[name]
                     self.state.ticketed.pop(name, None)
+                    self.state.issued.pop(name, None)
                 else:
                     record.state = "draining" if shown == "ready" else "stopping"
                 self._resume(name, record.drain_id, record.drain_why or "unknown")
@@ -916,6 +969,11 @@ class GateCore:
             self._check_apply_end()
         return st
 
+    def _answering_now(self, now: float) -> bool:
+        """Whether llama-swap counts as answering now: its last /running read answered, and was sent within
+        LLAMA_SWAP_HUNG_S, so a read that hangs, or a loop that stopped reading, never counts as answering."""
+        return self._answering and self._answered_at is not None and now - self._answered_at <= LLAMA_SWAP_HUNG_S
+
     def _llama_started(self) -> float | None:
         """When llama-swap's unit last started, by its last good reading; None while it isn't active."""
         st = self._units.get("llama-swap")
@@ -1229,9 +1287,11 @@ class GateCore:
         now = self._clock()
         state, registry = self.state, self.registry
         mem = self._mem
-        if mem is None:
-            self.read_memory()
-            mem = self._mem or MemInfo(0.0, 0.0)
+        if mem is None:  # no reading yet: one taken here, and kept nowhere, so the view changes nothing
+            try:
+                mem = self._read_meminfo()
+            except (OSError, ValueError):
+                mem = MemInfo(0.0, 0.0)
         if uses_hold is None:
             group = registry.key_groups.get("dan")
             uses_hold = True if group is None else group.uses_hold

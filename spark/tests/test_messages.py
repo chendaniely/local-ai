@@ -1886,7 +1886,19 @@ def test_the_gates_own_ticket_errors_say_what_happened():
     assert refusal("load_failed", replace(unconfirmed, **AGENT)).message == (
         "The gate couldn't confirm the coder's load ticket was withdrawn; Dan can see why with `make logs s=gate` on "
         "the Spark.")
-    for moment in (unwritten, unconfirmed, replace(unwritten, **AGENT), replace(unconfirmed, **AGENT)):
+    # A load whose ticket's id couldn't be saved is never sent (the controller's ruling at Task 18's review).
+    unsaved = replace(LOAD_FAILED, engine_said=None, state_unsaved=True)
+    assert refusal("load_failed", unsaved).message == (
+        "The gate couldn't save its state before loading the coder, so it didn't load it: `make logs s=gate` on the "
+        "Spark shows why.")
+    assert refusal("load_failed", replace(unsaved, **AGENT)).message == (
+        "The gate couldn't save its state before loading the coder, so it didn't load it: Dan can see why with `make "
+        "logs s=gate` on the Spark.")
+    assert say("load_failed", model_label="the coder", command="coder", state_unsaved=True) == (
+        "The gate couldn't save its state before loading the coder, so it didn't load it: `make logs s=gate` on the "
+        "Spark shows why.")
+    for moment in (unwritten, unconfirmed, unsaved, replace(unwritten, **AGENT), replace(unconfirmed, **AGENT),
+                   replace(unsaved, **AGENT)):
         assert not pi_retries(pi_shows(409, "load_failed", moment))
     assert say("load_failed", model_label="the coder", command="coder", ticket_unwritten=True) == (
         "The gate couldn't write the coder's load ticket: `make logs s=gate` on the Spark shows why.")

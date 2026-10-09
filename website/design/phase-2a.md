@@ -4474,7 +4474,10 @@ rulings at Task 17 add to the Files list.
     - ~~keeps holding every model `/running` shows `stopping` until it shows it gone, then sends
       `unloaded`. Under the sent-unload rule, it never undrains a model that may have an unload in flight;~~
     - sends Task 17's `room_hold_ended` with why `damaged`;
-    - then clears `fresh_after_damage`, and saves.
+    - ~~then clears `fresh_after_damage`, and saves.~~ *(Corrected 2026-10-08, the controller's ruling, at
+      Task 18's review: the core clears it once the front's first snapshot has been settled, so a gate restarted
+      before then still owes the front those drains; the engines found after damage are recorded only at the start
+      whose load found the damage. Task 18's note says how.)*
     ~~`gateproto.UndrainEvent.drain_id` becomes `str | None` for it.~~
   - *(Corrected 2026-10-08, the controller's rulings, at Task 13's re-review: an `undrain` of a model
     `/running` shows `ready` could cut a request, since v257 may hold its unload queued while it
@@ -4602,7 +4605,14 @@ rulings at Task 17 add to the Files list.
     are `core.admitter`, `drainer`, `room`, `pins`, `sessions`, `preloader`, `notifier` and `front`.
   - **Saving.** Every part's `on_change` is `core.save`, which writes the state, synchronously, before
     it returns. So saves land in call order, and a load call is never sent before its ticket's id is
-    on disk.
+    on disk. *(Added 2026-10-08, the controller's rulings, at Task 18's review:)*
+    - That holds outright. A save that fails before a load call sends no call. The admitter withdraws
+      the ticket and refuses the request as the gate's own error, `load_failed` with Moment's
+      `state_unsaved`: *The gate couldn't save its state before loading the coder, so it didn't load
+      it: `make logs s=gate` on the Spark shows why.* `agent` hears *Dan can see why with `make logs
+      s=gate` on the Spark.* A ticket it can't withdraw holds the slot, as any does.
+    - A save that takes longer than `SAVE_SLOW_S` (1 s) is logged with how long the loop waited, so
+      an fsync stalled behind other writes shows in the journal. Saves stay synchronous.
   - **`/running` not answering at the start.** It is never read as nothing running. The saved state's
     own records of this boot stand in for the read, every one counted, and admission waits for
     llama-swap. For another boot's state, nothing stands in, since no engine outlives a boot.
@@ -4619,6 +4629,10 @@ rulings at Task 17 add to the Files list.
     - `apply` when the start is the first at or after `begin` and comes while the hold stands or
       within `APPLY_LAPSE_S` of its end;
     - otherwise `restart`, through the Preloader.
+
+    *(Added 2026-10-08, the controller's ruling, at Task 18's review:)* so a llama-swap whose
+    restart comes more than `APPLY_LAPSE_S` after the hold lapsed reads as `restart`, its reloads in
+    the residents' hourly bound. One whose stop takes over about a minute past a lapse is the case.
   - **Apply's ends.** `apply/end` and `undrain-all` read `/running` first, so `end_apply` knows which
     residents the restart took. A save that fails makes `drain_all` and `apply_begin` take back their
     change and raise. `begin` names llama-swap as `llama-swap` or its unit's name.
@@ -4628,12 +4642,24 @@ rulings at Task 17 add to the Files list.
     - `fresh_after_damage` is cleared once the front's first snapshot has been settled, not at the
       start. A gate restarted before then still owes the front those drains.
     - The engines found at that start go into `state.ticketed` under the ticket id
-      `found-after-damage`, so a restart doesn't report them.
+      `found-after-damage`, so a restart doesn't report them. *(Corrected 2026-10-08, the controller's
+      ruling, at Task 18's review:)* only at the start whose load found the damage. A later start
+      before the front's first snapshot, the flag still set, records none. So an engine started around
+      the gate in between is reported.
     - The brake's events start at the file's end only while `brake_events_after` is None.
-  - **The brake's release check** runs every 5 s, whether llama-swap answers or not: memory readings
+  - ~~**The brake's release check** runs every 5 s, whether llama-swap answers or not: memory readings
     drive an admission pass every 250 ms, so the hold is seen either way. Reloads it queues wait for
     llama-swap. (The Task 17 note above expects the release to wait while llama-swap is down; the
-    controller may want that.)
+    controller may want that.)~~ *(Corrected 2026-10-08, the controller's ruling, at Task 18's review:
+    no automatic release while llama-swap is down, since the gate can't verify its reloads fit.)*
+    - The brake's hold lifts by itself only while llama-swap answers: its last `/running` read
+      answered, sent within `LLAMA_SWAP_HUNG_S` (10 s). A read that hangs, or a loop that stopped
+      reading, never counts as answering.
+    - Otherwise the check runs with no time above the warn line, so Room never releases. It still
+      says when a hold waits for Dan.
+    - Dan's own `make brake-release` lifts the hold whatever llama-swap does.
+    - The idle check, too, runs only while llama-swap answers, so no drain is begun that its unload
+      couldn't follow.
   - **Engine ports.** They follow v257's own rule (`internal/config/macros.go:150-186`): from
     `ENGINE_START_PORT`, 800, one each in the models' sorted names (`core.engine_ports`). Task 24's
     `render.ENGINE_START_PORT` should become the one constant.
@@ -4647,6 +4673,15 @@ rulings at Task 17 add to the Files list.
   - **`StatusView.health`** gains `damaged_at`, `damaged_kept_as` and `read_problems` (gateproto,
     Task 10's note). `problems` names a model the registry doesn't know, the state's damage while it
     is news, and the brake's events left unread after damage.
+  - *(Added 2026-10-08, the controller's rulings, at Task 18's review:)*
+    - **`/running` is read one read at a time.** A caller while one is in flight awaits its answer:
+      apply's end, beside the loop. An answer that comes after a newer read's is dropped.
+    - **`each_second`'s duties** (the brake's events, apply's lapse, the activity record) are each
+      guarded on their own, so one that breaks never keeps the others from running.
+    - **`status_view` changes nothing.** With no memory reading yet, it reads one and keeps it nowhere.
+    - **A fresh state after damage stands for nothing at a start whose `/running` doesn't answer.**
+      Its `boot_id` is unknown. That is safe only because admission waits for llama-swap, and the
+      first read that answers is reconciled before llama-swap counts as up.
 
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):

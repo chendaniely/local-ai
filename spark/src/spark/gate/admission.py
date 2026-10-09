@@ -26,8 +26,9 @@ status's.
 
 A load: its ticket issued (the footprint rule 9 admitted, MemAvailable then, this boot), its id saved in
 `state.issued` before the call, the model recorded `starting`, then `load_started`; the call runs in a task of its own,
-which no requester's leaving cancels. Its outcome, settled with the ticket (the controller's rulings at Task 12's
-reviews):
+which no requester's leaving cancels. A save that fails there sends no call: the ticket is withdrawn and the request
+refused as the gate's own error (the controller's ruling at Task 18's review). Its outcome, settled with the ticket
+(the controller's rulings at Task 12's reviews):
 - READY: the model is recorded with its load's fall, capped at the registry's cold load plus LOAD_FALL_MARGIN_GIB, else
   at its footprint, and flagged when capped; `loaded`; every request on it admitted.
 - A 500 (the start failed): `load_failed` once, its words launch's refusal record for this load, else the engine's last
@@ -248,9 +249,10 @@ class Admitter:
     core's, each cheap: the holders as last read off the event loop), `holders` given whether the asking group names
     Dan's processes. `launch` is launch's folder (tickets, `started/`, refusal records), `hf_home` the Hugging Face
     cache the engines read. Beside the plan's interface: `on_change` is called after every change to `state`, so the
-    core saves it, before a load call with the ticket's id in `state.issued` among them; `poll_s` bounds how long a
-    request or a load being settled goes unchecked without a `changed()`; `proc` is where the engines' RssAnon is read
-    (a tree the tests build). `registry` is replaced when the registry is read again."""
+    core saves it, before a load call with the ticket's id in `state.issued` among them, and should that one raise, no
+    call is sent; `poll_s` bounds how long a request or a load being settled goes unchecked without a `changed()`;
+    `proc` is where the engines' RssAnon is read (a tree the tests build). `registry` is replaced when the registry is
+    read again."""
 
     def __init__(self, registry: Registry, state: GateState, llamaswap: AsyncLlamaSwap, emit: Emit,
                  clock: Callable[[], float], *, read_mem: Callable[[], MemInfo], read_hold: Callable[[], Hold | None],
@@ -734,13 +736,43 @@ class Admitter:
         self.state.models[name] = ModelRecord(name=name, footprint_gib=model.footprint_gib, loaded_at=now,
                                               load_fall_gib=None, fall_flagged=False, rss_anon_at_load_gib=None,
                                               last_use=now, state="starting")
-        self._on_change_safe()  # saved before the load call
+        if not self._saved_before_call():  # its ticket's id not on disk: no call goes out
+            return self._unsaved(load, waiter)
         self._emit("load_started", f"load:{ticket_id}", label=model.label,
                    key_label=waiter.req.key.label if waiter.req.kind == "key" else None,
                    last_s=self._last_s.get(name))
         self._progress(waiter, self._load_progress(name))
         load.task = self._spawn(self._guarded(load, self._call(load)))
         return True
+
+    def _saved_before_call(self) -> bool:
+        """on_change, before a load call: that save must land, with the ticket's id in `state.issued`, so a restarted
+        gate knows the start it finds was its own. False when it raised (the controller's ruling at Task 18's
+        review)."""
+        try:
+            self._on_change()
+        except Exception:
+            _log.exception("the gate's state couldn't be saved with a load's ticket id, so that load isn't sent")
+            return False
+        return True
+
+    def _unsaved(self, load: _Load, waiter: _Waiter) -> bool:
+        """A load whose ticket's id couldn't be saved is never sent: its record and id taken back, its ticket withdrawn
+        so nothing can claim it, and its request refused as the gate's own error. A ticket that can't be withdrawn
+        holds the slot until it can't be claimed, as any does."""
+        name = load.model
+        self._pop(load)
+        record = self.state.models.get(name)
+        if record is not None and record.state == "starting" and record.loaded_at == load.issued_at:
+            del self.state.models[name]
+        if self.state.issued.get(name) == load.ticket_id:
+            del self.state.issued[name]
+        withdrawn = self._withdraw(name)
+        load.starter = None
+        self._refuse(waiter, "load_failed", state_unsaved=True, ticket_id=load.ticket_id)
+        if withdrawn is None:
+            self._hold_for_ticket(load)
+        return False
 
     async def _guarded(self, load: _Load, settle: Coroutine) -> None:
         """A load's task: whatever breaks in it never leaves a request waiting for ever, and the slot is freed only
@@ -1214,7 +1246,8 @@ class Admitter:
                 figures: _Figures | None = None, ticket_id: str | None = None, **how: Any) -> Refusal:
         """`code`'s refusal for `waiter`, in its group's words, recorded in the history; its notification, unless the
         caller sends one for several (a failed load's). `how` is load_failed's: engine_said, deadline_s, start_ended,
-        swap_status, swap_kept, ticket_unwritten and ticket_unconfirmed; `ticket_id` keys its notification."""
+        swap_status, swap_kept, ticket_unwritten, ticket_unconfirmed and state_unsaved; `ticket_id` keys its
+        notification."""
         moment = self._moment(waiter, code, hold, figures, how)
         refusal = messages.refusal(code, moment)
         req = waiter.req
@@ -1238,7 +1271,8 @@ class Admitter:
             self._emit(code, key, model_label=moment.model_label, command=moment.model_command,
                        engine_said=moment.engine_said, deadline_s=moment.deadline_s, start_ended=moment.start_ended,
                        swap_status=moment.swap_status, swap_kept=moment.swap_kept,
-                       ticket_unwritten=moment.ticket_unwritten, ticket_unconfirmed=moment.ticket_unconfirmed)
+                       ticket_unwritten=moment.ticket_unwritten, ticket_unconfirmed=moment.ticket_unconfirmed,
+                       state_unsaved=moment.state_unsaved)
         self._resolve(waiter, refusal)
         return refusal
 
