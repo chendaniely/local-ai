@@ -33,7 +33,7 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
 
 
 def opencode_provider(registry: Registry, base_url: str, key_env: str) -> dict:
-    """OpenCode custom provider config — OpenAI-compatible endpoint."""
+    """OpenCode custom provider config — OpenAI-compatible endpoint using AI SDK."""
     models = {}
     for m in registry.models.values():
         if m.capability != "chat":
@@ -42,11 +42,12 @@ def opencode_provider(registry: Registry, base_url: str, key_env: str) -> dict:
     return {
         "provider": {
             "spark": {
-                "models": models,
+                "npm": "@ai-sdk/openai-compatible",
                 "options": {
                     "apiKey": "{env:" + key_env + "}",
                     "baseURL": base_url,
-                }
+                },
+                "models": models,
             }
         }
     }
