@@ -8,7 +8,11 @@ any uid can be played. Those that time a head, a timeout, a cap or a dropped cal
 Task 9's protocol, on short Unix sockets, where the caller's uid is this test's own (SO_PEERCRED is Linux's, so they
 skip elsewhere, with Task 9's reason). The core under the apps is Task 18's, built by test_gate_core's Gate, on an
 injected clock with stand-ins for llama-swap, the units, ntfy and /proc; `spark gate` itself runs in a subprocess, as
-systemd starts it. Every uid, key, path and name here is a stand-in; none was read from the box."""
+systemd starts it. Every uid, key, path and name here is a stand-in; none was read from the box.
+
+One test reads the host: `spark gate`'s subprocess runs the real core's loops for about a second, which read the four
+units' `systemctl show`, nvidia-smi and /proc, all read-only, and write only to the test's own folders. A host without
+those units or without nvidia-smi passes it too: each failed read is a recorded problem, never an error."""
 
 import asyncio
 import contextlib
@@ -45,10 +49,9 @@ from spark.messages import Holder, Moment
 from test_gate_core import (AGENT, BOOT, BOUND_S, CODER, DAN, EMBED, FOOTPRINT, GEMMA, KEY, KEYS, RESIDENTS, SPARK,
                             STACK_REGISTRY, USERS, WHISPER, Front, Gate, anyio_backend, at, loaded, local_zone, record,
                             settle)
+from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
 
-LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux",
-                                reason="SO_PEERCRED is Linux's, and the gate runs only on the Spark")
 FRONT_UID = 990  # spark-front's, a stand-in
 ME = os.getuid()  # the caller over a real socket: this test
 LOGS = ("spark.gate.core", "spark.gate.room", "spark.gate.policy", "spark.gate.admission", "spark.gate.notify",
@@ -950,6 +953,181 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         assert answered.status == 503 and answered.json() == {"message": gate_app.GATE_STOPPING, "code": None}
         assert core.admitter.waiting() == [] and core.front.connected is False
         await core.stop()
+
+
+# The bounded routes' time, and the gate's stop (the controller's rulings at Task 19's review).
+
+@pytest.mark.anyio
+async def test_a_bounded_route_past_its_bound_says_its_still_finishing(tmp_path, monkeypatch):
+    # Its work goes on, so its 503 says so, in Task 6's voice, and pi's retry list matches nothing in it.
+    monkeypatch.setattr(gate_app, "REQUEST_TIMEOUT_S", 0.2)
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    finished = []
+
+    async def slow_lines(model, n=20, read_s=1.0):
+        await asyncio.sleep(0.5)
+        finished.append(model)
+        return ["a line"]
+
+    monkeypatch.setattr(gate.swap, "last_lines", slow_lines)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        _, control = apps(core)
+        answer = await call(control, "GET", "/v1/logs/coder", uid=DAN, query=b"n=5")
+        assert answer.status == 503
+        assert answer.json() == {"message": gate_app.STILL_FINISHING, "code": None}
+        assert gate_app.STILL_FINISHING == ("The gate is still finishing that: `spark status` on the Spark shows "
+                                            "when it's done.")
+        assert messages.pi_retry_match(gate_app.STILL_FINISHING) is None
+        assert finished == []
+        await asyncio.sleep(0.5)
+        assert finished == [CODER]  # its work went on to its end
+        await core.stop()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("route", ["/v1/apply/end", "/v1/undrain-all"])
+async def test_apply_end_and_undrain_all_are_bounded_past_their_running_read(tmp_path, monkeypatch, route):
+    # Each reads /running first, which may take up to LLAMA_SWAP_HUNG_S, 10 s: their bound is APPLY_END_TIMEOUT_S,
+    # 15 s, not REQUEST_TIMEOUT_S, so a slow read never reads as a failure to make apply.
+    assert gateproto.APPLY_END_TIMEOUT_S == 15.0 > gateproto.LLAMA_SWAP_HUNG_S
+    monkeypatch.setattr(gate_app, "REQUEST_TIMEOUT_S", 0.2)
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        core.drain_all(DAN)
+        _, control = apps(core)
+        gate.swap.pause_next = True  # the route's /running read waits
+        asyncio.get_running_loop().call_later(0.5, gate.swap.release)
+        answer = await call(control, "POST", route, uid=DAN)
+        assert (answer.status, answer.json()) == (200, {})
+        assert core.state.applying.ended is True
+        await core.stop()
+
+
+class Closer:
+    """A client `spark gate` closes once the core has stopped: what bounded work was still running as it closed."""
+
+    def __init__(self, gate, app):
+        self.gate, self.app = gate, app
+        self.pending: list | None = None
+
+    async def aclose(self) -> None:
+        self.pending = [work for work in self.app.state.bounded_work if not work.done()]
+        self.gate.swap.closed = True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("route", ["apply/end", "logs"])
+async def test_the_gates_stop_ends_a_503d_routes_work_before_the_client_closes(tmp_path, monkeypatch, route):
+    # A bounded route answered 503 and its work went on; then the gate's stop. That work is waited for briefly, then
+    # cancelled, before core.stop(): so it never uses the llama-swap client once that has closed, and never saves
+    # after the core's last save.
+    monkeypatch.setattr(gate_app, "REQUEST_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(gate_app, "APPLY_END_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(gate_app, "FINISH_WORK_S", 0.1)
+    from spark.gate import main as gate_main
+
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    let_go = asyncio.Event()
+    after_close = []
+    running, last_lines = gate.swap.running, gate.swap.last_lines
+
+    async def slow(call_name, real, *args, **kwargs):
+        await let_go.wait()
+        if getattr(gate.swap, "closed", False):
+            after_close.append(call_name)
+            raise RuntimeError("Cannot send a request, as the client has been closed.")  # as httpx's
+        return await real(*args, **kwargs)
+
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        core.drain_all(DAN)
+        monkeypatch.setattr(gate.swap, "running", lambda: slow("running", running))
+        monkeypatch.setattr(gate.swap, "last_lines", lambda *a, **k: slow("last_lines", last_lines, *a, **k))
+        status, control = apps(core)
+        method, path, query = ("POST", "/v1/apply/end", b"") if route == "apply/end" else (
+            "GET", "/v1/logs/coder", b"n=5")
+        answer = await call(control, method, path, uid=DAN, query=query)
+        assert answer.json() == {"message": gate_app.STILL_FINISHING, "code": None}
+        closer = Closer(gate, status)
+        await gate_main.shutdown(core, status, [closer])
+        assert closer.pending == []  # nothing that uses the client was left running as it closed
+        saved = (gate.state_dir / "state.json").read_bytes()
+        let_go.set()
+        await settle()
+        await asyncio.sleep(0.05)
+        assert after_close == []
+        assert (gate.state_dir / "state.json").read_bytes() == saved  # nothing saved after the core's last save
+        state, _ = load_state(gate.state_dir)
+        assert state.clean_shutdown is True and state.applying.ended is False  # apply's end was cut, not half-done
+
+
+@pytest.mark.anyio
+async def test_a_new_admit_or_stream_at_the_gates_stop_starts_nothing(tmp_path):
+    # Once the stop has begun, a call that would wait is answered 503 at once, its body unread, so no work starts in
+    # the moment before uvicorn stops taking connections.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, control = apps(core)
+        status.state.stopping.set()
+        calls = [(status, "POST", "/v1/admit", admit_body(CODER, gate.clock.now + 30), FRONT_UID),
+                 (status, "GET", "/v1/front/events", None, FRONT_UID),
+                 (control, "POST", "/v1/load", {"model": "coder"}, DAN),
+                 (control, "POST", "/v1/unload", {"model": GEMMA}, DAN),
+                 (control, "POST", "/v1/pin", {"model": "coder", "until": None}, DAN),
+                 (control, "POST", "/v1/make-room", {"plan_id": "p1", "for_s": None}, DAN)]
+        for app, method, path, body, uid in calls:
+            answer = await call(app, method, path, uid=uid, body=body)
+            assert (path, answer.status, answer.received) == (path, 503, False)
+            assert answer.json() == {"message": gate_app.GATE_STOPPING, "code": None}
+        await settle()
+        assert core.admitter.waiting() == [] and gate.swap.loads() == [] and gate.swap.unloads() == []
+        assert core.front.connected is False
+        await core.stop()
+
+
+def test_the_test_only_uid_overrides_are_said_in_the_journal(caplog):
+    from spark.gate import main as gate_main
+
+    with caplog.at_level(logging.WARNING, logger="spark.gate.main"):
+        assert gate_main.front_uid({"SPARK_FRONT_UID": "990"}) == 990
+        assert gate_main.admin_uids({"SPARK_ADMIN_UIDS": "1000,1001"})() == {1000, 1001}
+    said = [r.getMessage() for r in caplog.records if r.name == "spark.gate.main" and r.levelno == logging.WARNING]
+    assert len(said) == 2
+    assert "SPARK_FRONT_UID" in said[0] and "SPARK_ADMIN_UIDS" in said[1]
+    assert all("for the tests only" in line for line in said)
+
+
+def test_spark_admins_members_are_read_again_after_a_short_while(monkeypatch):
+    # Asked at each request that needs them, from a copy at most ADMINS_TTL_S old, so a member added is known without
+    # a restart, and the group database isn't read for every request.
+    from types import SimpleNamespace
+
+    from spark.gate import main as gate_main
+
+    members = ["chendaniely"]
+    reads = []
+
+    def getgrnam(name):
+        reads.append(name)
+        assert name == "spark-admin"
+        return SimpleNamespace(gr_gid=900, gr_mem=list(members))
+
+    accounts = {"chendaniely": 1000, "second-admin": 1003, "agent": 1001}
+    monkeypatch.setattr(gate_main.grp, "getgrnam", getgrnam)
+    monkeypatch.setattr(gate_main.pwd, "getpwnam", lambda name: SimpleNamespace(pw_uid=accounts[name]))
+    monkeypatch.setattr(gate_main.pwd, "getpwall", lambda: [SimpleNamespace(pw_uid=uid, pw_gid=uid)
+                                                           for uid in accounts.values()])
+    now = [100.0]
+    admins = gate_main.admin_uids({}, clock=lambda: now[0])
+    assert admins() == {1000}
+    members.append("second-admin")
+    count = len(reads)
+    assert admins() == {1000} and len(reads) == count  # the copy, not a new read
+    now[0] += gate_main.ADMINS_TTL_S + 0.1
+    assert admins() == {1000, 1003}
 
 
 # The unauthorized caller's body, over a real socket with Task 9's deadline.

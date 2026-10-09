@@ -12,8 +12,9 @@ relies on, in uvicorn 0.54.0's server.py: `serve(sockets=…)`; `should_exit`, w
 and `started`, set once a server listens.
 
 A service whose own tasks must run in the servers' loop (the gate's core, Task 19) gives `startup`, awaited before any
-server serves; `stopping`, called as the stop begins, so an answer that waits (the gate's events stream, a held admit)
-can end rather than hold the stop for its graceful time; and `shutdown`, awaited once every server has stopped."""
+server serves, and cancelled by a stop that comes meanwhile; `stopping`, called as the stop begins, so an answer that
+waits (the gate's events stream, a held admit) can end rather than hold the stop for its graceful time; and `shutdown`,
+awaited once every server has stopped."""
 
 from __future__ import annotations
 
@@ -48,9 +49,11 @@ def run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], *, protocol: t
                 shutdown: Callable[[], Awaitable[None]] | None = None) -> None:
     """Serves each app on its sockets, all in one event loop, until SIGTERM or SIGINT, then stops every server and
     returns once each has, within `graceful_s` of its own. A server that fails stops the others, and its error is
-    raised once they have stopped. `startup` is awaited in that loop before any server serves, and a signal meanwhile
-    means none does; `stopping` is called once, in the loop, as the stop begins; `shutdown` is awaited once every
-    server has stopped, whatever came before, a `startup` that failed included, whose error is then raised."""
+    raised once they have stopped. `startup` is awaited in that loop before any server serves; a signal meanwhile
+    cancels it, and none serves (the controller's ruling at Task 19's review: a service stopped while it starts never
+    holds its stop for its start). `stopping` is called once, in the loop, as the stop begins; `shutdown` is awaited
+    once every server has stopped, whatever came before, a `startup` that failed or was cancelled included, and the
+    error of one that failed is then raised."""
     asyncio.run(_run_servers(pairs, protocol, graceful_s, startup, stopping, shutdown))
 
 
@@ -81,11 +84,14 @@ async def _run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], protoco
     loop = asyncio.get_running_loop()
     servers = [QuietServer(_config(app, protocol, graceful_s)) for app, _ in pairs]
     stopping = False
+    starting: asyncio.Future | None = None
 
     def stop() -> None:
         nonlocal stopping
         for server in servers:
             server.should_exit = True
+        if starting is not None and not starting.done():
+            starting.cancel()
         if not stopping:
             stopping = True
             with contextlib.suppress(OSError):  # systemd sees the process end either way
@@ -103,7 +109,12 @@ async def _run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], protoco
     tasks: list[asyncio.Task] = []
     try:
         if startup is not None:
-            await startup()
+            starting = asyncio.ensure_future(startup())
+            try:
+                await starting
+            except asyncio.CancelledError:
+                if not (stopping and starting.cancelled()):
+                    raise  # this loop's own task cancelled, not the service's start by a stop
         if not stopping:  # a signal during startup: nothing serves
             tasks = [asyncio.create_task(server.serve(sockets=sockets)) for server, (_, sockets) in zip(servers, pairs)]
             while not all(server.started for server in servers):

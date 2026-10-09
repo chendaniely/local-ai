@@ -1221,6 +1221,52 @@ async def test_the_holders_never_count_a_ticketed_engine(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_dans_processes_follow_spark_admins_members(tmp_path):
+    # `dan_uids` may be what gives spark-admin's members, asked at each holders' read (the controller's ruling at Task
+    # 19's review), so a member added is named as Dan's without a restart.
+    members: set[int] = set()
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    process(gate.proc, 5000, "python3", uid=DAN, rss_anon_kib=gib(40))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(dan_uids=lambda: set(members))
+        await core.each_five_s()
+        assert [holder.dans for holder in core.holders(True) if holder.name.startswith("python3")] == [False]
+        members.add(DAN)
+        await core.each_five_s()
+        assert [holder.dans for holder in core.holders(True) if holder.name.startswith("python3")] == [True]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_stop_after_a_start_cut_short_is_prompt(tmp_path, monkeypatch, caplog):
+    # `spark gate`'s SIGTERM during its start cancels core.start() (the controller's ruling at Task 19's review). Cut
+    # where its parts are built but the Notifier's task isn't yet running, the stop never waits for a queue nothing
+    # sends, and says nothing of ntfy: a start after damage, cut in its scan of the engines running.
+    gate = Gate(tmp_path, damaged=True, shown=dict.fromkeys(RESIDENTS, "ready"))
+    scanning, free = threading.Event(), threading.Event()
+
+    def scan(ports):
+        scanning.set()
+        free.wait(BOUND_S)
+        return {}
+
+    with anyio.fail_after(BOUND_S):
+        core = gate.core()
+        monkeypatch.setattr(core, "_engines_running", scan)
+        starting = task(core.start(loops=False))
+        while not scanning.is_set():
+            await asyncio.sleep(0.01)
+        assert core.notifier is not None and core.notifier.queued  # room_hold_ended (damaged), queued, unsent
+        starting.cancel()
+        await asyncio.gather(starting, return_exceptions=True)
+        began = time.monotonic()
+        await core.stop()
+        assert time.monotonic() - began < 1.0
+        free.set()
+    assert not [r for r in caplog.records if "ntfy didn't take" in r.getMessage()]
+
+
+@pytest.mark.anyio
 async def test_a_blocking_read_never_holds_the_loop(tmp_path):
     gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
     gate.nvidia = lambda: time.sleep(1.0) or "5000, 20480\n"

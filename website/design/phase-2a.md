@@ -316,7 +316,13 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   reading a request's headers, 10 s · the gate's request size cap, 64 KiB, and its per-request
   timeout, 5 s, but for the routes that wait: an admission call is held for its key's wait,
   `/v1/load` and `/v1/pin` for the load call's 200 s, and `/v1/unload` and `/v1/make-room` for as
-  long as their drains take · `WatchdogSec=30` · the
+  long as their drains take *(added 2026-10-08, the controller's rulings, at Task 19's review:
+  `/v1/apply/end` and `/v1/undrain-all` are bounded at 15 s, `gateproto.APPLY_END_TIMEOUT_S`, past
+  their `/running` read's `LLAMA_SWAP_HUNG_S`, 10 s, and every other bounded route keeps 5 s; one
+  that does pass its bound answers a 503 that says its work is still going on, and its work goes on
+  (Task 19). `/v1/load` and `/v1/pin` hold, as built, for admission's `LOAD_CALL_TIMEOUT_S`, 200 s,
+  then for a load that started by then to its own 200 s: up to about 400 s, each gap between
+  their lines at most 200 s, inside the CLI's 210 s a gap, Task 30)* · `WatchdogSec=30` · the
   gate's load call, 200 s (180 + 20) · the gate's unload call, 60 s (`UNLOAD_CALL_TIMEOUT_S`; the
   controller's ruling at Task 12's review, 2026-10-08: v257 answers once the engine has stopped, a
   stuck one after its 10 s `unloadTimeout` and its kill, and its one run loop queues the stops, so
@@ -1776,6 +1782,10 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `graceful_s`; and `shutdown`, awaited once every server has stopped, whatever came before, a
   `startup` that failed included. The watchdog runs from the start, through `startup` and
   `shutdown`. Its test: `test_run_servers_runs_a_services_startup_and_shutdown_in_its_own_loop`.
+  *(Added 2026-10-08, the controller's ruling, at Task 19's review:)* a signal during `startup`
+  cancels it, rather than waiting for it, and `shutdown` still runs. `spark gate`'s comment beside
+  the call says why cancelling `core.start()` is safe. Its test:
+  `test_a_signal_during_startup_cancels_it`.
 
 **Tests:**
 
@@ -4773,7 +4783,11 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `spark/src/spark/gate/core.py` (the `keys`, `llamaswap` and `launch` properties, for the routes;
   nvidia-smi run with `child_env`); `spark/src/spark/gate/policy.py` (`Sessions.may_hold` and `HOLDS_NO_SESSION`, so
   `/v1/sessions` refuses `spark` and `spark-front` before the body); `stack/keys.example.yaml`
-  (its comment on a label pi's retry list matches); and this plan
+  (its comment on a label pi's retry list matches); and this plan. *(Added 2026-10-08, the
+  controller's rulings, at Task 19's review:)* `spark/src/spark/gateproto.py`
+  (`APPLY_END_TIMEOUT_S`); `spark/src/spark/gate/core.py` again (`dan_uids` may be what gives
+  spark-admin's members, asked at each read of the holders; a stop after a start cut short doesn't
+  wait on the Notifier's queue); and `spark/tests/test_gate_core.py`
 
 **Interfaces:**
 
@@ -4908,13 +4922,28 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     the gate began (apply's end, whose `/running` read can take up to `LLAMA_SWAP_HUNG_S`) is never
     cut halfway. `/v1/load` and `/v1/pin` add no bound of their own: `Room.load` and `Pins.pin` give
     their admission the deadline `LOAD_CALL_TIMEOUT_S`, and a load that started is waited for to
-    its own bound, as every load is.
+    its own bound, as every load is. *(Corrected 2026-10-08, the controller's rulings, at Task 19's
+    review:)* `/v1/apply/end` and `/v1/undrain-all` are bounded at `APPLY_END_TIMEOUT_S`, 15 s,
+    past that read, and every other bounded route at 5 s. The 503 past a bound says the work is
+    still going on: `app.STILL_FINISHING`, *The gate is still finishing that: `spark status` on the
+    Spark shows when it's done.*, which pi's retry list matches nothing in. Its tests:
+    `test_a_bounded_route_past_its_bound_says_its_still_finishing` and
+    `test_apply_end_and_undrain_all_are_bounded_past_their_running_read`.
   - **The gate's stop.** `build_apps` gives both apps one `asyncio.Event`, `app.state.stopping`,
     which `spark gate` sets as its stop begins (`run_servers`' `stopping`). The events stream then
     ends; a held `/v1/admit` leaves the queue and is answered 503, `app.GATE_STOPPING`, with
     `Connection: close`; a stream ends without its result, which Task 30's CLI reads as a gate that
     stopped partway. So the stop never waits out `GRACEFUL_S` for the front's events call, which is
-    always open. The front's way back is Task 22's: its note there says so.
+    always open. The front's way back is Task 22's: its note there says so. *(Added 2026-10-08, the
+    controller's rulings, at Task 19's review:)*
+    - A call that would wait, coming once the stop has begun, is answered that 503 at once, its body
+      unread, so no admission or load starts in the moment before uvicorn stops taking
+      connections. Its test: `test_a_new_admit_or_stream_at_the_gates_stop_starts_nothing`.
+    - A bounded route's work, kept in a set both apps share, that is still going on past its 503 is
+      the stop's too: `spark gate`'s `shutdown` waits for it up to `app.FINISH_WORK_S` (2 s), then
+      cancels it (`app.finish_work`), before `core.stop()`. Then it closes the clients. So none of
+      it reads `/running` on a closed client, nor saves after the core's last save. Its test:
+      `test_the_gates_stop_ends_a_503d_routes_work_before_the_client_closes`.
   - **Streams** send their head at once. A pin on a model already loaded, or on a name the
     registry doesn't have, answers once (`PinConfirmation`, or a 409 in Pins' words); any other
     pin streams. `/v1/load`, `/v1/unload`, `/v1/pin` and `DELETE /v1/pin/{model}` take a model's
@@ -4934,7 +4963,16 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     `ntfy-token` is missing or malformed still serves. It says so once, and each notification then
     fails as ntfy out of reach does, so `spark status` shows ntfy failing. `SPARK_FRONT_UID` and
     `SPARK_ADMIN_UIDS` are read only when set. `hf_home` is `render.HF_HOME`, the cache the engines
-    read. A startup refusal is one line on stderr, exit 1: a socket other than `status` and
+    read. *(Added 2026-10-08, the controller's rulings, at Task 19's review:)* either override, when
+    set, is said in the journal at the start, a warning naming it as the tests' only (its test:
+    `test_the_test_only_uid_overrides_are_said_in_the_journal`). spark-admin's members are read at
+    each request that needs them, and at each read of the holders (Dan's processes), from a copy
+    at most `main.ADMINS_TTL_S` (5 s) old (its tests:
+    `test_spark_admins_members_are_read_again_after_a_short_while` and, in `test_gate_core.py`,
+    `test_dans_processes_follow_spark_admins_members`). A SIGTERM during `core.start()` cancels it;
+    the comment beside `run_servers`' call says why that is safe, and what a cut in a start after
+    damage costs (its test, in `test_gate_core.py`:
+    `test_a_stop_after_a_start_cut_short_is_prompt`). A startup refusal is one line on stderr, exit 1: a socket other than `status` and
     `control`, or one missing; a credential; the registry or the key list; spark-front or
     spark-admin missing.
   - **`registry.parse_keys`** refuses a label `messages.pi_retry_match` matches, naming the key: the
@@ -6556,6 +6594,13 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   drill (Task 50), so the drill needs no code change and no restart of the front. *(Added
   2026-10-07, at Task 7, the controller's ruling: the question is `apply_no_quiet(inflight,
   deadline_s=<that deadline>)`, so it names the deadline it was given.)*
+- *(Added 2026-10-08, the controller's rulings, at Task 19's review:)* **`apply/end` and
+  `undrain-all` take longer than the other routes.** The gate bounds each at
+  `gateproto.APPLY_END_TIMEOUT_S`, 15 s, past its `/running` read, so apply's client for those two
+  waits longer than that: a `GateClient` timeout of `APPLY_END_TIMEOUT_S` plus a margin, never
+  `REQUEST_TIMEOUT_S`. A 503 from either, `gate.app.STILL_FINISHING`, means the gate is still
+  ending the hold, not that it failed: apply says so, points at `spark status`, and never counts it
+  as a failure.
 - Root's files come first, as in Phase 1: when any is pending, apply stages them and stops, exit
   0, before it asks the gate anything (the cutover's Step 2 depends on it).
 - The order, when a restart waits for the quiet moment: render and validate; the diff; the wait;

@@ -21,6 +21,10 @@ MAX_REQUEST_BYTES = 65536  # a request body above 64 KiB is answered 413, never 
 # Every request is bounded by this, but the routes that wait: /v1/admit (its key's wait), /v1/front/events (kept
 # open), /v1/load and /v1/pin (LOAD_CALL_TIMEOUT_S), and /v1/unload and /v1/make-room (as long as their drains take).
 REQUEST_TIMEOUT_S = 5.0
+# apply/end and undrain-all read /running first, which may take up to LLAMA_SWAP_HUNG_S (10 s), so their bound is past
+# it; every other bounded route keeps REQUEST_TIMEOUT_S (the controller's ruling at Task 19's review). `make apply`'s
+# client waits longer than this for them (Task 32).
+APPLY_END_TIMEOUT_S = 15.0
 # The gate's load call: 2a's healthCheckTimeout for llama-swap, 180 s, plus 20: the 5 s llama-swap takes to kill a
 # stuck start, and a margin.
 LOAD_CALL_TIMEOUT_S = 200.0

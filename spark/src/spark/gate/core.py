@@ -192,7 +192,9 @@ class GateCore:
     AsyncLlamaSwap; `publish` sends one Notification (an NtfyPublisher); `brake_dir` is the brake's folder (its hold and
     its events); `launch` is launch's folder; `hf_home` the Hugging Face cache the engines read; `keys` the private key
     list, each key by its name. `spark_uid` is the account the engines run as (this one's, by default); `dan_uids` the
-    accounts whose processes are Dan's; `may_pin` and `may_hold` are Pins' and Sessions'. The rest are the readings the
+    accounts whose processes are Dan's, or what gives them, asked at each read of the holders, so a member of
+    spark-admin added is named as Dan's without a restart (the controller's ruling at Task 19's review); `may_pin` and
+    `may_hold` are Pins' and Sessions'. The rest are the readings the
     tests stand in for: the clock, /proc/meminfo, the boot id and when the boot began, each unit's `systemctl show`,
     nvidia-smi, /proc, the host's name, the registry's reader, the drain's and admission's poll, and `sleep`."""
 
@@ -200,7 +202,7 @@ class GateCore:
                  publish: Callable[[Notification], Awaitable[None]], brake_dir: Path, launch: Path, hf_home: str,
                  may_pin: Callable[[int], bool], may_hold: Callable[[int], bool],
                  keys: Mapping[str, ClientKey] | None = None, spark_uid: int | None = None,
-                 dan_uids: Iterable[int] = (), clock: Callable[[], float] = time.time,
+                 dan_uids: Iterable[int] | Callable[[], Iterable[int]] = (), clock: Callable[[], float] = time.time,
                  read_meminfo: Callable[[], MemInfo] = memory.read_meminfo, boot_id: str | None = None,
                  boot_time: float | None = None, read_unit: Callable[[str], UnitState] = unitwatch.unit_state,
                  nvidia_smi: Callable[[], str] = _nvidia_smi, proc: Path = procs.PROC, host: str | None = None,
@@ -217,7 +219,7 @@ class GateCore:
         self._hf_home = hf_home
         self._keys = dict(keys or {})
         self._spark_uid = spark_uid if spark_uid is not None else os.geteuid()
-        self._dan_uids = set(dan_uids)
+        self._dan_uids = dan_uids if callable(dan_uids) else frozenset(dan_uids)
         self._may_pin = may_pin
         self._may_hold = may_hold
         self._clock = clock
@@ -367,7 +369,8 @@ class GateCore:
         """A clean stop: the loops, then every load and drain cancelled before the llama-swap client closes (each
         stays saved, for the next start to resume), the Notifier flushed and drained (by 5 s, within uvicorn's
         GRACEFUL_S), and `clean_shutdown` saved true. Before a start that built the parts, nothing is saved: the state
-        on disk is the last run's."""
+        on disk is the last run's. After a start cut short before the Notifier's task ran (`spark gate` stopped while
+        it started), there is no queue to wait on: nothing sends it (the controller's ruling at Task 19's review)."""
         await self._cancel(self._loops)
         if self.admitter is not None:
             await self.admitter.stop()
@@ -375,7 +378,7 @@ class GateCore:
             await self.drainer.stop()
         await self._cancel([t for t in self._tasks if t is not self._notifier_task]
                            + ([self._reading] if self._reading is not None else []))
-        if self.notifier is not None:
+        if self.notifier is not None and self._notifier_task is not None:
             self.notifier.flush()
             if not await self.notifier.drained():
                 _log.warning("ntfy didn't take every notification before the gate stopped")
@@ -1149,8 +1152,9 @@ class GateCore:
                 ours = (engine is not None and pid == engine.pid and engine.start_time is not None
                         and procs.still_running(pid, engine.start_time, proc=self._proc))
                 engines[model] = (port, pid, ours)
+            dans = set(self._dan_uids()) if callable(self._dan_uids) else set(self._dan_uids)
             holders = procs.top_holders(loaded, nvidia, engine_pids={pid for _, pid, _ in engines.values()},
-                                        dan_uids=self._dan_uids, proc=self._proc)
+                                        dan_uids=dans, proc=self._proc)
             problems["processes"] = None
         except OSError as err:
             engines = None

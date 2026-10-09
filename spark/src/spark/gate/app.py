@@ -19,25 +19,34 @@ refusal is a 403 whose sentence says who may.
 read: past it, a 413 in words, never parsed. A non-empty body is a JSON object, else 400. An answer sent before the
 body was read whole closes the connection, so what is left of it is never read as a request.
 
-**Time.** Every request is bounded by REQUEST_TIMEOUT_S, its body's read included: a body that hasn't come by then gets
-a 408 and the connection closes; an answer the gate hasn't made by then is a 503, and its work goes on to its end, so
-a change the gate began is never cut halfway (apply's end, its /running read slow, say). The routes that wait are
-bounded otherwise, their bodies still read within REQUEST_TIMEOUT_S: `/v1/admit` by its key's wait (the deadline the
-front gives; a load that started is waited for to its own bound, as every load is); `/v1/front/events`, kept open;
-`/v1/load` and `/v1/pin` by LOAD_CALL_TIMEOUT_S, the deadline Room.load and Pins.pin give their admission; and
-`/v1/unload` and `/v1/make-room` by their drains, which wait for their requests in flight however long.
+**Time.** Every request's body is read within REQUEST_TIMEOUT_S: a body that hasn't come by then gets a 408 and the
+connection closes. A bounded route's answer is bounded by REQUEST_TIMEOUT_S too, but `/v1/apply/end`'s and
+`/v1/undrain-all`'s, whose /running read may take up to LLAMA_SWAP_HUNG_S, by APPLY_END_TIMEOUT_S, past it (the
+controller's ruling at Task 19's review). An answer the gate hasn't made by its bound is a 503 that says the work is
+still going on (STILL_FINISHING), and the work goes on to its end, so a change the gate began is never cut halfway while
+it serves. The routes that wait are bounded otherwise: `/v1/admit` by its key's wait (the deadline the front gives; a
+load that started is waited for to its own bound, as every load is); `/v1/front/events`, kept open; `/v1/load` and
+`/v1/pin` by LOAD_CALL_TIMEOUT_S, the deadline Room.load and Pins.pin give their admission, and a load that started by
+then to its own bound; and `/v1/unload` and `/v1/make-room` by their drains, which wait for their requests in flight
+however long.
 
 **Streams.** `/v1/load`, `/v1/unload`, `/v1/make-room` and a `/v1/pin` that loads send their head at once, before any
 line, so a gate queued behind another load never reads to the CLI as one that is down; then NDJSON, each progress line
 with its `kind`, then the result, or a refusal line (GateRefusalBody), then the last chunk. A caller that goes ends its
-stream, never the work: a load that started goes on, and so do a drain and its unload. A pin on a model already loaded
-answers once, as does a pin refused before it would load.
+stream, never the work: a load that started goes on, and so do a drain and its unload. A pin on a model already loaded,
+or on a name the registry doesn't have, answers once: PinConfirmation, or a 409 in Pins' words (Pins' refusals there
+are all 409s, its 403 being the route's own). Any other pin streams, and a refusal before its load, an end already
+past, say, comes as its refusal line.
 
 **The gate's stop.** `spark gate` sets `stopping` (each app's `state.stopping`, one event for both) as its stop begins
 (serve.run_servers' `stopping`), and the answers that wait end then, rather than hold the stop for GRACEFUL_S: the
 events stream ends; a held admit leaves the queue and is answered 503, `GATE_STOPPING`, and the front asks the
 restarted gate again with its original deadline (Task 22); a stream ends without its result, which the CLI reads as a
-gate that stopped partway (Task 30), and each drain, saved, resumes at the restarted gate (Task 18).
+gate that stopped partway (Task 30), and each drain, saved, resumes at the restarted gate (Task 18). A call that would
+wait, coming once the stop has begun, is answered that 503 at once, its body unread, so no work starts. A bounded
+route's work still going on past its 503 is the stop's too (finish_work): waited for briefly, then cancelled, before
+the core stops, so none of it uses the llama-swap client once that has closed, nor saves after the core's last save
+(the controller's rulings at Task 19's review).
 
 **Errors never quote a request.** Every answer that isn't 2xx is a GateRefusalBody, `message` and `code`, None for the
 gate's own (`/v1/admit` alone answers a refusal 200, with `ok: false`). A route that breaks is logged by its route and
@@ -77,13 +86,19 @@ from spark.llamaswap import LlamaSwapError
 
 _log = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT_S = gateproto.REQUEST_TIMEOUT_S  # read at each request, so a test may shorten it
+# Each read at each request, so a test may shorten it.
+REQUEST_TIMEOUT_S = gateproto.REQUEST_TIMEOUT_S
+APPLY_END_TIMEOUT_S = gateproto.APPLY_END_TIMEOUT_S  # apply/end's and undrain-all's, past their /running read
 NDJSON = b"application/x-ndjson"
 JSON = b"application/json"
 LOGS_MAX = 1000  # `/v1/logs`' n: the last lines it may ask for
 TEXT_MAX = 2000  # a front refusal's words, as kept, and a session's label: as many as gateclient shows (MESSAGE_MAX)
 NAME_MAX = 256  # a model's name, a request's id, a drain's id or a needle, as a request gives it
 FILE_MAX = 1 << 20  # the canary reads at most this much of each of launch's files
+# At the gate's stop, a bounded route's work still going on past its 503 is waited for this long, then cancelled
+# (finish_work; the controller's ruling at Task 19's review). Read at each stop, so a test may shorten it.
+FINISH_WORK_S = 2.0
+_APPLY_ENDS = {("control", "POST", "/v1/apply/end"), ("control", "POST", "/v1/undrain-all")}
 
 # The gate's own words, each a GateRefusalBody's `message`.
 NO_PEER = "The gate answers only over its own sockets, where it knows each caller's account."
@@ -97,16 +112,14 @@ NO_SUCH_ROUTE = "The gate has no such route."
 WRONG_METHOD = "That route of the gate's doesn't take this method."
 ON_THE_CONTROL_SOCKET = "That route is on the gate's control socket, which only spark-admin's members and root can use."
 ON_THE_STATUS_SOCKET = "That route is on the gate's status socket."
+# A bounded route past its bound: its work goes on, so the answer says so, never that it failed (the controller's ruling
+# at Task 19's review). pi's retry list matches nothing in it (its test).
+STILL_FINISHING = "The gate is still finishing that: `spark status` on the Spark shows when it's done."
 
 
 def _slow_body() -> str:
     return (f"The request didn't arrive whole within {messages.duration(REQUEST_TIMEOUT_S)}, so the gate closed the "
             "connection.")
-
-
-def _slow_answer() -> str:
-    return (f"The gate couldn't answer within {messages.duration(REQUEST_TIMEOUT_S)}. On the Spark, `make logs s=gate` "
-            "shows why.")
 
 
 def _bad(field: str, what: str) -> str:
@@ -307,12 +320,14 @@ def _resolve(registry: Any, name: str) -> str:
 
 @dataclasses.dataclass
 class _Gate:
-    """What both apps share: the core, who may call, and the stop that ends the answers that wait."""
+    """What both apps share: the core, who may call, the stop that ends the answers that wait, and the bounded routes'
+    work under way, which the stop finishes or cancels (finish_work)."""
 
     core: Any
     front_uid: int
     admin_uids: Callable[[], set[int]]
     stopping: asyncio.Event
+    work: set[asyncio.Future] = dataclasses.field(default_factory=set)
 
     def is_admin(self, uid: int) -> bool:
         return uid == 0 or uid in self.admin_uids()
@@ -351,13 +366,19 @@ class _Endpoint:
                 refused = self.before_body(cred.uid)
             if refused is not None:
                 return await exchange.refuse(403, refused)
+            if self.waiting is not None and self.gate.stopping.is_set():  # nothing new starts once the stop has begun
+                return await exchange.refuse(503, GATE_STOPPING)
             body = await exchange.read_body(began + REQUEST_TIMEOUT_S)
             params = dict(scope.get("path_params") or {})
             query = parse_qs(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
             if self.waiting is not None:
+                if self.gate.stopping.is_set():
+                    return await exchange.refuse(503, GATE_STOPPING, close=True)
                 await self.waiting(exchange, cred.uid, body, params)
             else:
-                await self._bounded(exchange, cred.uid, body, params, query, began + REQUEST_TIMEOUT_S)
+                route = (self.route.socket, self.route.method, self.route.path)
+                bound = APPLY_END_TIMEOUT_S if route in _APPLY_ENDS else REQUEST_TIMEOUT_S
+                await self._bounded(exchange, cred.uid, body, params, query, began + bound)
         except _Done:
             return
         except _Bad as bad:
@@ -373,15 +394,19 @@ class _Endpoint:
 
     async def _bounded(self, exchange: _Exchange, uid: int, body: dict, params: dict, query: dict,
                        deadline: float) -> None:
+        """The handler's work, shielded and kept in the gate's set until it is done: past `deadline` the answer is a
+        503 that says it is still going on, and it goes on, until the gate's stop finishes or cancels it."""
         work = asyncio.ensure_future(self.bounded(uid, body, params, query))
+        self.gate.work.add(work)
+        work.add_done_callback(self.gate.work.discard)
         try:
             async with asyncio.timeout_at(deadline):
                 status, payload = await asyncio.shield(work)
         except TimeoutError:
-            _log.warning("the gate's %s %s took longer than %s: answered 503, and its work goes on to its end",
-                         self.route.method, self.route.path, messages.duration(REQUEST_TIMEOUT_S))
+            _log.warning("the gate's %s %s is taking longer than its bound: answered 503, and its work goes on",
+                         self.route.method, self.route.path)
             work.add_done_callback(self._late)
-            return await exchange.refuse(503, _slow_answer())
+            return await exchange.refuse(503, STILL_FINISHING)
         await exchange.answer(status, payload)
 
     def _late(self, work: asyncio.Future) -> None:
@@ -791,16 +816,35 @@ async def _broken(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"message": BROKE, "code": None}, status_code=500, headers={"connection": "close"})
 
 
+async def finish_work(app: Starlette, within_s: float | None = None) -> None:
+    """At the gate's stop, before the core stops: the bounded routes' work still going on, past its 503, waited for up
+    to `within_s` (FINISH_WORK_S), then cancelled and awaited, so none of it uses the llama-swap client once that has
+    closed, nor saves after the core's last save (the controller's ruling at Task 19's review). `app` is either app:
+    they share the work."""
+    pending = [work for work in app.state.bounded_work if not work.done()]
+    if not pending:
+        return
+    _, left = await asyncio.wait(pending, timeout=FINISH_WORK_S if within_s is None else within_s)
+    if left:
+        _log.warning("the gate's stop cancelled the work of %d bounded route(s) still going on", len(left))
+    for work in left:
+        work.cancel()
+    await asyncio.gather(*left, return_exceptions=True)
+
+
 def build_apps(core: Any, *, front_uid: int, admin_uids: Callable[[], set[int]]) -> tuple[Starlette, Starlette]:
     """The status app and the control app, on `core` (Task 18's GateCore, started in the servers' loop by `spark
     gate`). `front_uid` is spark-front's uid; `admin_uids()` gives spark-admin's members' uids, asked at each request
     that needs it, so a member added is known without a restart. Each app's `state.stopping`, one event for both, ends
-    the answers that wait once it is set (the module's docstring); `state.ping_every_s` is the events stream's ping."""
+    the answers that wait once it is set (the module's docstring); `state.bounded_work`, one set for both, is the
+    bounded routes' work under way, which finish_work ends at the stop; `state.ping_every_s` is the events stream's
+    ping."""
     gate = _Gate(core, front_uid, admin_uids, asyncio.Event())
     status_app = Starlette(exception_handlers={HTTPException: _refusals("status"), Exception: _broken})
     control_app = Starlette(exception_handlers={HTTPException: _refusals("control"), Exception: _broken})
     for app in (status_app, control_app):
         app.state.stopping = gate.stopping
+        app.state.bounded_work = gate.work
         app.state.ping_every_s = PING_EVERY_S
         app.router.redirect_slashes = False  # a redirect isn't one of the gate's answers
     routes = _Routes(gate, status_app.state)

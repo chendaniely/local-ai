@@ -414,3 +414,55 @@ def test_run_servers_runs_a_services_startup_and_shutdown_in_its_own_loop(sockdi
     assert [step[0] for step in steps] == ["startup", "stopping", "shutdown", "returned"]
     assert {step[1] for step in steps[:3]} == {served}  # one loop: the servers' own
     assert took < 5  # the stream ended at `stopping`, never waiting out graceful_s, 30 s
+
+
+# A startup that would wait 30 s; SIGTERM during it cancels it, nothing serves, and `shutdown` still runs (the
+# controller's ruling at Task 19's review), so a gate stopped while it starts never holds its stop for its start.
+SLOW_START = textwrap.dedent(
+    """
+    import asyncio, socket, sys
+    from spark import protocols, serve
+
+    async def app(scope, receive, send):
+        raise AssertionError("nothing serves after a stop during startup")
+
+    async def startup():
+        print("starting", flush=True)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            print("startup cancelled", flush=True)
+            raise
+
+    async def shutdown():
+        print("shutdown", flush=True)
+
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(sys.argv[1])
+    listener.listen()
+    serve.run_servers([(app, [listener])], protocol=protocols.make_protocol(peer_cred=False, header_timeout_s=10),
+                      graceful_s=0.5, startup=startup, shutdown=shutdown)
+    print("returned", flush=True)
+    """
+)
+
+
+def test_a_signal_during_startup_cancels_it(sockdir):
+    with _notify_socket(sockdir) as (receiver, notify_path):
+        child = subprocess.Popen([sys.executable, "-c", SLOW_START, str(sockdir / "a.sock")],
+                                 env={**os.environ, "NOTIFY_SOCKET": notify_path}, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        try:
+            assert child.stdout.readline() == "starting\n"
+            signalled = time.monotonic()
+            child.send_signal(signal.SIGTERM)
+            out, err = child.communicate(timeout=40)
+            took = time.monotonic() - signalled
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.communicate(timeout=10)
+        assert child.returncode == 0, err
+        assert out.splitlines() == ["startup cancelled", "shutdown", "returned"]
+        assert took < 5
+        assert _waiting(receiver) == [b"STOPPING=1"]  # never READY=1
