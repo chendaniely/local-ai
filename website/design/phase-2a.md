@@ -5860,7 +5860,8 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `EnvironmentFile=/etc/local-ai/values.env`, `Environment=` `SPARK_REGISTRY`, `SPARK_STATE`,
   `SPARK_GATE_STATE`, `SPARK_LAUNCH`, `SPARK_LLAMASWAP_URL=http://127.0.0.1:900`, `HF_HOME`,
   `Restart=always`, `RestartSec=2`, `StartLimitIntervalSec=0`, `OOMScoreAdjust=-900`,
-  `TimeoutStopSec=30`, `After=` llama-swap, `OnFailure=local-ai-notify@%n.service`; sandbox:
+  `TimeoutStopSec=` ~~30~~ 45 (see the shutdown test below), `After=` llama-swap,
+  `OnFailure=local-ai-notify@%n.service`; sandbox:
   `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ReadWritePaths=/var/lib/local-ai/gate
   /var/lib/local-ai/launch /var/lib/local-ai/brake`, `ProtectHome=yes`, `PrivateTmp=yes`; no
   `PrivateDevices=`, `ProtectProc=` or `ProcSubset=`; `WantedBy=multi-user.target`.
@@ -5923,6 +5924,10 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `[Install]`.
 - `test_graceful_shutdown_fits_inside_timeout_stop_sec` — `TimeoutStopSec=30` on the front and the
   gate, above `gateproto.GRACEFUL_S`, 20, which both mains pass.
+  *(Added 2026-10-08, after Task 19's review, the controller's ruling: the gate's stop can take
+  about 27 s at worst, its 20 s grace plus up to 2 s for work still running past a 503 plus the
+  notifier's 5 s bound, so the gate's unit gets `TimeoutStopSec=45`, not 30, and the test asserts
+  it exceeds `GRACEFUL_S` + 2 + `NTFY_TIMEOUT_S` with margin; the front stays at 30.)*
 - `test_the_new_services_score_minus_900` — `OOMScoreAdjust=-900` on the front and the gate.
 - `test_the_notifier_runs_ubuntus_curl_as_a_dynamic_user` — its unit as above.
 - `test_the_notifier_carries_the_registrys_priorities` — `front_down: off` in the registry →
