@@ -76,6 +76,7 @@ class Model:
 class Budget:
     allocatable_gib: float
     reserve_gib: float
+    idle_available_gib: float  # MemAvailable with no model loaded
 
 
 @dataclass(frozen=True)
@@ -246,6 +247,9 @@ def load_registry(path: Path) -> Registry:
         raise RegistryError("brake: warn_gib must be above brake_gib")
     if not budget.reserve_gib > brake.brake_gib:
         raise RegistryError("budget: reserve_gib must exceed brake.brake_gib, or a fresh load trips the brake")
+    if not budget.idle_available_gib > budget.reserve_gib:
+        raise RegistryError(f"budget: idle_available_gib ({budget.idle_available_gib}) must exceed reserve_gib "
+                            f"({budget.reserve_gib}), which every load leaves free")
     engines: dict[str, str] = {}
     for engine, binary in _mapping(data, "engines").items():
         if not isinstance(binary, str) or not binary:

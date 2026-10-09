@@ -203,7 +203,13 @@ when that file was retired on 2026-09-23.
   footprint 35 GiB, so the footprints are 32, 8, 3 and 35, all 78 GiB the budget allows; its cold
   load took 30.6 GiB. Phase 2a's Task 42 gives it its full context. The figures above for the coder
   before it, Qwen3.6-35B-A3B, record that model: its full 262,144 context, its ~30 GiB cold load
-  and its 33 GiB footprint.)*
+  and its 33 GiB footprint.)* *(2026-10-08, committed but not yet deployed: by Dan's decision
+  `spark render` on `main` has Phase 2a's corrected budget check, so the registry gives the coder
+  its full 262,144 tokens, with a footprint estimated at 41 GiB. The footprints come to 84 GiB,
+  within the 102 GiB ceiling, and the coder fits beside the residents with the reserve kept. The
+  box serves the coder at 163,840 until Dan runs `make apply`, which restarts llama-swap and so
+  refuses while a model is loaded (`make apply-now` restarts it anyway), and pi's lists show the
+  new window once the clients are written again; this section changes then.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for

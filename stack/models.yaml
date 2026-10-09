@@ -1,11 +1,18 @@
 # The one file to edit to add, swap or retire a model. `spark render` refuses anything invalid,
-# including a model set that doesn't fit allocatable − reserve.
+# including always-loaded models that don't fit idle MemAvailable less the reserve, within the
+# CUDA-allocatable ceiling, and an on-demand model that can't load beside them with the reserve
+# kept; it warns when every model loaded at once would pass the ceiling, or leave memory under the
+# brake's warn line. That is Phase 2a's corrected check, on main since 2026-10-08 (Dan's decision;
+# plan.md's Revisions). Until then render refused a set whose footprints together passed
+# allocatable − reserve, 78 GiB, which counted the reserve twice.
 # A model's `args` may set only the engine options on render's list, ALLOWED in
 # spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
 # An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).
 budget:
   allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
   reserve_gib: 24        # a load must leave this much MemAvailable free
+  # MemAvailable with no model loaded: 117.8 GiB before Phase 1's first load (changelog.md, 2026-09-28), rounded down.
+  idle_available_gib: 117
 brake:
   warn_gib: 28
   brake_gib: 20
@@ -85,18 +92,21 @@ models:
       repo: unsloth/Qwen3.8-27B-GGUF
       revision: "4ca720788d1e01f1bff70c033e0d0028fd02e502"
       file: Qwen3.8-27B-UD-Q4_K_XL.gguf
-    # The early swap (Dan's decision, 2026-10-08): the coder runs at 163,840 of its native 262,144 tokens until Phase
-    # 2a's Task 42 gives it all of them. Render sums every listed model against allocatable − reserve, 78 GiB: at full
-    # context (~41 GiB) the set would need 84, and at 163,840 it needs 78. Qwen3.6-35B-A3B, the coder before it, left
-    # the registry so the set fits; its files stay on disk.
+    # The early swap (Dan's decision, 2026-10-08), at its full 262,144 tokens since render's corrected budget check
+    # reached main the same day (Dan's decision): the residents' 43 GiB and its 41 come to 84, within the ceiling, and
+    # it fits beside the residents with the reserve kept, 41 of 117 − 43 − 24 = 50. Until then the registry held it at
+    # 163,840, with a footprint of 35, because Phase 1's check summed every listed model against allocatable − reserve,
+    # 78 GiB.
+    # Qwen3.6-35B-A3B, the coder before it, left the registry when it came; its files stay on disk.
     # Footprint, at its most after admission, estimated from the file's header (Phase 2a's council, 2026-10-07) and not
-    # yet measured: weights ~16.4 GiB (the file); the KV cache ~10.6 at 68 KiB a token, 64 for its 16 attention layers
+    # yet measured: weights ~16.4 GiB (the file); the KV cache ~17.0 at 68 KiB a token, 64 for its 16 attention layers
     # and 4 for its MTP layer; and ~7.5 for the rest: the compute and long-input buffers, its 2 GiB prompt cache and 8
-    # context checkpoints of ~150 MiB (its 48 recurrent layers' state). ~34.5 in all, until a soak measures it.
-    ctx: 163840
+    # context checkpoints of ~150 MiB (its 48 recurrent layers' state). ~41 in all, until a soak measures it. A cold
+    # load at 163,840 tokens took 30.6 GiB (2026-10-08); none at 262,144 is measured yet.
+    ctx: 262144
     parallel: 1
     cache_ram_mib: 2048
-    footprint_gib: 35
+    footprint_gib: 41
     footprint_measured: false
     # --spec-type draft-mtp drafts with the MTP layer in the main file (its header's nextn_predict_layers = 1), as the
     # coder before it did, and the draft length is carried over from it. By b11146's source, as Phase 2a's council read

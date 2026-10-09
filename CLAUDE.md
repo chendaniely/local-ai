@@ -141,7 +141,15 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over
   ~110 GB do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path.
   The plan budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be
-  measured) and keeps ≥24 GiB free on admission.
+  measured) and keeps ≥24 GiB free on admission. *(2026-10-08, Dan's decision: `spark render` on
+  `main` has Phase 2a's corrected budget check, rule 9 in the plan on the `phase-2a` branch. It
+  refuses always-loaded models that don't fit idle `MemAvailable` (117 GiB, the registry's
+  `idle_available_gib`) less the reserve, within the ceiling, and an on-demand model that doesn't
+  fit beside them with the reserve kept; it only warns when every model loaded at once would pass
+  the ceiling or leave memory under the brake's warn line. Until then render summed every
+  footprint against allocatable − reserve, 78 GiB, which counted the reserve twice. The launch
+  check, live `MemAvailable` capped at the ceiling, less the reserve, at each load, and the brake
+  are unchanged.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.
