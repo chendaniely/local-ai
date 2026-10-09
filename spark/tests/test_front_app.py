@@ -5,7 +5,7 @@ request, naming the key, the model, the status and the duration only.
 
 The app is called as uvicorn calls it, with a recording stand-in for llama-swap (Task 21's Upstream, as the app calls
 it) and one for the gate (Task 22's GateLink); two tests serve it on a real uvicorn with Task 9's protocol, on
-127.0.0.1. Every key, digest and name here is a stand-in; none was read from the box."""
+127.0.0.1 (uvicorn_helpers.py). The stand-ins are front_helpers.py's."""
 
 import asyncio
 import dataclasses
@@ -14,28 +14,30 @@ import itertools
 import json
 import logging
 import re
-from pathlib import Path
 
 import anyio
 import pytest
 
+from front_helpers import (BOUNDARY, DIGESTS, GROUPS, KEYS, KEYS_TEXT, MIB, MODELS, field, file_part,
+                           form_body)
 from spark import messages
 from spark.credentials import CredentialError
 from spark.front import app as front_app
 from spark.front import parse
 from spark.protocols import make_protocol
 from spark.registry import RegistryError
-# anyio_backend is test_front_parse's fixture, imported so it applies here as there.
-from test_front_parse import (BOUNDARY, DIGESTS, GROUPS, KEYS, MODELS, anyio_backend, field, file_part,  # noqa: F401
-                              form_body)
-from test_protocols import (HEADER_TIMEOUT_S, _connect, _read_response, _response, _tcp_listener,
-                            _trickle_until_closed, serving)
+from uvicorn_helpers import (HEADER_TIMEOUT_S, connect, read_response, response, serving, tcp_listener,
+                             trickle_until_closed)
 
 BOUND_S = 10
 NAMES = [entry["name"] for entry in MODELS]
 CODER, GEMMA, EMBED, WHISPER = "qwen3.8-27b", "gemma-4-26b-a4b", "qwen3-embedding-0.6b", "whisper-large-v3-turbo"
 FORM_TYPE = f"multipart/form-data; boundary={BOUNDARY}".encode()
-MIB = 1 << 20
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 @dataclasses.dataclass
@@ -121,13 +123,13 @@ class Front:
     now: list[float]
 
 
-def make_front(tmp_path, *, ready=NAMES, keys=KEYS, digests=DIGESTS) -> Front:
+def make_front(tmp_path, *, ready=NAMES, keys=KEYS, digests=DIGESTS, budget: int | None = None) -> Front:
     spool = tmp_path / "spool"
     spool.mkdir(exist_ok=True)
     upstream, gate, lines, now = Upstream(), Gate(ready), [], [1000.0]
     app = front_app.FrontApp(parse.ModelList(MODELS), keys, GROUPS, digests, upstream=upstream, gate=gate,
                              caps=parse.KeyCaps(keys, GROUPS), log=lines.append, clock=lambda: now[0],
-                             spool_dir=spool)
+                             spool_dir=spool, budget=None if budget is None else parse.BodyBudget(budget))
     return Front(app, upstream, gate, lines, spool, now)
 
 
@@ -238,6 +240,11 @@ UNKNOWN_KEY_BODY = {"error": {"message": "That API key isn't one the Spark knows
     # and a few near misses
     ("POST", "/health"), ("HEAD", "/v1/models"), ("GET", "/v1/models/"), ("POST", "/v1/chat/completions/"),
     ("POST", "/v1/audio/translations"), ("GET", "/"),
+    # uvicorn decodes the path but never normalizes it: no traversal, doubled slash or case reaches a route, and a
+    # %2F decodes to the same unmatched path (the controller's ruling, at Task 20's review)
+    ("GET", "//logs"), ("GET", "/v1/../logs"), ("GET", "/v1/models/.."), ("GET", "/v1/models/../../running"),
+    ("POST", "/v1/chat/completions/../../api/models/unload/x"), ("GET", "/V1/MODELS"), ("get", "/v1/models"),
+    ("post", "/v1/chat/completions"), ("get", "/health"), ("GET", "/v1/x/../models"), ("POST", "/v1//chat/completions"),
 ])
 async def test_only_the_listed_routes_go_through_and_the_rest_get_route_not_served(front, method, path):
     answer = await call(front.app, method, path, body=chat() if method == "POST" else None)
@@ -327,9 +334,6 @@ async def test_the_digests_must_match_the_key_list(tmp_path):
     for err in (excinfo.value, excinfo2.value):
         assert not re.search(r"[0-9a-f]{16}", str(err))  # never a digest
         assert isinstance(err, ValueError)  # so `spark front` refuses it as its other startup errors (Task 21)
-
-
-KEYS_TEXT = (Path(__file__).parent / "fixtures" / "keys.yaml").read_text()
 
 
 def credentials(tmp_path, keys_text: str = KEYS_TEXT, digests: dict[str, bytes] = DIGESTS) -> dict[str, str]:
@@ -440,11 +444,11 @@ def test_content_length_with_transfer_encoding_is_refused(tmp_path):
                b"Content-Type: application/json\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n"
                + f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
     front = make_front(tmp_path)
-    with _tcp_listener() as listener, \
+    with tcp_listener() as listener, \
             serving(front.app, listener, make_protocol(peer_cred=False, header_timeout_s=10)):
-        with _connect(listener) as client:
+        with connect(listener) as client:
             client.sendall(request)
-            lines, answer = _response(client)
+            lines, answer = response(client)
     assert lines[0] == b"HTTP/1.1 400 Bad Request"
     assert json.loads(answer)["error"]["message"] == parse.BOTH_LENGTHS
     assert front.upstream.seen == []
@@ -454,7 +458,8 @@ def test_content_length_with_transfer_encoding_is_refused(tmp_path):
 async def test_auth_cookie_and_proxy_auth_headers_never_go_upstream(front):
     await call(front.app, "POST", "/v1/chat/completions", body=chat(),
                headers=[(b"x-api-key", b"k1"), (b"cookie", b"session=s1"), (b"proxy-authorization", b"Basic eA=="),
-                        (b"connection", b"keep-alive"), (b"x-custom", b"1")])
+                        (b"connection", b"keep-alive"), (b"x-custom", b"1"), (b"x-forwarded-for", b"203.0.113.9"),
+                        (b"x-real-ip", b"203.0.113.9"), (b"forwarded", b"for=203.0.113.9")])
     [seen] = front.upstream.seen
     assert seen.headers == [(b"x-custom", b"1"), (b"content-type", b"application/json")]
 
@@ -530,6 +535,7 @@ async def test_a_body_over_200_mib_is_refused(front):
     answer = await call(front.app, "POST", "/v1/audio/transcriptions", chunks=chunks(), content_type=FORM_TYPE,
                         length=False)
     assert (answer.status, answer.json()["error"]["code"]) == (413, "request_too_large")
+    assert answer.json()["error"]["message"] == parse.too_big(200 * MIB, part_way=True).message
     assert max(seen_files) == 1  # it was spooled as it came
     assert list(front.spool.iterdir()) == []  # and its file is gone
     assert front.upstream.seen == []
@@ -674,6 +680,69 @@ async def _keep(answers: list, request) -> None:
     answers.append(await request)
 
 
+# The body budget (the controller's ruling, at Task 20's review).
+
+@pytest.mark.anyio
+async def test_a_body_past_the_fronts_budget_is_refused_busy(tmp_path):
+    front = make_front(tmp_path, budget=MIB)
+    busy = {"error": {"message": "The front is busy holding other large requests; try again in a moment.",
+                      "code": "front_busy"}, "retry_after_s": 10}
+    # By its Content-Length, before any of it is read.
+    answer = await call(front.app, "POST", "/v1/chat/completions", chunks=[b"{"], length=2 * MIB)
+    assert (answer.status, answer.json()) == (429, busy)
+    assert answer.headers["retry-after"] == "10" and "x-should-retry" not in answer.headers
+    assert not answer.received
+    # Chunked, as it comes.
+    big = b'{"model":"coder","x":"' + b"a" * (2 * MIB) + b'"}'
+    answer = await call(front.app, "POST", "/v1/chat/completions", chunks=[big[i:i + 65536] for i in
+                                                                           range(0, len(big), 65536)], length=False)
+    assert (answer.status, answer.json()) == (429, busy)
+    assert front.upstream.seen == [] and front.app.budget.held == 0
+    assert front.lines == ["front: dan-mac - 429 0.0s"] * 2
+    # A form reserves what it may hold in memory; past the budget, it is refused before it is read.
+    tight = make_front(tmp_path, budget=parse.FORM_IN_MEMORY - 1)
+    answer = await call(tight.app, "POST", "/v1/audio/transcriptions", body=form_body([field("model", "stt")]),
+                        content_type=FORM_TYPE)
+    assert (answer.status, answer.received) == (429, False)
+    assert messages.pi_retry_match(busy["error"]["message"]) is None
+
+
+@pytest.mark.anyio
+async def test_the_budget_is_shared_by_every_request_and_released_however_each_ends(tmp_path):
+    front = make_front(tmp_path, budget=4 * MIB)
+    front.upstream.hold = asyncio.Event()
+    body = b'{"model":"coder","x":"' + b"a" * (3 * MIB) + b'"}'
+    first = asyncio.create_task(call(front.app, "POST", "/v1/chat/completions", body=body))
+    with anyio.fail_after(BOUND_S):
+        await until(lambda: len(front.upstream.seen) == 1)
+    assert front.app.budget.held == len(front.upstream.seen[0].body)  # held while it waits on its answer
+    # Another key's body that doesn't fit beside it is refused busy.
+    answer = await call(front.app, "POST", "/v1/chat/completions", key="k2", body=body)
+    assert (answer.status, answer.json()["error"]["code"]) == (429, "front_busy")
+    front.upstream.hold.set()
+    assert (await first).status == 200
+    assert front.app.budget.held == 0
+
+    # Refused after it is read, cancelled while it waits on its answer, or a form: each gives its bytes back.
+    assert (await call(front.app, "POST", "/v1/chat/completions", body=chat("nonesuch"))).status == 404
+    assert front.app.budget.held == 0
+    front.upstream.hold = asyncio.Event()
+    for request in (call(front.app, "POST", "/v1/chat/completions", body=body),
+                    call(front.app, "POST", "/v1/audio/transcriptions", content_type=FORM_TYPE,
+                         body=form_body([field("model", "stt"), file_part(b"RIFF")]))):
+        task = asyncio.create_task(request)
+        seen = len(front.upstream.seen)
+        with anyio.fail_after(BOUND_S):
+            await until(lambda: len(front.upstream.seen) == seen + 1)
+        assert front.app.budget.held > 0
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert front.app.budget.held == 0
+    assert front.lines[-2:] == ["front: dan-mac qwen3.8-27b gone 0.0s",
+                                "front: dan-mac whisper-large-v3-turbo gone 0.0s"]
+
+
 # The journal.
 
 @pytest.mark.anyio
@@ -700,6 +769,7 @@ async def test_an_error_of_the_fronts_own_is_a_500_in_words_never_a_traceback(fr
     for key, words in (("k1", front_app.BROKE["dan"]), ("k2", front_app.BROKE["agent"])):
         answer = await call(front.app, "POST", "/v1/chat/completions", key=key, body=chat())
         assert (answer.status, answer.json()) == (500, {"error": {"message": words, "code": "front_error"}})
+        assert answer.headers["x-should-retry"] == "false"  # OpenAI's SDKs retry a 5xx unless told
     assert "raised-marker" not in caplog.text and "Traceback" not in caplog.text
     [record, _] = [r for r in caplog.records if r.name == "spark.front.app"]
     assert record.getMessage().startswith("the front's POST /v1/chat/completions broke: RuntimeError at ")
@@ -740,15 +810,15 @@ def test_an_unknown_key_with_a_trickled_body_is_refused_at_once(tmp_path):
     # The key is checked on the headers, before the first receive(): the 401 comes before any of the body is sent,
     # and the body nobody reads then falls under Task 9's deadline, however slowly it trickles in.
     front = make_front(tmp_path)
-    with _tcp_listener() as listener, \
+    with tcp_listener() as listener, \
             serving(front.app, listener, make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S),
                     keep_alive_s=2):
-        with _connect(listener) as client:
+        with connect(listener) as client:
             client.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: spark\r\nAuthorization: Bearer nope\r\n"
                            b"Content-Type: application/json\r\nContent-Length: 1000\r\n\r\n")
-            status, body = _read_response(client)
+            status, body = read_response(client)
             assert status == b"HTTP/1.1 401 Unauthorized"
             assert json.loads(body) == UNKNOWN_KEY_BODY
-            took = _trickle_until_closed(client, b"x", limit_s=3)
+            took = trickle_until_closed(client, b"x", limit_s=3)
     assert HEADER_TIMEOUT_S - 0.1 <= took <= HEADER_TIMEOUT_S + 0.5
     assert front.lines == ["front: - - 401 0.0s"]

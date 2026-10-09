@@ -8,13 +8,20 @@ each key's caps and the journal line.
 - **Keys.** The key comes from `Authorization: Bearer <key>` or `x-api-key: <key>`, and is matched against the
   digests in constant time (credentials.match_key). Two headers that carry different keys name no one.
 - **Bodies.** A JSON body is read whole, in memory, up to its cap, and goes on re-serialized from what was parsed, so
-  the front and llama-swap read the same model. A multipart form (a whisper upload) is read as it comes: a file part
-  over SPOOL_ABOVE goes to a file in the spool folder (the unit's PrivateTmp= /tmp, on disk), never to memory, and a
-  smaller one stays in memory; its fields that aren't files stay in memory, FIELDS_MAX in all, and the parts number
-  MAX_PARTS at most. A part is a file when it has a non-empty file name, as Go's mime/multipart reads a form (its
-  readForm and Part.FileName, read 2026-10-08 at Go's master branch), and two `model` fields are refused, since
+  the front and llama-swap read the same model. A multipart form (a whisper upload) is read as it comes. Its file
+  parts are held in memory up to SPOOL_ABOVE for the whole form (the controller's ruling, at Task 20's review: it
+  first applied to each part); the part that would pass it, and each after, goes to a file in the spool folder (the
+  unit's PrivateTmp= /tmp, on disk). Its fields that aren't files stay in memory, FIELDS_MAX in all, and the parts
+  number MAX_PARTS at most. A part is a file when it has a non-empty file name, as Go's mime/multipart reads a form
+  (its readForm and Part.FileName, read 2026-10-08 at Go's master branch), and two `model` fields are refused, since
   llama-swap takes the first value where Python's parser keeps the last (plan.md). The form goes on rebuilt
   (encode_form), never as the client's bytes.
+- **Memory** (the controller's rulings, at Task 20's review, with the figures measured then). A JSON body's arrays,
+  objects and values are counted before it is parsed (json_parts), and one with more than MAX_JSON_PARTS is refused:
+  16 MiB of empty arrays took ~400 MiB to parse. It goes on as UTF-8, not as \\u escapes, which took three times the
+  bytes. And every body the front holds in memory is charged to one budget for the whole front (BodyBudget): a JSON
+  body as it comes and then as it goes on, and a form what it may hold in memory (FORM_IN_MEMORY), each given back
+  when its request ends.
 - **Refusals.** Each is a Refused, its words fixed text that quotes nothing a client sent, so they may reach the
   journal too; pi's retry list matches none of them (test_front_parse.py)."""
 
@@ -49,18 +56,31 @@ ROUTES: frozenset[tuple[str, str]] = frozenset({("GET", "/v1/models"), *(("POST"
 HEALTH = ("GET", "/health")  # the front's own, answered with no key
 FORM_PATHS = frozenset({"/v1/audio/transcriptions"})  # the routes whose body is a multipart form; the rest take JSON
 
-SPOOL_ABOVE = 1 << 20  # a file part past this goes to disk
+SPOOL_ABOVE = 1 << 20  # a form's file parts held in memory, in all: the part that would pass it, and each after, spool
 FIELDS_MAX = 1 << 20  # a form's fields that aren't files, in all: each is text, held in memory
-MAX_PARTS = 32  # a form's parts, so its parts held in memory stay few
+MAX_PARTS = 32  # a form's parts
 _PART_HEAD_MAX = 16 << 10  # one part's headers
 _LINE_MAX = 256  # what may follow a delimiter before its line ends: padding, which RFC 2046 allows
 _READ_CHUNK = 1 << 20  # a spooled file is sent on in pieces this big
+# What a form may hold in memory, which the budget reserves for it whole: its file parts and its fields, and a MiB for
+# what is in transit (a received piece, a part's headers, the piece of a spooled file being sent on).
+FORM_IN_MEMORY = SPOOL_ABOVE + FIELDS_MAX + _READ_CHUNK
+# A JSON body's [, { and , outside its strings: past this it isn't parsed. A million parts parsed in at most 150 MiB
+# (measured on the Spark at Task 20's review: 500,000 objects, each with a key of its own).
+MAX_JSON_PARTS = 1_000_000
+BUSY_CODE = "front_busy"  # a 429: the front's body budget is spent
+BUSY_RETRY_AFTER_S = 10
 
 BAD_REQUEST = "invalid_request"  # the code of every 400
 TOO_LARGE = "request_too_large"  # the code of every 413
 
 # The front's own words for a body it can't take.
 NOT_JSON = "The request's body isn't JSON, so the front couldn't read which model it asks for."
+TOO_DEEP = "The request's body can't be read: it nests arrays and objects deeper than the front reads."
+NUMBER_TOO_BIG = "The request's body can't be read: it holds a number too large for the front to read."
+TOO_MANY_PARTS_JSON = (f"The request's body has more than {MAX_JSON_PARTS:,} parts (arrays, objects and the values in "
+                       "them), the most the front takes, so it was refused.")
+BUSY = "The front is busy holding other large requests; try again in a moment."
 NOT_AN_OBJECT = "The request's body isn't a JSON object, so the front couldn't read which model it asks for."
 NO_MODEL = 'The request names no model: its body needs "model", the model\'s name as text.'
 FORM_NOT_TAKEN = "This address takes a JSON body, not a form."
@@ -86,30 +106,39 @@ _KIND = re.compile(rf"[ \t]*({_TOKEN}(?:/{_TOKEN})?)[ \t]*")
 _PARAM = re.compile(rf'[ \t]*;[ \t]*({_TOKEN})[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|{_TOKEN})')
 _ESCAPE = re.compile(r"\\(.)")
 _CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # a control character other than a tab
+_JSON_STRING = re.compile(rb'"[^"\\]*+(?:\\.[^"\\]*+)*+"', re.DOTALL)  # possessive: no backtracking
 _BOUNDARY = re.compile(r"[0-9A-Za-z'()+_,\-./:=? ]{0,69}[0-9A-Za-z'()+_,\-./:=?]")  # RFC 2046's
 _PLAIN_ENCODINGS = ("7bit", "8bit", "binary")
-# What never goes upstream: the client's credentials, its framing, and the body's own headers, which the front writes
-# for the body it rebuilds.
+# What never goes upstream: the client's credentials, its framing, the body's own headers, which the front writes for
+# the body it rebuilds, and the addresses a client may claim, which llama-swap would put in its log lines (the
+# controller's ruling, at Task 20's review).
 _DROPPED = frozenset({b"authorization", b"x-api-key", b"cookie", b"proxy-authorization", b"host", b"content-length",
-                      b"transfer-encoding", b"content-type", b"content-encoding", b"expect"})
+                      b"transfer-encoding", b"content-type", b"content-encoding", b"expect", b"x-forwarded-for",
+                      b"x-real-ip", b"forwarded"})
 # RFC 9110's hop-by-hop headers, and the ones the connection header names.
 _HOP_BY_HOP = frozenset({b"connection", b"keep-alive", b"proxy-connection", b"te", b"trailer", b"upgrade",
                          b"proxy-authenticate"})
 
 
 class Refused(Exception):
-    """A request the front answers itself, as it reads it: its status, its code and its words."""
+    """A request the front answers itself, as it reads it: its status, its code, its words, and when to try again."""
 
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, retry_after_s: int | None = None):
         super().__init__(message)
-        self.status, self.code, self.message = status, code, message
+        self.status, self.code, self.message, self.retry_after_s = status, code, message, retry_after_s
 
     def body(self) -> dict:
-        """OpenAI's error shape, as messages.Refusal's: `message` and `code` only."""
-        return {"error": {"message": self.message, "code": self.code}}
+        """OpenAI's error shape, as messages.Refusal's: `message` and `code` only in `error`."""
+        body: dict = {"error": {"message": self.message, "code": self.code}}
+        if self.retry_after_s is not None:
+            body["retry_after_s"] = self.retry_after_s
+        return body
 
     def headers(self) -> Headers:
-        return [(b"content-type", b"application/json")]
+        headers = [(b"content-type", b"application/json")]
+        if self.retry_after_s is not None:
+            headers.append((b"retry-after", str(self.retry_after_s).encode()))
+        return headers
 
 
 class ClientGone(Exception):
@@ -120,10 +149,16 @@ def _bad(message: str) -> Refused:
     return Refused(400, BAD_REQUEST, message)
 
 
-def too_big(max_bytes: int) -> Refused:
-    """413: a body over `max_bytes`, by its Content-Length or as it came."""
+def too_big(max_bytes: int, *, part_way: bool = False) -> Refused:
+    """413: a body over `max_bytes`, by its Content-Length, before any of it is read, or `part_way`, as it came."""
+    ending = "it was refused part-way" if part_way else "it wasn't read"
     return Refused(413, TOO_LARGE, f"The request is over {_size(max_bytes)}, the most the front takes at this address, "
-                                   "so it wasn't read.")
+                                   f"so {ending}.")
+
+
+def busy() -> Refused:
+    """429: the bytes would take the front's body budget past its limit."""
+    return Refused(429, BUSY_CODE, BUSY, BUSY_RETRY_AFTER_S)
 
 
 def _size(count: int) -> str:
@@ -189,16 +224,59 @@ def declared_length(headers: Headers) -> int | None:
 
 # Bodies.
 
-class _Body:
-    """A request's body as uvicorn gives it, a message at a time, counted against `max_bytes` as it comes."""
+class BodyBudget:
+    """The request bodies the front holds in memory, all its requests together, in bytes, up to `limit` (the
+    controller's ruling, at Task 20's review). One event loop's: nothing here awaits, so a take and its check are one
+    step."""
 
-    def __init__(self, receive: Receive, max_bytes: int):
-        self._receive, self._max = receive, max_bytes
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.held = 0
+
+    def take(self, count: int) -> bool:
+        if self.held + count > self.limit:
+            return False
+        self.held += count
+        return True
+
+    def give(self, count: int) -> None:
+        self.held = max(self.held - count, 0)
+
+
+class Held:
+    """One request's share of the body budget: what it takes, and gives back, whole, when it ends (release)."""
+
+    def __init__(self, budget: BodyBudget):
+        self._budget = budget
+        self.bytes = 0
+
+    def take(self, count: int) -> None:
+        """`count` more bytes held, or busy() (429) when the budget can't take them, holding nothing more."""
+        if not self._budget.take(count):
+            raise busy()
+        self.bytes += count
+
+    def give(self, count: int) -> None:
+        count = min(count, self.bytes)
+        self._budget.give(count)
+        self.bytes -= count
+
+    def release(self) -> None:
+        self.give(self.bytes)
+
+
+class _Body:
+    """A request's body as uvicorn gives it, a message at a time, counted against `max_bytes` as it comes, and, with
+    `held`, charged to the body budget beyond what the request already holds."""
+
+    def __init__(self, receive: Receive, max_bytes: int, held: Held | None = None):
+        self._receive, self._max, self._held = receive, max_bytes, held
         self._total = 0
         self._done = False
 
     async def next(self) -> bytes | None:
-        """The body's next piece, or None once it has all come. 413 past the cap; ClientGone if the client goes."""
+        """The body's next piece, or None once it has all come. 413 past the cap, 429 past the budget; ClientGone if
+        the client goes."""
         while not self._done:
             message = await self._receive()
             if message["type"] == "http.disconnect":
@@ -207,37 +285,79 @@ class _Body:
             self._done = not message.get("more_body", False)
             self._total += len(chunk)
             if self._total > self._max:
-                raise too_big(self._max)
+                raise too_big(self._max, part_way=True)
+            if self._held is not None and self._total > self._held.bytes:
+                self._held.take(self._total - self._held.bytes)
             if chunk:
                 return chunk
         return None
 
 
+class _NotJson(ValueError):
+    """NaN and the infinities, which Python reads and JSON (and llama-swap) doesn't."""
+
+
 def _not_json(constant: str) -> None:
-    """json's parse_constant: NaN and the infinities, which Python reads and JSON (and llama-swap) doesn't."""
-    raise ValueError("a constant JSON doesn't have")
+    raise _NotJson
 
 
-async def read_json(receive: Receive, *, max_bytes: int) -> tuple[dict, bytes]:
+def json_parts(data: bytes | bytearray) -> int:
+    """The `[`, `{` and `,` outside a JSON body's strings: its arrays and objects and, near enough, the values in them.
+    A count over everything comes first, since it is cheap and can only count more; a body over MAX_JSON_PARTS by it
+    has its strings taken out and is counted again. Counted on the bytes as UTF-8, which RFC 8259 requires; in another
+    encoding the count can only be higher."""
+    count = data.count(b"[") + data.count(b"{") + data.count(b",")
+    if count <= MAX_JSON_PARTS:
+        return count
+    stripped = _JSON_STRING.sub(b'""', data)
+    return stripped.count(b"[") + stripped.count(b"{") + stripped.count(b",")
+
+
+def _compact(parsed: dict) -> bytes:
+    """`parsed` as compact JSON in UTF-8; with \\u escapes only when it holds a lone surrogate, which UTF-8 can't
+    carry. A number past a float's range, which Python reads as an infinity and JSON can't write, can't be read."""
+    try:
+        try:
+            return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+        except UnicodeEncodeError:
+            return json.dumps(parsed, separators=(",", ":"), allow_nan=False).encode()
+    except RecursionError:
+        raise _bad(TOO_DEEP) from None
+    except ValueError:
+        raise _bad(NUMBER_TOO_BIG) from None
+
+
+async def read_json(receive: Receive, *, max_bytes: int, held: Held | None = None) -> tuple[dict, bytes]:
     """The JSON body, read whole within `max_bytes` (413 past it), and the bytes to send on, re-serialized from it,
-    compact. 400 for a body that isn't a JSON object, or has no `model` that is text; an empty `model` is a name, which
-    model_not_found then words."""
-    body = _Body(receive, max_bytes)
+    compact, in UTF-8. 413 too for one with more than MAX_JSON_PARTS parts, counted before it is parsed. 400 for a body
+    that isn't JSON, is JSON the front can't read (too deep, or a number too large), isn't a JSON object, or has no
+    `model` that is text; an empty `model` is a name, which model_not_found then words. With `held`, the body is
+    charged to the body budget as it comes (429 past it), and once parsed, what is charged is the bytes sent on."""
+    body = _Body(receive, max_bytes, held)
     data = bytearray()
     while (chunk := await body.next()) is not None:
         data += chunk
+    if json_parts(data) > MAX_JSON_PARTS:
+        raise Refused(413, TOO_LARGE, TOO_MANY_PARTS_JSON)
     try:
         parsed = json.loads(data, parse_constant=_not_json)
-    except (ValueError, RecursionError):  # UnicodeDecodeError is a ValueError
+    except RecursionError:
+        raise _bad(TOO_DEEP) from None
+    except (json.JSONDecodeError, UnicodeDecodeError, _NotJson):
         raise _bad(NOT_JSON) from None
+    except ValueError:  # an integer past Python's digits limit
+        raise _bad(NUMBER_TOO_BIG) from None
+    received = len(data)
+    del data  # freed before the bytes to send on are made
     if not isinstance(parsed, dict):
         raise _bad(NOT_AN_OBJECT)
     if not isinstance(parsed.get("model"), str):
         raise _bad(NO_MODEL)
-    try:
-        sent = json.dumps(parsed, separators=(",", ":")).encode()
-    except (ValueError, RecursionError):
-        raise _bad(NOT_JSON) from None
+    if held is not None:
+        held.give(received)
+    sent = _compact(parsed)
+    if held is not None:
+        held.take(len(sent))
     return parsed, sent
 
 
@@ -383,6 +503,7 @@ class _FormReader:
         self._state = "start"
         self._parts = 0
         self._fields_size = 0
+        self._files_in_memory = 0  # the form's file parts held in memory, in all
         self._part: _Part | None = None
         self.fields: list[tuple[str, str]] = []
         self.files: list[FilePart] = []
@@ -488,17 +609,19 @@ class _FormReader:
                 raise _bad(FIELDS_TOO_BIG)
             part.data += data
             return
-        if part.file is None and len(part.data) + len(data) > self._spool_above:
+        if part.file is None and self._files_in_memory + len(data) > self._spool_above:
             fd, name = tempfile.mkstemp(prefix="upload-", dir=self._spool_dir)  # 0600, a name of its own
             part.path = Path(name)
             self.spooled.append(part.path)
             part.file = os.fdopen(fd, "wb")
             part.file.write(part.data)
+            self._files_in_memory -= len(part.data)
             part.data = bytearray()
         if part.file is not None:
             part.file.write(data)
         else:
             part.data += data
+            self._files_in_memory += len(data)
 
     def _finish(self) -> None:
         part, self._part = self._part, None
@@ -516,10 +639,10 @@ class _FormReader:
 
 async def read_form(receive: Receive, content_type: str, *, spool_dir: Path, max_bytes: int,
                     spool_above: int = SPOOL_ABOVE) -> Form:
-    """The multipart form, read as it comes within `max_bytes` (413 past it): a file part over `spool_above` goes to
-    a file in `spool_dir`, never to memory. 400 for a Content-Type that isn't multipart/form-data with a usable
-    boundary, a form that is malformed or stops early, a field that isn't UTF-8 text, too many parts or too much
-    field text, and no `model` field or two. Whatever ends it early deletes what it spooled; once it is read,
+    """The multipart form, read as it comes within `max_bytes` (413 past it): its file parts are held in memory up
+    to `spool_above` in all, and the part that would pass it, and each after, goes to a file in `spool_dir`. 400 for
+    a Content-Type that isn't multipart/form-data with a usable boundary, a form that is malformed or stops early, a
+    field that isn't UTF-8 text, too many parts or too much field text, and no `model` field or two. Whatever ends it early deletes what it spooled; once it is read,
     Form.close() does."""
     reader = _FormReader(_boundary(content_type), spool_dir, spool_above)
     body = _Body(receive, max_bytes)

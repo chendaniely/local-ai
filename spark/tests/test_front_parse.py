@@ -1,79 +1,25 @@
 """The front's parsing (website/design/phase-2a.md, Task 20): its routes, the client key from a request's headers,
-JSON bodies and multipart forms read within their caps and rebuilt, the model list and its roles, the headers that
-never go upstream, each key's caps, and the journal line. Every key, digest and name here is a stand-in; none was read
-from the box."""
+JSON bodies and multipart forms read within their caps and rebuilt, the body budget, the model list and its roles, the
+headers that never go upstream, each key's caps, and the journal line. The stand-ins are front_helpers.py's."""
 
-import hashlib
 import json
 import re
-from pathlib import Path
 
 import anyio
 import pytest
 
+from front_helpers import (BOUNDARY, CONTENT_TYPE, DIGESTS, GROUPS, KEYS, MODELS, ROOT, field, file_part, form_body,
+                           receiver)
 from spark import messages
 from spark.front import parse
-from spark.registry import load_registry, parse_keys
+from spark.registry import load_registry
 
-ROOT = Path(__file__).resolve().parents[2]
-GROUPS = load_registry(ROOT / "stack" / "models.yaml").key_groups
-KEYS = parse_keys((Path(__file__).parent / "fixtures" / "keys.yaml").read_text(), GROUPS)
-# Stand-in client keys, each with its digest as the front holds it.
-DIGESTS = {name: hashlib.sha256(key.encode()).digest() for name, key in
-           (("dan-mac", "k1"), ("agent", "k2"), ("open-webui", "k3"))}
-MODELS = [
-    {"name": "gemma-4-26b-a4b", "roles": ["small", "vision"], "label": "Gemma", "resident": True},
-    {"name": "qwen3-embedding-0.6b", "roles": ["embed"], "label": "the embeddings", "resident": True},
-    {"name": "whisper-large-v3-turbo", "roles": ["stt"], "label": "whisper", "resident": True},
-    {"name": "qwen3.8-27b", "roles": ["coder"], "label": "the coder", "resident": False},
-]
 BOUND_S = 10  # every async test's bound
-BOUNDARY = "spark-test-boundary"
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
-
-
-def receiver(chunks: list[bytes], *, gone: bool = False):
-    """receive() as uvicorn gives it: each chunk in its own message, `more_body` on all but the last; with `gone`, the
-    client goes after the chunks instead."""
-    messages_ = [{"type": "http.request", "body": chunk, "more_body": True} for chunk in chunks]
-    if gone:
-        messages_.append({"type": "http.disconnect"})
-    elif messages_:
-        messages_[-1]["more_body"] = False
-    else:
-        messages_.append({"type": "http.request", "body": b"", "more_body": False})
-
-    async def receive():
-        return messages_.pop(0)
-
-    return receive
-
-
-def form_body(parts: list[tuple[dict[str, str], bytes]], boundary: str = BOUNDARY) -> bytes:
-    """A multipart body: each part's headers, then its data."""
-    out = b""
-    for headers, data in parts:
-        out += f"--{boundary}\r\n".encode()
-        for name, value in headers.items():
-            out += f"{name}: {value}\r\n".encode()
-        out += b"\r\n" + data + b"\r\n"
-    return out + f"--{boundary}--\r\n".encode()
-
-
-def field(name: str, value: str) -> tuple[dict[str, str], bytes]:
-    return {"Content-Disposition": f'form-data; name="{name}"'}, value.encode()
-
-
-def file_part(data: bytes, name: str = "file", filename: str = "talk.wav") -> tuple[dict[str, str], bytes]:
-    return {"Content-Disposition": f'form-data; name="{name}"; filename="{filename}"',
-            "Content-Type": "audio/wav"}, data
-
-
-CONTENT_TYPE = f"multipart/form-data; boundary={BOUNDARY}"
 
 
 async def read_form(chunks, spool, content_type=CONTENT_TYPE, **kwargs):
@@ -138,8 +84,24 @@ async def test_a_json_body_is_parsed_and_reserialized_compact():
     with anyio.fail_after(BOUND_S):
         body, sent = await parse.read_json(receiver([raw[:10], raw[10:]]), max_bytes=1000)
     assert body == {"model": "coder", "x": 1, "y": [1.5, "é"]}
-    assert sent == json.dumps(json.loads(raw), separators=(",", ":")).encode()
-    assert sent == b'{"model":"coder","x":1,"y":[1.5,"\\u00e9"]}'
+    # Text outside ASCII goes on as UTF-8, never as \\u escapes, which take up to three times the bytes (the
+    # controller's ruling, at Task 20's review).
+    assert sent == json.dumps(json.loads(raw), separators=(",", ":"), ensure_ascii=False).encode()
+    assert sent == b'{"model":"coder","x":1,"y":[1.5,"\xc3\xa9"]}'
+
+
+@pytest.mark.anyio
+async def test_text_outside_ascii_goes_on_at_its_own_size():
+    emoji = "\U0001F600".encode() * 1000
+    raw = b'{"model":"coder","x":"' + emoji + b'"}'
+    with anyio.fail_after(BOUND_S):
+        _, sent = await parse.read_json(receiver([raw]), max_bytes=1 << 20)
+    assert sent == raw  # 4 bytes an emoji, as it came; \\u escapes would be 12
+    # A lone surrogate, which UTF-8 can't carry, goes on as its escape.
+    with anyio.fail_after(BOUND_S):
+        body, sent = await parse.read_json(receiver([b'{"model":"coder","x":"\\ud800\xc3\xa9"}']), max_bytes=100)
+    assert body["x"] == "\ud800é"
+    assert sent == b'{"model":"coder","x":"\\ud800\\u00e9"}'
 
 
 @pytest.mark.anyio
@@ -156,8 +118,13 @@ async def test_a_json_key_given_twice_goes_on_once():
     (b"", parse.NOT_JSON),
     (b'{"model": NaN}', parse.NOT_JSON),  # Python reads it; JSON and llama-swap don't
     (b'{"model": "x", "n": Infinity}', parse.NOT_JSON),
-    (b"[" * 100000 + b"]" * 100000, parse.NOT_JSON),  # too deep for the parser
-    (b'{"n": 1' + b"0" * 5000 + b"}", parse.NOT_JSON),  # past Python's digits limit
+    (b'{"model": "x", "n": -Infinity}', parse.NOT_JSON),
+    # JSON the front can't read: too deep for the parser, past Python's digits limit, past a float's range (which
+    # would go on as Infinity, which isn't JSON)
+    (b"[" * 100000 + b"]" * 100000, parse.TOO_DEEP),
+    (b'{"model": "x", "n": 1' + b"0" * 5000 + b"}", parse.NUMBER_TOO_BIG),
+    (b'{"model": "x", "t": 1e400}', parse.NUMBER_TOO_BIG),
+    (b'{"model": "x", "t": -1e400}', parse.NUMBER_TOO_BIG),
     (b"\xff\xfe{", parse.NOT_JSON),
     (b"[]", parse.NOT_AN_OBJECT),
     (b'"coder"', parse.NOT_AN_OBJECT),
@@ -185,7 +152,9 @@ async def test_a_json_body_over_its_cap_is_413_as_it_crosses():
     with pytest.raises(parse.Refused) as excinfo, anyio.fail_after(BOUND_S):
         await parse.read_json(receiver(chunks), max_bytes=80)
     assert refused(excinfo)[:2] == (413, "request_too_large")
-    assert "80 bytes" in excinfo.value.message
+    assert excinfo.value.message == parse.too_big(80, part_way=True).message
+    assert excinfo.value.message.endswith("80 bytes, the most the front takes at this address, so it was refused "
+                                          "part-way.")
     with anyio.fail_after(BOUND_S):  # one byte under it, read
         assert (await parse.read_json(receiver(chunks), max_bytes=84))[0]["model"] == "coder"
 
@@ -197,10 +166,36 @@ async def test_a_client_gone_while_its_body_comes_is_client_gone():
 
 
 def test_the_too_big_words_name_the_cap():
-    assert parse.too_big(200 << 20).message == ("The request is over 200 MiB, the most the front takes at this address, "
-                                                "so it wasn't read.")
+    assert parse.too_big(200 << 20).message == (
+        "The request is over 200 MiB, the most the front takes at this address, so it wasn't read.")
+    assert parse.too_big(200 << 20, part_way=True).message == (
+        "The request is over 200 MiB, the most the front takes at this address, so it was refused part-way.")
     assert "16 MiB" in parse.too_big(16 << 20).message
     assert "64 KiB" in parse.too_big(64 << 10).message
+
+
+@pytest.mark.anyio
+async def test_a_json_body_with_too_many_parts_is_refused_before_it_is_parsed():
+    # [, { and , outside strings, counted before json.loads, so a body of a million empty arrays can't take the front's
+    # memory: 16 MiB of them took ~400 MiB to parse (the controller's ruling, at Task 20's review).
+    def body(zeros: int) -> bytes:  # {, the model's comma, [, then a comma between each two zeros
+        return b'{"model":"coder","x":[' + b"0," * (zeros - 1) + b"0]}"
+
+    assert parse.json_parts(body(999_998)) == parse.MAX_JSON_PARTS
+    with anyio.fail_after(BOUND_S):
+        assert (await parse.read_json(receiver([body(999_998)]), max_bytes=16 << 20))[0]["model"] == "coder"
+    with pytest.raises(parse.Refused) as excinfo, anyio.fail_after(BOUND_S):
+        await parse.read_json(receiver([body(999_999)]), max_bytes=16 << 20)
+    assert refused(excinfo) == (413, "request_too_large", parse.TOO_MANY_PARTS_JSON)
+    lists = b'{"model":"coder","x":[' + b"[]," * 2_000_000 + b"[]]}"
+    with pytest.raises(parse.Refused) as excinfo, anyio.fail_after(BOUND_S):
+        await parse.read_json(receiver([lists]), max_bytes=16 << 20)
+    assert excinfo.value.message == parse.TOO_MANY_PARTS_JSON
+    # What is inside a string isn't a part, escaped quotes included.
+    commas = b'{"model":"coder","x":"\\"' + b",[{" * 1_000_000 + b'\\\\"}'
+    assert parse.json_parts(commas) == 2
+    with anyio.fail_after(BOUND_S):
+        assert (await parse.read_json(receiver([commas]), max_bytes=16 << 20))[0]["model"] == "coder"
 
 
 def test_declared_length():
@@ -239,6 +234,24 @@ async def test_a_part_over_the_threshold_is_spooled_and_close_deletes_it(tmp_pat
     form.close()
     assert list(tmp_path.iterdir()) == []
     form.close()  # twice is safe
+
+
+@pytest.mark.anyio
+async def test_the_spool_threshold_is_the_forms_not_each_parts(tmp_path):
+    # Small file parts held in memory come to SPOOL_ABOVE in all, not each, so 31 parts just under it can't hold
+    # 31 MiB (the controller's ruling, at Task 20's review): the first part that would take the form past it spools.
+    parts = [field("model", "stt")] + [file_part(bytes([i]) * (600 << 10), filename=f"{i}.wav") for i in range(3)]
+    form = await read_form([form_body(parts)], tmp_path)
+    kept = [part.path_or_bytes for part in form.files]
+    assert kept[0] == b"\x00" * (600 << 10)
+    assert [path.read_bytes() for path in kept[1:]] == [b"\x01" * (600 << 10), b"\x02" * (600 << 10)]
+    assert sorted(tmp_path.iterdir()) == sorted(kept[1:])
+    form.close()
+    many = [field("model", "stt")] + [file_part(b"s" * (100 << 10), filename=f"{i}.wav") for i in range(20)]
+    form = await read_form([form_body(many)], tmp_path)
+    in_memory = sum(len(part.path_or_bytes) for part in form.files if isinstance(part.path_or_bytes, bytes))
+    assert in_memory <= parse.SPOOL_ABOVE and len(list(tmp_path.iterdir())) == 10
+    form.close()
 
 
 @pytest.mark.anyio
@@ -392,6 +405,45 @@ async def test_encode_form_rebuilds_what_was_read(tmp_path):
     again.close()
 
 
+# The body budget.
+
+def test_the_budget_holds_bytes_until_they_are_given_back():
+    budget = parse.BodyBudget(100)
+    first, second = parse.Held(budget), parse.Held(budget)
+    first.take(60)
+    with pytest.raises(parse.Refused) as excinfo:
+        second.take(41)
+    assert refused(excinfo) == (429, "front_busy", parse.BUSY)
+    assert excinfo.value.body() == {"error": {"message": parse.BUSY, "code": "front_busy"}, "retry_after_s": 10}
+    assert excinfo.value.headers() == [(b"content-type", b"application/json"), (b"retry-after", b"10")]
+    assert (budget.held, second.bytes) == (60, 0)  # a refused take holds nothing
+    second.take(40)
+    first.give(100)  # never more than it holds
+    assert (budget.held, first.bytes) == (40, 0)
+    second.release()
+    second.release()
+    assert budget.held == 0
+
+
+@pytest.mark.anyio
+async def test_a_json_body_is_charged_as_it_comes_then_as_it_goes_on():
+    budget = parse.BodyBudget(1000)
+    held = parse.Held(budget)
+    raw = b'{"model":"coder",   "x":   "' + b"a" * 100 + b'"}'
+    with anyio.fail_after(BOUND_S):
+        _, sent = await parse.read_json(receiver([raw[:50], raw[50:]]), max_bytes=1000, held=held)
+    assert held.bytes == budget.held == len(sent) < len(raw)  # the bytes held now are what goes on
+    held.release()
+    # A body that would take the budget past its limit is refused as it comes, holding nothing more.
+    small = parse.BodyBudget(100)
+    held = parse.Held(small)
+    with pytest.raises(parse.Refused) as excinfo, anyio.fail_after(BOUND_S):
+        await parse.read_json(receiver([raw[:60], raw[60:]]), max_bytes=1000, held=held)
+    assert excinfo.value.status == 429 and small.held == held.bytes == 60
+    held.release()
+    assert small.held == 0
+
+
 # The model list.
 
 def test_a_name_or_a_role_resolves():
@@ -441,7 +493,8 @@ def test_clean_headers_drops_credentials_framing_and_hop_by_hop():
                (b"connection", b"keep-alive, x-gone"), (b"keep-alive", b"timeout=5"), (b"te", b"trailers"),
                (b"trailer", b"x"), (b"upgrade", b"websocket"), (b"proxy-connection", b"keep-alive"),
                (b"x-gone", b"named by connection"), (b"x-custom", b"1"), (b"accept", b"text/event-stream"),
-               (b"user-agent", b"pi")]
+               (b"x-forwarded-for", b"203.0.113.9"), (b"x-real-ip", b"203.0.113.9"),
+               (b"forwarded", b"for=203.0.113.9"), (b"user-agent", b"pi")]
     assert parse.clean_headers(headers) == [(b"x-custom", b"1"), (b"accept", b"text/event-stream"),
                                             (b"user-agent", b"pi")]
 

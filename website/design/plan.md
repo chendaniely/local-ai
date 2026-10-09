@@ -179,7 +179,10 @@ Four services, three sockets that systemd holds, and a notifier:
   `/v1/responses`, `/v1/messages`, `/v1/embeddings` and `/v1/audio/transcriptions`, and answers
   its own `GET /health`. Every other path gets a 404 that says why: llama-swap's admin routes,
   `/unload`, `/api/*` (its unload, cancel and profile calls), `/logs*`, `/upstream/*`, `/running`,
-  `/ui` and `/metrics`, never reach llama-swap through it. It reads the model from the JSON body,
+  `/ui` and `/metrics`, never reach llama-swap through it. *(Added 2026-10-08, the controller's
+  ruling, at the implementation plan's Task 20 review: the key comes first. A request with no key,
+  or one the front doesn't know, gets its 401 before any route check, so a caller the front
+  doesn't know learns nothing of its routes; the 404 is for the keys it knows.)* It reads the model from the JSON body,
   or from a multipart form (a whisper upload), and resolves the registry's role aliases.
   - **Its limits** (from the council's security review): `MemoryMax=` on its unit, so an
     out-of-memory kill stays inside it; bodies up to about 200 MB, enough for the ~170 MB uploads
@@ -3387,6 +3390,16 @@ Each item gets its own design pass when its turn comes.
     caller went is always settled, so make-room is never left refusing every run.
   - After an unplanned restart, the words say each resident's one automatic reload this hour is
     used, never that it reloaded; a hold the gate put back after a reboot says so.
+- **2026-10-08** — Phase 2a's Task 20 review, the controller's rulings. A dated note is in *The
+  front and the gate* (the route policy), and dated notes in the implementation plan's Tasks 20,
+  21 and 22.
+  - The front checks the key before the route: an unknown key gets 401 before any route check.
+  - The front's memory is bounded within `MemoryMax=512M`, not "well inside" it as first claimed:
+    one body budget for the whole front (192 MiB), a JSON body's parts counted before it is parsed
+    (at most 1,000,000), a JSON body sent on as UTF-8, and a form's in-memory threshold that is
+    the form's. The figures were measured on the Spark.
+  - Task 21 caps the uploads forwarded at once, since llama-swap v257 reads every POST body whole
+    into memory.
 
 ## Sources
 

@@ -312,7 +312,10 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 - **The values the spec left open** (the controller's ruling, 2026-10-07; recorded, changeable):
   waiting requests per key, 8 for each of Dan's keys and 4 for `agent`'s · open connections per
   key, 32 · sessions per uid, 8, each gone 12 h after its last heartbeat or when its process exits
-  · the front's `MemoryMax=512M` · bodies up to 200 MiB, spooled to disk above 1 MiB ·
+  · the front's `MemoryMax=512M` · bodies up to 200 MiB, spooled to disk above 1 MiB (*added
+  2026-10-08, the controller's rulings, at Task 20's review:* 1 MiB of a form's file parts in
+  memory, in all; the front's body budget, 192 MiB, for every body it holds in memory; a JSON body's
+  parts, 1,000,000) ·
   reading a request's headers, 10 s · the gate's request size cap, 64 KiB, and its per-request
   timeout, 5 s, but for the routes that wait: an admission call is held for its key's wait,
   `/v1/load` and `/v1/pin` for the load call's 200 s, and `/v1/unload` and `/v1/make-room` for as
@@ -5115,11 +5118,24 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
   give the hold back.
 - `parse.read_json(receive, *, max_bytes: int) -> tuple[dict, bytes]` — the body parsed, and the
   bytes to send on, re-serialized from it (`json.dumps`, compact); 400 for a body that isn't a
-  JSON object or has no string `model`.
+  JSON object or has no string `model`. *(Added 2026-10-08, the controller's rulings, at Task 20's
+  review:)*
+  - It re-serializes with `ensure_ascii=False`, falling back to `True` only for a lone surrogate,
+    and with `allow_nan=False`. An escaped emoji took three times its UTF-8 bytes, and `1e400` went
+    on as `Infinity`, which isn't JSON.
+  - It counts the body's `[`, `{` and `,` outside its strings before `json.loads`
+    (`parse.json_parts`), and refuses one with more than `MAX_JSON_PARTS`, 1,000,000, with a 413.
+    16 MiB of `[[],[],…]` took ~400 MiB to parse.
+  - A body that is JSON the front can't read reads *can't be read: …*, never *isn't JSON*: one too
+    deep, or with a number too large.
+  - A 413 that comes mid-body says *was refused part-way*, not *wasn't read*.
+  - It takes `held=`, the request's share of the front's body budget (`parse.BodyBudget`, below).
 - `parse.read_form(receive, content_type: str, *, spool_dir: Path, max_bytes: int, spool_above:
   int = 1 MiB) -> Form` — `Form(model: str, fields: list[tuple[str, str]], files:
   list[FilePart(name, filename, content_type, path_or_bytes)])`; a part over `spool_above` goes to
-  a file in `spool_dir` (the unit's `PrivateTmp=` `/tmp`), never memory; two `model` fields → 400;
+  a file in `spool_dir` (the unit's `PrivateTmp=` `/tmp`), never memory (*corrected 2026-10-08, the
+  controller's ruling, at Task 20's review:* `spool_above` is the form's file parts held in memory,
+  in all, so the part that would pass it, and each after, goes to a file); two `model` fields → 400;
   `parse.encode_form(form) -> tuple[str, AsyncIterator[bytes]]` rebuilds it for upstream;
   `Form.close()` deletes every spooled file.
 - `parse.ModelList` — the front's current model list, `[{name, roles, label, resident}]`: the
@@ -5128,7 +5144,9 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
   models: ModelList) -> ModelEntry | None` — a model's name or one of its roles.
 - `parse.clean_headers(headers) -> list[tuple[bytes, bytes]]` — drops `authorization`,
   `x-api-key`, `cookie`, `proxy-authorization`, `host`, `content-length`, `transfer-encoding` and
-  the hop-by-hop headers; `parse.both_lengths(headers) -> bool` — both `Content-Length` and
+  the hop-by-hop headers (*added 2026-10-08, the controller's ruling, at Task 20's review:* and
+  `x-forwarded-for`, `x-real-ip` and `forwarded`, since v257 puts them in its log lines and its
+  in-flight record); `parse.both_lengths(headers) -> bool` — both `Content-Length` and
   `Transfer-Encoding` present (400).
 - `parse.KeyCaps(keys, groups)` — per key, by its group (Task 4), requests waiting
   (`max_waiting`) and requests open, waiting or answering (`max_open`): `enter_open(key) -> bool`,
@@ -5138,13 +5156,35 @@ git commit -m "feat(spark): 🤖 spark gate: the status and control sockets, eac
 - `app.FrontApp(models: ModelList, keys, groups, digests, *, upstream, gate, caps, log)` — the ASGI
   app. A form's body,
   spooled, is capped at 200 MiB (`MAX_BODY_BYTES = 200 * 2**20`); a JSON body, parsed in memory, at
-  16 MiB (`MAX_JSON_BYTES = 16 * 2**20`), so a few at once stay well inside `MemoryMax=512M`. At
-  start it refuses, naming the key and never a digest, a digest whose name the private key list
+  16 MiB (`MAX_JSON_BYTES = 16 * 2**20`)~~, so a few at once stay well inside `MemoryMax=512M`~~.
+  *(Corrected 2026-10-08, the controller's rulings, at Task 20's review: that claim didn't hold.
+  One 16 MiB body of empty arrays took ~400 MiB to parse, and the caps let 96 bodies be held at
+  once. Now:)*
+  - Every body held in memory is charged to one budget for the whole front, `BODY_BUDGET_BYTES =
+    192 * 2**20` (`parse.BodyBudget`, a `parse.Held` per request):
+    - a JSON body by its `Content-Length` before any of it is read, or as it comes, then as the
+      bytes it goes on as;
+    - a form by `parse.FORM_IN_MEMORY`, what it may hold in memory.
+  - A request that would pass the budget gets 429 `front_busy`, `Retry-After: 10`: *The front is
+    busy holding other large requests; try again in a moment.* It gives back what it holds when
+    it ends, however it ends.
+  - A form's in-memory threshold, `SPOOL_ABOVE`, is the form's, not each part's.
+  - **Measured on the Spark** (Python 3.12, the front's imports loaded at 33 MiB). Parsing is
+    synchronous, so one parse at a time.
+    - The worst parse grew the process by 192 MiB: a 16 MiB string of ASCII with one emoji, which
+      Python holds at 4 bytes a character.
+    - A million parts took at most 150 MiB: 500,000 objects, each with a key of its own.
+    - So the front stays under about 420 MiB (33 + 192 + 192): within `MemoryMax=512M`, not well
+      inside it.
+
+  At start it refuses, naming the key and never a digest, a digest whose name the private key list
   (Task 4) lacks and a listed key with no digest. The front's own answers: `GET /health` → 200
   `{"status": "ok"}` with no key needed; an unlisted route → 404 `route_not_served`; no key or an
   unknown one → 401, `{"error": {"message": messages.UNKNOWN_KEY, "code": "invalid_api_key"}}`; an
   unknown model → 404 `model_not_found`; over a cap → 429 `too_many_requests`; a body over the cap →
-  413; anything it can't parse → 400; never a traceback to the client. (Task 21 forwards; Task 22
+  413; anything it can't parse → 400; never a traceback to the client (*added 2026-10-08, the
+  controller's ruling, at Task 20's review:* its own error is a 500 with `x-should-retry: false`,
+  since OpenAI's SDKs retry any 5xx). (Task 21 forwards; Task 22
   asks the gate. Here `upstream` and `gate` are stand-ins.)
 
 **Tests** (`spark/tests/test_front_parse.py` and `spark/tests/test_front_app.py`; the app called as
@@ -5153,7 +5193,10 @@ ASGI with a recording upstream stand-in, unless named):
 - `test_only_the_listed_routes_go_through_and_the_rest_get_route_not_served` — parametrized: `GET
   /unload`, `POST /api/models/unload/x`, `POST /api/inflight/1/cancel`, `GET /logs/stream`, `GET
   /upstream/x/health`, `GET /running`, `GET /ui`, `GET /metrics`, `GET /v1/chat/completions`, `POST
-  /v1/models` → 404 with Task 6's `route_not_served` text; the upstream saw nothing.
+  /v1/models` → 404 with Task 6's `route_not_served` text; the upstream saw nothing. *(Added
+  2026-10-08, the controller's ruling, at Task 20's review: and traversal, doubled-slash, case and
+  lower-case-method variants, such as `GET /v1/../logs`, `GET /v1/x/../models`, `POST
+  /v1//chat/completions` and `get /v1/models`.)*
 - `test_health_is_answered_by_the_front_itself` — `GET /health`, no key → 200 `{"status": "ok"}`;
   nothing upstream.
 - `test_an_unknown_key_is_refused_and_never_logged` — `Bearer nope` → 401 with the ruling's text
@@ -5199,6 +5242,16 @@ ASGI with a recording upstream stand-in, unless named):
   `make_protocol(peer_cred=False, header_timeout_s=0.5)`: a POST with an unknown key, its
   `Content-Length` 1000, gets its 401 before any body byte is sent; with the body then trickled a
   byte every 0.1 s, the connection is closed within the deadline.
+- *(Added 2026-10-08, the controller's rulings, at Task 20's review:)* a test for each memory
+  bound, the shared test helpers in `spark/tests/front_helpers.py` and
+  `spark/tests/uvicorn_helpers.py`:
+  - `test_text_outside_ascii_goes_on_at_its_own_size`: UTF-8, and a lone surrogate escaped;
+  - `test_a_json_body_with_too_many_parts_is_refused_before_it_is_parsed`;
+  - `test_the_spool_threshold_is_the_forms_not_each_parts`;
+  - `test_a_body_past_the_fronts_budget_is_refused_busy`;
+  - `test_the_budget_is_shared_by_every_request_and_released_however_each_ends`, a cancel among
+    them;
+  - `1e400` and the *can't be read* words in the 400 test's rows.
 
 **Steps:**
 
@@ -5265,6 +5318,12 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
     connection that breaks mid-stream.
   - Its journal line says `cut`, and the count goes down as on every other way out.
 - llama-swap's 429 `concurrency_limit` → the client's 429, its `Retry-After`, Task 6's words.
+- *(Added 2026-10-08, the controller's ruling, at Task 20's review:)* **Cap the uploads forwarded
+  at once.** v257 reads every POST body whole into memory, in its middleware, before its per-model
+  limit applies (`internal/swaputil/http.go:542`, read at the review). So each 200 MiB upload the
+  front forwards costs llama-swap about 200 MiB of the unified pool, and the front's 32 open per
+  key would let up to 96 through. Task 21 adds a small front-wide cap on uploads forwarded at
+  once, refused past it in Task 6's voice, with its test.
 - `FRONT_MODULES: frozenset[str]`, in `spark/front/__init__.py`, which imports nothing, so `apply`
   (Task 31) reads it without importing uvicorn — exactly the `spark` modules the front imports at
   start, all of them before it serves: `spark`, `spark.paths`, `spark.registry`,
@@ -5431,6 +5490,14 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
       its requests in flight finish, then `unloaded`; for one `stopping` or gone, `unloaded`, which
       releases the hold. The front never undrains on its own, and the sent-unload rule (Task 16)
       holds. Its test: a held model released by `unloaded` after the gate's damaged start.
+- *(Added 2026-10-08, the controller's rulings, at Task 20's review:)*
+  - **A resend rebuilds the form.** `parse.encode_form`'s body iterator can be used only once. So
+    "forwarded again from the held body" (llama-swap's 500 `exited prematurely`, a refused
+    connection) calls `encode_form(request.form)` again for a form, which it can, since the spooled
+    files live until the request ends. A JSON body's bytes are held, and can go again as they are.
+  - **One request id for each admit.** Task 20's app makes a request id for each admit
+    (`app.py`, `_wait_for_load`). GateLink keeps that id when it asks a restarted gate again, so
+    the gate takes the re-ask as the same request.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
   apply holds again: every new request is held, as for a draining model; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through

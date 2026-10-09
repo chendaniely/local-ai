@@ -13,17 +13,32 @@ doesn't come in time.
 4. Both Content-Length and Transfer-Encoding: 400.
 5. **The key's open cap** (parse.KeyCaps' `max_open`): past it, 429 `too_many_requests`, the body unread.
 6. **The body**, by its Content-Length before any is read, then as it comes: on `/v1/audio/transcriptions` a multipart
-   form, its files spooled to disk past parse.SPOOL_ABOVE, at most MAX_BODY_BYTES; anywhere else JSON, read in memory,
-   at most MAX_JSON_BYTES, so a few at once stay well inside the unit's MemoryMax=512M. 413 past the cap, 400 for what
-   can't be parsed. A spooled file is deleted when the request ends, however it ends.
+   form, its file parts spooled to disk past parse.SPOOL_ABOVE for the form, at most MAX_BODY_BYTES; anywhere else
+   JSON, read in memory, at most MAX_JSON_BYTES and parse.MAX_JSON_PARTS parts. 413 past a cap, 400 for what can't be
+   parsed. A spooled file is deleted when the request ends, however it ends.
+   - **Memory** (the controller's rulings, at Task 20's review). Every body held in memory is charged to one budget
+     for the whole front, BODY_BUDGET_BYTES (parse.BodyBudget). A JSON body is charged by its Content-Length before
+     any of it is read, or as it comes, and then as the bytes it goes on as. A form is charged parse.FORM_IN_MEMORY,
+     what it may hold in memory. A request that would pass the budget gets 429 `front_busy`, and gives back what it
+     holds when it ends, however it ends.
+   - **What that bounds, measured on the Spark at Task 20's review.** Parsing is synchronous, so at most one body is
+     parsed at a time.
+     - The worst parse measured grew the process by 192 MiB at its peak, the bytes the budget counts for it included:
+       a 16 MiB string of ASCII with one emoji, which Python then holds at 4 bytes a character.
+     - A million parts took at most 150 MiB (500,000 objects, each with a key of its own), and a body past the cap
+       48 MiB, to refuse it.
+     - The process held 33 MiB before any request.
+     So the front stays under about 420 MiB (33 + 192 + 192): within the unit's MemoryMax=512M, though not "well
+     inside" it, as this first said.
 7. **The model**, by its name or one of its roles, in the current model list (parse.ModelList): 404
    `model_not_found` naming the models, on-demand first, then the residents, each in the list's order.
 8. **A model not loaded** waits for the gate's admission, within the key's waiting cap (429 past it), its deadline
    when the front received the request plus the key's wait; the gate's refusal goes to the client as the gate words
    it, with its status and headers.
 9. **Forwarded, rebuilt**: to the route's own path, without the query; the client's headers less its credentials,
-   its framing and the hop-by-hop ones (parse.clean_headers), with the front's own Content-Type for the body it
-   rebuilt: the JSON re-serialized, the form re-encoded. Task 21's Upstream adds the internal key.
+   its framing, the hop-by-hop ones and the addresses it may claim (parse.clean_headers), with the front's own
+   Content-Type for the body it rebuilt: the JSON re-serialized, the form re-encoded. Task 21's Upstream adds the
+   internal key.
 
 **At start**, `spark front` (Task 21) reads the private key list and the key digests from their credentials
 (read_keys), and FrontApp refuses to start, naming the key, when the two disagree (check_keys).
@@ -31,8 +46,8 @@ doesn't come in time.
 Every refusal of the front's own is in the asking key's words (refusal()): its label, and its group's `words`, so
 `model_not_found`'s next step is the Mac's `make clients` for Dan's pi and agent's own command for agent's (Task 6).
 Nothing reaches a client as a traceback: an error of the front's own is logged by where it broke, never its text,
-which code can build from a request, and answered 500 in words. Each request but `/health` leaves one journal line
-(parse.journal_line): its key's name, its model's, its status and its duration.
+which code can build from a request, and answered 500 in words, with `x-should-retry: false`. Each request but
+`/health` leaves one journal line (parse.journal_line): its key's name, its model's, its status and its duration.
 
 The stand-ins this task's tests give, and the calls the app makes on them:
 - `upstream` (Task 21's Upstream): `await forward(method, path, headers, body, key)`, `body` None, bytes or an async
@@ -66,6 +81,7 @@ KEYS_CREDENTIAL = "keys"  # the private key list, /etc/local-ai/keys.yaml, by Lo
 DIGESTS_CREDENTIAL = "client-keys"  # the client keys' digests, `<key name> <sha256 hex>` lines
 MAX_BODY_BYTES = 200 * 2**20  # a form's body, spooled: the ~170 MB uploads *Speech* allows
 MAX_JSON_BYTES = 16 * 2**20  # a JSON body, parsed in memory
+BODY_BUDGET_BYTES = 192 * 2**20  # the bodies held in memory, all requests together (the controller's ruling)
 SPOOL_DIR = Path("/tmp")  # the unit's PrivateTmp=, on disk, not tmpfs
 UNKNOWN_KEY_CODE = "invalid_api_key"
 BROKE_CODE = "front_error"
@@ -74,6 +90,9 @@ BROKE = {"dan": "The front couldn't answer: it hit an error of its own. On the S
          "agent": "The front couldn't answer: it hit an error of its own. Dan can see why with `make logs s=front` on "
                   "the Spark."}
 JSON = (b"content-type", b"application/json")
+# The 500's: OpenAI's SDKs retry any 5xx unless told, so a deterministic error of the front's would be sent again (the
+# controller's ruling, at Task 20's review). pi's own retry still matches the status.
+NO_RETRY = (b"x-should-retry", b"false")
 _log = logging.getLogger(__name__)
 
 
@@ -122,6 +141,7 @@ class _Request:
     """One request as the front has it so far, for its answer and its journal line."""
 
     started: float  # when the front received it, by its clock: Unix seconds, as the gate's deadlines are
+    held: parse.Held  # its share of the body budget, given back when it ends
     route: tuple[str, str] | None = None  # set once it is one of parse.ROUTES
     key: str | None = None  # the key's name, once known
     model: str | None = None  # the model's registry name, once resolved
@@ -135,12 +155,14 @@ class FrontApp:
 
     def __init__(self, models: parse.ModelList, keys: dict[str, ClientKey], groups: dict[str, KeyGroup],
                  digests: dict[str, bytes], *, upstream: Any, gate: Any, caps: parse.KeyCaps,
-                 log: Callable[[str], None], clock: Callable[[], float] = time.time, spool_dir: Path = SPOOL_DIR):
+                 log: Callable[[str], None], clock: Callable[[], float] = time.time, spool_dir: Path = SPOOL_DIR,
+                 budget: parse.BodyBudget | None = None):
         check_keys(keys, digests)
         self.models = models
         self.keys, self.groups, self.digests = keys, groups, digests
         self.upstream, self.gate, self.caps = upstream, gate, caps
         self.log, self.clock, self.spool_dir = log, clock, spool_dir
+        self.budget = parse.BodyBudget(BODY_BUDGET_BYTES) if budget is None else budget
 
     def refusal(self, code: str, key: str, **fields: Any) -> messages.Refusal:
         """The front's own refusal `code` for `key`, in its words: its label, and its group's `words`,
@@ -158,7 +180,7 @@ class FrontApp:
         if (scope["method"], scope["path"]) == parse.HEALTH:
             await _answer(send, 200, {"status": "ok"})
             return
-        request = _Request(started=self.clock())
+        request = _Request(started=self.clock(), held=parse.Held(self.budget))
         try:
             await self._serve(scope, receive, send, request)
         except Exception as err:
@@ -167,8 +189,10 @@ class FrontApp:
             if request.status is None:
                 words = self.groups[self.keys[request.key].group].words if request.key else "dan"
                 with contextlib.suppress(Exception):  # a client already gone
-                    await self._send(send, request, 500, {"error": {"message": BROKE[words], "code": BROKE_CODE}})
+                    await self._send(send, request, 500, {"error": {"message": BROKE[words], "code": BROKE_CODE}},
+                                     [JSON, NO_RETRY])
         finally:
+            request.held.release()
             if request.form is not None:
                 request.form.close()
             self.log(parse.journal_line(request.key or "-", request.model or "-",
@@ -236,7 +260,7 @@ class FrontApp:
 
     async def _read(self, path: str, headers: parse.Headers, receive, request: _Request):
         """The body: (the model it names, the body to send on, its Content-Type). Refused by its Content-Length
-        before any of it is read, then as parse reads it."""
+        before any of it is read, by its cap or the body budget, then as parse reads it."""
         content_type = next((value for name, value in headers if name == b"content-type"), b"").decode("latin-1")
         is_form = path in parse.FORM_PATHS
         limit = MAX_BODY_BYTES if is_form else MAX_JSON_BYTES
@@ -244,12 +268,15 @@ class FrontApp:
         if length is not None and length > limit:
             raise parse.too_big(limit)
         if is_form:
+            request.held.take(parse.FORM_IN_MEMORY)
             request.form = await parse.read_form(receive, content_type, spool_dir=self.spool_dir, max_bytes=limit)
             kind, body = parse.encode_form(request.form)
             return request.form.model, body, kind.encode()
         if content_type.split(";", 1)[0].strip().lower().startswith("multipart/"):
             raise parse.Refused(400, parse.BAD_REQUEST, parse.FORM_NOT_TAKEN)
-        parsed, sent = await parse.read_json(receive, max_bytes=limit)
+        if length is not None:
+            request.held.take(length)  # before any of it is read
+        parsed, sent = await parse.read_json(receive, max_bytes=limit, held=request.held)
         return parsed["model"], sent, JSON[1]
 
     async def _wait_for_load(self, model: str, request: _Request) -> messages.Refusal | None:
