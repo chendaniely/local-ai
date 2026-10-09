@@ -54,20 +54,27 @@ def opencode_provider(registry: Registry, base_url: str, key_env: str) -> dict:
 
 
 def hermes_provider(registry: Registry, base_url: str, key_env: str) -> dict:
-    """Hermes config.yaml entry for a custom OpenAI-compatible provider."""
-    # Hermes expects the provider to be defined in config.yaml with base_url and api_key from env
-    # We'll output the provider config block and the model selection
+    """Hermes config.yaml entry for a custom OpenAI-compatible provider.
+    
+    Hermes expects named custom providers under providers: with:
+    - api (not api_base)
+    - key_env (not api_key with ${})
+    - api_mode: chat_completions for OpenAI-compatible
+    """
     chat_models = [m.name for m in registry.models.values() if m.capability == "chat"]
     default_model = chat_models[0] if chat_models else ""
     return {
         "model": {
-            "provider": "spark",
+            "provider": "custom",
             "default": default_model,
+            "base_url": base_url,
+            "key_env": key_env,
         },
         "providers": {
             "spark": {
-                "api_base": base_url,
-                "api_key": "${" + key_env + "}",
+                "api": base_url,
+                "key_env": key_env,
+                "api_mode": "chat_completions",
                 "models": {name: {} for name in chat_models},
             }
         }
@@ -158,9 +165,9 @@ def merge_hermes(path: Path, provider: dict) -> Path | None:
         raise ClientsError(f"Hermes config {path} won't load: {err}")
     backup = path.with_suffix(".yaml.bak")
     shutil.copy2(path, backup)
-    # Merge model config
-    data.setdefault("model", {}).update(provider.get("model", {}))
-    # Merge providers
+    # Merge model config (replace entirely - it's the main model config)
+    data["model"] = provider.get("model", data.get("model", {}))
+    # Merge providers (update/add the spark provider)
     data.setdefault("providers", {}).update(provider.get("providers", {}))
     path.write_text(yaml.safe_dump(data, sort_keys=False))
     return backup
