@@ -7,9 +7,14 @@ import json
 import shutil
 from pathlib import Path
 
+import yaml
+
 from spark.registry import Registry, load_registry
 
 PI_MODELS = Path("~/.pi/agent/models.json")  # expanded when run_pi runs, under the HOME it runs with
+OPENCODE_CONFIG = Path("~/.config/opencode/opencode.json")
+HERMES_CONFIG = Path("~/.hermes/config.yaml")
+HERMES_ENV = Path("~/.hermes/.env")
 COMPAT = {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": False,
           "supportsUsageInStreaming": True, "supportsStrictMode": False, "maxTokensField": "max_tokens"}
 
@@ -25,6 +30,52 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
                        "contextWindow": window, "maxTokens": min(32768, window // 2)})
     return {"baseUrl": base_url, "api": "openai-completions", "apiKey": "${" + key_env + "}",
             "compat": dict(COMPAT), "models": models}
+
+
+def opencode_provider(registry: Registry, base_url: str, key_env: str) -> dict:
+    """OpenCode custom provider config — OpenAI-compatible endpoint."""
+    models = {}
+    for m in registry.models.values():
+        if m.capability != "chat":
+            continue
+        models[m.name] = {}
+    return {
+        "provider": {
+            "spark": {
+                "models": models,
+                "options": {
+                    "apiKey": "{env:" + key_env + "}",
+                    "baseURL": base_url,
+                }
+            }
+        }
+    }
+
+
+def hermes_provider(registry: Registry, base_url: str, key_env: str) -> dict:
+    """Hermes config.yaml entry for a custom OpenAI-compatible provider."""
+    # Hermes expects the provider to be defined in config.yaml with base_url and api_key from env
+    # We'll output the provider config block and the model selection
+    chat_models = [m.name for m in registry.models.values() if m.capability == "chat"]
+    default_model = chat_models[0] if chat_models else ""
+    return {
+        "model": {
+            "provider": "spark",
+            "default": default_model,
+        },
+        "providers": {
+            "spark": {
+                "api_base": base_url,
+                "api_key": "${" + key_env + "}",
+                "models": {name: {} for name in chat_models},
+            }
+        }
+    }
+
+
+def hermes_env(key_env: str) -> str:
+    """Generate the .env entry for Hermes."""
+    return f"{key_env}=your-llama-swap-key-here\n"
 
 
 class ClientsError(ValueError):
@@ -76,15 +127,88 @@ def merge_pi(path: Path, provider: dict) -> Path | None:
     return backup
 
 
+def merge_opencode(path: Path, provider: dict) -> Path | None:
+    """Merge the Spark provider into OpenCode's config, preserving existing providers."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(json.dumps(provider, indent=2) + "\n")
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError, RecursionError) as err:
+        raise ClientsError(f"OpenCode config {path} won't load: {err}")
+    backup = path.with_suffix(".json.bak")
+    shutil.copy2(path, backup)
+    # Deep merge the provider object
+    existing = data.get("provider", {})
+    existing.setdefault("spark", provider["provider"]["spark"])
+    data["provider"] = existing
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return backup
+
+
+def merge_hermes(path: Path, provider: dict) -> Path | None:
+    """Merge the Spark provider into Hermes config.yaml, preserving existing config."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(yaml.safe_dump(provider, sort_keys=False))
+        return None
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except (OSError, ValueError, yaml.YAMLError) as err:
+        raise ClientsError(f"Hermes config {path} won't load: {err}")
+    backup = path.with_suffix(".yaml.bak")
+    shutil.copy2(path, backup)
+    # Merge model config
+    data.setdefault("model", {}).update(provider.get("model", {}))
+    # Merge providers
+    data.setdefault("providers", {}).update(provider.get("providers", {}))
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return backup
+
+
+def write_hermes_env(path: Path, env_line: str) -> Path | None:
+    """Write/append the API key to Hermes .env file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(env_line)
+        return None
+    # Check if key already exists
+    content = path.read_text()
+    key_name = env_line.split("=")[0]
+    if key_name in content:
+        return None  # already set, don't overwrite
+    backup = path.with_suffix(".env.bak")
+    shutil.copy2(path, backup)
+    with path.open("a") as f:
+        f.write(env_line)
+    return backup
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser("clients", help="client configs")
     sub = p.add_subparsers(dest="clients_command", required=True)
+
     pi = sub.add_parser("pi", help="the Spark provider for pi")
     pi.add_argument("--write", action="store_true", help=f"merge it into {PI_MODELS}")
     pi.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
     pi.add_argument("--key-env", default="SPARK_API_KEY")
     pi.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
     pi.set_defaults(func=run_pi)
+
+    opencode = sub.add_parser("opencode", help="the Spark provider for OpenCode")
+    opencode.add_argument("--write", action="store_true", help=f"merge it into {OPENCODE_CONFIG}")
+    opencode.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
+    opencode.add_argument("--key-env", default="SPARK_API_KEY")
+    opencode.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
+    opencode.set_defaults(func=run_opencode)
+
+    hermes = sub.add_parser("hermes", help="the Spark provider for Hermes")
+    hermes.add_argument("--write", action="store_true", help=f"merge it into {HERMES_CONFIG} and {HERMES_ENV}")
+    hermes.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
+    hermes.add_argument("--key-env", default="SPARK_API_KEY")
+    hermes.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
+    hermes.set_defaults(func=run_hermes)
 
 
 def run_pi(args: argparse.Namespace) -> int:
@@ -96,4 +220,41 @@ def run_pi(args: argparse.Namespace) -> int:
     backup = merge_pi(path, provider)
     kept = f"the previous file is {backup}" if backup else "there was no previous file"
     print(f"clients: wrote the 'spark' provider to {path} ({kept})")
+    return 0
+
+
+def run_opencode(args: argparse.Namespace) -> int:
+    provider = opencode_provider(load_registry(args.registry), args.base_url, args.key_env)
+    if not args.write:
+        print(json.dumps(provider, indent=2))
+        return 0
+    path = OPENCODE_CONFIG.expanduser()
+    backup = merge_opencode(path, provider)
+    kept = f"the previous file is {backup}" if backup else "there was no previous file"
+    print(f"clients: wrote the 'spark' provider to {path} ({kept})")
+    return 0
+
+
+def run_hermes(args: argparse.Namespace) -> int:
+    provider = hermes_provider(load_registry(args.registry), args.base_url, args.key_env)
+    env_line = hermes_env(args.key_env)
+    if not args.write:
+        print(yaml.safe_dump(provider, sort_keys=False))
+        print(f"# Add to {HERMES_ENV}:")
+        print(env_line)
+        return 0
+    config_path = HERMES_CONFIG.expanduser()
+    env_path = HERMES_ENV.expanduser()
+    config_backup = merge_hermes(config_path, provider)
+    env_backup = write_hermes_env(env_path, env_line)
+    parts = []
+    if config_backup:
+        parts.append(f"config backed up to {config_backup}")
+    else:
+        parts.append("new config")
+    if env_backup:
+        parts.append(f".env backed up to {env_backup}")
+    else:
+        parts.append(".env updated (or key already set)")
+    print(f"clients: wrote the 'spark' provider to {config_path} and {env_path} ({', '.join(parts)})")
     return 0
