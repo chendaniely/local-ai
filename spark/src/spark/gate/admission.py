@@ -155,6 +155,19 @@ class Admitted:
     seconds: float | None  # the load's, from its ticket to ready; None for a model loaded already
 
 
+@dataclass(frozen=True)
+class StartingLoad:
+    """A load under way, in the shape the activity record and the brake's events take it (Task 18; the controller's
+    ruling at Task 15): the footprint rule 9 admitted, when the load began (its ticket's issue; for one a restarted
+    gate found starting, launch's start from its `started/` record, once read), and MemAvailable when it was admitted.
+    None where the gate doesn't know it: a found load's MemAvailable at admission is only in a record an engine could
+    have written, so it isn't taken from there."""
+
+    admitted_gib: float
+    started_at: float | None
+    available_at_start: float | None
+
+
 def privileges(req: AdmitRequest, registry: Registry) -> Privileges:
     """A key's group's; Dan's commands get the `dan` group's; the gate's reloads, RELOAD."""
     if req.kind == "reload":
@@ -386,6 +399,25 @@ class Admitter:
     def starting_gib(self) -> Decimal:
         """The footprints of the models still starting."""
         return sum((_gib(r.footprint_gib) for r in self.state.models.values() if r.state == "starting"), Decimal(0))
+
+    def has_load(self, name: str) -> bool:
+        """Whether a load of the admitter's holds `name`, a ticket's watch among them: that model's record is the
+        admitter's to settle, never the core's (Task 18)."""
+        return name in self._loads
+
+    def starting_loads(self) -> dict[str, StartingLoad]:
+        """Each load under way, from the moment its ticket is issued, with its ticket's figures (Task 18's activity
+        record and the brake's `starts`). A ticket's watch has shown no start, and isn't one."""
+        return {name: StartingLoad(float(load.footprint),
+                                   load.issued_at if load.issued_at is not None else load.started_at,
+                                   load.available_at)
+                for name, load in self._loads.items() if load.phase != "watching"}
+
+    def held_gib(self, name: str) -> Decimal | None:
+        """What the loaded model `name` holds now, as *owed* reads it: its load's fall, plus its engine's RssAnon
+        growth where the registry counts it; a reading that can't be taken credits no growth. None with no record."""
+        record = self.state.models.get(name)
+        return None if record is None else self._held_now(record)
 
     def waiting(self) -> list[dict]:
         """StatusView's waiting rows, in the queue's order: who, for what, how long of how long, and why."""

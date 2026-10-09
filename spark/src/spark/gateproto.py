@@ -619,7 +619,16 @@ class HealthView(TypedDict):
     # Each engine on an engine port whose pid no ticket's start recorded this boot: the evidence of a load around the
     # gate.
     unticketed_engines: list[EngineView]
-    no_ticket_refusals: int  # starts launch refused for want of a ticket since this boot: the backstop working
+    # Starts launch refused for want of a ticket since this boot, no_ticket and ticket_expired both (Task 11's review):
+    # the backstop working.
+    no_ticket_refusals: int
+    # After a start fresh from a damaged state file, until the next boot: when, and where the damaged file was kept,
+    # None when it couldn't be (Task 13's damaged_at and damaged_kept_as), for Task 29's health line (Task 18).
+    damaged_at: float | None
+    damaged_kept_as: str | None
+    # Each reading the gate couldn't take at its last try, in words: /proc, nvidia-smi, a unit's `systemctl show`,
+    # launch's records, its own state's save. A failed read never ends a loop; it shows here instead (Task 18).
+    read_problems: list[str]
 
 
 class ApplyingView(TypedDict):

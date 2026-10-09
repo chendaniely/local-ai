@@ -380,6 +380,10 @@ class Drainer:
         if sent:
             self._note()
 
+    def draining(self, model: str) -> bool:
+        """Whether a drain of `model` is under way: its record is the drainer's to settle, never the core's (Task 18)."""
+        return model in self._drains
+
     def own_unload(self, model: str, since: float) -> bool:
         """Whether the gate's own unload accounts for `model` leaving /running after `since` (unloaded_why)."""
         return self.unloaded_why(model, since) is not None

@@ -1602,6 +1602,19 @@ def recent_brake_released(reloading: list[str], *, by_dan: bool) -> str:
     return f"{released}; reloading {_and(reloading)}" if reloading else f"{released}; nothing to reload"
 
 
+_APPLY_ENDED = {"end": "make apply finished", "undrain-all": "make apply stopped, and let them through",
+                "answered": "the model service answered again after its restart",
+                "lapsed": "make apply stopped renewing it, so it lapsed after {}"}
+
+
+def recent_apply_ended(why: str, lapse_s: float) -> str:
+    """*recent*'s line for apply's hold at its one end (Task 18), saying which end it was: `apply/end` (`end`),
+    `undrain-all`, llama-swap answering again after the restart `begin` named (`answered`), or a hold not renewed for
+    `lapse_s`, APPLY_LAPSE_S (`lapsed`). Taken as an argument, since this module imports nothing of the gate's."""
+    _one_of("recent_apply_ended", "why", why, _APPLY_ENDED)
+    return f"make apply's hold on new requests ended: {_APPLY_ENDED[why].format(duration(lapse_s))}"
+
+
 def room_ended_parts(label: str, *, pinned: bool, sessions: list[str]) -> list[str]:
     """make-room's `ended`: the pin it ended and each session that lost its model, a phrase each."""
     return ([f"your pin on {label}"] if pinned else []) + [f"the session {session}" for session in sessions]

@@ -739,8 +739,11 @@ def test_the_status_view_carries_the_plans_fields():
         "since", "available_gib", "releases_at", "waits_for_dan", "last_fired", "last_released"}
     assert gateproto.HeldView.__required_keys__ == {"size_gib", "until"}
     assert gateproto.RecentView.__required_keys__ == {"at", "text", "code", "model", "key_label"}
+    # The damage while it is news (Task 13's damaged_at and damaged_kept_as), and each read the gate couldn't take, in
+    # words (Task 18: /proc, systemctl, launch's records), so a failing read is seen, never silent.
     assert gateproto.HealthView.__required_keys__ == {
-        "front", "gate", "brake", "llama_swap", "ntfy", "activity_age_s", "unticketed_engines", "no_ticket_refusals"}
+        "front", "gate", "brake", "llama_swap", "ntfy", "activity_age_s", "unticketed_engines", "no_ticket_refusals",
+        "damaged_at", "damaged_kept_as", "read_problems"}
     assert "key_checked_at" in gateproto.BrakeHealth.__required_keys__
     assert "failing_since" in gateproto.NtfyHealth.__required_keys__
     # What the full publish queue dropped since the gate started, which `spark status` shows (the controller's ruling

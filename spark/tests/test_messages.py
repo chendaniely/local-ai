@@ -1321,6 +1321,14 @@ def test_make_rooms_own_words_for_a_run_refused_part_way_and_its_other_refusals(
         "brake released; reloading Gemma and the embeddings")
     assert messages.recent_brake_released([], by_dan=True) == (
         "brake released with `make brake-release`; nothing to reload")
+    # apply's hold, at its one end, says why it ended (Task 18), whichever end it was.
+    assert [messages.recent_apply_ended(why, 60) for why in ("end", "undrain-all", "answered", "lapsed")] == [
+        "make apply's hold on new requests ended: make apply finished",
+        "make apply's hold on new requests ended: make apply stopped, and let them through",
+        "make apply's hold on new requests ended: the model service answered again after its restart",
+        "make apply's hold on new requests ended: make apply stopped renewing it, so it lapsed after 1 minute"]
+    with pytest.raises(ValueError, match="^recent_apply_ended's why must be one of"):
+        messages.recent_apply_ended("crash", 60)
     with pytest.raises(ValueError, match="^room_ended is for a model a pin or a session kept"):
         messages.room_ended("the coder", pinned=False, sessions=[])
     assert messages.room_ended_parts("the coder", pinned=True, sessions=["agent's pi"]) == [

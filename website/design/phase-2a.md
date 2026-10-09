@@ -2011,7 +2011,10 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   `applying` (`since`, `restarting`) or null; `problems`. *(Added 2026-10-08, at Task 10, the
   controller's ruling: each model also carries `pinned: bool`, and `pinned_until` is only the pin's
   end, null for a pin with no end, as Task 7's `pinned` confirmation takes it, so a pin with no end
-  is never read as no pin.)*
+  is never read as no pin.)* *(Added 2026-10-08, at Task 18:)* `health` also carries `damaged_at`
+  and `damaged_kept_as` (Task 13's, while the damage is news) and `read_problems`. That is each
+  reading the gate couldn't take at its last try, in words: `/proc`, nvidia-smi, a unit's `systemctl
+  show`, launch's records, its own state's save. A failed read shows there; it never ends a loop.
 - `gateclient.GateClient(path: Path, timeout_s: float)`: `get(route) -> dict`, `post(route, body:
   dict) -> dict`, `delete(route) -> dict`, `stream(route, body: dict | None = None) ->
   Iterator[dict]` (a `POST` when a body is given, for `/v1/unload`). `GateUnavailable` —
@@ -4587,6 +4590,64 @@ rulings at Task 17 add to the Files list.
     residents *reloaded*, so it is sent only once their reloads have settled (each `Admitted`, or
     refused), never as they are queued, which Q3 corrected in `brake_released`.
 
+- *(Added 2026-10-08, at Task 18, as built; for the controller's review:)*
+  - **The interface.** `GateCore(registry, state_dir, *, registry_path, llamaswap, publish,
+    brake_dir, launch, hf_home, may_pin, may_hold, keys, …)`: `state_dir` is `GATE_STATE`, which
+    `start()` loads. `await start()`, `await stop()`. The loops' steps, which the tests call:
+    `read_memory()`, `await read_running()`, `each_second()`, `await each_five_s()`. The front's:
+    `open_front_events()` (the queue, with `hello` and `state` at its head, then `send_owed`) and
+    `inflight(snapshot)`. Apply's: `drain_all(uid)` (it answers `{since}`), `apply_renew(since,
+    uid)`, `apply_begin(restarting)`, `await apply_end()`, `await undrain_all()` and `end_apply(why)`.
+    Views: `quiet()`, `status_view(sees=…, uses_hold=…)` and `holders(names_processes)`. The parts
+    are `core.admitter`, `drainer`, `room`, `pins`, `sessions`, `preloader`, `notifier` and `front`.
+  - **Saving.** Every part's `on_change` is `core.save`, which writes the state, synchronously, before
+    it returns. So saves land in call order, and a load call is never sent before its ticket's id is
+    on disk.
+  - **`/running` not answering at the start.** It is never read as nothing running. The saved state's
+    own records of this boot stand in for the read, every one counted, and admission waits for
+    llama-swap. For another boot's state, nothing stands in, since no engine outlives a boot.
+  - **Each later read that answered settles the records** that no load and no drain holds:
+    - A model the state lacks is recorded `starting`, at the registry's footprint.
+    - A record whose model has gone is dropped.
+    - The transitions starting → ready, ready or starting → stopping (the brake's unload, or one
+      around the gate), and ready → starting follow the read.
+    - A record that changed while the read was in flight is left for the next read.
+  - **The residents' rule.** A resident whose record such a read dropped, with no read since its load
+    to list it, counts as leaving, from its load.
+  - **Restarts.** Before the residents' rule runs, llama-swap's unit is read again. A resident gone
+    with a llama-swap start since it was last listed reloads with that start:
+    - `apply` when the start is the first at or after `begin` and comes while the hold stands or
+      within `APPLY_LAPSE_S` of its end;
+    - otherwise `restart`, through the Preloader.
+  - **Apply's ends.** `apply/end` and `undrain-all` read `/running` first, so `end_apply` knows which
+    residents the restart took. A save that fails makes `drain_all` and `apply_begin` take back their
+    change and raise. `begin` names llama-swap as `llama-swap` or its unit's name.
+  - **The boot preload** queues only the residents with no record. One being drained, its unload
+    resumed at start, would otherwise reload once its drain ends.
+  - **After damage:**
+    - `fresh_after_damage` is cleared once the front's first snapshot has been settled, not at the
+      start. A gate restarted before then still owes the front those drains.
+    - The engines found at that start go into `state.ticketed` under the ticket id
+      `found-after-damage`, so a restart doesn't report them.
+    - The brake's events start at the file's end only while `brake_events_after` is None.
+  - **The brake's release check** runs every 5 s, whether llama-swap answers or not: memory readings
+    drive an admission pass every 250 ms, so the hold is seen either way. Reloads it queues wait for
+    llama-swap. (The Task 17 note above expects the release to wait while llama-swap is down; the
+    controller may want that.)
+  - **Engine ports.** They follow v257's own rule (`internal/config/macros.go:150-186`): from
+    `ENGINE_START_PORT`, 800, one each in the models' sorted names (`core.engine_ports`). Task 24's
+    `render.ENGINE_START_PORT` should become the one constant.
+  - **The admitter's accessors:**
+    - `starting_loads()` gives each load's `StartingLoad(admitted_gib, started_at,
+      available_at_start)`. A found load's MemAvailable stays None: it is only in a record an engine
+      could write.
+    - `has_load(name)`.
+    - `held_gib(name)`.
+    - The drainer's: `draining(name)`.
+  - **`StatusView.health`** gains `damaged_at`, `damaged_kept_as` and `read_problems` (gateproto,
+    Task 10's note). `problems` names a model the registry doesn't know, the state's damage while it
+    is news, and the brake's events left unread after damage.
+
 **Tests** (`spark/tests/test_gate_core.py`; an injected clock, stand-ins for llama-swap, the front's
 channel, the units and `/proc`):
 
@@ -4700,6 +4761,14 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
 - `GET /v1/status` through the status socket — the refusals the caller may see: those whose key's
   `account` (Task 4) is the caller's user name, and those whose record's `uid` is the caller's;
   Dan's processes only as *a process of Dan's*. Through the control socket, everything.
+  *(Added 2026-10-08, at Task 18:)* `core.status_view(sees=…, uses_hold=…)` takes that filter, a
+  predicate on each `RefusalRecord` and `RecentRecord`, and the caller's group's `uses_hold`.
+- *(Added 2026-10-08, at Task 18:)* `GateCore.start()` and `stop()` run in the servers' own event
+  loop: `start()` before they serve, `stop()` after they stop and before the llama-swap client
+  closes. `run_servers` runs `asyncio.run` itself, so it needs a way to run them there. The events
+  route opens its call with `core.open_front_events()`, and the in-flight route reports through
+  `core.inflight(snapshot)`, never `FrontChannel.report` directly. After damage, the core settles
+  the front's drains from that first report.
 - `gate/main.py`: `spark gate` — `listen_fds()["status"]` and `["control"]`; credentials
   `llamaswap-key`, `ntfy-token` and `keys` (the private key list, ~~read with `registry.load_keys`~~
   read with `credentials.read_credential_text` and parsed with `registry.parse_keys`, as the note
@@ -5480,6 +5549,11 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   `HEALTH_CHECK_TIMEOUT_S`, 180), `INTERNAL_KEY_ENVS = ("LLAMASWAP_KEY_FRONT", "LLAMASWAP_KEY_GATE",
   "LLAMASWAP_KEY_BRAKE")`; `KEY_ENVS` retires, and `apply.validation_env` uses the new names.
   Render refuses a registry whose engines' ports (800 upward, one per model) would reach 900.
+  *(Added 2026-10-08, at Task 18:)* the gate's bypass check and holders find each engine on its
+  port by v257's rule, from the start port one each in the models' sorted names
+  (`gate.core.engine_ports`). Until this task adds `ENGINE_START_PORT`, the core has its own 800. This
+  task makes the core read render's, so the two can't drift; its Files then gain
+  `spark/src/spark/gate/core.py`.
 - `engine_cmd` passes `--alias <the model's name>` to every llama.cpp engine; `SPELLINGS` gains
   `("-a", "--alias")`, so `args` may not set it.
 - The config: `healthCheckTimeout: 180`, `startPort: 800`, `apiKeys` the three
@@ -6000,6 +6074,9 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
   kept as /var/lib/local-ai/gate/state.json.damaged-<UTC time>* (Task 13's `damaged_at` and
   `damaged_kept_as`, through Task 18's `StatusView.health`), or *… the damaged file couldn't be
   kept* without a path, until the next boot.
+- *(Added 2026-10-08, at Task 18:)* `health.read_problems` lists each reading the gate couldn't take
+  at its last try, in words (Task 10's note). The `health` row shows each, so a failed read is
+  never silent.
 
 - *(Added 2026-10-08, the controller's ruling, at Task 17:)* the `recent` rows take, beside the
   refusals, `GateState.recent` (Task 17), the gate's events that aren't refusals, all in one list
