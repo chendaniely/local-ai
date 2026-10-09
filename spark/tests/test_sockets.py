@@ -339,3 +339,78 @@ def test_run_servers_says_ready_once_both_listen(sockdir):
         _, err = child.communicate(timeout=10)
         assert child.returncode == 0, err
         assert _waiting(receiver) == [b"STOPPING=1"]  # READY=1 came once, not once per server
+
+
+# A service whose own tasks run in the servers' loop (the gate's core, Task 19): `startup` before any server serves,
+# `stopping` as the stop begins, so an answer that waits can end, and `shutdown` once every server has stopped. Each
+# step prints the loop it ran in, and the app answers with its own, so all four must be one. A stream at /stream
+# waits until `stopping` says the stop has begun, then ends, so the stop doesn't wait out graceful_s for it.
+HOOKS = textwrap.dedent(
+    """
+    import asyncio, socket, sys
+    from spark import protocols, serve
+
+    stop_now = asyncio.Event()
+
+    async def app(scope, receive, send):
+        loop = str(id(asyncio.get_running_loop())).encode()
+        if scope["path"] == "/stream":
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"waiting ", "more_body": True})
+            await stop_now.wait()
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-length", str(len(loop)).encode())]})
+        await send({"type": "http.response.body", "body": loop})
+
+    async def startup():
+        await asyncio.sleep(0.2)
+        print("startup", id(asyncio.get_running_loop()), flush=True)
+
+    def stopping():
+        print("stopping", id(asyncio.get_running_loop()), flush=True)
+        stop_now.set()
+
+    async def shutdown():
+        await asyncio.sleep(0)
+        print("shutdown", id(asyncio.get_running_loop()), flush=True)
+
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(sys.argv[1])
+    listener.listen()
+    serve.run_servers([(app, [listener])], protocol=protocols.make_protocol(peer_cred=False, header_timeout_s=10),
+                      graceful_s=30, startup=startup, stopping=stopping, shutdown=shutdown)
+    print("returned", flush=True)
+    """
+)
+
+
+def test_run_servers_runs_a_services_startup_and_shutdown_in_its_own_loop(sockdir):
+    with _notify_socket(sockdir) as (receiver, notify_path):
+        child = subprocess.Popen([sys.executable, "-c", HOOKS, str(sockdir / "a.sock")],
+                                 env={**os.environ, "NOTIFY_SOCKET": notify_path}, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        try:
+            assert _notified(receiver, 10) == b"READY=1"  # once startup has run: it comes before serving
+            served = _get(sockdir / "a.sock").decode()
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                stream.settimeout(5)
+                stream.connect(str(sockdir / "a.sock"))
+                stream.sendall(b"GET /stream HTTP/1.1\r\nHost: spark\r\n\r\n")
+                seen = b""
+                while b"waiting" not in seen:  # the head, then the stream's first chunk
+                    seen += stream.recv(65536)
+                signalled = time.monotonic()
+                child.send_signal(signal.SIGTERM)
+                out, err = child.communicate(timeout=10)
+                took = time.monotonic() - signalled
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.communicate(timeout=10)
+    assert child.returncode == 0, err
+    steps = [line.split() for line in out.splitlines()]
+    assert [step[0] for step in steps] == ["startup", "stopping", "shutdown", "returned"]
+    assert {step[1] for step in steps[:3]} == {served}  # one loop: the servers' own
+    assert took < 5  # the stream ended at `stopping`, never waiting out graceful_s, 30 s

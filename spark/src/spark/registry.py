@@ -438,7 +438,20 @@ def load_keys(path: Path, groups: dict[str, KeyGroup]) -> dict[str, ClientKey]:
     """The private key list, /etc/local-ai/keys.yaml (paths.KEYS), checked against the registry's key groups: each
     client key's name, as the digests file has it, with its group, its label and the account that owns it. Names and
     words only, never a key or a digest; and never in the repo, where stack/keys.example.yaml shows its shape."""
-    data = yaml.load(Path(path).read_text(), Loader=_UniqueKeyLoader) or {}
+    return parse_keys(Path(path).read_text(), groups)
+
+
+def parse_keys(text: str, groups: dict[str, KeyGroup]) -> dict[str, ClientKey]:
+    """The key list from its text, as `spark gate` and `spark front` get it, a credential read whole
+    (credentials.read_credential_text); load_keys reads it from its file (Task 19). Refused, naming the key and what
+    is wrong: an unknown group or field, an empty label or account, a name that isn't lowercase letters, digits and
+    '-', and a label pi's retry list matches. A key's label goes into its refusals (*Not loading the coder for
+    <label>*), and pi retries every refusal whose text that list matches, three times, each a new wait, as
+    render.check_words says for the registry's words (the deferred note at Task 6's fix round 2). The list holds no
+    key or digest, so an error may quote its names, groups and labels, and PyYAML's a snippet of a line."""
+    from spark.messages import pi_retry_match  # messages imports this module
+
+    data = yaml.load(text, Loader=_UniqueKeyLoader) or {}
     if not isinstance(data, dict):
         raise RegistryError("the key list must be a mapping of keys, each key's name to its group, label and account")
     _known("the key list", data, ("keys",))
@@ -457,5 +470,9 @@ def load_keys(path: Path, groups: dict[str, KeyGroup]) -> dict[str, ClientKey]:
         group = raw["group"]
         if not isinstance(group, str) or group not in groups:
             raise RegistryError(f"{where}: group {group!r} is not one of {', '.join(groups)}")
-        keys[name] = ClientKey(name, group, _text(where, raw, "label"), _text(where, raw, "account", required=False))
+        label = _text(where, raw, "label")
+        if (found := pi_retry_match(label)) is not None:
+            raise RegistryError(f"{where}: its label holds {found!r}: pi's retry list matches it, so pi would retry "
+                                "every refusal that shows it, three times; choose another")
+        keys[name] = ClientKey(name, group, label, _text(where, raw, "account", required=False))
     return keys

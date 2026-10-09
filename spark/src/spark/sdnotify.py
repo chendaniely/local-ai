@@ -36,6 +36,17 @@ def stopping(env: Mapping[str, str] = os.environ) -> bool:
     return notify("STOPPING=1", env)
 
 
+# systemd's variables for this service alone: its notify socket and its watchdog's.
+SERVICE_ONLY = ("NOTIFY_SOCKET", "WATCHDOG_USEC", "WATCHDOG_PID")
+
+
+def child_env(env: Mapping[str, str] = os.environ) -> dict[str, str]:
+    """`env` for a child process, without SERVICE_ONLY: systemd 255's own tools report their exit through an inherited
+    NOTIFY_SOCKET (`systemctl show` sends EXIT_STATUS=0, seen on the Spark, 2026-10-08), which systemd would take as a
+    message from a pid that isn't the service's. The service's own environment keeps them."""
+    return {name: value for name, value in env.items() if name not in SERVICE_ONLY}
+
+
 def watchdog_interval_s(env: Mapping[str, str] = os.environ) -> float | None:
     """How often to send `WATCHDOG=1`: half of WATCHDOG_USEC, as systemd advises, when its unit sets `WatchdogSec=`
     and WATCHDOG_PID, if set, is this process's; otherwise None, no watchdog."""

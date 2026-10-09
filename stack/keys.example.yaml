@@ -4,7 +4,8 @@
 # letters, digits and '-'. No key or digest goes in this list.
 #   group    one of the registry's key_groups (stack/models.yaml), which decides what the key may do
 #   label    how messages name the asker; a pi key's label starts with the word "pi", which is how a refusal
-#            knows to name `make clients` for it
+#            knows to name `make clients` for it. A label pi's retry list matches (503, timeout, rate limit, …)
+#            is refused where the list is read, since pi would retry every refusal that shows it
 #   account  the Unix user whose own refusals this key's are; left out for a key no account owns
 keys:
   example-mac:

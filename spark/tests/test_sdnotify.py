@@ -107,3 +107,14 @@ async def test_the_watchdog_loop_pings_only_while_the_loop_runs(notify_socket):
             pinging.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pinging
+
+
+def test_a_child_never_inherits_the_services_notify_socket():
+    # systemd 255's own tools report their exit through an inherited NOTIFY_SOCKET (`systemctl show` sent
+    # EXIT_STATUS=0, seen on the Spark, 2026-10-08, at Task 19): to systemd, that is a message from a pid that isn't
+    # the service's, every time the gate reads a unit. So the gate's children get its environment without systemd's
+    # notify and watchdog variables.
+    env = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "NOTIFY_SOCKET": "/run/systemd/notify", "WATCHDOG_USEC": "30000000",
+           "WATCHDOG_PID": "4242"}
+    assert sdnotify.child_env(env) == {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
+    assert env["NOTIFY_SOCKET"] == "/run/systemd/notify"  # the service's own stays, for its READY=1 and its pings

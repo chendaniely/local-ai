@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from spark import sdnotify
 from spark.gate.state import ApplyHold, Emit, GateState
 from spark.gateproto import BACK_UP_AFTER_S, LLAMA_SWAP_HUNG_S
 
@@ -59,13 +60,14 @@ def _stamp(unit: str, name: str, value: str) -> float | None:
 
 def unit_state(unit: str, run: Callable[..., Any] = subprocess.run) -> UnitState:
     """`unit`'s state (gate, front, llama-swap or brake), from `systemctl show`. It blocks for up to SHOW_TIMEOUT_S:
-    the gate calls it off the event loop. UnitStateError when systemctl fails or answers what it can't read."""
+    the gate calls it off the event loop. UnitStateError when systemctl fails or answers what it can't read. systemctl
+    runs without the gate's notify socket, which systemd 255's reports its exit to (sdnotify.child_env)."""
     if unit not in UNITS:
         raise ValueError(f"{unit!r} isn't a unit the gate watches: gate, front, llama-swap or brake")
     name = UNITS[unit]
     argv = [SYSTEMCTL, "show", "--no-pager", "--timestamp=us+utc", f"--property={','.join(_PROPERTIES)}", name]
     try:
-        done = run(argv, capture_output=True, text=True, timeout=SHOW_TIMEOUT_S, check=False)
+        done = run(argv, capture_output=True, text=True, timeout=SHOW_TIMEOUT_S, check=False, env=sdnotify.child_env())
     except (OSError, subprocess.SubprocessError) as err:
         raise UnitStateError(f"systemctl show {name} didn't answer ({type(err).__name__})") from None
     if done.returncode != 0:

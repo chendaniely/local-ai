@@ -1728,7 +1728,14 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `NOTIFY_SOCKET` (a path, or `@name` for an abstract one); False, quietly, when it is unset;
   `ready()`, `stopping()`; `watchdog_interval_s(env) -> float | None` — half `WATCHDOG_USEC`, only
   when `WATCHDOG_PID` is unset or ours; `async watchdog_loop(interval_s: float)` — `WATCHDOG=1`
-  every interval, from the event loop, so a stuck loop sends none.
+  every interval, from the event loop, so a stuck loop sends none. *(Added 2026-10-08, at Task 19,
+  for the controller's review:)* `child_env(env) -> dict[str, str]` — `env` without
+  `NOTIFY_SOCKET`, `WATCHDOG_USEC` and `WATCHDOG_PID`, for a service's child processes. systemd
+  255's own tools report their exit to an inherited `NOTIFY_SOCKET`: `systemctl show` sent
+  `EXIT_STATUS=0` (seen on the Spark, 2026-10-08, when Task 19 first ran the gate's core under a
+  notify socket). To systemd that is a message from a pid that isn't the service's, each time the
+  gate reads a unit, four every 5 s. So Task 14's `units.unit_state` and Task 18's nvidia-smi call
+  run their child with `env=child_env()`.
 - `credentials.read_credential(name: str, env: Mapping[str, str] = os.environ) -> str` — the file
   `$CREDENTIALS_DIRECTORY/<name>`, one trailing newline dropped; refused when the variable or the
   file is missing, or the value is empty or holds anything but printable ASCII without spaces.
@@ -1761,7 +1768,14 @@ git commit -m "feat(spark): 🤖 read MemFree, each engine's anonymous RSS and t
   `watchdog_interval_s()` gives one; `STOPPING=1` on the way out; returns, exit 0, when a signal
   has arrived and every server has stopped. *(Added 2026-10-08, at Task 9's review, the
   controller's ruling: `ws="none"` too, so an upgrade never leaves `protocol` for a WebSocket
-  library's, which would serve the request without its uid or the header deadline.)*
+  library's, which would serve the request without its uid or the header deadline.)* *(Added
+  2026-10-08, at Task 19, for the controller's review, as Task 18's note says the gate needs:)*
+  three keyword arguments, each optional, so a service's own tasks run in the servers' loop:
+  `startup`, awaited before any server serves (a signal meanwhile means none does); `stopping`,
+  called once as the stop begins, so an answer that waits can end rather than hold the stop for
+  `graceful_s`; and `shutdown`, awaited once every server has stopped, whatever came before, a
+  `startup` that failed included. The watchdog runs from the start, through `startup` and
+  `shutdown`. Its test: `test_run_servers_runs_a_services_startup_and_shutdown_in_its_own_loop`.
 
 **Tests:**
 
@@ -4751,6 +4765,15 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
 - Modify: `spark/src/spark/cli.py` (`spark gate`, its module imported inside its handler, so
   Task 3's import test still holds); `spark/src/spark/registry.py` and
   `spark/tests/test_registry.py` (`registry.parse_keys`: added 2026-10-08, at Task 9's re-review)
+- *(Added 2026-10-08, at Task 19, as built; for the controller's review:)* Modify also
+  `spark/src/spark/serve.py` and `spark/tests/test_sockets.py` (`run_servers`' `startup`,
+  `stopping` and `shutdown`, which Task 18's note asks for); `spark/src/spark/sdnotify.py`,
+  `spark/src/spark/gate/units.py`, `spark/tests/test_sdnotify.py` and
+  `spark/tests/test_gate_units.py` (`sdnotify.child_env`, Task 9's note);
+  `spark/src/spark/gate/core.py` (the `keys`, `llamaswap` and `launch` properties, for the routes;
+  nvidia-smi run with `child_env`); `spark/src/spark/gate/policy.py` (`Sessions.may_hold` and `HOLDS_NO_SESSION`, so
+  `/v1/sessions` refuses `spark` and `spark-front` before the body); `stack/keys.example.yaml`
+  (its comment on a label pi's retry list matches); and this plan
 
 **Interfaces:**
 
@@ -4867,6 +4890,68 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `{unloaded: true, pin_ended}`, `pin_ended` true when the unload ended a pin on the model, which
   `room.unload` ends there, recording it in *recent*; a client that goes ends the route's iteration
   of `room.execute` (its task cancelled), and Room settles the run.
+
+- *(Added 2026-10-08, at Task 19, as built; for the controller's review:)*
+  - **Who may call, on the uid alone, before the first `receive()`.** `front`: `front_uid` only,
+    root not among them. `admin`: a uid `admin_uids()` gives, or 0. `users` and `owner`: any uid,
+    with `peer_cred`. `POST /v1/sessions` also refuses `spark-front`'s uid and any uid
+    `Sessions.may_hold` refuses (`spark`), before the body, in Sessions' own words
+    (`policy.HOLDS_NO_SESSION`). A session's renewal and end are Sessions' to decide, by the id in
+    the path: its owner's, or, to end it, an admin's.
+  - **The body.** A `Content-Length` over `MAX_REQUEST_BYTES` is answered 413 before any of it is
+    read; a body that grows past it as it is read, chunked say, the same. An empty body reads as
+    `{}`; a non-empty one that isn't a JSON object is a 400. An answer sent before the body was
+    read whole carries `Connection: close`, so what is left of it is never read as a request.
+  - **Time.** The body's read is bounded by `REQUEST_TIMEOUT_S` on every route: a body that hasn't
+    come is answered 408 and the connection closed. A bounded route's work runs shielded: past
+    `REQUEST_TIMEOUT_S` the answer is a 503 in words, and the work goes on to its end, so a change
+    the gate began (apply's end, whose `/running` read can take up to `LLAMA_SWAP_HUNG_S`) is never
+    cut halfway. `/v1/load` and `/v1/pin` add no bound of their own: `Room.load` and `Pins.pin` give
+    their admission the deadline `LOAD_CALL_TIMEOUT_S`, and a load that started is waited for to
+    its own bound, as every load is.
+  - **The gate's stop.** `build_apps` gives both apps one `asyncio.Event`, `app.state.stopping`,
+    which `spark gate` sets as its stop begins (`run_servers`' `stopping`). The events stream then
+    ends; a held `/v1/admit` leaves the queue and is answered 503, `app.GATE_STOPPING`, with
+    `Connection: close`; a stream ends without its result, which Task 30's CLI reads as a gate that
+    stopped partway. So the stop never waits out `GRACEFUL_S` for the front's events call, which is
+    always open. The front's way back is Task 22's: its note there says so.
+  - **Streams** send their head at once. A pin on a model already loaded, or on a name the
+    registry doesn't have, answers once (`PinConfirmation`, or a 409 in Pins' words); any other
+    pin streams. `/v1/load`, `/v1/unload`, `/v1/pin` and `DELETE /v1/pin/{model}` take a model's
+    name or one of its roles, resolved as `/v1/logs/{model}` resolves it.
+  - **Refusals.** Starlette's own 404 and 405 answer in `GateRefusalBody`'s shape too, a route on
+    the other socket saying where it is; no trailing-slash redirect. A route that breaks is logged
+    by its route and the file, line and function it broke at, never its exception's text, and
+    answered 500 in words, or with a refusal line partway through a stream.
+  - **`/v1/front/refused`** keeps the front's words to `app.TEXT_MAX` (2,000) characters, an
+    ellipsis ending words it cut, since `model_not_found`'s hold the client's own text; it keeps
+    the model only when the registry has it.
+  - **`/v1/canary`** looks in three places: `refusals`, the refusal history; `state`, the rest of
+    the gate's state in memory, and the files of its state folder but `state.json`, which holds the
+    same; and `launch`, every file under launch's folder. In files it looks for the needle as it is
+    and as a JSON writer escapes it.
+  - **`spark gate`** (`gate/main.py`'s `run`). A gate whose `NTFY_URL`, `NTFY_TOPIC_GATE` or
+    `ntfy-token` is missing or malformed still serves. It says so once, and each notification then
+    fails as ntfy out of reach does, so `spark status` shows ntfy failing. `SPARK_FRONT_UID` and
+    `SPARK_ADMIN_UIDS` are read only when set. `hf_home` is `render.HF_HOME`, the cache the engines
+    read. A startup refusal is one line on stderr, exit 1: a socket other than `status` and
+    `control`, or one missing; a credential; the registry or the key list; spark-front or
+    spark-admin missing.
+  - **`registry.parse_keys`** refuses a label `messages.pi_retry_match` matches, naming the key: the
+    deferred note at Task 6's fix round 2, met where the list is parsed, so `spark front` (Task 21)
+    and `load_keys` meet it too.
+  - **Tests beyond the list below:** `test_every_route_refuses_whoever_its_callers_dont_include`
+    (parametrized over `ROUTES`), `test_the_apps_serve_gateprotos_routes_and_no_other`,
+    `test_a_session_is_its_owners_and_dan_may_end_any`,
+    `test_a_streams_head_never_waits_for_its_first_line`, without which a head sent with the first
+    line passed, since every first line comes at once,
+    `test_each_of_the_fronts_refusals_is_worded_for_the_phone`,
+    `test_a_front_refusal_that_isnt_one_is_refused_in_words`,
+    `test_a_front_refusal_with_a_long_asked_name_is_kept_short`,
+    `test_make_room_plan_takes_a_size_or_all`,
+    `test_the_front_events_stream_its_channel_and_end_when_the_gate_stops` and
+    `test_spark_gate_refuses_to_start_without_its_sockets_or_its_key_list`; in `test_registry.py`,
+    `test_a_key_label_pis_retry_list_matches_is_refused`.
 
 **Tests** (`spark/tests/test_gate_app.py`; the apps called with a scope whose `peer_cred` the test
 sets, or over real sockets where named; those over real sockets read `SO_PEERCRED`, so they skip
@@ -5318,6 +5403,12 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   for loads. So a gate that fails at start inside an apply never holds the API.
 - A refusal of its own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`) is
   posted to `/v1/front/refused` when the gate is up; not when it is down.
+- *(Added 2026-10-08, at Task 19, for the controller's review:)* **The gate's stop.** As `spark
+  gate`'s stop begins, its events stream ends cleanly, with its last chunk, and each admit it holds
+  leaves its queue and is answered 503: a `GateRefusalBody` whose `code` is None
+  (`gate.app.GATE_STOPPING`), its connection closed. So the gate's stop never waits out
+  `GRACEFUL_S` for these calls. The front takes either as the gate restarting, as it takes a dropped
+  call: it asks the restarted gate again, with the admit's original deadline.
 
 **Tests** (`spark/tests/test_front_gatelink.py`; a scriptable gate stand-in on a short Unix socket,
 speaking Task 10's routes):
@@ -7934,7 +8025,9 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   the coder for <label>*, *<label> already has as many requests …*), and render never reads that
   file. Whichever task first loads `keys.yaml` at run time, the front's (Task 20) or the gate's,
   refuses at startup a label that `messages.pi_retry_match` matches, with a plain error naming the
-  key, as `render.check_words` does for the registry.
+  key, as `render.check_words` does for the registry. *(Done 2026-10-08, at Task 19:
+  `registry.parse_keys` refuses it, naming the key, so `spark gate`, `spark front` (Task 21) and
+  `load_keys` all do.)*
 - **A brake with nothing loaded needs words** (added 2026-10-07, at Task 7's review, the
   controller's ruling), for Tasks 13 and 23. `brake_fired` refuses `unloaded=[]`, so a brake that
   pauses new loads with no model to unload (memory taken by something outside the stack) has no
@@ -7953,6 +8046,10 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
 - **make-room with nothing loaded stops there** (added 2026-10-07, at Task 7's re-review), for
   Task 19. After *Nothing is loaded, so there is nothing to unload.*, the command ends: no
   `room_too_much` question and no `room_all` confirmation (*Unloaded everything …*) follow it.
+  *(At Task 19, 2026-10-08: the gate unloads and holds nothing until `/v1/make-room` takes a plan's
+  id. With nothing loaded, `/v1/make-room/plan` answers a plan whose `candidates` and `unload` are
+  empty, which `room_list` reads as that sentence. So the stop is the command's own: Task 30's
+  `spark make-room` posts no `/v1/make-room` after it. Left for Task 30, with its test.)*
 - **CI checks the notifications page** (added 2026-10-07, at Task 7, the controller's ruling). Task
   7's `website/reference/notifications.md` is generated from the registry; `make docs` writes it,
   and `test_the_committed_notifications_page_is_current` fails while it is stale. Task 52, on the

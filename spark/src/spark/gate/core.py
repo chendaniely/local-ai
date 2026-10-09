@@ -66,7 +66,7 @@ from typing import Any
 
 from spark import hold as holdfile
 from spark import launch as launches
-from spark import memory, messages, procs, tickets
+from spark import memory, messages, procs, sdnotify, tickets
 from spark.brakeevents import EVENTS_FILE, read_events
 from spark.gate import units as unitwatch
 from spark.gate.admission import Admitted, Admitter
@@ -149,7 +149,7 @@ def _boot_time(proc: Path) -> float | None:
 def _nvidia_smi() -> str:
     """nvidia-smi's per-process list (procs.NVIDIA_APPS), run with a bound; it raises when it can't be read."""
     return subprocess.run(procs.NVIDIA_APPS, capture_output=True, text=True, timeout=NVIDIA_TIMEOUT_S,
-                          check=True).stdout
+                          check=True, env=sdnotify.child_env()).stdout
 
 
 class _CoreEmit:
@@ -276,6 +276,22 @@ class GateCore:
     def registry(self) -> Registry:
         """The registry as last read: the admitter's, which Room, the drainer, the Preloader and Pins all read."""
         return self.admitter.registry if self.admitter is not None else self._registry
+
+    @property
+    def keys(self) -> Mapping[str, ClientKey]:
+        """The private key list, each key by its name, as `spark gate` read it: the routes' (Task 19), for an admit's
+        key, a front refusal's words and the status socket's filter."""
+        return self._keys
+
+    @property
+    def llamaswap(self) -> Any:
+        """The gate's llama-swap client, which `spark gate` closes once `stop()` is done; `/v1/logs` reads with it."""
+        return self._swap
+
+    @property
+    def launch(self) -> Path:
+        """launch's folder (tickets, started/, refusal records), which `/v1/canary` searches."""
+        return self._launch
 
     # Start and stop.
 

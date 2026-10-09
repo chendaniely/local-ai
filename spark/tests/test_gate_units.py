@@ -2,6 +2,7 @@
 that crashed has run again for BACK_UP_AFTER_S, and the gate's own return after an unclean stop; `llama_swap_down`
 once per outage when llama-swap hangs with its unit up."""
 
+import os
 import socket
 import subprocess
 import time
@@ -368,3 +369,15 @@ def test_llama_swap_down_once_per_outage_when_it_hangs():
         clock.now = T + second
         watch.observe(False, unit, applying=ended)
     assert [key for _, key, _ in holding.calls] == [f"llama-swap:{T + 360:.3f}"]
+
+
+def test_systemctl_never_inherits_the_gates_notify_socket(monkeypatch):
+    # systemd 255's systemctl reports its exit to an inherited NOTIFY_SOCKET (seen on the Spark at Task 19): the gate
+    # reads four units every 5 s, and each read would message systemd from a pid that isn't the gate's.
+    monkeypatch.setenv("NOTIFY_SOCKET", "/run/systemd/notify")
+    monkeypatch.setenv("WATCHDOG_USEC", "30000000")
+    calls: list = []
+    unit_state("gate", run=answering(SHOW, calls))
+    (_, kwargs), = calls
+    assert "NOTIFY_SOCKET" not in kwargs["env"] and "WATCHDOG_USEC" not in kwargs["env"]
+    assert kwargs["env"]["PATH"] == os.environ["PATH"]

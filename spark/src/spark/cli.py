@@ -45,7 +45,17 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import doctor
 
     doctor.register(subparsers)
+    gate = subparsers.add_parser("gate", help="run the gate on the two sockets systemd holds (local-ai-gate.service)")
+    gate.set_defaults(func=_gate)
     return parser
+
+
+def _gate(args: argparse.Namespace) -> int:
+    # Imported here, as the gate runs: it brings uvicorn and Starlette, which `spark launch` and `spark status` never
+    # import, since every command runs build_parser (Task 3's test).
+    from spark.gate import main as gate_main
+
+    return gate_main.run()
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -14,6 +14,7 @@ from spark.registry import (
     RegistryError,
     load_keys,
     load_registry,
+    parse_keys,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "models.yaml"
@@ -675,6 +676,41 @@ def test_the_key_list_loader_refuses_python_tags_rather_than_running_them(tmp_pa
     path.write_text("keys:\n  agent: {group: agent, label: !!python/object/apply:builtins.len [[1, 2]]}\n")
     with pytest.raises(yaml.YAMLError, match="python/object/apply"):
         load_keys(path, load_registry(FIXTURE).key_groups)
+
+
+EXAMPLE_KEYS = Path(__file__).resolve().parents[2] / "stack" / "keys.example.yaml"
+
+
+def test_parse_keys_reads_the_key_list_from_its_text(tmp_path):
+    # `spark gate` and `spark front` get the key list as a credential, read whole with read_credential_text (Task 9),
+    # so they parse its text; load_keys reads a path, through the same parser (Task 19).
+    groups = load_registry(FIXTURE).key_groups
+    text = EXAMPLE_KEYS.read_text()
+    assert parse_keys(text, groups) == load_keys(EXAMPLE_KEYS, groups)
+    assert set(parse_keys(text, groups)) == {"example-mac", "example-web-ui", "example-agent"}
+    # A text it refuses, load_keys refuses the same way, from the file that holds it.
+    for refused in ("keys:\n  agent: {group: robots, label: agent}\n", "- dan-mac\n",
+                    "keys:\n  agent: {group: agent, label: agent}\n  agent: {group: dan, label: x}\n"):
+        with pytest.raises(RegistryError) as from_text:
+            parse_keys(refused, groups)
+        path = tmp_path / "keys.yaml"
+        path.write_text(refused)
+        with pytest.raises(RegistryError) as from_file:
+            load_keys(path, groups)
+        assert str(from_text.value) == str(from_file.value)
+
+
+@pytest.mark.parametrize("label", ["pi on the 503", "agent, rate limited", "the web UI (timeout)"])
+def test_a_key_label_pis_retry_list_matches_is_refused(label):
+    # A key's label goes into its refusals (*Not loading the coder for <label>*), and pi retries every refusal whose
+    # text its retry list matches, three times, each a new wait (the deferred note at Task 6's fix round 2): so the
+    # key list is refused where it is read, naming the key, never a key or a digest, as render.check_words refuses
+    # the registry's words.
+    groups = load_registry(FIXTURE).key_groups
+    text = yaml.safe_dump({"keys": {"dan-mac": {"group": "dan", "label": label}}})
+    with pytest.raises(RegistryError, match="^keys: dan-mac: its label holds ") as refused:
+        parse_keys(text, groups)
+    assert "pi's retry list matches it" in str(refused.value)
 
 
 def test_the_registry_holds_no_key_list(tmp_path):

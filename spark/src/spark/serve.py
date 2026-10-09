@@ -9,15 +9,20 @@ first hears of it only from the second's raise, and its own raise then meets the
 2026-10-08: the process ended by SIGTERM, and by SIGINT), which systemd counts as a failure. QuietServer gives all
 that up, and run_servers takes both signals with the loop's own handlers, which tell every server. What else this
 relies on, in uvicorn 0.54.0's server.py: `serve(sockets=…)`; `should_exit`, which its main loop reads every 0.1 s;
-and `started`, set once a server listens."""
+and `started`, set once a server listens.
+
+A service whose own tasks must run in the servers' loop (the gate's core, Task 19) gives `startup`, awaited before any
+server serves; `stopping`, called as the stop begins, so an answer that waits (the gate's events stream, a held admit)
+can end rather than hold the stop for its graceful time; and `shutdown`, awaited once every server has stopped."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import signal
 import socket
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 
 import uvicorn
 
@@ -27,6 +32,7 @@ from spark.protocols import ASGIApp
 TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}
 SIGNALS = (signal.SIGTERM, signal.SIGINT)
 _STARTED_POLL_S = 0.01
+_log = logging.getLogger(__name__)
 
 
 class QuietServer(uvicorn.Server):
@@ -37,11 +43,15 @@ class QuietServer(uvicorn.Server):
         yield
 
 
-def run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], *, protocol: type, graceful_s: float) -> None:
+def run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], *, protocol: type, graceful_s: float,
+                startup: Callable[[], Awaitable[None]] | None = None, stopping: Callable[[], None] | None = None,
+                shutdown: Callable[[], Awaitable[None]] | None = None) -> None:
     """Serves each app on its sockets, all in one event loop, until SIGTERM or SIGINT, then stops every server and
     returns once each has, within `graceful_s` of its own. A server that fails stops the others, and its error is
-    raised once they have stopped."""
-    asyncio.run(_run_servers(pairs, protocol, graceful_s))
+    raised once they have stopped. `startup` is awaited in that loop before any server serves, and a signal meanwhile
+    means none does; `stopping` is called once, in the loop, as the stop begins; `shutdown` is awaited once every
+    server has stopped, whatever came before, a `startup` that failed included, whose error is then raised."""
+    asyncio.run(_run_servers(pairs, protocol, graceful_s, startup, stopping, shutdown))
 
 
 def _config(app: ASGIApp, protocol: type, graceful_s: float) -> uvicorn.Config:
@@ -65,7 +75,9 @@ def _config(app: ASGIApp, protocol: type, graceful_s: float) -> uvicorn.Config:
     )
 
 
-async def _run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], protocol: type, graceful_s: float) -> None:
+async def _run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], protocol: type, graceful_s: float,
+                       startup: Callable[[], Awaitable[None]] | None, on_stopping: Callable[[], None] | None,
+                       shutdown: Callable[[], Awaitable[None]] | None) -> None:
     loop = asyncio.get_running_loop()
     servers = [QuietServer(_config(app, protocol, graceful_s)) for app, _ in pairs]
     stopping = False
@@ -78,29 +90,43 @@ async def _run_servers(pairs: list[tuple[ASGIApp, list[socket.socket]]], protoco
             stopping = True
             with contextlib.suppress(OSError):  # systemd sees the process end either way
                 sdnotify.stopping()
+            if on_stopping is not None:
+                try:
+                    on_stopping()
+                except Exception:  # the stop goes on: each server still stops within its graceful time
+                    _log.exception("the service's own step at the start of its stop broke")
 
     for signum in SIGNALS:
         loop.add_signal_handler(signum, stop)
     interval = sdnotify.watchdog_interval_s()
     watchdog = asyncio.create_task(sdnotify.watchdog_loop(interval)) if interval else None
-    tasks = [asyncio.create_task(server.serve(sockets=sockets)) for server, (_, sockets) in zip(servers, pairs)]
+    tasks: list[asyncio.Task] = []
     try:
-        while not all(server.started for server in servers):
-            done, _ = await asyncio.wait(tasks, timeout=_STARTED_POLL_S, return_when=asyncio.FIRST_COMPLETED)
-            if done:
-                break  # a server ended before every one listened: a failure, raised below
-        else:
-            if not stopping:
-                sdnotify.ready()
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        if startup is not None:
+            await startup()
+        if not stopping:  # a signal during startup: nothing serves
+            tasks = [asyncio.create_task(server.serve(sockets=sockets)) for server, (_, sockets) in zip(servers, pairs)]
+            while not all(server.started for server in servers):
+                done, _ = await asyncio.wait(tasks, timeout=_STARTED_POLL_S, return_when=asyncio.FIRST_COMPLETED)
+                if done:
+                    break  # a server ended before every one listened: a failure, raised below
+            else:
+                if not stopping:
+                    sdnotify.ready()
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
     finally:
         stop()
-        await asyncio.wait(tasks)
-        if watchdog is not None:
-            watchdog.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog
-        for signum in SIGNALS:
-            loop.remove_signal_handler(signum)
+        try:
+            if tasks:
+                await asyncio.wait(tasks)
+            if shutdown is not None:
+                await shutdown()
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watchdog
+            for signum in SIGNALS:
+                loop.remove_signal_handler(signum)
     for task in tasks:
         task.result()

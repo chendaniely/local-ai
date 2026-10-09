@@ -90,6 +90,10 @@ _log = logging.getLogger(__name__)
 POLL_S = 1.0  # a drain reads /running, and rechecks its clock, at least this often without a changed()
 FINAL_WORDS = ("undrain", "unloaded")  # the words that end a drain the front may hold: owed until it takes them
 LABEL_MAX = 80  # a session's label, on one line, in Dan's terminal (`spark status`, make-room's list)
+# The refusal of a session to an account that runs the stack itself, spark or spark-front: Sessions.register's, and
+# `/v1/sessions`' before it reads the body (Task 19).
+HOLDS_NO_SESSION = ("This account runs the stack itself, so it can't hold a session: a session keeps a model loaded "
+                    "for an agent's own process.")
 # The save of a drain's id and why before `drain` is sent is bounded by this; unsaved, nothing is sent and the drain
 # ends (the controller's ruling at Task 16's review).
 SAVE_BOUND_S = 5.0
@@ -1148,8 +1152,7 @@ class Sessions:
         LABEL_MAX characters, since Dan's terminal shows it."""
         now = self._clock()
         if not self._may_hold(uid):
-            return Refusal(403, "This account runs the stack itself, so it can't hold a session: a session keeps a "
-                                "model loaded for an agent's own process.")
+            return Refusal(403, HOLDS_NO_SESSION)
         if not (isinstance(model, str) and self._is_model(model)):
             return Refusal(409, f"There's no model {_shown_id(str(model))!r} in the registry, so no session can "
                                 "keep it loaded.")
@@ -1170,6 +1173,10 @@ class Sessions:
         self.state.sessions[session.id] = session
         self._changed()
         return session
+
+    def may_hold(self, uid: int) -> bool:
+        """Whether `uid` may hold a session at all, which `/v1/sessions` asks before it reads the body (Task 19)."""
+        return bool(self._may_hold(uid))
 
     def renew(self, session_id: str, uid: int) -> Session | Refusal:
         """The owner's renewal: the session lives SESSION_TTL_S from now. One whose process has gone ends here."""
