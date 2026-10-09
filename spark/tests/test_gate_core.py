@@ -855,6 +855,46 @@ async def test_a_model_restored_with_its_unload_requested_is_drained_then_unload
         await core.stop()
 
 
+@pytest.mark.parametrize("then", ["ready", "stopping", "gone"])
+@pytest.mark.anyio
+async def test_a_model_restored_in_a_state_it_didnt_know_waits_for_one_it_does(tmp_path, then):
+    # Its unload requested, and /running showing it in a state the gate doesn't know: counted as starting, never
+    # served, not resumed; then, once /running shows one it knows, drained and unloaded (ready), held until gone
+    # (stopping), or released (gone), under its saved id (the controller's ruling at Task 13's review).
+    state = loaded(*RESIDENTS)
+    state.models[CODER] = record(CODER, state="draining", unload_requested_at=T - 3, drain_id="d1",
+                                 drain_why="unload")
+    gate = Gate(tmp_path, state=state, shown=dict.fromkeys(RESIDENTS, "ready") | {CODER: "shutdown"})
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        front = Front(core)
+        await core.read_running()
+        await settle()
+        assert core.state.models[CODER].state == "starting" and front.about(CODER) == []
+        asked = admit(core, "r1", CODER, T + 1, key="dan-mac")
+        await settle()
+        assert not asked.done()  # never served meanwhile
+        gate.clock.now = T + 1
+        core.admitter.changed()
+        assert (await asked).code == "draining" and gate.swap.unloads() == [] and gate.swap.loads() == []
+        if then == "gone":
+            gate.swap.states.pop(CODER)
+        else:
+            gate.swap.states[CODER] = then
+        await core.read_running()
+        if then == "stopping":
+            await settle()
+            assert core.state.models[CODER].state == "stopping" and front.about(CODER) == []
+            gate.swap.states[CODER] = "stopped"
+        await until(lambda: CODER not in core.state.models, core=core)
+        await settle()
+        heard = {"ready": [("drain", "d1"), ("unloaded", None)], "stopping": [("unloaded", None)],
+                 "gone": [("unloaded", None)]}[then]
+        assert front.about(CODER) == heard
+        assert gate.swap.unloads() == ([CODER] if then == "ready" else [])
+        await core.stop()
+
+
 @pytest.mark.anyio
 async def test_a_resumed_make_room_drain_puts_its_model_on_the_hold(tmp_path):
     # A gate killed mid-run: the make-room drain it resumes ends with the model on the room hold that stands, so its
