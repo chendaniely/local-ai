@@ -140,10 +140,8 @@ def merge_opencode(path: Path, provider: dict) -> Path | None:
         raise ClientsError(f"OpenCode config {path} won't load: {err}")
     backup = path.with_suffix(".json.bak")
     shutil.copy2(path, backup)
-    # Deep merge the provider object
-    existing = data.get("provider", {})
-    existing.setdefault("spark", provider["provider"]["spark"])
-    data["provider"] = existing
+    # Merge the provider object (update existing, don't just setdefault)
+    data.setdefault("provider", {}).update(provider["provider"])
     path.write_text(json.dumps(data, indent=2) + "\n")
     return backup
 
