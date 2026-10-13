@@ -33,6 +33,9 @@ class LlamaSwapAnswered(LlamaSwapError):
 class Running:
     model: str
     state: str
+    # llama-swap v257 also sends each model's proxy: the engine's URL, its ${PORT} already filled in. `spark watch`
+    # fetches the engine's /metrics from it; an answer that omits it (a stand-in) reads empty, and watch says so.
+    proxy: str = ""
 
 
 def key_from_env(name: str) -> str | None:
@@ -106,7 +109,9 @@ class LlamaSwap:
         if not (isinstance(listed, list) and all(isinstance(r, dict) and isinstance(r.get("model"), str)
                                                  and isinstance(r.get("state"), str) for r in listed)):
             raise LlamaSwapAnswered("llama-swap GET /running: an answer it can't read (not v257's shape)")
-        return [Running(r["model"], r["state"]) for r in listed]
+        # The proxy, which v257 also sends, is read permissively: a stand-in that omits it still reads.
+        return [Running(r["model"], r["state"], r.get("proxy") if isinstance(r.get("proxy"), str) else "")
+                for r in listed]
 
     def unload(self, model: str) -> None:
         self._call("POST", "/api/models/unload/" + urllib.parse.quote(model, safe=""))

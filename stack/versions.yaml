@@ -61,6 +61,44 @@ components:
     context7: null
     changelog: https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_V22.md
     advisories: https://nodejs.org/en/blog/vulnerability
+  # Monitoring TUIs, apt-installed by Dan for the live view (website/how-to/monitoring.md): nvitop and nvtop
+  # 2026-10-08, btop and DCGM 2026-10-13 (their package versions; dpkg reports DCGM's with its epoch, 1:3.3.9).
+  btop:
+    version: 1.3.0-1
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://github.com/aristocratos/btop
+    context7: null
+    changelog: https://github.com/aristocratos/btop/releases
+    advisories: null
+  datacenter-gpu-manager:
+    version: 3.3.9
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://docs.nvidia.com/datacenter-gpu-manager/user-guide/
+    context7: null
+    changelog: https://github.com/NVIDIA/DCGM/releases
+    advisories: null
+  nvitop:
+    version: 1.3.2-1
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://github.com/XuehaiPan/nvitop
+    context7: null
+    changelog: https://github.com/XuehaiPan/nvitop/releases
+    advisories: null
+  nvtop:
+    version: 3.0.2-1
+    where: [spark]
+    pin: null
+    deployed: false
+    docs: https://github.com/xmxkmx/nvtop
+    context7: null
+    changelog: https://github.com/xmxkmx/nvtop/releases
+    advisories: null
   llama-swap:
     version: v257
     where: [spark]

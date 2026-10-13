@@ -366,7 +366,7 @@ SETTINGS = [  # (the model, a spelling of a flag render passes it), from each en
     *[("coder", flag) for flag in ("-c", "--ctx-size", "--ctx_size", "-np", "--parallel", "-ngl", "--gpu-layers",
                                    "--n-gpu-layers", "--n_gpu_layers", "-cram", "--cache-ram", "--cache-ram=0")],
     ("embed", "--embedding"), ("embed", "--embeddings"),
-    ("stt", "--inference-path"), ("coder", "--offline"),
+    ("stt", "--inference-path"), ("coder", "--offline"), ("coder", "--metrics"),
 ]
 
 
@@ -571,6 +571,9 @@ def test_each_engine_gets_its_own_flags():
     # UI to the box's other accounts; whisper-server has neither.
     assert [cmd.count("--no-slots") for cmd in (vision, embed, coder, stt)] == [1, 1, 1, 0]
     assert [cmd.count("--no-webui") for cmd in (vision, embed, coder, stt)] == [1, 1, 1, 0]
+    # --metrics serves the per-engine counters `spark watch` reads (its in-flight and deferred requests): aggregate
+    # numbers, never a request's content, which the two above already hold.
+    assert [cmd.count("--metrics") for cmd in (vision, embed, coder, stt)] == [1, 1, 1, 0]
     # whisper-server answers where llama-swap and Open WebUI send audio, and gets none of llama-server's flags.
     assert values(stt, "--inference-path") == ["/v1/audio/transcriptions"]
     assert not {"--ctx-size", "--parallel", "--gpu-layers", "--cache-ram", "--embedding"} & set(stt)

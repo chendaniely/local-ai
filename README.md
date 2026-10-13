@@ -165,7 +165,10 @@ when that file was retired on 2026-09-23.
   bootstrap; **Tailscale 1.102.4** came from its own install script (2026-09-24; its version
   recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
   2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
-  pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
+  pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. **btop 1.3.0-1**,
+  **nvitop 1.3.2-1**, **nvtop 3.0.2-1** and **datacenter-gpu-manager 1:3.3.9** (dcgmi) are Ubuntu's
+  packages, installed by Dan for the live view (2026-10-08 and 2026-10-13); the runbook is
+  [Monitoring: the live view](website/how-to/monitoring.md). Claude Code here
   talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
 - **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +

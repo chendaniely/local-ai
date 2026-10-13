@@ -194,7 +194,9 @@ class AsyncLlamaSwap:
         if not (isinstance(listed, list) and all(isinstance(r, dict) and isinstance(r.get("model"), str)
                                                  and isinstance(r.get("state"), str) for r in listed)):
             raise LlamaSwapAnswered("llama-swap GET /running: an answer it can't read (not v257's shape)")
-        return [Running(r["model"], r["state"]) for r in listed]
+        # The proxy, which v257 also sends, is read permissively: a stand-in that omits it still reads.
+        return [Running(r["model"], r["state"], r.get("proxy") if isinstance(r.get("proxy"), str) else "")
+                for r in listed]
 
     async def load(self, model: str) -> LoadOutcome:
         """Loads `model`, or joins its load under way, and waits for it up to `load_timeout_s`. Any timeout or error

@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import status
 
     status.register(subparsers)
+    from spark import watch
+
+    watch.register(subparsers)
     from spark import render as render_cmd
 
     render_cmd.register(subparsers)

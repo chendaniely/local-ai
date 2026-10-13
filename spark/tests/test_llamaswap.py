@@ -115,8 +115,26 @@ def chained(err: BaseException) -> list[BaseException]:
 
 
 def test_running_sends_the_key(server):
-    assert LlamaSwap(server, "good").running() == [Running("coder", "ready")]
+    assert LlamaSwap(server, "good").running() == [Running("coder", "ready", "y")]
     assert SEEN == [("GET", "/running", "Bearer good")]
+
+
+def test_running_carries_the_engine_port(server):
+    # v257's /running sends each model's proxy, the engine's URL with its ${PORT} filled in: `spark watch` reads the
+    # engine's /metrics from it.
+    ANSWER["body"] = {"running": [{"model": "coder", "state": "starting", "proxy": "http://127.0.0.1:5801"}]}
+    assert LlamaSwap(server, "good").running() == [Running("coder", "starting", "http://127.0.0.1:5801")]
+
+
+@pytest.mark.parametrize("proxy", [None, 4, ["x"]], ids=["absent", "not a string", "a list"])
+def test_an_answer_without_a_string_proxy_still_reads(server, proxy):
+    # A stand-in that omits the proxy (or a llama-swap older than v257) still reads; `spark watch` then says the
+    # port is unknown, and nothing here fails.
+    entry = {"model": "coder", "state": "ready"}
+    if proxy is not None:
+        entry["proxy"] = proxy
+    ANSWER["body"] = {"running": [entry]}
+    assert LlamaSwap(server, "good").running() == [Running("coder", "ready")]
 
 
 def test_wrong_key_is_a_clear_error(server):
@@ -245,7 +263,7 @@ def test_a_proxy_in_the_environment_never_gets_the_request(server, monkeypatch):
         monkeypatch.setattr(urllib.request, "_opener", None)  # urlopen keeps the proxies it read on first use
         running = LlamaSwap(server, "good").running()
     assert PROXIED == []  # nothing, so no key, reached the proxy
-    assert running == [Running("coder", "ready")] and SEEN == [("GET", "/running", "Bearer good")]
+    assert running == [Running("coder", "ready", "y")] and SEEN == [("GET", "/running", "Bearer good")]
 
 
 @pytest.mark.parametrize("url", [

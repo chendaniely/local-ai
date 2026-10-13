@@ -8,6 +8,21 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-13 — Monitoring: btop and DCGM installed (Dan)
+
+**On the Spark**, apt-installed by Dan: btop 1.3.0-1 and datacenter-gpu-manager 1:3.3.9 (dcgmi), the two
+of the live view's tools that nvitop 1.3.2-1 and nvtop 3.0.2-1 (installed 2026-10-08, recorded below)
+lacked: btop for CPU and memory, dcgmi for the GPU's utilization, clock, power and temperature. The
+live view is `spark watch` (the monitoring branch, not yet deployed) beside the four TUIs; the runbook
+is [website/how-to/monitoring.md](website/how-to/monitoring.md).
+
+## 2026-10-08 — Monitoring: nvitop and nvtop installed (Dan) (recorded 2026-10-13)
+
+**On the Spark**, apt-installed by Dan: nvitop 1.3.2-1 and nvtop 3.0.2-1, the GPU process viewers. On
+the GB10's unified memory nvitop's NVML view reads `[N/A]` for memory, so `free -g` and `spark watch`'s
+memory line stay the memory's source; the process list and utilization work. Recorded with its
+2026-10-13 companion when the monitoring runbook landed.
+
 ## 2026-10-05 — Dependabot's hatchling bump deployed (recorded 2026-10-07)
 
 **Deployed** at 03:19 by a `make apply` from the clone, and not recorded until the

@@ -86,7 +86,7 @@ async def test_running_reads_v257s_shape(fake):
             assert await llamaswap.running() == []
             fake.set_state(CODER, "starting")
             fake.set_state(GEMMA, "ready")
-            assert await llamaswap.running() == [Running(GEMMA, "ready"), Running(CODER, "starting")]
+            assert await llamaswap.running() == [Running(GEMMA, "ready", "http://127.0.0.1:${PORT}"), Running(CODER, "starting", "http://127.0.0.1:${PORT}")]
 
             # Anything but v257's shape must never read as nothing running: the gate would load over a loaded model.
             for body in (b'{"models": []}', b'{"running": {}}', b'{"running": [{"model": 1, "state": "ready"}]}',
@@ -108,7 +108,7 @@ async def test_load_waits_past_every_other_timeout(fake):
             began = time.monotonic()
             assert await llamaswap.load(CODER) == LoadOutcome.READY
             assert time.monotonic() - began >= 1.0
-            assert await llamaswap.running() == [Running(CODER, "ready")]
+            assert await llamaswap.running() == [Running(CODER, "ready", "http://127.0.0.1:${PORT}")]
             # A model already loaded answers at once.
             assert await llamaswap.load(CODER) == LoadOutcome.READY
 
@@ -123,10 +123,10 @@ async def test_a_load_call_that_times_out_reads_as_unknown_not_failed(fake):
             assert 0.2 <= time.monotonic() - began < 0.9
             # Which is the truth: v257's start goes on without its caller, so an unknown load may be under way, and
             # the gate settles it with the load's ticket (Task 15).
-            assert await llamaswap.running() == [Running(CODER, "starting")]
+            assert await llamaswap.running() == [Running(CODER, "starting", "http://127.0.0.1:${PORT}")]
 
             async def ready():
-                return await llamaswap.running() == [Running(CODER, "ready")]
+                return await llamaswap.running() == [Running(CODER, "ready", "http://127.0.0.1:${PORT}")]
 
             await eventually(ready)
 
@@ -171,10 +171,10 @@ async def test_unload_returns_once_the_engine_is_gone(fake):
             began = time.monotonic()
             unloading = asyncio.create_task(llamaswap.unload(CODER))
             await asyncio.sleep(0.1)
-            assert await llamaswap.running() == [Running(GEMMA, "ready"), Running(CODER, "stopping")]
+            assert await llamaswap.running() == [Running(GEMMA, "ready", "http://127.0.0.1:${PORT}"), Running(CODER, "stopping", "http://127.0.0.1:${PORT}")]
             assert await unloading is None
             assert time.monotonic() - began >= 0.3
-            assert await llamaswap.running() == [Running(GEMMA, "ready")]
+            assert await llamaswap.running() == [Running(GEMMA, "ready", "http://127.0.0.1:${PORT}")]
 
             with pytest.raises(LlamaSwapAnswered, match="^llama-swap POST /api/models/unload/nonesuch: HTTP 404$"):
                 await llamaswap.unload("nonesuch")
@@ -209,7 +209,7 @@ async def test_unload_waits_its_own_bound(fake, monkeypatch):
             assert 0.3 <= time.monotonic() - began < 0.9
             # What the gate does then (Tasks 16 and 17): read /running, where the stop goes on, and count the model
             # stopping until it is gone; never llama_swap_down.
-            assert await llamaswap.running() == [Running(CODER, "stopping")]
+            assert await llamaswap.running() == [Running(CODER, "stopping", "http://127.0.0.1:${PORT}")]
 
 
 @pytest.mark.anyio
@@ -300,7 +300,7 @@ async def test_an_environment_proxy_is_ignored(fake, monkeypatch):
                 monkeypatch.delenv(name, raising=False)
             async with AsyncLlamaSwap(url, KEY, load_timeout_s=5) as llamaswap:
                 assert await llamaswap.load(GEMMA) == LoadOutcome.READY
-                assert await llamaswap.running() == [Running(GEMMA, "ready")]
+                assert await llamaswap.running() == [Running(GEMMA, "ready", "http://127.0.0.1:${PORT}")]
                 await llamaswap.unload(GEMMA)
                 assert await llamaswap.last_lines(GEMMA, read_s=0.1) == []
             assert seen == []

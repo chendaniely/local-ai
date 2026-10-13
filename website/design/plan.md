@@ -2024,6 +2024,12 @@ Each item gets its own design pass when its turn comes.
 
 ## Open items and risks
 
+- **The live view has no history** (added 2026-10-13, with the monitoring branch): `spark watch` and the
+  TUIs show the box now — memory, loaded models, each engine's in-flight and deferred requests, the
+  brake — but nothing keeps the past. The backlog already lists a usage and utilization dashboard. → A
+  history dashboard (Prometheus and Grafana on the box, over the engines' `--metrics` and the box's own
+  counters) gets its own design pass when its turn comes; alerting stays ntfy's, not the dashboard's
+  (*Visibility and notifications*).
 - **GB10 hard freezes**, memory-related and not → conservative thresholds, the minimal brake from
   Phase 1, the off-box watchdog, a clock cap if needed, Home Assistant power later; incidents are
   logged in the vault.
