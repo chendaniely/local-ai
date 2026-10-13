@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.3">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="dcterms.date" content="2026-09-25">
+<meta name="description" content="What Phase 0 built, how it ran, where it departed from the plan, what the reviews found, why it took so many loops, what Phase 1 inherits, and how to start over.">
+
+<title>Phase 0 — retrospective – local-ai</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-e44360b8a8db1e130c7792fece1c8032.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-759232fa0b86b84cb2931155628a3b47.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">local-ai</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../design/plan.html"> 
+<span class="menu-text">Plan</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../architecture.html"> 
+<span class="menu-text">Architecture</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../scenarios/index.html"> 
+<span class="menu-text">Scenarios</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../how-to/index.html"> 
+<span class="menu-text">How-to</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/stack.html"> 
+<span class="menu-text">Stack</span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#phase-0-retrospective" id="toc-phase-0-retrospective" class="nav-link active" data-scroll-target="#phase-0-retrospective">Phase 0 — retrospective</a>
+  <ul class="collapse">
+  <li><a href="#what-phase-0-delivered" id="toc-what-phase-0-delivered" class="nav-link" data-scroll-target="#what-phase-0-delivered">What Phase 0 delivered</a></li>
+  <li><a href="#how-it-ran" id="toc-how-it-ran" class="nav-link" data-scroll-target="#how-it-ran">How it ran</a></li>
+  <li><a href="#where-the-build-departed-from-the-plan-and-why" id="toc-where-the-build-departed-from-the-plan-and-why" class="nav-link" data-scroll-target="#where-the-build-departed-from-the-plan-and-why">Where the build departed from the plan, and why</a></li>
+  <li><a href="#what-the-reviews-found-by-theme" id="toc-what-the-reviews-found-by-theme" class="nav-link" data-scroll-target="#what-the-reviews-found-by-theme">What the reviews found, by theme</a></li>
+  <li><a href="#why-there-were-so-many-loops" id="toc-why-there-were-so-many-loops" class="nav-link" data-scroll-target="#why-there-were-so-many-loops">Why there were so many loops</a></li>
+  <li><a href="#carried-to-phase-1" id="toc-carried-to-phase-1" class="nav-link" data-scroll-target="#carried-to-phase-1">Carried to Phase 1</a></li>
+  <li><a href="#starting-over" id="toc-starting-over" class="nav-link" data-scroll-target="#starting-over">Starting over</a></li>
+  </ul></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Phase 0 — retrospective</h1>
+</div>
+
+<div>
+  <div class="description">
+    What Phase 0 built, how it ran, where it departed from the plan, what the reviews found, why it took so many loops, what Phase 1 inherits, and how to start over.
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">September 25, 2026</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="phase-0-retrospective" class="level1">
+<h1>Phase 0 — retrospective</h1>
+<p>Phase 0 ran from 2026-09-23 to 2026-09-25: <a href="../design/phase-0.html">its implementation plan</a>, executed task by task on branch <code>phase-0</code>, then reviewed and fixed until no review found anything important. That took 68 commits before this page, <code>89cad0c..60e0d30</code>. <a href="../design/plan.html">The plan</a> stays the place for decisions. This page is the history behind them, written so that a rebuilt box, or the next phase, takes fewer loops.</p>
+<section id="what-phase-0-delivered" class="level2">
+<h2 class="anchored" data-anchor-id="what-phase-0-delivered">What Phase 0 delivered</h2>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Piece</th>
+<th>What it is</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Leak guards</td>
+<td>pre-commit and commit-msg hooks: gitleaks, then the repo’s own patterns and a private denylist, over every commit’s files, file names and message. <code>make hooks</code> turns them on in a clone, after checking that gitleaks has its <code>git</code> command and that the denylist has terms. Before every push, a scan by hand of everything going out, with the denylist.</td>
+<td><a href="../how-to/leak-guards.html">Leak guards</a> · <code>.githooks/</code></td>
+</tr>
+<tr class="even">
+<td>CI</td>
+<td>Four jobs: the tests; the leak scans (gitleaks over the whole history, and the repo’s patterns over every tracked file and every commit’s patches and messages); shellcheck; the site build. Publishing the site is a manual workflow. Dependabot proposes GitHub Actions and <code>spark/uv.lock</code> updates every Friday.</td>
+<td><code>.github/</code></td>
+</tr>
+<tr class="odd">
+<td>The <code>spark</code> CLI</td>
+<td>A uv project on Python 3.12, pinned in <code>spark/.python-version</code>: <code>spark leakcheck</code>, <code>spark docs stack</code> and <code>spark docs check-scenarios</code>, with 109 tests.</td>
+<td><code>spark/</code></td>
+</tr>
+<tr class="even">
+<td>Pinned versions</td>
+<td><code>stack/versions.yaml</code>, rendered into the Stack page.</td>
+<td><a href="../reference/stack.html">Stack</a> · <code>stack/versions.yaml</code></td>
+</tr>
+<tr class="odd">
+<td>Host bootstrap</td>
+<td><code>make bootstrap</code>: packages, the GPU-set hold, the users <code>spark</code> and <code>agent</code>, directories, a headless boot, earlyoom, ufw with SSH only, the polkit rule. <code>make hold-gpu</code> re-holds the GPU set and nothing else. Each has a <code>-dry-run</code> target.</td>
+<td><a href="../how-to/bootstrap.html">Bootstrap</a> · <code>stack/host/</code></td>
+</tr>
+<tr class="even">
+<td>Runbooks</td>
+<td>Seven, in the order the How-to page lists them: the Spark session, leak guards, bootstrap, SSH from the Mac, Tailscale and secret files, then updates, which is ongoing.</td>
+<td><a href="../how-to/index.html">How-to</a></td>
+</tr>
+<tr class="odd">
+<td>Scenarios</td>
+<td>S01–S23, all <em>planned</em>. S23, upgrade day, was added in Phase 0.</td>
+<td><a href="../scenarios/index.html">Scenarios</a></td>
+</tr>
+<tr class="even">
+<td>The box</td>
+<td>Bootstrapped on 2026-09-24: headless, the GPU set held (151 packages), on the tailnet as <code>tag:spark</code>, and the Phase 1 secret files in place.</td>
+<td><code>README.md</code> §Current state · <code>changelog.md</code></td>
+</tr>
+<tr class="odd">
+<td>Phase 1’s plan, revised</td>
+<td>Phase 0’s lessons carried forward: a new Task 10 (a needrestart override, <code>make upgrade-gpu</code>, <code>make doctor</code> v0), the Spark session set up before any <strong>[Spark]</strong> task, and two box steps gated before anything faces the network.</td>
+<td><a href="../design/phase-1.html">Phase 1</a></td>
+</tr>
+</tbody>
+</table>
+<p>The “Phase 0 is done when” criteria hold, all but CI on <code>main</code>, which comes with the merge’s push. The headless <code>free -g</code> baseline is recorded. The planted private address is refused on both machines. <code>agent</code> can’t read Dan’s files or use Docker, and <code>nvidia-smi</code> run as <code>agent</code> names the GPU; a real CUDA program as <code>agent</code> waits for Phase 1’s first engine. The site builds, and CI passed on the branch on 2026-09-24; Task 12’s commits get their run at the next push.</p>
+</section>
+<section id="how-it-ran" class="level2">
+<h2 class="anchored" data-anchor-id="how-it-ran">How it ran</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>When</th>
+<th>Where</th>
+<th>What happened</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>2026-09-23</td>
+<td>—</td>
+<td>The plan and this phase’s implementation plan were written the day the Spark arrived, and <code>phase-0</code> was cut from <code>main</code> at <code>89cad0c</code>.</td>
+</tr>
+<tr class="even">
+<td>2026-09-23 to 24</td>
+<td>Mac</td>
+<td>Tasks 1–8 (<code>89cad0c..80b27d1</code>), subagent-driven: an implementer per task, then a spec and quality review. One task needed a fix round. The hooks stayed off, because the denylist didn’t exist yet, so each task’s diff was scanned by hand.</td>
+</tr>
+<tr class="odd">
+<td>2026-09-24</td>
+<td>Mac</td>
+<td>A whole-branch review: 1 Critical (scan the branch’s history and messages with the denylist before anything is public), 5 Important, 16 Minor. One fix wave (<code>80b27d1..1adb1e0</code>) was re-reviewed, and only minors were left. Then the push gate: Dan’s denylist, <code>make hooks</code>, the leak drill, the scans of the tree, the history and the messages, and Dan’s OK to push.</td>
+</tr>
+<tr class="even">
+<td>2026-09-24</td>
+<td>Spark</td>
+<td>Tasks 9–11 (<code>1adb1e0..6893c1d</code>), in a Claude Code session on the box and by Dan. The dry run and the inventory found the login and the hold wrong, and Dan made two decisions about updates. Dan bootstrapped the box, joined Tailscale and wrote the secret files; the session checked and recorded it all. SSH from the Mac got its own runbook (<code>ed348f5</code>, <code>96d0217</code>).</td>
+</tr>
+<tr class="odd">
+<td>2026-09-24 to 25</td>
+<td>Mac</td>
+<td>Task 12: the vault’s entry note, then a council of four reviewers (goal-fit and scenarios, reliability, security and simplicity, toolstack). Each said “with fixes”; none found anything Critical. Three fix waves followed, each reviewed. G1, the code (<code>96d0217..fe3d8b7</code>), passed its first review. G2, the as-built docs (<code>fe3d8b7..f1c30f2</code>), needed one fix round. G3, the forward look into Phase 1’s plan (<code>f1c30f2..0eb3760</code>), needed three.</td>
+</tr>
+<tr class="even">
+<td>2026-09-25</td>
+<td>Mac</td>
+<td>A polish pass for the first upgrade day, 2026-09-26, mostly the check of which kernel GRUB boots (<code>0eb3760..60e0d30</code>, reviewed three times). Then this page, before the merge.</td>
+</tr>
+</tbody>
+</table>
+<p>Of the 68 commits, 45 came in the fix waves: 7 after the whole-branch review, and 38 in Task 12. The ranges are git’s <code>A..B</code>: the commits after <code>A</code>, up to and including <code>B</code>.</p>
+</section>
+<section id="where-the-build-departed-from-the-plan-and-why" class="level2">
+<h2 class="anchored" data-anchor-id="where-the-build-departed-from-the-plan-and-why">Where the build departed from the plan, and why</h2>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>What changed</th>
+<th>Why</th>
+<th>Commits</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Dan’s login on the Spark isn’t <code>dan</code>, the Mac’s login. Bootstrap takes its admin from whoever runs it.</td>
+<td>The plan assumed it, and the runbooks hardcoded <code>/home/dan</code>. Under the wrong name, one check always passed and one step deleted the key it had failed to copy.</td>
+<td><code>3cf93e4</code></td>
+</tr>
+<tr class="even">
+<td>The GPU set is held as one: the kernel metapackages, the NVIDIA modules, the driver, and CUDA with its version-named libraries.</td>
+<td>The plan held <code>nvidia-*</code>, <code>libnvidia-*</code> and <code>cuda-*</code> only, which left the kernel and its modules free to move; DGX OS ships all four together. Dan’s decision.</td>
+<td><code>cb0ec0b</code>, <code>f77a144</code></td>
+</tr>
+<tr class="odd">
+<td>Everyday <code>apt upgrade</code> runs any time. The GPU set moves only on upgrade day, weekly on Saturdays.</td>
+<td>Dan runs apt out of habit, so the held set needs a written plan for when it moves. Weekly rather than monthly was Dan’s call.</td>
+<td><code>cb0ec0b</code>, <code>8bb80e1</code></td>
+</tr>
+<tr class="even">
+<td>There is no tailnet route home.</td>
+<td>Every device Dan uses runs Tailscale, and the Spark sits on the LAN. Dan’s decision.</td>
+<td><code>f4390df</code>, <code>13633aa</code></td>
+</tr>
+<tr class="odd">
+<td>The secrets runbook is <code>secret-files.md</code>.</td>
+<td><code>.gitignore</code>’s <code>secrets.*</code> rule, kept as strict as it was, ignores a file named <code>secrets.md</code>. Dan’s decision.</td>
+<td><code>80b27d1</code></td>
+</tr>
+<tr class="even">
+<td><code>/var/lib/local-ai</code> is root’s (<code>root:root 0755</code>), and bootstrap never acts inside <code>agent</code>’s home.</td>
+<td>A re-run as root followed any symlink <code>spark</code> or <code>agent</code> could plant there, which is a path to root.</td>
+<td><code>3735420</code></td>
+</tr>
+<tr class="odd">
+<td>The hooks came on only once Dan’s denylist existed.</td>
+<td>Without it they refuse every commit. Tasks 1–8 and their fix wave were committed with the hooks off and scanned by hand, then scanned again with the denylist, tree, history and messages, before Dan’s OK to push. That scan is now a step before every push (<a href="../how-to/leak-guards.html#before-every-push">Leak guards</a>).</td>
+<td>the push gate, 2026-09-24</td>
+</tr>
+<tr class="even">
+<td><code>make hold-gpu</code> re-holds the GPU set and nothing else.</td>
+<td>Upgrade day re-ran all of bootstrap just to re-hold, which stops a running desktop, restarts earlyoom and resets owners and modes.</td>
+<td><code>f77a144</code>, <code>ed0e06a</code></td>
+</tr>
+<tr class="odd">
+<td>Bootstrap installs every apt package the box relies on.</td>
+<td>A rebuild must not depend on what DGX OS happens to ship.</td>
+<td><code>d0c4d3c</code></td>
+</tr>
+<tr class="even">
+<td>Ubuntu’s gitleaks 8.16 was removed once the plan’s 8.30.1 release binary was in <code>/usr/local/bin</code>, rather than left on <code>PATH</code> beside it.</td>
+<td>With both installed, which one ran depended on <code>PATH</code>. gitleaks has no snap, so the direct install stays, with its upgrade steps in <code>updates.md</code>.</td>
+<td><code>0c86fae</code>, <code>cb0ec0b</code></td>
+</tr>
+<tr class="odd">
+<td>A mid-document rule under <code>website/</code> is <code>***</code>.</td>
+<td>Pandoc read <code>---</code> as the start of a YAML block, and the render failed.</td>
+<td><code>cbb28b2</code></td>
+</tr>
+<tr class="even">
+<td>Dependabot proposes GitHub Actions and <code>spark/uv.lock</code> updates.</td>
+<td>The plan’s “automated PRs” had been dropped without a word. What Dependabot can’t read went to the Backlog.</td>
+<td><code>c0653ca</code></td>
+</tr>
+<tr class="odd">
+<td>One Python minor version, 3.12, pinned in <code>spark/.python-version</code>.</td>
+<td>Nothing pinned it, and the Mac’s had floated to 3.14; uv looks for the pin only in the project directory.</td>
+<td><code>fe3d8b7</code></td>
+</tr>
+<tr class="even">
+<td>The Spark session is set up first, with the Mac’s rules and secrets guard, and its GitHub token can push to this repository only.</td>
+<td>Its setup was scheduled after the task that ran in it, and a plain <code>gh auth login</code> can push to every repository Dan can.</td>
+<td><code>8bc5a3b</code>, <code>0c976e6</code>, <code>a4da76f</code></td>
+</tr>
+<tr class="odd">
+<td><code>make doctor</code> v0 moves into Phase 1.</td>
+<td>Weekly upgrade day starts on 2026-09-26 and needs a check after it. <code>spark doctor</code> proper stays in Phase 2.</td>
+<td><code>e503da1</code></td>
+</tr>
+<tr class="even">
+<td>The plan’s code listings stay as written. Where a later fix changed the code, the listing is marked <em>Superseded</em>.</td>
+<td>Correct, don’t delete. The code in the repo is the as-built version.</td>
+<td><code>13633aa</code></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="what-the-reviews-found-by-theme" class="level2">
+<h2 class="anchored" data-anchor-id="what-the-reviews-found-by-theme">What the reviews found, by theme</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Theme</th>
+<th>What was found</th>
+<th>Fixed in</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Leak-check gaps</td>
+<td>A private address at the end of a sentence passed, and so did every IPv6 private or tailnet address. The allow marker excused denylisted terms too, and a bad denylist line gave a traceback. Type changes, UTF-16 text, file names and an empty denylist passed, and binaries were skipped without a word. <code>make hooks</code> accepted a gitleaks too old for the hooks, and a missing <code>uv</code> gave a bare error. In CI the repo’s patterns read only the tree, never earlier patches or commit messages. <code>*.env</code> files weren’t ignored.</td>
+<td><code>8e0a5e7</code>, <code>cbd7ca3</code>, <code>f581016</code>, <code>783a619</code>, <code>bad1b55</code>, <code>05921a1</code></td>
+</tr>
+<tr class="even">
+<td>Root writing where <code>spark</code> or <code>agent</code> can plant a symlink</td>
+<td>Bootstrap re-applied owners inside <code>spark</code>’s <code>/var/lib/local-ai</code> and in <code>agent</code>’s home. The runbook wrote <code>agent</code>’s <code>authorized_keys</code> as root. Phase 1’s plan wrote <code>agent</code>’s key file as root, and ran Node’s installer from a fixed <code>/tmp</code> name.</td>
+<td><code>3735420</code>, <code>16094cc</code>, <code>e503da1</code></td>
+</tr>
+<tr class="odd">
+<td>The GPU hold failing silently</td>
+<td>The hold missed the kernel and the NVIDIA modules. Held packages read as <code>hi</code> and dropped out of the set, half-configured packages were skipped, and nothing checked that the hold took.</td>
+<td><code>cb0ec0b</code>, <code>f77a144</code>, <code>ed0e06a</code></td>
+</tr>
+<tr class="even">
+<td>Upgrade day booting a kernel with no NVIDIA module</td>
+<td>A stopped upgrade left the set released. Nothing checked the new kernel’s module before the reboot, and the recovery line could neither recover nor be run twice. apt could swap the driver branch. The check of which kernel GRUB boots read only GRUB’s settings, and so missed <code>GRUB_TOP_LEVEL</code>, <code>GRUB_FLAVOUR_ORDER</code> and indented or exported lines; it now reads <code>grub.cfg</code> and <code>grub-editenv</code>. In Phase 1’s plan, early versions of <code>make upgrade-gpu</code> compared the set including its hold letter, and could suggest a restart after a new kernel arrived without its module.</td>
+<td><code>1e1abbc</code>, <code>833666a</code>, <code>9e36459</code>, <code>ad6c896</code>, <code>8476142</code>, <code>0d35bfb</code>, <code>3345b19</code>, <code>3979f5a</code>, <code>0eb3760</code></td>
+</tr>
+<tr class="odd">
+<td>CI fragility</td>
+<td>One step downloaded, checked and ran gitleaks, so a network blip read as a leak. The job token stayed in the checkouts, and no job had a time limit or retried a download. Nothing proposed updates, so two Actions pins fell behind unnoticed.</td>
+<td><code>bad1b55</code>, <code>ed0e06a</code>, <code>c0653ca</code></td>
+</tr>
+<tr class="even">
+<td>Runbook commands that could print a secret, or couldn’t work</td>
+<td>A check <code>cat</code>ed Dan’s secrets file in exactly the case it exists to catch. A key that a later step copies was never created, so three keys would have been written empty. <code>sudo</code> inside a piped <code>ssh</code> had no terminal to ask for the password. A failed checksum didn’t stop an install. A check meant to list names could print a value.</td>
+<td><code>41da7fb</code>, <code>2381c21</code></td>
+</tr>
+<tr class="odd">
+<td>Access wider than needed</td>
+<td>The Spark’s <code>gh</code> login could push to every repository Dan can, and the Spark session’s runbook didn’t carry over the Mac’s secrets rule and guard. The SSH runbook had no keys-only step and no public IPv6 check.</td>
+<td><code>8bc5a3b</code>, <code>0dc7a3a</code></td>
+</tr>
+<tr class="even">
+<td>Docs that had become untrue</td>
+<td>The plan’s route home, the secret files’ mode, who turns the hooks on and where uv’s Pythons live; <code>CLAUDE.md</code>‘s “almost no code yet”; the README’s contents. Phase 1’s plan lacked three things this plan promised for Phase 1. <code>CLAUDE.md</code> said <code>agent</code> never gets credentials. The plan said screenshots and Actions logs get checked, and neither is read. The leak-guards runbook lagged the hooks’ new checks, and read every red leaks step in CI as a finding.</td>
+<td><code>13633aa</code>, <code>15e81fc</code>, <code>e503da1</code>, <code>f1c30f2</code>, <code>2d030e5</code>, <code>5debe62</code>, <code>d750eab</code></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="why-there-were-so-many-loops" class="level2">
+<h2 class="anchored" data-anchor-id="why-there-were-so-many-loops">Why there were so many loops</h2>
+<p>Phase 0 is small: a CLI, two hooks, one shell script and a set of docs. Yet Task 12 alone took three fix waves and a polish pass, and six more rounds to fix what their reviews found. The causes, each with the rule it now has in <code>CLAUDE.md</code> (<em>Lessons from Phase 0</em>):</p>
+<ol type="1">
+<li><strong>Plan code that was never run.</strong> Phase 0’s code listings went into the plan untested. The implementers copied them faithfully, so the plan’s bugs arrived as code: a check that could print the secrets file, <code>sudo</code> inside a piped <code>ssh</code>, a key that was never created, tests that passed with nothing to check, and hold patterns that missed the kernel metapackages, the NVIDIA modules and 23 CUDA libraries. <em>Rule:</em> run every code block before it goes into a plan, and keep the listing byte-identical to the tested code. G3 worked this way for Phase 1’s new code.</li>
+<li><strong>Testing only on the Mac.</strong> Even prototyped code broke on the box’s userland. GNU make 4.3 prints <code>Entering directory</code> lines under <code>make -n -C</code>. procps-ng 4’s <code>ps</code> rejects <code>oom_score_adj</code>. dpkg marks a held package <code>hi</code>, which the tests’ fakes never did, so a before-and-after comparison that passed on the Mac would always have differed on the box. A throwaway <code>ubuntu:24.04</code> container reproduced each one. <em>Rule:</em> test shell, Makefile, <code>ps</code> and apt/dpkg behaviour on both, and make fakes change state the way the real tool does.</li>
+<li><strong>Box facts assumed from the Mac.</strong> The login name, a <code>~/.secrets</code> on the Spark, DGX OS’s package names and what it ships, and which kernel GRUB boots were all assumptions. All but the last proved wrong once the box was checked, the first two silently; which kernel GRUB boots still isn’t checked there. <em>Rule:</em> a box fact stays marked unverified until the Spark session checks it.</li>
+<li><strong>Checks that couldn’t fail.</strong> The check that <code>agent</code> can’t read <code>/home/dan/.secrets</code> printed “good” because the file didn’t exist. Bootstrap’s tests passed when the line they checked was missing, and the hold’s test data never held a package in state <code>hi</code>, <code>iU</code> or <code>iF</code>. <em>Rule:</em> see every test and check fail once, against the bad case.</li>
+<li><strong>Security came last.</strong> The per-task reviews checked the spec and code quality. Security had a lens of its own only at the phase-end council, after bootstrap had run on the box. So its fixes landed in the code and the runbooks first, and the box’s side follows: a bootstrap re-run and three of Dan’s steps (<em>Carried to Phase 1</em>). <em>Rule:</em> review permissions, secrets and network exposure in the task that changes them, before it reaches the box.</li>
+<li><strong>Fixes that made new errors.</strong> Most reviews of a fix found something the fix itself had introduced. G2’s new upgrade-day recovery let a moved set skip its own check, and each of G3’s rounds left wording the next round corrected. The GRUB check changed in six commits. The first four reasoned from GRUB’s settings, and each missed a case; the fifth read what <code>grub.cfg</code> will boot, tested against Ubuntu’s real <code>grub-mkconfig</code>, and the sixth tightened it. <em>Rule:</em> re-read every sentence a fix touches against the code, check a tool’s behaviour against the tool itself, and mark the rest unverified.</li>
+<li><strong>Steps placed before what they need.</strong> The plan set up the Spark session in Task 10, after Task 9 had run in it. The first “In order” list for the runbooks missed what step 1 uses (tmux, gh, Claude Code, uv), and that the tailnet names don’t resolve until Tailscale is joined. <em>Rule:</em> a step comes after everything it uses.</li>
+<li><strong>Process slips.</strong> One commit went in with another model’s trailer and had to be amended. Shell expansion garbled one commit message (<code>cbb28b2</code>). The secrets hook refused shell commands that merely named a secret path. <em>Rule:</em> commits carry the exact trailer and are never amended without Dan’s OK; plans and runbooks are written with file tools, and a commit message with a body, or with backticks, <code>$</code> or <code>*</code> in it, goes through a file (<code>git commit -F</code>).</li>
+</ol>
+</section>
+<section id="carried-to-phase-1" class="level2">
+<h2 class="anchored" data-anchor-id="carried-to-phase-1">Carried to Phase 1</h2>
+<p><strong>Open decisions</strong></p>
+<ul>
+<li><strong>The unit-file model.</strong> Dan decides before Phase 1’s Task 6 writes the unit templates: keep the units rendered as Dan, in which case anything running as Dan can become root without a password, or install root-owned copies. The plan’s <em>Open items and risks</em> gives both options, and <code>phase-1.md</code> builds the first and stops at Task 6. (Decided 2026-09-25: root-owned copies, which <code>phase-1.md</code> now builds; the plan’s open item is resolved.)</li>
+<li><strong>Whether <code>make upgrade-gpu</code> runs the GRUB check itself</strong> before it says to reboot. It is recommended; decide at Phase 1’s pre-flight (<code>phase-1.md</code>, Task 10). Until then, <code>updates.md</code>’s step 5 GRUB check is run by hand, before the move and again before the reboot. (Decided 2026-09-25: it runs the check itself, before the release and again after the move; <code>phase-1.md</code>’s Task 10 builds it.)</li>
+</ul>
+<p><strong>Pending on the box.</strong> Not yet applied on the box, or applied but not yet recorded in <code>README.md</code> §Current state. A box change gets a dated <code>changelog.md</code> entry and a line there when it’s done; the IPv6 check’s result goes in the vault instead.</p>
+<ul>
+<li><strong>Pull before the next upgrade day.</strong> Nothing after <code>96d0217</code> has been pushed, so the Spark’s clone has the <code>updates.md</code> from before the council: no tmux step, no module check before the reboot, no GRUB check, a re-hold through the whole of <code>make bootstrap</code>, and a recovery line the reliability review showed can leave the box without a GPU. The current steps need <code>make hold-gpu</code> (<code>ed0e06a</code>) and bootstrap’s <code>--hold-gpu</code> (<code>f77a144</code>), which that clone lacks. Once the merge is pushed, pull it on the Spark before upgrade day, or skip that Saturday; the plan allows skipping one.</li>
+<li><strong>Re-run <code>make bootstrap</code></strong>, so that <code>/var/lib/local-ai</code> becomes root’s and earlyoom avoids <code>sshd.*</code> (<code>3735420</code>). Phase 1’s Task 12, Step 1 does this, together with Phase 1’s cache folders and needrestart override.</li>
+<li><strong>Keys-only SSH</strong> (<a href="../how-to/ssh.html#keys-only">SSH from the Mac</a>), then its one-time public IPv6 check, whose result goes in the vault.</li>
+<li><strong>The Spark’s GitHub token for this repository only</strong>, with the first login revoked (<a href="../how-to/spark-session.html#github-a-token-for-this-repository-only">The Spark session</a>).</li>
+<li><strong>The secrets guard in the Spark’s Claude session</strong>, with the Mac’s global rules (<a href="../how-to/spark-session.html#before-the-first-session">The Spark session</a>, steps 2 and 3). They reached the runbook after the Spark’s Phase 0 sessions, and nothing records them on the box.</li>
+<li><strong>Three facts to record:</strong> Tailscale’s version, the kernel’s full release string, and the Spark’s OpenSSH version (the keys-only drop-in was tested only with the Mac’s).</li>
+</ul>
+<p>Phase 1’s Mac → Spark switch point checks keys-only SSH, the token and the secrets guard before any <strong>[Spark]</strong> task, and before anything faces the network.</p>
+<p><strong>Still unverified.</strong> The plan’s <em>To verify on the box</em> lists the design’s open checks, and <code>phase-1.md</code> and the runbooks mark the rest where they rely on one, as not yet checked, tried or performed on this box. Among them: upgrade day’s move of the GPU set and its recovery, untried until the first one; that GRUB boots the newest kernel; and <code>agent</code> running a real CUDA program, which waits for Phase 1’s first engine.</p>
+<p><strong>Deferred minors.</strong> Small, and none blocks anything:</p>
+<ul>
+<li>There is no pre-push hook, so the scan before every push (<a href="../how-to/leak-guards.html#before-every-push">Leak guards</a>) is run by hand.</li>
+<li>No pattern catches a global IPv6 address (<code>2000::/3</code>, allowing the <code>2001:db8::/32</code> documentation prefix).</li>
+<li>A MAC address written without separators, or in dotted form, isn’t matched.</li>
+<li>A tailnet IPv6 address is reported twice, as a tailnet address and as a unique-local one.</li>
+<li><code>check-scenarios</code> reads only <code>sNN-*.md</code>, while the site lists every <code>s*.md</code>, so a misnamed page or two pages with the same ID pass.</li>
+<li><code>versions.py</code> doesn’t check that <code>advisories</code> is an https URL, and doesn’t escape table cells.</li>
+<li>The Spark’s arm64 gitleaks is checked against the release’s own checksum file; pin its hash as CI pins the x64 one.</li>
+<li>shellcheck isn’t pinned (0.11.0 on the Mac, 0.9.0 on the Spark, the runner’s own in CI), and its file list is kept in both <code>ci.yml</code> and the <code>Makefile</code>.</li>
+<li>uv’s <code>required-version</code> is a floor, not a pin, so a <code>uv self update</code> between upgrade days goes unnoticed.</li>
+<li>Run from a root shell, bootstrap takes root as the admin and stops partway; preflight should refuse it.</li>
+<li>Bootstrap overwrites earlyoom’s dpkg conffile, which an earlyoom update can revert; a systemd drop-in would avoid that.</li>
+<li>systemd-oomd is off only because it isn’t installed; mask it, and have <code>make doctor</code> check it.</li>
+<li>earlyoom restarts on every bootstrap re-run; a <code>cmp -s</code> guard would skip an unchanged file.</li>
+<li>The <code>adm</code> group gives Dan’s sessions more logs than <code>make logs</code> needs (<code>systemd-journal</code> fits), and <code>spark-session.md</code> should say that journal output is private material.</li>
+<li><code>secret-files.md</code> has no command that removes a key, so a leaked key has no documented way to be rotated. (Its other half, steps that refuse a key already there, was declined in <code>2381c21</code>: it would add a guard to seven commands, and the dedupe it would replace stays useful.)</li>
+<li><code>tailscale.md</code>’s grant template keeps a home-LAN grant that does nothing without a route. Drop it until a route exists, and add policy tests and a note to keep Funnel off <code>tag:spark</code>.</li>
+<li>The hold’s hint for a half-installed or reinstall-required package names only <code>dpkg --configure -a</code>, and apt may be needed as well.</li>
+<li>Dependabot’s first PRs come after the merge: they should bring the two stale Actions pins up to date, and its first uv PR needs checking against <code>required-version</code>.</li>
+</ul>
+<p><strong>Decided, not deferred:</strong> <code>publish-website.yml</code>’s checkout keeps the job token, because its publish step pushes with it; <code>persist-credentials: false</code> is only in <code>ci.yml</code> (<code>bad1b55</code>).</p>
+</section>
+<section id="starting-over" class="level2">
+<h2 class="anchored" data-anchor-id="starting-over">Starting over</h2>
+<p><strong>On a new or rebuilt box</strong>, follow the How-to page’s <a href="../how-to/index.html#in-order"><em>In order</em></a> from the top. Its <em>Before step 1</em> installs Claude Code, uv, tmux and gh, and uses the LAN aliases until Tailscale is joined. Then come the Spark session, leak guards, bootstrap, SSH from the Mac, Tailscale and secret files, then back to SSH’s <em>Keys only</em> and the IPv6 check. <a href="../how-to/updates.html">Updates</a> is ongoing. A rebuild starts with <code>README.md</code>’s factory reset (not yet performed on this box). On the way through the runbooks, delete the old Tailscale device before rejoining (<a href="../how-to/tailscale.html#rebuilding-the-box">Join Tailscale</a>), and move the GPU set to current at, or right after, the first bootstrap (the plan’s <em>Backups, recovery and upgrades</em>). Record each step in <code>changelog.md</code> and <code>README.md</code> §Current state. S18 is the scenario for this.</p>
+<p><strong>On the Mac:</strong> <a href="../how-to/leak-guards.html">Leak guards</a> (gitleaks and shellcheck from Homebrew, the denylist, <code>make hooks</code> and the drill), uv, Quarto for <code>make docs</code>, and a container runtime (Docker Desktop here) for the throwaway <code>ubuntu:24.04</code> containers that test shell and apt behaviour. <code>make test lint docs</code> must pass before anything else.</p>
+<p><strong>Read first:</strong> <code>CLAUDE.md</code>, with its <em>Lessons from Phase 0</em>; <a href="../design/plan.html">the plan</a>; this page; <code>README.md</code> §Current state; then the phase plan being executed, which is <a href="../design/phase-1.html">Phase 1</a> next. The code in the repo is the as-built version. In <a href="../design/phase-0.html">Phase 0’s plan</a>, a listing whose code a later fix changed is marked <em>Superseded</em>; one that a later task extended as planned isn’t marked. Either way, the code wins.</p>
+<p><strong>A fresh Claude session</strong> reads <code>CLAUDE.md</code> by itself; point it at the plan and this page before it proposes anything. On the Spark it also needs what <a href="../how-to/spark-session.html">The Spark session</a> sets up first: the Mac’s global rules, the secrets guard and the project’s private memory. Everything private, such as full addresses, MACs, the ACL policy and each secret’s record by reference, lives in the vault’s entry note, never here.</p>
+
+
+</section>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/chendaniely\.github\.io\/local-ai\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

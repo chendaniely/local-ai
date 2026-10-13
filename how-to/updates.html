@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.3">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="What you can run any time, what updates by itself, what waits for upgrade day, and how to check everything is back afterwards.">
+
+<title>Updates – local-ai</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-e44360b8a8db1e130c7792fece1c8032.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-759232fa0b86b84cb2931155628a3b47.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">local-ai</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../design/plan.html"> 
+<span class="menu-text">Plan</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../architecture.html"> 
+<span class="menu-text">Architecture</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../scenarios/index.html"> 
+<span class="menu-text">Scenarios</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../how-to/index.html"> 
+<span class="menu-text">How-to</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/stack.html"> 
+<span class="menu-text">Stack</span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#any-time-apt" id="toc-any-time-apt" class="nav-link active" data-scroll-target="#any-time-apt">Any time: apt</a></li>
+  <li><a href="#by-themselves-snaps" id="toc-by-themselves-snaps" class="nav-link" data-scroll-target="#by-themselves-snaps">By themselves: snaps</a></li>
+  <li><a href="#after-any-update-is-everything-back" id="toc-after-any-update-is-everything-back" class="nav-link" data-scroll-target="#after-any-update-is-everything-back">After any update: is everything back?</a></li>
+  <li><a href="#upgrade-day-the-gpu-set" id="toc-upgrade-day-the-gpu-set" class="nav-link" data-scroll-target="#upgrade-day-the-gpu-set">Upgrade day: the GPU set</a>
+  <ul class="collapse">
+  <li><a href="#if-it-goes-wrong" id="toc-if-it-goes-wrong" class="nav-link" data-scroll-target="#if-it-goes-wrong">If it goes wrong</a></li>
+  </ul></li>
+  <li><a href="#upgrade-day-the-automated-prs" id="toc-upgrade-day-the-automated-prs" class="nav-link" data-scroll-target="#upgrade-day-the-automated-prs">Upgrade day: the automated PRs</a></li>
+  <li><a href="#upgrade-day-gitleaks" id="toc-upgrade-day-gitleaks" class="nav-link" data-scroll-target="#upgrade-day-gitleaks">Upgrade day: gitleaks</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Updates</h1>
+</div>
+
+<div>
+  <div class="description">
+    What you can run any time, what updates by itself, what waits for upgrade day, and how to check everything is back afterwards.
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>Everything here runs <strong>on the Spark</strong>, as you, unless a step says otherwise.</p>
+<p><code>sudo apt update &amp;&amp; sudo apt upgrade</code> is safe to run any time, as often as habit says: it can’t move the GPU stack while the set is held. The set is held except in two cases: midway through upgrade day, and a package of the set you have just installed, until <code>make hold-gpu</code> holds it too (<a href="#any-time-apt">Installing something new</a>). Everything that needs care waits for <strong>upgrade day, on Saturdays</strong>. Skipping one is fine; the next one catches up.</p>
+<p>A version set by hand in <code>stack/versions.yaml</code>, whatever its row below, moves only to a release at least seven days old, unless an urgent fix needs it sooner, and the commit then says so (Dan’s decision, 2026-09-28; <code>CLAUDE.md</code>, <em>Building it</em>).</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>What</th>
+<th>Comes from</th>
+<th>When and how it updates</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Everything else from apt</td>
+<td>apt</td>
+<td>Any time: <code>sudo apt update &amp;&amp; sudo apt upgrade</code></td>
+</tr>
+<tr class="even">
+<td>The GPU set: kernel, NVIDIA modules, driver, CUDA</td>
+<td>apt, held</td>
+<td>Upgrade day — <a href="#upgrade-day-the-gpu-set">the GPU set</a></td>
+</tr>
+<tr class="odd">
+<td>GitHub Actions and <code>spark/</code>’s Python dependencies, in <code>uv.lock</code> and <code>pyproject.toml</code> <em>(this said <code>spark/uv.lock</code> alone until 2026-09-28)</em></td>
+<td>Dependabot’s PRs against <code>main</code>, opened on Fridays</td>
+<td>Upgrade day — <a href="#upgrade-day-the-automated-prs">the automated PRs</a></td>
+</tr>
+<tr class="even">
+<td>gitleaks</td>
+<td>a direct install in <code>/usr/local/bin</code></td>
+<td>Upgrade day — <a href="#upgrade-day-gitleaks">gitleaks</a>; no package manager sees it</td>
+</tr>
+<tr class="odd">
+<td>uv</td>
+<td>the Spark: your <code>~/.local/bin</code>; the Mac: as installed there</td>
+<td>Upgrade day, <strong>on the Spark</strong>: <code>uv self update &lt;version&gt;</code>, the version <code>stack/versions.yaml</code> pins; the Mac’s uv, which the hooks also run, moves to the same version on the Mac. <em>(Added 2026-09-28: <code>agent</code>’s uv, in its <code>~/.local/bin</code>, came from uv’s installer at its newest, 0.12.19, not the pin; <code>stack/versions.yaml</code> records it.)</em></td>
+</tr>
+<tr class="even">
+<td>Python for <code>spark/</code></td>
+<td><code>spark/.python-version</code> pins 3.12</td>
+<td>Only deliberately, on upgrade day: change the pin, and each machine rebuilds <code>spark/.venv</code> on its next <code>uv run</code></td>
+</tr>
+<tr class="odd">
+<td>llama.cpp (<code>llama-server</code>)</td>
+<td>its release’s prebuilt arm64 CUDA binaries, in <code>/opt/local-ai/bin/llama.cpp/&lt;version&gt;/</code>; <code>stack/versions.yaml</code> pins it</td>
+<td>By hand, on upgrade day, one component at a time (the plan’s <em>Weekly upgrade day</em>). Its runbook is written with its first bump</td>
+</tr>
+<tr class="even">
+<td>llama-swap</td>
+<td>its release binary, in <code>/opt/local-ai/bin/llama-swap/&lt;version&gt;/</code>; pinned</td>
+<td>By hand, on upgrade day. Its runbook is written with its first bump</td>
+</tr>
+<tr class="odd">
+<td>whisper.cpp (<code>whisper-server</code>)</td>
+<td>built on the Spark from its release, in <code>/opt/local-ai/bin/whisper.cpp/&lt;version&gt;/</code>; pinned by commit</td>
+<td>By hand, on upgrade day. Its runbook is written with its first bump. A rebuild after the GPU set moves is <a href="#upgrade-day-the-gpu-set">the GPU set</a>’s step 7</td>
+</tr>
+<tr class="even">
+<td>Open WebUI</td>
+<td>its container image; pinned by digest</td>
+<td>By hand, on upgrade day. Its runbook is written with its first bump. Before any upgrade, copy its data folder, <code>/var/lib/local-ai/open-webui</code>: Open WebUI migrates its database when it starts, and a migration can’t be undone</td>
+</tr>
+<tr class="odd">
+<td>SearXNG</td>
+<td>its container image; pinned by digest</td>
+<td>By hand, on upgrade day. Its runbook is written with its first bump</td>
+</tr>
+<tr class="even">
+<td>The desktop’s snaps (browser, mail, Snap Store, firmware updater) and their runtimes</td>
+<td>snap</td>
+<td>By themselves, about four times a day</td>
+</tr>
+<tr class="odd">
+<td>Claude Code</td>
+<td>your <code>~/.local/bin</code></td>
+<td>By itself</td>
+</tr>
+<tr class="even">
+<td>Firmware</td>
+<td>fwupd</td>
+<td>Not automatically. Whether GIGABYTE publishes this box’s firmware there is not yet checked</td>
+</tr>
+</tbody>
+</table>
+<section id="any-time-apt" class="level2">
+<h2 class="anchored" data-anchor-id="any-time-apt">Any time: apt</h2>
+<p><strong>On the Spark:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt update <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> apt upgrade</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>make bootstrap</code> holds the GPU set, so this never changes the kernel, the NVIDIA driver or CUDA; <code>apt-mark showhold</code> lists what is held. unattended-upgrades isn’t installed, so apt changes things only when you run it. Use a terminal rather than NVIDIA’s web updater: the 2026-09-23 DGX OS update came from it, and how it treats held packages is not yet checked.</p>
+<p><strong>Installing something new.</strong> A package that belongs to the set, such as an <code>nvidia-*</code> or <code>cuda-*</code> package or a CUDA library, arrives unheld. Hold it with the rest: <code>make hold-gpu</code>, from <code>~/git/hub/local-ai</code> (<code>make hold-gpu-dry-run</code> previews it). If <code>apt install</code> stops with <code>you have held broken packages</code>, the package needs a newer version of something in the held set. The hold is doing its job: wait for upgrade day, or install the version that fits the held set. <code>apt policy &lt;package&gt;</code> lists the versions, and <code>sudo apt install &lt;package&gt;=&lt;version&gt;</code> picks one.</p>
+<p>What a routine upgrade can restart by itself:</p>
+<ul>
+<li><strong>Services on replaced libraries.</strong> After every apt run, needrestart restarts the services still using a library the upgrade replaced. It leaves Docker, the login services and DGX OS’s own dashboard alone. Bootstrap installs <code>/etc/needrestart/conf.d/local-ai.conf</code>, so it leaves the stack’s <code>local-ai-*</code> units alone too, and a habitual upgrade never restarts a model mid-use. <code>sudo needrestart -r l</code> lists what is still waiting for a restart.</li>
+<li><strong>Containers, when Docker itself upgrades.</strong> Docker comes from NVIDIA’s repository here. An upgrade stops every running container, and only those with a restart policy come back by themselves. The stack’s web services may not, whatever their policy: <a href="#after-any-update-is-everything-back">After any update</a> says why.</li>
+<li><strong>Nothing that needs a reboot, until you reboot.</strong> If <code>/var/run/reboot-required</code> exists afterwards, <code>cat /var/run/reboot-required.pkgs</code> names the package that asked. Reboot when nothing is running, and only once <a href="#upgrade-day-the-gpu-set">upgrade day’s step 5</a> checks pass: a routine upgrade can rebuild GRUB’s menu too.</li>
+</ul>
+<p>apt keeps its own record of every run, so routine updates need no notes. <strong>On the Spark</strong>, to see when updates ran and what changed:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="at">-A4</span> <span class="st">'^Start-Date'</span> /var/log/apt/history.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-40</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Older runs are in the rotated <code>/var/log/apt/history.log.*.gz</code> files (read them with <code>zgrep</code>). Upgrade day’s changes also get a <code>changelog.md</code> entry.</p>
+</section>
+<section id="by-themselves-snaps" class="level2">
+<h2 class="anchored" data-anchor-id="by-themselves-snaps">By themselves: snaps</h2>
+<p>The snaps here are the desktop’s own; none is part of the stack. snapd refreshes them about four times a day (<code>snap refresh --time</code> shows when), so there is nothing to run. <code>sudo snap refresh</code> updates them now.</p>
+<p>If something the stack depends on ever comes as a snap, <strong>on the Spark</strong>, hold it so it moves on upgrade day:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> snap refresh <span class="at">--hold</span> <span class="op">&lt;</span>name<span class="op">&gt;</span>   <span class="co"># stops its automatic refreshes and a plain `snap refresh`</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> snap refresh <span class="op">&lt;</span>name<span class="op">&gt;</span>          <span class="co"># upgrade day: naming the snap still refreshes it</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>gitleaks has no snap (checked 2026-09-24), which is why it is a direct install.</p>
+</section>
+<section id="after-any-update-is-everything-back" class="level2">
+<h2 class="anchored" data-anchor-id="after-any-update-is-everything-back">After any update: is everything back?</h2>
+<p><strong>On the Spark</strong>, from the clone, check Phase 0’s guardrails and the stack in one pass:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">make</span> doctor</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>It checks Phase 0’s guardrails: the leak hooks, the GPU set held (the running kernel’s modules package included), the driver’s kernel module agreeing with <code>nvidia-smi</code>, earlyoom running with the repo’s arguments, ufw on, the secrets folder closed to you, and spark’s folders as bootstrap sets them (<code>/var/lib/local-ai</code> root’s, the brake’s folder spark’s, shared with <code>spark-admin</code>). It checks the stack too: root’s own copies of the units and the Compose project (each root’s regular file or folder, not a link, and not writable by group or others), needrestart’s override installed as the repo has it, no folder that llama-server could read a <code>config.ini</code> from (<code>/etc/llama.cpp</code> or <code>/var/lib/local-ai/.config</code>), its three units active, llama-swap answering and refusing a call without a key, Open WebUI and SearXNG answering, and the embeddings model answering through llama-swap, loaded first if it wasn’t. Each line is <code>ok</code> or <code>FAIL</code>, and a <code>FAIL</code> says what to do. It changes nothing but this: it loads the embeddings model if it isn’t loaded, which also clears the last refusal record that <code>make status</code> shows. It needs no sudo, and uses your <code>SPARK_API_KEY</code>, which <a href="../how-to/deploy.html#before-the-first-deploy">Deploy the stack</a> puts in the Spark’s <code>~/.secrets</code>.</p>
+<p>What brings the stack back by itself:</p>
+<ul>
+<li>the units are enabled, so a reboot starts them;</li>
+<li>llama-swap and the brake restart if they crash;</li>
+<li>needrestart leaves the units alone.</li>
+</ul>
+<p>A Docker upgrade may not. The web services’ unit requires Docker, so a restart of Docker restarts it too. An upgrade that stops Docker and starts it again leaves the web services stopped, whatever their containers’ restart policy: the unit’s stop removes the containers (<code>docker compose down</code>), and nothing starts the unit again until <code>systemctl start local-ai-compose</code>. Which of the two a Docker upgrade does is not yet tried on this box. <code>make doctor</code> shows which: its <code>stack units</code> line names the web services’ unit when it is stopped, with the command that starts it.</p>
+<p>llama-swap preloads nothing, so after a reboot each model loads on its first request.</p>
+</section>
+<section id="upgrade-day-the-gpu-set" class="level2">
+<h2 class="anchored" data-anchor-id="upgrade-day-the-gpu-set">Upgrade day: the GPU set</h2>
+<p>The kernel, the NVIDIA modules built for it, the driver and CUDA only work as a matched set. The modules are compiled for one kernel and need one exact driver version. DGX OS ships them together: the 2026-09-23 update moved the kernel from 6.11 to 7.0, the driver from 580.95 to 580.178 and CUDA from 13.0.0 to 13.0.3 in one transaction. So they are held together and moved together. Holding only part of the set would let a routine <code>apt upgrade</code> install a kernel with no NVIDIA module, and the box would come back from its next reboot without a GPU.</p>
+<p><strong>Moving it early.</strong> Only a security fix in the set justifies it: a kernel fix in <a href="https://ubuntu.com/security/notices">Ubuntu’s security notices</a>, or a GPU display driver fix in <a href="https://www.nvidia.com/en-us/security/">NVIDIA’s security bulletins</a>. <code>agent</code> and <code>spark</code> both use the GPU, so a driver privilege-escalation fix is a boundary fix too. Everything else waits for Saturday; that wait is the cost of holding the set.</p>
+<p><em>Not yet performed on this box.</em> Every step below, the recovery included, is untried until the first upgrade day.</p>
+<p><code>make upgrade-gpu</code> runs steps 1 to 5, llama-swap and the brake being step 1’s part, as one command, in tmux, from the clone; it refuses to start outside tmux. Step 5’s GRUB check included, it runs all of them. First the GRUB check, as step 2 says: if GRUB won’t boot the newest kernel, it stops there, with the set still held and nothing moved, and says why. Then it releases the set, reads apt’s plan and refuses it before anything moves if it breaks step 3’s rule, stops llama-swap and the brake, and moves the set (you read apt’s plan and answer). Then it holds the set again with <code>make hold-gpu</code>’s hold, runs step 5’s two checks on the new newest kernel, the module and then GRUB, and says whether to reboot: <code>DON'T REBOOT</code> names the reason, and never a GRUB id or UUID. Every way out after the release runs the hold, and only the hold after apt’s move is tried again. The set can still stay released: when the hold stops (a package dpkg didn’t finish, a hold that didn’t take, no kernel or nothing matching), or when a signal cuts off a hold the way out runs, the retry included. In each case it says to run <code>make hold-gpu</code>. It judges whether apt moved anything by each package’s state and version, not the hold letter, and it checks that the newest kernel still has its module. If apt moved even part of the set, left the newest kernel without a module, or GRUB failed after the move, it sends you to <a href="#if-it-goes-wrong">If it goes wrong</a> rather than to a reboot or a restart of the stack. Only when none of these happened does it say how to start the stack again. <code>make upgrade-gpu-dry-run</code> prints the steps without running them. The numbered steps are what it runs, to read along with, and to do by hand if it can’t; step 5’s GRUB check by hand is for those steps. (Corrected 2026-09-25: this said it would run all but the GRUB check, which you would run before it and again before the reboot. Dan decided that it runs the check itself.)</p>
+<p><strong>On the Spark</strong>, work in tmux, from the clone. A dropped SSH session in the middle of <code>full-upgrade</code> is the likeliest way to leave the set half-moved; in tmux the upgrade carries on, and <code>tmux attach -t upgrade</code> brings you back:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> new <span class="at">-As</span> upgrade</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/git/hub/local-ai</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>On the Spark</strong>, in that session, check before <code>make upgrade-gpu</code> that the clone’s <code>Makefile</code> and <code>stack/host/bootstrap.sh</code> are as committed: its sudo runs both, as step 4’s <code>make hold-gpu</code> does. This prints nothing when they are:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> status <span class="at">--short</span> <span class="at">--</span> Makefile stack/host</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Stop your own GPU jobs first, and <code>agent</code>’s as <code>agent</code> (<code>sudo -iu agent</code>, or its own session): <code>make upgrade-gpu</code> stops only llama-swap and the brake. Then, <strong>on the Spark</strong>, run it, or do the numbered steps below by hand:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">make</span> upgrade-gpu</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<ol type="1">
+<li><p>Stop what uses the GPU: <code>systemctl stop local-ai-llama-swap local-ai-brake</code> (the reboot starts them again), your own GPU jobs, and <code>agent</code>’s as <code>agent</code>.</p></li>
+<li><p>First run step 5’s GRUB check, so the GRUB question is settled before anything moves. If it doesn’t pass, stop here, with the set still held and nothing moved, and bring what it printed to the Claude session working on the repo (the Spark’s, by default) to work out why. <code>make upgrade-gpu</code> runs this check itself, before it releases the set. Then release the set:</p>
+<p><strong>On the Spark:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">apt-mark</span> showhold <span class="kw">|</span> <span class="fu">xargs</span> <span class="at">-r</span> sudo apt-mark unhold</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Only bootstrap holds packages on this box, so this releases just the set. With nothing held it does nothing, so it is safe to run again. <strong>From here until step 4, the set is free to move. If anything below fails, or you answer no, run <code>make hold-gpu</code> before anything else.</strong></p></li>
+<li><p><strong>On the Spark</strong>, move the set as one:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> dpkg <span class="at">--configure</span> <span class="at">-a</span> <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> apt update <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> apt full-upgrade</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>dpkg --configure -a</code> finishes anything an earlier run left half-done; otherwise it does nothing. <code>full-upgrade</code>, not <code>upgrade</code>: moving the set can remove the modules built for the old kernel, and <code>upgrade</code> never removes anything. Removing the old kernel’s own modules package (<code>linux-modules-nvidia-…-&lt;old kernel&gt;</code>) is expected. Read apt’s plan before you answer, and answer <strong>no</strong> if any of these is true:</p>
+<ul>
+<li>it would remove a <code>linux-modules-nvidia-*-nvidia-hwe-*</code> package with no other <code>linux-modules-nvidia-*-nvidia-hwe-*</code> installed in its place: that is the metapackage that brings in the modules for each new kernel;</li>
+<li>it would install a new kernel, <code>linux-image-&lt;version&gt;</code>, with no <code>linux-modules-nvidia-*</code> package ending in that same <code>&lt;version&gt;</code>;</li>
+<li>it would swap that metapackage for another driver branch’s (<code>linux-modules-nvidia-580-open-…</code> removed, <code>linux-modules-nvidia-590-open-…</code> installed, say).</li>
+</ul>
+<p>In the first two cases the new kernel would boot without a GPU. Answering no installs and removes nothing, so re-hold with <code>make hold-gpu</code> and try again next upgrade day. The third is a new driver branch: answer no and re-hold. Moving to a new branch is not a routine upgrade day. You plan that move for a day you choose, and make it by hand. <code>make upgrade-gpu</code> refuses all three too.</p></li>
+<li><p>Hold the new set: <code>make hold-gpu</code>. It prints <code>GPU set: N packages, M already held</code>, then <code>GPU set held: N packages</code>. It stops instead, naming the packages, if one isn’t cleanly installed (it says how to finish it) or if a hold didn’t take. Do what it says, then run it again.</p></li>
+<li><p><strong>On the Spark</strong>, before you reboot, check that the kernel GRUB boots has an NVIDIA module. “GPU set held” proves the holds took, not that the set is complete. It takes two checks. First the module check, on the newest kernel:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="va">k</span><span class="op">=</span><span class="va">$(</span><span class="ex">linux-version</span> list <span class="kw">|</span> <span class="ex">linux-version</span> sort <span class="at">--reverse</span> <span class="kw">|</span> <span class="fu">head</span> <span class="at">-1</span><span class="va">)</span>   <span class="co"># the newest kernel</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">modinfo</span> <span class="at">-k</span> <span class="st">"</span><span class="va">$k</span><span class="st">"</span> <span class="at">-F</span> version nvidia                                  <span class="co"># the new driver's version</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>If <code>modinfo</code> says <code>Module nvidia not found</code>, or any other error, <strong>don’t reboot</strong>: go to <a href="#if-it-goes-wrong">If it goes wrong</a>.</p>
+<p><strong>On the Spark</strong>, then the GRUB check: that GRUB will boot that same kernel. It does by default, as Ubuntu sets it up, but that is not yet checked on this box <em>(checked 2026-09-27, in Phase 1’s Task 12: entry 0 booted the newest kernel, with the stock <code>default=</code> lines and an empty <code>grub-editenv list</code>)</em>, and more settings can change it than <code>/etc/default/grub</code> shows: some put another kernel first on the menu, others pick another entry. So read what GRUB will actually do, from the menu it boots from, which installing a kernel rebuilds, and from what it keeps between boots. <code>grub-editenv</code> runs without <code>sudo</code>, so nothing here can change anything:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="va">k</span><span class="op">=</span><span class="va">$(</span><span class="ex">linux-version</span> list <span class="kw">|</span> <span class="ex">linux-version</span> sort <span class="at">--reverse</span> <span class="kw">|</span> <span class="fu">head</span> <span class="at">-1</span><span class="va">)</span><span class="kw">;</span> <span class="bu">echo</span> <span class="st">"</span><span class="va">$k</span><span class="st">"</span>   <span class="co"># the newest kernel</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> grep <span class="at">-m1</span> <span class="at">-E</span> <span class="st">'^[[:space:]]*linux[[:space:]]'</span> /boot/grub/grub.cfg          <span class="co"># entry 0's kernel</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> grep <span class="st">'default='</span> /boot/grub/grub.cfg                                       <span class="co"># the entry GRUB starts</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">grub-editenv</span> list                                                              <span class="co"># what GRUB kept</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>The check passes when all three of these are true:</p>
+<ul>
+<li>entry 0’s <code>linux</code> line names <code>vmlinuz-</code> followed by the version <code>echo</code> printed;</li>
+<li>the <code>default=</code> lines are exactly the stock two, both <code>set default=</code>: one is <code>"${next_entry}"</code>, and the other is <code>"0"</code>, or <code>"${saved_entry}"</code> with <code>grub-editenv</code> printing no <code>saved_entry=</code> with a value, or <code>saved_entry=0</code>. A third line, or a bare <code>default=</code> without <code>set</code>, fails;</li>
+<li><code>grub-editenv</code> prints no <code>next_entry=</code> and no <code>prev_entry=</code> with a value. An empty <code>next_entry=</code> is what a used <code>grub-reboot</code> leaves behind, and GRUB ignores it. A <code>prev_entry</code> becomes the next entry when <code>initrdfail=1</code>: unlikely on a box that booted, but cheap to rule out.</li>
+</ul>
+<p><code>make upgrade-gpu</code> runs this same check itself after the move, before it says to reboot.</p>
+<p>Anything else, or any of these commands failing: <strong>don’t reboot yet</strong>, and bring what they printed to the Claude session working on the repo (the Spark’s, by default). Much of it carries the root filesystem’s UUID: <code>root=UUID=…</code>, or <code>root=PARTUUID=…</code>, in the <code>linux</code> lines, and every entry id (<code>gnulinux-simple-…</code>, <code>gnulinux-advanced-…</code>, <code>gnulinux-&lt;version&gt;-advanced-…</code>), a default, <code>saved_entry</code> or <code>next_entry</code> that is an id included. Write “an id” in place of each UUID and PARTUUID when you bring it over, and never paste one into the repo. <strong>On the Spark</strong>, to see which kernel GRUB would start instead, list the menu, each entry followed by its <code>linux</code> line:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> grep <span class="at">-E</span> <span class="st">'^[[:space:]]*(menuentry|submenu|linux)[[:space:]]'</span> /boot/grub/grub.cfg</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>GRUB starts <code>next_entry</code> if it has a value (or <code>prev_entry</code>, when <code>initrdfail=1</code>), otherwise the default, where <code>"${saved_entry}"</code> means <code>saved_entry</code>’s value. A number counts the menu’s top-level entries from 0, the submenu being one of them, and <code>1&gt;2</code> is the third entry inside the second. A title or an id is looked up at the top level only, so an entry inside the submenu needs the submenu’s in front, joined by <code>&gt;</code> (<code>gnulinux-advanced-…&gt;gnulinux-&lt;version&gt;-advanced-…</code>). <code>10_linux</code> adds the submenu to a bare title when it builds the menu, but not to a bare id. When nothing matches, GRUB starts entry 0. Reboot only when both checks pass.</p></li>
+<li><p>Reboot: <code>sudo reboot</code>. It asks for your password again: <code>make upgrade-gpu</code> and <code>make hold-gpu</code> end with <code>sudo -k</code>, which forgets sudo’s cached credential in that terminal.</p></li>
+<li><p><strong>On the Spark</strong>, check, once you are back in:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">uname</span> <span class="at">-r</span>                                                            <span class="co"># the new kernel</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">nvidia-smi</span> <span class="at">--query-gpu</span><span class="op">=</span>name,driver_version <span class="at">--format</span><span class="op">=</span>csv,noheader   <span class="co"># the GPU, on the new driver</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="ex">modinfo</span> <span class="at">-F</span> version nvidia                                           <span class="co"># the same version as nvidia-smi's driver</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="ex">apt-mark</span> showhold <span class="kw">|</span> <span class="fu">grep</span> <span class="at">--</span> <span class="st">"-</span><span class="va">$(</span><span class="fu">uname</span> <span class="at">-r</span><span class="va">)</span><span class="st">$"</span>                         <span class="co"># the running kernel's NVIDIA modules package: held</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>If the last line prints nothing, the running kernel’s modules aren’t held: run <code>make hold-gpu</code> and check again. Then check whisper-server, which <code>make doctor</code> never loads. It was built on this box against the system’s CUDA (Phase 1, Task 11), while llama.cpp carries its own CUDA runtime, so a CUDA move can leave whisper-server without a library:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ldd</span> /opt/local-ai/bin/whisper.cpp/<span class="pp">*</span>/whisper-server <span class="kw">|</span> <span class="fu">grep</span> <span class="st">'not found'</span> <span class="kw">||</span> <span class="bu">echo</span> <span class="st">"all libraries found"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Expected: <code>all libraries found</code>. A <code>not found</code> line means rebuild it the way <a href="../design/phase-1.html">Phase 1’s plan</a>, Task 11 Step 4, built it, into the same folder. Then <code>make doctor</code>: every line <code>ok</code>.</p></li>
+<li><p>Record the new kernel, driver and CUDA versions in <code>changelog.md</code>, and bring the GPU set’s line in <code>README.md</code> §Current state up to date.</p></li>
+</ol>
+<section id="if-it-goes-wrong" class="level3">
+<h3 class="anchored" data-anchor-id="if-it-goes-wrong">If it goes wrong</h3>
+<p><strong>You answered no, or a step failed before the reboot.</strong> Re-hold first: <code>make hold-gpu</code>. If it stops on a package that isn’t cleanly installed, do what it says, then run it again. <code>make upgrade-gpu</code> runs the hold again by itself on its way out, so <code>make hold-gpu</code> by hand is for the manual steps, or for when its own hold stopped or was cut off. If step 3 changed anything before it stopped, run step 5 before any reboot, both its checks. Once both pass, carry on at step 6. If the module is missing, go to the next paragraph; if only the GRUB check fails, don’t reboot yet, as step 5 says: a <code>DON'T REBOOT</code> from <code>make upgrade-gpu</code> that names GRUB, <code>grub.cfg</code> or <code>grubenv</code>, or says it can’t read one of them, is that case.</p>
+<p><strong>Step 5’s module check failed, <code>nvidia-smi</code> fails after the reboot, or <code>make upgrade-gpu</code> said <code>DON'T REBOOT</code> because the newest kernel has no NVIDIA module, or that apt may have moved the set.</strong> The likeliest cause is a kernel with no NVIDIA module, from a set that didn’t finish moving. The box still boots and SSH still works: nothing on the network path needs the GPU. Every command here is safe to run again:</p>
+<ol type="1">
+<li><p><strong>On the Spark</strong>, release the set and finish the move, answering as step 3 says:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/git/hub/local-ai</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">apt-mark</span> showhold <span class="kw">|</span> <span class="fu">xargs</span> <span class="at">-r</span> sudo apt-mark unhold</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> dpkg <span class="at">--configure</span> <span class="at">-a</span> <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> apt update <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> apt full-upgrade</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p><strong>On the Spark</strong>, if the modules metapackage was removed, put it back. apt’s log names it; take the name from there, never from memory. If it prints more than one, take the one that matches your driver (<code>dpkg -l 'nvidia-driver-*'</code>):</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb16"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="at">-ho</span> <span class="st">'linux-modules-nvidia-[^ :,]*-nvidia-hwe-[^ :,]*'</span> /var/log/apt/history.log <span class="kw">|</span> <span class="fu">sort</span> <span class="at">-u</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt install <span class="op">&lt;</span>the name it printed<span class="op">&gt;</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p>Run step 5 again, both its checks. Once both pass: <code>make hold-gpu</code>, <code>sudo reboot</code>, then step 7’s checks.</p></li>
+</ol>
+<p><strong>The quick way back, when the driver didn’t move, on the Spark.</strong> If only the kernel moved, the previous kernel still has its module:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb17"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="va">p</span><span class="op">=</span><span class="va">$(</span><span class="ex">linux-version</span> list <span class="kw">|</span> <span class="ex">linux-version</span> sort <span class="at">--reverse</span> <span class="kw">|</span> <span class="fu">sed</span> <span class="at">-n</span> 2p<span class="va">)</span>   <span class="co"># the previous kernel</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="ex">modinfo</span> <span class="at">-k</span> <span class="st">"</span><span class="va">$p</span><span class="st">"</span> <span class="at">-F</span> version nvidia                                    <span class="co"># prints the installed driver's version?</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>If it prints the version of the driver installed now (<code>dpkg -l 'nvidia-driver-*'</code> shows it), boot that kernel. It needs a keyboard and display at the box: as it starts, press Esc to show GRUB’s hidden menu, then choose <em>Advanced options</em> and the previous kernel. If the firmware’s setup opens instead, leave it without saving and press Esc a moment later. Neither keypress is tried on this box yet. When the driver moved too, as it did on 2026-09-23 (which also removed the old kernel’s modules), the previous kernel won’t help.</p>
+<p><em>Not yet performed on this box</em>, like every step above.</p>
+</section>
+</section>
+<section id="upgrade-day-the-automated-prs" class="level2">
+<h2 class="anchored" data-anchor-id="upgrade-day-the-automated-prs">Upgrade day: the automated PRs</h2>
+<p>Dependabot opens its PRs on Fridays, against <code>main</code>: up to three each for the GitHub Actions pins and for <code>spark/</code>’s Python dependencies. On upgrade day, for each one:</p>
+<ol type="1">
+<li><strong>On github.com</strong>, read what it bumps and its release notes, and let CI finish green.</li>
+<li>There, read the PR’s commit message, then merge it with a merge commit or a rebase. Never squash it: a squash can paste the release notes into the message, CI scans every commit message with the repo’s patterns, and once merged, a finding in history can’t be taken back or marked allowed.</li>
+</ol>
+<p>They don’t touch <code>stack/versions.yaml</code>, the workflows’ <code>version:</code> inputs, uv’s <code>required-version</code> or the gitleaks pin; those still move by hand.</p>
+<p><em>(Corrected 2026-09-28, from Phase 1’s council: this said the uv PRs update <code>spark/uv.lock</code>.)</em> A uv PR can change <code>spark/pyproject.toml</code> as well as, or instead of, the lock: PR #3, on 2026-09-25, raised the <code>[build-system]</code> floor on hatchling there and left <code>uv.lock</code> alone. The same updater could widen <code>huggingface_hub&gt;=0.34,&lt;2</code>, the cap Task 8’s review set when the lock had taken 2.0.0, a new major on a new HTTP stack, once a 2.x release is a week old. So read a uv PR’s <code>pyproject.toml</code> diff too, and treat one that moves a cap as a decision of its own, not a routine merge.</p>
+<p>The uv PRs propose only releases at least seven days old. <code>spark/pyproject.toml</code> locks nothing newer (<code>exclude-newer = "7 days"</code>, a rolling window), and <code>.github/dependabot.yml</code> waits as long (Dan’s decision, 2026-09-27): a bad or compromised upload is most often caught in its first days. Dependabot reads both from <code>main</code>, which gets them with Phase 1’s merge, so no uv PR had run under the window by 2026-09-28. An update by hand follows the same window. <strong>On the Spark</strong>, in the clone (or on the Mac, when the Mac’s session holds the branch), this takes the newest release of <code>&lt;name&gt;</code> that is a week old:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb18"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> lock <span class="at">--project</span> spark <span class="at">--upgrade-package</span> <span class="op">&lt;</span>name<span class="op">&gt;</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>A fix you need sooner, such as a security release, gets an exception for that one package: add <code>exclude-newer-package = { &lt;name&gt; = "&lt;now, e.g. 2026-09-27T12:00:00Z&gt;" }</code> under <code>[tool.uv]</code> in <code>spark/pyproject.toml</code>, run the same <code>uv lock</code>, and take the line out once that release is a week old; before then, a plain <code>uv lock</code> would move the package back. Dependabot’s security PRs don’t wait, so one for a release younger than a week fails to lock until then.</p>
+</section>
+<section id="upgrade-day-gitleaks" class="level2">
+<h2 class="anchored" data-anchor-id="upgrade-day-gitleaks">Upgrade day: gitleaks</h2>
+<p>gitleaks is a direct install, so apt and snap never update it. On upgrade day, look at its <a href="https://github.com/gitleaks/gitleaks/releases">releases</a>. If there is a newer version at least seven days old (the rule above the table):</p>
+<ol type="1">
+<li><p><strong>On the Mac</strong>, bump it everywhere it is pinned, in one commit: <code>stack/versions.yaml</code>; in <code>.github/workflows/ci.yml</code>, the URL in the “download gitleaks” step and the <code>linux_x64</code> checksum in the “check gitleaks against its pinned checksum” step (the checksum is in the release’s <code>checksums.txt</code>); and the version in <a href="../how-to/leak-guards.html">Leak guards</a>’ install block. Then <code>brew upgrade gitleaks</code> for the Mac’s own copy. Push it, after <a href="../how-to/leak-guards.html#before-every-push">the scan before every push</a>, and pull it on the Spark.</p></li>
+<li><p><strong>On the Spark</strong>, install it over the old one. Set <code>v</code> to the new version; the checksum is checked before anything is installed:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb19"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="va">v</span><span class="op">=</span>8.30.1   <span class="co"># the new version, as stack/versions.yaml pins it</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> <span class="st">"</span><span class="va">$(</span><span class="fu">mktemp</span> <span class="at">-d</span><span class="va">)</span><span class="st">"</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSLO</span> <span class="st">"https://github.com/gitleaks/gitleaks/releases/download/v</span><span class="va">$v</span><span class="st">/gitleaks_</span><span class="va">${v}</span><span class="st">_linux_arm64.tar.gz"</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">curl</span> <span class="at">-fsSLO</span> <span class="st">"https://github.com/gitleaks/gitleaks/releases/download/v</span><span class="va">$v</span><span class="st">/gitleaks_</span><span class="va">${v}</span><span class="st">_checksums.txt"</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">sha256sum</span> <span class="at">--ignore-missing</span> <span class="at">-c</span> <span class="st">"gitleaks_</span><span class="va">${v}</span><span class="st">_checksums.txt"</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">tar</span> xzf <span class="st">"gitleaks_</span><span class="va">${v}</span><span class="st">_linux_arm64.tar.gz"</span> gitleaks <span class="kw">&amp;&amp;</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">sudo</span> install <span class="at">-m</span> 0755 gitleaks /usr/local/bin/</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> <span class="at">-</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="ex">gitleaks</span> version   <span class="co"># the new version</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p><strong>On the Spark</strong>, <code>make test</code> — the hook tests run the real gitleaks — and a <code>changelog.md</code> entry. Then <strong>on the Mac</strong>, in the clone, <code>make test</code> too: step 1 moved the Mac’s own copy, and its hooks use it.</p></li>
+</ol>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/chendaniely\.github\.io\/local-ai\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

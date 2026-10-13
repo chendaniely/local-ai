@@ -1,0 +1,46 @@
+[
+  {
+    "listing": "/how-to/index.html",
+    "items": [
+      "/how-to/scratch-model.html",
+      "/how-to/bootstrap.html",
+      "/how-to/deploy.html",
+      "/how-to/tailscale.html",
+      "/how-to/leak-guards.html",
+      "/how-to/orca.html",
+      "/how-to/ssh.html",
+      "/how-to/secret-files.html",
+      "/how-to/spark-session.html",
+      "/how-to/updates.html",
+      "/how-to/pi.html"
+    ]
+  },
+  {
+    "listing": "/scenarios/index.html",
+    "items": [
+      "/scenarios/s01-morning-start.html",
+      "/scenarios/s02-big-job.html",
+      "/scenarios/s03-doesnt-fit-interactive.html",
+      "/scenarios/s04-doesnt-fit-unattended.html",
+      "/scenarios/s05-memory-critically-low.html",
+      "/scenarios/s06-agent-gpu-step.html",
+      "/scenarios/s07-lecture-transcript.html",
+      "/scenarios/s08-batch-vs-interactive.html",
+      "/scenarios/s09-phone-away.html",
+      "/scenarios/s10-homelab-3am.html",
+      "/scenarios/s11-new-model.html",
+      "/scenarios/s12-long-agent-run.html",
+      "/scenarios/s13-freeze-away.html",
+      "/scenarios/s14-gate-down.html",
+      "/scenarios/s15-nas-down.html",
+      "/scenarios/s16-postgres-down.html",
+      "/scenarios/s17-changing-models.html",
+      "/scenarios/s18-rebuild.html",
+      "/scenarios/s19-claude-code-pipeline.html",
+      "/scenarios/s20-web-search.html",
+      "/scenarios/s21-pixeltable.html",
+      "/scenarios/s22-another-tailnet.html",
+      "/scenarios/s23-upgrade-day.html"
+    ]
+  }
+]

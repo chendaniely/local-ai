@@ -1,0 +1,1444 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.3">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="dcterms.date" content="2026-09-28">
+<meta name="description" content="What Phase 1 built, how it ran, where it departed from the plan, what the reviews found, why it looped, what Phase 2 inherits, and how to start over.">
+
+<title>Phase 1 — retrospective – local-ai</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-e44360b8a8db1e130c7792fece1c8032.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-759232fa0b86b84cb2931155628a3b47.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">local-ai</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../design/plan.html"> 
+<span class="menu-text">Plan</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../architecture.html"> 
+<span class="menu-text">Architecture</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../scenarios/index.html"> 
+<span class="menu-text">Scenarios</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../how-to/index.html"> 
+<span class="menu-text">How-to</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/stack.html"> 
+<span class="menu-text">Stack</span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#phase-1-retrospective" id="toc-phase-1-retrospective" class="nav-link active" data-scroll-target="#phase-1-retrospective">Phase 1 — retrospective</a>
+  <ul class="collapse">
+  <li><a href="#what-phase-1-delivered" id="toc-what-phase-1-delivered" class="nav-link" data-scroll-target="#what-phase-1-delivered">What Phase 1 delivered</a></li>
+  <li><a href="#how-it-ran" id="toc-how-it-ran" class="nav-link" data-scroll-target="#how-it-ran">How it ran</a></li>
+  <li><a href="#where-the-build-departed-from-the-plan-and-why" id="toc-where-the-build-departed-from-the-plan-and-why" class="nav-link" data-scroll-target="#where-the-build-departed-from-the-plan-and-why">Where the build departed from the plan, and why</a></li>
+  <li><a href="#what-the-reviews-found-by-theme" id="toc-what-the-reviews-found-by-theme" class="nav-link" data-scroll-target="#what-the-reviews-found-by-theme">What the reviews found, by theme</a></li>
+  <li><a href="#why-there-were-loops" id="toc-why-there-were-loops" class="nav-link" data-scroll-target="#why-there-were-loops">Why there were loops</a></li>
+  <li><a href="#lessons-worth-keeping" id="toc-lessons-worth-keeping" class="nav-link" data-scroll-target="#lessons-worth-keeping">Lessons worth keeping</a></li>
+  <li><a href="#carried-to-phase-2" id="toc-carried-to-phase-2" class="nav-link" data-scroll-target="#carried-to-phase-2">Carried to Phase 2</a></li>
+  <li><a href="#starting-over" id="toc-starting-over" class="nav-link" data-scroll-target="#starting-over">Starting over</a></li>
+  </ul></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Phase 1 — retrospective</h1>
+</div>
+
+<div>
+  <div class="description">
+    What Phase 1 built, how it ran, where it departed from the plan, what the reviews found, why it looped, what Phase 2 inherits, and how to start over.
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">September 28, 2026</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="phase-1-retrospective" class="level1">
+<h1>Phase 1 — retrospective</h1>
+<p>Phase 1 ran from 2026-09-25 to 2026-09-28: <a href="../design/phase-1.html">its implementation plan</a>, executed on branch <code>phase-1</code>, on the Mac until the switch point and then in a Claude Code session on the Spark. It took 144 commits before this page, <code>ebb32da..fa18819</code>. The page was written during Task 17, before its last commits (the rest of the council’s second fix batch, the scenario statuses and the forward look) and before Task 18’s merge. <a href="../design/plan.html">The plan</a> stays the place for decisions; its forward look, 2026-09-28, says what Phase 2 takes up. This page is the history behind them, and the tracked home of what Phase 1 set aside, which until now lived only in the session’s gitignored ledger.</p>
+<section id="what-phase-1-delivered" class="level2">
+<h2 class="anchored" data-anchor-id="what-phase-1-delivered">What Phase 1 delivered</h2>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Piece</th>
+<th>What it is</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>The <code>spark</code> CLI, grown</td>
+<td>The registry loader, the launch check and the brake’s hold, a llama-swap client, and <code>spark brake</code>, <code>status</code>, <code>render</code>, <code>apply</code>, <code>models pull</code>, <code>clients</code> and <code>doctor</code>. 906 tests at the close, from Phase 0’s 109.</td>
+<td><code>spark/</code></td>
+</tr>
+<tr class="even">
+<td>The registry and render</td>
+<td><code>stack/models.yaml</code> renders into llama-swap’s config, the systemd units and the Compose project. Render refuses, with the reason, an edit that rebinds an engine off 127.0.0.1, puts a key in a command, downloads a model, overrides a setting it derives, or loads a file outside the pinned snapshot. llama-server always runs <code>--offline</code>, <code>--no-slots</code> and <code>--no-webui</code>.</td>
+<td><code>stack/</code> · <code>spark/src/spark/render.py</code></td>
+</tr>
+<tr class="odd">
+<td>Deploy with root’s own copies</td>
+<td><code>make apply</code> stages; <code>make install-units</code> (sudo) shows the diff and installs root’s copies; <code>make apply-now</code>, <code>make pull</code>, <code>make brake-release</code>, <code>make clients</code>, <code>make tunnel</code>. The polkit rule starts, stops and restarts the four units by name, and nothing more.</td>
+<td><a href="../how-to/deploy.html">Deploy the stack</a> · <code>Makefile</code></td>
+</tr>
+<tr class="even">
+<td>The minimal brake and the launch check</td>
+<td><code>spark launch</code> refuses a load that doesn’t fit, or while the brake holds, and says by how much. <code>spark brake</code> holds new loads and unloads, on-demand first, below 20 GiB; at start it checks that llama-swap takes its key.</td>
+<td>plan.md, <em>Admission and memory rules</em></td>
+</tr>
+<tr class="odd">
+<td>Updates that don’t take it down</td>
+<td>The needrestart override; <code>make upgrade-gpu</code>, with the GRUB check, ending in <code>sudo -k</code>; <code>make doctor</code>, 15 checks.</td>
+<td><a href="../how-to/updates.html">Updates</a></td>
+</tr>
+<tr class="even">
+<td>The engines</td>
+<td>llama-swap v257, llama.cpp b11146 (the build llama.cpp’s v0.5.0 release names), and whisper.cpp v1.9.4 built for <code>121a-real</code>, installed at their pins.</td>
+<td><a href="../reference/stack.html">Stack</a> · phase-1.md, Task 11</td>
+</tr>
+<tr class="odd">
+<td>The stack on the box</td>
+<td>Serving since 2026-09-28: Gemma 4 26B (resident vision chat and Open WebUI’s task model), Qwen3-Embedding-0.6B and whisper large-v3-turbo (resident), and the Qwen3.6-35B-A3B coder (on demand), each at its full context; Open WebUI and SearXNG under root’s Compose unit; Open WebUI on the tailnet over HTTPS through <code>tailscale serve</code>.</td>
+<td><code>README.md</code> §Current state · <code>changelog.md</code></td>
+</tr>
+<tr class="even">
+<td>Clients</td>
+<td>pi’s <code>spark</code> provider, written by <code>spark clients</code>: on the Mac through the tunnel, and for <code>agent</code> in tmux, whose Claude Code gets the secrets guard before its key.</td>
+<td><a href="../how-to/pi.html">pi</a></td>
+</tr>
+<tr class="odd">
+<td>Runbooks</td>
+<td>Two new ones, deploy.md and pi.md, steps 7 and 8 of <em>In order</em>. Every runbook says where each command runs, in bold above its block.</td>
+<td><a href="../how-to/index.html">How-to</a></td>
+</tr>
+<tr class="even">
+<td>Measurements</td>
+<td>The brake drill’s numbers, the first taken on this box; footprints at two contexts; load times.</td>
+<td><code>cosmicbboy-local-ai.md</code> §I · <code>changelog.md</code></td>
+</tr>
+<tr class="odd">
+<td>The lock’s window</td>
+<td><code>spark/uv.lock</code> takes only releases at least seven days old, and Dependabot’s uv PRs wait as long.</td>
+<td><a href="../how-to/updates.html">Updates</a> · <code>spark/pyproject.toml</code></td>
+</tr>
+</tbody>
+</table>
+<p>Of <em>Phase 1 is done when</em>, these hold. pi finished real tasks from the Mac and as <code>agent</code>, and a detached session survived a logout. The brake, at raised thresholds, held, unloaded the coder, refused the held reload and released it. A load that didn’t fit was refused with needed against available, and nothing was unloaded. A fresh clone with <code>make bootstrap</code> and <code>make apply</code> changed nothing. The stack kept serving through a routine upgrade, came back by itself after a reboot, and <code>make doctor</code> passed 15 of 15. S09 and S20 passed on the phone on 2026-09-28, and their pages turn <em>verified</em> in Task 17 Step 1. CI’s render step, the Mac check and the merge are Task 18’s. The upgrade half is weak evidence: apt moved no library the engines use and no Docker package.</p>
+</section>
+<section id="how-it-ran" class="level2">
+<h2 class="anchored" data-anchor-id="how-it-ran">How it ran</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>When</th>
+<th>Where</th>
+<th>What happened</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>2026-09-25</td>
+<td>Mac</td>
+<td>After Phase 0’s merge (<code>ebb32da</code>), Dan’s two decisions went into the plan: root-owned copies of the units, and <code>make upgrade-gpu</code> runs the GRUB check. The pre-flight ran every Task 1–10 listing in a scratch copy on the Mac and in <code>ubuntu:24.04</code>, and its review and a scan across the tasks were fixed and run again. Dan’s rule that work runs on the Spark moved Tasks 1–10 and 17 there and added Task 18. <code>ebb32da..2fa6c8f</code>, 12 commits.</td>
+</tr>
+<tr class="even">
+<td>2026-09-25</td>
+<td>Spark</td>
+<td>The switch point: the session’s guard, keys-only SSH, a GitHub token for this repository only. The clone’s <code>origin</code> was SSH, with a key on Dan’s account that went around the token; it moved to https. Dan’s rule that every command says where it runs relabelled the runbooks. <code>2fa6c8f..3a55a7f</code>, 6 commits.</td>
+</tr>
+<tr class="odd">
+<td>2026-09-26</td>
+<td>Spark</td>
+<td>Tasks 1–10, subagent-driven: <code>3a55a7f..1e5152b</code>, 83 commits, 46 of them <code>fix</code>. Task 1 first ran on a smaller model, which took its own harness’s trailer; Dan had it redone on Opus, and every subagent since ran on Opus. Per task: an implementer whose first commit is the listing byte for byte, a review, fix rounds, a scoped re-review, then a plan record (<em>Superseded</em> notes, dated corrections, a Revisions line). Before Tasks 9 and 10, a read-only scan ran each brief on a scratch copy first, and its rulings went into the dispatch. 15 fix rounds in all, two Criticals (Tasks 4 and 7); 109 tests became 822.</td>
+</tr>
+<tr class="even">
+<td>2026-09-27</td>
+<td>Spark</td>
+<td>The push point: Dan’s seven-day window (<code>7170a52</code>); an audit of every command’s label, 38 fixes; the first push, with CI green. Task 11, run by the session itself: the engines at their pins, and <code>agent</code> reaches the GPU. Task 12: Dan re-ran bootstrap and ran <code>make apply</code>, which Claude Code’s auto-mode classifier refused the session, then <code>make install-units</code> and <code>make pull</code>. The GRUB check passed. <code>1e5152b..f31b84f</code>.</td>
+</tr>
+<tr class="odd">
+<td>2026-09-28</td>
+<td>Spark, Dan</td>
+<td>Tasks 13–15 (<code>f31b84f..fb96c8d</code>): the stack started, first footprints, task calls without thinking; the phone, where a photo aborted Gemma’s engine until its micro-batch grew; pi on the Mac and as <code>agent</code>. Task 16’s drills, then Dan’s full-context decision, whose review found 7 Important and took two fix rounds against llama.cpp’s source; deployed and checked (<code>fb96c8d..ce9df60</code>).</td>
+</tr>
+<tr class="even">
+<td>2026-09-28</td>
+<td>Spark</td>
+<td>Task 17: a council of four read-only reviewers (0 Critical, 15 Important, 37 Minor, 17 decisions for Dan). Batch A fixed what needed no decision: <code>ce9df60..8c48549</code>, 17 commits, 873 tests. Dan decided the rest that evening. Batch B, the code for two of his decisions and two of the session’s rulings, followed (<code>8c48549..9a03b15</code>), then a follow-up of five minor fixes and the close’s own commits. Its logging change was reversed before the deploy, by Dan, once the final review found whisper’s file names and metadata would reach the journal.</td>
+</tr>
+<tr class="odd">
+<td>2026-09-29</td>
+<td>Mac</td>
+<td>Task 18: the README records the Mac’s coreutils, and CI renders the real registry. <code>make test lint docs</code> passed on bash 3.2 and GNU make 3.81, 906 tests with none skipped, and the site rendered with no warnings: no Mac difference turned up. The first push was refused, because the Mac’s gh login lacked the <code>workflow</code> scope that a change under <code>.github/workflows/</code> needs, until Dan added it. CI went green on the branch, the render step included, and the merge followed: 4 commits after <code>b0a6b52</code>, then the merge (<code>ff205f9</code>). Then Dependabot’s PRs #1–#3, one at a time: Dependabot rebased each onto <code>main</code>, and each was rebase-merged once its CI was green, with <code>main</code> green after each (<code>12d6383</code>, <code>b33c22e</code>, <code>16efba8</code>). pi.md’s jq and awk block for <code>agent</code>’s guard ran in the Mac’s zsh for the first time, and built both files as expected.</td>
+</tr>
+</tbody>
+</table>
+<p>Of the 144 commits, 57 are <code>fix</code>, 15 <code>feat</code>, 68 <code>docs</code> and 4 <code>build</code>. The ranges are git’s <code>A..B</code>: the commits after <code>A</code>, up to and including <code>B</code>. <em>(Recounted 2026-09-29, at the merge: 144 was counted before the close’s last commits. With them and Task 18’s, the branch holds 158: 60 <code>fix</code>, 16 <code>feat</code>, 77 <code>docs</code>, 4 <code>build</code> and 1 <code>ci</code>.)</em></p>
+</section>
+<section id="where-the-build-departed-from-the-plan-and-why" class="level2">
+<h2 class="anchored" data-anchor-id="where-the-build-departed-from-the-plan-and-why">Where the build departed from the plan, and why</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>What changed</th>
+<th>Why</th>
+<th>Commits</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Every subagent runs on Opus, and Task 1 was redone.</td>
+<td>Its first run was on a smaller model, which followed its own harness’s trailer. Dan chose a redo over an amend.</td>
+<td><code>d8dd6f2</code>..<code>69cc076</code></td>
+</tr>
+<tr class="even">
+<td>Every listing in Tasks 1–10 is marked <em>Superseded</em>.</td>
+<td>Each review found the listing, byte for byte, short of the spec: refuse with the reason, fail closed, never show a key. The spec won.</td>
+<td>Revisions, 2026-09-26</td>
+</tr>
+<tr class="odd">
+<td><code>spark/</code>’s environment runs only on uv’s own Python.</td>
+<td>The Spark’s had been built on Ubuntu’s 3.12.3. Dan’s decision.</td>
+<td><code>be74dff</code></td>
+</tr>
+<tr class="even">
+<td>The lock holds huggingface_hub below 2, and takes only releases a week old.</td>
+<td>It had taken 2.0.0, a new major two days old, for code that runs as <code>spark</code> with egress. The window is Dan’s decision.</td>
+<td><code>cf21a82</code>, <code>7170a52</code></td>
+</tr>
+<tr class="odd">
+<td>The brake’s advice names <code>make brake-release</code>.</td>
+<td><code>spark brake --release</code> isn’t on Dan’s PATH.</td>
+<td><code>d3481ab</code></td>
+</tr>
+<tr class="even">
+<td><code>make bootstrap</code>, <code>make hold-gpu</code> and <code>make upgrade-gpu</code> end with <code>sudo -k</code>.</td>
+<td>It closed early a path the plan had left for the council: the clone’s code running under a warm sudo.</td>
+<td><code>25617b8</code>, <code>4122330</code></td>
+</tr>
+<tr class="odd">
+<td>No <code>#</code> in a shell block that runs on the Mac, and every command says where it runs.</td>
+<td>Dan’s rules, after the Mac’s zsh ran a pasted label as a command.</td>
+<td><code>718dd7c</code>, <code>432dfb3</code>, <code>f2258f9</code></td>
+</tr>
+<tr class="even">
+<td><code>make doctor</code> has 15 checks, loads a model, and comes after <code>make status</code>.</td>
+<td>Three checks joined; its end-to-end load clears the last refusal record.</td>
+<td><code>2d38442</code>, <code>4a6ab28</code></td>
+</tr>
+<tr class="odd">
+<td>A Docker upgrade can leave the web services stopped.</td>
+<td>Found in Task 10’s scan: a stop-and-start of Docker leaves their unit down. Not yet seen, since no upgrade has moved Docker.</td>
+<td><code>1cea890</code></td>
+</tr>
+<tr class="even">
+<td>Dan ran <code>make apply</code> on the box.</td>
+<td>The auto-mode classifier refused the session’s, and the session didn’t work around it.</td>
+<td>Tasks 12–16</td>
+</tr>
+<tr class="odd">
+<td>Open WebUI’s task calls run without thinking.</td>
+<td>Both chat models think without limit by default, and Gemma is the task model. Dan’s decision.</td>
+<td><code>4279a56</code></td>
+</tr>
+<tr class="even">
+<td>Gemma runs <code>--ubatch-size 2048 --image-max-tokens 1120</code>.</td>
+<td>llama.cpp decodes an image in one micro-batch, and at the default 512 any photo over about 1.2 MP aborted the engine.</td>
+<td><code>eae863b</code></td>
+</tr>
+<tr class="odd">
+<td>The Mac’s pi follows Homebrew; the 0.85.1 pin is <code>agent</code>’s.</td>
+<td>Dan’s decision.</td>
+<td><code>fb96c8d</code></td>
+</tr>
+<tr class="even">
+<td>Every model at its full context; Gemma’s two slots share one pool, keep idle caches and cap their checkpoints.</td>
+<td>Dan’s decision. Its review, reading b11146’s source, corrected the first version.</td>
+<td><code>41d4e89</code>, <code>f312ac8</code>, <code>2df8e9e</code></td>
+</tr>
+<tr class="odd">
+<td>Footprints of 32, 8 and 33 GiB, the coder’s checkpoints capped at 8: 76 of the 78 allowed.</td>
+<td>A cold load leaves out what grows after admission.</td>
+<td><code>7b39fa8</code></td>
+</tr>
+<tr class="even">
+<td>S12 is a Phase 1 page, <code>built</code>.</td>
+<td>Task 15 checked its tmux half, and Task 17 had left it out.</td>
+<td><code>72af00a</code></td>
+</tr>
+<tr class="odd">
+<td><code>make deploy</code> from the Mac is dropped.</td>
+<td>Dan’s decision at the close.</td>
+<td>plan.md’s forward look</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="what-the-reviews-found-by-theme" class="level2">
+<h2 class="anchored" data-anchor-id="what-the-reviews-found-by-theme">What the reviews found, by theme</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Theme</th>
+<th>What was found</th>
+<th>Fixed in</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>A key that could reach an error, a log or a stranger</td>
+<td>The client sent its key through <code>http_proxy</code> and printed one holding CR/LF. A Hugging Face token with a control character printed whole in every <code>FAILED</code> line, and the library logged a stored one. A failing test could print the shell’s environment, Phase 0’s tests included. Doctor’s probe could send the key to a proxy or through a redirect, and the client the brake uses followed a redirect with it.</td>
+<td><code>828fb3e</code>, <code>32deab1</code>, <code>ae9708f</code>, <code>be4c3c3</code>, <code>92bcc9c</code>, <code>d8c1d4c</code></td>
+</tr>
+<tr class="even">
+<td>Refusals that crashed or misled</td>
+<td>A malformed registry was a traceback, not a reason. Whole-GiB rounding could make a refusal read as a fit. A damaged hold crashed the launch check. <code>spark status</code> called a wrong key “unreachable”, inviting a restart that stops every model, and showed HOLDING to anyone who couldn’t read the state folder.</td>
+<td><code>f0f44c7</code>, <code>69cc076</code>, <code>e575700</code>, <code>548ab5c</code>, <code>db4aece</code></td>
+</tr>
+<tr class="odd">
+<td>The brake failing when it’s needed</td>
+<td>A failing hold write stopped every unload (Critical). A slow stop cost one more model every 250 ms. Seven safety mutants survived the tests. Noise in <code>MemAvailable</code> ended its wait. The deployed unit had never sent its key.</td>
+<td><code>c249ce7</code>, <code>ebd3ad1</code>, <code>faee0a3</code></td>
+</tr>
+<tr class="even">
+<td><code>spark apply</code>’s partial runs</td>
+<td>After a failed <code>uv sync</code>, later applies reported success (Critical). A partial run lost the restarts it owed. Nothing tested <code>run()</code>. A unit whose binary started counted as up, even if it then stopped.</td>
+<td><code>4e639d0</code>, <code>5641842</code>, <code>81b8124</code>, <code>faee0a3</code></td>
+</tr>
+<tr class="odd">
+<td>What a registry edit could do</td>
+<td>Rebind an engine, put a key in its command, download at start, override a derived setting, read outside the pinned snapshot, add a line to what root runs. Each engine served <code>/slots</code> and a web UI without a key, and nothing pinned Open WebUI’s lockdown.</td>
+<td><code>f2ffd3b</code>, <code>b26c6e5</code>, <code>a0a8612</code>, <code>98f5f56</code>, <code>99c3359</code>, <code>d066044</code></td>
+</tr>
+<tr class="even">
+<td>Upstream behaviour read from a name</td>
+<td>v257’s unload was read as answered once scheduled; its source answers after the engine exits. <code>--batch-size</code> caps <code>--ubatch-size</code>, so the embedding model’s raise did nothing. <code>--ctx-checkpoints</code> is per slot and fills by turns. <code>--kv-unified</code> clears idle slots at every task. An image’s tokens must fit one micro-batch.</td>
+<td><code>c249ce7</code>, <code>f312ac8</code>, <code>2df8e9e</code>, <code>eae863b</code></td>
+</tr>
+<tr class="odd">
+<td>Memory the accounting missed</td>
+<td>Footprints left out prompt caches, checkpoints and image buffers. GPU memory doesn’t count toward RSS, so earlyoom would kill the resident Gemma before the coder. Page cache counts as available.</td>
+<td><code>7b39fa8</code>; batch B; plan.md, <em>Page cache and the launch check</em></td>
+</tr>
+<tr class="even">
+<td>Upgrade day</td>
+<td>A signal that killed only the way out’s hold subshell left the GPU set released while suggesting a start.</td>
+<td><code>ecd2264</code></td>
+</tr>
+<tr class="odd">
+<td>Docs that had become untrue</td>
+<td>“Not yet checked” for GRUB in three places after it passed, and for the first sign-up and doctor’s web check; “the three residents stayed” when two were loaded; a dropped “not yet measured”; S09’s “always-loaded”; the <em>Always loaded</em> requirement exceeded without a note; <code>agent</code>’s guard tested but only given in chat.</td>
+<td><code>d71d285</code>, <code>f312ac8</code>, <code>d2f1537</code>, <code>02ed8ab</code>, <code>1dbb3d1</code></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="why-there-were-loops" class="level2">
+<h2 class="anchored" data-anchor-id="why-there-were-loops">Why there were loops</h2>
+<p>Tasks 1–10 took 15 fix rounds, the context change two, and the council still found 15 Important. The causes:</p>
+<ol type="1">
+<li><strong>A listing that runs can still be wrong.</strong> Phase 0’s rule held: every listing ran before it went into the plan, and every implementation matched its listing byte for byte. Yet each review of Tasks 1–10 found cases the spec rules out and the listing never met: a hold write that fails, a sync that fails, an answer not in v257’s shape, a token with a control character. Before Tasks 9 and 10, a read-only scan ran each brief against the spec first, and its rulings went into the dispatch. Task 10, the largest, then passed its first review with no Critical or Important finding.</li>
+<li><strong>Upstream behaviour taken from a flag’s name, or from memory.</strong> The five findings in that theme above came from llama.cpp’s or llama-swap’s source, read only after a name, a default or a first reading had been trusted. One reached the phone: the default micro-batch was smaller than an image, and a photo killed the engine. The session’s own note that llama-server “lifts the batch cap for embeddings” was wrong, and the context change’s first version rested on it.</li>
+<li><strong>A drill that didn’t run the deployed unit.</strong> Task 16 ran <code>spark brake --once</code> as Dan, with Dan’s key. The unit runs as <code>spark</code> with its own key, which it had never sent: its journal held no line of its own. The done-when criterion was met by the CLI, not the unit.</li>
+<li><strong>Test requests unlike real ones.</strong> The context check’s 26-token task call began with the chat’s template tokens, over 10% of its length, so it took the chat’s slot; Open WebUI’s task calls are hundreds of tokens long. Its first run put a 126,000-token chat on <code>jq</code>’s command line and sent empty bodies. Task 13’s 512-token cap left both thinking models with no reply.</li>
+<li><strong>A settled item leaves its markers behind.</strong> GRUB’s check passed on 2026-09-27 and <em>To verify</em> marked it resolved, but the plan’s upgrade steps, S23 and <code>updates.md</code> still said “not yet checked” until the council, and deploy.md and a doctor comment said the same of other checks.</li>
+<li><strong>What lived only in chat or the ledger.</strong> Dan’s first try at <code>agent</code>’s guard lost the end of a long <code>jq | ssh</code> line in copying. The session rewrote it as short commands and tested them on stand-ins, but they reached no runbook until the council. Deferred minors and forward items piled up in the gitignored ledger, which noted the risk itself after Task 6.</li>
+<li><strong>Rulings built on a wrong premise.</strong> At least four of the controller’s own readings or rulings were wrong and had to be corrected later: v257’s unload, Task 4’s literal floor rule, Task 8’s release dates and Task 9’s R16. The floor rule alone cost Task 4 a second round. Phase 0’s rule to check a tool’s behaviour against the tool itself covers it: a ruling is a fix too.</li>
+<li><strong>Tests that couldn’t fail.</strong> A test server rewrote <code>//</code>, so one fake couldn’t fail (Task 3), and the brake ignored <code>--key-env</code> while the suite passed with no unloads (Task 4). Probes and mutation runs in the tasks’ own rounds found them, as Phase 0’s rule asks.</li>
+<li><strong>Process slips.</strong> Task 1’s trailer. A second trailer as a third <code>-m</code> split the trailers into two paragraphs (amended with Dan’s OK). Three subjects ran past 100 characters by the push point, and seven of batch A’s past 72. The permission classifier refused an auditor’s commits, which went in with Dan’s OK, and batch A’s fixer couldn’t change <code>CLAUDE.md</code> on an agent’s say-so.</li>
+</ol>
+</section>
+<section id="lessons-worth-keeping" class="level2">
+<h2 class="anchored" data-anchor-id="lessons-worth-keeping">Lessons worth keeping</h2>
+<p>Proposals: promoting any of them to <code>CLAUDE.md</code>, as <em>Lessons from Phase 0</em> were, is Dan’s call.</p>
+<ul>
+<li><strong>Read the engine’s source at its pin before trusting a flag’s name, default or scope,</strong> and cite the file: <code>--batch-size</code> caps <code>--ubatch-size</code>; <code>--ctx-checkpoints</code> counts per slot and fills by turns; v257 answers an unload once the engine has exited (causes 2 and 7).</li>
+<li><strong>A drill runs the unit as deployed</strong> — its user, its key, its environment — or reads the unit’s own record (cause 3).</li>
+<li><strong>A test request has the shape and size real clients send,</strong> and a large body goes through a file, never argv (cause 4).</li>
+<li><strong>When an item settles, grep for every “not yet” it leaves,</strong> and date each one (cause 5).</li>
+<li><strong>What’s learned goes into a tracked file in the same change:</strong> a procedure tested in chat into its runbook, a forward item into the plan, never only the ledger; and a command Dan pastes stays short (cause 6).</li>
+<li><strong>Before a dispatch, a read-only scan runs the brief on a scratch copy against the spec;</strong> commit 1 is the listing byte for byte, and each ruling is a commit of its own (cause 1).</li>
+<li><strong>A finding that can expose a key is fixed in the task that finds it:</strong> the redirect with the key, found in Task 3, waited for the council. Phase 0’s security lesson, applied to findings.</li>
+<li><strong>Every test runs in an environment it builds,</strong> so a failing assertion can’t print the shell’s (<code>be4c3c3</code>).</li>
+<li><strong>A cold load is not a footprint:</strong> the registry says what each estimate counts, growth after admission included (<code>7b39fa8</code>; the plan’s rule 6).</li>
+<li><strong>With more than one trailer, the message goes through a file,</strong> the trailers in one paragraph (cause 9).</li>
+</ul>
+</section>
+<section id="carried-to-phase-2" class="level2">
+<h2 class="anchored" data-anchor-id="carried-to-phase-2">Carried to Phase 2</h2>
+<p><strong>Dan’s decisions at Phase 1’s close (2026-09-28),</strong> as the session recorded them. plan.md’s forward look, 2026-09-28, records them with their reasons.</p>
+<ul>
+<li><em>Now, in Phase 1:</em> render allows only listed engine options.</li>
+<li><em>Reversed before it was deployed:</em> llama-swap sending the engines’ output to the journal. The check behind it had missed whisper, which logs each upload’s file name and its metadata. Phase 2 revisits it with a check that covers speech.</li>
+<li><em>In Phase 2:</em> llama-swap’s port moves to a Unix socket with the gate; the engines and the pull get a user of their own; swap and swappiness are measured at the real thresholds first; <code>agent</code>’s GPU jobs get an OOM score before <code>agent</code> runs GPU work; pi 0.87.1 for <code>agent</code> after a deliberate test; systemd sandboxing for the stack’s units and <code>cap_drop</code> for the web containers.</li>
+<li><em>Dropped:</em> <code>make deploy</code> from the Mac.</li>
+<li><em>Kept:</em> the seven-day window, which now covers pins set by hand as well.</li>
+<li><em>S09</em> is verified on Task 14’s phone pass, with the context change’s settings checked in the Mac’s browser.</li>
+<li><em>Dependabot’s</em> PRs #1–#3 merge on the Mac after Phase 1’s merge (Task 18 Step 7). <em>(Done 2026-09-29.)</em></li>
+<li><em>Phase 1 closes</em> on the upgrade drill’s weak evidence.</li>
+<li><em>Every model stays at its full context,</em> the embedding model’s 32,768 included. The settings that would save memory are revisited when more models are fitted.</li>
+</ul>
+<p><strong>Rulings at the close, from the council</strong>, which Dan didn’t decide himself: earlyoom follows the brake, with resident engines at <code>oom_score_adj</code> 900 and on-demand ones at 1000; the brake’s floor tolerance becomes 1.0 GiB, and <code>GRACE_S</code> stays 15 s; the brake checks at start that llama-swap takes its key (batch A). The council’s other recommendations, that llama.cpp follows its formal releases and that alerts wait for Phase 2’s ntfy, went unchallenged; they were never put to Dan as decisions.</p>
+<p><strong>Still to do before the merge</strong> (as of the close’s last commits). The deploy of the council’s fixes: <code>make apply</code>, <code>make install-units</code> (the unit comments changed), <code>make apply-now</code>; until the new brake has run its start check, <code>make doctor</code> fails its <code>stack units</code> line. Then Task 17 Step 2’s checks, an earlyoom dry run for the new order among them, and the changelog and README entries. Task 17 Step 3’s private findings, which go to the vault through Dan. Task 18: CI’s render step, and the whole suite’s first run on a Mac (the folder fsync on APFS, bash 3.2, make 3.81, the environment each test builds) along with pi.md’s two Mac blocks; the merge; then Dependabot’s PRs #1–#3, and the Spark’s and <code>agent</code>’s clones move to <code>main</code>.</p>
+<p><strong>Pending on the box, for Dan.</strong> <code>agent</code>’s uv (0.12.19) onto the 0.12.18 pin, or the pin moves. Whether the first <code>gh</code> login’s authorization was revoked, and whether the Mac’s npm-installed pi 0.85.1 is still there, are not yet recorded.</p>
+<p><strong>Still unverified</strong> (plan.md, <em>To verify on the box</em>, unless noted): an upgrade that moves <code>libc6</code> or <code>libstdc++6</code>, and one that moves Docker; the GPU set’s move on a real upgrade day, which makes S23 <em>verified</em>; pi’s crash range; the coder’s checkpoint size, the first thing a soak at full context measures; the CUDA-allocatable ceiling; whether memory swaps out before <code>MemAvailable</code> reaches the brake; a load that has to reclaim page cache (<em>Page cache and the launch check</em>); a busy engine’s stop, and the lag before its memory shows in <code>MemAvailable</code> (<em>The minimal brake’s reach</em>); S09’s app install and reply label, marked not yet recorded (<code>d2f1537</code>).</p>
+<p><strong>Recorded in plan.md’s open items already:</strong> <em>Engines share llama-swap’s user</em> (the pull and hf_xet’s logs with them), <em>Phase 1’s launch check is a static fit</em>, <em>Anyone on the box can take 127.0.0.1:9100</em>, <em>The minimal brake’s reach</em> (llama-swap down or hung, and the measured falls) and <em>Page cache and the launch check</em>.</p>
+<p><strong>Deferred minors and forward items.</strong> Every one the ledger, the four council reports and batch A’s report set aside, one line each. Each is as its source gave it; only the closed ones below were checked against the code again. The last column names where plan.md or phase-1.md also records it, as of this writing.</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Theme</th>
+<th>What’s left</th>
+<th>From</th>
+<th>Also in</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Registry</td>
+<td><code>Registry</code> is frozen but holds dicts, so hashing it raises <code>TypeError</code></td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>static_total_gib()</code> sums every model, resident or not; its docstring should say so</td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>YAML 1.1 turns <code>0042</code> (octal) and <code>1:30</code> (base 60) in <code>args</code> into numbers before <code>str()</code></td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>roles</code> aren’t checked against the name pattern: <code>roles: [""]</code> loads</td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The duplicate-key check refuses a legal nested merge-and-override; check at <code>flatten_mapping</code>’s start</td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A bare <code>=</code> key raises YAML’s <code>ConstructorError</code>, not a <code>RegistryError</code></td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>An unquoted all-digit 40-character revision passes, stored as an int</td>
+<td>Task 1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Launch and status</td>
+<td>Any model’s start clears the one refusal record, doctor’s embedding load included</td>
+<td>Task 2; toolstack I3</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>An unreadable <code>/proc/meminfo</code> or a failed exec exits 1, not a recorded refusal</td>
+<td>Task 2</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A failed refusal write leaves <code>.last-refusal.json.&lt;pid&gt;</code> behind</td>
+<td>Task 2</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A folder named <code>hold.json</code> holds, and <code>release_hold</code> can’t clear it</td>
+<td>Task 2</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A footprint, or a margin, of 1e27 GiB or more crashes Decimal’s quantize, in launch and status</td>
+<td>Tasks 2, 5</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The folder fsync after <code>os.replace</code> is unguarded; make it best effort once the Mac run checks APFS</td>
+<td>Task 2</td>
+<td>phase-1.md, Task 18</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>spark launch</code>’s registry catch lacks <code>RecursionError</code> and PyYAML’s tagged-scalar errors; status’s should catch <code>Exception</code>, as the brake’s does</td>
+<td>Task 5</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>“this account can’t read …” doesn’t name the remedy for a login older than the group</td>
+<td>Task 5</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>(no key in $NAME)</code> also follows an unreachable error; JSON’s <code>last_refusal</code> null means none, unknown or damaged alike</td>
+<td>Task 5</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td>llama-swap client</td>
+<td>An <code>InvalidURL</code> from a redirect’s <code>Location</code> reads as an invalid base URL</td>
+<td>Task 3</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>ssl.SSLError</code> can escape <code>_call</code>, on https only</td>
+<td>Task 3</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A 401’s response is never closed (a <code>ResourceWarning</code> under <code>-W error</code>)</td>
+<td>Task 3</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>Two never-sent paths, <code>InvalidURL</code> and <code>ValueError</code>, aren’t pinned as “not answered”</td>
+<td>Task 7</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>Three blank lines before a parametrized test</td>
+<td>Task 3</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Brake</td>
+<td>No test pins remedy 2’s keep-in-asked: a mutant that drops it passes, and a starting coder with no answer is asked six times as memory falls (marked “matters”)</td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>No in-episode test of the stage rule’s <code>asked.discard</code></td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>Stale docstrings on <code>_Returning</code> and <code>_Brake</code></td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A refused connection is logged as “no answer in 2 s” and counted as unloaded</td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>The asked rule can’t tell a fresh start within one poll of an aborted one</td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The brief expected <code>ModuleNotFoundError</code>; Python raises <code>ImportError</code></td>
+<td>Task 4</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>The hold’s two fsyncs come before the first unload: write, rename, unload, then fsync</td>
+<td>Task 4; reliability m3</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A <code>starting</code> engine isn’t unloaded first, as rule 5 says</td>
+<td>reliability m1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A failed unload is passed over for the whole episode</td>
+<td>reliability m4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>earlyoom runs at nice 0 and <code>oom_score_adj</code> 0; <code>-p</code> would raise it</td>
+<td>reliability m9</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>Nothing announces a brake event, a hold that survives a reboot, a stopped unit or a failed restart until ntfy</td>
+<td>reliability D4</td>
+<td>Phases, Phase 2</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The gate names the top GPU holder outside the stack from nvidia-smi, since a CUDA job’s RSS hides its memory</td>
+<td>reliability I3</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Apply and units</td>
+<td>Copy before sync: a failed sync leaves the new code live on the old environment (the message says so)</td>
+<td>Task 7</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>No test pins <code>_show</code>’s <code>--timestamp=us+utc</code>, or uv sync’s <code>--frozen</code> and <code>VIRTUAL_ENV</code></td>
+<td>Task 7</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A deferred llama-swap restart deploys the new <code>models.yaml</code> beside the old commands</td>
+<td>reliability m10</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>llama-swap’s unit has <code>Restart=on-failure</code>, so a stray SIGTERM leaves it down</td>
+<td>reliability m6</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>The web services’ unit could be <code>WantedBy=docker.service</code>, or Docker held with the GPU set</td>
+<td>toolstack M8</td>
+<td>Phases, Phase 1; <em>To verify</em></td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The stack’s units have no systemd sandboxing (<code>NoNewPrivileges</code>, <code>ProtectSystem</code> and so on)</td>
+<td>security M2, beside D1</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>The web containers run as root with host networking, and no <code>cap_drop</code> or <code>no-new-privileges</code></td>
+<td>security M3</td>
+<td><em>Paths that stay open</em></td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A user of their own for the engines and the pull, with the gate</td>
+<td>security D1</td>
+<td><em>Engines share llama-swap’s user</em></td>
+</tr>
+<tr class="even">
+<td>Render and engines</td>
+<td>The <code>--offline</code> comment, test and commit overstate: a Docker model is resolved before the gate (<code>-dr</code> is refused, so the behaviour holds)</td>
+<td>Task 6</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td><code>IMAGE</code> accepts a one-part name with a numeric tag, a bare host:port, and <code>..</code> or <code>_</code> in parts</td>
+<td>Task 6</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>load_versions</code> checks no shapes: a list, or <code>components: 5</code>, is a traceback</td>
+<td>Task 6</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>Refuse a vision model whose micro-batch can’t hold its image; today only a test on the repo’s registry holds it</td>
+<td>Task 14</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>--alias</code>, so a reply names the registry’s model, not the GGUF path</td>
+<td>Task 13</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A higher <code>--slot-prompt-similarity</code> for Gemma: at 0.10 a short new prompt can take a long chat’s slot</td>
+<td>context change</td>
+<td>phase-1.md, Task 17</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A doctor check of each engine’s <code>/props</code> <code>n_ctx</code> against the registry</td>
+<td>context review m10</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A doctor check that whisper-server finds its libraries; <code>updates.md</code> step 7 does it by hand</td>
+<td>Task 11</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A <code>TESTED_AGAINST</code> test tying version-specific code to <code>versions.yaml</code>; each component’s upgrade runbook, written with its first bump; doctor v1’s version-drift checks</td>
+<td>toolstack I1</td>
+<td>Revisions, 2026-09-28</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>Check the rendered config against v257’s embedded schema, since <code>-validate</code> ignores a mistyped <code>swap:</code>; weigh v259’s split logs with the gate</td>
+<td>toolstack</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td><em>Components</em> rows say more than was built: <code>CLAUDE.md</code> pointers, the schema check, <code>121</code> vs <code>121a-real</code></td>
+<td>toolstack M7</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td>The pull</td>
+<td>The pyproject-vs-lock test would fail falsely on a dependency with an extra or a marker</td>
+<td>Task 8</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A token holding <code>? # &lt; &gt; ( )</code> in a URL path could leave part of itself; refuse those six</td>
+<td>Task 8</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>A <code>(</code> in a URL path before its <code>?</code> leaves that URL’s query</td>
+<td>Task 8</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>The held-back token note says “reading its token files” for an OAuth refresh failure too</td>
+<td>Task 8</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The sanitiser’s order shows part of a token holding <code>#&lt;&gt;()</code> in a URL query (unreachable: tokens travel in a header)</td>
+<td>Task 8</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Tests and CI</td>
+<td>The test fixture should set <code>UV_PYTHON_DOWNLOADS=never</code></td>
+<td>Task 7</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>conftest’s docstring overclaims for module and session fixtures; <code>PYTEST_DEBUG_TEMPROOT</code> is deleted before <code>mktemp</code>; <code>test_hooks</code> needs uv to collect; blank lines</td>
+<td>Task 7</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>A stale <code>test_doctor.py</code> comment on a set-but-empty <code>SPARK_LLAMASWAP_URL</code></td>
+<td>Task 10</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>CI lacks <code>uv lock --check</code>, llama-swap <code>-validate</code>, <code>docker compose config</code>, a check of its <code>version:</code> inputs against <code>versions.yaml</code>, a pinned shellcheck and a macOS job</td>
+<td>toolstack M6</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>Dependabot could widen <code>huggingface_hub&lt;2</code>: <code>lockfile-only</code>, or ignore its majors; test that its cooldown matches <code>exclude-newer</code></td>
+<td>toolstack I4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td>Versions</td>
+<td><code>versions.yaml</code> lacks containerd.io, Tailscale and shellcheck</td>
+<td>toolstack M2</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>llama.cpp’s pin covers the binaries tarball, not its cudart companion</td>
+<td>toolstack M4</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>Quarto 1.10.3 is a prerelease; the newest stable was 1.10.18; and Quarto on the Spark</td>
+<td>toolstack M3</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>pi’s npm dependencies float, outside the seven-day rule (<code>npm --before</code>)</td>
+<td>toolstack M10</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td><code>b11146/</code> took the tarball folder’s group and no setgid, unlike its siblings</td>
+<td>Task 11</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Web UI and search</td>
+<td>SearXNG’s <code>outgoing.request_timeout</code>: duckduckgo takes 2.7 s against 3 s, and the cold first search found nothing</td>
+<td>Task 13</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The emoji task call still thinks; it caps at 4 tokens</td>
+<td>Task 13</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>One <code>404</code> on <code>/v1/chat/completions</code>, its model logged by neither side</td>
+<td>Task 14</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>Gemma’s RSS grew from 1.6 to 5.7 GiB after long generations, unexplained</td>
+<td>Task 13; context review</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Security</td>
+<td><code>make install-units</code>’ screen passes bidi controls and zero-width characters</td>
+<td>Task 9; security M1</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>The <code>git status</code> check before a sudo target guards only against accidents, and sudo runs the clone’s own scripts: accepted</td>
+<td>Task 9; security</td>
+<td><em>Paths that stay open</em></td>
+</tr>
+<tr class="even">
+<td></td>
+<td><code>GET /props</code>, the engine’s read-only settings, still answers without a key</td>
+<td>batch A</td>
+<td><em>127.0.0.1 is not a boundary against <code>agent</code></em></td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>DGX OS’s own dashboard, part of it as root, and CUPS listen on loopback, outside this repo</td>
+<td>security M4</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Docs wording</td>
+<td>tailscale.md: “On that home Linux machine” comes before the machine is introduced; “Tag the Spark, on the Spark:”</td>
+<td>docs task</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>updates.md: “<strong>On the Spark</strong>, then the GRUB check” reads clunky, and one bold header ends with its machine</td>
+<td>docs task</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>secret-files.md: steps 1–7 each repeat “<strong>On the Spark:</strong>” in a section that says so; step 8 folds it in</td>
+<td>docs task</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td></td>
+<td>updates.md and scratch-model.md each have a step with no block beside bolded siblings</td>
+<td>docs task</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td></td>
+<td>pi.md’s two Mac blocks ran only under bash on the Spark, never zsh, BSD awk or the Mac’s jq <em>(2026-09-29, Task 18: the jq and awk block ran in zsh 5.9 with BSD awk and jq 1.7.1, its <code>scp</code> left out, and built both files as expected: 35 deny rules, none still naming Dan’s home, the one hook, and only the secrets section. The <code>ssh</code> and <code>scp</code> block, which writes into <code>agent</code>’s home, didn’t run again.)</em></td>
+<td>batch A</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Closed since.</strong> Of the ledger’s 57 deferred-minor lines, five are closed, checked against the code: a quoted <code>"false"</code> and a test that warn sits above brake (Task 1’s redo, <code>69cc076</code>), <code>fullmatch</code> and a repo’s <code>org/name</code> (<code>a0a8612</code>), and a registry error at launch as a traceback (<code>548ab5c</code>). A sixth, render’s incomplete denylist, gave way to Dan’s allowlist. Of the forward items, the Node entry and the Mac’s pi in the records went in with batch A, and pi’s <code>400</code>s on Gemma at 16,384 tokens a slot ended with the full context.</p>
+<p><strong>From the final review (2026-09-28),</strong> small, code-level, deferred: a doctor check that reads earlyoom’s order (today the dry run is the only check); a value check for whisper-server’s <code>--tmp-dir</code>, which the allowlist lets through and whisper-server passes to <code>/bin/sh</code> inside double quotes; three surviving mutants in the start check’s tests (<code>flush=True</code>, <code>daemon=False</code>, the log lock); and doctor treating a start check still “waiting” long after <code>KEY_CHECK_S</code> as stopped, so a thread that dies can’t leave that state for good.</p>
+</section>
+<section id="starting-over" class="level2">
+<h2 class="anchored" data-anchor-id="starting-over">Starting over</h2>
+<p><strong>On a new or rebuilt box</strong>, start as <a href="../design/phase-0-retro.html#starting-over">Phase 0’s page</a> says, and follow the How-to page’s <a href="../how-to/index.html#in-order"><em>In order</em></a> to its end, now eight steps. Before step 7, install the engines as <a href="../design/phase-1.html">Phase 1’s plan</a>, Task 11, does; there is no runbook yet, and <code>updates.md</code> says each component’s is written with its first bump. <a href="../how-to/deploy.html">Deploy the stack</a> then covers your own key on the Spark, <code>make apply</code>, <code>make install-units</code>, <code>make pull</code>, the start, the web UI’s first account straight after it (the first account becomes the admin) and <code>tailscale serve</code>. <a href="../how-to/pi.html">pi</a> gives <code>agent</code> its guard before its key. Then <code>make status</code>, and <code>make doctor</code> for 15 of 15. Task 16 Step 4’s drill, a fresh clone and <code>make bootstrap</code> after which <code>make apply</code> changes nothing and <code>make install-units-dry-run</code> finds nothing, is the check that the repo reproduces the box. Record each step in <code>changelog.md</code> and <code>README.md</code> §Current state. S18 is the scenario for this.</p>
+<p><strong>On the Mac:</strong> Phase 0’s list, plus coreutils, whose <code>timeout</code> the install-units tests run, and Homebrew’s pi with <code>make clients</code> and <code>make tunnel</code> (<a href="../how-to/pi.html">pi</a>).</p>
+<p><strong>Read first:</strong> <code>CLAUDE.md</code>; <a href="../design/plan.html">the plan</a>, with its forward look; this page and Phase 0’s; <code>README.md</code> §Current state; then the phase plan being executed. In <a href="../design/phase-1.html">Phase 1’s plan</a>, every listing a review changed is marked <em>Superseded</em>, and dated notes say what the box showed. The code wins.</p>
+<p><strong>A fresh Claude session</strong> reads <code>CLAUDE.md</code> by itself; point it at the plan and this page before it proposes anything. Subagents run on Opus, and their commits carry the phase plan’s trailer. On the Spark, Dan runs the commands Claude Code’s auto-mode classifier refuses a session, <code>make apply</code> among them; a session stops and asks rather than work around a refusal.</p>
+
+
+</section>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/chendaniely\.github\.io\/local-ai\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

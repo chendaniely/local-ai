@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.3">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="Temporary: build llama.cpp in your home folder, serve one model, and use it from the Mac through an SSH tunnel — until Phase 1’s stack replaces it.">
+
+<title>A scratch model to tinker with – local-ai</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-e44360b8a8db1e130c7792fece1c8032.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-759232fa0b86b84cb2931155628a3b47.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">local-ai</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../design/plan.html"> 
+<span class="menu-text">Plan</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../architecture.html"> 
+<span class="menu-text">Architecture</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../scenarios/index.html"> 
+<span class="menu-text">Scenarios</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../how-to/index.html"> 
+<span class="menu-text">How-to</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/stack.html"> 
+<span class="menu-text">Stack</span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#build-llama.cpp" id="toc-build-llama.cpp" class="nav-link active" data-scroll-target="#build-llama.cpp">1. Build llama.cpp</a></li>
+  <li><a href="#download-a-model" id="toc-download-a-model" class="nav-link" data-scroll-target="#download-a-model">2. Download a model</a></li>
+  <li><a href="#serve-it" id="toc-serve-it" class="nav-link" data-scroll-target="#serve-it">3. Serve it</a></li>
+  <li><a href="#connect-from-the-mac" id="toc-connect-from-the-mac" class="nav-link" data-scroll-target="#connect-from-the-mac">4. Connect from the Mac</a></li>
+  <li><a href="#clients" id="toc-clients" class="nav-link" data-scroll-target="#clients">5. Clients</a></li>
+  <li><a href="#option-b-vllm-from-nvidias-ngc-container" id="toc-option-b-vllm-from-nvidias-ngc-container" class="nav-link" data-scroll-target="#option-b-vllm-from-nvidias-ngc-container">Option B: vLLM from NVIDIA’s NGC container</a></li>
+  <li><a href="#what-you-can-run" id="toc-what-you-can-run" class="nav-link" data-scroll-target="#what-you-can-run">What you can run</a></li>
+  <li><a href="#switch-models" id="toc-switch-models" class="nav-link" data-scroll-target="#switch-models">Switch models</a></li>
+  <li><a href="#clean-up" id="toc-clean-up" class="nav-link" data-scroll-target="#clean-up">Clean up</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">A scratch model to tinker with</h1>
+</div>
+
+<div>
+  <div class="description">
+    Temporary: build llama.cpp in your home folder, serve one model, and use it from the Mac through an SSH tunnel — until Phase 1’s stack replaces it.
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p><em>(Added 2026-09-28, from Phase 1’s council: Phase 1’s stack now serves models, so this page’s premise is gone. A scratch model loads around the launch check, which nothing may do while the stack’s models share the memory. Until Phase 2’s <code>spark try</code> replaces it, use it only with llama-swap stopped, <strong>on the Spark</strong> <code>systemctl stop local-ai-llama-swap</code>, which stops every model. The brake can’t unload a scratch model: if memory falls below its line, it holds the stack’s loads until <code>make brake-release</code>, and earlyoom stays the only net.)</em></p>
+<p>This is <strong>not the stack</strong>. It is a model you run by hand to tinker with while Phase 1 is being built. It lives in <code>~/scratch</code>, runs as you, and needs no sudo and no new packages. Delete it when Phase 1 serves models (<a href="#clean-up">Clean up</a>).</p>
+<p><strong>Guardrails until Phase 1’s brake exists:</strong></p>
+<ul>
+<li><strong>One model at a time, well under memory.</strong> Keep it to about 60–70 GB. Overcommitting GB10’s shared memory can freeze the box outright. earlyoom is the only net until Phase 1, and it kills model engines first.</li>
+<li><strong>Stop it before Phase 1 loads real models</strong>, so the two never share memory.</li>
+<li><strong>Mind the disk.</strong> Models share the 1 TB drive with everything else.</li>
+</ul>
+<p>Run everything on the Spark, as you, inside tmux (<code>tmux new -As scratch</code>), unless a step says Mac.</p>
+<p>Two ways to serve, and one at a time, never both:</p>
+<ul>
+<li><strong>A. llama.cpp</strong> (steps 1–5): builds in two minutes, runs as you with no sudo, and takes only the memory the model needs. Start here.</li>
+<li><strong>B. vLLM from NVIDIA’s NGC container</strong> (<a href="#option-b-vllm-from-nvidias-ngc-container">Option B</a>): NVIDIA’s build for this hardware. Use it to try vLLM itself, many requests at once, or a model whose FP8/NVFP4 version only vLLM serves well. It needs <code>sudo docker</code>.</li>
+</ul>
+<section id="build-llama.cpp" class="level2">
+<h2 class="anchored" data-anchor-id="build-llama.cpp">1. Build llama.cpp</h2>
+<p><strong>On the Spark:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/scratch <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> ~/scratch</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--depth</span> 1 https://github.com/ggml-org/llama.cpp</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> llama.cpp</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cmake</span> <span class="at">-B</span> build <span class="at">-DGGML_CUDA</span><span class="op">=</span>ON <span class="at">-DCMAKE_CUDA_ARCHITECTURES</span><span class="op">=</span>121a-real <span class="at">-DLLAMA_OPENSSL</span><span class="op">=</span>OFF <span class="at">-DCMAKE_BUILD_TYPE</span><span class="op">=</span>Release</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cmake</span> <span class="at">--build</span> build <span class="at">--config</span> Release <span class="at">-j</span> <span class="st">"</span><span class="va">$(</span><span class="fu">nproc</span><span class="va">)</span><span class="st">"</span> <span class="at">--target</span> llama-server llama-cli</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li><code>121a-real</code> is the GB10’s architecture, as NVIDIA’s own llama.cpp playbook builds it. Without the right one, the build silently targets the wrong GPU.</li>
+<li><code>LLAMA_OPENSSL=OFF</code>: llama.cpp’s built-in Hugging Face download needs OpenSSL’s headers, which aren’t installed. Step 2 downloads with Hugging Face’s own tool instead, so nothing is missing.</li>
+<li>The build takes about two minutes on the Spark’s 20 cores, mostly compiling CUDA kernels.</li>
+<li>Check that it sees the GPU: <code>build/bin/llama-server --list-devices</code> shows <code>CUDA0: NVIDIA GB10</code>. (Tested 2026-09-24 with llama.cpp <code>1ab7e5a</code>: built, found the GB10, served a model.)</li>
+</ul>
+</section>
+<section id="download-a-model" class="level2">
+<h2 class="anchored" data-anchor-id="download-a-model">2. Download a model</h2>
+<p>Hugging Face’s CLI runs through uv, so nothing gets installed. Pick one:</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Model</th>
+<th>File</th>
+<th>Size</th>
+<th>Good for</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Qwen3-8B</td>
+<td><code>Qwen3-8B-Q4_K_M.gguf</code> from <code>Qwen/Qwen3-8B-GGUF</code></td>
+<td>~5 GB</td>
+<td>a quick first try</td>
+</tr>
+<tr class="even">
+<td>Gemma 4 26B-A4B</td>
+<td><code>gemma-4-26B-A4B-it-Q4_0.gguf</code> from <code>ggml-org/gemma-4-26B-A4B-it-GGUF</code></td>
+<td>~14 GB</td>
+<td>one of Phase 1’s real models</td>
+</tr>
+</tbody>
+</table>
+<p><strong>On the Spark:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/scratch/models</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uvx</span> <span class="at">--from</span> huggingface_hub hf download Qwen/Qwen3-8B-GGUF Qwen3-8B-Q4_K_M.gguf <span class="at">--local-dir</span> ~/scratch/models</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co"># or</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="ex">uvx</span> <span class="at">--from</span> huggingface_hub hf download ggml-org/gemma-4-26B-A4B-it-GGUF gemma-4-26B-A4B-it-Q4_0.gguf <span class="at">--local-dir</span> ~/scratch/models</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Neither repository is gated, so no token is needed. Your Hugging Face token stays in the stack’s secret file.</p>
+</section>
+<section id="serve-it" class="level2">
+<h2 class="anchored" data-anchor-id="serve-it">3. Serve it</h2>
+<p><strong>On the Spark:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scratch/llama.cpp/build/bin/llama-server</span> <span class="dt">\</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">-m</span> ~/scratch/models/Qwen3-8B-Q4_K_M.gguf <span class="at">--alias</span> qwen3-8b <span class="dt">\</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--host</span> 127.0.0.1 <span class="at">--port</span> 8080 <span class="dt">\</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">-ngl</span> 999 <span class="at">-c</span> 32768 <span class="at">--jinja</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li><code>--host 127.0.0.1</code>: only the Spark itself can reach it. The Mac gets in through the SSH tunnel in step 4, and nothing opens on the LAN or the tailnet.</li>
+<li><code>-ngl 999</code> puts every layer on the GPU; <code>-c 32768</code> sets a 32K-token context window.</li>
+<li><code>--alias</code> is the model name clients see and send. Without it, the name is the file’s full path.</li>
+<li><code>--jinja</code> uses the model’s own chat template, which tool-calling clients such as pi need.</li>
+</ul>
+<p><strong>On the Spark</strong>, leave it running in its tmux window (detach with Ctrl-b d). To check it from a second window:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:8080/v1/models <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">'.data[].id'</span>   <span class="co"># qwen3-8b, the alias</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">free</span> <span class="at">-g</span>                                                          <span class="co"># memory it's holding</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="connect-from-the-mac" class="level2">
+<h2 class="anchored" data-anchor-id="connect-from-the-mac">4. Connect from the Mac</h2>
+<p><strong>On the Mac</strong>, open a tunnel and leave it running:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ssh</span> <span class="at">-N</span> <span class="at">-L</span> 8080:127.0.0.1:8080 brightroar</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>This uses the <code>brightroar</code> alias from <a href="../how-to/ssh.html">SSH from the Mac</a>. It works at home and away, and stops when you press Ctrl-C.</p>
+<p>Then, on the Mac:</p>
+<ul>
+<li><strong>Chat in a browser:</strong> <a href="http://localhost:8080" class="uri">http://localhost:8080</a>. llama-server has its own chat page.</li>
+<li><strong>The API</strong>, for anything that speaks OpenAI’s API: base URL <code>http://localhost:8080/v1</code>, API key any non-empty string (the server doesn’t check one), and the model name (the <code>--alias</code>).</li>
+</ul>
+</section>
+<section id="clients" class="level2">
+<h2 class="anchored" data-anchor-id="clients">5. Clients</h2>
+<ul>
+<li><strong>pi, Open WebUI on the Mac, and other chat or agent apps:</strong> add an “OpenAI-compatible” provider with the base URL and model name above. Most apps call it a custom OpenAI endpoint.</li>
+<li><strong>Ollama:</strong> can’t use this. Ollama is itself a model server, and its apps talk to their own server rather than to llama-server.</li>
+<li><strong>Claude Code and Claude Desktop: never.</strong> Pointing them at the Spark would mean changing the Claude path (<code>ANTHROPIC_BASE_URL</code> or a proxy), and the repo’s first rule is that the Claude path stays untouched.</li>
+</ul>
+</section>
+<section id="option-b-vllm-from-nvidias-ngc-container" class="level2">
+<h2 class="anchored" data-anchor-id="option-b-vllm-from-nvidias-ngc-container">Option B: vLLM from NVIDIA’s NGC container</h2>
+<p><em>Not yet tested on this box.</em> The commands follow NVIDIA’s DGX Spark playbooks; the image’s tag and its arm64 build were checked on 2026-09-25.</p>
+<p>Stop any llama.cpp server first, so the two never share memory.</p>
+<p><strong>B1. On the Spark, pull the image</strong> (about 11 GB compressed, public, no NGC login needed):</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker pull nvcr.io/nvidia/vllm:26.08-py3</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>B2. On the Spark, save the compose file.</strong> vLLM uses a model’s original Hugging Face repo (safetensors), not GGUF. Everything you’re likely to change is in <code>x-settings</code> at the top:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/scratch/vllm <span class="kw">&amp;&amp;</span> <span class="fu">nano</span> ~/scratch/vllm/compose.yaml</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode yaml code-with-copy"><code class="sourceCode yaml"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Scratch vLLM (not the stack). Edit the values in `x-settings`, then: sudo docker compose up</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="fu">x-settings</span><span class="kw">:</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">model</span><span class="kw">:</span><span class="at"> </span><span class="ot">&amp;model</span><span class="at"> Qwen/Qwen3-8B</span><span class="co">            # Hugging Face repo (safetensors, not GGUF)</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">name</span><span class="kw">:</span><span class="at"> </span><span class="ot">&amp;name</span><span class="at"> qwen3-8b</span><span class="co">                    # the name clients send</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">memory</span><span class="kw">:</span><span class="at"> </span><span class="ot">&amp;memory</span><span class="at"> "0.4"</span><span class="co">                   # share of GB10's memory vLLM reserves; 0.5 at most here</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">context</span><span class="kw">:</span><span class="at"> </span><span class="ot">&amp;context</span><span class="at"> "32768"</span><span class="co">               # max tokens per request</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">tool_parser</span><span class="kw">:</span><span class="at"> </span><span class="ot">&amp;tool_parser</span><span class="at"> hermes</span><span class="co">        # tool calling for Qwen3; other families differ</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="fu">services</span><span class="kw">:</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">vllm</span><span class="kw">:</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">image</span><span class="kw">:</span><span class="at"> nvcr.io/nvidia/vllm:26.08-py3</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">container_name</span><span class="kw">:</span><span class="at"> scratch-vllm</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">command</span><span class="kw">:</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> vllm</span></span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> serve</span></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="ot">*model</span></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> --served-model-name</span></span>
+<span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="ot">*name</span></span>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> --gpu-memory-utilization</span></span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="ot">*memory</span></span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> --max-model-len</span></span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="ot">*context</span></span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> --enable-auto-tool-choice</span></span>
+<span id="cb8-24"><a href="#cb8-24" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> --tool-call-parser</span></span>
+<span id="cb8-25"><a href="#cb8-25" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="ot">*tool_parser</span></span>
+<span id="cb8-26"><a href="#cb8-26" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ports</span><span class="kw">:</span></span>
+<span id="cb8-27"><a href="#cb8-27" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="st">"127.0.0.1:8000:8000"</span><span class="co">             # the Spark only; the Mac uses the SSH tunnel</span></span>
+<span id="cb8-28"><a href="#cb8-28" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ipc</span><span class="kw">:</span><span class="at"> host</span></span>
+<span id="cb8-29"><a href="#cb8-29" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ulimits</span><span class="kw">:</span></span>
+<span id="cb8-30"><a href="#cb8-30" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">memlock</span><span class="kw">:</span><span class="at"> </span><span class="dv">-1</span></span>
+<span id="cb8-31"><a href="#cb8-31" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">stack</span><span class="kw">:</span><span class="at"> </span><span class="dv">67108864</span></span>
+<span id="cb8-32"><a href="#cb8-32" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">volumes</span><span class="kw">:</span></span>
+<span id="cb8-33"><a href="#cb8-33" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> ./hf:/root/.cache/huggingface</span><span class="co">     # downloads land in ~/scratch/vllm/hf (root-owned)</span></span>
+<span id="cb8-34"><a href="#cb8-34" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">deploy</span><span class="kw">:</span></span>
+<span id="cb8-35"><a href="#cb8-35" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">resources</span><span class="kw">:</span></span>
+<span id="cb8-36"><a href="#cb8-36" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">reservations</span><span class="kw">:</span></span>
+<span id="cb8-37"><a href="#cb8-37" aria-hidden="true" tabindex="-1"></a><span class="at">          </span><span class="fu">devices</span><span class="kw">:</span></span>
+<span id="cb8-38"><a href="#cb8-38" aria-hidden="true" tabindex="-1"></a><span class="at">            </span><span class="kw">-</span><span class="at"> </span><span class="fu">driver</span><span class="kw">:</span><span class="at"> nvidia</span></span>
+<span id="cb8-39"><a href="#cb8-39" aria-hidden="true" tabindex="-1"></a><span class="at">              </span><span class="fu">count</span><span class="kw">:</span><span class="at"> all</span></span>
+<span id="cb8-40"><a href="#cb8-40" aria-hidden="true" tabindex="-1"></a><span class="at">              </span><span class="fu">capabilities</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">gpu</span><span class="kw">]</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li><strong><code>memory</code> is the important one.</strong> vLLM reserves that share of GPU memory at start, whatever the model needs. On GB10 that is the whole machine’s memory, and vLLM’s default of 0.9 would take about 110 GB. 0.4 reserves about 50 GB. Raise it only as far as the scratch guardrail allows (0.5 at most).</li>
+<li><code>127.0.0.1:8000</code> publishes the port on the Spark only; the Mac uses the tunnel.</li>
+<li><code>name</code> is what clients send, like llama.cpp’s <code>--alias</code>.</li>
+<li><code>tool_parser</code> enables tool calling, which pi needs. <code>hermes</code> is right for Qwen3; other families use a different parser (see vLLM’s docs).</li>
+<li>If the GPU request is refused, replace the whole <code>deploy:</code> block with <code>devices: ["nvidia.com/gpu=all"]</code>. The Spark has NVIDIA’s device spec at <code>/var/run/cdi/nvidia.yaml</code>.</li>
+</ul>
+<p><code>sudo docker compose config</code> (in that folder) checks the file without starting anything.</p>
+<p><strong>B3. On the Spark, serve it:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/scratch/vllm</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker compose up            <span class="co"># stays in the foreground; Ctrl-C stops it</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co"># or: sudo docker compose up -d &amp;&amp; sudo docker compose logs -f</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Startup takes a few minutes: download, load, then compile. It is ready when the log says <code>Application startup complete</code>. <strong>On the Spark</strong>, check it from another window:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:8000/v1/models <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">'.data[].id'</span>   <span class="co"># qwen3-8b</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">free</span> <span class="at">-g</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>To switch models, edit <code>x-settings</code> and run <code>sudo docker compose up</code> again.</p>
+<p><strong>B4. From the Mac:</strong> the same as step 4, on port 8000: <code>ssh -N -L 8000:127.0.0.1:8000 brightroar</code>, then base URL <code>http://localhost:8000/v1</code>. vLLM has no chat page, so use a client.</p>
+<p><strong>B5. On the Spark, stop it:</strong> Ctrl-C where <code>sudo docker compose up</code> runs, or <code>sudo docker compose down</code> in <code>~/scratch/vllm</code>. <strong>On the Mac</strong>, Ctrl-C closes B4’s tunnel.</p>
+</section>
+<section id="what-you-can-run" class="level2">
+<h2 class="anchored" data-anchor-id="what-you-can-run">What you can run</h2>
+<p><strong>One model per server.</strong> The chat page and the API see only the model <code>llama-server</code> was started with. To switch, restart it with another file (<a href="#switch-models">Switch models</a>).</p>
+<p><strong>From Hugging Face:</strong></p>
+<ul>
+<li><p><strong>GGUF files only.</strong> Most popular models have GGUF versions, from their makers or from <code>ggml-org</code>, <code>unsloth</code> or <code>bartowski</code>. A model published only as safetensors needs converting first.</p></li>
+<li><p><strong>An architecture your build supports.</strong> Mainstream families work: Llama, Qwen, Gemma, Mistral, DeepSeek, GLM, Phi. A brand-new one may need a newer llama.cpp. If loading fails with “unknown architecture”, run <code>git pull</code> in <code>~/scratch/llama.cpp</code> and repeat step 1’s two <code>cmake</code> lines.</p></li>
+<li><p><strong>Gated models</strong> (some Llama, Gemma and Mistral repos) need their license accepted on the model’s page, and your token for the download. <strong>On the Spark</strong>, give the token for that one command only, rather than <code>hf auth login</code>, which saves it in a file:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="bu">read</span> <span class="at">-rsp</span> <span class="st">"HF token: "</span> <span class="va">HF_TOKEN</span><span class="kw">;</span> <span class="bu">echo</span><span class="kw">;</span> <span class="bu">export</span> <span class="va">HF_TOKEN</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uvx</span> <span class="at">--from</span> huggingface_hub hf download <span class="op">&lt;</span>repo<span class="op">&gt;</span> <span class="op">&lt;</span>file<span class="op">&gt;</span> --local-dir ~/scratch/models</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="bu">unset</span> <span class="va">HF_TOKEN</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p><strong>The license</strong> on each model’s page says what you may use it for.</p></li>
+</ul>
+<p><strong>What fits.</strong> A 4-bit file is about 0.6 GB per billion parameters, plus a few GB for context:</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Model size</th>
+<th>4-bit file</th>
+<th>In scratch?</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>8B</td>
+<td>~5 GB</td>
+<td>easily</td>
+</tr>
+<tr class="even">
+<td>32B</td>
+<td>~20 GB</td>
+<td>yes</td>
+</tr>
+<tr class="odd">
+<td>70B</td>
+<td>~42 GB</td>
+<td>yes, slowly</td>
+</tr>
+<tr class="even">
+<td>120B-class mixture-of-experts</td>
+<td>~65 GB</td>
+<td>at the limit (keep scratch under about 60–70 GB)</td>
+</tr>
+<tr class="odd">
+<td>over ~110 GB</td>
+<td>—</td>
+<td>never: it can’t fit, and trying risks freezing the box</td>
+</tr>
+</tbody>
+</table>
+<p>Context costs memory too: a long <code>-c</code> (128K tokens, say) can add many GB on top of the file.</p>
+<p><strong>What llama.cpp does and doesn’t do:</strong></p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<tbody>
+<tr class="odd">
+<td>Text chat, coding, tool calling</td>
+<td>yes</td>
+</tr>
+<tr class="even">
+<td>Embeddings, reranking</td>
+<td>yes (<code>--embedding</code>, <code>--reranking</code>)</td>
+</tr>
+<tr class="odd">
+<td>Images as input</td>
+<td>yes, for vision models that ship an <code>mmproj</code> file</td>
+</tr>
+<tr class="even">
+<td>Speech-to-text</td>
+<td>no: that’s whisper.cpp (Phase 1)</td>
+</tr>
+<tr class="odd">
+<td>Image generation</td>
+<td>no: diffusion models need other tools (ComfyUI, in the plan’s backlog)</td>
+</tr>
+<tr class="even">
+<td>Training or fine-tuning</td>
+<td>no (it can load LoRA adapters, not train them)</td>
+</tr>
+<tr class="odd">
+<td>Many users at once</td>
+<td>weaker: it’s built for one person; vLLM is the high-concurrency option</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Speed and quality:</strong></p>
+<ul>
+<li><strong>Generation speed tracks active parameters,</strong> because GB10 is bound by memory bandwidth. Mixture-of-experts models (Gemma 4 26B-A4B, with about 4B active) feel fast. A dense 70B runs at single-digit tokens per second. Tens of tokens per second is the realistic band for big models.</li>
+<li><strong>Quantization trades quality for size.</strong> 4-bit (<code>Q4_K_M</code>, <code>Q4_0</code>) is the usual sweet spot, 8-bit is near-lossless at twice the size, and quality drops noticeably below 4-bit.</li>
+<li><strong>Tool calling depends on the model’s chat template.</strong> Some community GGUF files have imperfect templates, and agents like pi then misbehave. Makers’ own or <code>ggml-org</code> files are the safest.</li>
+</ul>
+</section>
+<section id="switch-models" class="level2">
+<h2 class="anchored" data-anchor-id="switch-models">Switch models</h2>
+<p>Ctrl-C the server, download another file (step 2), and start step 3 again with the new <code>-m</code>. One model at a time.</p>
+</section>
+<section id="clean-up" class="level2">
+<h2 class="anchored" data-anchor-id="clean-up">Clean up</h2>
+<p>Do this when Phase 1’s stack serves models, or any time you’re done with scratch. Each step says where it runs.</p>
+<p><strong>1. On the Spark, stop the server.</strong> Press Ctrl-C in its tmux window. If you’ve lost track of it:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-u</span> <span class="st">"</span><span class="va">$USER</span><span class="st">"</span> <span class="at">-x</span> llama-server</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pgrep</span> <span class="at">-a</span> llama-server <span class="kw">||</span> <span class="bu">echo</span> <span class="st">"no server running"</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> kill-session <span class="at">-t</span> scratch <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>2. On the Spark, check that the memory came back:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">free</span> <span class="at">-g</span>                                                               <span class="co"># available back near 118</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">nvidia-smi</span> <span class="at">--query-compute-apps</span><span class="op">=</span>pid,process_name <span class="at">--format</span><span class="op">=</span>csv,noheader   <span class="co"># prints nothing</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>3. Close the tunnel and forget the endpoint (Mac).</strong> Press Ctrl-C where <code>ssh -N -L 8080…</code> runs, or <code>pkill -f 'ssh -N -L 8080'</code>. Remove the custom <code>http://localhost:8080/v1</code> provider from any app you added it to.</p>
+<p><strong>4. On the Spark, delete the build and the models:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">du</span> <span class="at">-sh</span> ~/scratch    <span class="co"># how much this frees</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> ~/scratch</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>5. On the Spark, delete what the downloads cached.</strong> Both are download caches, so deleting them is safe:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> ~/.cache/huggingface/xet      <span class="co"># Hugging Face's chunk cache from the downloads</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> cache clean huggingface-hub       <span class="co"># uv's cached copy of the Hugging Face CLI</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Leave the rest of <code>~/.cache/huggingface/hub</code> unless you know what’s in it. Other tools share it: <code>du -sh ~/.cache/huggingface/hub/models--*</code> lists each model in it and its size, and you can delete the ones you no longer want. If you gave a token with <code>HF_TOKEN</code> (see gated models), it was never saved, so there’s nothing to remove.</p>
+<p><strong>If you used Option B, on the Spark:</strong> its downloads are owned by root, and the image stays until removed:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb16"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">(</span><span class="bu">cd</span> ~/scratch/vllm <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> docker compose down<span class="kw">)</span>     <span class="co"># if still running</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> rm <span class="at">-rf</span> ~/scratch/vllm/hf                        <span class="co"># the models vLLM downloaded (root-owned)</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker rmi nvcr.io/nvidia/vllm:26.08-py3        <span class="co"># the image, about 20 GB on disk</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker ps <span class="at">-a</span> <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> docker images             <span class="co"># nothing scratch-related left</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Do this before step 4, because <code>rm -rf ~/scratch</code> can’t delete root-owned files.</p>
+<p><strong>6. Check the disk (Spark):</strong> <code>df -h /</code>.</p>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/chendaniely\.github\.io\/local-ai\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
