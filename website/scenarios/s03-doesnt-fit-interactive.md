@@ -8,7 +8,9 @@ status: planned
 **Situation.** I ask for a model that doesn't fit in free memory.
 
 **What happens.** Nothing is evicted or substituted. The request is refused, with the memory
-needed against what's available, the top memory holders, and my options.
+needed against what's available, the top memory holders, and my options. *(2026-10-13, Phase 5a:
+one exception, a model the registry marks as taking the box, such as Qwen3.8-Flash-Next, which
+unloads every other model when it loads; [S24](s24-takes-the-box.md).)*
 
 **What I see.** An error in the client. From Phase 3 the explanation is inline; before that
 it's on the menu bar and through ntfy.

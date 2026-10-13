@@ -149,14 +149,19 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   the ceiling or leave memory under the brake's warn line. Until then render summed every
   footprint against allocatable − reserve, 78 GiB, which counted the reserve twice. The launch
   check, live `MemAvailable` capped at the ceiling, less the reserve, at each load, and the brake
-  are unchanged.)*
+  are unchanged.)* *(2026-10-13, Dan's decision, not built yet: Phase 5a ports the corrected
+  launch check, `min(MemAvailable − reserve, ceiling − committed)`, which on an empty box allows
+  93 GiB where today's allows 78; the plan's rule 1 note.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.
 - **One memory pool — nothing loads unless it fits.** Decided 2026-09-23: llama-swap supervises the
   engines and `spark-gate` admits a load only if it fits in free memory; it never evicts, never
   substitutes, and every refusal explains itself (the plan, *Admission and memory rules*). Don't
-  design anything that loads models around the gate.
+  design anything that loads models around the gate. *(2026-10-13, Dan's decision, Phase 5a: one
+  exception, chosen per model in advance — a model the registry marks as taking the box, such as
+  Qwen3.8-Flash-Next, unloads every other model when it loads, and other loads are refused while
+  it holds the box; rule 2's note.)*
 - **Overcommitting memory can hard-freeze the box** — no OOM kill, just a power cycle (reported;
   open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
   them casually.

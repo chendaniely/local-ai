@@ -67,11 +67,11 @@ In order of how much they constrain the design:
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
-| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
+| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). *(2026-10-13: Dan now works in opencode in Orca more than in pi, so opencode's config comes early, with Phase 5a's clients step: `make clients` writes it on the Mac, beside pi's.)* |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by Phase 5's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by Phase 5's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* *(2026-10-13, Dan's decision: Phase 5a brings route D forward, so `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and DFlash2, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Qwen3.8-Flash-Next joins as a model that takes the box; Phases, Phase 5a.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -127,8 +127,17 @@ Architecture page now, and git history keeps the drawing.)*
 1. **Admission happens where engines start.** `spark-launch` asks the gate; a model fits when
    `footprint.peak ≤ available − reserve − pending`, where *available* is `MemAvailable` capped by
    the CUDA-allocatable ceiling (reported near 102 GiB; to be measured). One load at a time; caches
-   are dropped (local filesystems, with a deadline) before loading.
+   are dropped (local filesystems, with a deadline) before loading. *(2026-10-13, Phase 5a, Dan's
+   decision: `main`'s launch check takes Phase 2a's corrected formula early, in its simple form,
+   `footprint ≤ min(MemAvailable − reserve, ceiling − committed)`, where committed is what is
+   already loaded. Capping `MemAvailable` at the ceiling and then taking the reserve off counts the
+   reserve twice once the ceiling binds: on an empty box it allows 78 GiB, too little for
+   Flash-Next, where the corrected formula allows 93 and still keeps the reserve free at every
+   load.)*
 2. **Never evict, never substitute.** The only automatic unloads are the idle policy and the brake.
+   *(2026-10-13, Phase 5a, Dan's decision: one exception, chosen per model in advance. A model the
+   registry marks as taking the box, Qwen3.8-Flash-Next the first, unloads every other model when
+   it loads; while it is loaded, other loads are refused with the reason, naming it.)*
 3. **Idle policy:** 30 minutes by default; in-flight requests and active agent sessions count as use;
    pins (manual, work hours); scheduled preloads are fit-checked and notify if they don't fit.
 4. **make-room** lists candidate unloads with their sizes and unloads only what Dan confirms.
@@ -543,7 +552,114 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
 - *From Orca on the Mac (2026-09-28):* harness hooks on the Mac live beside Orca's status hooks, which
   Orca rewrites at each start; a pi session started from Orca counts as an active agent session
   and keeps its model until its pi process exits (Dan's decision); SwiftBar lists those sessions.
+- *From Phase 5a (2026-10-13, Dan's decision):* the fast coder and Flash-Next come to `main` early
+  (Phase 5a, below), so Phase 2a's merge carries what they add: the `sglang` engine type with its
+  root unit, its polkit line and `spark engine-unit`; llama-swap's three groups; the model kind that
+  takes the box; and the corrected launch check, which the gate replaces with its full formula. The
+  gate admits a container engine by its footprint like any other, and its make-room meets a model
+  that takes the box.
 - *Done when:* S01, S02, S03, S05, S06, S11, S12, S13, S14 and S17 are verified.
+
+**Phase 5a — the fast coder and Flash-Next, early** (designed 2026-10-13, Dan's decisions; on `main`
+while Phase 2a is built on its branch)
+
+Phase 5's route D for Qwen3.8-27B, and Qwen3.8-Flash-Next 176B, brought forward. Dan, 2026-10-13:
+the deployed coder (route A, llama.cpp with MTP) is "at the bare minimum speed"; he wants "a useable
+qwen3.8 27b model" first, and Flash-Next selectable in pi and opencode, since opencode in Orca is now
+his main harness. It runs on `main` as the 2026-10-08 coder swap did, under today's llama-swap,
+render's corrected check and the minimal brake; Phase 2a carries on and takes in what it adds when
+it merges (Phase 2's line). Its implementation plan, `phase-5a.md`, follows this design. Its
+numbers are others' unless they say measured here: hasso5703/dgx-spark-qwen38 (read at `3849269`,
+2026-10-13; README §Reference) is the fullest record of route D on one Spark.
+
+- *The fast coder, route D.* SGLang v0.5.21 in Docker; `RadixArk/Qwen3.8-27B-NVFP4` with the
+  DFlash2 drafter `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal`, 16 tokens deep (`modelopt_fp4`;
+  `z-lab/Qwen3.8-27B-DFlash2`, BF16 at 8, is the rollback); the native 262,144-token context; an FP8
+  KV cache, whose scales the checkpoint carries; Qwen's reasoning and tool-call parsers (`qwen3`,
+  `qwen3_coder`); the flashinfer autotuner off (`--disable-flashinfer-autotune`), which makes its
+  speed the same at every start and avoids the autotuner's allocations outside SGLang's accounting;
+  bound to 127.0.0.1 on a fixed port outside llama-swap's range and not SearXNG's 8888.
+  hasso5703's chat template, patched for agentic clients, comes in only if the stock one fails
+  opencode's or pi's tool calls. Reported by hasso5703: 71.4 tok/s greedy median on its `bench.sh`,
+  about 40 on code and 22 on prose on its harsher battery, thinking on.
+  - **It takes over the name `qwen3.8-27b`**, so pi, opencode and Open WebUI reach it with no client
+    change. Today's llama.cpp coder stays as the fallback, `qwen3.8-27b-gguf`, for a day SGLang won't
+    start; the two share a llama-swap group, so only one is ever loaded.
+  - **One request at a time** (`--max-running-requests 1`): opencode's sub-agents queue, each at full
+    single-stream speed. It is raised once sglang #36548 (DFlash2's state corrupted by concurrent
+    requests, open on 2026-10-13) is fixed, or once a concurrency check passes on this box. A
+    sub-agent queued behind a long request can pass opencode's 300 s wait for response headers and
+    be sent again, which hasso5703 saw pile up (its v1.22.5); a drill fans a task out through
+    opencode, and if that happens the timeout in the opencode config `make clients` writes goes up
+    (the option's name is checked against opencode's docs then).
+  - **A root unit starts the container, and `spark` stays out of docker.** A unit template for
+    container engines, root's copy installed by `make install-units`, runs a fixed `docker run`.
+    llama-swap's command goes through `spark launch`, so the fit check stands, to
+    `spark engine-unit`, which starts the unit, waits until SGLang answers and stays in the
+    foreground for llama-swap; its exit, or llama-swap's `cmdStop`, stops the unit, which runs
+    `docker stop`. One polkit line lets `spark` start and stop exactly those units, as
+    `stack/host/50-local-ai.rules` already lets `spark-admin` start and stop the stack's four. Chosen
+    over a sudoers launcher, a second privilege mechanism beside polkit, and over a native build of
+    SGLang, which has no verified aarch64 and sm_121 build of v0.5.21.
+  - **It shares the box with the residents.** Its claim, `--mem-fraction-static`, is a fraction of the
+    whole pool, so render sets it from the registry's footprint and the whole engine fits the 50 GiB
+    free beside the residents with the reserve kept. By arithmetic, not measured: weights and drafter
+    ~23.5 GiB, the FP8 KV cache ~8 GiB at 262,144 tokens (MiaAI-Lab's ~32.8 KB a token), a few GiB of
+    recurrent state at one request, and 8–15 GiB outside the claim (hasso5703 had 21.3 GiB of the
+    pool free after graph capture at 0.76): ~42–49 GiB, which fits on paper, barely. Its first load
+    measures it. If 262,144 tokens don't fit beside the residents, the residents are trimmed first,
+    with the Backlog's levers (the embedding model at 8,192 tokens, ~3 GiB; Gemma's KV cache at
+    `q8_0`, ~2.5 GiB, a quality cost to measure), and taking the box is the last resort: Gemma and
+    transcription "should just work" while Dan codes.
+- *Flash-Next.* llama.cpp b11146, which loads its architecture (`qwen4exp`), with
+  `unsloth/Qwen3.8-Flash-Next-GGUF` at UD-IQ3_XXS (76.3 GiB): the engine already deployed, so no
+  container and no new privileges. Its context and its KV cache's type are set once its first load
+  is measured; whether its lookup table (`per_layer_tok_embd`, gathered by row) is better mmapped or
+  loaded is measured then too. hasso5703's SGLang flash lane (47.9 tok/s on code, reported) claims
+  0.85 of the pool and leaves about 17 GiB available, under the reserve, so it isn't this route.
+  - **A model that takes the box**, a new kind in the registry. Render requires that it fit on its
+    own, `min(idle − reserve, ceiling)`, 93 GiB. Its llama-swap group is exclusive, so loading it
+    unloads every other model first (Dan: "others unload by themselves"). While it is loaded, other
+    loads are refused with the reason, naming it, so nothing evicts it mid-task, Open WebUI's
+    background calls included. It unloads after 60 minutes idle, Phase 2a's idle time for
+    on-demand models, and a new `make unload m=<model>` frees the box sooner; the residents come back
+    on their next request.
+  - **The launch check takes Phase 2a's corrected formula, in its simple form** (rule 1's note): on an
+    empty box it allows 93 GiB where today's allows 78.
+- *Groups.* llama-swap's one `stack` group becomes three: the residents, loaded together and not
+  persistent, so a model that takes the box can unload them; the coders, one at a time; and the
+  models that take the box, exclusive. The semantics are checked against v257's config schema and
+  source on the Spark before anything relies on them.
+- *Safety.*
+  - Container processes run at `oom_score_adj` 1000 (`docker run --oom-score-adj`), first for the
+    kernel and earlyoom, as the coder is today.
+  - Docker's `--memory` cap bounds the container's own RAM, not CUDA's unified allocations
+    (hasso5703 measured this), so the claim is the guard.
+  - The brake unloads through llama-swap as before, which stops the unit. A container stops slower
+    than llama-server, so a drill times its stop against the brake's 15 s grace before routine use.
+  - `spark engine-unit` stops its unit on every way out, and `spark status` and `spark doctor` flag
+    an engine unit running with no model loaded, which would hold memory llama-swap doesn't know of.
+  - SGLang's `/health` can answer while the engine is wedged (hasso5703), so the doctor's check sends
+    a one-token request.
+  - A soak at long context measures each footprint before routine use (rule 6). It watches for a
+    known GB10 failure: a decode path that loses its state emits runs of `!`, token 0
+    (sglang #36537, #36558).
+- *Pins and pulls.* The seven-day rule holds: v0.5.21 was released on 2026-10-02, the drafter's
+  revision is from 2026-08-30 and the checkpoint's from August. The image is pinned by the digest
+  the Spark session reads itself, not copied. `spark models pull` learns whole-repository snapshots
+  and split GGUFs, and refuses to start without room on the disk: about 76 GiB for Flash-Next and
+  about 56 GB for the fast coder (a ~33 GB image, ~21 GB of weights, ~1.5 GB of drafter, at
+  hasso5703's sizes). The container runs offline (`HF_HUB_OFFLINE=1`), with the model cache mounted
+  read-only and no Hugging Face token inside.
+- *Order.* Flash-Next first, since it needs no new privileges; then the fast coder, whose unit and
+  polkit line Dan installs; then the clients: Dan's `feat/clients-opencode-hermes` branch merges,
+  and `make clients` writes pi's and opencode's configs with all three models, on the Spark for
+  `agent` and on the Mac for Orca's opencode.
+- *Done when:* Flash-Next and the fast coder are selectable in pi and opencode and answer; the fast
+  coder's decode and time to first token are measured in opencode and pi, and its tool calls work;
+  the brake's unload of each, the forgotten-unit check and the refusal while Flash-Next holds the
+  box pass as drills; the soak's footprints are in the registry; S24, S25 and S26 are verified; and
+  the Architecture page's new parts are solid.
 
 **Phase 3 — App API + speech** (Dan's audio pipeline is the first app with its own key)
 
@@ -597,6 +713,9 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
     Phase 2a's Task 42 gives it its full context; the rest of this phase's comparison stands.)*
     *(Changed the same day, Dan's decision: it has its full context on `main` already, since
     render's corrected budget check came there; Revisions.)*
+    *(2026-10-13, Dan's decision: route D runs early, as Phase 5a, and becomes the registry's
+    `qwen3.8-27b`, with route A kept as its fallback; route C still waits for this phase, and the
+    comparison of all four still runs here.)*
     TensorRT-LLM is out for now: it doesn't yet load Qwen3.8-27B NVFP4 on this GPU (its issue
     #17723).
   - **Measured in that order.** Speed: decode and time to first token in pi, and prefill — vLLM
@@ -634,6 +753,26 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
     cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
     `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
     would need an SGLang engine with its own option allowlist.
+  - *2026-10-13, from [hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38)
+    (read at `3849269`; its numbers, not measured here):* it serves route D on one Spark from the
+    official `v0.5.21` release image, pinned by digest, which corrects "no report yet runs those
+    releases on a Spark" above. The combination, DFlash2 16 deep, has been the SGLang cookbook's
+    own recipe for this model since 2026-08-21. `v0.5.19` lacks sglang #37818, a DFlash fix merged
+    on 2026-09-12, so route D starts at `v0.5.21`. The two issues above were still open on
+    2026-10-13 (checked that day). Its memory evidence: `--mem-fraction-static` 0.50 at the native
+    262,144 tokens (about 60 GiB, by arithmetic) and 0.76 for its 1M-token mode (about 92 GiB),
+    with 0.80 measured crashing under three concurrent requests; Docker's `--memory` cap doesn't see
+    CUDA's unified allocations; and the flashinfer autotuner, off there, decides between speeds at
+    boot and allocates outside the claim. At 0.50 it doesn't fit beside this stack's residents with
+    the reserve kept (43 + 60 + 24 = 127 GiB of the 117 available at idle), and its 1M mode needs
+    the box to itself, so Phase 5a sets the claim from the footprint instead: the speed comes from
+    NVFP4 and the drafter, not the claim. Its losslessness study found DFlash2's greedy output
+    differing from the plain model's as early as DSpark's (floating-point near-ties, the subject of
+    #38009), with no measurable loss on GSM8K or IFEval. Its keepalive proxy guards a long prefill
+    that leaves the wire silent past a client's timeout (it measured a cold 690K-token prefill at
+    40 minutes, and requests queued past opencode's 300 s wait for headers). Phase 5a starts
+    without one, serving one request at a time at no more than 262,144 tokens; its soak times a
+    long prefill through opencode, and a keepalive comes in if that wait is passed.
 - [Mac] those client configs installed on the Mac · the `spark-endpoints` skill for
   chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
@@ -1499,6 +1638,26 @@ Each item gets its own design pass when its turn comes.
   `CLAUDE.md`'s memory gotcha, `README.md` §Current state, `pi.md` and S09. The box changes once
   Dan runs `make apply`, and pi's lists once the clients are written again; `changelog.md` records
   it then.
+- **2026-10-13** — Phase 5a, Dan's decisions, designed on the Mac from his questions that day: the
+  deployed coder is "at the bare minimum speed", so Phase 5's route D (SGLang v0.5.21, NVFP4 and a
+  DFlash2 drafter) comes to `main` early, and Qwen3.8-Flash-Next joins it, selectable in pi and
+  opencode. The fast coder takes over the name `qwen3.8-27b`, with today's llama.cpp coder kept as
+  `qwen3.8-27b-gguf`, and serves one request at a time while sglang #36548 is open. A root unit
+  started through one polkit line runs its container, so `spark` stays out of docker. It shares
+  the box with the residents, its claim set from its footprint, and if 262,144 tokens don't fit,
+  the residents are trimmed before it takes the box. Flash-Next runs on the llama.cpp already
+  deployed, at UD-IQ3_XXS, as a new kind of model that takes the box: loading it unloads every
+  other model (rule 2's one exception), other loads are refused while it holds the box, and it
+  unloads after 60 minutes idle. `main`'s launch check takes Phase 2a's corrected formula in its
+  simple form (rule 1's note), which on an empty box allows 93 GiB where today's allows 78. The
+  order: Flash-Next, then the fast coder, then the clients, with Dan's
+  `feat/clients-opencode-hermes` branch merged for opencode. Phase 5's SGLang notes gain what
+  hasso5703/dgx-spark-qwen38 (Dan's pointer, read at `3849269`) adds and corrects: a release image
+  runs route D on a Spark, `v0.5.21` rather than `v0.5.19`, and its memory evidence. The
+  *Orca* and *Models* requirements, rules 1 and 2, Phase 2's line and Phase 5's routes gain dated
+  notes; the Architecture page gains the planned parts and S24–S26 are new. The README's Reference
+  section lists hasso5703's repo and bidual/awesome-dgx-spark, which the new Community projects page
+  triages. The box doesn't change until `phase-5a.md`'s tasks run on the Spark.
 
 ## Sources
 

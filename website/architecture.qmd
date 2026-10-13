@@ -23,6 +23,7 @@ flowchart TB
     orca["Orca"]
     claude_mac["Claude Code,<br/>Claude Desktop"]
     pi_mac["pi"]
+    oc_mac["opencode<br/>Phase 5a"]:::planned
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
   end
@@ -47,7 +48,9 @@ flowchart TB
     gate["spark-gate<br/>Phase 2"]:::planned
     brake["memory brake<br/>as spark"]
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder"]
-    vllm["vLLM or SGLang, for NVFP4<br/>Phase 5"]:::planned
+    sglang["fast coder: SGLang in Docker<br/>root's unit, started for llama-swap · Phase 5a"]:::planned
+    flash["Flash-Next, llama.cpp<br/>takes the box · Phase 5a"]:::planned
+    vllm["vLLM, for NVFP4<br/>Phase 5"]:::planned
   end
 
   subgraph nas["Synology"]
@@ -57,10 +60,12 @@ flowchart TB
 
   orca -- starts --> claude_mac
   orca -- starts --> pi_mac
+  orca -. starts .-> oc_mac
   claude_mac --> anthropic
   webapp -- "HTTPS over Tailscale" --> tss
   pwa -- "HTTPS over Tailscale" --> tss
   pi_mac -- "SSH tunnel, make tunnel" --> swap
+  oc_mac -. "SSH tunnel, make tunnel" .-> swap
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -75,6 +80,8 @@ flowchart TB
   guestui -.-> litellm
   litellm -.-> swap
   swap -- "spark launch" --> engines
+  swap -. "spark engine-unit, one polkit rule" .-> sglang
+  swap -. "spark launch" .-> flash
   swap -.-> vllm
   brake -- "unloads through llama-swap" --> engines
   gate -.-> engines
@@ -87,7 +94,8 @@ flowchart TB
   SSH alone from the LAN.
 - **Three accounts on the Spark.** Mine, the admin; `spark`, which runs llama-swap, the engines and
   the brake; and `agent`, for coding agents in tmux, with no sudo, no docker and keys of its own.
-  Root runs the web services from its own copies of their units.
+  Root runs the web services from its own copies of their units, and from Phase 5a the fast
+  coder's container too, which llama-swap starts and stops through one polkit rule.
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
   Anthropic, wherever they run; Orca only starts them. The Spark is a separate mode.
 
@@ -100,6 +108,7 @@ flowchart LR
   piT["pi on the Mac<br/>in a terminal or Orca"]
   ui["web UI<br/>on the Mac or the phone"]
   piA["pi as agent<br/>in tmux on the Spark"]
+  ocT["opencode on the Mac<br/>in Orca · Phase 5a"]:::planned
   cc["Claude Code<br/>anywhere"]
   app["an app with its own key<br/>Phase 3"]:::planned
   fam["family and friends<br/>over a shared Tailscale node · Phase 6"]:::planned
@@ -115,6 +124,7 @@ flowchart LR
   anthropic(("Anthropic"))
 
   piT --> tunnel --> swap
+  ocT -.-> tunnel
   ui --> serve --> owui --> swap
   owui --> searx
   piA --> swap
@@ -151,10 +161,14 @@ flowchart TD
   brake --> held
   gate["Phase 2, the gate: a live fit check, one load at a time,<br/>idle unload, session pins, make-room, notifications"]:::planned
   gate -.-> launch
+  takes["Phase 5a, a model that takes the box: llama-swap unloads<br/>every other model first, and refuses others while it's loaded"]:::planned
+  takes -.-> launch
 ```
 
 A model loads only if it fits: nothing is evicted to make room, and nothing is swapped for a
-smaller model. Free memory is the smaller of `MemAvailable` and what the GPU can allocate, and the
+smaller model. From Phase 5a there is one exception, chosen per model in advance: a model that
+takes the box, such as Qwen3.8-Flash-Next, unloads every other model when it loads
+([S24](scenarios/s24-takes-the-box.md)). Free memory is the smaller of `MemAvailable` and what the GPU can allocate, and the
 reserve stays free, because overcommitting a GB10 can freeze it without an out-of-memory kill.
 
 ## Apps and speech (Phase 3, planned)
@@ -210,3 +224,6 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S21 · Pixeltable over datasets](scenarios/s21-pixeltable.md) | Apps and speech |
 | [S22 · On another tailnet over WireGuard](scenarios/s22-another-tailnet.md) | Reaching the Spark: the LAN alias |
 | [S23 · Upgrade day](scenarios/s23-upgrade-day.md) | Upkeep |
+| [S24 · A model that takes the box](scenarios/s24-takes-the-box.md) | Loading a model |
+| [S25 · The fast coder won't start](scenarios/s25-fast-coder-down.md) | Loading a model |
+| [S26 · Sub-agents on the fast coder](scenarios/s26-subagents-fast-coder.md) | Loading a model |
