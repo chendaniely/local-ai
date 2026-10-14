@@ -1876,7 +1876,14 @@ moved.
   clocks (`nvidia-smi` needs no daemon). ~~PR #9 stays open as a draft until then, with its
   council's other fixes noted on it.~~ *(Changed the same day, Dan's decision: PR #9 is closed,
   since this bullet carries it; its branch, `feat/monitoring`, and the council's fixes noted on the
-  PR are where the rebuild starts.)*
+  PR are where the rebuild starts.)* *(Both decided the same day, Dan's: **`--metrics` stays on**,
+  for the view it gives of each model at work, its cost recorded under *127.0.0.1 is not a boundary
+  against `agent`*; it turns on with this rebuild. **DCGM's host engine is turned off**, now rather
+  than in 2b, since if it is installed it is open now: [Dan] on the Spark, `systemctl is-enabled
+  nvidia-dcgm` first, since #9 recorded DCGM as installed but nothing checked it on the box; if it
+  is, `sudo systemctl disable --now nvidia-dcgm`, with the dated entry in `changelog.md` and README
+  §Current state. The GPU is watched with `nvidia-smi` and `nvtop`, which need no daemon, and the
+  rebuild's runbook leaves `dcgmi` out.)*
 - *Scenarios:* S06, S12, ~~S13,~~ and S01's menu-bar part, and S13's *unreachable* on the menu bar.
 - *Done when:* S06, S12, ~~S13~~ and S01's menu-bar part are verified, and the menu bar says
   *unreachable* when the Spark doesn't answer. *(2026-10-14: S13 moves to Phase 5 with the
@@ -2502,7 +2509,11 @@ Each item gets its own design pass when its turn comes.
   council: a direct call reached more than a model. Each llama-server also served `/slots`, every
   slot's in-flight request with its prompt's size, its sampling settings and the token it last
   sampled, and its own web UI, both without a key. Render now passes `--no-slots` and `--no-webui`.
-  `GET /props`, the engine's read-only settings, still answers.)
+  `GET /props`, the engine's read-only settings, still answers.) *(2026-10-14, Dan's decision for
+  2b: the engines' `--metrics` comes on with `spark watch`, and its `/metrics` takes no key either.
+  It serves only totals, but two reads around one request give that request's prompt size, how much
+  of it came from the cache, and its output length, the sizes `/slots` was turned off for. Dan
+  keeps it for the view of each model at work; Phase 3's decision on direct calls covers it too.)*
 - **Page cache and the launch check** (added 2026-09-27, from Phase 1's Task 12) → the launch check
   admits against `MemAvailable`, which counts reclaimable page cache as available. On GB10 the
   driver has been seen to reclaim page cache too slowly while a model loads: loading a large
@@ -3745,6 +3756,12 @@ Each item gets its own design pass when its turn comes.
   `spark watch`. Dated notes are in the *Orca* requirement, the *Mac and agent clients* component,
   Phase 2b and Phase 4a; the architecture page draws opencode and Hermes on the Mac, through the
   tunnel, as `main`'s does with #7.
+- **2026-10-14** — `--metrics` stays on, and DCGM's host engine goes off (Dan's decisions, the two
+  2b left open). `--metrics` comes on with 2b's `spark watch`; its cost, request sizes readable by
+  any account on the box, is recorded under *127.0.0.1 is not a boundary against `agent`*. DCGM's
+  host engine, a root daemon that takes commands from any account, is turned off by Dan on the
+  Spark now, if a check shows it installed, and the GPU is watched with `nvidia-smi` and `nvtop`.
+  Dated notes are in Phase 2b and that open item.
 - **2026-10-14** — Phase 2a's Task 23 review, the controller's rulings. A dated note is in rule 5
   (the rate-of-fall watch): it acts only on a fall of at least 1.5 GiB within its window, so noise
   and a model's ordinary growth near the reserve don't trip it, and an admitted load's floor stands
