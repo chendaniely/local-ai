@@ -273,3 +273,35 @@ def test_hermes_default_must_be_one_of_the_registrys_chat_models(capsys):
     assert capsys.readouterr().err == (f"spark clients: --default embed isn't a chat model in {registry}: "
                                        "vision-chat, coder\n")
     assert not (Path(os.environ["HOME"]) / ".hermes").exists()
+
+
+def test_hermes_merge_sets_each_spark_models_reasoning_and_keeps_the_rest(tmp_path):
+    # Hermes sends its configured effort as it is, and Qwen3.8's template refuses `max` with a 500 (2026-10-14).
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"agent": {"reasoning_effort": "max", "other": 1,
+                                              "reasoning_overrides": {"openai/gpt-5": "low"}}}))
+    merge_hermes(path, {"api": "u"}, reasoning={"coder": "xhigh"})
+    assert yaml.safe_load(path.read_text())["agent"] == {
+        "reasoning_effort": "max", "other": 1, "reasoning_overrides": {"openai/gpt-5": "low", "coder": "xhigh"}}
+
+
+@pytest.mark.parametrize(("text", "says"), [
+    ("agent: fast\n", ": its agent settings are a string, not the mapping Hermes reads"),
+    ("agent:\n  reasoning_overrides: [coder]\n", ": its agent.reasoning_overrides are a list, not the mapping Hermes "
+                                                  "reads")])
+def test_agent_settings_of_the_wrong_shape_are_refused(tmp_path, text, says):
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
+    with pytest.raises(ValueError) as err:
+        merge_hermes(path, {"api": "u"}, reasoning={"coder": "xhigh"})
+    assert str(err.value) == f"Hermes's config {path}{says}"
+    assert path.read_text() == text and not (tmp_path / "config.yaml.bak").exists()
+
+
+def test_hermes_write_sets_xhigh_for_the_chat_models_only(capsys):
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    args = argparse.Namespace(registry=registry, base_url="u", key_env="SPARK_API_KEY", write=True, default=None)
+    assert clients.run_hermes(args) == 0
+    data = yaml.safe_load((Path(os.environ["HOME"]) / ".hermes" / "config.yaml").read_text())
+    assert data["agent"] == {"reasoning_overrides": {"vision-chat": "xhigh", "coder": "xhigh"}}
+    assert "with reasoning effort xhigh for its models" in capsys.readouterr().out

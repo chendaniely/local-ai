@@ -16,6 +16,11 @@ OPENCODE_CONFIG = Path("~/.config/opencode/opencode.json")
 HERMES_CONFIG = Path("~/.hermes/config.yaml")
 HERMES_ENV = Path("~/.hermes/.env")  # read only for the placeholder check below; never written
 HERMES_PLACEHOLDER = "your-llama-swap-key-here"  # what this command's first version wrote there
+# The reasoning effort Hermes sends the Spark's models, set per model. Hermes sends its configured effort as it is,
+# up to `max`, and Qwen3.8's chat template refuses all but xhigh, medium and low: a 500 (seen 2026-10-14, with `max`).
+# xhigh is that template's own default, what pi gets by sending none; a template that doesn't read it, Gemma's,
+# ignores it.
+HERMES_REASONING = "xhigh"
 COMPAT = {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": False,
           "supportsUsageInStreaming": True, "supportsStrictMode": False, "maxTokensField": "max_tokens"}
 
@@ -175,16 +180,26 @@ def _load_hermes(path: Path) -> dict:
     return data
 
 
-def merge_hermes(path: Path, provider: dict, default: str | None = None) -> Path | None:
+def merge_hermes(path: Path, provider: dict, default: str | None = None,
+                 reasoning: dict[str, str] | None = None) -> Path | None:
     """Put `provider` under providers.spark in Hermes's config, keep everything else, and back up the old file, as
     merge_pi does. Hermes keeps the model it had, unless `default` names a Spark model for it: then its model's
-    provider and default are set, and the rest of its model settings stay. The file is rewritten from its data, so
-    comments in it don't survive; the backup keeps them."""
+    provider and default are set, and the rest of its model settings stay. `reasoning` maps Spark models to the effort
+    Hermes sends them, in agent.reasoning_overrides, beside the overrides already there. The file is rewritten from
+    its data, so comments in it don't survive; the backup keeps them."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _load_hermes(path) if path.exists() else None
     if default is not None and data is not None and not isinstance(data.get("model", {}), dict):
         raise ClientsError(f"Hermes's config {path}: its model is {_yaml_kind(data['model'])}, not a mapping, so "
                            "--default can't set it; pick the Spark model in Hermes with /model instead")
+    if reasoning and data is not None:
+        agent = data.get("agent", {})
+        if not isinstance(agent, dict):
+            raise ClientsError(f"Hermes's config {path}: its agent settings are {_yaml_kind(agent)}, not the mapping "
+                               "Hermes reads")
+        if not isinstance(agent.get("reasoning_overrides", {}), dict):
+            raise ClientsError(f"Hermes's config {path}: its agent.reasoning_overrides are "
+                               f"{_yaml_kind(agent['reasoning_overrides'])}, not the mapping Hermes reads")
     backup = None
     if data is None:
         data = {}
@@ -194,6 +209,8 @@ def merge_hermes(path: Path, provider: dict, default: str | None = None) -> Path
     data.setdefault("providers", {})["spark"] = provider
     if default is not None:
         data.setdefault("model", {}).update({"provider": "custom:spark", "default": default})
+    if reasoning:
+        data.setdefault("agent", {}).setdefault("reasoning_overrides", {}).update(reasoning)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
     return backup
 
@@ -266,13 +283,16 @@ def run_hermes(args: argparse.Namespace) -> int:
         raise ClientsError(f"--default {args.default} isn't a chat model in {args.registry}: "
                            f"{', '.join(m.name for m in chat)}")
     provider = hermes_provider(registry, args.base_url, args.key_env)
+    reasoning = {m.name: HERMES_REASONING for m in chat}
     if not args.write:
-        print(yaml.safe_dump({"providers": {"spark": provider}}, sort_keys=False), end="")
+        print(yaml.safe_dump({"providers": {"spark": provider}, "agent": {"reasoning_overrides": reasoning}},
+                             sort_keys=False), end="")
         return 0
     path = HERMES_CONFIG.expanduser()
-    backup = merge_hermes(path, provider, args.default)
+    backup = merge_hermes(path, provider, args.default, reasoning)
     kept = f"the previous file is {backup}" if backup else "there was no previous file"
-    print(f"clients: wrote the 'spark' provider to {path} ({kept})")
+    print(f"clients: wrote the 'spark' provider to {path} ({kept}), with reasoning effort {HERMES_REASONING} for its "
+          "models")
     if args.default is not None:
         print(f"clients: Hermes's default model is now {args.default}, on the Spark")
     elif chat:

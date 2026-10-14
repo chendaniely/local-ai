@@ -43,6 +43,13 @@ previous file beside it as a `.bak` with the same permissions, and says which.
 
 The tunnel has to be open while you use them: `make tunnel` in a spare terminal.
 
+**Hermes's reasoning effort.** Hermes sends its own reasoning effort with every request, and
+Qwen3.8's chat template takes only `xhigh`, its default, `medium` and `low`: anything else, such as
+Hermes's `max` or `ultra`, comes back as an error 500 naming the effort. So `make clients` sets
+`xhigh` for each Spark model, under `agent.reasoning_overrides` in Hermes's config, and your other
+providers keep your global setting. For quicker, shorter thinking in one session, `/reasoning
+medium` or `/reasoning low`; leave out `--global`, which would change it for every provider.
+
 ## If Hermes says 401
 
 The key is wrong or missing. Hermes reads `SPARK_API_KEY` from its environment, so start it from a
