@@ -37,7 +37,9 @@ sudo apt install tmux gh
 5. [Join Tailscale](tailscale.md)
 6. [Secret files](secret-files.md)
 7. [ntfy on the Synology](ntfy.md) — the phone's alerts, and the values file and header files the
-   Spark reads for them.
+   Spark reads for them. *(Phase 5's, since 2026-10-14, Dan's decision: ntfy optional, moving with
+   the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Skip it until then: the stack
+   deploys and runs without it.)*
 8. [Deploy the stack](deploy.md)
 9. [pi, the coding agent](pi.md) — `agent`'s Claude Code gets the secrets guard before its key.
 

@@ -1,7 +1,7 @@
 ---
 title: "S19 · Claude Code building a pipeline elsewhere"
 scenario-id: S19
-phase: 5
+phase: 4
 status: planned
 ---
 
@@ -13,3 +13,6 @@ status: planned
 **What I see.** A working client.
 
 **How to override.** None.
+
+*(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5. This page's
+`phase` goes from 5 to 4 with the bake-off, clients and Claude Code docs.)*

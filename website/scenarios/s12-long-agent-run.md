@@ -16,5 +16,8 @@ the coder in tmux, and detaching, logging out and reattaching kept the session. 
 notifications arrive in Phase 2.)*
 
 **What I see.** The tmux session, and later, notifications and the session on the menu bar.
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5: the hooks and the menu bar stay in 2b, but their notifications reach my phone or
+the Mac only once ntfy is set up, in Phase 5.)*
 
 **How to override.** None needed.

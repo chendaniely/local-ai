@@ -22,6 +22,11 @@ that wait, so `spark clients` sets it to about 15 minutes, and the refusal reach
 a default-priority *refused* notification, which makes no sound in quiet hours, 00:00–05:00: they
 are set on my phone, where only high-priority alerts get through Do Not Disturb.
 
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, so from 2a until then my phone gets no
+*refused* notification: the refusal reaches `agent`'s pi, and `spark status` keeps it in its
+history of recent refusals, on the Spark.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

@@ -26,12 +26,12 @@ flowchart TB
     pi_mac["pi"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
-    ntfy_mac["ntfy alerts<br/>Phase 2b"]:::planned
+    ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
   end
 
   subgraph phone["Android phone"]
     pwa["web UI,<br/>home-screen app"]
-    ntfy_phone["ntfy alerts<br/>Phase 2a"]:::planned
+    ntfy_phone["ntfy alerts<br/>Phase 5"]:::planned
   end
 
   anthropic(("Anthropic"))
@@ -53,13 +53,13 @@ flowchart TB
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold · Phase 2a"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap · Phase 2a"]:::planned
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder<br/>to 800 and up; coder Qwen3.8-27B · Phase 2a"]
-    vllm["vLLM or SGLang, for NVFP4<br/>Phase 5"]:::planned
+    vllm["vLLM or SGLang, for NVFP4<br/>Phase 4"]:::planned
   end
 
   subgraph nas["Synology"]
-    ntfy["ntfy · Phase 2a<br/>tailnet and home LAN only"]:::planned
-    watchdog["the watchdog<br/>Phase 2b"]:::planned
-    shares["shares and backups<br/>Phase 4"]:::planned
+    ntfy["ntfy · Phase 5<br/>tailnet and home LAN only"]:::planned
+    watchdog["the watchdog<br/>Phase 5"]:::planned
+    shares["shares and backups<br/>Phase 5"]:::planned
   end
 
   orca -- starts --> claude_mac
@@ -118,8 +118,14 @@ flowchart TB
   brake stays a unit of its own, so it runs even while the gate is down, and then sends its own
   alert. The web containers drop their capabilities, so they can't take those ports either. ntfy
   on the Synology
-  carries notifications to my phone, over the tailnet or the home LAN only, and to my Mac from
-  Phase 2b. [The plan](design/plan.md#the-front-and-the-gate-phase-2a) says why.
+  carries notifications to my phone, over the tailnet or the home LAN only, and to my Mac ~~from
+  Phase 2b~~. [The plan](design/plan.md#the-front-and-the-gate-phase-2a) says why. *(2026-10-14,
+  Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase
+  now 5. ntfy, the phone's and the Mac's alerts and the watchdog all come with Phase 5, NAS and
+  backups, so the diagram labels them Phase 5, as it does the shares and backups; until then the
+  stack runs without ntfy, the gate, the brake and the failure notifier send nothing and say so,
+  and what they would report shows in `spark status` and `make doctor`. The bake-off's vLLM and
+  SGLang are Phase 4's.)*
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
   Anthropic, wherever they run; Orca only starts them. The Spark is a separate mode.
 

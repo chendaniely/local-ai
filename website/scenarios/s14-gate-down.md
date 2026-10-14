@@ -10,7 +10,8 @@ status: planned
 **What happens.** Models already loaded keep serving. Only new loads are refused. A failure
 notifier alerts without needing the gate itself.
 
-**What I see.** A high-priority notification.
+**What I see.** A high-priority notification. *(From Phase 5, since 2026-10-14; until then
+`spark status` and `make doctor`, on the Spark: the note below.)*
 
 **How to override.** None needed.
 
@@ -51,6 +52,14 @@ The drill, in 2a: each of the four services killed in turn; the front frozen wit
 its watchdog; llama-swap sent a clean SIGTERM; the gate made to fail at start, since a gate merely
 stopped is started again at once by its sockets; and, as `agent`, a crash-loop check that shows
 9100 stays held and never answers as anyone else.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so until then no alert
+reaches my phone: the failure notifier still runs on each failure, sends nothing, and says so in
+its journal, and the brake's own alert does the same. `spark status` shows each service's health
+and *ntfy not set up*, and `make doctor` names what's wrong, with ntfy as a warning. 2a's drill
+verifies this page without the phone, the notifier seen running on each failure; Phase 5 checks
+each alert on the phone, once per failure and once per 5 minutes through a crash loop.
 
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind

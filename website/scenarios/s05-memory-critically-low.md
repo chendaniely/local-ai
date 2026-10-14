@@ -13,7 +13,8 @@ engine first, then idle models of any class, then the least recently used, and h
 there. earlyoom is the last resort. Phase 1 ships a minimal brake that unloads the on-demand
 coder first, then the always-loaded models.
 
-**What I see.** A high-priority "brake" notification, and a hold shown in `spark status`.
+**What I see.** A high-priority "brake" notification, and a hold shown in `spark status`. *(The
+notification from Phase 5, since 2026-10-14: the note at the foot.)*
 *(Added 2026-09-28: that line of `make status` also says whether llama-swap took the brake's own
 key when the brake started, and `make doctor`'s `stack units` line fails if it didn't. A brake
 whose key llama-swap refuses can unload nothing.)*
@@ -34,7 +35,9 @@ Thresholds live in `stack/models.yaml`.
 
 *Status: built, 2026-09-28 (Phase 1). Phase 1's minimal brake unloads the on-demand models first:
 Phase 1's Task 16 drill, at raised thresholds, held new loads and unloaded the coder while the residents
-stayed. The idle-first order and the notifications arrive in Phase 2.*
+stayed. The idle-first order and the notifications arrive in Phase 2.* *(Corrected 2026-10-14, Dan's
+decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5:
+the idle-first order arrives in Phase 2a, and the notifications reach my phone from Phase 5.)*
 
 **Phase 2a, as designed (2026-10-07): what happens and what I see.** The brake stays a unit of its
 own, as today, so it keeps running while the gate is down. Its order is a loading engine first,
@@ -81,6 +84,14 @@ was loading when the brake fired at 03:12. On the Spark, `spark load coder` allo
 own requests load it if it fits.* The brake's own alert, sent while the gate is down, ends *They
 resume once the gate is back and memory has stayed above 28 GiB available for 5 min.* The plan's
 [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of
+the notifications above until then, the brake's own alert while the gate is down included: the
+brake sends nothing then and says so in its journal, and `spark status` says *ntfy not set up*.
+Until Phase 5 the brake shows as *paused* in `spark status`, with its release in *recent*, and
+the refusals read as above in the client. 2a's drill verifies this page without the phone; Phase 5
+checks the phone's part.
 
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind

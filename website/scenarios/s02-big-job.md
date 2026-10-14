@@ -56,6 +56,12 @@ is.)* `spark make-room --done` says how much of the hold went unused and what re
 Gemma.*), and my phone gets the same as *make-room's hold for you ended*. The plan's [*What you see
 in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of
+the notifications above until then: 2a's stack runs without it, and `spark status` says *ntfy not
+set up*. What make-room did shows in its own words on the Spark and in `spark status`. 2a's drill
+verifies this page without the phone; Phase 5 checks the phone's part.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

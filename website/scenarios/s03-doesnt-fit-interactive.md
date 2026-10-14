@@ -11,7 +11,9 @@ status: planned
 needed against what's available, the top memory holders, and my options.
 
 **What I see.** An error in the client: today a plain one, with the explanation on the Spark; from
-Phase 2a the explanation itself, inline in the client, and a notification on my phone.
+Phase 2a the explanation itself, inline in the client, and a notification on my phone *(from Phase
+5: corrected 2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5
+swapped, the NAS phase now 5)*.
 
 **How to override.** Free memory (`spark make-room`, stop a job), pick a model that fits, or
 retry.
@@ -55,6 +57,12 @@ with its reason, and a model not yet downloaded `not_downloaded`. Only `gate_dow
 answers at once while the gate itself is down, is a `503`, which pi retries a few times as the gate
 restarts. The plan's [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has
 the message for every code.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets no
+*refused* notification until then: 2a's stack runs without it, and `spark status` says *ntfy not
+set up*. The refusal in the client and `spark status`'s history of recent refusals are unchanged.
+2a's drill verifies this page without the phone; Phase 5 checks the phone's part.
 
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind

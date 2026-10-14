@@ -1,6 +1,6 @@
 ---
 title: "Phase 2a — implementation plan"
-description: "The gate: a front on 127.0.0.1:9100 and a gate on two Unix sockets in front of llama-swap, admission with refusals in Dan's words, make-room with its hold, the brake's release, ntfy on the phone, and Qwen3.8-27B as the coder."
+description: "The gate: a front on 127.0.0.1:9100 and a gate on two Unix sockets in front of llama-swap, admission with refusals in Dan's words, make-room with its hold, the brake's release, a stack that runs without ntfy until the NAS phase sets it up, and Qwen3.8-27B as the coder."
 date: 2026-10-07
 ---
 
@@ -26,10 +26,18 @@ date: 2026-10-07
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
 > same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
-> 1.**~~ **Done (2026-10-07 and 08):** Tasks 1 and 3–20, each reviewed. **Task 2 [Dan]** runs side by
+> 1.**~~ **Done (2026-10-07 and 08):** Tasks 1 and 3–20, each reviewed. ~~**Task 2 [Dan]** runs side by
 > side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
-> before Task 27 starts. **Next: Task 21.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> before Task 27 starts.~~ **Next: Task 21.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`.
+>
+> **ntfy is optional, and Task 2 leaves 2a** *(2026-10-14, Dan's decision: ntfy optional, moving
+> with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5)*. ntfy needs a Synology homelab
+> setup Dan isn't ready for yet, so Task 2 moves to Phase 5, NAS and backups, when he sets that
+> up, and Phase 2a finishes without it: no task in 2a waits for it, Task 27 included. The stack
+> runs without ntfy until then, and whenever ntfy is away later. *ntfy is optional until Task 2*,
+> under *Global Constraints*, says how, and each task it touches carries the same dated note.
+> Task 2's text stays below, as Phase 5's starting point.
 
 **Goal:** Requests reach a new front on 127.0.0.1:9100, which checks the same client keys (held
 only as digests), counts the requests in flight and forwards to llama-swap on 127.0.0.1:900 with an
@@ -37,7 +45,10 @@ internal key. For a model that isn't loaded it asks a gate on two Unix sockets, 
 load at a time on rule 9's formula, Dan's keys first, holds the request for its key's wait, and
 otherwise returns a refusal in Dan's words. The gate idle-unloads at 60 minutes, pins, keeps
 `agent`'s sessions, runs make-room with its hold, lifts the brake's hold within bounds and reloads
-the residents, and sends every notification to Dan's phone through ntfy on the Synology. The brake
+the residents, and sends every notification to Dan's phone through ntfy on the Synology *(from
+Phase 5: 2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5
+swapped, the NAS phase now 5. Until then no notification leaves the box, and what one would say
+shows in `spark status` and `make doctor`, on the Spark)*. The brake
 stays its own unit, unloading idle models first and acting on the rate of fall. `make apply` waits
 for a quiet minute and restarts llama-swap under loaded models. Qwen3.8-27B becomes the coder, and
 the soak, the CUDA ceiling and the brake's timings are measured.
@@ -51,7 +62,9 @@ uvicorn protocol subclass that reads `SO_PEERCRED`. `local-ai-brake.service` sta
 loop of its own. llama-swap v257 moves to 127.0.0.1:900 and its engines to 800 and up, with
 `CAP_NET_BIND_SERVICE`, internal keys only and a sandbox; every engine still starts through
 `spark launch`, which now needs the gate's admission ticket. `local-ai-notify@.service` runs
-Ubuntu's `/usr/bin/curl` when any of the four fails. The registry (`stack/models.yaml`) gains each
+Ubuntu's `/usr/bin/curl` when any of the four fails *(and, until ntfy is set up, sends nothing and
+says so in the journal: 2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase;
+Phases 4 and 5 swapped, the NAS phase now 5)*. The registry (`stack/models.yaml`) gains each
 model's label, ~~the client keys and their groups~~ the key groups, the notification list and the
 gate's settings (the keys themselves are in the private `/etc/local-ai/keys.yaml`, by Dan's decision
 after the forward-and-back council; *corrected 2026-10-07, at Task 4*);
@@ -62,8 +75,9 @@ reaches the gate with the standard library only.
 exactly, no `[standard]` extras) · **Starlette 1.x** · **httpx 0.28** (already locked) · anyio's
 pytest plugin · the standard library's `http.client`, `socket` and `ctypes` · pytest · llama-swap
 v257 · llama.cpp b11146 · whisper.cpp v1.9.4 · Open WebUI v0.11.4 · SearXNG · ntfy v2.28.0 (on the
-Synology) · systemd 255 (socket activation, `LoadCredential=`, `OnFailure=`, `Type=notify`
-watchdogs) · polkit · pi 0.85.1 (`agent`'s).
+Synology; set up in Phase 5 since 2026-10-14) · systemd 255 (socket activation, `LoadCredential=`
+with `SetCredential=` as its default, `OnFailure=`, `Type=notify` watchdogs) · polkit · pi 0.85.1
+(`agent`'s).
 
 **Spec:** [`website/design/plan.md`](plan.md) — Phase 2a; *The front and the gate (Phase 2a)*;
 *Admission and memory rules* 1–9; *Components* (the front, spark-gate, llama-swap, Host, ntfy +
@@ -180,13 +194,19 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 - **The private values file** (the controller's ruling, 2026-10-07): `/etc/local-ai/values.env`,
   never in the repo, `KEY=value` lines that systemd's `EnvironmentFile=` reads: `NTFY_URL`,
   `NTFY_TOPIC_GATE`, `NTFY_TOPIC_NOTIFY`, `NTFY_TOPIC_BRAKE`. The topic names are private too.
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5. The file and its `NTFY_*` lines are optional until Task 2, in Phase 5: the
+  units read it as `EnvironmentFile=-`, so a missing file starts them (Task 25), and an unset
+  `NTFY_URL` is what "ntfy isn't set up" means.)*
 - **ntfy:** "pinned at **v2.28.0** by its index digest,
   `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`"; "the server sets no
   `upstream-base-url` and no Firebase key"; "each publisher has a publish-only token of its own" (the
   gate, the failure notifier, the brake), "and only to its own topic"; "reached over the tailnet or
   the home LAN only, with no public relay"; "**Quiet hours run 00:00–05:00**", set on the phone:
   "Android's Do Not Disturb … and the ntfy app's high and max priority channels are allowed through
-  it"; alerts reach "**The phone only, in 2a**".
+  it"; alerts reach "**The phone only, in 2a**". *(2026-10-14, Dan's decision: ntfy optional,
+  moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. All of this holds once
+  Task 2 sets ntfy up, in Phase 5; no alert reaches the phone in 2a.)*
 - **ntfy's deploy** (Dan, 2026-10-07): a Docker Compose file, `stack/synology/ntfy/compose.yaml`,
   that deploys with any Compose helper (Portainer's stacks today, from the web editor or this repo
   as a Git-repository stack), with plain `docker compose up -d`, or with another helper; nothing
@@ -197,11 +217,42 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   Compose file still holds nothing private, and now no variable either: it pastes as it is, and
   keeps the settings that aren't private, the login's two switches among them, which ntfy takes over
   `server.yml`. `server.yml` keeps the hashes and the tokens in the NAS's `docker` folder.)*
+  *(2026-10-14: the file and its runbook, built in Task 1, deploy in Phase 5, with Task 2.)*
+- **ntfy is optional until Task 2** *(2026-10-14, Dan's decision: ntfy optional, moving with the
+  NAS phase; Phases 4 and 5 swapped, the NAS phase now 5)*. ntfy needs a Synology homelab setup Dan
+  isn't ready for yet, so Task 2 moves to Phase 5, NAS and backups, when he sets that up, and 2a
+  finishes without it. "Task 2" stays this plan's name for that work, which Phase 5's plan takes
+  over. The stack runs without ntfy until then, and keeps running whenever ntfy is away later:
+  - **The gate** already does (Task 19, as built): without `NTFY_URL`, `NTFY_TOPIC_GATE` or its
+    token it serves, says once that ntfy isn't set up, and each notification then fails as ntfy out
+    of reach does. `spark status` shows *ntfy not set up (Task 2, Phase 5)* rather than *failing*
+    (Task 29), and `make doctor`'s ntfy line says the same as a WARN, never a FAIL (Task 33).
+  - **The units start without ntfy's files:** the values file as `EnvironmentFile=-`, and each ntfy
+    header by `LoadCredential=` with a `SetCredential=` placeholder as its default (Task 25, its
+    behaviour checked on the box's systemd 255: *How the command blocks were checked*).
+  - **The failure notifier and the brake's own alert** send nothing, successfully, and say so in the
+    journal (Tasks 23 and 26).
+  - **Bootstrap, the secret files and the cutover** treat ntfy's three headers and the values file
+    as optional: their checks report *ntfy not set up (Task 2, Phase 5)* rather than failing
+    (Tasks 27, 35, 36 and 38).
+  - **The drills** check what pi, the web UI, `spark status`, `make doctor` and the journal show.
+    Their notification checks move to Phase 5's ntfy work (Tasks 48–50), and Phase 2a closes
+    without ntfy (Task 51, *Phase 2a is done when*).
+  - **Two built texts still name the phone:** the `gate_down` and `llama_swap_down` refusals'
+    *Your phone has the alert* (`messages._ALERT`, from plan.md's refusal table), and the
+    notifications page's opening, which says the alerts go to the phone *once they are deployed
+    (Task 38 …)* (`docs.py`). Neither is true until Phase 5. The controller rules their words, and
+    Task 29 changes them, with their tests, and regenerates the page.
+  - Until Phase 5, what a notification would say shows only in `spark status` and `make doctor`,
+    on the Spark, and, from 2b, in the Mac's menu bar, which reads `spark status --json`.
 - **The failure notifier:** "`local-ai-notify@.service`, a template unit that `OnFailure=` starts
   for the front, the gate, the brake and llama-swap … runs Ubuntu's `/usr/bin/curl`, outside the
   app's venv, with `--max-time` and `--fail`, as a user of its own (`DynamicUser=yes`) … token …
   through `LoadCredential=` as a header file, which curl reads with `-H @file` … It sends the unit,
   its result and the time, never a journal line, and at most one alert per unit in a set interval."
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5. Until ntfy is set up it sends nothing, exits 0 and writes one line of its
+  own to the journal saying so: Tasks 25 and 26.)*
 - **The front's routes:** "only `GET /v1/models` and `POST` to `/v1/chat/completions`,
   `/v1/completions`, `/v1/responses`, `/v1/messages`, `/v1/embeddings` and
   `/v1/audio/transcriptions`, and answers its own `GET /health`. Every other path gets a 404 that
@@ -384,6 +435,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
    (llama-swap on 9100 with the client keys) is written and its render checked before anything
    moves; the crash-loop check as `agent` shows 9100 never answers as anyone else, and binding it
    always fails; the notifier pages once per 5 minutes, not every 2 s. *(Tasks 25, 26, 38, 49.)*
+   *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+   the NAS phase now 5. Until Phase 5 sets ntfy up, the notifier pages nobody: each run sends
+   nothing, exits 0 and says so in the journal, and the once-per-5-minutes check moves to Phase 5.)*
 6. **A refusal in pi** — pi 0.85.1 (and 0.87.1) retries a failed turn by itself, up to three times,
    2, 4 and 8 s apart, whenever the error's text matches its list, which holds "503" and "429" but
    not "409"; it reads neither `x-should-retry` nor `Retry-After` at that level (*Before Task 1*).
@@ -461,7 +515,7 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `spark/tests/fake_llamaswap.py` (new) | A llama-swap v257 stand-in that behaves as its source does, for the async tests |
 | `spark/tests/test_*.py` | One file per new module, named in each task; the existing files change with their modules |
 | `Makefile` | `logs` gains `front`, `gate`, `notify`; `restart-front`; help texts |
-| `website/how-to/ntfy.md` (new) | Dan's runbook: ntfy, the phone, the tokens, the values file |
+| `website/how-to/ntfy.md` (new) | Dan's runbook: ntfy, the phone, the tokens, the values file; Phase 5's since 2026-10-14, when Task 2 moved there |
 | `website/reference/notifications.md` (new, generated) | Every notification type with its priority, from the registry |
 | `website/how-to/deploy.md`, `secret-files.md`, `pi.md`, `bootstrap.md`, `updates.md`, `index.qmd` | Runbooks for 2a |
 | `website/architecture.qmd` | Parts turn solid as each is deployed |
@@ -544,6 +598,10 @@ move to another, so nothing here depends on Portainer: the same file deploys as 
 (from its web editor, or from this public repo as a Git-repository stack), with plain
 `docker compose up -d`, and with any other Compose helper. Phase 2b's watchdog on the Synology
 follows the same pattern, under `stack/synology/watchdog/`.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5. This task is done and stays done: its records and its runbook wait for Task 2,
+which moves to Phase 5, and the watchdog moves there with it, from 2b.)*
 
 **Files:**
 
@@ -728,7 +786,30 @@ git commit -m "build(stack): 🤖 ntfy v2.28.0 as a Compose file for the Synolog
 
 ***
 
-### Task 2 [Dan]: ntfy on the Synology, the phone, the tokens and the private values file
+### Task 2 [Dan]: ntfy on the Synology, the phone, the tokens and the private values file — moved to Phase 5
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* **This task no longer runs in 2a.** ntfy needs a Synology homelab setup Dan isn't
+ready for yet, so it runs in Phase 5, NAS and backups, when he sets that up, and Phase 2a finishes
+without it. Its text stays here as written, for Phase 5's plan to take up, with these changes for
+when it runs:
+
+- **By then the stack is running** without ntfy (*ntfy is optional until Task 2*). Step 5's files
+  reach it only at a start: once they are written, **on the Spark**, `systemctl restart
+  local-ai-gate.service local-ai-brake.service`, which the polkit rule allows; the failure notifier
+  reads them at each run. A high alert the gate kept while ntfy wasn't set up, under 6 hours old,
+  may then arrive marked *sent late* (Task 14). Once the gate's next notification goes through,
+  `spark status` shows *ntfy ok* and `make doctor`'s ntfy line passes; until then they may show
+  ntfy failing since the first notification the gate couldn't send, a time it keeps across a
+  restart (Task 13).
+- **Step 3's Repository stack** follows `refs/heads/main`, since 2a will have merged.
+- **Step 5's rate-limit check** takes in Task 38's: whether ntfy's per-visitor limit on the NAS
+  would clip the gate's queue flushing after an outage.
+- **The drills' notification checks** join it, from Tasks 48–50: each alert those drills name,
+  word for word on the phone, at its priority, once; quiet hours; and the failure notifier's one
+  alert per unit per 5 minutes.
+- **Step 8's record** also makes the edges from the gate, the brake and the failure notifier to
+  `ntfy` solid on the architecture page, since those publishers are built by then.
 
 **Files (the session's record, once Dan's steps are done):**
 
@@ -745,7 +826,8 @@ git commit -m "build(stack): 🤖 ntfy v2.28.0 as a Compose file for the Synolog
   Portainer's steps above all)
 
 **What later tasks read** (values never in the repo): `/etc/local-ai/values.env` and the three
-header files, as `ntfy.md` §8 writes them.
+header files, as `ntfy.md` §8 writes them. *(2026-10-14: what the running stack reads once Task 2
+has run, in Phase 5; until then no task needs them.)*
 
 - [ ] **Step 1 [Dan, on the Synology and in Tailscale's console]:** `ntfy.md` §1 and §3.
 - [ ] **Step 2: The grant, reviewed in this task** (`CLAUDE.md`, *Review permissions … in the task
@@ -4967,7 +5049,11 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     and as a JSON writer escapes it.
   - **`spark gate`** (`gate/main.py`'s `run`). A gate whose `NTFY_URL`, `NTFY_TOPIC_GATE` or
     `ntfy-token` is missing or malformed still serves. It says so once, and each notification then
-    fails as ntfy out of reach does, so `spark status` shows ntfy failing. `SPARK_FRONT_UID` and
+    fails as ntfy out of reach does, so `spark status` shows ntfy failing. *(2026-10-14, Dan's
+    decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now
+    5. This is 2a's state until Phase 5, not a fault: Task 29 makes `spark status` say *ntfy not set
+    up (Task 2, Phase 5)* here rather than *failing*, and Task 25's placeholder token is read as
+    malformed, which this already covers.)* `SPARK_FRONT_UID` and
     `SPARK_ADMIN_UIDS` are read only when set. `hf_home` is `render.HF_HOME`, the cache the engines
     read. *(Added 2026-10-08, the controller's rulings, at Task 19's review:)* either override, when
     set, is said in the journal at the start, a warning naming it as the tests' only (its test:
@@ -5696,7 +5782,12 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   running brake; finished children reaped each tick; the event recorded `sent_by_brake: true`. The
   text is Task 7's `brake_fired` with `by_brake`. A `--once` run (the S05 drill's unit, Task 25)
   waits for its alert, which curl's `--max-time 10` bounds, before it exits, since systemd ends a
-  oneshot unit's leftover processes. *(Added 2026-10-07, at Task 7, the controller's ruling:
+  oneshot unit's leftover processes. *(2026-10-14, Dan's decision: ntfy optional, moving with the
+  NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Until ntfy is set up: with `NTFY_URL` or
+  `NTFY_TOPIC_BRAKE` unset, or the `ntfy-token` credential not one header line, which Task 25's
+  placeholder isn't, it starts no curl, writes one line to its journal per episode saying ntfy
+  isn't set up, so the alert wasn't sent, and records the event `sent_by_brake: false`, so the
+  gate, once back, still tries it. It never fails the tick or the `--once` run for it.)* *(Added 2026-10-07, at Task 7, the controller's ruling:
   `unloaded` names each model in its state, `starting`, `idle` or `answering`, or None without the
   gate's record.)* *(Added 2026-10-07, at Task 7, the controller's ruling on rule 5: and
   `release_waits_for_dan`, Task 13's `hold.release_waits_for_dan` for the hold it wrote, with the
@@ -5788,6 +5879,11 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   words; `GateForbidden` → its words, exit 1, the file kept.
 - `test_the_brake_never_waits_on_the_gate_a_socket_or_ntfy` — a hanging `Popen` and a missing
   record: each tick takes under 50 ms of its own.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5:)* `test_without_ntfy_set_up_the_brake_sends_nothing_and_says_so` — the
+  record stale and, in turn, no `NTFY_URL`, no `NTFY_TOPIC_BRAKE`, and the credential holding Task
+  25's placeholder: firing calls no `Popen`, writes one journal line for the episode (a second
+  unload in it, none more), records `sent_by_brake: false`, and a `--once` run exits 0.
 
 **Steps:**
 
@@ -5966,8 +6062,10 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `WantedBy=sockets.target`.
 - `local-ai-gate.service` — `Type=notify`, `WatchdogSec=30`, `User=spark`, `Group=spark`,
   `ExecStart=… spark gate`, `Sockets=` both, `LoadCredential=llamaswap-key:…/gate.key`,
-  `LoadCredential=ntfy-token:…/ntfy-gate.header`, `LoadCredential=keys:/etc/local-ai/keys.yaml`,
-  `EnvironmentFile=/etc/local-ai/values.env`, `Environment=` `SPARK_REGISTRY`, `SPARK_STATE`,
+  `LoadCredential=ntfy-token:…/ntfy-gate.header` (with `SetCredential=ntfy-token:not-set-up`
+  beside it, 2026-10-14, below), `LoadCredential=keys:/etc/local-ai/keys.yaml`,
+  ~~`EnvironmentFile=/etc/local-ai/values.env`~~ `EnvironmentFile=-/etc/local-ai/values.env`
+  (2026-10-14, below), `Environment=` `SPARK_REGISTRY`, `SPARK_STATE`,
   `SPARK_GATE_STATE`, `SPARK_LAUNCH`, `SPARK_LLAMASWAP_URL=http://127.0.0.1:900`, `HF_HOME`,
   `Restart=always`, `RestartSec=2`, `StartLimitIntervalSec=0`, `OOMScoreAdjust=-900`,
   `TimeoutStopSec=` ~~30~~ 45 (see the shutdown test below), `After=` llama-swap,
@@ -5976,7 +6074,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   /var/lib/local-ai/launch /var/lib/local-ai/brake`, `ProtectHome=yes`, `PrivateTmp=yes`; no
   `PrivateDevices=`, `ProtectProc=` or `ProcSubset=`; `WantedBy=multi-user.target`.
 - `local-ai-notify@.service` — `Type=oneshot`, `DynamicUser=yes`, `StateDirectory=local-ai-notify`,
-  `LoadCredential=ntfy-token:…/ntfy-notify.header`, `EnvironmentFile=/etc/local-ai/values.env`,
+  `LoadCredential=ntfy-token:…/ntfy-notify.header` with `SetCredential=ntfy-token:not-set-up`,
+  ~~`EnvironmentFile=/etc/local-ai/values.env`~~ `EnvironmentFile=-/etc/local-ai/values.env`
+  (both 2026-10-14, below),
   `Environment=NOTIFY_FRONT=<p> NOTIFY_GATE=<p> NOTIFY_BRAKE=<p> NOTIFY_LLAMA_SWAP=<p>` (the
   registry's priorities for `front_down`, `gate_down`, `brake_down`, `llama_swap_down`; so a change
   to one of these four needs `make install-units` after `make apply`, which the generated
@@ -5985,8 +6085,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`; no
   `[Install]`.
 - The brake's unit — `LoadCredential=llamaswap-key:…/brake.key`,
-  `LoadCredential=ntfy-token:…/ntfy-brake.header`, `EnvironmentFile=/etc/local-ai/values.env`,
-  `ExecStart=… spark brake --key-credential llamaswap-key`,
+  `LoadCredential=ntfy-token:…/ntfy-brake.header` with `SetCredential=ntfy-token:not-set-up`,
+  ~~`EnvironmentFile=/etc/local-ai/values.env`~~ `EnvironmentFile=-/etc/local-ai/values.env`
+  (both 2026-10-14, below), `ExecStart=… spark brake --key-credential llamaswap-key`,
   `Environment=SPARK_GATE_STATE=/var/lib/local-ai/gate`,
   `Environment=SPARK_LLAMASWAP_URL=http://127.0.0.1:900`, `StartLimitIntervalSec=0`,
   `OnFailure=local-ai-notify@%n.service`; no `llama-swap.env`.
@@ -6004,6 +6105,37 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `install_units` leaves template names (`…@.service`) out of its `systemctl show
   --property=NeedDaemonReload` call, since systemd 255 refuses one and says nothing for the units
   after it; its polkit `say` line names the seven services.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **The gate's, the failure notifier's and the brake's units start without
+  ntfy's files**, and so does the drill's, which copies the brake's lines, since Task 2 now runs in
+  Phase 5 and none of those files exists until then:
+  - **The values file** is `EnvironmentFile=-/etc/local-ai/values.env` on each: the leading `-`
+    lets a missing file pass.
+  - **Each ntfy header** keeps its `LoadCredential=ntfy-token:…/ntfy-<publisher>.header`, with
+    `SetCredential=ntfy-token:not-set-up` beside it. In systemd 255, `SetCredential=` is
+    `LoadCredential=`'s default: with the file missing, the unit starts with the placeholder, and
+    with the file there, the file wins (`systemd.exec(5)`, *SetCredential=*: "not being able to
+    retrieve the credential from the path specified in LoadCredential= … is not considered
+    fatal"). The placeholder isn't a header line, so the gate reads it as malformed and runs
+    without ntfy (Task 19), and the brake and the notifier send nothing (Tasks 23 and 26). It
+    holds nothing secret, as a `SetCredential=` value must not, since other processes can read it
+    over systemd's IPC. It is never empty: systemd 255 starts no unit with an empty one.
+  - **Only ntfy's credential gets a default.** A key, the key list and the digests stay required,
+    so a unit without one still doesn't start.
+  - **Checked on the box, 2026-10-14,** with transient user units (`systemd-run --user`, stand-in
+    files, no secret): `LoadCredential=` of a missing file alone fails, result 243
+    (`CREDENTIALS`); with `SetCredential=testcred:not-set-up` beside it, the unit starts with the
+    placeholder's 10 bytes, and with a stand-in file there, the file's 16; an empty
+    `SetCredential=` value fails; `EnvironmentFile=-` of a missing file starts, and without the `-`
+    fails. `ImportCredential=` of a name in no credential
+    store starts too, but systemd 255 has no form that renames what it imports, so each
+    publisher's token would need its own name under `/etc/credstore/`, apart from the other secret
+    files, and the code would read three names. Not taken.
+  - **What Task 25's implementer verifies on the box,** with the rendered units, before the
+    commit: the test below, which runs each unit's lines as a transient user unit, with neither
+    file there (it starts, and `ntfy-token` holds the placeholder) and with stand-in files there
+    (the file's bytes); and `systemd-analyze verify` on each, as before. The system units with the
+    real paths are checked at the cutover (Task 38), on a box with no ntfy files.
 
 **Tests** (`spark/tests/test_units.py` on the rendered units, unless named):
 
@@ -6047,6 +6179,19 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
 - `test_every_rendered_unit_passes_systemd_analyze_verify` — skipped where `systemd-analyze` is
   missing: `systemd-analyze verify` on each, with its output holding no complaint but a missing
   binary or user this machine lacks.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5:)* `test_ntfys_files_are_optional_to_every_unit_that_reads_them` — the
+  gate's, the notifier's, the brake's and the drill's units each hold
+  `EnvironmentFile=-/etc/local-ai/values.env`, never the line without its `-`, and beside each
+  `LoadCredential=ntfy-token:` a `SetCredential=ntfy-token:not-set-up`; no `SetCredential=` value
+  is empty, and none names another credential.
+- *(The same:)* `test_each_unit_renders_a_form_that_starts_without_ntfys_files` — skipped where
+  `systemd-run --user` can't reach a user manager (the Mac, CI): for each of those four units, a
+  transient user unit with its `EnvironmentFile=` and credential lines, every path moved under
+  `tmp_path`, runs a stand-in that reports only whether `ntfy-token` exists and its size. With
+  neither file there it starts, exits 0 and reports the placeholder's 10 bytes; with stand-in
+  files there it reports the stand-in header's size. Seen to fail once with the `-` and the
+  `SetCredential=` line taken out.
 
 `spark/tests/test_polkit.py`, `test_bootstrap.py`:
 
@@ -6103,6 +6248,14 @@ git commit -m "feat(stack): 🤖 units for the front, the gate, the failure noti
   `header = "Priority: <p>"` and `data-binary`, each value in curl's config quoting with `"` and
   `\` escaped, so neither the address, the topic nor the text is on a command line; never a
   journal line. (`CURL` is for the tests; the unit never sets it.)
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **Without ntfy set up, it does nothing, successfully.** With `NTFY_URL` or
+  `NTFY_TOPIC_NOTIFY` unset, or the `ntfy-token` credential Task 25's placeholder (`not-set-up`) or
+  missing, it runs no `curl`, writes one line to stderr, which the journal keeps, and exits 0:
+  *ntfy isn't set up (Task 2, Phase 5), so no alert was sent: <unit> failed at HH:MM (<result in
+  words>).* The line names what is missing by its variable's or credential's name, never a value.
+  It writes no stamp, so the first alert after Task 2 isn't held back. The alert's own text still
+  never carries a journal line.
 
 **Tests** (`spark/tests/test_notifier_script.py`; the script run with a stand-in `curl` that records
 its arguments and data, a stand-in `date`, and temporary credential and state folders):
@@ -6118,6 +6271,11 @@ its arguments and data, a stand-in `date`, and temporary credential and state fo
   `@<credentials>/ntfy-token`; neither the arguments nor the config hold the token's text, and the
   arguments hold neither the URL nor the topic.
 - `test_an_off_priority_sends_nothing` — `NOTIFY_GATE=off` → no `curl`, exit 0.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5:)* `test_without_ntfy_set_up_it_sends_nothing_and_says_so` — in turn, no
+  `NTFY_URL`, no `NTFY_TOPIC_NOTIFY`, the credential holding `not-set-up`, and no credential file:
+  no `curl`, exit 0, one stderr line naming the unit, the result in words and what is missing, no
+  stamp file; then, with all of them set, the next failure sends at once.
 - `test_the_script_and_messages_agree` — for each of the four units, the script's text equals
   `messages.notification`'s for the same unit, result and time. *(Added 2026-10-07, at Task 7, the
   controller's ruling: `result_words` is the script's result in words, *it crashed* …, to which the
@@ -6177,13 +6335,21 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
 - `secret-files.md` — the 2a files: `internal-keys.env` (`LLAMASWAP_KEY_FRONT`, `_GATE`, `_BRAKE`);
   `front.key`, `gate.key`, `brake.key`, each key generated once and written to its raw file and to
   `internal-keys.env`, never displayed; `client-keys.sha256`, the digests of the existing client
-  keys, one `<key name> <hex>` line each; the three ntfy headers (Task 2's); hash checks that print
-  only *match*; the private key list, `/etc/local-ai/keys.yaml` (Task 4: names, labels, groups and
+  keys, one `<key name> <hex>` line each; the three ntfy headers (Task 2's) *(optional until Task 2
+  runs, in Phase 5: 2026-10-14, below)*; hash checks that print only *match*; the private key list, `/etc/local-ai/keys.yaml` (Task 4: names, labels, groups and
   accounts; private, not secret), written from `stack/keys.example.yaml` with the digests file's
   names, `0640 root:spark-admin`; making a new client key after 2a, which changes both files and
   needs `make restart-front`; and `llama-swap.env` kept, `0600 root:root`, for
   the rollback until the close (Task 51). Every block in it run first against a temporary folder
   standing in for `/etc/local-ai/secrets`, as Phase 1's were.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **ntfy's files are optional until Task 2.** The three ntfy headers and the
+  values file, with its `NTFY_*` lines, come with Task 2, in Phase 5, and nothing in 2a needs them
+  (Task 25's units start without them). Bootstrap never makes, needs or checks them.
+  `secret-files.md` names them as Task 2's, links `ntfy.md` for them, and its checks over the
+  secret folder report them as *ntfy not set up (Task 2, Phase 5)* while no header is there and the
+  values file, if any, has no `NTFY_URL` line, never a failure. Some of them there and some not is
+  a Task 2 left half done: that check names each one missing, by name only.
 
 **Tests** (`spark/tests/test_bootstrap.py`, on dry runs and stand-ins as Phase 1's, unless named):
 
@@ -6221,7 +6387,10 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
 - [ ] **Step 2:** bootstrap, doctor's two checks, the pull; the tests pass; `make test lint`.
 - [ ] **Step 3: Docs.** `secret-files.md` and `bootstrap.md` (the 2a re-run: stop llama-swap and the
   brake first, keep a second SSH session open while it runs, since it changes sshd's PAM stack, then
-  `make bootstrap`), their blocks run on stand-ins first.
+  `make bootstrap`), their blocks run on stand-ins first. *(2026-10-14: `secret-files.md`'s check
+  block run on stand-ins three ways too: with no ntfy file, reporting *ntfy not set up (Task 2,
+  Phase 5)*; with the three headers and `NTFY_URL`, silent about ntfy; and with one header
+  missing, naming it.)*
 - [ ] **Step 4: Commit.** **On the Spark:**
 
 ```bash
@@ -6356,6 +6525,22 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 - *(Added 2026-10-08, at Task 18:)* `health.read_problems` lists each reading the gate couldn't take
   at its last try, in words (Task 10's note). The `health` row shows each, so a failed read is
   never silent.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **ntfy not set up is its own state, not a failure.** Until Task 2 runs, in
+  Phase 5, the gate runs on Task 19's publisher for a gate without ntfy, and `spark status` would
+  otherwise read *ntfy failing since …* for weeks. So:
+  - `health.ntfy.status` gains `not_set_up` beside `ok` and `failing`. The gate sets it while it
+    runs without ntfy, whatever the reason its journal line gave. This changes built code,
+    `gate/main.py` (the publisher says it is the one for a gate without ntfy), `gate/core.py` (the
+    status view) and `gateproto.NtfyHealth`'s comment, in this task, with its test.
+  - The `health` row then shows `ntfy not set up (Task 2, Phase 5)`, with no *failing since* and no
+    dropped count, since the gate keeps no ntfy to send to. `--json` carries `not_set_up` as it
+    is, for 2b's menu bar.
+  - The two built texts that still name the phone (*ntfy is optional until Task 2*, under *Global
+    Constraints*): `messages._ALERT`, in the `gate_down` and `llama_swap_down` refusals, and
+    `docs.py`'s opening of the notifications page. The controller rules their words before this
+    task starts; this task changes them, with `test_messages.py`, plan.md's refusal table and the
+    page regenerated (`spark docs notifications --write`), and its commit adds those paths.
 
 - *(Added 2026-10-08, the controller's ruling, at Task 17:)* the `recent` rows take, beside the
   refusals, `GateState.recent` (Task 17), the gate's events that aren't refusals, all in one list
@@ -6389,6 +6574,13 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
   `used by other processes` line.
 - `test_the_oldest_request_shows_from_a_minute` — 3 min → `(oldest 3 min)`; 40 s → nothing added.
 - `test_notifications_failing_since_shows` — `failing_since` 08:52 → `ntfy failing since 08:52`.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5:)* `test_ntfy_not_set_up_reads_as_such` — `status: not_set_up`, with a
+  `failing_since` and 3 dropped → `ntfy not set up (Task 2, Phase 5)`, and neither *failing* nor
+  *dropped* on the row; and, in `test_gate_core.py`,
+  `test_a_gate_without_ntfy_reports_not_set_up` — the core with the publisher for a gate without
+  ntfy → `health.ntfy.status` `not_set_up`; with a publisher that raises `NtfyError` →
+  `failing`.
 - `test_with_the_gate_down_status_says_so_and_shows_memory` — `GateUnavailable` → the header from
   memory and the `gate` line above; exit 0; with `--json`, the gate-down shape above.
 - `test_nothing_free_for_a_load_reads_none` — `free_for_a_load_gib` −58 → `free for a load: none
@@ -6826,7 +7018,12 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
 - `gate` — `GET /v1/status` on the control socket answers; its `health` shows the four services.
 - `brake` — its start check passed (Phase 1's, folded into `stack units`).
 - `ntfy` — the gate's `health.ntfy`: ok, or *notifications failing since HH:MM: `make logs
-  s=gate`*.
+  s=gate`*. *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5
+  swapped, the NAS phase now 5:)* or, for `not_set_up` (Task 29), *not set up (Task 2, Phase 5)*
+  as a **WARN**, never a FAIL. So doctor gains a third verdict: a `Check` carries `warn`, the
+  report prints it as `WARN`, it doesn't fail the run or count against *N of M checks pass*, and
+  the summary line adds how many warned (`doctor: <n> of <n> checks pass, 1 warning`). Only this
+  check warns, for now.
 - `sockets` — each socket file (`/run/local-ai/gate-status.sock`, `gate-control.sock`) a socket,
   `spark`'s, `0660`, its group.
 - `stack units` — the five services that keep running (llama-swap, the brake, compose, the front,
@@ -6869,6 +7066,10 @@ and):
   401 → ok.
 - `test_ntfy_prints_a_verdict_never_the_url` — failing since 08:52 → FAIL with that time; a stand-in
   URL nowhere in the output.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5:)* `test_ntfy_not_set_up_is_a_warning_never_a_failure` — `not_set_up` →
+  `WARN  ntfy: not set up (Task 2, Phase 5)`, exit 0 with every other check passing, and the
+  summary counting one warning; `failing` → FAIL and exit 1, as before.
 - `test_socket_modes_and_groups_are_checked` — `0666` → FAIL naming it; another group → FAIL.
 - `test_version_drift_names_the_component` — `v256` from llama-swap → FAIL naming v256 and v257;
   llama-server's `(build 11146, …)` → ok, `(build 11145, …)` → FAIL naming b11145; uvicorn 0.53.0
@@ -6959,6 +7160,10 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
 **What the runbook gains:**
 
 - *Before the first deploy*: 2a's secret files (secret-files.md) and the values file (`ntfy.md`).
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5: the values file and ntfy's headers are optional, and a box without them
+  deploys and serves, with `spark status` showing *ntfy not set up (Task 2, Phase 5)*; `ntfy.md`
+  sets them up when ntfy comes.)*
 - *First deploy*, for a new box: the sockets started before the services.
 - *Moving a Phase 1 box to 2a*: Task 38's sequence, word for word, and its rollback to Phase 1's
   layout.
@@ -7039,7 +7244,10 @@ test -x /usr/local/libexec/local-ai-agent-oom && grep -c 'local-ai-agent-oom' /e
   clone's `uv run --frozen --project spark spark doctor`) passes for it.
 - [ ] **Step 4 [Dan, on the Spark]:** `sudo ls -l /etc/local-ai/secrets`, read aloud by name and
   mode only, never a value: the 2a files, the ntfy headers (Task 2), `llama-swap.env` still there
-  for the rollback.
+  for the rollback. *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4
+  and 5 swapped, the NAS phase now 5: the ntfy headers aren't there until Task 2 runs, in Phase 5,
+  and their absence is expected; secret-files.md's check reports it as *ntfy not set up (Task 2,
+  Phase 5)*, Task 27.)*
 - [ ] **Step 5: The record and commit.** **On the Spark:**
 
 ```bash
@@ -7124,7 +7332,8 @@ git worktree remove ../local-ai-main
   - `changelog.md`: keep both entries, `main`'s `cap_drop` entry and `phase-2a`'s, newest first.
   - `website/architecture.qmd`: keep `phase-2a`'s text and diagrams, and make the `cap_drop` part
     that `main` built read as built (solid, not planned), so the page stays true.
-  - `README.md`: keep both sides' lines in §Current state (likely only once Tasks 2 and 36 have run).
+  - `README.md`: keep both sides' lines in §Current state (likely only once ~~Tasks 2 and 36 have~~
+    Task 36 has run; Task 2 runs in Phase 5 since 2026-10-14).
   - `spark/tests/test_render.py`: keep both sides' tests.
 
   Then stage those files by name, finish the merge without editing its message, and run the tests:
@@ -7145,8 +7354,10 @@ make test lint
 changes), `CLAUDE.md` (the gotchas *Never reload llama-swap while models are loaded* and the
 reserve: 2a's half built and running, with the date; and README §Conventions with it),
 `website/architecture.qmd` (the front, the gate, the three sockets, the notifier, llama-swap at
-900, the engines at 800 and up, the brake's idle-first order, and the edges from the gate, the brake
-and the notifier to ntfy, all solid), `website/design/plan.md` (*Anyone on the box can take
+900, the engines at 800 and up, the brake's idle-first order, ~~and the edges from the gate, the
+brake and the notifier to ntfy,~~ all solid; *2026-10-14, Dan's decision: ntfy optional, moving with
+the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5: ntfy, the phone's alerts and the edges
+into ntfy stay dashed, labelled Phase 5, unless Task 2 has run by then*), `website/design/plan.md` (*Anyone on the box can take
 127.0.0.1:9100* closed as built; *To verify*: the engines bind below 1024 with the capability they
 inherit, and the gate receives each caller's uid; a Revisions line), `website/how-to/deploy.md`
 (only what the cutover corrects)
@@ -7215,7 +7426,14 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   (*Lessons from Phase 0*). 9100 is free from Step 4's stop until the socket starts, the cutover's
   one window.
 - [ ] **Step 6 [Spark]: Check it.** `make doctor` passes every line. `make status` reads as the
-  plan's layout. `make logs s=gate` shows the residents loading one after another. Then
+  plan's layout. `make logs s=gate` shows the residents loading one after another.
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5. Unless Task 2 has run, which it won't have in 2a: `make doctor` passes every
+  line but `ntfy`, which reads `WARN  ntfy: not set up (Task 2, Phase 5)` and fails nothing (Task
+  33); `make status`'s `health` row reads `ntfy not set up (Task 2, Phase 5)` (Task 29); `make logs
+  s=gate` holds its one line that ntfy isn't set up, and no other ntfy line; and the gate, the
+  brake and the notifier's units started with neither the values file nor a header file there,
+  the system-unit check Task 25 left for this step.)* Then
   the listening ports, numbers only. **On the Spark:**
 
 ```bash
@@ -7247,6 +7465,10 @@ mkdir -p ~/.local/bin && ln -sf /opt/local-ai/app/.venv/bin/spark ~/.local/bin/s
   queue holds up to 100, so a full queue flushing after an outage would draw 429s past the burst: the
   lows and defaults past it lost, and each high one sent late as *refused*. If the limit the NAS runs
   would clip a flush, the fix is a Compose variable on the NAS, decided then with Dan, and recorded.
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5. This check, and the queue's flush it guards, run here only if Task 2 has run;
+  in 2a it won't have, so both move to Task 2, in Phase 5, and this step checks the *ntfy not set
+  up* lines above instead.)*
 - [ ] **Step 7 [Dan, as `agent`]: what `agent` can't do.** `sudo -iu agent` on the Spark, then, while
   **[Dan]** runs `systemctl restart local-ai-front.service` in another terminal. **On the Spark, as
   `agent`:**
@@ -7666,8 +7888,9 @@ git commit -m "docs(plan): 🤖 the page-cache drill settles rule 1's cache drop
 ### Task 44 [Spark]: the coder's first measurements, and route A's speed
 
 **Files:** `stack/models.yaml` (the coder's comments; `cold_load_gib`), `website/design/plan.md`
-(Phase 5's route A row, measured here; the load's deadline confirmed or revised; a Revisions
-line), `cosmicbboy-local-ai.md` (only a claim this measures), `changelog.md`
+(~~Phase 5's~~ Phase 4's route A row, measured here; the load's deadline confirmed or revised; a
+Revisions line), `cosmicbboy-local-ai.md` (only a claim this measures), `changelog.md`
+*(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
 
 - [ ] **Step 1, in the design's order** (*What 2a measures first*), each sampled with
   `stack/measure/sample_memory.py`: (1) b11146 loads it and drafts with MTP — the acceptance rate
@@ -7688,7 +7911,8 @@ line), `cosmicbboy-local-ai.md` (only a claim this measures), `changelog.md`
   design's — Task 42's way back, or his full-context, f16 rule — and a plan revision records it.
   Nothing else in this task runs until he has chosen.
 - [ ] **Step 2 [Dan, on the Mac]:** route A's decode, time to first token and prefill in pi, in
-  Phase 5's order, recorded against Phase 5's table.
+  ~~Phase 5's~~ Phase 4's order, recorded against ~~Phase 5's~~ Phase 4's table *(2026-10-14, the
+  same)*.
 - [ ] **Step 3:** the registry records the coder's `cold_load_gib`; private readings (load times,
   readings in context) go to Dan in the chat, for the vault.
 - [ ] **Step 4: Commit.** **On the Spark:**
@@ -7797,6 +8021,9 @@ git commit -m "feat(spark): 🤖 the brake's timings and rate-of-fall watch, fro
 
 **Files:** `website/scenarios/s05-memory-critically-low.md` (`status: verified`, `verified:` the
 date; `phase` stays 1), `changelog.md`, `website/design/plan.md` if anything differs from it.
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5: S05's page gains a dated line saying its phone alerts are checked in Phase 5, with
+Task 2, and that this drill verified the rest.)*
 
 - [ ] **Step 1: The drill's brake.** The brake is drilled through Task 25's oneshot,
   `local-ai-brake-drill.service`, which runs `spark brake --once` as `spark`, with the brake's
@@ -7866,13 +8093,29 @@ sudo -k
     and its notification names `spark load coder`; Dan's request loads it;
   - with the gate made to fail at start (the block above), the drill's brake fires and sends its own
     `brake_fired`, waiting for curl before it exits; the gate, put back, doesn't send it twice.
+
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* Unless Task 2 has run, which it won't have in 2a, nothing above reaches
+  the phone, and the notification checks move to Phase 5's ntfy work (Task 2's note):
+  `memory_warning`, `brake_fired` and its follow-ups, `brake_released`, `brake_needs_release`,
+  `footprint_suspect`'s notification, and the brake's own `brake_fired` while the gate is down.
+  The rest stays and is checked here: the refusals in pi and for `agent`, word for word
+  (`held_by_brake`, `footprint_suspect`); `brake_released_by_dan`'s words; `spark status`'s
+  *paused* row in both its forms, and the release in *recent*; the residents reloading one at a
+  time (`make logs s=gate`); the hold waiting for Dan after the reboot; and the drill's journal
+  lines. With the gate made to fail at start, the drill's brake fires, starts no curl, says in its
+  journal that ntfy isn't set up (Task 23) and exits 0; the gate, put back, tries the alert itself,
+  and records it as not sent.
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
 git add website/scenarios/s05-memory-critically-low.md changelog.md website/design/plan.md
-git commit -m "docs(website): 🤖 S05 verified: the brake fires, releases within bounds, and alerts without the gate" \
+git commit -m "docs(website): 🤖 S05 verified: the brake fires and releases within bounds; its phone alerts wait for Phase 5" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+  *(2026-10-14: the message read "… releases within bounds, and alerts without the gate", which
+  holds once Task 2 has run.)*
 
 ***
 
@@ -7881,6 +8124,16 @@ git commit -m "docs(website): 🤖 S05 verified: the brake fires, releases withi
 **Files:** `website/scenarios/s14-gate-down.md` (`status: verified`, dated),
 `website/design/plan.md` (*To verify*: `OnFailure=` under `Restart=`, and 9100 held through a crash
 loop; a Revisions line), `changelog.md`, `README.md`
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* Unless Task 2 has run, which it won't have in 2a, no alert reaches the phone,
+and this drill's notification checks move to Phase 5's ntfy work (Task 2's note): each `*_down`
+alert on the phone, high, once, in Task 7's words; `back_up`; and one `front_down` per 5 minutes
+through a crash loop. The rest stays. In their place, each failure is seen to start the failure
+notifier, which does nothing, successfully (Task 26): **on the Spark**, `journalctl -u
+'local-ai-notify@*' -o cat` holds one *ntfy isn't set up* line per failure, naming the unit and
+its result in words, and `systemctl --failed` lists no notifier unit. That still verifies
+`OnFailure=` under `Restart=`. S14's page says its phone alerts are checked in Phase 5.
 
 - [ ] **Step 1 [Dan, on the Spark]: each service killed in turn**, `sudo systemctl kill
   --signal=SIGKILL local-ai-<name>.service` for the front, the gate, the brake and llama-swap: each
@@ -7928,9 +8181,11 @@ sudo -k
 
 ```bash
 git add website/scenarios/s14-gate-down.md website/design/plan.md changelog.md README.md
-git commit -m "docs(website): 🤖 S14 verified: each failure alerts once, and 9100 holds through a crash loop" \
+git commit -m "docs(website): 🤖 S14 verified: each failure starts the notifier, and 9100 holds through a crash loop" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+  *(2026-10-14: the message read "each failure alerts once", which holds once Task 2 has run.)*
 
 ***
 
@@ -7974,6 +8229,15 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   them, through the gate's own restart, is held, and goes through once llama-swap answers again,
   or reads `restarting`'s words at its deadline, never `llama_swap_down`'s; the phone gets
   `apply_restarted` and no `llama_swap_down`.
+
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* Unless Task 2 has run, which it won't have in 2a, no step above reaches
+  the phone, and these notification checks move to Phase 5's ntfy work (Task 2's note): S01's
+  `unloaded`, `load_started`, `loaded` and `pin_ended`; S02's `resident_waiting`; S03's `refused`
+  and its burst; and S17's `apply_restarted` with no `llama_swap_down`. The rest of each step stays:
+  what pi, the web UI, the commands, `spark status` (its *waiting* and *recent* rows among them) and
+  the front's and the gate's logs show. Each page these drills verify gains a dated line saying its
+  phone alerts are checked in Phase 5.
 - [ ] **Step 5: Commit.** **On the Spark:**
 
 ```bash
@@ -7992,6 +8256,14 @@ git commit -m "docs(website): 🤖 S02, S03 and S17 verified, and S01's gate par
 `website/design/plan.md` (the forward look, Revisions, Phase 2a's status line);
 `website/design/phase-2a-qa.md` (any decision made since it was written);
 `website/design/phase-2a-retro.md` (new); this plan's Progress note
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* **Phase 2a closes without ntfy** unless Task 2 has run, and says so: in the
+Progress note, plan.md's Phase 2a status line and the retrospective, which name Task 2 and the
+drills' notification checks as Phase 5's. On the architecture page, every 2a part turns solid but
+ntfy, the phone's and the Mac's alerts, and the edges into ntfy, which stay dashed, labelled Phase
+5. Step 2's `make doctor` passes with its one WARN, `ntfy: not set up (Task 2, Phase 5)` (Task 33),
+and Step 5's forward look carries the watchdog's Compose file to Phase 5, with ntfy.
 
 - [ ] **Step 1:** **on the Spark**, `uv run --frozen --project spark spark docs check-scenarios`,
   `spark docs stack --check` and `spark docs notifications --check`; the docs true against the box.
@@ -8083,7 +8355,14 @@ git merge --no-ff phase-2a -m "chore(repo): 🤖 merge phase 2a" -m "Co-Authored
 
 - [ ] S01's gate part, S02, S03, S05, S14 and S17 are verified: their pages read *verified* with the
   date, but S01, which stays `planned` with a dated note recording its gate part until 2b's menu
-  bar, and S05, which stays `phase: 1`.
+  bar, and S05, which stays `phase: 1`. *(2026-10-14, Dan's decision: ntfy optional, moving with
+  the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Phone alerts are no longer a 2a
+  item: they arrive with Phase 5, when Task 2 sets ntfy up, and each of these pages says its phone
+  alerts are checked then.)*
+- [ ] *(2026-10-14, the same:)* The stack runs without ntfy: the units start without its files,
+  the failure notifier and the brake's own alert do nothing, successfully, and say so in the
+  journal, and `spark status` and `make doctor` show *ntfy not set up (Task 2, Phase 5)*, the
+  latter as a WARN.
 - [ ] Qwen3.8-27B is the registry's coder, and pi completes a task with it from the Mac and from
   tmux as `agent`.
 - [ ] The soak has measured every footprint, the coder's included, and the registry holds the
@@ -8092,7 +8371,8 @@ git merge --no-ff phase-2a -m "chore(repo): 🤖 merge phase 2a" -m "Co-Authored
   the method stops at the reserve.
 - [ ] The brake's timings, `MemAvailable`'s lag, swap (down to 24 GiB available) and earlyoom's
   order are recorded.
-- [ ] Route A's decode, time to first token and prefill are recorded against Phase 5's table.
+- [ ] Route A's decode, time to first token and prefill are recorded against ~~Phase 5's~~ Phase 4's
+  table *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*.
 - [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac, and CI is green;
   README §Current state, the changelog and the architecture page are true; the council review is
   done and the forward look applied; `phase-2a` is merged to `main` with Dan's OK.
@@ -8143,6 +8423,15 @@ Every command block above was run on 2026-10-07, before it went in:
 - **ntfy's Compose file:** `docker compose config` with stand-in values read the file's shape this
   task's test pins (Docker's CLI needs no daemon for it): with the values it printed the service,
   a bcrypt hash's `$` kept; without them it stopped, naming `NTFY_BASE_URL`.
+- **systemd 255 and ntfy's optional files** *(2026-10-14, for Task 25's note: ntfy optional, moving
+  with the NAS phase)*: transient user units on the Spark (`systemd-run --user --wait --pipe`),
+  with stand-in files in the scratchpad that hold no secret, each running a script that printed
+  only whether the unit started, whether its credential existed and its size. `LoadCredential=` of
+  a missing file alone: result 243. With `SetCredential=` for the same id: the default, 10 bytes
+  for `not-set-up`; with the file there, the file's 16. An empty `SetCredential=` value: no start.
+  `ImportCredential=` of a name in no store: started, no credential. `EnvironmentFile=-` of a
+  missing file: started; without the `-`: no start. `systemd.exec(5)` at systemd 255 was read for
+  `SetCredential=` and `ImportCredential=`.
 
 ***
 
@@ -8276,8 +8565,14 @@ From the later-phases reviewer's Minors, each for the phase named; none needs wo
 - **Phase 3:** the failure notifier covers four units, and Postgres or LiteLLM down need types and
   units of their own (M-11); a gated model's HF token on `spark-pull`, with the hf_xet log check
   still due (M-13).
-- **Phase 5:** a container engine that runs as a non-root uid needs `spark`'s gid to read the
-  cache (M-13).
+- **Phase 4:** *(~~Phase 5~~ until 2026-10-14, Dan's decision: Phases 4 and 5 swapped, the
+  bake-off now 4 and the NAS 5)* a container engine that runs as a non-root uid needs `spark`'s gid
+  to read the cache (M-13).
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **Phase 5:** the 2b items above that need ntfy move here with it: the
+  watchdog's *box unreachable* type and its route to the front's and the gate's health (M-4, M-6),
+  and the Mac's subscriber with its read tokens and priority filter (M-5). `agent`'s hooks' types
+  (M-4) stay 2b's; what they post reaches a phone or the Mac from here.
 - **Phase 6:** per-person keys make the front's journal, which names the key, a per-person usage
   log, and `GET /v1/models` shows every model to every key (M-9); caps are per key, and an event
   needs them per group (M-10).

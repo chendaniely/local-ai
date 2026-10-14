@@ -1,6 +1,6 @@
 ---
 title: "Phase 2a — questions and answers"
-description: "How Phase 2a's design was decided: the scenario questions Dan answered, the architecture question, the coder and the budget, what the council raised, how Dan wants the gate to read to him, the decisions on the implementation plan's forward-and-back council, and how the scenario pages read before their rewrite. Each answer with its reason."
+description: "How Phase 2a's design was decided: the scenario questions Dan answered, the architecture question, the coder and the budget, what the council raised, how Dan wants the gate to read to him, the decisions on the implementation plan's forward-and-back council, ntfy's move to the NAS phase, and how the scenario pages read before their rewrite. Each answer with its reason."
 date: 2026-10-07
 ---
 
@@ -75,7 +75,10 @@ lifts. At 7 am you ask Gemma about a photo from your phone.***
 - C: ntfy and the watchdog both move into 2a.
 
 **Dan: A.** ntfy is deployed as a Docker Compose file, as all of Dan's homelab apps are (Portainer
-stacks today, any Compose helper tomorrow).
+stacks today, any Compose helper tomorrow). *(2026-10-14, Dan's decision: ntfy optional, moving with
+the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Reversed in part: ntfy moves to Phase 5,
+and until then 2a's events show in `spark status`, as B had it. See* ntfy waits for the NAS
+phase*, below.)*
 
 **S17, changing a model mid-task. *`agent`'s pi is mid-task on the coder, you used Gemma a minute
 ago, and you run `make apply` on a change that restarts llama-swap.***
@@ -192,7 +195,7 @@ after the re-review or the final re-review, say who decided and when:
 | Hardening into 2a | **llama-swap's sandbox, root-only secret files, the pull's own user**, and, by Dan's choice after the re-review, **`cap_drop` for the web services.** The engines' own user waits. |
 | `agent`'s own GPU jobs | **An OOM score root sets, in 2a if it holds when tested as `agent`.** |
 | The tools | **uvicorn, a plain ASGI front, a Starlette gate and httpx** — two new packages. |
-| Alerts on the Mac | **Phone only in 2a; the Mac with 2b's menu bar.** |
+| Alerts on the Mac | **Phone only in 2a; the Mac with 2b's menu bar.** *(2026-10-14: both from Phase 5, with ntfy; see* ntfy waits for the NAS phase*, below.)* |
 | The gate down | **The brake sends its own alert** when the gate is down, so Dan hears "brake fired", not only "gate down" (the session's ruling after the re-review). |
 
 ## How it should read to Dan
@@ -243,6 +246,33 @@ phases. **Dan: "all recommended"** (2026-10-07):
 | The front reads the model list once, so a rename restarts it | **The front takes the model list from the gate's events.** |
 | 2a's front narrows Phase 3's LiteLLM choice | **Phase 3 weighs a third option, no LiteLLM.** |
 | Sessions need a process on the Spark, which Orca's pi on the Mac hasn't got | **`spark session hold`, in 2a,** for the Mac's hooks to run over SSH. |
+
+## ntfy waits for the NAS phase
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)*
+
+**Q: Task 2 sets up ntfy on the Synology, and had to be done before Task 27 started. Setting it up
+needs Dan's Synology homelab — the NAS on the tailnet, a grant, Portainer, the phone — which he
+isn't ready for yet. Should ntfy become optional, so 2a goes on without it?**
+
+**Dan: "Yes, make ntfy optional."** (Given to the controller, 2026-10-14.) First Task 2 was to run at
+2a's very end, after Task 51, or as a follow-up after 2a merged. The same day Dan placed it more
+simply: **ntfy lands with the NAS**,
+in the NAS phase, and 2a finishes without it. A second decision that day swapped Phases 4 and 5 by
+renumbering — the bake-off, the clients and the Claude Code docs first, as Phase 4, then NAS and
+backups, as Phase 5 — since the NAS settings come after he has settled what is running. So ntfy
+arrives in **Phase 5**, and 2b's watchdog on the Synology (S13) and the Mac's ntfy subscriber move
+there with it, since both need ntfy; the menu bar stays in 2b.
+
+Why it costs little: the gate was already built to run without ntfy (Task 19), saying so once and
+treating every notification as ntfy out of reach. What 2a adds is that the rest copes too, and says
+so plainly: the units start without ntfy's files, the failure notifier and the brake's own alert do
+nothing, successfully, and log it, and `spark status` and `make doctor` read *ntfy not set up (Task
+2, Phase 5)*, doctor's as a warning, never a failure. It is a lasting improvement: the stack keeps
+working whenever ntfy is away later, not only before it exists. Until Phase 5, what the alerts would
+report shows only in `spark status` and `make doctor`, on the Spark, and from 2b on the Mac's menu
+bar. The 2a scenarios are verified without their phone alerts, which Phase 5 checks.
 
 ## How the scenario pages read before the rewrite
 

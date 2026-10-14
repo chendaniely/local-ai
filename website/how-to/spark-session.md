@@ -62,7 +62,9 @@ Mac, `ssh brightroar` first.
    which bootstrap installs, and lets everything through without it: the check in the first
    session, below, is what shows it working. If Claude Code is already running on the Spark,
    restart it so it loads the hook. Some of the script's rules name paths that exist only on the
-   Mac; when Phase 4 mounts the NAS's shares on the Spark, add their paths to the script.
+   Mac; when ~~Phase 4~~ Phase 5 mounts the NAS's shares on the Spark, add their paths to the script.
+   *(Renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS
+   5.)*
 
 4. **Private context**: this project's private memory folder. **On the Mac:**
 

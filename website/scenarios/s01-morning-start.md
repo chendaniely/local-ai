@@ -10,8 +10,9 @@ status: planned
 **What happens.** My first request loads the coder if it fits, which takes tens of seconds with
 llama.cpp. A pin I set keeps it loaded for as long as I say, so it doesn't idle-unload under me.
 
-**What I see.** A slower first reply, and word that the coder is loading: on my phone from Phase
-2a, and on the menu bar from Phase 2b.
+**What I see.** A slower first reply, and word that the coder is loading: on my phone from ~~Phase
+2a~~ Phase 5, and on the menu bar from Phase 2b. *(Corrected 2026-10-14, Dan's decision: ntfy
+optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5.)*
 
 **How to override.** `spark load coder` or `spark pin coder [duration]`, on the Spark; the menu
 bar's Load from Phase 2b.
@@ -29,6 +30,12 @@ in 24 s.* With the coder not yet loaded, `spark pin coder 8h` answers *The coder
 silent *The pin on the coder ended at 18:00; it unloads after 60 min idle.* `spark status` lists
 the coder as *loads when asked* and the others as *always loaded*. The plan's [*What you see in
 Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of
+the notifications above until then: 2a's stack runs without it, and `spark status` says *ntfy not
+set up*. Until then the loading shows in `spark status` on the Spark, and from 2b on the menu bar.
+2a's drill checks the gate's part without the phone; Phase 5 checks the phone's.
 
 After 2a this page stays `planned`, with a dated note recording its gate part, until 2b's menu bar
 completes it.

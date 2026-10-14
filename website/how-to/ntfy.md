@@ -3,10 +3,18 @@ title: "ntfy on the Synology"
 description: "ntfy for the Spark's alerts, on the Synology in Marius Hosting's style: a Compose file pasted as it is, a private server.yml, the tailnet grant, the users and tokens, the phone, and the Spark's values file and header files."
 ---
 
-From Phase 2a, the Spark's alerts reach your phone through ntfy, which runs on the Synology. This
-runbook sets it up once (Phase 2a's Task 2): the NAS on the tailnet and its grant, the users and
-tokens, the deploy, the phone, and the files on the Spark that the gate, the failure notifier and
-the brake read.
+From ~~Phase 2a~~ Phase 5, the Spark's alerts reach your phone through ntfy, which runs on the
+Synology. This runbook sets it up once (Phase 2a's Task 2, which now runs in Phase 5): the NAS on
+the tailnet and its grant, the users and tokens, the deploy, the phone, and the files on the Spark
+that the gate, the failure notifier and the brake read.
+
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* **This runbook is Phase 5's.** ntfy needs a Synology homelab setup Dan isn't
+ready for yet, so it waits for Phase 5, NAS and backups, and Phase 2a finishes without it. Until
+then the stack runs without ntfy: no alert leaves the Spark, the gate, the failure notifier and the
+brake say in their journals that ntfy isn't set up, and `spark status` and `make doctor` read *ntfy
+not set up*. The page stays as written for Phase 5, which runs it and corrects what it finds; §8
+says what changes when it runs on a stack that is already up.
 
 ntfy deploys from two files, as in Marius Hosting's guide (below). The Compose file,
 `stack/synology/ntfy/compose.yaml`, is public, holds nothing private and is pasted as it is, with no
@@ -381,7 +389,13 @@ folder in its place, and redeploy: ntfy starts with new databases, makes the use
 
 The gate, the failure notifier and the brake read these from Phase 2a's later tasks: the values
 file through systemd's `EnvironmentFile=`, the header files through `LoadCredential=`. Each is
-`0600 root:root`; `install`, run as root, makes them root's. **On the Spark:**
+`0600 root:root`; `install`, run as root, makes them root's. *(2026-10-14, Dan's decision: ntfy
+optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. In Phase 5 the
+stack is already running without these files, and the gate and the brake read them only when they
+start: after the check below, on the Spark, `systemctl restart local-ai-gate.service
+local-ai-brake.service`, which the polkit rule allows without sudo. The failure notifier reads them
+at each run. `spark status` reads *ntfy ok* once the gate's next notification goes through.)*
+**On the Spark:**
 
 ```bash
 sudo install -m 0600 ~/ntfy-setup/values.env /etc/local-ai/values.env && sudo install -m 0600 -t /etc/local-ai/secrets ~/ntfy-setup/ntfy-gate.header ~/ntfy-setup/ntfy-notify.header ~/ntfy-setup/ntfy-brake.header

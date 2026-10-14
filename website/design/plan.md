@@ -67,11 +67,11 @@ In order of how much they constrain the design:
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. *(Phase 2a, Dan's decision, 2026-10-07: make-room then holds the room it freed for him, so nothing automatic takes it back, and requests from his keys wait ahead of `agent`'s: rule 4 and *The front and the gate*.)* |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
-| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
+| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by Phase 5's route A, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -91,7 +91,9 @@ Architecture page now, and git history keeps the drawing.)*
 - **Phases 1–2:** Open WebUI and pi reach llama-swap directly with llama-swap keys — pi on the Mac
   through an SSH tunnel, so nothing listens on the LAN yet. A refused load is a plain error in the
   client; the explanation is in `spark status` (Phase 1), for an account in `spark-admin`, which
-  can read the brake's state, and on the menu bar and ntfy (Phase 2). *(Corrected 2026-10-07, for
+  can read the brake's state, and on the menu bar and ntfy (Phase 2; ntfy from Phase 5, since
+  2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+  NAS phase now 5). *(Corrected 2026-10-07, for
   Phase 2a's design: from 2a they reach the front, at the same address, 127.0.0.1:9100, with the
   same keys, and the front forwards to llama-swap on a private port. A load that doesn't fit waits
   for the key's wait, and a refusal then arrives inline, as a normal API error with its reason
@@ -120,13 +122,13 @@ Architecture page now, and git history keeps the drawing.)*
 | **the front** (Phase 2a) | `local-ai-front.service`, system unit `User=spark-front`, a user of its own; 127.0.0.1:9100, held by `local-ai-front.socket` | A small forwarder in front of llama-swap, raw ASGI on uvicorn, with no policy about loads but a route policy: only the inference routes, so llama-swap's admin routes never reach it. The same client keys as llama-swap takes today (Dan's on the Mac, Open WebUI's, `agent`'s), so no client changes, held only as SHA-256 digests; an internal key of its own toward llama-swap, so clients' keys go no further; requests in flight counted per model, until each response ends; for a model that isn't loaded, asks the gate, which holds the request for its key's wait, then forwards or returns a refusal that says why; while the gate is down, forwards to loaded models and refuses only new loads (`gate_down`); limits on memory, bodies, waiting requests and connections; doesn't restart when llama-swap does, and 9100 stays held while it restarts; systemd sandboxing from the start; `OnFailure=` notifier. (Dan's design, 2026-10-07, revised the same day after the council; *The front and the gate*.) |
 | **llama-swap** v257 | system unit `User=spark`, 127.0.0.1 | canonical **`routing:`** config; **`swap: false, exclusive: false` on every group** (the defaults evict; render fails on ungrouped models); `apiKeys`; `captureBuffer: 0`; `logToStdout: proxy`, v257's default, pinned: the engines' output, a refused start's reason and an engine's crash included, stays in an in-memory buffer that every restart wipes, and only llama-swap's own lines reach the journal (Dan's decision, 2026-09-28, reversing that day's `both` before it was deployed: whisper-server logs each upload's file name, and its ffmpeg conversion reports the file's metadata, which the journal would keep; Phase 2 revisits it with a check that covers speech); every `cmd` is `spark-launch <model>` (~~from Phase 2~~ since Phase 1: corrected 2026-10-07); no llama-swap preload; ~~**never reloaded while models are loaded** (a v257 reload stops every engine — `spark apply` waits for idle or asks; in Phase 1 it refuses instead, unless `make apply-now`: *Deploy workflow*)~~ (Phase 1 refuses a reload while models are loaded, unless `make apply-now`; 2a's own rule is below); validated with `-validate` and its schema. A separate lab instance serves `spark try`. *(Phase 2a, designed 2026-10-07 and revised the same day after the council: llama-swap stays at v257 and moves to **127.0.0.1:900**, its engines to **800 and up**, both below 1024, which only its unit, given `CAP_NET_BIND_SERVICE`, can bind (Dan's decision); its `apiKeys` are only the internal keys, one each for the front, the gate and the brake. `ttl: 0` stays, so the gate is the only thing that unloads. Since nothing waits inside `cmd` any more, `healthCheckTimeout` has only a load to cover, and goes from 600 s to **180 s** (the session's ruling). `Restart=always`, and its unit is sandboxed (Dan's decision). It is no longer **never reloaded while models are loaded**: `spark apply` waits until no request has been in flight for ~60 s, from the front's counts, then restarts it with models loaded, and the gate reloads the residents (*Deploy workflow*). The journal question above goes to Phase 2b.)* |
 | **llama.cpp** | a formal release tag; prebuilt arm64 CUDA 13 or a source build | `--load-mode none` or `dio` (reported: a 120B model loads in ≈22 s this way against ≈2 min through mmap); explicit `--cache-ram` (defaults to 8 GiB per server) and `--parallel`; MTP where supported. Every model at its native maximum context, and a model with more than one slot gives them one shared KV pool (`--kv-unified`), so any one request can use the whole context (Dan's decision, 2026-09-28); idle slots keep their cache (`--no-cache-idle-slots`), and a model whose context checkpoints are large caps them (`--ctx-checkpoints`), counted in its footprint. No `/slots` and no web UI of its own (`--no-slots`, `--no-webui`): an engine takes no key (2026-09-28). Verify `CMAKE_CUDA_ARCHITECTURES` `121` against NVIDIA's `121a-real`. |
-| **vLLM** | NGC 26.08 container (26.09 was current on 2026-10-05; Phase 5 pins the newest one a week old); upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
+| **vLLM** | NGC 26.08 container (26.09 was current on 2026-10-05; ~~Phase 5~~ Phase 4 pins the newest one a week old, *renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5*); upstream cu130 only if needed | explicit memory caps (the default claims ~110 GiB); fastsafetensors; persisted caches; `restart: no`; `--oom-score-adj=1000`. |
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
 | **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model, with thinking off for task calls (`TASK_MODEL_PARAMS`; Dan's decision, 2026-09-28), while chats keep it; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. *(Phase 2a, Dan's choice, 2026-10-07, after the design's re-review: `cap_drop: [ALL]`, with only the capabilities it is found to need added back, checked by the web UI still working end to end.)* |
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. *(Phase 2a, the same: `cap_drop: [ALL]`, only what it needs added back, checked by a working search.)* |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
-| **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* |
+| **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* |
 | **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
@@ -547,8 +549,10 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    rule can run under `NoNewPrivileges=`, which llama-swap's unit, where `spark launch` runs, and
    the sandboxed gate both have; the route, if the drill needs it, is a root oneshot unit that
    polkit lets `spark` start by its exact name. Noted after the implementation plan's
-   forward-and-back council: the drill decides for llama.cpp's GGUF loads only; Phase 5's
-   safetensors loads, where E.1 was seen, get a drill of their own (Phase 5's cautions).)*
+   forward-and-back council: the drill decides for llama.cpp's GGUF loads only; ~~Phase 5's~~
+   Phase 4's safetensors loads, where E.1 was seen, get a drill of their own (~~Phase 5's~~ Phase
+   4's cautions; *renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4
+   and the NAS 5*).)*
 2. **Never evict, never substitute.** The only automatic unloads are the idle policy and the brake.
 3. **Idle policy:** 30 minutes by default; in-flight requests and active agent sessions count as use;
    pins (manual, work hours); scheduled preloads are fit-checked and notify if they don't fit.
@@ -904,7 +908,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   make-room's with its size and end), each model's oldest request in flight, "unaccounted memory"
   (idle `MemAvailable`, less what is available now and the loaded models' footprints, which tells
   a wrong footprint from a job outside the stack), and "notifications failing since …" when ntfy
-  can't be reached. Through the status socket, which `agent` reads, it leaves out other keys'
+  can't be reached (and, since 2026-10-14, "ntfy not set up" until Phase 5 sets it up: the ntfy
+  bullet below). Through the status socket, which `agent` reads, it leaves out other keys'
   refusals and the names of Dan's processes. The brake stays its own unit, so its key check at
   start stays with it, and doctor checks the brake too. Its layout, in plain words, is under *What
   you see in Phase 2a*, below.)*
@@ -944,10 +949,28 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
     process name, as a refusal does (rule 7), since it shows on the phone's lock screen.
   - 2a's full list of notification types, their priorities and their wording is under *What you
     see in Phase 2a*, below, and supersedes the three-line list above for 2a.)*
+
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **ntfy is optional, and arrives in Phase 5.** It needs a Synology homelab
+  setup Dan isn't ready for yet, so setting it up (2a's implementation plan, Task 2) moves to Phase
+  5, NAS and backups, with the watchdog and the Mac's alerts, and 2a finishes without it. Everything
+  above about ntfy holds from then. Until then:
+  - **The stack runs without ntfy,** and keeps running whenever ntfy is away later. The gate
+    serves without ntfy's address, topic or token, says once in its journal that ntfy isn't set up,
+    and each notification fails as ntfy out of reach does. The failure notifier and the brake's
+    own alert send nothing, successfully, and say so in the journal. Their units start without the
+    values file or the token files.
+  - **No alert leaves the box.** What the alerts report shows only in `spark status` and `make
+    doctor`, on the Spark: `spark status`'s *health* row reads *ntfy not set up (Task 2, Phase 5)*,
+    and doctor's ntfy line says the same as a warning, never a failure. 2b's menu bar adds the Mac,
+    since it reads `spark status --json`.
+  - **Out of reach and not set up are told apart:** *ntfy failing since …* stays for an ntfy that
+    is set up but doesn't answer.
 - **Harness hooks** register agent sessions with the gate and post their outcomes to ntfy.
   *(Noted 2026-10-07, after Phase 2a's council: `agent`'s hooks, in 2b, post through the gate's
   status socket, or with a publish-only token on a topic of their own, so they can't post as the
-  gate.)*
+  gate.)* *(2026-10-14: what they post reaches a phone or the Mac only once ntfy is set up, in
+  Phase 5.)*
 - **Orca (2026-09-28)** shows each agent it started on the Mac — working, waiting for input, done —
   through its own status hooks. It adds to ntfy rather than replacing it: agents in tmux on the
   Spark don't run in Orca.
@@ -967,10 +990,19 @@ the same day after the final re-review, with the session's rulings: make-room's 
 load into (rule 4), so `no_fit`'s next step works; "available" and "free for a load" each name one
 number; and the examples now agree with their moments.)*
 
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* **Until Phase 5 sets ntfy up, nothing below reaches the phone.** The
+notifications are designed, built and worded as below, and are sent once ntfy is set up; until
+then what they report shows only in `spark status` and `make doctor`, on the Spark, and from 2b in
+the menu bar on the Mac, which reads `spark status --json`. `spark status`'s *health* row then
+reads *ntfy not set up (Task 2, Phase 5)* in place of the example's *ntfy ok*. Two refusals,
+`gate_down` and `llama_swap_down`, say *Your phone has the alert*, which isn't true until then: the
+controller rules their words, and the implementation plan's Task 29 changes them.
+
 | Where Dan looks | What it's for | In 2a |
 |---|---|---|
 | The client (pi, the web UI) | the answer to this request, or why there isn't one | the refusal's message |
-| The phone (ntfy) | what needs him, or happened while he wasn't looking | every notification type below |
+| The phone (ntfy) | what needs him, or happened while he wasn't looking | every notification type below *(from Phase 5, since 2026-10-14; until then `spark status` and `make doctor`)* |
 | `spark status`, on the Spark | the whole picture, at any time | the layout below |
 | The menu bar on the Mac | the picture without asking | Phase 2b |
 
@@ -1032,11 +1064,11 @@ carries its mark (rule 5).
 | `no_fit` | 409 | *The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.* For `agent`'s key, a hold of Dan's is counted and named: *… less … and the 41 GiB make-room holds for Dan. The hold ends when Dan runs `spark make-room --done` on the Spark.* (Corrected 2026-10-07, at the implementation plan's Task 6's fix round 2, the controller's ruling: it read *On the Spark, `spark make-room --done` ends the hold.*, which didn't say whose step it is.) Once Dan's job has taken the room, below 0 is never shown: *… and nothing is free for a load while make-room holds 70 GiB for Dan (36 GiB available, less the 24 GiB reserve). …* For `agent`'s key with no hold of Dan's counted: *… Only Dan can free memory for it, on the Spark; try again after that.* Where the GPU's ceiling binds, the parenthesis is that term's: *… and 10 GiB is free for a load (the 102 GiB the GPU can allocate, less the 92 GiB the loaded models may grow to). …*; with a model still starting, *… and the 27 GiB the model still starting may take*. (Added 2026-10-07, at the implementation plan's Task 6, the controller's rulings: make-room is Dan's alone, and its hold would bar `agent` anyway; and the breakdown is the term that gave the figure, so it adds up.) (Corrected 2026-10-07, at the implementation plan's Task 7's review, the controller's ruling: `agent`'s *The hold ends when Dan runs …* comes only when ending the hold would let the load fit, free for a load and the hold together at least the need; with Dan's job in the hold, as in the clamp's moment, ending it leaves 36 − 24 = 12 GiB, so that moment ends *… Only Dan can free memory for it, on the Spark; try again after that.*) |
 | `loading` | 409 | *The coder didn't start in time: it was waiting its turn while Gemma loads, since one model loads at a time, and your 30 s ran out. Try again in a minute.* Behind a load ticket the gate couldn't withdraw, with no model loading: *The embeddings didn't start in time: it was waiting its turn while the gate settles a load ticket it couldn't withdraw, and your 30 s ran out. On the Spark, `make logs s=gate` shows why.* For `agent`'s key: *… Dan can see why with `make logs s=gate` on the Spark.* (Added 2026-10-08, at the implementation plan's Task 15's re-review, the controller's ruling.) |
 | `held_by_brake` | 409 | *Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads are paused. They resume by themselves after 5 minutes above 28 GiB available, if what would reload fits; on the Spark, `make brake-release` resumes them now.* When the hold waits for Dan (a second brake within the hour, or one found after a reboot): *… new loads stay paused until you release them: on the Spark, `make brake-release`.* For `agent`'s key: *… if what would reload fits, or when Dan runs `make brake-release` on the Spark.*, and when the hold waits for Dan, *… new loads stay paused until Dan releases them: on the Spark, `make brake-release`.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's rulings: only Dan can release the brake's hold.) A hold that doesn't record when it fired or how low memory ran (Phase 1's, or one that can't be read) is worded as seen, never as fired, with no reading: *Not loading the coder now: new loads are paused by a brake hold from before the gate started (seen at 09:12); they stay paused until you release them: on the Spark, `make brake-release`.* (Added 2026-10-08, at the implementation plan's Task 15, the controller's ruling.) A hold whose own time parses is dated by it, whatever else it lacks: *… new loads are paused by a brake hold from 03:12 (no reading recorded); …* (Added 2026-10-08, at the implementation plan's Task 15's review, the controller's ruling.) |
-| `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6: the phone and `make doctor` are Dan's.) |
+| `gate_down` | 503 | *No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6: the phone and `make doctor` are Dan's.) *(2026-10-14: the phone half isn't true until ntfy is set up, in Phase 5; the words meanwhile are the controller's to rule, above the table.)* |
 | `load_failed` | 409 | *The coder started loading but failed: the engine stopped with "failed to load model". On the Spark, `spark logs coder` shows the engine's last lines.* Past its deadline: *… but didn't finish within 3 minutes.* For `agent`'s key: *… Dan can see why with `spark logs coder` on the Spark.* (Corrected 2026-10-07, at the implementation plan's Task 6's fix round 2, the controller's ruling: the next step named `spark status`, which shows no engine lines; Task 30's `spark logs <model>` does, on the control socket, which `agent` can't use.) (Corrected 2026-10-07, at the implementation plan's Task 6, the controller's rulings: the deadline read *within 180 s*, and a duration of a minute or more now reads in minutes, so none prints as a bare 5xx. `agent`'s form was added, since only Dan reads the engine's lines.) (Added 2026-10-08, at the implementation plan's Task 15, the controller's rulings:) A start launch claimed that left `/running` without becoming ready: *The coder's start stopped before it was ready: `spark logs coder` on the Spark shows why.* (the ruling's *ended without becoming ready* holds words pi's retry list matches). llama-swap refusing the load, at once for a 404 or a 401: *llama-swap refused to load the coder (HTTP 404): its config may not match the registry. On the Spark, `make logs s=llama-swap` shows why.*; after a 429 or a 503 for the whole wait: *llama-swap kept refusing to load the coder, and your 30 s ran out. …*, its status left out wherever pi's retry list would match it, and the phone's notification showing it. For `agent`'s key: *… Dan can see why with … on the Spark.* (Added 2026-10-08, at the implementation plan's Task 15's review, the controller's rulings:) The gate's own errors with the load's ticket: *The gate couldn't write the coder's load ticket: ~~`make doctor`~~ `make logs s=gate` on the Spark shows why.*, and, for a ticket it couldn't confirm it withdrew ~~with nothing ever in `/running`~~ (for a request whose own wait ran out while the gate waited on that ticket: corrected 2026-10-08, at the implementation plan's Task 15's second re-review, the controller's ruling), *The gate couldn't confirm the coder's load ticket was withdrawn; on the Spark, ~~`make doctor`~~ `make logs s=gate` shows why.* For `agent`'s key: *… Dan can see why with `make logs s=gate` on the Spark.* (Corrected 2026-10-08, at the implementation plan's Task 15's re-review, the controller's ruling: `make doctor` doesn't read launch's folder; the reason is in the gate's journal.) |
 | `not_downloaded` | 409 | *The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).* For `agent`'s key: *… Dan can fetch it with `make pull` on the Spark (16 GiB).* (Added 2026-10-07, at the implementation plan's Task 6: the pull is Dan's.) |
 | `restarting` | 409 | *The model service on the Spark is restarting for a configuration change, and your 30 s ran out. Try again in a minute.* |
-| `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6.) |
+| `llama_swap_down` | 409 | *The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, `make doctor` shows what's wrong.* For `agent`'s key: *… Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong.* (Added 2026-10-07, at the implementation plan's Task 6.) *(2026-10-14: the phone half isn't true until ntfy is set up, in Phase 5; the words meanwhile are the controller's to rule, above the table.)* |
 | `draining` | 409 | *The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try again in a minute: your request can load it again, into the room make-room holds for you, if it fits.* For `agent`'s key: *… It won't load for agent while make-room's hold stands. The hold ends when Dan runs `spark make-room --done` on the Spark.* (The last sentence added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: it says what ends the hold, and whose step that is.) |
 | `footprint_suspect` | 409 | *Not loading the coder for agent: it was loading when the brake fired at 03:12, so only Dan can load it again: `spark load coder` on the Spark, or one of Dan's requests from pi on the Mac or the web UI, which loads it if it fits.* (Corrected 2026-10-07, at the implementation plan's Task 6's fix round 2, the controller's ruling: it read *a request of his*; no message uses a gendered pronoun for Dan.) |
 | `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* For `agent`'s key: *… On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates pi's list.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: `agent`'s pi is on the Spark, and the Mac's `make clients` doesn't reach it. Corrected at Task 6's review the same day: the first correction read *… pull its clone and run `spark clients pi --write` to update pi's list.*, the procedure before 2a. After the cutover `agent` has no clone and runs the deployed CLI, as Task 34 sets up.) (Corrected 2026-10-07, at the implementation plan's Task 7's review, the controller's ruling: the last sentence is pi's step only for a key of Dan's whose label starts with "pi"; for another, such as the web UI's, the list alone ends it, since `make clients` updates pi's list only.) |
@@ -1134,7 +1166,11 @@ are worded in `spark/src/spark/messages.py`, each in its tests.
 
 The failure notifier's four `*_down` types keep its rules (*The front and the gate*): it sends the
 unit, its result and the time, worded as above, never a journal line. 2b adds the watchdog's
-"box unreachable" and `agent`'s done, needs-input and failed.
+"box unreachable" and `agent`'s done, needs-input and failed. *(2026-10-14, Dan's decision: ntfy
+optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5: the watchdog's
+"box unreachable" comes with Phase 5, with the watchdog; `agent`'s types stay 2b's, and reach the
+phone from Phase 5. Until ntfy is set up, the failure notifier sends nothing and says so in the
+journal.)*
 
 **One notification per event.** The gate never repeats an alert for the same hold or the same
 outage. A burst of identical refusals (the same model, key and code) collapses: the first goes at
@@ -1513,6 +1549,14 @@ Every phase ends by updating scenario statuses, the architecture diagrams (its b
 solid), the docs site, `changelog.md` and `README.md` §Current state. Tasks are labelled by where
 they run.
 
+*(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5.)* **Phase 4
+is now the model bake-off, clients and Claude Code docs, and Phase 5 NAS and backups**: the NAS
+settings come after the bake-off and the client work, as Dan settles what is running. Until that
+day the NAS was Phase 4 and the bake-off Phase 5. Current text below says the new numbers, each
+changed one struck through beside it; the Revisions and other dated records keep the old ones, and
+the Revisions line of 2026-10-14 says how to read them. The same day ntfy moved to the NAS phase,
+now 5, with the watchdog and the Mac's alerts from 2b.
+
 **Phase 0 — Guardrails, prep, docs scaffold** — done, 2026-09-25
 
 - [Mac] `Makefile` + `make bootstrap` skeleton · leak guards (`.githooks`, gitleaks in CI) ·
@@ -1611,8 +1655,13 @@ council, with Dan's fourteen decisions (Revisions).*
   - the **private values file**, holding ntfy's address, which `CLAUDE.md`, `README.md` §My
     environment and the vault's entry note record when it is created.
 
-  So the gate notifies from its first day, and S14's alert is verified in 2a. The Mac's alerts come
-  with 2b's menu bar (Dan, 2026-10-07).
+  ~~So the gate notifies from its first day, and S14's alert is verified in 2a. The Mac's alerts
+  come with 2b's menu bar (Dan, 2026-10-07).~~ *(2026-10-14, Dan's decision: ntfy optional, moving
+  with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. This item moves to Phase 5, NAS
+  and backups, below, since it needs a Synology homelab setup Dan isn't ready for yet, and 2a
+  finishes without it: the stack runs without ntfy (*Visibility and notifications*), and S14's
+  alert, like every 2a scenario's phone alert, is verified in Phase 5. The Mac's alerts move there
+  too, from 2b.)*
 - [Dan] `make bootstrap` again, for 2a's users and permissions: `spark-front` and `spark-pull`, and
   the secret files `0600 root:root`. Then the client keys' digests, made with a sudo one-liner that
   shows no key. *(Added after the re-review:)* the existing Hugging Face cache moves to
@@ -1628,7 +1677,9 @@ council, with Dan's fourteen decisions (Revisions).*
   helper, Portainer's stacks today, or plain `docker compose up -d`; the NAS's address, the topic
   names and the tokens arrive as variables it names. 2b's watchdog follows the same pattern.
   Dan's decision, 2026-10-08: they moved into ntfy's own `server.yml` on the NAS, as Marius
-  Hosting's guide keeps it, and the Compose file holds no variable.)*
+  Hosting's guide keeps it, and the Compose file holds no variable.)* *(2026-10-14: done in 2a, as
+  its implementation plan's Task 1, with the runbook `website/how-to/ntfy.md`; both are Phase 5's to
+  use, with the item above.)*
 - [Spark] **the front and the gate** (*The front and the gate*): the front as `spark-front` on the
   socket-activated 127.0.0.1:9100, with the key digests, the route list and its limits; the gate on
   its two socket-activated sockets, with SO_PEERCRED; `local-ai-brake` kept, reading the gate's
@@ -1663,7 +1714,7 @@ council, with Dan's fourteen decisions (Revisions).*
   default, too, unless Dan leaves it until he turns it on, as the council's security review
   suggests. *(Ruled 2026-10-07, with the plan: not in 2a; the Backlog, until Dan asks for it.)*
 - [Spark] `spark status` (requests waiting, recent refusals, the growth owed, the holds,
-  unaccounted memory, `--json`, in *What you see in Phase 2a*'s plain words and layout) · `spark doctor` with the front, the gate, the brake and ntfy, a
+  unaccounted memory, `--json`, in *What you see in Phase 2a*'s plain words and layout) · `spark doctor` with the front, the gate, the brake and ntfy (its ntfy line a warning, *not set up*, until Phase 5: 2026-10-14), a
   check for each of 2a's scenarios, doctor's version-drift checks, and the rendered llama-swap
   config checked against v257's embedded schema (both from Phase 1's close) · `make apply`'s diff,
   quiet wait, deadline and drain, and `make apply-now` (*Deploy workflow*).
@@ -1673,8 +1724,8 @@ council, with Dan's fourteen decisions (Revisions).*
   accounts for its growth in `MemAvailable`, which *owed* relies on (added after the re-review;
   after the final re-review, its anonymous RSS, `RssAnon`, compared with `MemAvailable`'s fall and
   with `nvidia-smi`'s per-process figure).
-- [Spark] **the coder** (Dan, 2026-10-07): Qwen3.8-27B replaces Qwen3.6-35B-A3B, by Phase 5's route
-  A — llama.cpp b11146 as deployed, Unsloth's GGUF, MTP. The repo is `unsloth/Qwen3.8-27B-GGUF`, at
+- [Spark] **the coder** (Dan, 2026-10-07): Qwen3.8-27B replaces Qwen3.6-35B-A3B, by ~~Phase 5's~~
+  Phase 4's route A — llama.cpp b11146 as deployed, Unsloth's GGUF, MTP. The repo is `unsloth/Qwen3.8-27B-GGUF`, at
   revision `4ca720788d1e01f1bff70c033e0d0028fd02e502` (last modified 2026-08-20, so past the
   seven-day rule), and the file `Qwen3.8-27B-UD-Q4_K_XL.gguf` (17.6 GB): Dan's pick, speed first,
   since a dense model is bound by memory bandwidth here. Its header: architecture `qwen35`, 65
@@ -1704,10 +1755,10 @@ council, with Dan's fourteen decisions (Revisions).*
     default" means for real work, Dan's and `agent`'s first real tasks with it, which come after
     these. Both pis list it from the swap on, since `make clients` follows the pull, as below, so
     these measurements run in pi.)*
-  - **Route A's speed** — decode, time to first token and prefill, in pi, in Phase 5's order — is
-    recorded against Phase 5's table. Its reported decode is 15–27 tok/s, against today's coder's
-    93 measured; Dan accepts the trade, with route B (38–50 reported) in 2c and routes C and D in
-    Phase 5.
+  - **Route A's speed** — decode, time to first token and prefill, in pi, in ~~Phase 5's~~ Phase
+    4's order — is recorded against ~~Phase 5's~~ Phase 4's table. Its reported decode is 15–27
+    tok/s, against today's coder's 93 measured; Dan accepts the trade, with route B (38–50
+    reported) in 2c and routes C and D in ~~Phase 5~~ Phase 4.
   - Qwen3.6-35B-A3B leaves the registry, and its files stay on disk. The swap runs in *Deploy
     workflow*'s order: apply, then the pull, then `make clients`.
 - [Spark] **the page-cache drill,** before the coder becomes the default (for real work, as above;
@@ -1743,11 +1794,22 @@ council, with Dan's fourteen decisions (Revisions).*
   stops at the reserve: Dan's decision, 2026-10-07); the brake's timings, `MemAvailable`'s lag, swap
   (down to 24 GiB available) and
   earlyoom's order are recorded; and route A's decode, time to first token and prefill are recorded
-  against Phase 5's table.
+  against ~~Phase 5's~~ Phase 4's table. *(2026-10-14, Dan's decision: ntfy optional, moving with
+  the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Phone alerts are no longer a 2a item:
+  the scenarios above are verified without them, each page saying its phone alerts are checked in
+  Phase 5, and 2a's stack runs without ntfy, `spark status` and `make doctor` saying it isn't set
+  up.)*
 
 **Phase 2b — Visibility**
 
-- [Dan] the watchdog on the Synology, beside 2a's ntfy (S13).
+*(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
+NAS phase now 5.)* The watchdog on the Synology (S13) and ntfy's alerts on the Mac both depend on
+ntfy, so **they move to Phase 5 with it**, rather than wait in 2b for it: the watchdog is Synology
+work like ntfy's own, and the Mac's subscriber needs ntfy's server to subscribe to. The menu bar
+stays in 2b, and with it S13's *unreachable* on the Mac. The items below are struck where they
+moved.
+
+- ~~[Dan] the watchdog on the Synology, beside 2a's ntfy (S13).~~ (Phase 5, 2026-10-14.)
 - [Mac] the SwiftBar menu bar, polling `spark status --json` over SSH · harness hooks on the Mac,
   which live beside Orca's status hooks, which Orca rewrites at each start (from Orca on the Mac,
   2026-09-28).
@@ -1760,25 +1822,28 @@ council, with Dan's fourteen decisions (Revisions).*
   output to the journal, only after a check that covers speech shows what it would keep (from Phase
   1's close) · pi 0.87.1 for `agent` after a deliberate test (from Phase 1's close; placed here,
   with `agent`'s hooks).
-- *Added 2026-10-07, after 2a's council:* [Mac] ntfy's alerts on the Mac, with the menu bar (Dan's
+- *Added 2026-10-07, after 2a's council:* ~~[Mac] ntfy's alerts on the Mac, with the menu bar (Dan's
   decision; the council's toolstack review suggests the ntfy CLI as a launchd agent, which needs no
-  HTTPS and no relay) · [Spark] `agent`'s hooks post through the gate's status socket, or with a
-  publish-only token on a topic of their own · `agent`'s GPU jobs' OOM score here only if 2a's test
+  HTTPS and no relay)~~ (Phase 5, 2026-10-14) · [Spark] `agent`'s hooks post through the gate's
+  status socket, or with a publish-only token on a topic of their own (what they post reaches a
+  phone or the Mac from Phase 5) · `agent`'s GPU jobs' OOM score here only if 2a's test
   as `agent` fails · llama-swap v259 or later weighed with the journal question, since it can send
   each of its log streams to the journal apart (the toolstack review) · S06's drill runs its GPU
   step longer than the 60-minute idle time, or with the idle time lowered for the drill, and is
   seen to fail once without the hook: at 40 minutes it would pass with the hook broken.
-- *Scenarios:* S06, S12, S13, and S01's menu-bar part.
-- *Done when:* S06, S12, S13 and S01's menu-bar part are verified.
+- *Scenarios:* S06, S12, ~~S13,~~ and S01's menu-bar part, and S13's *unreachable* on the menu bar.
+- *Done when:* S06, S12, ~~S13~~ and S01's menu-bar part are verified, and the menu bar says
+  *unreachable* when the Spark doesn't answer. *(2026-10-14: S13 moves to Phase 5 with the
+  watchdog.)*
 
 **Phase 2c — The lab**
 
 - [Spark] `spark try`, `spark promote` and `spark forget`, with the lab instance (S11) · then
   Qwen3.8-27B's route B, DFlash2 on llama.cpp, as the speed step after 2a's route A; routes C and D
-  stay in Phase 5. (Until 2026-10-07, routes A and B were both to run on `spark try` here: Dan,
+  stay in ~~Phase 5~~ Phase 4. (Until 2026-10-07, routes A and B were both to run on `spark try` here: Dan,
   2026-10-05.) Qwen3.6-35B-A3B can come back here as a trial.
-- *Added 2026-10-07, after 2a's council (the session's rulings):* route B is measured in Phase 5's
-  order, decode and time to first token in pi, then quality per GB, then long context; whether it
+- *Added 2026-10-07, after 2a's council (the session's rulings):* route B is measured in ~~Phase
+  5's~~ Phase 4's order, decode and time to first token in pi, then quality per GB, then long context; whether it
   becomes the coder is 2c's call, with those measurements. S11's trial note is written on the Spark,
   shown in `spark status`, and filed in the vault by Dan, since the vault isn't reachable from the
   Spark. The lab instance's ports sit below 1024 too. *(Noted after the implementation plan's
@@ -1837,15 +1902,14 @@ huggingface_hub with network access, matters most.)*
   listener beyond loopback. Keys then reload without a restart: since 2a they live in a private file
   the front and the gate read at start, which this phase makes reloadable.)*
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
+  *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5: ntfy now comes after this phase, so S04's, S10's and S16's notifications
+  can't reach the phone here. Their phone parts are checked in Phase 5, with 2a's; this phase's
+  plan says how each alert shows until then, `spark status` and `make doctor` as in 2a, and
+  whether Postgres or LiteLLM down needs types of their own, 2a's deferred M-11.)*
 
-**Phase 4 — NAS and backups**
-
-- [Dan] Synology exports (read-only data and recordings, read-write work folders, root squash, the
-  wired address) + immutable snapshots + the non-admin rsync account.
-- [Spark] systemd automounts · nightly backups · one restore test.
-- *Done when:* S15 and S18 are verified.
-
-**Phase 5 — Model bake-off, clients, Claude Code docs**
+**Phase 4 — Model bake-off, clients, Claude Code docs** *(~~Phase 5~~ until 2026-10-14, Dan's decision:
+Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
 
 - [Spark] coders: Qwen3.8-27B (its four routes, below; until 2026-10-05 this said "GGUF + MTP; vLLM
   FP8/NVFP4 only if needed"), Laguna-S-2.1, gpt-oss-120b
@@ -1919,13 +1983,46 @@ huggingface_hub with network access, matters most.)*
     cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
     `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
     would need an SGLang engine with its own option allowlist.
+- *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5.)* **Disk
+  first:** the bake-off's large files — gpt-oss-120b, the BF16 reference for KLD (55.6 GB), the
+  NVFP4 checkpoints — need planning on the 1 TB NVMe, which the weights, the Hugging Face cache and
+  the container images share, before any is pulled. With the NAS phase now after this one, cold
+  storage for weights on the Synology stays a Backlog item.
 - [Mac] those client configs installed on the Mac · the `spark-endpoints` skill for
   chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
   are in the vault; the docs are updated.
 
+**Phase 5 — NAS and backups** *(~~Phase 4~~ until 2026-10-14, Dan's decision: Phases 4 and 5 swapped,
+the bake-off now 4 and the NAS 5; the NAS settings come after the bake-off and the client work, as
+Dan settles what is running)*
+
+- [Dan] Synology exports (read-only data and recordings, read-write work folders, root squash, the
+  wired address) + immutable snapshots + the non-admin rsync account.
+- [Spark] systemd automounts · nightly backups · one restore test.
+- *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
+  the NAS phase now 5.)* **ntfy, and what needs it,** moved here, since it needs the Synology
+  homelab setup this phase does:
+  - [Dan] **ntfy on the Synology**, as Phase 2a planned it: its implementation plan's Task 2, with
+    the runbook [`website/how-to/ntfy.md`](../how-to/ntfy.md) as written and the Compose file 2a's
+    Task 1 built — the NAS on the tailnet and its grant, the phone, a publish-only token per
+    publisher, and the private values file. The gate, the brake and the failure notifier, built in
+    2a and running without ntfy, then send to the phone with no code change, once the gate and the
+    brake restart to read the new files.
+  - The 2a drills' notification checks (that plan's Tasks 48–50): each alert S01, S02, S03, S05, S14
+    and S17 name, on the phone, word for word, at its priority; quiet hours; one failure alert per
+    unit per 5 minutes through a crash loop; and ntfy's rate limit against the gate's queue.
+  - [Dan] the watchdog on the Synology (S13), from 2b, with its *box unreachable* type, and an SSH
+    route to the front's and the gate's health from off the box (2a's deferred notes, M-4 and M-6).
+  - [Mac] ntfy's alerts on the Mac, from 2b: the ntfy CLI as a launchd agent, which needs no HTTPS
+    and no relay (the council's toolstack review), with read tokens and a priority filter across
+    the three topics (M-5).
+- *Scenarios (2026-10-14):* S13, S15, S18, and the phone alerts of 2a's scenarios.
+- *Done when:* S15 and S18 are verified. *(Added 2026-10-14:)* S13 is verified, and the 2a
+  scenarios' phone alerts are checked on the phone, each page's dated note marked done.
+
 **Phase 6 — Other people: family over Tailscale, guests at events** (designed 2026-10-07; needs
-Phases 2, 3 and 5)
+Phases 2, 3 and ~~5~~ 4, the bake-off, renumbered 2026-10-14)
 
 - *Family and friends, from anywhere (Dan's dad, say).* Tailscale node sharing puts only the Spark
   into their own tailnet; the ACL grants shared-in users the web UI's port 443 and LiteLLM's port,
@@ -2331,7 +2428,8 @@ Each item gets its own design pass when its turn comes.
   day, with around 7,000 open issues. Its hooks went into `~/.claude/settings.json` on 2026-09-24
   and its pi extensions on 2026-09-28, before this repo recorded either.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
-  per-app keys exist); Open WebUI chat history isn't backed up until Phase 4; the web UI is out of
+  per-app keys exist); Open WebUI chat history isn't backed up until ~~Phase 4~~ Phase 5 (the NAS
+  phase, renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped); the web UI is out of
   reach over WireGuard; agents started from Orca stop when the Mac does (Dan, 2026-09-28).
 
 ## Revisions
@@ -3411,6 +3509,44 @@ Each item gets its own design pass when its turn comes.
     - `[DONE]` for chat and completions;
     - `message_stop` for `/v1/messages`;
     - `response.completed` for `/v1/responses`.
+- **2026-10-14** — Phases 4 and 5 swapped, by renumbering (Dan's decision). The model bake-off,
+  clients and Claude Code docs become **Phase 4**, and NAS and backups **Phase 5**: the NAS settings
+  come after the bake-off and the client work, as Dan settles what is running. Every Revisions line
+  before this one, and every other dated record (`changelog.md`, the phase retrospectives, Phases 0
+  and 1's plans, the councils' records), keeps the old numbers: read *Phase 4* there as the NAS
+  phase and *Phase 5* as the bake-off. Current text carries the new numbers, the old struck beside
+  them, with a dated note: *Requirements* (Orca, Models), *Components* (vLLM), rule 1, the Phases
+  section (2a's coder and done-when, 2c's routes, the two phases themselves, now in their new order,
+  and Phase 6's dependency), and *Accepted gaps*; the scenario pages' `phase:` follows (S19 to 4,
+  S15 and S18 to 5), as do the architecture page, `README.md`, `website/how-to/spark-session.md` and
+  the implementation plan's Task 44, its done-when and its notes for later phases. The bake-off, now
+  4, gains one line: its large
+  files need disk planning on the 1 TB NVMe, and the NAS's cold storage for weights stays in the
+  Backlog.
+- **2026-10-14** — ntfy optional, moving with the NAS phase (Dan's decision). ntfy needs a Synology
+  homelab setup Dan isn't ready for yet, so setting it up, Phase 2a's implementation plan's Task 2,
+  moves to Phase 5, NAS and backups, with the watchdog on the Synology (S13) and ntfy's alerts on
+  the Mac, both from 2b; the menu bar stays in 2b. Phase 2a finishes without ntfy, and the stack runs
+  without it then and whenever ntfy is away later: the gate already serves without it (2a's Task
+  19); the gate's, the failure notifier's and the brake's units start without the values file or
+  the token files (`EnvironmentFile=-`, and `SetCredential=` as `LoadCredential=`'s default, checked
+  on the box's systemd 255); the failure notifier and the brake's own alert send nothing,
+  successfully, and say so in the journal; `spark status` shows *ntfy not set up (Task 2, Phase 5)*
+  and `make doctor` the same as a warning. Until Phase 5 no alert leaves the box: what they report
+  shows only in `spark status` and `make doctor`, and from 2b on the Mac's menu bar. Phone alerts
+  leave 2a's done-when; the drills' notification checks move to Phase 5. Two built texts that say the
+  phone has the alert (`gate_down`'s and `llama_swap_down`'s refusals, and the notifications page's
+  opening) wait for the controller's words, which 2a's Task 29 puts in. Phase 3, now before ntfy,
+  can't send S04's, S10's or S16's alerts to the phone, and its plan says how they show until
+  Phase 5. Dated notes are in *Request flow*, *Components* (the ntfy row), *Visibility and
+  notifications* and *What you see in Phase 2a* (the table of where Dan looks, the two refusals,
+  the failure notifier's types), and the Phases section (2a, 2b, 3's done-when, 5); in the
+  implementation plan's description, Goal, Architecture, Tech Stack, Progress note, Global
+  Constraints, Review Focus, file table, Tasks 1, 2, 19, 23, 25–27, 29, 33, 35–38 and 48–51, its
+  done-when, *How the command blocks were checked* and its notes for later phases; in [Phase 2a —
+  questions and answers](phase-2a-qa.md); on the S01–S05, S10, S12, S13, S14 and S16 scenario pages
+  (S13 to `phase: 5`); on the architecture page (ntfy, its alerts and the watchdog labelled Phase
+  5); in the ntfy runbook's opening and §8; and in the how-to index.
 
 ## Sources
 

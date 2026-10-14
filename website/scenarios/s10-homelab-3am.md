@@ -9,7 +9,10 @@ status: planned
 
 **What happens.** It loads under the same rule as my own requests, and idle-unloads after 30
 minutes. Notifications for this are low priority and stay quiet at night. *(Corrected 2026-10-07:
-an on-demand model idle-unloads after 60 minutes from Phase 2a, Dan's decision.)*
+an on-demand model idle-unloads after 60 minutes from Phase 2a, Dan's decision.)* *(2026-10-14,
+Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now
+5: the notifications reach my phone only once ntfy is set up, in Phase 5, after this page's Phase
+3.)*
 
 **What I see.** Nothing, unless I go looking.
 
