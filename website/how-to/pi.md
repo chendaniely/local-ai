@@ -52,7 +52,8 @@ make clients
 
 It writes the provider into `~/.pi/agent/models.json` and leaves every other provider there as it
 was. The previous file, if there was one, is kept as `models.json.bak`, and the line `make clients`
-prints says which.
+prints says which. *(Since 2026-10-14 `make clients` also writes the `spark` provider for opencode and Hermes:
+[opencode and Hermes on the Mac](opencode-hermes.md). `make clients-pi` writes pi's alone.)*
 
 **On the Mac**, in a spare terminal, from your clone, open the tunnel and leave it open. Ctrl-C
 closes it.

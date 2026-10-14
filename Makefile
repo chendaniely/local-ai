@@ -76,8 +76,19 @@ logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|sear
 tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 (Ctrl-C closes it)
 	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
 
-clients: ## Add the Spark provider to pi on this machine
+clients: ## Add the Spark provider to all clients on this machine (pi, opencode, hermes)
 	$(SPARK) clients pi --write
+	$(SPARK) clients opencode --write
+	$(SPARK) clients hermes --write
+
+clients-pi: ## Add the Spark provider to pi only
+	$(SPARK) clients pi --write
+
+clients-opencode: ## Add the Spark provider to OpenCode only
+	$(SPARK) clients opencode --write
+
+clients-hermes: ## Add the Spark provider to Hermes only
+	$(SPARK) clients hermes --write
 
 doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor
