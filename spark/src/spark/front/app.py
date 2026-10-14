@@ -32,14 +32,16 @@ doesn't come in time.
      inside" it, as this first said.
 7. **The model**, by its name or one of its roles, in the current model list (parse.ModelList): 404
    `model_not_found` naming the models, on-demand first, then the residents, each in the list's order.
-8. **A model not loaded** waits for the gate's admission, within the key's waiting cap (429 past it), its deadline
+8. **An upload** (a form) goes on only while fewer than UPLOADS_AT_ONCE are forwarded or waiting for a load,
+   front-wide; past that, 429 `uploads_busy`, never forwarded. It takes its slot here, before the gate is asked, so
+   one the cap refuses never waits for a load first (the controller's ruling, at Task 21's review). llama-swap v257
+   reads every POST body whole into memory before its per-model limit applies (internal/swaputil/http.go:542), so
+   each 200 MiB upload forwarded costs it about 200 MiB of the unified pool (the controller's ruling, at Task 20's
+   review). A JSON body needs no such cap: the front holds each one it forwards, within its body budget, until its
+   request ends, so llama-swap's copies are within that budget too.
+9. **A model not loaded** waits for the gate's admission, within the key's waiting cap (429 past it), its deadline
    when the front received the request plus the key's wait; the gate's refusal goes to the client as the gate words
    it, with its status and headers.
-9. **An upload** (a form) goes on only while fewer than UPLOADS_AT_ONCE are forwarded, front-wide; past that, 429
-   `uploads_busy`, never forwarded. llama-swap v257 reads every POST body whole into memory before its per-model limit
-   applies (internal/swaputil/http.go:542), so each 200 MiB upload forwarded costs it about 200 MiB of the unified
-   pool (the controller's ruling, at Task 20's review). A JSON body needs no such cap: the front holds each one it
-   forwards, within its body budget, until its request ends, so llama-swap's copies are within that budget too.
 10. **Forwarded, rebuilt** (upstream.Upstream): to the route's own path, without the query; the client's headers less
    its credentials, its framing, the hop-by-hop ones and the addresses it may claim (parse.clean_headers), with the
    front's own Content-Type for the body it rebuilt: the JSON re-serialized, the form re-encoded, at each send, so a
@@ -120,8 +122,10 @@ JSON = (b"content-type", b"application/json")
 # The 500's: OpenAI's SDKs retry any 5xx unless told, so a deterministic error of the front's would be sent again (the
 # controller's ruling, at Task 20's review). pi's own retry still matches the status.
 NO_RETRY = (b"x-should-retry", b"false")
-# The uploads forwarded at once, front-wide: llama-swap v257 holds each whole in memory, up to MAX_BODY_BYTES, so at
-# most 800 MiB of the unified pool; whisper transcribes one at a time, so more at once would only wait in llama-swap.
+# The uploads forwarded at once, or waiting for a load, front-wide. llama-swap v257 reads each forwarded upload whole
+# into memory (internal/swaputil/http.go:542), up to MAX_BODY_BYTES, so they hold at most about 800 MiB of the unified
+# pool in llama-swap. v257 passes them on to whisper-server, up to its per-model limit; what whisper-server holds of the
+# ones it hasn't reached yet isn't measured (the controller's ruling, at Task 21's review).
 UPLOADS_AT_ONCE = 4
 UPLOADS_BUSY_CODE = "uploads_busy"
 UPLOADS_RETRY_AFTER_S = 30
@@ -139,7 +143,8 @@ _log = logging.getLogger(__name__)
 def uploads_busy(at_once: int) -> parse.Refused:
     """429: the front is already forwarding `at_once` uploads, the most it sends llama-swap at once."""
     return parse.Refused(429, UPLOADS_BUSY_CODE, f"The front is already sending {at_once} uploads on to the model "
-                         "service, the most it sends at once; try again in a minute.", UPLOADS_RETRY_AFTER_S)
+                         f"service, the most it sends at once; try again in {UPLOADS_RETRY_AFTER_S} seconds.",
+                         UPLOADS_RETRY_AFTER_S)
 
 
 class KeyListError(ValueError):
@@ -302,48 +307,68 @@ class FrontApp:
                                                                models=self._listed()))
                 return
             request.model, request.entry = entry["name"], entry
-            if not await self.gate.loaded(entry["name"]):
-                refused = await self._wait_for_load(entry["name"], request)
-                if refused is not None:
-                    await self._refuse(send, request, refused)
-                    return
         if request.form is None:
-            await self._forward(method, path, sent_headers, receive, send, request)
+            await self._admitted(method, path, sent_headers, receive, send, request)
             return
+        # An upload takes its slot before the gate is asked, so one the cap refuses never waits for a load, or starts
+        # one, first; one waiting for its load holds its slot (the controller's ruling, at Task 21's review).
         if self.uploading >= self.uploads_at_once:
             await self._refuse(send, request, uploads_busy(self.uploads_at_once))
             return
         self.uploading += 1  # nothing awaits between the check and the take: one event loop
         try:
-            await self._forward(method, path, sent_headers, receive, send, request)
+            await self._admitted(method, path, sent_headers, receive, send, request)
         finally:
             self.uploading -= 1
+
+    async def _admitted(self, method: str, path: str, headers: parse.Headers, receive, send,
+                        request: _Request) -> None:
+        """A request for a model the gate says isn't loaded waits for its admission (_wait_for_load), then is
+        forwarded; one for a loaded model, or with no model (`GET /v1/models`), is forwarded at once."""
+        if request.model is not None and not await self.gate.loaded(request.model):
+            refused = await self._wait_for_load(request.model, request)
+            if refused is not None:
+                await self._refuse(send, request, refused)
+                return
+        await self._forward(method, path, headers, receive, send, request)
 
     async def _forward(self, method: str, path: str, headers: parse.Headers, receive, send,
                        request: _Request) -> None:
         """The request forwarded and its answer relayed (_relay), counted in flight for its model from here until the
         relay has ended, however it ends; receive() watched beside it, and the relay, with its upstream call,
-        cancelled when the client goes first. An error of the relay's is raised once it has ended."""
+        cancelled when the client goes first. An error of the relay's is raised once it has ended, or, when this
+        task was cancelled meanwhile, logged as one plain line."""
         counted = None if request.model is None else self.inflight.enter(request.model, request.key)
         try:
             relay = asyncio.ensure_future(self._relay(method, path, headers, send, request))
             watch = asyncio.ensure_future(_disconnected(receive))
+            cancelled = False
             try:
                 await asyncio.wait((relay, watch), return_when=asyncio.FIRST_COMPLETED)
-                # uvicorn also gives http.disconnect once the answer is whole: then the relay is only closing.
-                if not relay.done() and not request.complete:
+                # uvicorn also gives http.disconnect once the answer is whole, and a relay that has ended its answer
+                # (whole, cut or with the engine's error) is only closing: neither is a client gone first, and the
+                # close is never cut short (the controller's ruling, at Task 21's review).
+                if not relay.done() and not request.complete and request.ended is None:
                     request.ended = "gone"
                     relay.cancel()
             except BaseException:  # this task cancelled, as by the front's own stop: the relay with it
+                cancelled = True
                 relay.cancel()
                 raise
             finally:
                 watch.cancel()
                 await asyncio.wait((relay, watch))  # the relay's own cleanup closes the upstream answer
+                # Each task's end taken, so asyncio never reports one later as an exception never retrieved, with its
+                # traceback (the controller's ruling, at Task 21's review).
                 if not watch.cancelled():
-                    watch.exception()  # taken, so it is never reported as unretrieved
-            if not relay.cancelled():
-                relay.result()
+                    watch.exception()
+                broke = None if relay.cancelled() else relay.exception()
+                if cancelled and broke is not None:
+                    route = " ".join(request.route)
+                    _log.error("the front's %s broke as it was cancelled: %s at %s", route, type(broke).__name__,
+                               _where(broke))
+            if broke is not None:
+                raise broke
         finally:
             if counted is not None:
                 self.inflight.leave(counted)

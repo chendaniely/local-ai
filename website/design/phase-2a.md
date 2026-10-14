@@ -5451,10 +5451,18 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   - **The upload cap: 4 uploads forwarded at once, front-wide** (`app.UPLOADS_AT_ONCE`). That
     is at most 800 MiB of the pool in llama-swap, and whisper transcribes one at a time anyway.
     The fifth gets a 429, code `uploads_busy`, `Retry-After: 30`: *The front is already sending
-    4 uploads on to the model service, the most it sends at once; try again in a minute.* It is
-    refused after its form is read and before it is forwarded, since only a forwarded upload
-    costs llama-swap memory. A JSON body needs no cap: the front holds each one it forwards,
-    within its body budget, until its request ends.
+    4 uploads on to the model service, the most it sends at once; try again in ~~a minute~~ 30
+    seconds.* ~~It is refused after its form is read and before it is forwarded, since only a
+    forwarded upload costs llama-swap memory.~~ A JSON body needs no cap: the front holds each
+    one it forwards, within its body budget, until its request ends. *(Corrected 2026-10-14, the
+    controller's rulings, at Task 21's review:)*
+    - The words say what `Retry-After` says: 30 seconds, not a minute.
+    - An upload is refused after its form is read and before the gate is asked for a load. It
+      takes its slot there, so one the cap would refuse never waits for a whisper load, or starts
+      one, first. An upload waiting for its load holds its slot, so at most 4 uploads are
+      forwarded or waiting at once.
+    - The 800 MiB is what llama-swap holds. v257 passes the uploads on to whisper-server, up to
+      its per-model limit, and what whisper-server holds of them isn't measured.
   - **llama-swap giving no answer** (no connection, or one closed before the head) is a 502 of
     the front's own until Task 22 asks the gate: code `llama_swap_unreached`, *The front
     couldn't reach the model service on the Spark. On the Spark, `make logs s=llama-swap` shows
@@ -5467,9 +5475,13 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   - **One logging setup for both services.** `serve.configure_logging` now holds the gate's
     setup, `QuietUvicorn` and `quiet_http_loggers`, which `spark gate` and `spark front` both
     call. The front imports no module of the gate's. `notify.quiet_http_loggers` is the same
-    function. The journal lines go out under the `spark.front` logger. Each cut also leaves
+    function. The journal lines go out under the `spark.front` logger. ~~Each cut also leaves
     uvicorn's own fixed line, *ASGI callable returned without completing response.*, beside the
-    front's `cut`.
+    front's `cut`.~~ *(Corrected 2026-10-14, the controller's ruling, at Task 21's review:)* the
+    front's own setup (`front.main.configure_logging`) drops that line too, since the front ends
+    a response unfinished on purpose, to pass a cut on, and its own line says `cut`. The gate
+    keeps the line, where it would flag a bug. Both keep *ASGI callable returned without starting
+    response.*, which is a bug in either.
   - **The chunked form through the real v257, checked.** A private v257 binary on a scratch
     port was given the front's own upload path (`encode_form` through `Upstream`) and a
     stand-in engine. It took the chunked multipart form, a 3 MiB spooled part included,
@@ -5623,6 +5635,11 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
       its requests in flight finish, then `unloaded`; for one `stopping` or gone, `unloaded`, which
       releases the hold. The front never undrains on its own, and the sent-unload rule (Task 16)
       holds. Its test: a held model released by `unloaded` after the gate's damaged start.
+- *(Added 2026-10-14, the controller's ruling, at Task 21's review:)* **The upload cap comes
+  before admission.** Task 21's app takes an upload's slot (`app.UPLOADS_AT_ONCE`) before it asks
+  the gate, so an upload the cap would refuse never waits for a whisper load, or starts one,
+  first. GateLink's admission path keeps that order, and the slot stays held while the upload
+  waits.
 - *(Added 2026-10-08, the controller's rulings, at Task 20's review:)*
   - **A resend rebuilds the form.** `parse.encode_form`'s body iterator can be used only once. So
     "forwarded again from the held body" (llama-swap's 500 `exited prematurely`, a refused

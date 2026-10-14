@@ -19,9 +19,10 @@ awaited once every server has stopped.
 **Logging** (configure_logging), which each service sets before it serves: its lines on stderr, which the journal
 takes; on uvicorn's, no traceback, whose exception's text code can build from a request (`int()` of a header quotes
 it), and none of the "Unsupported upgrade request" warnings any local process can cause, `ws="none"` turning every
-upgrade down (Task 9); and httpx's and httpcore's request lines quieted, which carry ntfy's topic and host in the
-gate, and llama-swap's address in both (quiet_http_loggers). It was the gate's (Task 19), and moved here when the
-front came to need the same (Task 21), since the front imports no module of the gate's."""
+upgrade down (Task 9), nor any line the service names itself (the front's, Task 21's review); and httpx's and
+httpcore's request lines quieted, which carry ntfy's topic and host in the gate, and llama-swap's address in both
+(quiet_http_loggers). It was the gate's (Task 19), and moved here when the front came to need the same (Task 21),
+since the front imports no module of the gate's."""
 
 from __future__ import annotations
 
@@ -46,16 +47,21 @@ _HANDLER_MARK = "_spark_service"  # the stderr handler configure_logging adds, o
 
 
 class QuietUvicorn(logging.Filter):
-    """On uvicorn's lines: no traceback, and none of the upgrade warnings any local process can cause. Its other lines
-    are fixed text, or a startup's error, never a request's content."""
+    """On uvicorn's lines: no traceback, and none of the upgrade warnings any local process can cause, nor the lines a
+    service names in `also` (the front's, Task 21). Its other lines are fixed text, or a startup's error, never a
+    request's content."""
 
     DROPPED = ("Unsupported upgrade request.", "No supported WebSocket library detected")
+
+    def __init__(self, also: tuple[str, ...] = ()):
+        super().__init__()
+        self.dropped = self.DROPPED + tuple(also)
 
     def filter(self, record: logging.LogRecord) -> bool:
         if not record.name.startswith("uvicorn"):
             return True
         message = str(record.msg)
-        if message.startswith(self.DROPPED):
+        if message.startswith(self.dropped):
             return False
         record.exc_info = record.exc_text = record.stack_info = None
         record.msg = message.rstrip("\n")  # "Exception in ASGI application\n", its traceback gone
@@ -72,21 +78,30 @@ def quiet_http_loggers() -> None:
             logger.setLevel(logging.WARNING)
 
 
-def configure_logging() -> None:
-    """A service's logging, before it serves: INFO and up on stderr, uvicorn's lines filtered (QuietUvicorn),
-    httpx's and httpcore's quieted (quiet_http_loggers). Called again, it adds nothing."""
+def configure_logging(*, also_dropped: tuple[str, ...] = ()) -> None:
+    """A service's logging, before it serves: INFO and up on stderr, uvicorn's lines filtered (QuietUvicorn), those
+    in `also_dropped` too, and httpx's and httpcore's quieted (quiet_http_loggers). Called again, it adds no handler
+    or filter, only the lines it is given to drop."""
     root = logging.getLogger()
-    if not any(getattr(handler, _HANDLER_MARK, False) for handler in root.handlers):
+    handler = next((each for each in root.handlers if getattr(each, _HANDLER_MARK, False)), None)
+    if handler is None:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
         setattr(handler, _HANDLER_MARK, True)
-        handler.addFilter(QuietUvicorn())  # a uvicorn logger below uvicorn.error is filtered here too
         root.addHandler(handler)
     root.setLevel(logging.INFO)
-    uvicorn_error = logging.getLogger("uvicorn.error")
-    if not any(isinstance(each, QuietUvicorn) for each in uvicorn_error.filters):
-        uvicorn_error.addFilter(QuietUvicorn())
+    _quiet(handler, also_dropped)  # a uvicorn logger below uvicorn.error is filtered here too
+    _quiet(logging.getLogger("uvicorn.error"), also_dropped)
     quiet_http_loggers()
+
+
+def _quiet(target: logging.Filterer, also: tuple[str, ...]) -> None:
+    """`target` with one QuietUvicorn, which drops `also` as well as what it dropped before."""
+    for each in target.filters:
+        if isinstance(each, QuietUvicorn):
+            each.dropped = tuple(dict.fromkeys((*each.dropped, *also)))
+            return
+    target.addFilter(QuietUvicorn(also))
 
 
 class QuietServer(uvicorn.Server):

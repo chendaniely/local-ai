@@ -11,7 +11,9 @@ stand-in; none was read from the box."""
 import asyncio
 import contextlib
 import dataclasses
+import gc
 import json
+import logging
 import os
 import shutil
 import signal
@@ -154,7 +156,8 @@ class Rig:
 
 
 @contextlib.asynccontextmanager
-async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | None = None, **app_options):
+async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | None = None, gate=None,
+              **app_options):
     """The front on a real uvicorn, its Upstream reaching `swap_url`, or the v257 stand-in `fake` (one with every model
     ready, by default), and an httpx client for it with a read timeout well past any silence a test makes."""
     if swap_url is None:
@@ -169,9 +172,9 @@ async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | No
     lines, now = [], [T]
     async with context as url_of_swap:
         forwarder = upstream.Upstream(url_of_swap, INTERNAL)
-        app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder, gate=Loaded(),
-                                 caps=parse.KeyCaps(KEYS, GROUPS), log=lines.append, clock=lambda: now[0],
-                                 spool_dir=spool, **app_options)
+        app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder,
+                                 gate=Loaded() if gate is None else gate, caps=parse.KeyCaps(KEYS, GROUPS),
+                                 log=lines.append, clock=lambda: now[0], spool_dir=spool, **app_options)
         tasks = Tasks(app)
         try:
             async with serve_app(tasks) as url, httpx.AsyncClient(base_url=url, trust_env=False,
@@ -179,6 +182,66 @@ async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | No
                 yield Rig(app, tasks, fake, url_of_swap, url, lines, now, client)
         finally:
             await forwarder.aclose()
+
+
+def nothing_listening() -> str:
+    """A URL on 127.0.0.1 where nothing listens: a port the system gave this test, then closed. Never one of the
+    stack's own (900, 9100, 800 and up, 5800 and up, 3000, 8888), so no test can reach the live llama-swap."""
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{free.getsockname()[1]}"
+
+
+@contextlib.asynccontextmanager
+async def front_with(tmp_path, forwarder, *, gate=None, **app_options):
+    """The front on a real uvicorn, its upstream the stand-in `forwarder`, called as the app calls Upstream; yields
+    (the app, its request tasks, an httpx client for it, its journal lines)."""
+    lines: list[str] = []
+    app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder,
+                             gate=Loaded() if gate is None else gate, caps=parse.KeyCaps(KEYS, GROUPS),
+                             log=lines.append, clock=lambda: T, spool_dir=tmp_path, **app_options)
+    tasks = Tasks(app)
+    async with serve_app(tasks) as url, httpx.AsyncClient(base_url=url, trust_env=False,
+                                                          timeout=httpx.Timeout(15)) as client:
+        yield app, tasks, client, lines
+
+
+class Scripted:
+    """llama-swap's stand-in for the app as Task 20's tests call it: a 200 event stream whose first chunk comes at once
+    and then, 0.05 s later, as `then` says: "break", the body broken off (upstream.Broken), or "wait", nothing more,
+    ever. Its close takes `close_s`, then raises if `close_raises`, else counts itself in `closed`. `reached` is set
+    when it gets to `then`."""
+
+    def __init__(self, then: str = "wait", *, close_s: float = 0.0, close_raises: bool = False):
+        self.then, self.close_s, self.close_raises = then, close_s, close_raises
+        self.reached = asyncio.Event()
+        self.closed = 0
+
+    async def forward(self, method, path, headers, body, key):
+        if body is not None and not isinstance(body, bytes):
+            async for _ in body:  # sent, as httpx sends it
+                pass
+        script = self
+
+        class Response:
+            status = 200
+            headers = [(b"content-type", b"text/event-stream")]
+
+            async def aiter_raw(self):
+                yield DELTA
+                await asyncio.sleep(0.05)
+                script.reached.set()
+                if script.then == "break":
+                    raise upstream.Broken("llama-swap's answer broke off before its end")
+                await asyncio.Event().wait()
+
+            async def aclose(self):
+                await asyncio.sleep(script.close_s)
+                if script.close_raises:
+                    raise RuntimeError("close-marker")
+                script.closed += 1
+
+        return Response()
 
 
 async def first_chunk(response: httpx.Response) -> tuple[bytes, object]:
@@ -509,9 +572,7 @@ def test_in_flight_counts_each_request_once_however_often_it_is_left():
 
 @pytest.mark.anyio
 async def test_llama_swap_not_answering_is_a_502_in_words(tmp_path):
-    with socket.socket() as free:  # a port nothing listens on
-        free.bind(("127.0.0.1", 0))
-        nothing = f"http://127.0.0.1:{free.getsockname()[1]}"
+    nothing = nothing_listening()
 
     async def hang_up(reader, writer):  # takes the request, then closes before any answer: a crash mid-request
         await reader.readuntil(b"\r\n\r\n")
@@ -618,7 +679,7 @@ async def test_a_proxy_in_the_environment_is_never_used(tmp_path, monkeypatch):
 
 
 def test_each_key_has_a_client_of_its_own_and_none_follows_a_redirect():
-    forwarder = upstream.Upstream("http://127.0.0.1:900", INTERNAL)
+    forwarder = upstream.Upstream("http://127.0.0.1:9", INTERNAL)  # never sent to: Upstream is lazy
     dan = forwarder.client("dan-mac")
     assert forwarder.client("dan-mac") is dan and forwarder.client("agent") is not dan
     assert dan.follow_redirects is False and dan.trust_env is False
@@ -627,10 +688,10 @@ def test_each_key_has_a_client_of_its_own_and_none_follows_a_redirect():
 
 def test_a_bad_address_or_key_is_refused_at_start_without_quoting_the_key():
     with pytest.raises(ValueError, match="URL"):
-        upstream.Upstream("ftp://127.0.0.1:900", INTERNAL)
+        upstream.Upstream("ftp://127.0.0.1:9", INTERNAL)
     for bad in ("", "key with spaces-marker", "key-marker\r"):
         with pytest.raises(ValueError) as refused:
-            upstream.Upstream("http://127.0.0.1:900", bad)
+            upstream.Upstream("http://127.0.0.1:9", bad)
         assert "marker" not in str(refused.value)
 
 
@@ -754,7 +815,8 @@ async def test_the_uploads_forwarded_at_once_are_capped(tmp_path):
             assert fifth.json() == {"error": {"message": front_app.uploads_busy(4).message,
                                               "code": front_app.UPLOADS_BUSY_CODE},
                                     "retry_after_s": front_app.UPLOADS_RETRY_AFTER_S}
-            assert fifth.headers["retry-after"] == str(front_app.UPLOADS_RETRY_AFTER_S)
+            assert fifth.headers["retry-after"] == str(front_app.UPLOADS_RETRY_AFTER_S) == "30"
+            assert fifth.json()["error"]["message"].endswith("; try again in 30 seconds.")
             assert len(holding.seen) == 4  # never forwarded
             # A JSON body isn't an upload: the body budget bounds those.
             chat_answer = asyncio.create_task(r.client.post("/v1/chat/completions", json=chat(), headers=auth()))
@@ -773,27 +835,135 @@ async def test_the_uploads_forwarded_at_once_are_capped(tmp_path):
                                                "code": front_app.UPLOADS_BUSY_CODE})) is None
 
 
+class Waits:
+    """The gate's stand-in: no model loaded, and each admit held until `admitted` is set, then answered ok."""
+
+    def __init__(self):
+        self.admits: list[str] = []
+        self.admitted = asyncio.Event()
+
+    async def loaded(self, model: str) -> bool:
+        return False
+
+    async def admit(self, model, key, deadline, request_id):
+        self.admits.append(model)
+        await self.admitted.wait()
+        return {"ok": True, "model": model}
+
+
 @pytest.mark.anyio
-async def test_an_uploads_slot_is_given_back_however_it_ends(tmp_path):
-    holding = Holding()
-    async with serve_app(holding) as url, rig(tmp_path, swap_url=url, uploads_at_once=1) as r:
+async def test_an_upload_past_the_cap_is_refused_before_it_waits_for_a_load(tmp_path):
+    # The slot is taken before the gate is asked, so an upload the cap would refuse never waits for a load, or starts
+    # one, first (the controller's ruling, at Task 21's review). An upload waiting for its load holds its slot.
+    holding, gate = Holding(), Waits()
+    async with serve_app(holding) as url, rig(tmp_path, swap_url=url, gate=gate, uploads_at_once=1) as r:
         body, kind = upload()
+        headers = {**auth(), "content-type": kind}
         with anyio.fail_after(BOUND_S):
-            # The client gone while its upload is forwarded, its answer held upstream.
-            gone = asyncio.create_task(r.client.post("/v1/audio/transcriptions", content=body,
-                                                     headers={**auth(), "content-type": kind}))
-            await until(lambda: len(holding.seen) == 1)
+            first = asyncio.create_task(r.client.post("/v1/audio/transcriptions", content=body, headers=headers))
+            await until(lambda: len(gate.admits) == 1)
             assert r.app.uploading == 1
-            gone.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await gone
-            await until(lambda: r.app.uploading == 0)
-            await until(lambda: r.lines == [f"front: dan-mac {WHISPER} gone 0.0s"])
+            second = await r.client.post("/v1/audio/transcriptions", content=body, headers=headers)
+            assert (second.status_code, second.json()["error"]["code"]) == (429, front_app.UPLOADS_BUSY_CODE)
+            assert gate.admits == [WHISPER]  # the second never asked the gate
+            gate.admitted.set()
+            await until(lambda: len(holding.seen) == 1)
             holding.release.set()
-            answer = await r.client.post("/v1/audio/transcriptions", content=body,
-                                         headers={**auth(), "content-type": kind})
-            assert answer.status_code == 200
+            assert (await first).status_code == 200
             await until(lambda: r.app.uploading == 0)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("way", ["gone", "unreached", "error", "cut", "cancelled"])
+async def test_an_uploads_slot_is_given_back_however_it_ends(tmp_path, way):
+    body, kind = upload()
+    headers = {**auth(), "content-type": kind}
+    holding = Holding()
+    async with contextlib.AsyncExitStack() as stack:
+        if way == "gone":
+            url = await stack.enter_async_context(serve_app(holding))
+            forwarder = upstream.Upstream(url, INTERNAL)
+        elif way == "unreached":
+            forwarder = upstream.Upstream(nothing_listening(), INTERNAL)
+        elif way == "error":
+            forwarder = Raising()
+        else:
+            forwarder = Scripted("break" if way == "cut" else "wait")
+        app, tasks, client, lines = await stack.enter_async_context(front_with(tmp_path, forwarder,
+                                                                                uploads_at_once=1))
+        with anyio.fail_after(BOUND_S):
+            if way == "gone":  # the client gone while its upload is forwarded, its answer held upstream
+                gone = asyncio.create_task(client.post("/v1/audio/transcriptions", content=body, headers=headers))
+                await until(lambda: len(holding.seen) == 1)
+                assert app.uploading == 1
+                gone.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await gone
+            elif way in ("unreached", "error"):
+                answer = await client.post("/v1/audio/transcriptions", content=body, headers=headers)
+                assert answer.status_code == {"unreached": 502, "error": 500}[way]
+            else:  # cut upstream, or the handler's task cancelled as by the front's own stop
+                with pytest.raises(httpx.RemoteProtocolError):
+                    async with client.stream("POST", "/v1/audio/transcriptions", content=body,
+                                             headers=headers) as response:
+                        _, rest = await first_chunk(response)
+                        assert app.uploading == 1
+                        if way == "cancelled":
+                            tasks.tasks[-1].cancel()
+                        async for _ in rest:
+                            pass
+            ended = {"gone": "gone", "unreached": 502, "error": 500, "cut": "cut", "cancelled": "cut"}[way]
+            await until(lambda: lines == [f"front: dan-mac {WHISPER} {ended} 0.0s"])
+            assert app.uploading == 0
+            holding.release.set()
+        if isinstance(forwarder, upstream.Upstream):
+            await forwarder.aclose()
+
+
+# Ways out that end late.
+
+@pytest.mark.anyio
+async def test_an_error_while_a_cancelled_relay_closes_is_one_plain_line(tmp_path, caplog):
+    # The handler's task cancelled while it streams, and the upstream answer's close then raises: the relay's error is
+    # taken and logged as one plain line, by where it broke, so asyncio never logs it later as a task exception never
+    # retrieved, with its traceback.
+    caplog.set_level(logging.DEBUG)
+    forwarder = Scripted("wait", close_raises=True)
+    async with front_with(tmp_path, forwarder) as (app, tasks, client, lines):
+        with anyio.fail_after(BOUND_S):
+            with pytest.raises(httpx.RemoteProtocolError):
+                async with client.stream("POST", "/v1/chat/completions", json=chat(), headers=auth()) as response:
+                    _, rest = await first_chunk(response)
+                    await forwarder.reached.wait()
+                    tasks.tasks[-1].cancel()
+                    async for _ in rest:
+                        pass
+            await until(lambda: lines == [f"front: dan-mac {CODER} cut 0.0s"])
+    gc.collect()
+    await asyncio.sleep(0)
+    assert not [record for record in caplog.records if "never retrieved" in record.getMessage()]
+    [plain] = [record for record in caplog.records if record.name == "spark.front.app"]
+    assert plain.getMessage().startswith("the front's POST /v1/chat/completions broke as it was cancelled: "
+                                         "RuntimeError at ")
+    assert plain.exc_info is None and "close-marker" not in plain.getMessage()
+    assert app.inflight.count(CODER) == 0
+
+
+@pytest.mark.anyio
+async def test_a_cut_stays_a_cut_when_the_client_goes_while_it_closes(tmp_path):
+    # The answer broke off upstream, so the relay has stopped and is closing; a client that goes meanwhile neither
+    # turns the cut into `gone` nor cuts the close short.
+    forwarder = Scripted("break", close_s=0.3)
+    async with front_with(tmp_path, forwarder) as (app, tasks, client, lines):
+        with anyio.fail_after(BOUND_S):
+            async with client.stream("POST", "/v1/chat/completions", json=chat(), headers=auth()) as response:
+                kept = await first_chunk(response)  # kept: a dropped iterator would close the response at once
+                await forwarder.reached.wait()
+                await asyncio.sleep(0.05)  # the relay is in its close, which takes 0.3 s
+                del kept
+            await until(lambda: lines == [f"front: dan-mac {CODER} cut 0.0s"])
+    assert forwarder.closed == 1  # its close ran to its end
+    assert app.inflight.count(CODER) == 0
 
 
 # `spark front`, as systemd starts it.
@@ -884,7 +1054,9 @@ def test_spark_front_refuses_to_start_without_its_socket_or_with_keys_that_disag
     registry = tmp_path / "models.yaml"
     registry.write_text(STACK_REGISTRY.read_text())
     credentials = _credentials(tmp_path / "credentials")
-    common = {"CREDENTIALS_DIRECTORY": str(credentials), "SPARK_REGISTRY": str(registry)}
+    # llama-swap's address on a closed port, so a refusal that stopped refusing could reach nothing live.
+    common = {"CREDENTIALS_DIRECTORY": str(credentials), "SPARK_REGISTRY": str(registry),
+              "SPARK_LLAMASWAP_URL": nothing_listening()}
     wrong = subprocess.run([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
                            pass_fds=[listener.fileno()], env=_environment(LISTEN_FDS="1", LISTEN_FDNAMES="status",
                                                                           **common),
@@ -978,6 +1150,8 @@ def test_the_fronts_logging_setup_quiets_httpx_and_httpcore_and_filters_uvicorn(
         logging.getLogger("uvicorn.error").warning("Unsupported upgrade request.")
         logging.getLogger("uvicorn.error").warning("No supported WebSocket library detected. Please use ...")
         logging.getLogger("uvicorn.error").info("Started server process")
+        logging.getLogger("uvicorn.error").error("ASGI callable returned without completing response.")
+        logging.getLogger("uvicorn.error").error("ASGI callable returned without starting response.")
         # A uvicorn logger below uvicorn.error, which only the handler's filter meets.
         try:
             raise ValueError("EXCEPTION-MARKER-STANDIN")
@@ -993,6 +1167,26 @@ def test_the_fronts_logging_setup_quiets_httpx_and_httpcore_and_filters_uvicorn(
     assert "Started server process" in result.stderr
     assert "Exception in ASGI application" in result.stderr
     assert "EXCEPTION-MARKER-STANDIN" not in result.stderr and "Traceback" not in result.stderr
+    # The front ends a response unfinished on purpose, to pass a cut on, and its own line says `cut`: uvicorn's line
+    # for it is dropped. One that never started is still a bug, and stays (the controller's ruling, Task 21's review).
+    assert "without completing response" not in result.stderr
+    assert "ASGI callable returned without starting response." in result.stderr
+
+
+def test_the_gates_logging_setup_keeps_uvicorns_incomplete_response_line():
+    # The gate never means to leave a response unfinished, so there the line flags a bug.
+    script = textwrap.dedent(
+        """
+        import logging
+        from spark.gate import main
+        main.configure_logging()
+        logging.getLogger("uvicorn.error").error("ASGI callable returned without completing response.")
+        """
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False,
+                            env=_environment())
+    assert result.returncode == 0, result.stderr
+    assert "ASGI callable returned without completing response." in result.stderr
 
 
 # Its modules.

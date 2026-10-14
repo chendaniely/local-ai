@@ -12,9 +12,13 @@ name, `front` (sockets.listen_fds).
 - **The gate.** Until Task 22's GateLink, the front asks no gate: it takes every model for loaded (_NoGateLinkYet), so
   each request is forwarded as for a loaded model, and llama-swap answers. Nothing deploys from this state: Task 22
   comes before the cutover.
-- **Its logging** (configure_logging, serve's, called before anything else): its lines on stderr, which the journal
-  takes; its journal line for each request (parse.journal_line) under `spark.front`; uvicorn's lines without a
-  traceback or the upgrade warnings; httpx's and httpcore's request lines quieted (serve.quiet_http_loggers).
+- **Its logging** (configure_logging, called before anything else: serve's, and one line more): its lines on stderr,
+  which the journal takes; its journal line for each request (parse.journal_line) under `spark.front`; uvicorn's
+  lines without a traceback or the upgrade warnings; httpx's and httpcore's request lines quieted
+  (serve.quiet_http_loggers). And without uvicorn's *ASGI callable returned without completing response.*: the
+  front leaves a response unfinished on purpose, to pass a cut on as a cut, and its own journal line says `cut` (the
+  controller's ruling, at Task 21's review). The gate keeps that line, where it would flag a bug, and both keep
+  *… without starting response.*, which is one here too.
 - **Its stop**: SIGTERM or SIGINT; uvicorn's graceful shutdown, within gateproto.GRACEFUL_S, below the unit's
   TimeoutStopSec=, lets the answers in flight finish and cuts those that outlast it; then each upstream client
   closed.
@@ -32,7 +36,7 @@ from collections.abc import MutableMapping
 
 import yaml
 
-from spark import paths
+from spark import paths, serve
 from spark.credentials import CredentialError, read_credential
 from spark.front import parse
 from spark.front.app import FrontApp, read_keys
@@ -40,7 +44,7 @@ from spark.front.upstream import Upstream
 from spark.gateproto import GRACEFUL_S
 from spark.protocols import make_protocol
 from spark.registry import load_registry
-from spark.serve import configure_logging, run_servers
+from spark.serve import run_servers
 from spark.sockets import FRONT, SocketsError, listen_fds
 
 # The front forwards to llama-swap v257's routes and reads its answers (upstream.py cites the lines).
@@ -49,9 +53,18 @@ TESTED_AGAINST = {"llama-swap": "v257"}
 HEADER_TIMEOUT_S = 10  # a request's head, and a body nobody will read, past which a connection closes (Task 9)
 JOURNAL = "spark.front"  # the logger of the front's journal lines
 LLAMASWAP_KEY_CREDENTIAL = "llamaswap-key"
+# uvicorn 0.54.0 logs this at ERROR when an app returns with its response begun and unfinished (h11_impl.py:430-433),
+# which is how the front passes a cut on.
+INCOMPLETE_RESPONSE = "ASGI callable returned without completing response."
 __all__ = ["configure_logging", "run"]
 _journal = logging.getLogger(JOURNAL)
 _REFUSALS = (SocketsError, CredentialError, ValueError, OSError, yaml.YAMLError)  # KeyListError is a ValueError
+
+
+def configure_logging() -> None:
+    """The front's logging, before it serves: serve.configure_logging's, with uvicorn's INCOMPLETE_RESPONSE line
+    dropped too (the controller's ruling, at Task 21's review). Called again, it adds nothing."""
+    serve.configure_logging(also_dropped=(INCOMPLETE_RESPONSE,))
 
 
 class _NoGateLinkYet:
