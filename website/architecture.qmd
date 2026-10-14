@@ -26,7 +26,7 @@ flowchart TB
     pi_mac["pi"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
-    oc_mac["opencode<br/>Phase 4a"]:::planned
+    oc_mac["opencode, Hermes"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
   end
 
@@ -67,11 +67,12 @@ flowchart TB
 
   orca -- starts --> claude_mac
   orca -- starts --> pi_mac
-  orca -. starts .-> oc_mac
+  orca -- starts --> oc_mac
   claude_mac --> anthropic
   webapp -- "HTTPS over Tailscale" --> tss
   pwa -- "HTTPS over Tailscale" --> tss
   pi_mac -- "SSH tunnel, make tunnel" --> swap
+  oc_mac -- "same tunnel" --> swap
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -147,7 +148,7 @@ flowchart TB
 flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  piT["pi on the Mac<br/>in a terminal or Orca"]
+  piT["pi, opencode or Hermes on the Mac<br/>in a terminal or Orca"]
   ui["web UI<br/>on the Mac or the phone"]
   piA["pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
@@ -184,7 +185,8 @@ flowchart LR
 
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
 beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
-alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
+alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
+Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`). From
 Phase 2a (planned), the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
 inference routes go through: llama-swap's admin routes stay out of every client's reach. From Phase
