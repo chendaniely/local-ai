@@ -493,6 +493,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       under it.
     - A first alert read after its pause ended (no hold stands, or a newer one does: the brake's queue held it back,
       Task 23's re-review) says the brake paused new loads and the pause has since lifted, never that they are paused.
+      One whose `fired` says its hold was never written (`hold_written` false) says the brake couldn't write its
+      pause, so new loads weren't paused (the controller's ruling on Task 23's fix round 2).
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -600,7 +602,9 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
         fields["released_at"] = state.last_auto_release_at
     if reading.falling:  # the rate-of-fall watch acted above the line (Task 23)
         fields["falling"] = True
-    if _pause_lifted(path, (boot, episode)):  # read after its pause ended: never "new loads are paused" now
+    if not reading.hold_written:  # the brake couldn't write its hold: no pause stood, so none lifted either
+        fields["hold_written"] = False
+    elif _pause_lifted(path, (boot, episode)):  # read after its pause ended: never "new loads are paused" now
         fields["lifted"] = True
     if not_unloaded:  # why llama-swap didn't unload these (Task 23)
         fields["not_unloaded"] = not_unloaded

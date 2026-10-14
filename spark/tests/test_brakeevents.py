@@ -250,3 +250,16 @@ def test_a_lock_another_process_holds_is_waited_for_only_so_long(path):
         holder.kill()
         holder.wait()
     assert append_event(path, event(), wait_s=0.1).seq == 1  # free again: it takes it
+
+
+def test_a_fired_records_whether_its_hold_was_written_and_older_lines_read_as_written(path):
+    # The controller's ruling on Task 23's fix round 2: the gate's words for a brake whose hold never reached the disk
+    # must say so, so the fired event carries it; a line written before it reads as written.
+    unwritten = append_event(path, replace(event("fired", model=None, state=None), hold_written=False))
+    assert read_events(path, None) == [unwritten] and unwritten.hold_written is False
+    first = json.loads(path.read_text().splitlines()[0])
+    path.write_text(json.dumps({k: v for k, v in first.items() if k != "hold_written"}) + "\n")
+    (back,) = read_events(path, None)
+    assert back.hold_written is True
+    with pytest.raises(ValueError, match="hold_written"):
+        append_event(path, replace(event("fired", model=None, state=None), hold_written="no"))

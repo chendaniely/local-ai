@@ -775,6 +775,18 @@ def test_a_brake_read_after_its_pause_lifted_says_so(tmp_path, standing):
                          "which was idle; it paused new loads, and the pause has since lifted.")
 
 
+def test_a_brake_whose_hold_was_never_written_never_says_the_pause_lifted(tmp_path):
+    # The controller's ruling on Task 23's fix round 2: no hold stands because the brake couldn't write it, so new
+    # loads weren't paused; the words say so, not that a pause lifted.
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle"))
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
+                                         now=at(3, 12, 2)))
+    assert words == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, "
+                     "which was idle; it couldn't write its pause, so new loads weren't paused. On the Spark, `make "
+                     "logs s=brake` shows why.")
+
+
 def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):
     # Task 23's rate-of-fall watch acts above the line: its first alert says memory was falling toward the line, never
     # that it was under it.

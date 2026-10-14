@@ -1284,6 +1284,31 @@ def test_a_brake_whose_pause_has_since_lifted_never_says_loads_are_paused():
         say("brake_fired", **{**FIRED, "lifted": True, "by_brake": True})
 
 
+def test_a_brake_whose_hold_was_never_written_says_loads_werent_paused():
+    # The controller's ruling on Task 23's fix round 2: when the brake couldn't write its hold, nothing paused new
+    # loads; its alert says so, and where to look, never that loads are paused or that a pause lifted.
+    unloaded = say("brake_fired", **{**FIRED, "hold_written": False})
+    assert unloaded == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, "
+                        "which was loading; it couldn't write its pause, so new loads weren't paused. On the Spark, "
+                        "`make logs s=brake` shows why.")
+    nothing = say("brake_fired", **{**FIRED, "unloaded": [], "hold_written": False, "by_brake": True})
+    assert nothing.endswith("Nothing of the stack's was loaded, so there was nothing to unload; it couldn't write its "
+                            "pause, so new loads weren't paused. On the Spark, `make logs s=brake` shows why.")
+    unanswered = say("brake_fired", **{**FIRED, "unloaded": [], "unload_unanswered": True, "hold_written": False,
+                                       "not_unloaded": [("the coder", "HTTP 401")]})
+    assert unanswered == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; it couldn't write "
+                          "its pause, so new loads weren't paused. It hasn't unloaded anything yet: llama-swap refused "
+                          "its unload of the coder (HTTP 401: the brake's key). On the Spark, `make logs s=brake` "
+                          "shows why.")
+    both = say("brake_fired", **{**FIRED, "hold_written": False, "lifted": True})  # unwritten wins: none ever stood
+    assert both == unloaded
+    for text in (unloaded, nothing, unanswered):
+        assert "are paused" not in text and "since lifted" not in text and messages.pi_retry_match(text) is None
+        assert text.count("make logs s=brake") == 1
+    with pytest.raises(ValueError, match="^brake_fired's hold_written is for a first alert"):
+        say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "hold_written": False})
+
+
 def test_falling_is_for_a_first_alert():
     # A follow-up names no reading, so it can't say memory was falling (Task 23).
     with pytest.raises(ValueError, match="^brake_fired's falling is for a first alert"):

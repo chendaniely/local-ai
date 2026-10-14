@@ -68,6 +68,9 @@ class BrakeEvent:
     # The rate-of-fall watch acted, above the line (Task 23): memory was falling toward the line, not under it. A line
     # written before Task 23 has neither of these two, and reads as no reason and not falling.
     falling: bool = False
+    # A fired's hold reached the disk; False when the brake couldn't write it, so nothing paused new loads (the
+    # controller's ruling on Task 23's fix round 2). A line without it reads as written.
+    hold_written: bool = True
 
 
 def _whole(value: Any, least: int) -> bool:
@@ -98,6 +101,7 @@ def _problem(data: dict[str, Any]) -> str | None:
         "sent_by_brake": isinstance(data.get("sent_by_brake"), bool),
         "reason": data.get("reason") is None or isinstance(data.get("reason"), str),
         "falling": isinstance(data.get("falling", False), bool),
+        "hold_written": isinstance(data.get("hold_written", True), bool),
     }
     wrong = [name for name, ok in checks.items() if not ok]
     return f"not a brake event: {', '.join(wrong)}" if wrong else None
@@ -113,7 +117,7 @@ def _parse(line: bytes) -> BrakeEvent | None:
         return None
     return BrakeEvent(data["seq"], float(data["at"]), data["boot_id"], data["episode"], data["kind"], data["model"],
                       data["state"], float(data["available_gib"]), float(data["line_gib"]), data["sent_by_brake"],
-                      data.get("reason"), data.get("falling", False))
+                      data.get("reason"), data.get("falling", False), data.get("hold_written", True))
 
 
 def _events(data: bytes) -> list[BrakeEvent]:

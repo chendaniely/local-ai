@@ -2048,3 +2048,22 @@ def test_a_firing_poll_writes_the_hold_then_unloads_then_records(box_folders, mo
     assert order[:order.index(f"unload {GEMMA}") + 1] == ["hold", f"unload {GEMMA}"]
     assert order[order.index(f"unload {GEMMA}"):] == [f"unload {GEMMA}", "hold", "gate's state", "journal",
                                                       "step fired", "step unload"]
+
+
+
+def test_a_hold_it_couldnt_write_is_recorded_and_its_alert_says_loads_werent_paused(box_folders, tmp_path,
+                                                                                     monkeypatch):
+    # The controller's ruling on Task 23's fix round 2: the fired event records whether the hold reached the disk, and
+    # the brake's own alert, the gate being down, says new loads weren't paused when it didn't.
+    def full_disk(state_dir, hold):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(brake, "write_hold", full_disk)
+    curl = Curl(finishes_after=0)
+    run_2a(Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False), once=True,
+           alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert [(e.kind, e.hold_written) for e in events(box_folders)] == [("fired", False), ("unload", True)]
+    (child,) = curl.started
+    words = curl_config(child.stdin.data)["data-raw"][0]
+    assert words == first_alert(unloaded=[(LABELS[GEMMA], None)], hold_written=False)
+    assert "couldn't write its pause, so new loads weren't paused" in words and "resume" not in words

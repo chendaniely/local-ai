@@ -839,7 +839,7 @@ class _Brake:
         written = self.write(hold)
         sending = self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "fired", None, None, mem.available_gib, line, sending,
-                               falling=falling))
+                               falling=falling, hold_written=written))
         return _Fired(wall, mem.available_gib, line, hold, falling, sending, written)
 
     def after_fire(self, fired: _Fired, wall: float) -> None:
@@ -1072,7 +1072,8 @@ class _Brake:
         """Task 7's brake_fired, `by_brake`: what this poll's unload did, and why llama-swap didn't unload a model it
         refused (the controller's ruling, at Task 23); or, with none, that nothing of the stack's was loaded, or that
         llama-swap hasn't confirmed its unload; and how the pause ends, by rule 5, from the last automatic release in
-        the gate's saved state."""
+        the gate's saved state, or, with its hold never written, that new loads weren't paused (the controller's ruling
+        on Task 23's fix round 2)."""
         state = fired.saved or load_state(self.gate_state, now=fired.at)[0]  # never raises; damage: release_assumed
         waits = fired.waits
         fields: dict[str, Any] = {
@@ -1080,7 +1081,8 @@ class _Brake:
             "unloaded": list(fired.unloaded), "by_brake": True, "release_waits_for_dan": waits,
             "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed,
             "unload_unanswered": not fired.unloaded and (something_loaded or bool(fired.failed)),
-            "falling": fired.falling, "not_unloaded": list(fired.failed)}
+            "falling": fired.falling, "not_unloaded": list(fired.failed),
+            "hold_written": fired.written}  # its hold never reached the disk: new loads weren't paused
         if waits and not state.release_assumed:
             fields["released_at"] = state.last_auto_release_at
         self.send("brake_fired", fields)
