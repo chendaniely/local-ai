@@ -167,6 +167,11 @@ when that file was retired on 2026-09-23.
   2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
   pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
   talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
+  **btop** and NVIDIA's **DCGM 1:3.3.9** (`datacenter-gpu-manager`) were installed together with
+  `apt install` (dated 2026-10-13 by PR #9, not checked here; btop's version not recorded). DCGM's
+  host engine service, `nvidia-dcgm`, is **masked and stopped** (2026-10-14, Dan's decision): it
+  runs as root and takes commands from any account on the box. The GPU is watched with
+  `nvidia-smi` instead. Details in the changelog.
 - **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
   CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
