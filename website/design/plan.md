@@ -1818,7 +1818,14 @@ council, with Dan's fourteen decisions (Revisions).*
   `phase-2a` merges into `main` with Dan's OK. Not a rebase: that would replay 2a's commits one
   by one, most against the same conflicting files, and change their hashes, which 2a's own docs
   cite and other branches build on. Work merged into `phase-2a` meanwhile, such as the by-hand
-  pages for Phase 4a's models (PR #11), lands with it.
+  pages for Phase 4a's models (PR #11), lands with it. *(Corrected the same day: `main` now
+  changes a workflow, since the site publishes on every push to `main` (PR #14), and the Spark's
+  token can't push a merge that brings one in (*Where work runs*). So the Spark session still
+  makes the merge, resolves the conflicts and runs 2a's tests, and commits it without pushing; the
+  Mac fetches that commit from the Spark over SSH, runs the pre-push leak scan and pushes it. A
+  trial merge of `phase-2a` at `45cecf2` with `main` at `9009e6a` conflicts in 18 places in 10
+  files, `plan.md` 5 and `test_render.py` 4. With 2a's side taken in each, the clients, registry
+  and render tests pass, and the rest fail on the Mac only where 2a alone does.)*
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -3773,6 +3780,11 @@ Each item gets its own design pass when its turn comes.
   ending in one step keeps its floor. The implementation plan's Task 23 has the rest: a hold that
   stands counts as written, a hold that can never be written is one episode with one first alert,
   and a poll's flush waits 0.2 s in all.
+- **2026-10-14** — Phase 2a's close: the Mac pushes the merge of `main` into `phase-2a`. PR #14
+  made `main` change a workflow, which the Spark's token can't push, so the Spark session makes the
+  merge, resolves it and runs 2a's tests, and the Mac fetches the commit over SSH and pushes it
+  after the leak scan. A dated note is in Phase 2a's close, with a trial merge's count: 18
+  conflicts in 10 files.
 
 ## Sources
 
