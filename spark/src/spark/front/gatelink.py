@@ -24,8 +24,11 @@ received the request, plus the key's wait):
 4. **Admission** (`admit`): `POST /v1/admit`, its answer as the gate gives it. A request that comes to admission while
    the gate is down gets `gate_down` at once. One already asking keeps its key's wait: a 503 (the gate's stop,
    `GATE_STOPPING`) or a call that drops is the gate restarting, so it is asked again, under the same request id and
-   its original deadline, once the gate's socket answers, and gets `gate_down` only at its deadline, the gate's call
-   still not open. A call cancelled, as when the client goes, closes, and the gate takes that as the cancel.
+   its original deadline, once the gate's socket answers, RETRY_S apart, and gets `gate_down` at its deadline, the
+   gate's call not open, or its asks still failing though it is (the controller's ruling, at Task 22's review). One
+   whose call the gate holds past its deadline is waited for until LATE_ANSWER_S past it, while the gate's call stays
+   open, since a load the gate started by the deadline is waited for to its own bound; then `gate_down`. A call
+   cancelled, as when the client goes, closes, and the gate takes that as the cancel.
 The app gives `waits`, called once before the request first waits (a hold, a drain or an admission): false, and the
 request is refused `too_many_requests`, the key's waiting cap reached.
 
@@ -43,6 +46,16 @@ answered `busy`, and the model keeps serving. Otherwise `drained` is posted once
   `undrain`, since its unload may already be queued in llama-swap, and a request let through could be cut when the
   stop ran (the controller's rulings at Task 12's second re-review). `drained` counts as reported from the moment its
   post begins, so a post the gate took but whose answer was lost never leads to an undrain.
+- **A `drained` the gate didn't take** (the post failed) is sent again at each snapshot's turn, while the drain is
+  held and the gate's call is open, until the gate takes it; its answer to a repeat changes nothing (the controller's
+  ruling, at Task 22's review).
+
+**What the front lists** (`running_models`): the models the gate's last `state` listed, ready, starting or draining,
+as llama-swap v257 lists running models as loaded; the app's answer to `GET /v1/models` reads it (the controller's
+ruling, at Task 22's review).
+
+**Its two tasks**, the events call and the snapshots, never end but at `aclose()`: a step of either that breaks is
+logged by its type, and tried again RETRY_S later.
 
 **What it tells the gate**, each post bounded by REQUEST_TIMEOUT_S, a failure logged once until one goes through: a
 whole `/v1/front/inflight` snapshot, every model with its count and the models held draining, on every change and at
@@ -71,12 +84,20 @@ from typing import Any, TypeVar
 import httpx
 
 from spark.front.upstream import InFlight
-from spark.gateproto import APPLY_LAPSE_S, DRAIN_WHY, FRONT_REFUSAL_CODES, GATE_DOWN_AFTER_S, REQUEST_TIMEOUT_S
+from spark.gateproto import (APPLY_LAPSE_S, DRAIN_WHY, FRONT_REFUSAL_CODES, GATE_DOWN_AFTER_S, LOAD_CALL_TIMEOUT_S,
+                             REQUEST_TIMEOUT_S)
 
 POLL_S = 0.5  # a wait reads its clock again at least this often, whatever else wakes it
 RETRY_S = 0.25  # the events call, or an admit the gate's restart ended, is tried again this long after
 SNAPSHOT_EVERY_S = 1.0  # the in-flight snapshot, at least this often while the gate's call is open
 RUNNING_FOR_S = 1.0  # llama-swap's /running, read while the gate is down, stands for this long
+# An admit the gate holds past its deadline, its call open, is waited for this long past it, then refused gate_down.
+# The gate answers at the deadline, but a load it started by then is waited for to its own bound, the gate's load
+# call, LOAD_CALL_TIMEOUT_S (admission.py: a load's requests wait past their key's wait, bounded by the load's own
+# deadline); and its answer's way back, REQUEST_TIMEOUT_S. A bound of the deadline and REQUEST_TIMEOUT_S alone would
+# refuse a request whose load is under way, and leave that load for nobody (the controller's ruling, at Task 22's
+# review, asked for a margin; this is the one that keeps a started load's requests).
+LATE_ANSWER_S = LOAD_CALL_TIMEOUT_S + REQUEST_TIMEOUT_S
 # A cut's journal line waits this long for the gate's events to show its model gone from /running: v257's
 # unloadTimeout of 10 s for an engine that doesn't stop, the gate's read every second, and a margin.
 CUT_WHY_S = 12.0
@@ -116,7 +137,9 @@ class _Restarting(Exception):
 class _Drain:
     drain_id: str
     why: str
-    reported: bool = False  # `drained` posted for it
+    reported: bool = False  # `drained` posted for it, from the post's start
+    taken: bool = False  # the gate took that post, under the drain's id now
+    posting: bool = False  # a post of `drained` is under way
     ended: str | None = None  # how it ended: undrain, unloaded, or dropped (the front's own undrain)
 
 
@@ -135,13 +158,14 @@ class GateLink:
     def __init__(self, status_socket: Path, clock: Callable[[], float] = time.time, *, inflight: InFlight,
                  models: Any, running: Callable[[], Awaitable[Iterable[str]]] | None = None,
                  down_after_s: float = GATE_DOWN_AFTER_S, poll_s: float = POLL_S, retry_s: float = RETRY_S,
-                 snapshot_every_s: float = SNAPSHOT_EVERY_S, cut_why_s: float = CUT_WHY_S):
+                 snapshot_every_s: float = SNAPSHOT_EVERY_S, cut_why_s: float = CUT_WHY_S,
+                 late_answer_s: float = LATE_ANSWER_S):
         self.status_socket = Path(status_socket)
         self.clock = clock
         self.inflight = inflight
         self.models = models
         self.down_after_s, self.poll_s, self.retry_s = down_after_s, poll_s, retry_s
-        self.snapshot_every_s, self.cut_why_s = snapshot_every_s, cut_why_s
+        self.snapshot_every_s, self.cut_why_s, self.late_answer_s = snapshot_every_s, cut_why_s, late_answer_s
         self.connected = False
         self.events_read = 0
         self._closing = False
@@ -182,6 +206,11 @@ class GateLink:
     def draining(self) -> frozenset[str]:
         """The models the front holds as draining."""
         return frozenset(self._drains)
+
+    def running_models(self) -> frozenset[str]:
+        """The models the gate's last `state` listed, ready, starting or draining: those llama-swap's `/running`
+        showed it, the last list kept while the gate is down."""
+        return frozenset(self._listed)
 
     # Its life.
 
@@ -272,9 +301,10 @@ class GateLink:
 
     async def admit(self, model: str, key: str, deadline: float, request_id: str) -> dict | Refused:
         """The gate's answer for `model`'s admission for `key`, as `/v1/admit` gives it (gateproto's AdmitAnswer); or
-        Refused gate_down once `deadline` has passed with the gate's call not open. A 503 or a call that drops is the
-        gate restarting: asked again under the same request id and deadline once the gate's socket answers. Cancelled,
-        as when the client goes, its call closes, which the gate takes as the cancel."""
+        Refused gate_down: once `deadline` has passed with the gate's call not open, or its asks still failing; or
+        `late_answer_s` past it, the gate holding the call. A 503 or a call that drops is the gate restarting: asked
+        again under the same request id and deadline, `retry_s` apart, once the gate's socket answers. Cancelled, as
+        when the client goes, its call closes, which the gate takes as the cancel."""
         body = {"model": model, "key": key, "deadline": deadline, "request_id": request_id}
         while True:
             while not self.connected:
@@ -299,6 +329,8 @@ class GateLink:
                     return call.result()
                 if not isinstance(error, _Restarting):
                     raise error
+                if self.clock() >= deadline:
+                    return Refused("gate_down")  # asked until its deadline, and never answered
                 await asyncio.sleep(self.retry_s)
                 continue
             return Refused("gate_down")
@@ -320,11 +352,12 @@ class GateLink:
 
     # What the front tells the gate.
 
-    async def drained(self, model: str, drain_id: str) -> None:
-        await self._post("/v1/front/drained", {"model": model, "drain_id": drain_id})
+    async def drained(self, model: str, drain_id: str) -> bool:
+        """`drained` posted for `model`'s drain `drain_id`: whether the gate took it."""
+        return await self._post("/v1/front/drained", {"model": model, "drain_id": drain_id})
 
-    async def busy(self, model: str, drain_id: str) -> None:
-        await self._post("/v1/front/busy", {"model": model, "drain_id": drain_id})
+    async def busy(self, model: str, drain_id: str) -> bool:
+        return await self._post("/v1/front/busy", {"model": model, "drain_id": drain_id})
 
     def refused(self, code: str, model: str | None, key: str, message: str) -> None:
         """A refusal of the front's own, posted to the gate while its call is open (gateproto.FrontRefusal), its words
@@ -350,9 +383,10 @@ class GateLink:
                 await pulse.wait()
 
     async def _down_by(self, deadline: float) -> None:
-        """Until `deadline` has passed with the gate's call not open."""
-        while self.connected or self.clock() < deadline:
-            await self._changed(deadline if self.clock() < deadline else None)
+        """Until `deadline` has passed with the gate's call not open, or `late_answer_s` past it whatever the call."""
+        late = deadline + self.late_answer_s
+        while (self.connected or self.clock() < deadline) and self.clock() < late:
+            await self._changed(deadline if self.clock() < deadline else late)
 
     def _holding(self) -> bool:
         """Whether apply's hold stands. Dropped here once the gate has been gone longer than its `lapse_s`."""
@@ -428,7 +462,8 @@ class GateLink:
     # The events.
 
     async def _follow(self) -> None:
-        """The gate's events call, kept open, called again whenever it ends."""
+        """The gate's events call, kept open, called again whenever it ends; a step that breaks is logged by its type,
+        and the call made again, so the task never ends but at `aclose()`."""
         while True:
             try:
                 async with self._http().stream("GET", "/v1/front/events", timeout=EVENTS_TIMEOUT) as response:
@@ -446,6 +481,8 @@ class GateLink:
                             self._dropped()
             except httpx.TransportError:
                 pass
+            except Exception as err:
+                _log.error("the front's events call to the gate broke: %s; it calls again", type(err).__name__)
             await asyncio.sleep(self.retry_s)
 
     def _opened(self) -> None:
@@ -508,7 +545,7 @@ class GateLink:
         count = self.inflight.count(model)
         held = self._drains.get(model)
         if held is not None:  # the same drain asked again, or adopted under the gate's new id
-            held.drain_id, held.why = drain_id, why
+            held.drain_id, held.why, held.taken = drain_id, why, False
             if count == 0:
                 self._report_drained(model, held)
             return
@@ -565,7 +602,25 @@ class GateLink:
 
     def _report_drained(self, model: str, drain: _Drain) -> None:
         drain.reported = True  # from the post's start: an answer lost on the way never undrains it
-        self._spawn(self.drained(model, drain.drain_id))
+        self._spawn(self._post_drained(model, drain))
+
+    async def _post_drained(self, model: str, drain: _Drain) -> None:
+        """`drained` posted for `drain`; `taken` once the gate took it under the id the drain still has."""
+        drain_id = drain.drain_id
+        drain.posting = True
+        try:
+            taken = await self.drained(model, drain_id)
+        finally:
+            drain.posting = False
+        if taken and drain.drain_id == drain_id:
+            drain.taken = True
+
+    def _drained_again(self) -> None:
+        """Each held drain whose `drained` the gate didn't take, posted again (the controller's ruling, at Task 22's
+        review)."""
+        for model, drain in list(self._drains.items()):
+            if drain.reported and not drain.taken and not drain.posting:
+                self._spawn(self._post_drained(model, drain))
 
     def _count_changed(self, model: str) -> None:
         """InFlight's hook, on every enter and leave, in its step."""
@@ -575,15 +630,22 @@ class GateLink:
             self._report_drained(model, drain)
 
     async def _snapshots(self) -> None:
-        """The whole snapshot, on every change and at least every `snapshot_every_s`, while the gate's call is open."""
+        """The whole snapshot, on every change and at least every `snapshot_every_s`, while the gate's call is open,
+        and each `drained` the gate didn't take, again. A turn that breaks is logged by its type, and the next tried
+        `retry_s` later, so the task never ends but at `aclose()`."""
         while True:
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(self.snapshot_every_s):
                     await self._dirty.wait()
             self._dirty.clear()
-            if self.connected:
-                await self._post("/v1/front/inflight", self.inflight.snapshot(
-                    models=[entry["name"] for entry in self.models], draining=list(self._drains)))
+            try:
+                if self.connected:
+                    await self._post("/v1/front/inflight", self.inflight.snapshot(
+                        models=[entry["name"] for entry in self.models], draining=list(self._drains)))
+                    self._drained_again()
+            except Exception as err:
+                _log.error("the front's in-flight report to the gate broke: %s; it reports again", type(err).__name__)
+                await asyncio.sleep(self.retry_s)
 
 
 def _admit_answer(response: httpx.Response) -> dict:

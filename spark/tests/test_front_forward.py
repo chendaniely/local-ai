@@ -96,7 +96,7 @@ async def until(condition, bound_s: float = BOUND_S) -> None:
 class Loaded:
     """The gate's stand-in, as the app calls Task 22's GateLink: every model loaded, so each request is cleared at once,
     counted as it is (`enter`), and nothing is admitted. A resend, which goes through admission, is refused with
-    `refusal`: the gate's llama_swap_down, by default."""
+    `refusal`: the gate's llama_swap_down, by default. Every model runs, by the model list."""
 
     def __init__(self, refusal: dict | None = None):
         self.refusal = refusal or {"ok": False, "code": "llama_swap_down", "status": 409, "message": "M",
@@ -114,6 +114,9 @@ class Loaded:
 
     async def why_cut(self, model, since):
         return None
+
+    def running_models(self):
+        return frozenset(NAMES)
 
 
 class Tasks:
@@ -585,38 +588,42 @@ def test_in_flight_counts_each_request_once_however_often_it_is_left():
 # Errors before an answer.
 
 @pytest.mark.anyio
-async def test_llama_swap_not_answering_is_a_502_for_the_model_list_and_goes_through_admission_for_a_model(tmp_path):
-    # No connection, or one closed before the head. For a model, the request goes through admission (Task 22), and
-    # the gate's answer reaches the client; the model list, which names no model, gets the front's own 502.
+async def test_llama_swap_not_answering_leaves_the_model_list_answered_and_sends_a_model_through_admission(tmp_path):
+    # No connection, or one closed before the head. The model list is the front's own answer, from its copy of the
+    # gate's list, so it is answered whatever llama-swap does, and nothing goes upstream for it (the controller's
+    # ruling, at Task 22's review). A request for a model goes through admission (Task 22), and the gate's answer
+    # reaches the client.
     nothing = nothing_listening()
+    reached: list[bytes] = []
 
     async def hang_up(reader, writer):  # takes the request, then closes before any answer: a crash mid-request
-        await reader.readuntil(b"\r\n\r\n")
+        reached.append(await reader.readuntil(b"\r\n\r\n"))
         writer.close()
 
     server = await asyncio.start_server(hang_up, "127.0.0.1", 0)
     hangs_up = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     try:
         for url in (nothing, hangs_up):
+            reached.clear()
             gate = Loaded()
             async with rig(tmp_path, swap_url=url, gate=gate) as r:
-                for key, words in (("k1", front_app.UNREACHED["dan"]), ("k2", front_app.UNREACHED["agent"])):
+                for key in ("k1", "k2"):
                     answer = await r.client.get("/v1/models", headers=auth(key))
-                    assert (answer.status_code, answer.json()) == (
-                        502, {"error": {"message": words, "code": front_app.UNREACHED_CODE}})
+                    assert answer.status_code == 200
+                    assert [each["id"] for each in answer.json()["data"]] == sorted(NAMES)
+                assert reached == []  # nothing upstream for the list
                 answer = await r.client.post("/v1/chat/completions", json=chat(), headers=auth())
                 refused = {"error": {"message": "M", "code": "llama_swap_down"}, "retry_after_s": 30}
                 assert (answer.status_code, answer.json()) == (409, refused)
                 await until(lambda: r.count() == 0)
                 await until(lambda: len(r.lines) == 3)
-                assert r.lines == ["front: dan-mac - 502 0.0s", "front: agent - 502 0.0s",
+                assert r.lines == ["front: dan-mac - 200 0.0s", "front: agent - 200 0.0s",
                                    f"front: dan-mac {CODER} 409 0.0s (llama_swap_down)"]
                 assert gate.admits == 1
+            assert len(reached) == (0 if url == nothing else 1)  # only the model's request went upstream
     finally:
         server.close()
         await server.wait_closed()
-    for words in front_app.UNREACHED.values():
-        assert messages.pi_retry_match(json.dumps({"message": words, "code": front_app.UNREACHED_CODE})) is None
 
 
 class Raising:
@@ -876,6 +883,9 @@ class Waits:
 
     async def why_cut(self, model, since):
         return None
+
+    def running_models(self):
+        return frozenset()
 
 
 @pytest.mark.anyio

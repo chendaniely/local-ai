@@ -2,9 +2,11 @@
 client key a request carries, the body read within its cap and rebuilt, the model it names, the headers that go on,
 each key's caps and the journal line.
 
-- **Routes.** Only `GET /v1/models` and `POST` to the six inference paths reach llama-swap (ROUTES); `GET /health` is
-  the front's own. llama-swap's admin routes (`/unload`, `/api/*`, `/logs*`, `/upstream/*`, `/running`, `/ui`,
-  `/metrics`) are not among them, so they are never reached through the front.
+- **Routes.** The front serves only `GET /v1/models` and `POST` to the six inference paths (ROUTES), and only the
+  `POST`s reach llama-swap: the model list (MODEL_LIST) is the front's own answer, from its copy of the gate's model
+  list (the controller's ruling, at Task 22's review), and `GET /health` is the front's own too. llama-swap's admin
+  routes (`/unload`, `/api/*`, `/logs*`, `/upstream/*`, `/running`, `/ui`, `/metrics`) are not among them, so they are
+  never reached through the front.
 - **Keys.** The key comes from `Authorization: Bearer <key>` or `x-api-key: <key>`, and is matched against the
   digests in constant time (credentials.match_key). Two headers that carry different keys name no one.
 - **Bodies.** A JSON body is read whole, in memory, up to its cap, and goes on re-serialized from what was parsed, so
@@ -52,7 +54,8 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 # them.
 INFERENCE_PATHS = ("/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/messages", "/v1/embeddings",
                    "/v1/audio/transcriptions")
-ROUTES: frozenset[tuple[str, str]] = frozenset({("GET", "/v1/models"), *(("POST", path) for path in INFERENCE_PATHS)})
+MODEL_LIST = ("GET", "/v1/models")  # answered by the front itself (app.FrontApp._model_list)
+ROUTES: frozenset[tuple[str, str]] = frozenset({MODEL_LIST, *(("POST", path) for path in INFERENCE_PATHS)})
 HEALTH = ("GET", "/health")  # the front's own, answered with no key
 FORM_PATHS = frozenset({"/v1/audio/transcriptions"})  # the routes whose body is a multipart form; the rest take JSON
 

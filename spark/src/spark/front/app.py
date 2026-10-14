@@ -12,6 +12,15 @@ doesn't come in time.
    never reached through the front.
 4. Both Content-Length and Transfer-Encoding: 400.
 5. **The key's open cap** (parse.KeyCaps' `max_open`): past it, 429 `too_many_requests`, the body unread.
+5a. **The model list** (`GET /v1/models`) is the front's own answer, from its copy of the gate's model list
+   (_model_list), never sent upstream and never held (the controller's ruling, at Task 22's review). It has llama-swap
+   v257's shape (internal/server/api.go, handleListModels) for the registry's models, so pi's and the web UI's saved
+   model ids keep working: `{"object": "list", "data": [...]}`, one entry a model, sorted by name, each with its `id`
+   (the model's name: render sets no `includeAliasesInList`, so v257 lists no role as an id), `object` "model",
+   `created` (now), `owned_by` "llama-swap", `meta.llamaswap` (`type` "model", and its roles as `aliases` when it
+   has any) and `status.value` ("loaded" while the gate's last `state` lists it, ready, starting or draining, as
+   v257 counts a running model; else "unloaded"). What v257 discovers by probing a ready engine (`context_length`,
+   `capabilities` and the like) isn't listed: the front probes nothing.
 6. **The body**, by its Content-Length before any is read, then as it comes: on `/v1/audio/transcriptions` a multipart
    form, its file parts spooled to disk past parse.SPOOL_ABOVE for the form, at most MAX_BODY_BYTES; anywhere else
    JSON, read in memory, at most MAX_JSON_BYTES and parse.MAX_JSON_PARTS parts. 413 past a cap, 400 for what can't be
@@ -67,9 +76,9 @@ doesn't come in time.
    restarting) goes through admission too, with its original deadline, so the gate answers it (`restarting`,
    `llama_swap_down`, or a load); while the gate admits it and llama-swap still doesn't answer, it goes through
    admission and is sent again RESEND_AFTER_S apart, and gets the front's own `llama_swap_down` at its deadline. Its
-   key's waiting slot is held only while it waits on the gate link. A request that names no model
-   (`GET /v1/models`) has no admission: llama-swap giving it no answer is a 502 of the front's own,
-   `llama_swap_unreached`.
+   key's waiting slot is held only while it waits on the gate link. Every request forwarded names a model: the
+   model list is the front's own answer (5a), so no request has a 502 of the front's own for llama-swap giving no
+   answer (Task 21's `llama_swap_unreached`, retired at Task 22's review).
 
 **At start**, `spark front` (Task 21) reads the private key list and the key digests from their credentials
 (read_keys), and FrontApp refuses to start, naming the key, when the two disagree (check_keys).
@@ -92,8 +101,9 @@ The calls the app makes, on Task 21's Upstream and Task 22's GateLink, or the te
   giving a response with `status`, `headers`, `aiter_raw()` and `await aclose()`; upstream.Unreached for no answer,
   and upstream.Broken from `aiter_raw()` for a body that broke off;
 - `gate`: `await clear(model, key, deadline, request_id, enter=…, admit=…, waits=…)`, giving what `enter()` gave (the
-  request counted in flight) or a gatelink.Refused; `refused(code, model, key, message)`; and `await why_cut(model,
-  since)`, giving the words for a cut's journal line, or None."""
+  request counted in flight) or a gatelink.Refused; `refused(code, model, key, message)`; `await why_cut(model,
+  since)`, giving the words for a cut's journal line, or None; and `running_models()`, the models the model list
+  shows loaded."""
 
 from __future__ import annotations
 
@@ -150,14 +160,6 @@ NO_RETRY = (b"x-should-retry", b"false")
 UPLOADS_AT_ONCE = 4
 UPLOADS_BUSY_CODE = "uploads_busy"
 UPLOADS_RETRY_AFTER_S = 30
-# llama-swap giving a request that names no model (`GET /v1/models`) no answer: no connection, or one that failed
-# before its head. A 502, which pi and OpenAI's SDKs retry, as is sensible for a llama-swap that is restarting. A
-# request for a model goes through admission instead (Task 22).
-UNREACHED_CODE = "llama_swap_unreached"
-UNREACHED = {"dan": "The front couldn't reach the model service on the Spark. On the Spark, `make logs s=llama-swap` "
-                    "shows why.",
-             "agent": "The front couldn't reach the model service on the Spark. Dan can see why with "
-                      "`make logs s=llama-swap` on the Spark."}
 ANSWER_MAX = 64 << 10  # a 429's or a 500's body read to tell llama-swap's own, far more than its few hundred bytes
 # A request llama-swap gave no answer, while the gate admits it, is sent again this long after (Task 22): the gate
 # admits a model it counts ready at once, so without a pause the two would go back and forth until the deadline.
@@ -352,23 +354,25 @@ class FrontApp:
             self.caps.leave_open(key)
 
     async def _open(self, headers: parse.Headers, receive, send, request: _Request) -> None:
-        method, path = request.route
+        if request.route == parse.MODEL_LIST:
+            await self._send(send, request, 200, self._model_list())
+            return
+        method, path = request.route  # each route left is a POST that names its model
         sent_headers = parse.clean_headers(headers)
-        if method == "POST":
-            try:
-                name = await self._read(path, headers, receive, request)
-            except parse.Refused as refused:
-                await self._refuse(send, request, refused)
-                return
-            except parse.ClientGone:
-                return
-            request.asked = name
-            entry = parse.resolve(name, self.models)
-            if entry is None:
-                await self._refuse(send, request, self.refusal("model_not_found", request.key, asked_name=name,
-                                                               models=self._listed()))
-                return
-            request.model, request.entry = entry["name"], entry
+        try:
+            name = await self._read(path, headers, receive, request)
+        except parse.Refused as refused:
+            await self._refuse(send, request, refused)
+            return
+        except parse.ClientGone:
+            return
+        request.asked = name
+        entry = parse.resolve(name, self.models)
+        if entry is None:
+            await self._refuse(send, request, self.refusal("model_not_found", request.key, asked_name=name,
+                                                           models=self._listed()))
+            return
+        request.model, request.entry = entry["name"], entry
         if request.form is None:
             await self._admitted(method, path, sent_headers, receive, send, request)
             return
@@ -385,12 +389,8 @@ class FrontApp:
 
     async def _admitted(self, method: str, path: str, headers: parse.Headers, receive, send,
                         request: _Request) -> None:
-        """A request with no model (`GET /v1/models`) is forwarded at once. One for a model is cleared by the gate
-        (_cleared), then forwarded; sent again through admission when llama-swap answers that its start exited, once,
-        or gives no answer, until its deadline (step 12)."""
-        if request.model is None:
-            await self._forward(method, path, headers, receive, send, request, None)
-            return
+        """The request cleared by the gate (_cleared), then forwarded; sent again through admission when llama-swap
+        answers that its start exited, once, or gives no answer, until its deadline (step 12)."""
         deadline = request.started + self.groups[self.keys[request.key].group].wait_s
         admit, exits = False, 0
         while True:
@@ -419,39 +419,52 @@ class FrontApp:
                        admit: bool) -> InFlightRequest | Refused | None:
         """The gate link's answer for the request (GateLink.clear): counted in flight, or its refusal; None when the
         client went first, which drops the wait, and with it any admit call. While it waits, it holds one of its key's
-        waiting slots."""
+        waiting slots.
+
+        Its bookkeeping awaits nothing, so no cancel can skip it (the controller's ruling, at Task 22's review): the
+        waiting slot is given back by a done-callback on the gate link's work, however that ends; and a count the work
+        cleared that the request won't forward, its client gone or its own task cancelled, is left there too, or at
+        once when the work had already ended (InFlight.leave counts a request once, however often it is left)."""
         key, model = request.key, request.model
-        waiting = False
+        waiting = abandoned = False
 
         def waits() -> bool:
             nonlocal waiting
             waiting = self.caps.enter_waiting(key)
             return waiting
 
+        def leave_unused(work: asyncio.Future) -> None:
+            if not work.cancelled() and work.exception() is None and not isinstance(work.result(), Refused):
+                self.inflight.leave(work.result())
+
+        def settle(work: asyncio.Future) -> None:
+            if waiting:
+                self.caps.leave_waiting(key)
+            if abandoned:
+                leave_unused(work)
+            elif not work.cancelled():
+                work.exception()  # taken: an error is raised from the result below
+
         work = asyncio.ensure_future(self.gate.clear(model, key, deadline, secrets.token_hex(8), admit=admit,
                                                      waits=waits, enter=functools.partial(self.inflight.enter,
                                                                                           model, key)))
+        work.add_done_callback(settle)
         watch = asyncio.ensure_future(_disconnected(receive))
-        cancelled = False
+        watch.add_done_callback(lambda done: done.cancelled() or done.exception())
         try:
             await asyncio.wait((work, watch), return_when=asyncio.FIRST_COMPLETED)
-        except BaseException:  # this task cancelled, as by the front's own stop: the wait with it
-            cancelled = True
-            raise
-        finally:
+        except BaseException:  # this task cancelled, as by the front's own stop: the wait with it, and its count
+            abandoned = True
             watch.cancel()
-            if not work.done():
+            if work.done():
+                leave_unused(work)
+            else:
                 work.cancel()
-            await asyncio.wait((work, watch))
-            if waiting:
-                self.caps.leave_waiting(key)
-            if not watch.cancelled():
-                watch.exception()
-            if cancelled and not work.cancelled() and work.exception() is None:
-                left = work.result()
-                if not isinstance(left, Refused):  # cleared as this task was cancelled: never forwarded
-                    self.inflight.leave(left)
-        if work.cancelled():
+            raise
+        watch.cancel()
+        if not work.done():  # the client went first
+            abandoned = True
+            work.cancel()
             return None
         cleared = work.result()
         if not isinstance(cleared, Refused):
@@ -478,7 +491,7 @@ class FrontApp:
         await self._refuse(send, request, worded)
 
     async def _forward(self, method: str, path: str, headers: parse.Headers, receive, send,
-                       request: _Request, counted: InFlightRequest | None) -> str | None:
+                       request: _Request, counted: InFlightRequest) -> str | None:
         """The request forwarded and its answer relayed (_relay), counted in flight (`counted`, as the gate link
         cleared it) until the relay has ended, however it ends; receive() watched beside it, and the relay, with its
         upstream call, cancelled when the client goes first. EXITED or UNANSWERED when the send ended so, nothing of an
@@ -516,26 +529,21 @@ class FrontApp:
                 raise broke
             return None if relay.cancelled() else relay.result()
         finally:
-            if counted is not None:
-                self.inflight.leave(counted)
+            self.inflight.leave(counted)
 
     async def _relay(self, method: str, path: str, headers: parse.Headers, send, request: _Request) -> str | None:
-        """One send to llama-swap, its body made for it (_body), and its answer back to the client as it comes; for a
-        model's request, EXITED or UNANSWERED instead, nothing sent (step 12)."""
+        """One send to llama-swap, its body made for it (_body), and its answer back to the client as it comes; or
+        EXITED or UNANSWERED instead, nothing sent (step 12)."""
         content_type, body = self._body(request)
-        sent = headers if content_type is None else [*headers, (b"content-type", content_type)]
+        sent = [*headers, (b"content-type", content_type)]
         try:
             response = await self.upstream.forward(method, path, sent, body, request.key)
         except Unreached:
-            if request.entry is not None:
-                return UNANSWERED
-            await self._send(send, request, 502, {"error": {"message": UNREACHED[self._words(request)],
-                                                            "code": UNREACHED_CODE}})
-            return None
+            return UNANSWERED
         chunks = response.aiter_raw()
         try:
             head, broke = b"", False
-            if response.status in (429, 500) and request.entry is not None:
+            if response.status in (429, 500):
                 head, broke = await _upto(chunks, ANSWER_MAX)
                 if not broke and exited_prematurely(response.status, head):
                     return EXITED
@@ -577,15 +585,13 @@ class FrontApp:
             await response.aclose()
 
     @staticmethod
-    def _body(request: _Request) -> tuple[bytes | None, bytes | AsyncIterator[bytes] | None]:
+    def _body(request: _Request) -> tuple[bytes, bytes | AsyncIterator[bytes]]:
         """(its Content-Type, the body to send on), made at each send: a form encoded again, from its spooled files,
-        which live until the request ends; a JSON body's bytes, held; none for a GET."""
+        which live until the request ends; a JSON body's bytes, held."""
         if request.form is not None:
             kind, body = parse.encode_form(request.form)
             return kind.encode(), body
-        if request.json is not None:
-            return JSON[1], request.json
-        return None, None
+        return JSON[1], request.json
 
     def _words(self, request: _Request) -> str:
         """Whose words the request's answers of the front's own are in: its key's group's, Dan's for no key."""
@@ -610,6 +616,19 @@ class FrontApp:
             request.held.take(length)  # before any of it is read
         parsed, request.json = await parse.read_json(receive, max_bytes=limit, held=request.held)
         return parsed["model"]
+
+    def _model_list(self) -> dict:
+        """`GET /v1/models`' answer, in llama-swap v257's shape for the registry's models (step 5a)."""
+        created, running = int(self.clock()), self.gate.running_models()
+        data = []
+        for entry in sorted(self.models, key=lambda entry: entry["name"]):
+            meta: dict[str, Any] = {"type": "model"}
+            if entry["roles"]:
+                meta["aliases"] = list(entry["roles"])
+            data.append({"id": entry["name"], "object": "model", "created": created, "owned_by": "llama-swap",
+                         "meta": {"llamaswap": meta},
+                         "status": {"value": "loaded" if entry["name"] in running else "unloaded"}})
+        return {"object": "list", "data": data}
 
     def _listed(self) -> list[tuple[str, str]]:
         """The models as model_not_found names them, (label, name): on-demand first, then the residents, each in the

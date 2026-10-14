@@ -179,7 +179,11 @@ Four services, three sockets that systemd holds, and a notifier:
   asks the gate (*A request that needs a load*, below). It does have a **route policy**. It
   forwards only `GET /v1/models` and `POST` to `/v1/chat/completions`, `/v1/completions`,
   `/v1/responses`, `/v1/messages`, `/v1/embeddings` and `/v1/audio/transcriptions`, and answers
-  its own `GET /health`. Every other path gets a 404 that says why: llama-swap's admin routes,
+  its own `GET /health`. *(Corrected 2026-10-14, the controller's ruling, at the implementation
+  plan's Task 22 review: `GET /v1/models` isn't forwarded. The front answers it itself, from its
+  copy of the gate's model list, in llama-swap v257's shape for the registry's models, the same
+  ids. So it never goes upstream, is never held, and answers while llama-swap restarts.)* Every
+  other path gets a 404 that says why: llama-swap's admin routes,
   `/unload`, `/api/*` (its unload, cancel and profile calls), `/logs*`, `/upstream/*`, `/running`,
   `/ui` and `/metrics`, never reach llama-swap through it. *(Added 2026-10-08, the controller's
   ruling, at the implementation plan's Task 20 review: the key comes first. A request with no key,
@@ -3578,6 +3582,13 @@ Each item gets its own design pass when its turn comes.
   - The front answers `llama_swap_down` itself at a request's deadline when the gate keeps admitting
     a model llama-swap doesn't answer for.
   - Its journal line says why a request was refused, or cut short, where the gate gives it.
+- **2026-10-14** — Phase 2a's Task 22 review, the controller's rulings. A dated note is in *The
+  front and the gate* (its route policy), and the implementation plan's Task 22 has the rest.
+  - The front answers `GET /v1/models` itself, from its copy of the gate's model list, in llama-swap
+    v257's shape and with the same ids. It never goes upstream and is never held.
+  - The front's waits on the gate are bounded even while the gate's call stays open: a request
+    whose admission the gate never answers gets `gate_down`. A `drained` the gate didn't take is
+    sent again until it does.
 
 ## Sources
 

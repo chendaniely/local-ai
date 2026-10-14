@@ -26,7 +26,7 @@ from spark import messages
 from spark.front import app as front_app
 from spark.front import gatelink, parse, upstream
 from spark.gate import app as gate_app
-from spark.gateproto import GATE_DOWN_AFTER_S
+from spark.gateproto import GATE_DOWN_AFTER_S, LOAD_CALL_TIMEOUT_S, REQUEST_TIMEOUT_S
 from test_front_forward import DELTA, DONE, INTERNAL, auth, chat, nothing_listening, serve_app, until
 
 BOUND_S = 20
@@ -124,18 +124,20 @@ class Rig:
     def count(self, model: str = CODER) -> int:
         return self.link.inflight.count(model)
 
-    async def heard(self, events: int) -> None:
-        """Until the gate link has read `events` more events than it had."""
-        await until(lambda: self.link.events_read >= events)
+    async def loaded(self, model: str, want: bool = True) -> None:
+        """Until the gate link takes `model` as loaded, or, with `want` false, as not loaded."""
+        with anyio.fail_after(BOUND_S):
+            while await self.link.loaded(model) != want:
+                await asyncio.sleep(0.005)
 
 
 @contextlib.asynccontextmanager
 async def rig(*, ready=(), swap_ready=None, models=MODELS, serving=True, applying=False, lapse_s=60.0,
-              swap_url=None, cut_why_s=5.0, **app_options):
+              swap_url=None, retry_s=0.01, snapshot_every_s=1.0, cut_why_s=5.0, late_answer_s=None, **app_options):
     """The front on a real uvicorn, its GateLink on the gate stand-in's socket (serving unless `serving` is false, when
     its listener only holds connections), llama-swap's stand-in at `swap_url` or a Swap of its own showing `swap_ready`
     (by default, the gate's `ready`), and an httpx client for the front. With the gate serving, yielded once the gate
-    link has read its first `hello` and `state`."""
+    link has read its first `hello` and `state`. At the end, no body the front posted failed the gate's own checks."""
     folder = Path(tempfile.mkdtemp(prefix="gl", dir="/tmp"))
     gate = GateStandIn(folder, models=models, ready=ready, applying=applying, lapse_s=lapse_s, started_at=T)
     swap = Swap(ready if swap_ready is None else swap_ready)
@@ -150,8 +152,10 @@ async def rig(*, ready=(), swap_ready=None, models=MODELS, serving=True, applyin
             stack.push_async_callback(forwarder.aclose)
             inflight = upstream.InFlight(lambda: now[0])
             listed = parse.ModelList(models)
+            more = {} if late_answer_s is None else {"late_answer_s": late_answer_s}
             link = gatelink.GateLink(gate.path, lambda: now[0], inflight=inflight, models=listed,
-                                     running=forwarder.ready_models, poll_s=0.01, retry_s=0.01, cut_why_s=cut_why_s)
+                                     running=forwarder.ready_models, poll_s=0.01, retry_s=retry_s,
+                                     snapshot_every_s=snapshot_every_s, cut_why_s=cut_why_s, **more)
             app = front_app.FrontApp(listed, KEYS, GROUPS, DIGESTS, upstream=forwarder, gate=link,
                                      caps=parse.KeyCaps(KEYS, GROUPS), log=lines.append, clock=lambda: now[0],
                                      spool_dir=folder, inflight=inflight, resend_after_s=0.01, **app_options)
@@ -165,6 +169,7 @@ async def rig(*, ready=(), swap_ready=None, models=MODELS, serving=True, applyin
                 with anyio.fail_after(BOUND_S):
                     await until(lambda: link.connected and link.events_read >= 2)
             yield Rig(gate, swap, link, app, client, now, lines)
+            assert gate.bad == []  # every body the front posted, as the gate's own checks take it
     finally:
         await gate.close()
         shutil.rmtree(folder, ignore_errors=True)
@@ -187,8 +192,121 @@ async def test_a_loaded_model_is_forwarded_without_asking_the_gate():
     async with rig(ready=[CODER]) as r:
         with anyio.fail_after(BOUND_S):
             answer = await r.post()
-        assert (answer.status_code, answer.content) == (200, DELTA + DONE)
-        assert r.gate.admits == [] and [path for path, _ in r.swap.seen] == ["/v1/chat/completions"]
+            assert (answer.status_code, answer.content) == (200, DELTA + DONE)
+            # The gate's pings, as its events stream sends them, are read and change nothing.
+            await until(lambda: r.gate.pings >= 2 and r.link.events_read >= 4)  # hello, state, then pings
+            assert r.link.connected
+            again = await r.post()
+        assert (again.status_code, again.content) == (200, DELTA + DONE)
+        assert r.gate.admits == [] and [path for path, _ in r.swap.seen] == ["/v1/chat/completions"] * 2
+
+
+@pytest.mark.anyio
+async def test_the_model_list_is_answered_by_the_front_from_the_gates_list():
+    # The controller's ruling, at Task 22's review: never sent upstream, never held, in llama-swap v257's own shape
+    # for the registry's models (internal/server/api.go, handleListModels), whose ids are the model names: render sets
+    # no includeAliasesInList, so v257 lists no role as an id.
+    async with rig(ready=[GEMMA]) as r:
+        with anyio.fail_after(BOUND_S):
+            r.gate.send({"op": "hold_all", "lapse_s": 60})
+            await until(lambda: r.link.holding)
+            answer = await r.client.get("/v1/models", headers=auth("k2"))
+            assert answer.status_code == 200 and answer.headers["content-type"] == "application/json"
+            assert answer.json() == {"object": "list", "data": [
+                {"id": entry["name"], "object": "model", "created": int(T), "owned_by": "llama-swap",
+                 "meta": {"llamaswap": {"type": "model", "aliases": entry["roles"]}},
+                 "status": {"value": "loaded" if entry["name"] == GEMMA else "unloaded"}}
+                for entry in sorted(MODELS, key=lambda entry: entry["name"])]}
+            assert r.swap.seen == [] and r.gate.admits == []
+            await until(lambda: r.lines == ["front: agent - 200 0.0s"])
+            # The gate's list changes it, at once: a model added, one with no role listed without aliases.
+            plain = {"name": "plain-model", "roles": [], "label": "the plain model", "resident": False}
+            r.gate.send({"op": "release_all"})
+            r.gate.send({**r.gate.state, "starting": [CODER], "models": [*MODELS, plain]})
+            await until(lambda: any(entry["name"] == "plain-model" for entry in r.app.models))
+            listed = {each["id"]: each for each in (await r.client.get("/v1/models", headers=auth())).json()["data"]}
+            assert listed["plain-model"]["meta"] == {"llamaswap": {"type": "model"}}
+            assert listed[CODER]["status"] == {"value": "loaded"}  # starting counts, as v257's running models do
+            # The gate down: the last list kept, still answered.
+            await r.gate.stop("crash")
+            await until(lambda: not r.link.connected)
+            r.now[0] = T + GATE_DOWN_AFTER_S
+            kept = await r.client.get("/v1/models", headers=auth())
+        assert kept.status_code == 200 and [each["id"] for each in kept.json()["data"]] == sorted(listed)
+        assert r.swap.seen == []
+
+
+@pytest.mark.anyio
+async def test_an_admit_ends_at_its_deadline_while_the_gates_call_stays_open():
+    # Its posts failing: tried again a pause apart, never in a busy loop, and gate_down at the deadline.
+    async with rig(retry_s=0.1) as r:
+        r.gate.admit_breaks = True
+        with anyio.fail_after(BOUND_S):
+            asked = r.ask()
+            await asyncio.sleep(0.5)
+            assert 2 <= len(r.gate.admits) <= 8 and not asked.done() and r.link.connected
+            r.now[0] = T + DAN_WAIT
+            answer = await asked
+        assert (answer.status_code, answer.json()) == (503, r.app.refusal("gate_down", "dan-mac").body())
+        tried = len(r.gate.admits)
+        await asyncio.sleep(0.3)
+        assert len(r.gate.admits) == tried  # and none after
+    # Its post hanging: a load the gate started by the deadline is waited for to its own bound, then gate_down.
+    async with rig() as r:
+        r.gate.hold = asyncio.Event()
+        assert gatelink.LATE_ANSWER_S == LOAD_CALL_TIMEOUT_S + REQUEST_TIMEOUT_S
+        with anyio.fail_after(BOUND_S):
+            asked = r.ask()
+            await until(lambda: len(r.gate.admits) == 1)
+            r.now[0] = T + DAN_WAIT
+            await asyncio.sleep(0.2)
+            assert not asked.done()
+            r.now[0] = T + DAN_WAIT + gatelink.LATE_ANSWER_S
+            answer = await asked
+            assert (answer.status_code, answer.json()) == (503, r.app.refusal("gate_down", "dan-mac").body())
+            await until(lambda: r.gate.closed_admits == [r.gate.admits[0]["request_id"]])  # its call closed
+        assert r.link.connected
+
+
+@pytest.mark.anyio
+async def test_a_drained_post_the_gate_didnt_take_is_sent_again():
+    async with rig(ready=[CODER], snapshot_every_s=0.1) as r:
+        r.gate.fail_posts["/v1/front/drained"] = 2
+        with anyio.fail_after(BOUND_S):
+            r.gate.send(drain(CODER, "d1", "unload"))
+            await until(lambda: r.gate.drained == [{"model": CODER, "drain_id": "d1"}])
+            await asyncio.sleep(0.3)
+        assert [body for path, body in r.gate.failed_posts] == [{"model": CODER, "drain_id": "d1"}] * 2
+        assert r.gate.drained == [{"model": CODER, "drain_id": "d1"}]  # once taken, not again
+
+
+@pytest.mark.anyio
+async def test_a_step_that_raises_never_ends_the_links_tasks(caplog):
+    async with rig(ready=[CODER], snapshot_every_s=0.1) as r:
+        handlers, snapshot = r.link._handlers, r.link.inflight.snapshot
+        raised = []
+
+        def raise_once(name, real):
+            def step(*args, **kwargs):
+                if name not in raised:
+                    raised.append(name)
+                    raise RuntimeError("step-marker")
+                return real(*args, **kwargs)
+            return step
+
+        handlers["state"] = raise_once("state", handlers["state"])
+        r.link.inflight.snapshot = raise_once("snapshot", snapshot)
+        with anyio.fail_after(BOUND_S):
+            calls, posted = r.gate.events_calls, len(r.gate.snapshots)
+            r.gate.send(r.gate.state)  # its handler raises: the events call ends, and the link calls again
+            await until(lambda: r.gate.events_calls == calls + 1 and r.link.connected)
+            await until(lambda: "snapshot" in raised and len(r.gate.snapshots) > posted + 1)
+            answer = await r.post()
+        assert answer.status_code == 200 and r.gate.admits == []
+        broke = [record for record in caplog.records if record.name == "spark.front.gatelink"
+                 and "RuntimeError" in record.getMessage()]
+        assert len(broke) == 2 and all(record.exc_info is None for record in broke)
+        assert not any("step-marker" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.anyio
@@ -707,9 +825,8 @@ async def test_a_model_the_gate_adds_is_served_without_a_restart():
         with anyio.fail_after(BOUND_S):
             before = await r.post(CODER)
             assert before.status_code == 404 and f"the coder ({CODER})" not in before.json()["error"]["message"]
-            read = r.link.events_read
             r.gate.send({**r.gate.state, "models": MODELS})
-            await r.heard(read + 1)
+            await until(lambda: any(entry["name"] == CODER for entry in r.app.models))
             answer = await r.post(CODER)
             assert answer.status_code == 200 and [admit["model"] for admit in r.gate.admits] == [CODER]
             listed = (await r.post("nonesuch")).json()["error"]["message"]
@@ -724,28 +841,33 @@ async def test_a_model_the_gate_adds_is_served_without_a_restart():
 
 @pytest.mark.anyio
 async def test_in_flight_snapshots_are_whole_never_deltas():
-    async with rig(ready=[CODER]) as r:
+    # The floor's tick a minute away, so every snapshot after the first is a change's own.
+    async with rig(ready=[CODER], snapshot_every_s=60) as r:
         r.swap.hold = asyncio.Event()
-        loop = asyncio.get_running_loop()
         with anyio.fail_after(BOUND_S):
-            await until(lambda: len(r.gate.snapshots) >= 1)  # one as the call opens
-            quiet = len(r.gate.snapshots)
-            await asyncio.sleep(1.5)
-            assert len(r.gate.snapshots) > quiet  # at least one a second, with nothing changing
+            await until(lambda: len(r.gate.snapshots) == 1)  # one as the call opens
             asked = r.ask()
-            began = loop.time()
-            await until(lambda: any(each["models"][CODER]["count"] == 1 for each in r.gate.snapshots))
-            assert loop.time() - began < 0.5  # one on the change, not at the next second
+            await until(lambda: len(r.gate.snapshots) >= 2)
+            assert r.gate.snapshots[1]["models"][CODER]["count"] == 1  # one on the change
             r.swap.hold.set()
             await asked
-            ended = loop.time()
             await until(lambda: r.gate.snapshots[-1]["models"][CODER]["count"] == 0)
-            assert loop.time() - ended < 0.5
         for each in r.gate.snapshots:
             assert set(each["models"]) == set(NAMES)  # every model, with its count
             assert all(counts["count"] >= 0 for counts in each["models"].values())
         seqs = [each["seq"] for each in r.gate.snapshots]
         assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+@pytest.mark.anyio
+async def test_in_flight_snapshots_come_at_least_once_a_second():
+    async with rig(ready=[CODER]) as r:
+        with anyio.fail_after(BOUND_S):
+            await until(lambda: len(r.gate.snapshots) >= 1)
+            quiet = len(r.gate.snapshots)
+            await asyncio.sleep(2.5)  # nothing changes meanwhile
+        assert gatelink.SNAPSHOT_EVERY_S == 1.0
+        assert len(r.gate.snapshots) - quiet >= 2
 
 
 # The client.
@@ -820,9 +942,8 @@ async def test_the_journal_line_says_why_a_request_was_cut_or_refused():
             await until(lambda: len(r.lines) == 2)
             assert r.lines[1] == f"front: dan-mac {CODER} cut 0.0s ({gatelink.CUT_WHY})"
             # Cut with no such event since it was forwarded: `cut`, no more.
-            read = r.link.events_read
             r.gate.send(r.gate.state)
-            await r.heard(read + 1)
+            await r.loaded(CODER)
             r.now[0] = T + 1  # forwarded after the coder last left
             with pytest.raises(httpx.RemoteProtocolError):
                 async with r.client.stream("POST", "/v1/chat/completions", json=chat(), headers=auth()) as response:

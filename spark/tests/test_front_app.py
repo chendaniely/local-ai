@@ -122,6 +122,9 @@ class Gate:
     async def why_cut(self, model: str, since: float) -> None:
         return None
 
+    def running_models(self) -> frozenset[str]:
+        return frozenset(self.ready)
+
 
 @dataclasses.dataclass
 class Front:
@@ -277,20 +280,28 @@ async def test_a_route_not_served_without_a_key_gets_401(front):
 @pytest.mark.anyio
 async def test_the_path_sent_on_is_the_routes_own_with_no_query(front):
     await call(front.app, "POST", "/v1/chat/completions", body=chat(), query=b"x=1")
-    await call(front.app, "GET", "/v1/models", query=b"y=2")
-    assert [(seen.method, seen.path) for seen in front.upstream.seen] == [("POST", "/v1/chat/completions"),
-                                                                          ("GET", "/v1/models")]
+    assert [(seen.method, seen.path) for seen in front.upstream.seen] == [("POST", "/v1/chat/completions")]
 
 
 @pytest.mark.anyio
-async def test_the_model_list_route_is_forwarded_without_a_body_or_the_gate(front):
-    front.gate.ready = set()
-    answer = await call(front.app, "GET", "/v1/models", key="k2")
-    assert (answer.status, answer.body) == (200, b'{"ok":true}')
-    [seen] = front.upstream.seen
-    assert (seen.body, seen.key) == (None, "agent")
-    assert front.gate.admits == []
+async def test_the_model_list_is_the_fronts_own_answer_from_the_gates_list(front):
+    # The controller's ruling, at Task 22's review: the front answers it from its copy of the gate's model list, in
+    # llama-swap v257's shape, never upstream and never through the gate's admission.
+    front.gate.ready = {GEMMA}
+    answer = await call(front.app, "GET", "/v1/models", key="k2", query=b"y=2")
+    assert answer.status == 200 and answer.headers["content-type"] == "application/json"
+    assert answer.json() == {"object": "list", "data": [
+        {"id": entry["name"], "object": "model", "created": 1000, "owned_by": "llama-swap",
+         "meta": {"llamaswap": {"type": "model", "aliases": entry["roles"]}},
+         "status": {"value": "loaded" if entry["name"] == GEMMA else "unloaded"}}
+        for entry in sorted(MODELS, key=lambda entry: entry["name"])]}
+    assert front.upstream.seen == [] and front.gate.admits == []
     assert front.lines == ["front: agent - 200 0.0s"]
+    # The current list: one the gate's list drops isn't listed.
+    front.app.models.replace([entry for entry in MODELS if entry["name"] != EMBED])
+    answer = await call(front.app, "GET", "/v1/models")
+    assert [each["id"] for each in answer.json()["data"]] == sorted(set(NAMES) - {EMBED})
+    assert front.upstream.seen == []
 
 
 @pytest.mark.anyio
@@ -688,6 +699,54 @@ async def test_too_many_requests_when_a_keys_caps_are_reached(front):
 
 async def _keep(answers: list, request) -> None:
     answers.append(await request)
+
+
+class ClearsOnCue(Gate):
+    """The gate's stand-in: every request waits, in a waiting slot, until `cue` is set, then is cleared. A `stubborn`
+    one clears it even when cancelled meanwhile, as no gate link should: what it gives back is still counted."""
+
+    def __init__(self, stubborn: bool = False):
+        super().__init__(ready=())
+        self.cue = asyncio.Event()
+        self.stubborn = stubborn
+
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+        if not waits():
+            return gatelink.Refused("too_many_requests")
+        try:
+            await self.cue.wait()
+        except asyncio.CancelledError:
+            if not self.stubborn:
+                raise
+        return enter()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("when", ["waiting", "clearing", "cleared", "stubborn"])
+async def test_a_cancel_never_skips_the_waits_bookkeeping(tmp_path, when):
+    # A request cancelled while it waits, as the gate link clears it, or once the link's work has ended and settled
+    # but before the request took its count; then cancelled again in what follows. Its waiting slot is given back, and
+    # a count it was cleared with, which nothing will forward, is left: even one a stubborn link gives back after the
+    # cancel. In the front, only uvicorn's forced cancel at shutdown reaches this.
+    front = make_front(tmp_path)
+    gate = front.app.gate = ClearsOnCue(stubborn=when == "stubborn")
+    task = asyncio.create_task(call(front.app, "POST", "/v1/chat/completions", body=chat()))
+    with anyio.fail_after(BOUND_S):
+        await until(lambda: front.app.caps.waiting("dan-mac") == 1)
+    if when in ("clearing", "cleared"):
+        gate.cue.set()  # the gate link clears it in the next step
+    if when == "cleared":
+        await asyncio.sleep(0)  # the link's work ends: its count taken
+        await asyncio.sleep(0)  # its done-callbacks run, and the request's wake-up is due
+        assert front.app.inflight.count(CODER) == 1 and front.app.caps.waiting("dan-mac") == 0
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()  # again, in its cleanup
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.05)
+    assert front.app.caps.waiting("dan-mac") == 0
+    assert front.app.inflight.count(CODER) == 0 and front.upstream.seen == []
 
 
 # The body budget (the controller's ruling, at Task 20's review).

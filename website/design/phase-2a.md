@@ -5649,7 +5649,10 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
     (`app.py`, `_wait_for_load`). GateLink keeps that id when it asks a restarted gate again, so
     the gate takes the re-ask as the same request.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
-  apply holds again: every new request is held, as for a draining model; requests in flight
+  apply holds again: every new request is held, as for a draining model *(corrected 2026-10-14, the
+  controller's ruling, at Task 22's review: every new request that names a model; `GET /v1/models`
+  is the front's own answer, from its copy of the gate's model list, never held and never sent
+  upstream)*; requests in flight
   finish; on `release_all`, or a `hello` with `applying` false, the held requests go through
   admission; at a held request's deadline it gets `restarting`, from the gate, or from the front
   itself while the gate isn't answering — never `gate_down` or `llama_swap_down`. Once the gate has
@@ -5682,13 +5685,35 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   - **A refused connection while the gate keeps admitting.** The gate admits a model it counts as
     ready at once, even while llama-swap doesn't answer. So after the first failed send the front
     goes through admission at once, then every `app.RESEND_AFTER_S` (1 s), and at the deadline
-    answers `llama_swap_down` itself, in the key's words. A request with no model (`GET /v1/models`)
-    keeps Task 21's 502 `llama_swap_unreached`.
+    answers `llama_swap_down` itself, in the key's words. ~~A request with no model (`GET /v1/models`)
+    keeps Task 21's 502 `llama_swap_unreached`.~~ *(Corrected 2026-10-14, the controller's ruling,
+    at Task 22's review: the model list is the front's own answer, below, so every request forwarded
+    names a model, and the 502 is retired.)*
   - **`load_failed` after a second exit** is the front's own, in `start_ended`'s words: *The
     coder's start stopped before it was ready: …*.
-  - **`GET /v1/models` isn't held.** Apply's hold and drains hold the requests that name a model.
+  - ~~**`GET /v1/models` isn't held.** Apply's hold and drains hold the requests that name a model.
     The model list goes on to llama-swap as before, since it starts nothing. If every request is to
-    be held, the controller rules it.
+    be held, the controller rules it.~~ *(Ruled 2026-10-14, the controller's ruling, at Task 22's
+    review: the front answers `GET /v1/models` itself, from its copy of the gate's model list,
+    after the key and before any body, never sent upstream and never held. It answers in llama-swap
+    v257's shape for the registry's models (`internal/server/api.go`, `handleListModels`), so pi's
+    and the web UI's saved model ids keep working.*
+    - *v257 lists:* `{"object": "list", "data": [...]}`, sorted by id, one entry for each model,
+      its name as its `id`. Render sets no `includeAliasesInList`, so no role is listed as an id;
+      pi's settings name models by name too (`spark clients`). Each entry has `object` "model",
+      `created` (now), `owned_by` "llama-swap", `meta.llamaswap` (`type` "model", and `aliases`,
+      its roles, when it has any) and `status.value`, "loaded" for a model llama-swap runs in any
+      state but stopped, else "unloaded". For a model whose ready engine it probed it adds what it
+      discovered (`architecture`, `capabilities`, `context_length`, `context_window`,
+      `meta.n_ctx`). Render sets no `name`, `description` or `metadata`.
+    - *The front lists* the same entries, with the same fields and order, but not what v257
+      discovers by probing: the front probes no engine. Its `status.value` is "loaded" while the
+      gate's last `state` lists the model, ready, starting or draining (`GateLink.running_models`),
+      the last list kept while the gate is down.
+    - Its tests: `test_the_model_list_is_the_fronts_own_answer_from_the_gates_list` (`test_front_app.py`),
+      `test_the_model_list_is_answered_by_the_front_from_the_gates_list` (held by apply's hold, the
+      gate's list changing it, and the gate down), and, in `test_front_forward.py`,
+      `test_llama_swap_not_answering_leaves_the_model_list_answered_and_sends_a_model_through_admission`.
   - **The journal's why.** `parse.journal_line` takes `why`, appended in brackets. For a refusal it
     is the refusal's code, when the gate gave it or it came after a wait, but never
     `too_many_requests`. For a cut it is `gatelink.CUT_WHY`, when a `state` event shows the model
@@ -5697,6 +5722,29 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
     response never waits.
   - **Refusals posted to the gate are cut** to the gate's `TEXT_MAX`, 2,000 characters, words and
     model both. So a client's long model name never takes the post past the gate's 64 KiB cap.
+  - *(The controller's rulings, at Task 22's review, the Minors, as built:)*
+    - **An admit's deadline holds while the gate's call stays open.** An ask that fails (a 503, a
+      broken connection) is tried again `gatelink.RETRY_S` apart, but not after the deadline, when
+      it gets `gate_down`. An ask the gate holds is waited for until `gatelink.LATE_ANSWER_S` past
+      the deadline, then `gate_down`. That is `LOAD_CALL_TIMEOUT_S` plus `REQUEST_TIMEOUT_S`, 205 s,
+      not the ruling's `REQUEST_TIMEOUT_S` alone, since the gate waits for a load it started by the
+      deadline to the load's own bound (*Admission*: a load's requests wait past their key's
+      wait). A bound of 5 s would refuse a request whose load is under way, and leave that load to
+      nobody. Its test: `test_an_admit_ends_at_its_deadline_while_the_gates_call_stays_open`.
+    - **A `drained` the gate didn't take is sent again**, at each snapshot's turn, while the drain
+      is held and the gate's call is open, until the gate takes it. Its test:
+      `test_a_drained_post_the_gate_didnt_take_is_sent_again`.
+    - **GateLink's two tasks never end** but at its close: a step of the events call or of the
+      snapshots that breaks is logged by its type, then tried again. Its test:
+      `test_a_step_that_raises_never_ends_the_links_tasks`.
+    - **The waits' bookkeeping awaits nothing**, so no cancel skips it: the waiting slot is given
+      back by a done-callback on the gate link's work, and a count that cleared but won't be
+      forwarded is left there, or at once. Its test, in `test_front_app.py`:
+      `test_a_cancel_never_skips_the_waits_bookkeeping`.
+    - **The stand-in checks what the front posts** with the gate's own checks (`gate.app._snapshot`,
+      `_text`, `_number`, and the refused route's), and sends the gate's pings between events.
+    - **The snapshots' timing is tested in two halves**: on change, with the floor's tick a minute
+      away, and the 1 s floor alone.
   - **Files beyond the list:** `upstream.py` (`InFlight.on_change`, `Upstream.ready_models` and
     `exited_prematurely`), `parse.py` (`journal_line`'s `why`), `test_front_app.py` (its gate
     stand-in, on `clear`), and `spark/tests/gate_standin.py`. The stand-in speaks HTTP on asyncio's
