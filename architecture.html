@@ -184,6 +184,7 @@ ul.task-list li input[type="checkbox"] {
     orca["Orca"]
     claude_mac["Claude Code,&lt;br/&gt;Claude Desktop"]
     pi_mac["pi"]
+    oc_mac["opencode, Hermes"]
     webapp["web UI,&lt;br/&gt;Safari web app"]
     term["terminal"]
   end
@@ -218,10 +219,12 @@ ul.task-list li input[type="checkbox"] {
 
   orca -- starts --&gt; claude_mac
   orca -- starts --&gt; pi_mac
+  orca -- starts --&gt; oc_mac
   claude_mac --&gt; anthropic
   webapp -- "HTTPS over Tailscale" --&gt; tss
   pwa -- "HTTPS over Tailscale" --&gt; tss
   pi_mac -- "SSH tunnel, make tunnel" --&gt; swap
+  oc_mac -- "same tunnel" --&gt; swap
   term -- "ssh brightroar-agent" --&gt; agent_tmux
   tss --&gt; owui
   owui --&gt; searx
@@ -263,7 +266,7 @@ ul.task-list li input[type="checkbox"] {
 <pre class="mermaid mermaid-js">flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  piT["pi on the Mac&lt;br/&gt;in a terminal or Orca"]
+  piT["pi, opencode or Hermes on the Mac&lt;br/&gt;in a terminal or Orca"]
   ui["web UI&lt;br/&gt;on the Mac or the phone"]
   piA["pi as agent&lt;br/&gt;in tmux on the Spark"]
   cc["Claude Code&lt;br/&gt;anywhere"]
@@ -296,7 +299,7 @@ ul.task-list li input[type="checkbox"] {
 </div>
 </div>
 </div>
-<p>pi on the Mac reaches llama-swap only while <code>make tunnel</code> runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN alias still carries SSH and so pi’s tunnel, but the web UI waits. <code>agent</code>’s pi needs no tunnel. From Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark, and guests at an event reach LiteLLM and a guest web UI of their own, on the venue’s network only.</p>
+<p>pi on the Mac reaches llama-swap only while <code>make tunnel</code> runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN alias still carries SSH and so pi’s tunnel, but the web UI waits. <code>agent</code>’s pi needs no tunnel. opencode and Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, <code>make clients</code>). From Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark, and guests at an event reach LiteLLM and a guest web UI of their own, on the venue’s network only.</p>
 </section>
 <section id="loading-a-model" class="level2">
 <h2 class="anchored" data-anchor-id="loading-a-model">Loading a model</h2>

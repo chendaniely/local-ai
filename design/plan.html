@@ -255,10 +255,6 @@ ul.task-list li input[type="checkbox"] {
 <section id="requirements-decided-2026-09-23" class="level2">
 <h2 class="anchored" data-anchor-id="requirements-decided-2026-09-23">Requirements (decided 2026-09-23)</h2>
 <table class="caption-top table">
-<colgroup>
-<col style="width: 50%">
-<col style="width: 50%">
-</colgroup>
 <thead>
 <tr class="header">
 <th>Area</th>
@@ -312,7 +308,7 @@ ul.task-list li input[type="checkbox"] {
 </tr>
 <tr class="even">
 <td>Orca (decided 2026-09-28)</td>
-<td>Orca, the desktop app that runs coding agents in panes, each in its own git worktree, <strong>stays on the Mac in its local mode</strong>: the agents it starts run on the Mac, as Dan, and nothing of Orca’s runs on the Spark (neither <code>brightroar</code> nor <code>brightroar-agent</code> is an Orca target). Dan’s Claude Code runs in it with Orca’s status hooks kept, <strong>Agent Permissions set to Manual</strong> and telemetry off. <strong>pi runs in it and reaches the Spark’s models over <code>make tunnel</code></strong>, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. The Spark as Orca’s server, and Orca on the phone, are parked (Backlog).</td>
+<td>Orca, the desktop app that runs coding agents in panes, each in its own git worktree, <strong>stays on the Mac in its local mode</strong>: the agents it starts run on the Mac, as Dan, and nothing of Orca’s runs on the Spark (neither <code>brightroar</code> nor <code>brightroar-agent</code> is an Orca target). Dan’s Claude Code runs in it with Orca’s status hooks kept, <strong>Agent Permissions set to Manual</strong> and telemetry off. <strong>pi runs in it and reaches the Spark’s models over <code>make tunnel</code></strong>, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for Phase 5. <em>(2026-10-14, Dan’s request: not any more for the deployed models. <code>make clients</code> writes OpenCode’s and Hermes’s <code>spark</code> provider from the registry, as it does pi’s, each key by reference: <a href="../how-to/opencode-hermes.html">opencode and Hermes on the Mac</a>. The bake-off’s new models reach them the same way.)</em> The Spark as Orca’s server, and Orca on the phone, are parked (Backlog).</td>
 </tr>
 <tr class="odd">
 <td>Reach</td>
@@ -518,7 +514,7 @@ ul.task-list li input[type="checkbox"] {
 <section id="docs-site-and-scenarios" class="level3">
 <h3 class="anchored" data-anchor-id="docs-site-and-scenarios">Docs site and scenarios</h3>
 <ul>
-<li><code>website/</code> (Quarto, documentation only): overview · architecture · how-to runbooks · endpoint reference (for Dan’s own code; the model table is generated from the registry) · Stack (generated from <code>versions.yaml</code>) · <strong>Scenarios</strong> · design notes (this plan and the implementation plans, in <code>website/design/</code>). There is no top-level <code>docs/</code>. A SHA-pinned GitHub Actions workflow publishes to GitHub Pages — Dan confirms before the first publish.</li>
+<li><code>website/</code> (Quarto, documentation only): overview · architecture · how-to runbooks · endpoint reference (for Dan’s own code; the model table is generated from the registry) · Stack (generated from <code>versions.yaml</code>) · <strong>Scenarios</strong> · design notes (this plan and the implementation plans, in <code>website/design/</code>). There is no top-level <code>docs/</code>. A SHA-pinned GitHub Actions workflow publishes to GitHub Pages — Dan confirms before the first publish. <em>(First published 2026-10-13. Since 2026-10-14, Dan’s decision, it publishes on every push to <code>main</code>, and by hand.)</em></li>
 <li><strong>Scenarios</strong> have IDs that <code>spark doctor</code> checks and the phases’ “done when” criteria refer to. Each page gives the situation · what happens · what Dan sees · how to override · status (planned / built / verified with a date). A behaviour change updates its scenario page <strong>and</strong> its check in the same commit. The seed list: <strong>S01</strong> morning start · <strong>S02</strong> big job while an agent works · <strong>S03</strong> doesn’t fit, interactive · <strong>S04</strong> doesn’t fit, unattended · <strong>S05</strong> memory critically low · <strong>S06</strong> an agent’s long GPU step · <strong>S07</strong> lecture → transcript with speakers · <strong>S08</strong> batch versus interactive · <strong>S09</strong> phone away from home · <strong>S10</strong> homelab app at 3 am · <strong>S11</strong> trying a new model · <strong>S12</strong> long agent run, laptop closed · <strong>S13</strong> Spark freezes while away · <strong>S14</strong> gate down · <strong>S15</strong> NAS down · <strong>S16</strong> Postgres down · <strong>S17</strong> changing models mid-task · <strong>S18</strong> rebuild after a factory reset · <strong>S19</strong> Claude Code building a pipeline elsewhere · <strong>S20</strong> web search from the phone · <strong>S21</strong> Pixeltable over datasets (backlog) · <strong>S22</strong> on another tailnet via WireGuard (pi and the API work; the web UI waits). Added since: <strong>S23</strong> upgrade day (2026-09-25).</li>
 </ul>
 </section>
