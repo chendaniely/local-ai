@@ -23,7 +23,7 @@ from front_helpers import (BOUNDARY, DIGESTS, GROUPS, KEYS, KEYS_TEXT, MIB, MODE
 from spark import messages
 from spark.credentials import CredentialError
 from spark.front import app as front_app
-from spark.front import parse
+from spark.front import gatelink, parse
 from spark.protocols import make_protocol
 from spark.registry import RegistryError
 from uvicorn_helpers import (HEADER_TIMEOUT_S, connect, read_response, response, serving, tcp_listener,
@@ -94,23 +94,33 @@ class Upstream:
 
 
 class Gate:
-    """The gate's stand-in, as Task 22's GateLink is called: which models are loaded, and the admit call, which it
-    records and answers with `answer`, held while `hold` is set and not yet released."""
+    """The gate's stand-in, as the app calls Task 22's GateLink: a model in `ready` is cleared at once, counted as it is
+    (`enter`); any other takes a waiting slot (`waits`), too_many_requests without one, and asks for an admit, which
+    it records and answers with `answer`, held while `hold` is set and not yet released. The front's own refusals it
+    is told of are kept in `refusals`."""
 
     def __init__(self, ready=NAMES):
         self.ready = set(ready)
         self.admits: list[tuple[str, str, float, str]] = []
         self.hold: asyncio.Event | None = None
         self.answer: dict = {"ok": True}
+        self.refusals: list[tuple[str, str | None, str, str]] = []
 
-    async def loaded(self, model: str) -> bool:
-        return model in self.ready
-
-    async def admit(self, model: str, key: str, deadline: float, request_id: str) -> dict:
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+        if not admit and model in self.ready:
+            return enter()
+        if not waits():
+            return gatelink.Refused("too_many_requests")
         self.admits.append((model, key, deadline, request_id))
         if self.hold is not None:
             await self.hold.wait()
-        return {**self.answer, "model": model} if self.answer.get("ok") else self.answer
+        return enter() if self.answer.get("ok") else gatelink.Refused(self.answer["code"], answer=self.answer)
+
+    def refused(self, code: str, model: str | None, key: str, message: str) -> None:
+        self.refusals.append((code, model, key, message))
+
+    async def why_cut(self, model: str, since: float) -> None:
+        return None
 
 
 @dataclasses.dataclass
@@ -612,7 +622,7 @@ async def test_model_not_found_names_the_current_models(front):
 @pytest.mark.anyio
 async def test_the_fronts_own_refusals_are_in_the_asking_keys_words(front):
     # Every refusal the front builds goes through app.refusal, the asking key's label and its group's words with it:
-    # model_not_found here, and draining when Task 22 builds it.
+    # model_not_found here, and draining, which Task 22's GateLink gives at a draining model's deadline.
     for key, words, label in (("dan-mac", "dan", "pi on the Mac"), ("agent", "agent", "agent")):
         group = GROUPS[KEYS[key].group]
         for code, fields in (("draining", {"model_label": "the coder", "inflight": 1, "drain_for": "make-room"}),

@@ -32,9 +32,10 @@ import pytest
 import spark.front
 from fake_llamaswap import FakeLlamaSwap, serve_fake
 from front_helpers import DIGESTS, GROUPS, KEYS, KEYS_TEXT, MODELS, field, file_part, form_body
+from gate_standin import GateStandIn
 from spark import messages, serve
 from spark.front import app as front_app
-from spark.front import parse, upstream
+from spark.front import gatelink, parse, upstream
 from spark.protocols import make_protocol
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
@@ -93,13 +94,26 @@ async def until(condition, bound_s: float = BOUND_S) -> None:
 
 
 class Loaded:
-    """The gate's stand-in, as Task 22's GateLink is called: every model loaded, so nothing waits for an admit."""
+    """The gate's stand-in, as the app calls Task 22's GateLink: every model loaded, so each request is cleared at once,
+    counted as it is (`enter`), and nothing is admitted. A resend, which goes through admission, is refused with
+    `refusal`: the gate's llama_swap_down, by default."""
 
-    async def loaded(self, model: str) -> bool:
-        return True
+    def __init__(self, refusal: dict | None = None):
+        self.refusal = refusal or {"ok": False, "code": "llama_swap_down", "status": 409, "message": "M",
+                                   "retry_after_s": 30}
+        self.admits = 0
 
-    async def admit(self, model, key, deadline, request_id):
-        raise AssertionError("no admit: every model is loaded")
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+        if not admit:
+            return enter()
+        self.admits += 1
+        return gatelink.Refused(self.refusal["code"], answer=self.refusal)
+
+    def refused(self, code, model, key, message):
+        pass
+
+    async def why_cut(self, model, since):
+        return None
 
 
 class Tasks:
@@ -571,7 +585,9 @@ def test_in_flight_counts_each_request_once_however_often_it_is_left():
 # Errors before an answer.
 
 @pytest.mark.anyio
-async def test_llama_swap_not_answering_is_a_502_in_words(tmp_path):
+async def test_llama_swap_not_answering_is_a_502_for_the_model_list_and_goes_through_admission_for_a_model(tmp_path):
+    # No connection, or one closed before the head. For a model, the request goes through admission (Task 22), and
+    # the gate's answer reaches the client; the model list, which names no model, gets the front's own 502.
     nothing = nothing_listening()
 
     async def hang_up(reader, writer):  # takes the request, then closes before any answer: a crash mid-request
@@ -582,14 +598,20 @@ async def test_llama_swap_not_answering_is_a_502_in_words(tmp_path):
     hangs_up = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     try:
         for url in (nothing, hangs_up):
-            async with rig(tmp_path, swap_url=url) as r:
+            gate = Loaded()
+            async with rig(tmp_path, swap_url=url, gate=gate) as r:
                 for key, words in (("k1", front_app.UNREACHED["dan"]), ("k2", front_app.UNREACHED["agent"])):
-                    answer = await r.client.post("/v1/chat/completions", json=chat(), headers=auth(key))
+                    answer = await r.client.get("/v1/models", headers=auth(key))
                     assert (answer.status_code, answer.json()) == (
                         502, {"error": {"message": words, "code": front_app.UNREACHED_CODE}})
-                    await until(lambda: r.count() == 0)
-                await until(lambda: len(r.lines) == 2)
-                assert r.lines == [f"front: dan-mac {CODER} 502 0.0s", f"front: agent {CODER} 502 0.0s"]
+                answer = await r.client.post("/v1/chat/completions", json=chat(), headers=auth())
+                refused = {"error": {"message": "M", "code": "llama_swap_down"}, "retry_after_s": 30}
+                assert (answer.status_code, answer.json()) == (409, refused)
+                await until(lambda: r.count() == 0)
+                await until(lambda: len(r.lines) == 3)
+                assert r.lines == ["front: dan-mac - 502 0.0s", "front: agent - 502 0.0s",
+                                   f"front: dan-mac {CODER} 409 0.0s (llama_swap_down)"]
+                assert gate.admits == 1
     finally:
         server.close()
         await server.wait_closed()
@@ -842,13 +864,18 @@ class Waits:
         self.admits: list[str] = []
         self.admitted = asyncio.Event()
 
-    async def loaded(self, model: str) -> bool:
-        return False
-
-    async def admit(self, model, key, deadline, request_id):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+        if not waits():
+            return gatelink.Refused("too_many_requests")
         self.admits.append(model)
         await self.admitted.wait()
-        return {"ok": True, "model": model}
+        return enter()
+
+    def refused(self, code, model, key, message):
+        pass
+
+    async def why_cut(self, model, since):
+        return None
 
 
 @pytest.mark.anyio
@@ -899,9 +926,9 @@ async def test_an_uploads_slot_is_given_back_however_it_ends(tmp_path, way):
                 gone.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await gone
-            elif way in ("unreached", "error"):
+            elif way in ("unreached", "error"):  # unreached: through admission, which the stand-in refuses
                 answer = await client.post("/v1/audio/transcriptions", content=body, headers=headers)
-                assert answer.status_code == {"unreached": 502, "error": 500}[way]
+                assert answer.status_code == {"unreached": 409, "error": 500}[way]
             else:  # cut upstream, or the handler's task cancelled as by the front's own stop
                 with pytest.raises(httpx.RemoteProtocolError):
                     async with client.stream("POST", "/v1/audio/transcriptions", content=body,
@@ -912,8 +939,9 @@ async def test_an_uploads_slot_is_given_back_however_it_ends(tmp_path, way):
                             tasks.tasks[-1].cancel()
                         async for _ in rest:
                             pass
-            ended = {"gone": "gone", "unreached": 502, "error": 500, "cut": "cut", "cancelled": "cut"}[way]
-            await until(lambda: lines == [f"front: dan-mac {WHISPER} {ended} 0.0s"])
+            ended = {"gone": "gone 0.0s", "unreached": "409 0.0s (llama_swap_down)", "error": "500 0.0s",
+                     "cut": "cut 0.0s", "cancelled": "cut 0.0s"}[way]
+            await until(lambda: lines == [f"front: dan-mac {WHISPER} {ended}"])
             assert app.uploading == 0
             holding.release.set()
         if isinstance(forwarder, upstream.Upstream):
@@ -1000,48 +1028,62 @@ def _environment(**more: str) -> dict[str, str]:
 @LINUX_ONLY
 @pytest.mark.anyio
 async def test_spark_front_takes_9100_from_systemd(tmp_path, sockdir):
-    # 127.0.0.1:0 stands in for 9100, which local-ai-front.socket holds. Until Task 22's GateLink the front asks no
-    # gate, so no gate stand-in is given yet: Task 22 adds it with the link.
+    # 127.0.0.1:0 stands in for 9100, which local-ai-front.socket holds, and a short socket under /tmp for the gate's
+    # status socket (Task 22's GateLink), where the gate stand-in shows Gemma ready.
     credentials = _credentials(tmp_path / "credentials")
     registry = tmp_path / "models.yaml"
     registry.write_text(STACK_REGISTRY.read_text())
     from spark.registry import load_registry
 
-    names = list(load_registry(registry).models)
+    loaded = load_registry(registry)
+    names = list(loaded.models)
+    coder = next(name for name, model in loaded.models.items() if "coder" in model.roles)  # the registry's own
     fake = FakeLlamaSwap({INTERNAL}, names)
     for name in names:
         fake.set_state(name, "ready")
     fake.stream("gemma-4-26b-a4b", [DELTA, DONE])
+    fake.stream(coder, [DELTA, DONE])
+    gate = GateStandIn(sockdir, models=list(parse.ModelList.from_registry(loaded)), ready=[GEMMA])
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     url = f"http://127.0.0.1:{listener.getsockname()[1]}"
     with anyio.fail_after(60), socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
         receiver.bind(str(sockdir / "notify"))
-        async with serve_fake(fake) as swap_url:
-            env = _environment(LISTEN_FDS="1", LISTEN_FDNAMES="front", NOTIFY_SOCKET=str(sockdir / "notify"),
-                               CREDENTIALS_DIRECTORY=str(credentials), SPARK_REGISTRY=str(registry),
-                               SPARK_LLAMASWAP_URL=swap_url)
-            child = subprocess.Popen([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
-                                     pass_fds=[listener.fileno()], env=env, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True)
-            listener.close()  # the front's now, as systemd's would be
-            try:
-                assert await asyncio.to_thread(_received, receiver, 30) == b"READY=1"
-                async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=10) as client:
-                    health = await client.get("/health")
-                    assert (health.status_code, health.json()) == (200, {"status": "ok"})
-                    answer = await client.post("/v1/chat/completions", json=chat(GEMMA), headers=auth("k2"))
-                    assert (answer.status_code, answer.content) == (200, DELTA + DONE)
-                child.send_signal(signal.SIGTERM)
-                _, err = await asyncio.to_thread(child.communicate, timeout=30)
-            finally:
-                if child.poll() is None:
-                    child.kill()
-                    await asyncio.to_thread(child.communicate, timeout=10)
-            assert child.returncode == 0, err
-            assert await asyncio.to_thread(_received, receiver, 5) == b"STOPPING=1"
-    assert [seen.headers["authorization"] for seen in fake.requests] == [f"Bearer {INTERNAL}"]
+        await gate.start()
+        try:
+            async with serve_fake(fake) as swap_url:
+                env = _environment(LISTEN_FDS="1", LISTEN_FDNAMES="front", NOTIFY_SOCKET=str(sockdir / "notify"),
+                                   CREDENTIALS_DIRECTORY=str(credentials), SPARK_REGISTRY=str(registry),
+                                   SPARK_LLAMASWAP_URL=swap_url, SPARK_GATE_STATUS=str(gate.path))
+                child = subprocess.Popen([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
+                                         pass_fds=[listener.fileno()], env=env, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True)
+                listener.close()  # the front's now, as systemd's would be
+                try:
+                    assert await asyncio.to_thread(_received, receiver, 30) == b"READY=1"
+                    await until(lambda: gate.events_calls == 1 and gate.snapshots)  # it follows the gate
+                    async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=10) as client:
+                        health = await client.get("/health")
+                        assert (health.status_code, health.json()) == (200, {"status": "ok"})
+                        await until(lambda: any(each["models"] for each in gate.snapshots))
+                        answer = await client.post("/v1/chat/completions", json=chat(GEMMA), headers=auth("k2"))
+                        assert (answer.status_code, answer.content) == (200, DELTA + DONE)
+                        assert gate.admits == []  # loaded: no admit
+                        answer = await client.post("/v1/chat/completions", json=chat(coder), headers=auth("k2"))
+                        assert (answer.status_code, answer.content) == (200, DELTA + DONE)
+                        assert [(admit["model"], admit["key"]) for admit in gate.admits] == [(coder, "agent")]
+                    child.send_signal(signal.SIGTERM)
+                    _, err = await asyncio.to_thread(child.communicate, timeout=30)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        await asyncio.to_thread(child.communicate, timeout=10)
+                assert child.returncode == 0, err
+                assert await asyncio.to_thread(_received, receiver, 5) == b"STOPPING=1"
+        finally:
+            await gate.close()
+    assert [seen.headers["authorization"] for seen in fake.requests] == [f"Bearer {INTERNAL}"] * 2
     assert "front: agent gemma-4-26b-a4b 200" in err  # its journal line
     assert "Traceback" not in err and "k2" not in err
 
@@ -1055,8 +1097,9 @@ def test_spark_front_refuses_to_start_without_its_socket_or_with_keys_that_disag
     registry.write_text(STACK_REGISTRY.read_text())
     credentials = _credentials(tmp_path / "credentials")
     # llama-swap's address on a closed port, so a refusal that stopped refusing could reach nothing live.
+    # The gate's socket, a path nothing listens on, so a refusal that stopped refusing could reach no gate either.
     common = {"CREDENTIALS_DIRECTORY": str(credentials), "SPARK_REGISTRY": str(registry),
-              "SPARK_LLAMASWAP_URL": nothing_listening()}
+              "SPARK_LLAMASWAP_URL": nothing_listening(), "SPARK_GATE_STATUS": str(tmp_path / "no-gate.sock")}
     wrong = subprocess.run([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
                            pass_fds=[listener.fileno()], env=_environment(LISTEN_FDS="1", LISTEN_FDNAMES="status",
                                                                           **common),
@@ -1211,6 +1254,7 @@ def _loaded(module: str) -> list[str]:
 
 def test_the_front_imports_only_its_listed_modules():
     assert isinstance(spark.front.FRONT_MODULES, frozenset)
+    assert "spark.front.gatelink" in spark.front.FRONT_MODULES  # Task 22's link to the gate
     loaded = _loaded("spark.front.main")
     assert {name for name in loaded if name == "spark" or name.startswith("spark.")} == spark.front.FRONT_MODULES
     # spark.front alone loads no third-party module, so `spark apply` reads FRONT_MODULES without uvicorn.

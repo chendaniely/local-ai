@@ -744,9 +744,9 @@ def resolve(name: str, models: ModelList) -> ModelEntry | None:
 # Caps.
 
 class KeyCaps:
-    """Each key's caps, by its group (Task 4): its requests waiting for a load (`max_waiting`), and its requests open,
-    waiting or answering (`max_open`). Past either, the front answers too_many_requests. A key the list doesn't have
-    has no room."""
+    """Each key's caps, by its group (Task 4): its requests waiting (`max_waiting`), for a load, a drain or apply's hold
+    (Task 22), and its requests open, waiting or answering (`max_open`). Past either, the front answers
+    too_many_requests. A key the list doesn't have has no room."""
 
     def __init__(self, keys: dict[str, ClientKey], groups: dict[str, KeyGroup]):
         self._caps = {name: (groups[key.group].max_waiting, groups[key.group].max_open) for name, key in keys.items()}
@@ -780,9 +780,11 @@ class KeyCaps:
 
 # The journal.
 
-def journal_line(key: str, model: str, status: int | str, seconds: float) -> str:
-    """`front: <key> <model> <status> <seconds, one decimal>s`, nothing more (plan.md, *Its journal lines*): the key's
-    name and the model's, never a key, a digest, a header, a body or a file name. `-` stands for a key or a model the
-    request didn't name; a status that is a word says how a request ended without one (`gone`: its client went
-    first)."""
-    return f"front: {key} {model} {status} {max(seconds, 0.0):.1f}s"
+def journal_line(key: str, model: str, status: int | str, seconds: float, why: str | None = None) -> str:
+    """`front: <key> <model> <status> <seconds, one decimal>s`, then ` (<why>)` when there is a why, nothing more
+    (plan.md, *Its journal lines*): the key's name and the model's, never a key, a digest, a header, a body or a file
+    name. `-` stands for a key or a model the request didn't name; a status that is a word says how a request ended
+    without one (`gone`: its client went first). `why` is the front's own words, from what the gate says (Task 22): a
+    refusal's code, or why a stream was cut, never a client's text."""
+    line = f"front: {key} {model} {status} {max(seconds, 0.0):.1f}s"
+    return line if why is None else f"{line} ({why})"

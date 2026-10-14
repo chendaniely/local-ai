@@ -5664,6 +5664,44 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   (`gate.app.GATE_STOPPING`), its connection closed. So the gate's stop never waits out
   `GRACEFUL_S` for these calls. The front takes either as the gate restarting, as it takes a dropped
   call: it asks the restarted gate again, with the admit's original deadline.
+- *(Added 2026-10-14, as Task 22 was built; the implementer's choices, for the controller's review:)*
+  - **The app's one call.** `GateLink.clear(model, key, deadline, request_id, *, enter, admit, waits)`
+    replaces Task 20's stand-in calls, `loaded` and `admit`, which GateLink keeps. It waits out
+    apply's hold and any drain the front holds, asks `admit` when the model isn't loaded, and
+    counts the request in flight with `enter()` in the step that cleared it. So the drain's check
+    and the count stay one step, though the app races the wait against the client's disconnect in a
+    task of its own. `waits()` takes the key's waiting slot before the first wait. The cap now
+    counts requests waiting for a load, a drain or apply's hold. `InFlight.on_change` tells the link
+    of each change to the count, in its step: `drained` at 0, and a snapshot for each change.
+  - **`gate_down`, new and held.** A request that comes to admission while the gate counts as down
+    gets `gate_down` at once (rule 8). One already asking when the gate's call drops keeps its
+    key's wait. It is asked again under its request id and its deadline once the gate's call is
+    open, and gets `gate_down` at its deadline. So the test's *at T + 5 it gets `gate_down`* is
+    read as a new request at T + 5. The one from T + 3 waits on, and gets `gate_down` at its own
+    deadline.
+  - **A refused connection while the gate keeps admitting.** The gate admits a model it counts as
+    ready at once, even while llama-swap doesn't answer. So after the first failed send the front
+    goes through admission at once, then every `app.RESEND_AFTER_S` (1 s), and at the deadline
+    answers `llama_swap_down` itself, in the key's words. A request with no model (`GET /v1/models`)
+    keeps Task 21's 502 `llama_swap_unreached`.
+  - **`load_failed` after a second exit** is the front's own, in `start_ended`'s words: *The
+    coder's start stopped before it was ready: …*.
+  - **`GET /v1/models` isn't held.** Apply's hold and drains hold the requests that name a model.
+    The model list goes on to llama-swap as before, since it starts nothing. If every request is to
+    be held, the controller rules it.
+  - **The journal's why.** `parse.journal_line` takes `why`, appended in brackets. For a refusal it
+    is the refusal's code, when the gate gave it or it came after a wait, but never
+    `too_many_requests`. For a cut it is `gatelink.CUT_WHY`, when a `state` event shows the model
+    in none of `ready`, `starting` and `draining` at or after the request's forwarding. A cut's line
+    waits up to `gatelink.CUT_WHY_S` (12 s) for that event, in a task of its own. The client's
+    response never waits.
+  - **Refusals posted to the gate are cut** to the gate's `TEXT_MAX`, 2,000 characters, words and
+    model both. So a client's long model name never takes the post past the gate's 64 KiB cap.
+  - **Files beyond the list:** `upstream.py` (`InFlight.on_change`, `Upstream.ready_models` and
+    `exited_prematurely`), `parse.py` (`journal_line`'s `why`), `test_front_app.py` (its gate
+    stand-in, on `clear`), and `spark/tests/gate_standin.py`. The stand-in speaks HTTP on asyncio's
+    streams, not uvicorn, so a test can break a connection as a gate that dies does. Its listener
+    stays held while it isn't serving, as systemd holds the gate's socket.
 
 **Tests** (`spark/tests/test_front_gatelink.py`; a scriptable gate stand-in on a short Unix socket,
 speaking Task 10's routes):

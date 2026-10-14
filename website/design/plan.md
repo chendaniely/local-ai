@@ -206,7 +206,10 @@ Four services, three sockets that systemd holds, and a notifier:
     with `Retry-After: 30`.)*
   - **Its journal lines** name the key, the model, the status and the duration, never a key, a
     digest, a body, a header or an upload's file name, so it doesn't undo what the llama-swap row
-    keeps out of the journal.
+    keeps out of the journal. *(Added 2026-10-14, at the implementation plan's Task 22: and, in
+    the front's own words, why, where the gate gives it: a refusal's code when the refusal came
+    from the gate or after a wait, and, for a stream cut short, that the model stopped while it
+    answered, when the gate's events show it gone from llama-swap's `/running`.)*
 - **The gate** — `local-ai-gate.service`, a system unit as `spark`, on two Unix sockets: the
   **status socket** (group `spark-users`: status and sessions) and the **control socket** (group
   `spark-admin`: load, unload, pin, make-room, release, and the reads Dan's commands make). A
@@ -484,7 +487,13 @@ If llama-swap answers a forwarded request with "upstream command exited prematur
 crashed or the front's view of what is loaded was stale, and `spark launch` refused it for want of
 a ticket. The front then asks the gate, as for any model that isn't loaded, and forwards the
 request again from the body it holds. llama-swap's own limit per model, 10 requests waiting or
-served, answers a `429` with `Retry-After`, which the front passes on.
+served, answers a `429` with `Retry-After`, which the front passes on. *(Added 2026-10-14, at the
+implementation plan's Task 22, as built: a second "exited prematurely" in a row reaches the client
+as a `409`, `load_failed`. A refused connection, or one reset before its answer, goes through the
+gate the same way, with the request's original deadline. The gate admits a model it counts as
+loaded at once, even while llama-swap isn't answering, so while it keeps doing so the front asks
+again and sends again a second apart, and at the deadline answers `llama_swap_down` itself, in the
+asking key's words.)*
 
 *Added 2026-10-07, after the re-review:* a gate restart drops the admission calls it held, so the
 front asks again for each, with the request's original deadline, and no key's wait starts over.
@@ -3563,6 +3572,12 @@ Each item gets its own design pass when its turn comes.
   shows in `spark status` and `make doctor`. Dated notes are in *What you see in Phase 2a* (the
   paragraph above the refusal table, and its two rows) and in Phase 5's ntfy line; in the
   implementation plan's Global Constraints and Task 29; and on the S14 scenario page.
+- **2026-10-14** — Phase 2a's Task 22, as it was built: the front asks the gate for each load.
+  Dated notes are in *The front and the gate* (*Its journal lines*, and the paragraph on "upstream
+  command exited prematurely"). The implementation plan's Task 22 has the rest.
+  - The front answers `llama_swap_down` itself at a request's deadline when the gate keeps admitting
+    a model llama-swap doesn't answer for.
+  - Its journal line says why a request was refused, or cut short, where the gate gives it.
 
 ## Sources
 

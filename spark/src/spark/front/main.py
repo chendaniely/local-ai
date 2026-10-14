@@ -9,9 +9,11 @@ name, `front` (sockets.listen_fds).
   paths.LLAMASWAP_URL.
 - **Its modules** are spark.front.FRONT_MODULES, every one imported here, before it serves, so the code it runs is the
   code it started with, and `spark apply` knows which changes restart it (Task 31).
-- **The gate.** Until Task 22's GateLink, the front asks no gate: it takes every model for loaded (_NoGateLinkYet), so
-  each request is forwarded as for a loaded model, and llama-swap answers. Nothing deploys from this state: Task 22
-  comes before the cutover.
+- **The gate** (Task 22's GateLink), on the gate's status socket, paths.GATE_STATUS_SOCKET: started in the serving
+  loop before the front serves (run_servers' `startup`), which returns at once, so the front serves whether the gate
+  answers or not; its model list replaces the registry's from the gate's first `hello`; while the gate is down, what's
+  loaded is what llama-swap's `/running` shows ready (Upstream.ready_models). The gate link and the app count requests
+  in flight in one InFlight.
 - **Its logging** (configure_logging, called before anything else: serve's, and one line more): its lines on stderr,
   which the journal takes; its journal line for each request (parse.journal_line) under `spark.front`; uvicorn's
   lines without a traceback or the upgrade warnings; httpx's and httpcore's request lines quieted
@@ -20,8 +22,9 @@ name, `front` (sockets.listen_fds).
   controller's ruling, at Task 21's review). The gate keeps that line, where it would flag a bug, and both keep
   *… without starting response.*, which is one here too.
 - **Its stop**: SIGTERM or SIGINT; uvicorn's graceful shutdown, within gateproto.GRACEFUL_S, below the unit's
-  TimeoutStopSec=, lets the answers in flight finish and cuts those that outlast it; then each upstream client
-  closed.
+  TimeoutStopSec=, lets the answers in flight finish and cuts those that outlast it, the requests it holds waiting
+  among them; then the cuts' journal lines still waiting for why written without it, the gate link closed, and each
+  upstream client closed.
 
 A startup refusal is one line on stderr, exit 1: a socket missing or one too many, a credential missing or malformed
 (named, never quoted), a registry or a key list that won't load, digests and a key list that disagree (a key's name,
@@ -32,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from collections.abc import MutableMapping
 
 import yaml
@@ -40,7 +44,8 @@ from spark import paths, serve
 from spark.credentials import CredentialError, read_credential
 from spark.front import parse
 from spark.front.app import FrontApp, read_keys
-from spark.front.upstream import Upstream
+from spark.front.gatelink import GateLink
+from spark.front.upstream import InFlight, Upstream
 from spark.gateproto import GRACEFUL_S
 from spark.protocols import make_protocol
 from spark.registry import load_registry
@@ -67,16 +72,6 @@ def configure_logging() -> None:
     serve.configure_logging(also_dropped=(INCOMPLETE_RESPONSE,))
 
 
-class _NoGateLinkYet:
-    """The gate as the front sees it until Task 22's GateLink: every model loaded, so nothing is admitted."""
-
-    async def loaded(self, model: str) -> bool:
-        return True
-
-    async def admit(self, model: str, key: str, deadline: float, request_id: str) -> dict:
-        raise RuntimeError("the front has no link to the gate before Task 22, so it admits nothing")
-
-
 def run(env: MutableMapping[str, str] = os.environ) -> int:
     """`spark front`: until SIGTERM or SIGINT, then 0; a startup refusal, one line on stderr, then 1."""
     configure_logging()
@@ -88,12 +83,22 @@ def run(env: MutableMapping[str, str] = os.environ) -> int:
         registry = load_registry(paths.REGISTRY)
         keys, digests = read_keys(registry.key_groups, env)
         upstream = Upstream(paths.LLAMASWAP_URL, read_credential(LLAMASWAP_KEY_CREDENTIAL, env))
-        app = FrontApp(parse.ModelList.from_registry(registry), keys, registry.key_groups, digests,
-                       upstream=upstream, gate=_NoGateLinkYet(), caps=parse.KeyCaps(keys, registry.key_groups),
-                       log=_journal.info)
+        models, inflight = parse.ModelList.from_registry(registry), InFlight()
+        gate = GateLink(paths.GATE_STATUS_SOCKET, time.time, inflight=inflight, models=models,
+                        running=upstream.ready_models)
+        app = FrontApp(models, keys, registry.key_groups, digests, upstream=upstream, gate=gate,
+                       caps=parse.KeyCaps(keys, registry.key_groups), log=_journal.info, inflight=inflight)
     except _REFUSALS as err:
         print(f"spark front: {err}", file=sys.stderr)
         return 1
+
+    async def shutdown() -> None:
+        try:
+            await app.aclose()
+            await gate.aclose()
+        finally:
+            await upstream.aclose()
+
     run_servers([(app, [sockets[FRONT]])], protocol=make_protocol(peer_cred=False, header_timeout_s=HEADER_TIMEOUT_S),
-                graceful_s=GRACEFUL_S, shutdown=upstream.aclose)
+                graceful_s=GRACEFUL_S, startup=gate.start, shutdown=shutdown)
     return 0
