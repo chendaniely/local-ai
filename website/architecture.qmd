@@ -1,20 +1,25 @@
 ---
 title: "Architecture"
 description: "Where everything sits — the Mac, the phone, the Spark and the Synology — and the paths a request takes. Built parts are solid; planned parts are dashed, with their phase."
-format:
-  html:
-    mermaid:
-      theme: neutral
 ---
 
-One picture of where everything sits, then the three paths a request can take. Every scenario
-follows one of those paths, so the table at the end names the path for each, and each scenario's
-page says what happens along it. **Solid** parts are built and running; **dashed** parts are
-planned, labelled with the phase that brings them. [The plan](design/plan.md) holds the reasons.
+The overview first, then one picture of where everything sits, then the three paths a request can
+take. Every scenario follows one of those paths, so the table at the end names the path for each,
+and each scenario's page says what happens along it. **Solid** parts are built and running;
+**dashed** parts are planned, labelled with the phase that brings them. [The plan](design/plan.md)
+holds the reasons.
+
+## The overview
+
+The tools, and how a request reaches a model. The home page shows the same diagram, from one
+file, `website/_overview.qmd`.
+
+{{< include _overview.qmd >}}
 
 ## Where everything sits
 
 ```{mermaid}
+%%| column: screen-inset
 flowchart TB
   classDef planned stroke-dasharray: 5 5
 

@@ -1,0 +1,42 @@
+```{mermaid}
+%%| column: page
+%% The overview: one file, included by index.qmd and architecture.qmd, never copied.
+%% It changes with the Architecture page's diagrams (CLAUDE.md, Docs must be true).
+flowchart TB
+  classDef planned stroke-dasharray: 5 5
+
+  subgraph mine["my Mac and phone"]
+    harness["pi, opencode, Hermes<br/>in a terminal or Orca"]
+    browser["web UI<br/>in a browser or as an app"]
+  end
+
+  later["my apps · Phase 3<br/>family and guests · Phase 6"]:::planned
+  claude["Claude Code and<br/>Claude Desktop<br/>wherever they run"]
+  anthropic(("Anthropic"))
+
+  subgraph spark["brightroar · the DGX Spark"]
+    owui["Open WebUI<br/>with SearXNG for search"]
+    agent["pi as agent<br/>in tmux"]
+    litellm["LiteLLM<br/>a key per app · Phase 3"]:::planned
+    swap["llama-swap<br/>starts the model<br/>a request names"]
+    gate["spark-gate<br/>takes both over · Phase 2"]:::planned
+    guard["fit check, memory brake<br/>a model loads only if it fits"]
+    engines["llama.cpp, whisper.cpp<br/>models for chat, coding,<br/>embeddings, speech"]
+    vllm["vLLM or SGLang<br/>Phase 5"]:::planned
+  end
+
+  nas["Synology<br/>alerts · Phase 2<br/>backups · Phase 4"]:::planned
+
+  harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> swap
+  browser -- "HTTPS over Tailscale" --> owui
+  later -.-> litellm
+  claude -- "never through the Spark" --> anthropic
+  owui --> swap
+  agent --> swap
+  litellm -.-> swap
+  swap --> guard
+  gate -.-> guard
+  guard --> engines
+  guard -.-> vllm
+  gate -. "alerts" .-> nas
+```

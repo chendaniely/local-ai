@@ -109,7 +109,11 @@ wrong one misleads more than any wrong sentence. A change that adds, moves or re
 path (a service, a port, an account, a link between machines), or builds a planned part (dashed
 turns solid), updates the diagrams and the page's scenario table in the same commit; the change
 isn't done until they match. When unsure whether a change touches them, open the page and check.
-Diagrams live only there: other pages link to them rather than drawing their own copy.
+Diagrams live only there: other pages link to them rather than drawing their own copy. The one
+exception is the overview (Dan's decision, 2026-10-14): the simple picture of the tools and how a
+request reaches a model lives in one file, `website/_overview.qmd`, which the Architecture page and
+the site's home page both include, never copy. It is one of the Architecture page's diagrams and is
+kept true with them; any part or path it shows changes there in the same commit.
 
 These files are not independent. Known sync obligations:
 
@@ -119,7 +123,7 @@ These files are not independent. Known sync obligations:
 | An open item gets settled | the plan's Requirements or Design gain the decision, its "Open items and risks" entry is marked resolved with the date, **and** a Revisions line records it |
 | A hardware fact is corrected | `README.md` §Hardware, plus any number in the plan derived from it |
 | The stack's behaviour changes | its page under `website/scenarios/` **and** its `spark doctor` check, in the same commit |
-| A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid) **and** its scenario table, in the same commit |
+| A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid), the overview in `website/_overview.qmd` too when it shows that part, **and** its scenario table, in the same commit |
 | Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |
