@@ -26,6 +26,7 @@ flowchart TB
     pi_mac["pi"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
+    oc_mac["opencode, Hermes"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
   end
 
@@ -53,7 +54,9 @@ flowchart TB
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold · Phase 2a"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap · Phase 2a"]:::planned
     engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder<br/>to 800 and up; coder Qwen3.8-27B · Phase 2a"]
-    vllm["vLLM or SGLang, for NVFP4<br/>Phase 4"]:::planned
+    vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
+    fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
+    flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
   end
 
   subgraph nas["Synology"]
@@ -64,10 +67,12 @@ flowchart TB
 
   orca -- starts --> claude_mac
   orca -- starts --> pi_mac
+  orca -- starts --> oc_mac
   claude_mac --> anthropic
   webapp -- "HTTPS over Tailscale" --> tss
   pwa -- "HTTPS over Tailscale" --> tss
   pi_mac -- "SSH tunnel, make tunnel" --> swap
+  oc_mac -- "same tunnel" --> swap
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -75,6 +80,7 @@ flowchart TB
   agent_tmux --> swap
   agent_tmux -- "its Claude Code" --> anthropic
   pi_mac -. "same tunnel" .-> front
+  oc_mac -. "same tunnel" .-> front
   owui -.-> front
   agent_tmux -.-> front
   front -. "internal key" .-> swap
@@ -92,6 +98,8 @@ flowchart TB
   litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap
   swap -- "spark launch" --> engines
   swap -.-> vllm
+  swap -. "start route designed in 4a" .-> fast
+  swap -. "spark launch" .-> flash
   brake -- "unloads through llama-swap" --> engines
   gate -.-> ntfy
   brake -. "its own alert, while the gate is down" .-> ntfy
@@ -126,6 +134,11 @@ flowchart TB
   stack runs without ntfy, the gate, the brake and the failure notifier send nothing and say so,
   and what they would report shows in `spark status` and `make doctor`. The bake-off's vLLM and
   SGLang are Phase 4's.)*
+- **Phase 4a (planned, 2026-10-14)** brings the fast coder, Qwen3.8-27B on SGLang in a container
+  that root's unit runs, and Qwen3.8-Flash-Next on llama.cpp, which loads after `spark make-room`
+  clears the box; opencode on the Mac lists them. Until then both run by hand, outside the stack:
+  [The fast coder, by hand](how-to/qwen3.8-27b-sglang.md) and
+  [Qwen3.8-Flash-Next, by hand](how-to/qwen3.8-flash-next.md).
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
   Anthropic, wherever they run; Orca only starts them. The Spark is a separate mode.
 
@@ -135,7 +148,7 @@ flowchart TB
 flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  piT["pi on the Mac<br/>in a terminal or Orca"]
+  piT["pi, opencode or Hermes on the Mac<br/>in a terminal or Orca"]
   ui["web UI<br/>on the Mac or the phone"]
   piA["pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
@@ -172,7 +185,8 @@ flowchart LR
 
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
 beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
-alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
+alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
+Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`). From
 Phase 2a (planned), the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
 inference routes go through: llama-swap's admin routes stay out of every client's reach. From Phase
@@ -290,3 +304,5 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S21 · Pixeltable over datasets](scenarios/s21-pixeltable.md) | Apps and speech |
 | [S22 · On another tailnet over WireGuard](scenarios/s22-another-tailnet.md) | Reaching the Spark: the LAN alias |
 | [S23 · Upgrade day](scenarios/s23-upgrade-day.md) | Upkeep |
+| [S24 · The fast coder won't start](scenarios/s24-fast-coder-down.md) | Loading a model: Phase 4a's fast coder |
+| [S25 · Sub-agents on the fast coder](scenarios/s25-subagents-fast-coder.md) | Loading a model: Phase 4a's fast coder |

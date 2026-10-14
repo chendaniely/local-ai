@@ -67,11 +67,11 @@ In order of how much they constrain the design:
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. *(Phase 2a, Dan's decision, 2026-10-07: make-room then holds the room it freed for him, so nothing automatic takes it back, and requests from his keys wait ahead of `agent`'s: rule 4 and *The front and the gate*.)* |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
-| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
+| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. *(2026-10-14: Dan sets opencode up by hand for the fast coder's by-hand runs now, following [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md); its rendered config comes with Phase 4a's clients.)* *(Corrected the same day: PR #7's `spark clients opencode` already renders it for the deployed models, so opencode, and Hermes too, list them once #7 is on `main` and `make clients` runs on the Mac; Phase 4a's clients add its new models.)* The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -130,7 +130,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* |
-| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
 ### The front and the gate (Phase 2a)
@@ -1326,7 +1326,8 @@ the deadline it was given, so a drill's shorter one reads true.
   down · **S17** changing models mid-task · **S18** rebuild after a factory reset · **S19** Claude Code
   building a pipeline elsewhere · **S20** web search from the phone · **S21** Pixeltable over datasets
   (backlog) · **S22** on another tailnet via WireGuard (pi and the API work; the web UI waits).
-  Added since: **S23** upgrade day (2026-09-25).
+  Added since: **S23** upgrade day (2026-09-25) · **S24** the fast coder won't start · **S25**
+  sub-agents on the fast coder (both 2026-10-14, Phase 4a).
 
 ### Repo layout
 
@@ -1801,6 +1802,15 @@ council, with Dan's fourteen decisions (Revisions).*
 - [Spark] `spark clients` writes `agent`'s pi `httpIdleTimeoutMs`, 900,000, beside its provider.
 - [Mac] pi's provider is rendered again after the deploy — `make clients` on the Mac, and the same
   for `agent` on the Spark — so pi lists the new coder.
+- *Closing 2a (added 2026-10-14, Dan's decision):* `main` holds work this branch doesn't: the
+  coder's early swap and render's corrected check (2026-10-08), the Phase 6 plan, and anything
+  merged there since. Merging the two conflicts in about a dozen files, `plan.md` most. At 2a's
+  close, before its council, **`main` is merged into `phase-2a` once**, on the Spark, with the
+  conflicts resolved there and 2a's tests run, so the council reviews what will land; then
+  `phase-2a` merges into `main` with Dan's OK. Not a rebase: that would replay 2a's commits one
+  by one, most against the same conflicting files, and change their hashes, which 2a's own docs
+  cite and other branches build on. Work merged into `phase-2a` meanwhile, such as the by-hand
+  pages for Phase 4a's models (PR #11), lands with it.
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -1847,6 +1857,18 @@ moved.
   each of its log streams to the journal apart (the toolstack review) · S06's drill runs its GPU
   step longer than the 60-minute idle time, or with the idle time lowered for the drill, and is
   seen to fail once without the hook: at 40 minutes it would pass with the hook broken.
+- *Added 2026-10-14, Dan's decision:* [Spark] **`spark watch`**, the live view PR #9 built
+  (memory, the loaded models, each engine's requests in flight and deferred, the brake), rebuilt
+  here on 2a's status view. On 2a's design it can't read the engines as built: llama-swap on
+  127.0.0.1:900 takes only the internal keys, and the front answers 404 for `/running`, so it
+  reads the gate's status socket and the gate's engine ports instead. Two decisions come with it,
+  Dan's: whether the engines' `--metrics` stays on, since its counters let any account on the box
+  read each request's prompt and output sizes, the reason `/slots` is off; and whether DCGM's host
+  engine runs at all, a root daemon that asks for no login, so `agent` could start GPU tests or set
+  clocks (`nvidia-smi` needs no daemon). ~~PR #9 stays open as a draft until then, with its
+  council's other fixes noted on it.~~ *(Changed the same day, Dan's decision: PR #9 is closed,
+  since this bullet carries it; its branch, `feat/monitoring`, and the council's fixes noted on the
+  PR are where the rebuild starts.)*
 - *Scenarios:* S06, S12, ~~S13,~~ and S01's menu-bar part, and S13's *unreachable* on the menu bar.
 - *Done when:* S06, S12, ~~S13~~ and S01's menu-bar part are verified, and the menu bar says
   *unreachable* when the Spark doesn't answer. *(2026-10-14: S13 moves to Phase 5 with the
@@ -1964,6 +1986,10 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
     vLLM with MTP hard-rebooted a Spark twice at 16K context with two requests, and SGLang run
     outside a container froze one: each starts behind the gate, after a soak. vLLM on this GPU
     has an open prefill regression (#55397) and runs FP8 KV cache only on `triton_attn`.
+    *(Corrected 2026-10-14, from PR #8's council, which read SGLang v0.5.21's source: on GB10,
+    SGLang's `--mem-fraction-static` is a share of `MemAvailable` when the engine starts, not of the
+    pool, so its size moves with what else is loaded. Phase 4a caps SGLang by tokens instead,
+    `--max-total-tokens` and `--max-mamba-cache-size`, and the fraction only lets it start.)*
   - **Since 2a's design** (noted 2026-10-07, after the implementation plan's forward-and-back
     council): a container engine can't start from llama-swap's sandbox (`NoNewPrivileges=`, no
     docker group for `spark`), and root may not claim a ticket through `spark`'s folder, so its
@@ -1986,7 +2012,9 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
   - **Its memory claim.** `--mem-fraction-static` takes a fraction of the whole pool (its 0.90
     here is ~109 GiB, and its KV pool alone measured ~81 GB), so it would overrun the residents
     and the reserve. Set it from the registry's footprint and budget it like any engine; its own
-    history includes hard reboots at 0.95, and earlyoom killing its scheduler.
+    history includes hard reboots at 0.95, and earlyoom killing its scheduler. *(Corrected
+    2026-10-14: on GB10 the fraction is of `MemAvailable` at the engine's start; the cautions
+    above, and Phase 4a's caps.)*
   - **Its speculative decoders.** DSpark and DFlash2 are SGLang's, not llama.cpp's. DFlash2 needs a
     dev image (no released tag had it), pinned by digest under the seven-day rule, and two of its
     upstream issues were open: cross-request context bleed under concurrency (sglang #36548),
@@ -1999,6 +2027,25 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
     cores (`--cpuset-cpus 5-9,15-19`, +2–7% decode); `--shm-size 32g`; it downloads through
     `HF_TOKEN`, where this stack pulls pinned revisions with `spark models pull`; and render
     would need an SGLang engine with its own option allowlist.
+  - *2026-10-14, from [hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38)
+    (read at `3849269`, 2026-10-13; its numbers, not measured here):* it serves route D on one Spark
+    from the official `v0.5.21` release image, pinned by digest, which corrects "no report yet runs
+    those releases on a Spark" above; the combination, DFlash2 16 deep, has been the SGLang
+    cookbook's recipe for this model since 2026-08-21. `v0.5.19` lacks sglang #37818, a DFlash fix
+    merged on 2026-09-12, so route D starts at `v0.5.21`. #36548 and #38009 were still open on
+    2026-10-14. It reports 71.4 tok/s greedy median on its `bench.sh`. Its memory evidence:
+    `--mem-fraction-static` 0.50 at the native 262,144 tokens and 0.76 for its 1M-token mode, with
+    0.80 crashing under three concurrent requests; Docker's `--memory` doesn't cap CUDA's unified
+    allocations; and the flashinfer autotuner allocates outside the claim at boot. Since the
+    fraction is a share of what is free at its start, its size on its own box isn't its size beside
+    this stack's residents, so Phase 4a caps by tokens. Its losslessness study found DFlash2's
+    greedy output differing from the plain model's as early as DSpark's (floating-point near-ties,
+    the subject of #38009), with no measurable loss on GSM8K or IFEval. Its keepalive proxy guards
+    a long prefill that leaves the wire silent past a client's timeout: a cold 690K-token prefill
+    took 40 minutes, and requests queued past opencode's 300 s wait for a reply. Its unit runs on
+    the host network with `--trust-remote-code` and restarts itself; the by-hand page and Phase 4a
+    do none of the three (neither checkpoint holds code), after sglang #40948, where a restart onto
+    memory not yet given back froze a Spark.
 - *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5.)* **Disk
   first:** the bake-off's large files — gpt-oss-120b, the BF16 reference for KLD (55.6 GB), the
   NVFP4 checkpoints — need planning on the 1 TB NVMe, which the weights, the Hugging Face cache and
@@ -2008,6 +2055,83 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
   chendaniely/skills (Dan pushes).
 - *Done when:* the registry has a primary and a policy-safe pick per slot; S19 is verified; findings
   are in the vault; the docs are updated.
+
+**Phase 4a — The fast coder and Flash-Next** (designed 2026-10-14, Dan's decisions; it needs only
+2a, so Dan picks at 2a's close whether it runs before 2b or beside it)
+
+*(It replaces the "Phase 5a" designed on 2026-10-13 to build on `main` before 2a. PR #8 held that
+design, and its council review on 2026-10-14 found it tied to Phase 1's llama-swap, which 2a
+replaces; wrong about SGLang's memory on GB10; and holding a second eviction rule 2 didn't list,
+the two coders' group. It is rebuilt here on 2a's gate, and PR #8 is closed.)*
+
+Phase 4's route D and Qwen3.8-Flash-Next come to the registry ahead of the rest of the bake-off.
+Both are tested by hand first, on today's stack, and those runs measure the footprints and speeds
+this phase starts from: [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md) and
+[Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md), merged into `phase-2a` (PR #11).
+
+- **Names** (Dan, 2026-10-13): the fast coder takes over `qwen3.8-27b`, and today's llama.cpp coder
+  stays as `qwen3.8-27b-gguf`, the fallback. Both are on demand, and they don't fit together
+  beside the always-loaded models (43 + 43 + 41 + 24 > 117 GiB), so a request for one while the
+  other is loaded is refused with the reason, as for any model (S24). Neither evicts the other.
+- **Flash-Next** is a registry model marked `needs_room`, on llama.cpp, at `UD-IQ3_XXS` (76.3 GiB;
+  Dan's pick on 2026-10-13, which the council's reviews backed with unsloth's quality figures).
+  Render checks it against idle `MemAvailable` less the reserve, and the ceiling: 93 GiB (rule 9).
+  It loads after `spark make-room` frees room for it, `--all` or its size, which only Dan can run,
+  and his keys load it into the hold while `agent`'s can't (rule 4). Idle for 60 minutes, it
+  unloads like any on-demand model; `spark make-room --done` ends the hold, and the gate reloads
+  the always-loaded models. So rule 2 keeps no exception: 2026-10-13's model that "takes the box"
+  is make-room, which Dan already runs. The by-hand run's flags carry over (`--load-mode none
+  --lazy-mode off --parallel 1 --cache-ram 1024 --ctx-checkpoints 8`), and its measured footprint
+  goes in the registry. b11146 has its architecture (read in its source; the by-hand run confirms
+  it); MTP for it needs b11330 or later (llama.cpp PR #29761), a pin change under the seven-day
+  rule if the by-hand run shows it's worth having. The registry pulls its own copy, and the
+  by-hand one in `~/scratch` goes then.
+- **The fast coder** is SGLang `v0.5.21` in Docker, with RadixArk's NVFP4 checkpoint at `52d1adc`
+  and maurienne-ai's DFlash2 drafter at `bd7a934`, from hasso5703's setup (read at `3849269`):
+  whole-repo snapshots `spark models pull` fetches, and the image by the digest read on the Spark.
+  - **Memory, capped by tokens.** On GB10 SGLang sizes its claim from `MemAvailable` at its start,
+    so the registry passes `--max-total-tokens` and `--max-mamba-cache-size`, and
+    `--mem-fraction-static` only has to let it start. About 43 GiB by arithmetic, beside the
+    always-loaded models' room of 50; the by-hand runs measure it, alone and beside them, and the
+    registry takes the larger.
+  - **One request at a time** (`--max-running-requests 1`) while sglang #36548 and #38009 are open,
+    with a drill for queued sub-agents against opencode's 300 s wait for a reply (S25).
+  - **Its start route**, the open item under *Since 2a's design* above, is designed at 4a's start,
+    to these requirements, from the council's reviews:
+    - the container comes from a root unit of its own, which `spark`, or the gate, may only start
+      and stop, through one polkit rule naming that exact unit; whether llama-swap's sandboxed unit
+      can reach systemd over D-Bus is checked first;
+    - its `docker` arguments live only in root's copy (the unit, or `/etc/local-ai`), never in a
+      folder `spark` or `spark-admin` can write, and nothing from a request reaches them;
+    - `Restart=no`, never enabled, `--rm`, and `docker rm -f` before each start, so a crash stays
+      stopped and nothing restarts onto memory not yet given back (sglang #40948);
+    - it starts only with the gate's ticket, like any load, and the gate sees it by the unit's main
+      pid and the container's cgroup, for its pid scan and the growth owed;
+    - the gate waits for its readiness itself, since a cold start, 5–9 minutes for hasso5703,
+      passes the 180 s deadline;
+    - llama-swap's unload waits longer than the container's stop (`docker stop -t 20`, hasso5703's),
+      and the next load waits for the memory to come back (2–5 s there);
+    - the brake stops an engine unit llama-swap doesn't list, so a container left behind can't
+      hold memory it can't see;
+    - the page-cache drill runs again with this safetensors load before the first registry load.
+  - **Its security**, from the same reviews: a key on every route, from a root-only `--config`
+    file, never a command line, and `--log-level warning`, since SGLang's INFO line prints every
+    setting, the key included; llama-swap sends that key, and the front's own keys stay in front
+    of it, like any engine; the container as the by-hand page runs it (a non-root user, no
+    capabilities, `no-new-privileges`, a read-only root, no remote code, a bridge network
+    publishing one 127.0.0.1 port below 1024, outside 2a's 800-and-up and 900); its output kept
+    out of the journal, since its tool-call warnings carry request arguments (the journal question
+    stays 2b's); and a doctor check, run as `agent`, that its admin routes refuse it.
+- [Mac] **Clients:** opencode, pi and Hermes list both coders and Flash-Next, rendered by `spark
+  clients` (PR #7's generators, ~~once its Hermes part is fixed or left out~~ its Hermes part fixed
+  the same day), with opencode's timeout raised if the drill needs it.
+- Its implementation plan, `phase-4a.md`, is written at 4a's start, from the by-hand runs' numbers.
+- *Scenarios:* S02 (make-room, for Flash-Next), S24, S25.
+- *Done when:* Flash-Next loads after `spark make-room --all`, answers in opencode on the Mac, and
+  the always-loaded models come back after `--done`; the fast coder serves `qwen3.8-27b` through
+  the front, its footprint and speed measured and recorded against route A, its admin routes
+  refusing `agent`, and the concurrency drill run; S24 and S25 are verified; opencode, pi and Hermes
+  list all three.
 
 **Phase 5 — NAS and backups** *(~~Phase 4~~ until 2026-10-14, Dan's decision: Phases 4 and 5 swapped,
 the bake-off now 4 and the NAS 5; the NAS settings come after the bake-off and the client work, as
@@ -3589,6 +3713,30 @@ Each item gets its own design pass when its turn comes.
   - The front's waits on the gate are bounded even while the gate's call stays open: a request
     whose admission the gate never answers gets `gate_down`. A `drained` the gate didn't take is
     sent again until it does.
+- **2026-10-14** — Phase 4a, Dan's decisions after the council reviews of PRs #8, #9 and #10.
+  The fast coder (Phase 4's route D: SGLang v0.5.21, NVFP4 and a DFlash2 drafter) and
+  Qwen3.8-Flash-Next come to the registry in Phase 4a, after 2a, on its gate, not early on `main`
+  as 2026-10-13's "Phase 5a" (PR #8, closed) designed: its council found that design tied to
+  Phase 1's llama-swap, which 2a replaces, wrong about SGLang's memory on GB10, and holding a
+  second eviction it didn't list. Flash-Next becomes a `needs_room` model loaded after `spark
+  make-room`, so rule 2 keeps no exception. Both are tested by hand first, from two runbooks
+  merged into this branch (PR #11, which carries PR #10's page, revised):
+  [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) and
+  [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md). PR #9's `spark watch` moves to 2b,
+  rebuilt on 2a's status view, with Dan's decisions on `--metrics` and DCGM to come. At 2a's close
+  `main` is merged into `phase-2a` once, not rebased. Dated notes are in the *Orca* and *Models*
+  requirements, Phase 2a's close, Phase 2b, and Phase 4's cautions and SGLang notes, which gain
+  hasso5703/dgx-spark-qwen38 (read at `3849269`). From PR #8 come the README's Reference entries
+  and the Community projects page (bidual/awesome-dgx-spark, read at `294eaf1`), under a new
+  Reference menu; S24 and S25 are new; the architecture page gains the planned parts.
+- **2026-10-14** — the clients, and PR #9 closed (Dan's request and decision). PR #7's generators
+  render the deployed models for opencode and Hermes as well as pi, with each key by reference, so
+  opencode and Hermes list them once #7 is on `main`: its Hermes part, which wrote a placeholder key
+  that Hermes sent (a 401), was fixed that day, and opencode and Hermes got pi's care and tests.
+  Phase 4a's clients then add its new models. PR #9 is closed, since Phase 2b's bullet carries
+  `spark watch`. Dated notes are in the *Orca* requirement, the *Mac and agent clients* component,
+  Phase 2b and Phase 4a; the architecture page draws opencode and Hermes on the Mac, through the
+  tunnel, as `main`'s does with #7.
 
 ## Sources
 

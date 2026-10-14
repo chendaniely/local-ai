@@ -33,7 +33,7 @@ this line, was parked on 2026-09-23.)
 | [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
 | [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
 | [`stack/`](stack) | The model registry (`models.yaml`), the private key list's shape with placeholder names (`keys.example.yaml`; the real list is `/etc/local-ai/keys.yaml`, never in the repo), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`), the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule) and the Synology's Compose files (`synology/`: ntfy's, with the shape of its private `server.yml`). |
-| [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks and the generated Stack and Notifications pages. |
+| [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks, the generated Stack and Notifications pages, and the Community projects page. |
 
 ## Hosts
 
@@ -373,6 +373,21 @@ coder bake-off (added 2026-09-28, read at its 2026-09-12 state); plan.md's ~~Pha
 says what this stack must account for to run it. Its numbers are its own, not measured here.
 *(Renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS
 5.)*
+
+**[github.com/hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38)** — a
+one-command SGLang service for Qwen3.8-27B on one DGX Spark: the NVFP4 checkpoint with a DFlash2
+drafter, 71.4 tok/s greedy median on its own bench, the combination the SGLang cookbook gives as
+its recipe. Read at commit `3849269` (2026-10-13). It installs its own engines, ports, systemd
+units and sudoers rules, so this stack reads it for its config rather than running it: the
+[by-hand page](website/how-to/qwen3.8-27b-sglang.md) and plan.md's Phase 4a take its checkpoint,
+drafter and memory evidence, and its Phase 4 notes record what it adds and corrects. Its numbers
+are its own, not measured here.
+
+**[github.com/bidual/awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark)** — a curated
+list of community projects for the DGX Spark and other GB10 machines. The site's
+[Community projects](website/reference/community.md) page triages it for this stack (read
+2026-10-13, at its commit `294eaf1`): what each useful entry is, why it matters here and where in
+the plan it would come in, and what was left out and why.
 
 ## Conventions
 

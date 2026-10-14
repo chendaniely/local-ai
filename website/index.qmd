@@ -14,3 +14,5 @@ machines added; this is a separate mode.
 - **[Stack](reference/stack.md)** — every pinned component, with docs and advisories.
 - **[Notifications](reference/notifications.md)** — every notification type on my phone, with
   its priority, generated from the registry.
+- **[Community projects](reference/community.md)** — what the awesome-dgx-spark list holds that
+  this stack can use, and where in the plan it would come in.
