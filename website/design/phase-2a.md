@@ -6382,11 +6382,13 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   naming it. One line per problem with its path; render refuses a config with any. The vendored
   file is `https://raw.githubusercontent.com/mostlygeek/llama-swap/v257/config-schema.json`, whose
   SHA-256 read `d75ebf1e18806194ce674ebd59cb70b6f8bf93cb6ec65c2392e0e17fc9d0b076` on 2026-10-07:
-  Step 1 compares it, and records it in `test_schema.py`. *(Added 2026-10-14, at the task:)* two
-  readings go past JSON Schema's letter, each stricter, never looser. An object whose schema lists
-  its `properties` and says nothing of `additionalProperties` is read as closed: v257 decodes its
-  config with yaml.v3, which drops a key it doesn't know (`internal/config/load.go`), and its schema
-  leaves the top level, a model and a group open, so the `swapp` of
+  Step 1 compares it, and records it in `test_schema.py`. *(Added 2026-10-14, at the task; accepted
+  at its review, the controller's ruling:)* two readings go past JSON Schema's letter, each
+  stricter, never looser. An object whose schema lists its `properties` and says nothing of
+  `additionalProperties` is read as closed, departing on purpose from JSON Schema's default, which
+  leaves it open: so a key v257 accepts but its schema doesn't list is refused at render time. v257
+  decodes its config with yaml.v3, which drops a key it doesn't know (`internal/config/load.go`),
+  and its schema leaves the top level, a model and a group open, so the `swapp` of
   `test_a_mistyped_group_key_fails_the_schema_check` would pass both, and leave the group at v257's
   default, `swap: true`. And `$ref` is checked beside its sibling keywords, not instead of them (the
   file gives it none). Neither holds under `not`, `if` or `oneOf`, where a stricter subschema could
@@ -7881,7 +7883,17 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   33); `make status`'s `health` row reads `ntfy not set up (Task 2, Phase 5)` (Task 29); `make logs
   s=gate` holds its one line that ntfy isn't set up, and no other ntfy line; and the gate, the
   brake and the notifier's units started with neither the values file nor a header file there,
-  the system-unit check Task 25 left for this step.)* Then
+  the system-unit check Task 25 left for this step.)* *(Added 2026-10-14, at Task 24's review, the
+  controller's ruling:)* llama-swap's keys under its sandbox, checked here first as a system unit.
+  Its unit reads `EnvironmentFile=/etc/local-ai/secrets/internal-keys.env` while
+  `InaccessiblePaths=/etc/local-ai/secrets` hides that folder. systemd.exec(5) says environment
+  files are read from the service manager's own file system, before any bind mounts, but a user
+  unit can't apply that sandbox on this box (`kernel.apparmor_restrict_unprivileged_userns = 1`),
+  so nothing has run it. This step confirms llama-swap read its three keys: a call through the
+  front with a client key is answered, not a 401 (the front forwards it with its own internal key:
+  pi's and the web UI's answers below are such calls), and the gate's own key reaches `/running`
+  (`make status` shows the residents' states, which the gate reads there, and `make logs s=gate`
+  holds no 401 from llama-swap). If either gets a 401, the cutover stops there (Step 8). Then
   the listening ports, numbers only. **On the Spark:**
 
 ```bash
@@ -8396,13 +8408,17 @@ line), `changelog.md`, `README.md`
   `nvidia-smi`'s per-process figure. `owed_reads_rss` turns on, for an engine kind, only if
   `RssAnon` accounts for the growth `MemAvailable` shows for that kind.
   *(Added 2026-10-14, at Task 24, the controller's ruling on Gemma's `--slot-prompt-similarity`,
-  0.5:)* the soak checks it too. Through Step 1's use of the web UI, Gemma's log (`spark logs
-  gemma-4-26b-a4b`) shows each choice of slot by similarity as `selected slot by LCP similarity`,
-  with its `f_sim_best` and `f_keep` (b11146's `tools/server/server-context.cpp:1600`). One with a
-  low `f_keep`, under 0.5, took a slot whose cache it mostly drops: a wrong pick. Count how often one
-  happens, out of all Gemma's requests, and record it in plan.md, in the ruling's dated note in the
-  Phase 2a line; if wrong picks are common, the value is weighed again, the controller's ruling
-  (*Values the box decides*).
+  0.5; reworded the same day at Task 24's review, the controller's ruling:)* the soak checks it too.
+  Through Step 1's use of the web UI, Gemma's log (`spark logs gemma-4-26b-a4b`) shows each choice
+  of slot by similarity as `selected slot by LCP similarity`, with its `f_sim_best` and `f_keep`
+  (b11146's `tools/server/server-context.cpp:1600`). Record each one's `f_keep`, and how many tokens
+  were then re-read: the next turn of the chat whose slot it took shows them, as its reply's
+  `timings.prompt_n` or the engine's `prompt eval time = … / N tokens` line. A pick counts as wrong
+  only when it cost a long chat its cache, that chat's next turn re-reading most of a long prompt;
+  an `f_keep` under 0.5 alone isn't one, since the slot may have held only a short task call. Count
+  the wrong picks, out of all Gemma's requests, and record them in plan.md, in the ruling's dated
+  note in the Phase 2a line; if they are common, the value is weighed again, the controller's
+  ruling (*Values the box decides*).
 - [ ] **Step 3:** the registry's footprints become the measured ones; render passes; **[Dan]**
   decides whether the reserve moves. **If render refuses the measured set** (a footprint over what
   the set leaves it), **stop and ask Dan**, as Task 44 does: Task 42's way back, or his

@@ -7,9 +7,10 @@ so a later schema's new keyword is never skipped and what it forbids let through
 
 Two readings go past JSON Schema's letter, each stricter, never looser:
 - An object whose schema lists its keys (`properties`) and says nothing of `additionalProperties` is read as closed: a
-  key it doesn't list is a problem. v257 decodes its config with yaml.v3, which drops a key it doesn't know, and its
-  schema leaves the top level, a model and a group open, so a misspelled `swap` would pass both and leave the group at
-  v257's default, swap: true, where loads evict each other.
+  key it doesn't list is a problem. This departs on purpose from JSON Schema's default, which leaves such an object
+  open, so a key v257 accepts but its schema doesn't list is refused at render time. v257 decodes its config with
+  yaml.v3, which drops a key it doesn't know, and its schema leaves the top level, a model and a group open, so a
+  misspelled `swap` would pass both and leave the group at v257's default, swap: true, where loads evict each other.
 - `$ref` is checked beside its sibling keywords, not instead of them (v257's file gives it none).
 Neither holds under `not`, `if` or `oneOf`, where a stricter subschema could let more through: there, JSON Schema's own
 reading stands.

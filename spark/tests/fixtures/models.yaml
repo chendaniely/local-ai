@@ -42,7 +42,7 @@ models:
     cache_ram_mib: 0
     footprint_gib: 2.5
     footprint_measured: false
-    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp]
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp]
   coder:
     label: the coder
     capability: chat
