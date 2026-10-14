@@ -949,7 +949,9 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         status.state.stopping.set()
         streamed, answered = await events, await held
         ops = [line["op"] for line in streamed.lines()]
-        assert ops[:3] == ["hello", "state", "unloaded"] and "ping" in ops[3:]
+        # A heartbeat can come at any moment, even before the core's `unloaded` (CI saw it once in three runs): the
+        # pings are passed over, and at least one came (the controller's ruling, at Task 23).
+        assert [op for op in ops if op != "ping"][:3] == ["hello", "state", "unloaded"] and "ping" in ops
         assert answered.status == 503 and answered.json() == {"message": gate_app.GATE_STOPPING, "code": None}
         assert core.admitter.waiting() == [] and core.front.connected is False
         await core.stop()

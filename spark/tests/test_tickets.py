@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from spark import tickets
+from spark import procs, tickets
 
 NOW = 1_800_000_000.0
 BOOT = "boot-a"
@@ -253,9 +253,13 @@ def test_a_withdrawn_ticket_cant_be_claimed_and_a_claimed_one_cant_be_withdrawn(
 
 
 def test_mark_started_keeps_the_ticket_with_its_start_and_pid(tmp_path):
+    # And launch's own start time, procs.start_time of its pid, which the engine keeps across the exec, so the brake
+    # matches the engine exactly (the controller's ruling, at Task 23).
     ticket = start(tmp_path, "coder", at=NOW)
     record = json.loads((tmp_path / "started" / "coder.json").read_text())
-    assert record == ticket | {"started_at": NOW, "pid": os.getpid()}
+    own = procs.start_time(os.getpid())
+    assert isinstance(own, int) and own >= 0
+    assert record == ticket | {"started_at": NOW, "pid": os.getpid(), "start_time": own}
     assert stat.S_IMODE((tmp_path / "started" / "coder.json").stat().st_mode) == 0o600
     assert [p.name for p in (tmp_path / "started").iterdir()] == ["coder.json"]  # no temporary file left
 
@@ -296,6 +300,9 @@ def test_started_passes_over_a_record_that_isnt_one(tmp_path, monkeypatch):
     (folder / "big.json").write_text(json.dumps(record | {"model": "big", "started_at": 10**400}))
     (folder / "huge.json").write_text(json.dumps(record | {"model": "huge", "footprint_gib": -10**400}))
     (folder / ".stt.json.123.abcd").write_text(json.dumps(record))  # a write not yet swapped in
+    # A start time that isn't one of /proc's (a whole number of ticks from 0) isn't a record of launch's.
+    for name, bad in (("emb", "1"), ("vis", -1), ("bool", True), ("float", 1.5)):
+        (folder / f"{name}.json").write_text(json.dumps(record | {"model": name, "start_time": bad}))
     assert [r["model"] for r in tickets.started(tmp_path, now=NOW, boot_id=BOOT)] == ["stt"]
     monkeypatch.setattr(tickets.os, "geteuid", lambda: os.getuid() + 1)  # every record another account's
     assert tickets.started(tmp_path, now=NOW, boot_id=BOOT) == []
@@ -342,3 +349,14 @@ def test_root_never_writes_a_record(tmp_path, monkeypatch):
     with pytest.raises(PermissionError):
         tickets.mark_started(tmp_path, {"model": "coder"}, NOW)
     assert list(tmp_path.iterdir()) == []  # not even a folder
+
+
+def test_a_started_record_from_before_its_start_time_still_reads(tmp_path):
+    # Written before the controller's ruling at Task 23, with no start time: still a record, which the brake bounds by
+    # its age instead, the stricter way.
+    start(tmp_path, "stt", at=NOW)
+    path = tmp_path / "started" / "stt.json"
+    old = {k: v for k, v in json.loads(path.read_text()).items() if k != "start_time"}
+    path.write_text(json.dumps(old))
+    (record,) = tickets.started(tmp_path, now=NOW, boot_id=BOOT)
+    assert "start_time" not in record and record["pid"] == os.getpid()

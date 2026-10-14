@@ -406,12 +406,13 @@ class NtfyPublisher:
 @dataclass
 class _Group:
     """One notification's worth of the brake's events: an episode's first alert (`fired`, and the unloads that go with
-    it), or a follow-up's unloads."""
+    it), or a follow-up's unloads; with each the unloads llama-swap didn't do (`failed`, Task 23), so it says why."""
 
     episode: tuple[str, int]
     fired: BrakeEvent | None  # the first alert's fired event; None for a follow-up, or a first alert from its unload
     first: bool
     unloads: list[BrakeEvent] = field(default_factory=list)
+    failed: list[BrakeEvent] = field(default_factory=list)  # unload_failed: an unload refused, or that failed
     sent: bool = False  # the brake sent it itself (sent_by_brake): the gate doesn't send it again
     reboot: bool = False  # an earlier boot's episode, never notified: one brake_needs_release, whatever was sent
 
@@ -437,9 +438,20 @@ def _new_from(events: list[BrakeEvent], after: tuple[str, int, float] | None) ->
     return 0
 
 
-# The steps that unload nothing, which the gate passes over: a warn (memory_warning is the gate's own), and an unload
-# that failed (Task 23), after which the brake tries the next model at its next poll.
+# The steps that unload nothing, which a lone fired goes on waiting past for its first unload: a warn (memory_warning is
+# the gate's own, so it sends nothing), and an unload that failed (Task 23), after which the brake tries the next model
+# at its next poll; the alert then says why that one is still loaded.
 _NO_UNLOAD = ("warn", "unload_failed")
+_STEPS = ("unload", "unload_failed")  # what a notification names: an unload, or one llama-swap didn't do
+
+
+def _steps(group: _Group) -> list[BrakeEvent]:
+    """A group's unloads and failed unloads, in the file's order."""
+    return sorted(group.unloads + group.failed, key=lambda e: e.seq)
+
+
+def _add(group: _Group, e: BrakeEvent) -> None:
+    (group.unloads if e.kind == "unload" else group.failed).append(e)
 
 
 def _held_back(events: list[BrakeEvent], now: float, boot_id: str) -> int:
@@ -471,9 +483,12 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     - Each later unload of the episode is a follow-up, *Brake, 03:13: also unloaded …*. The unloads of one read at the
       same local minute go together.
     - A line the brake sent itself (`sent_by_brake`) isn't sent again. A `warn` sends nothing: memory_warning is the
-      gate's own (MemoryWarning). Nor does an `unload_failed` (Task 23): it unloaded nothing, so it marks nothing, and
-      a `fired` before it still waits for the brake's next unload; past FIRED_ALONE_S the first alert says llama-swap
-      hasn't confirmed the unload, which stays true. Its `reason` is kept in the file for the words that name it.
+      gate's own (MemoryWarning).
+    - An `unload_failed` (Task 23) unloaded nothing, so it marks nothing, and a `fired` before it still waits for the
+      brake's next unload. It goes in its group as an unload does, and the words say why llama-swap didn't unload
+      that model (`not_unloaded`, from its `reason`: the controller's ruling, at Task 23): in the first alert, beside
+      what was unloaded, or, with nothing unloaded by FIRED_ALONE_S, in place of "hasn't confirmed"; or in a follow-up.
+      It also says something was loaded, whatever the gate's state holds.
     - A first alert from the rate-of-fall watch (`falling`, Task 23) says memory was falling toward the line, never
       under it.
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
@@ -505,13 +520,12 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     reboots: dict[tuple[str, int], _Group] = {}
     for e in taken:
         episode = _episode(e)
-        if e.kind in _NO_UNLOAD:
+        if e.kind == "warn":
+            continue
+        if e.kind in _STEPS and not e.model:  # an unload names its model (Task 23): one that doesn't has nothing to say
+            _log.warning("notify: the brake's event %s:%s is an unload with no model; passed over", e.boot_id, e.seq)
             continue
         if e.kind == "unload":
-            if not e.model:  # an unload names its model (Task 23): one that doesn't has nothing to say
-                _log.warning("notify: the brake's event %s:%s is an unload with no model; passed over", e.boot_id,
-                             e.seq)
-                continue
             if e.state == "starting":
                 seen = None if not starts or e.model not in starts else max(0.0, starts[e.model] - e.available_gib)
                 state.brake_marks[e.model] = BrakeMark(e.model, fired_at.get(episode, e.at), seen)
@@ -521,7 +535,7 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
                 groups.append(reboots[episode])
             if e.kind == "fired":
                 reboots[episode].fired = reboots[episode].fired or e
-            else:
+            elif e.kind == "unload":  # only what it did unload: brake_needs_release names it
                 reboots[episode].unloads.append(e)
             continue
         if e.kind == "fired":
@@ -530,10 +544,11 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
             begun.add(episode)
             continue
         if _joins(group, e):
-            group.unloads.append(e)
+            _add(group, e)
             continue
         # The file holds no fired for an episode not yet begun: its first unload is its first alert.
-        group = _Group(episode, None, first=episode not in begun, unloads=[e], sent=e.sent_by_brake)
+        group = _Group(episode, None, first=episode not in begun, sent=e.sent_by_brake)
+        _add(group, e)
         groups.append(group)
         begun.add(episode)
     last = taken[-1]
@@ -550,7 +565,8 @@ def _joins(group: _Group | None, e: BrakeEvent) -> bool:
         return False
     if not group.first and e.sent_by_brake:
         return False
-    return not group.unloads or _minute(group.unloads[0].at) == _minute(e.at)
+    steps = _steps(group)
+    return not steps or _minute(steps[0].at) == _minute(e.at)
 
 
 def _label(registry: Registry, name: str) -> str:
@@ -565,20 +581,28 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
     if group.reboot:
         return _after_reboot(group, path, state, registry, now, boot_id)
     unloaded = [(_label(registry, e.model or ""), e.state) for e in group.unloads]
+    not_unloaded = [(_label(registry, e.model or ""), e.reason) for e in group.failed]
+    steps = _steps(group)
     if not group.first:
-        first = group.unloads[0]
-        return ("brake_fired", f"brake:{boot}:{episode}:{first.seq}",
-                {"at": first.at, "unloaded": unloaded, "follow_up": True})
-    reading = group.fired or group.unloads[0]
+        first = steps[0]
+        fields: dict[str, Any] = {"at": first.at, "unloaded": unloaded, "follow_up": True}
+        if not_unloaded:
+            fields["not_unloaded"] = not_unloaded
+        return "brake_fired", f"brake:{boot}:{episode}:{first.seq}", fields
+    reading = group.fired or steps[0]
     waits = _waits_for_dan(reading, path, state, now)
-    fields: dict[str, Any] = {"at": reading.at, "available_gib": reading.available_gib, "line_gib": reading.line_gib,
-                              "unloaded": unloaded, "release_waits_for_dan": waits,
-                              "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed}
+    fields = {"at": reading.at, "available_gib": reading.available_gib, "line_gib": reading.line_gib,
+              "unloaded": unloaded, "release_waits_for_dan": waits, "release_after_s": RELEASE_AFTER_S,
+              "release_assumed": state.release_assumed}
     if waits and not state.release_assumed:
         fields["released_at"] = state.last_auto_release_at
     if reading.falling:  # the rate-of-fall watch acted above the line (Task 23)
         fields["falling"] = True
-    if not unloaded and state.models:  # something is loaded, and no unload came by FIRED_ALONE_S
+    if not_unloaded:  # why llama-swap didn't unload these (Task 23)
+        fields["not_unloaded"] = not_unloaded
+    # Something is loaded (the gate holds a model, or llama-swap refused to unload one), and no unload came by
+    # FIRED_ALONE_S.
+    if not unloaded and (state.models or not_unloaded):
         fields["unload_unanswered"] = True
     return "brake_fired", f"brake:{boot}:{episode}:{reading.seq}", fields
 

@@ -102,10 +102,13 @@ ACTIVITY_FILE = "activity.json"  # the gate's record, in its state folder (gate/
 # llama-swap v257 hands each model whose cmd holds ${PORT} a port from startPort, in their names' sorted order: the
 # gate's core.engine_ports, kept here so the brake never imports the gate's core (and with it httpx and uvicorn).
 ENGINE_START_PORT = 800
-# A started/ record's process must have been forked when the record says it started: launch writes `started_at` just
-# before its exec, a moment after llama-swap forked it, so the process may be up to LAUNCH_SLACK_S older than the
-# record, and no more than AGE_TOLERANCE_S younger (the clocks' grain). An engine that has run an hour isn't a load
-# just begun, whatever a record says.
+# A started/ record's process must have been forked when the record says its load started. Launch writes its own start
+# time (the controller's ruling, at Task 23): the engine's, exactly, since it is exec'd in place, and the load's age is
+# then read by the boot's clock, /proc/uptime less that start time, at most STARTED_EXPIRES_S and LAUNCH_SLACK_S (the
+# moments launch runs before its exec), never by the wall clock. A record from before it has only `started_at`: the
+# process may then be up to LAUNCH_SLACK_S older than the record, and no more than AGE_TOLERANCE_S younger (the clocks'
+# grain), the stricter way, since a clock stepped since the record can reject it. Either way, an engine that has run
+# an hour isn't a load just begun, whatever a record says.
 LAUNCH_SLACK_S = 30.0
 AGE_TOLERANCE_S = 2.0
 # The brake's own readings, kept as long as a started/ record lasts, so a record's start is read from them, never from
@@ -170,7 +173,8 @@ class Action:
 
 
 def _phase_1_key(registry, name: str) -> tuple[bool, float]:
-    """Phase 1's order: on-demand first, then the largest. A model the registry doesn't know goes as /running lists it."""
+    """Phase 1's order: on-demand first, then the largest. A model the registry doesn't know goes as /running lists
+    it."""
     model = registry.models.get(name)
     return (model.resident if model else False, -(model.footprint_gib if model else 0.0))
 
@@ -328,9 +332,11 @@ def _uptime_s(proc: Path) -> float | None:
 
 def _is_its_engine(record: dict, port: int, *, now: float, proc: Path, spark_uid: int) -> bool:
     """Whether a started/ record's pid is its model's engine, read as procs.engine_pid reads one: the process on the
-    model's engine port, run as spark, with an engine's comm; and one forked when the record says its load started
-    (its start time against the record's age), so a record naming a long-running engine isn't a load just begun. A
-    /proc that can't be read is no engine: no load in progress, the stricter way."""
+    model's engine port, run as spark, with an engine's comm, and its start time launch's own, exactly, where the record
+    holds it (the controller's ruling, at Task 23); and one forked when its load began, by the boot's clock, so a record
+    naming a long-running engine isn't a load just begun. A record from before launch wrote its start time is judged by
+    its age against the process's instead, the stricter way. A /proc that can't be read is no engine: no load in
+    progress, the stricter way."""
     try:
         pid = procs.engine_pid(port, spark_uid=spark_uid, proc=proc)
         if pid is None or pid != record["pid"]:
@@ -342,6 +348,8 @@ def _is_its_engine(record: dict, port: int, *, now: float, proc: Path, spark_uid
     if started is None or uptime is None:
         return False
     process_age = uptime - started / os.sysconf("SC_CLK_TCK")
+    if "start_time" in record:  # tickets.started has checked it is whole ticks
+        return started == record["start_time"] and 0 <= process_age <= tickets.STARTED_EXPIRES_S + LAUNCH_SLACK_S
     record_age = now - record["started_at"]
     return record_age - AGE_TOLERANCE_S <= process_age <= record_age + LAUNCH_SLACK_S
 
@@ -574,6 +582,7 @@ class _Fired:
     falling: bool
     sending: bool  # the brake sends the alert itself, the gate being down
     unloaded: list[tuple[str, str | None]] = field(default_factory=list)  # (label, state)
+    failed: list[tuple[str, str]] = field(default_factory=list)  # (label, reason): unloads llama-swap didn't do
 
 
 class _Brake:
@@ -779,11 +788,19 @@ class _Brake:
         except LlamaSwapError as err:
             self.log(f"brake: unloading {model} failed: {err}")
             # The controller's ruling at Task 14: a failed or refused unload is an event with its reason, so the gate
-            # can word the cause. Its text never holds the key (LlamaSwap's errors don't).
-            reason = messages._one_line(str(err))[:REASON_MAX] or type(err).__name__
-            self.record(BrakeEvent(1, wall, self.boot_id, self.episode_now(), "unload_failed", model, said,
-                                   mem.available_gib, line, fired.sending if fired else False, reason=reason,
-                                   falling=falling))
+            # can word the cause (messages, the controller's ruling at Task 23): `HTTP <status>` for a refusal, else the
+            # error's own line, which never holds the key (LlamaSwap's errors don't).
+            status = getattr(err, "status", None)
+            reason = (f"HTTP {status}" if isinstance(status, int)
+                      else messages._one_line(str(err))[:REASON_MAX] or type(err).__name__)
+            episode = self.episode_now()
+            sending = fired.sending if fired is not None else self.will_alert(wall, episode)
+            self.record(BrakeEvent(1, wall, self.boot_id, episode, "unload_failed", model, said, mem.available_gib,
+                                   line, sending, reason=reason, falling=falling))
+            if fired is not None:
+                fired.failed.append((self.label(model), reason))
+            elif sending:
+                self.follow_up(wall, model, said, reason=reason)
             return
         else:
             # This includes an engine still starting, which v257 stops at once: measured 2026-09-28, it answered 200 in
@@ -898,9 +915,10 @@ class _Brake:
         return True
 
     def first_alert(self, fired: _Fired, *, something_loaded: bool) -> None:
-        """Task 7's brake_fired, `by_brake`: what this poll's unload did, or, with none, that nothing of the stack's
-        was loaded, or that llama-swap hasn't confirmed its unload; and how the pause ends, by rule 5, from the last
-        automatic release in the gate's saved state."""
+        """Task 7's brake_fired, `by_brake`: what this poll's unload did, and why llama-swap didn't unload a model it
+        refused (the controller's ruling, at Task 23); or, with none, that nothing of the stack's was loaded, or that
+        llama-swap hasn't confirmed its unload; and how the pause ends, by rule 5, from the last automatic release in
+        the gate's saved state."""
         state, _ = load_state(self.gate_state, now=fired.at)  # never raises; damage reads as release_assumed
         waits = release_waits_for_dan(fired.hold, boot_id=self.boot_id, last_auto_release_at=state.last_auto_release_at,
                                       now=fired.at)
@@ -908,14 +926,19 @@ class _Brake:
             "at": fired.at, "available_gib": fired.available_gib, "line_gib": fired.line_gib,
             "unloaded": list(fired.unloaded), "by_brake": True, "release_waits_for_dan": waits,
             "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed,
-            "unload_unanswered": not fired.unloaded and something_loaded, "falling": fired.falling}
+            "unload_unanswered": not fired.unloaded and (something_loaded or bool(fired.failed)),
+            "falling": fired.falling, "not_unloaded": list(fired.failed)}
         if waits and not state.release_assumed:
             fields["released_at"] = state.last_auto_release_at
         self.send("brake_fired", fields)
 
-    def follow_up(self, wall: float, model: str, said: str | None) -> None:
-        self.send("brake_fired", {"at": wall, "unloaded": [(self.label(model), said)], "follow_up": True,
-                                  "by_brake": True})
+    def follow_up(self, wall: float, model: str, said: str | None, *, reason: str | None = None) -> None:
+        """A later unload's follow-up, or, with a `reason`, why llama-swap didn't do it (Task 23)."""
+        if reason is None:
+            fields: dict[str, Any] = {"unloaded": [(self.label(model), said)]}
+        else:
+            fields = {"unloaded": [], "not_unloaded": [(self.label(model), reason)]}
+        self.send("brake_fired", fields | {"at": wall, "follow_up": True, "by_brake": True})
 
     def send(self, kind: str, fields: dict[str, Any]) -> None:
         """Words the alert and starts curl with it; neither ever stops the brake. Once the event says the brake sent

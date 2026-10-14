@@ -666,27 +666,74 @@ def test_a_brake_whose_unload_went_unanswered_says_so_then_follows_up(tmp_path):
         "Brake, 03:13: also unloaded Gemma, which was idle."]
 
 
+def refused(when: float, model: str, reason: str | None, *, episode: int = 1, by_brake: bool = False,
+            boot: str = BOOT) -> BrakeEvent:
+    """An unload llama-swap refused, or that failed, as Task 23's brake records it: `reason` is `HTTP <status>`, or the
+    error's own line."""
+    return replace(event("unload_failed", when, episode=episode, model=model, state="idle", by_brake=by_brake,
+                         boot=boot), reason=reason)
+
+
 def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path):
     # Task 23 writes an unload llama-swap refused as an event of its own, with the reason (the controller's ruling at
-    # Task 14): it unloaded nothing and marks nothing, and a lone fired still waits for the brake's next unload.
+    # Task 14): it unloaded nothing and marks nothing, and a lone fired still waits for the brake's next unload. The
+    # alert then says why the model it couldn't unload is still loaded (the controller's ruling, at Task 23).
     path = tmp_path / EVENTS_FILE
     state = GateState(models={GEMMA: ModelRecord(name=GEMMA, footprint_gib=32, loaded_at=at(1, 0), load_fall_gib=27,
                                                  fall_flagged=False, rss_anon_at_load_gib=None, last_use=at(3, 0),
                                                  state="ready")})
-    refused = replace(event("unload_failed", at(3, 12, 1), model=CODER, state="starting"),
-                      reason="llama-swap POST /api/models/unload/coder: HTTP 500")
-    write(tmp_path, event("fired", at(3, 12)), refused)
+    write(tmp_path, event("fired", at(3, 12)), replace(refused(at(3, 12, 1), CODER, "HTTP 401"), state="starting"))
     assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)) == []
     write(tmp_path, event("unload", at(3, 12, 2), model=GEMMA, state="idle"))
     found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 3))
     assert texts(found) == [
-        "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded Gemma, which was idle; new "
-        "loads are paused. They resume by themselves after 5 min above 28 GiB available."]
+        "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded Gemma, which was idle; "
+        "llama-swap refused its unload of the coder (HTTP 401: the brake's key); new loads are paused. They resume by "
+        "themselves after 5 min above 28 GiB available."]
     assert CODER not in state.brake_marks
-    # Alone past FIRED_ALONE_S, with something loaded, it goes as unconfirmed, and its failed unload names nothing.
-    write(tmp_path, event("fired", at(3, 20), episode=2), replace(refused, at=at(3, 20, 1), episode=2))
+    # Alone past FIRED_ALONE_S, it says why nothing was unloaded, in place of "hasn't confirmed".
+    write(tmp_path, event("fired", at(3, 20), episode=2), refused(at(3, 20, 1), CODER, "HTTP 401", episode=2))
     (words,) = texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 20, FIRED_ALONE_S)))
-    assert "It hasn't unloaded anything yet: llama-swap hasn't confirmed its unload." in words
+    assert ("It hasn't unloaded anything yet: llama-swap refused its unload of the coder (HTTP 401: the brake's key). "
+            "On the Spark, `make logs s=brake` shows why.") in words
+
+
+def test_a_failed_unload_with_nothing_the_gate_holds_still_says_what_was_loaded(tmp_path):
+    # llama-swap refused an unload, so something was loaded, whatever the gate's state holds; a reason the words don't
+    # know keeps Task 14's "hasn't confirmed", naming the model.
+    write(tmp_path, event("fired", at(3, 12)), refused(at(3, 12, 1), CODER, "llama-swap POST …: a request it couldn't "
+                                                                             "send (ValueError)"))
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
+                                         now=at(3, 12, FIRED_ALONE_S)))
+    assert "It hasn't unloaded anything yet: llama-swap hasn't confirmed its unload of the coder." in words
+    assert "Nothing of the stack's was loaded" not in words
+
+
+def test_a_failed_unload_after_the_first_alert_follows_up_with_why(tmp_path):
+    path = tmp_path / EVENTS_FILE
+    state = GateState()
+    write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="starting"))
+    ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
+    write(tmp_path, refused(at(3, 13), GEMMA, "HTTP 404"), event("unload", at(3, 13, 1), model=EMBED, state="idle"))
+    found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 2))
+    assert texts(found) == ["Brake, 03:13: also unloaded the embeddings, which was idle; llama-swap refused its unload "
+                            "of Gemma (HTTP 404: its config may not match the registry)."]
+    assert found[0][2]["follow_up"] is True
+    write(tmp_path, refused(at(3, 15), name_of("whisper"), "HTTP 401"))  # a refusal alone, a follow-up of its own
+    assert texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 15, 1))) == [
+        "Brake, 03:15: llama-swap refused its unload of whisper (HTTP 401: the brake's key)."]
+    # One the brake sent itself, the gate being down, isn't sent again.
+    write(tmp_path, refused(at(3, 16), GEMMA, "HTTP 401", by_brake=True))
+    assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 16, 1)) == []
+
+
+def test_a_failed_unload_before_a_reboot_isnt_named_as_unloaded(tmp_path):
+    write_hold(tmp_path, Hold("2026-10-08T03:12:00", "19.6 GiB available", (CODER,), boot_id=BOOT, episode=1,
+                              available_gib=19.6))
+    write(tmp_path, event("fired", at(3, 12)), refused(at(3, 12, 1), GEMMA, "HTTP 401"),
+          event("unload", at(3, 12, 2), model=CODER, state="idle"))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=LATER_BOOT, now=at(9, 0))
+    assert [(kind, fields["unloaded"]) for kind, _, fields in found] == [("brake_needs_release", ["the coder"])]
 
 
 def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):

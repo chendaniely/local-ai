@@ -26,7 +26,12 @@ class LlamaSwapUnreachable(LlamaSwapError):
 
 class LlamaSwapAnswered(LlamaSwapError):
     """It answered, but with an error, or with something it can't read: so it's up. A request never sent
-    (a bad URL, a key a header can't carry) is neither this nor LlamaSwapUnreachable."""
+    (a bad URL, a key a header can't carry) is neither this nor LlamaSwapUnreachable. `status` is the HTTP status of
+    an error answer, None for an answer it can't read: the brake records it for the gate's words (Task 23)."""
+
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -82,7 +87,7 @@ class LlamaSwap:
             with self._opener.open(request, timeout=self.timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as err:
-            raise LlamaSwapAnswered(f"{where}: HTTP {err.code}") from None
+            raise LlamaSwapAnswered(f"{where}: HTTP {err.code}", status=err.code) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
             raise LlamaSwapUnreachable(f"llama-swap unreachable at {self.base_url}: {err}") from None
         except http.client.InvalidURL:  # one urlsplit lets through, such as a control character in the host

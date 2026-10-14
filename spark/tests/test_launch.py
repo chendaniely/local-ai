@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from spark import launch, tickets
+from spark import launch, procs, tickets
 from spark.admission import Decision, admit
 from spark.hold import Hold, read_hold, release_hold, write_hold
 from spark.memory import MemInfo, boot_id, parse_meminfo
@@ -285,6 +285,7 @@ def test_a_ticket_is_used_up_by_one_start(box, capsys):
     assert started["id"] == ticket_id and started["model"] == "coder" and started["boot_id"] == BOOT
     assert (started["footprint_gib"], started["available_gib"]) == (28, 70.0)
     assert (started["started_at"], started["pid"]) == (NOW, os.getpid())
+    assert started["start_time"] == procs.start_time(os.getpid())  # the engine's own, since it is exec'd in place
     assert box.started() == ["coder.json"]  # kept, for the gate to clear once the load is ready or failed
     assert box.run() == 3
     assert capsys.readouterr().err == NO_TICKET

@@ -777,15 +777,17 @@ class Room:
             _log.error("the gate couldn't save its state before lifting the brake's hold, so the hold stands")
             self.state.last_auto_release_at, self.state.release_assumed = before
             return False
+        broke = False
         try:
             released = bool(self._release_hold(hold))
         except OSError as err:  # the truth for both: a hold moved aside and not put back comes back at the next start
-            _log.error("the brake's hold couldn't be lifted (%s): it stands, or, should it have been moved aside and "
-                       "not put back, the gate's next start puts it back", err)
-            released = False
+            _log.error("the brake's hold couldn't be lifted (%s), so nothing lifted: it stands, or, should it have "
+                       "been moved aside and not put back, the gate's next start puts it back", err)
+            released, broke = False, True
         if not released:
-            _log.warning("the brake's hold the gate judged no longer stands as it was (the brake fired again, or it "
-                         "was released meanwhile): nothing lifted")
+            if not broke:  # one true line: after a failure, the hold may still stand as it was (Task 23)
+                _log.warning("the brake's hold the gate judged no longer stands as it was (the brake fired again, or "
+                             "it was released meanwhile): nothing lifted")
             self.state.last_auto_release_at, self.state.release_assumed = before
             if not await self._saved_first():  # awaited, so no release that never happened stays recorded unseen
                 _log.error("the gate couldn't save its rolled-back release: until its next save, its saved state names "

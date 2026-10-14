@@ -130,8 +130,11 @@ def test_unload_posts_to_the_model(server):
 
 
 def test_unload_unknown_model_raises(server):
-    with pytest.raises(LlamaSwapError, match="404"):
+    with pytest.raises(LlamaSwapError, match="404") as caught:
         LlamaSwap(server, "good").unload("nope")
+    # Its status, as a number, for the brake's event (the controller's ruling, at Task 23): the gate words it.
+    assert isinstance(caught.value, llamaswap.LlamaSwapAnswered) and caught.value.status == 404
+    assert llamaswap.LlamaSwapAnswered("llama-swap GET /running: an answer it can't read").status is None
 
 
 def test_unreachable_is_a_clear_error():

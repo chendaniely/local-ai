@@ -1059,6 +1059,25 @@ COMPOSED = [
     ("brake_fired", {**FIRED, "available_gib": 44.6, "falling": True, "unloaded": [], "unload_unanswered": True},
      "Brake on brightroar at 03:12: 44.6 GiB available and falling fast toward the 20 GiB line; new loads are paused. "
      "It hasn't unloaded anything yet"),
+    # Why llama-swap didn't unload, from the brake's unload_failed events (the controller's ruling, at Task 23): its
+    # status, where pi's list doesn't match it; Task 14's "hasn't confirmed" where the reason isn't known.
+    ("brake_fired", {**FIRED, "unloaded": [], "unload_unanswered": True, "not_unloaded": [("the coder", "HTTP 401")]},
+     "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't "
+     "unloaded anything yet: llama-swap refused its unload of the coder (HTTP 401: the brake's key). On the Spark, "
+     "`make logs s=brake` shows why. They resume by themselves after 5 min above 28 GiB available."),
+    ("brake_fired", {**FIRED, "unloaded": [("the embeddings", "idle")], "not_unloaded": [("Gemma", "HTTP 503")]},
+     "Unloaded the embeddings, which was idle; llama-swap refused its unload of Gemma; new loads are paused."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [], "not_unloaded": [("Gemma", "HTTP 404")], "follow_up": True},
+     "Brake, 03:13: llama-swap refused its unload of Gemma (HTTP 404: its config may not match the registry)."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [("the embeddings", "idle")], "follow_up": True,
+                     "not_unloaded": [("Gemma", "llama-swap POST /api/models/unload/small: a broken answer "
+                                                "(BadStatusLine)")]},
+     "Brake, 03:13: also unloaded the embeddings, which was idle; llama-swap's answer to its unload of Gemma couldn't "
+     "be read."),
+    ("brake_fired", {**FIRED, "unloaded": [], "unload_unanswered": True,
+                     "not_unloaded": [("the coder", "HTTP 401"), ("Gemma", "HTTP 401"), ("whisper", None)]},
+     "It hasn't unloaded anything yet: llama-swap refused its unloads of the coder and Gemma (HTTP 401: the brake's "
+     "key); llama-swap hasn't confirmed its unload of whisper. On the Spark,"),
     ("brake_down", {**DOWN, "result_words": "it stopped answering"},
      "The memory brake on brightroar stopped at 09:14 (it stopped answering; it is restarting within 2 s)."),
     ("llama_swap_down", {**DOWN, "result_words": "it ran out of memory"},
@@ -1190,6 +1209,21 @@ def test_a_brake_after_a_damaged_start_never_names_an_automatic_release():
                          "`make brake-release` resumes them.")
     assert "automatic release at" not in text
     assert say("brake_fired", **WITHIN_THE_HOUR).endswith(DANS_RELEASE)  # a real release keeps its words
+
+
+def test_why_llama_swap_didnt_unload_never_matches_pis_list():
+    # The controller's ruling, at Task 23: the cause is in messages, checked against pi's retry list. A status pi's
+    # list matches (500, 503 …) isn't shown; the brake's journal has it.
+    for status in (401, 404, 409, 500, 502, 503, 504, 429, 520):
+        follow = say("brake_fired", at=at(3, 13), unloaded=[], not_unloaded=[("Gemma", f"HTTP {status}")],
+                     follow_up=True)
+        first = say("brake_fired", **{**FIRED, "unloaded": [], "unload_unanswered": True,
+                                     "not_unloaded": [("Gemma", f"HTTP {status}")]})
+        assert messages.pi_retry_match(follow) is None and messages.pi_retry_match(first) is None, status
+        assert (f"HTTP {status}" in follow) is (messages.pi_retry_match(str(status)) is None)
+    # Nothing unloaded, with a refusal, is the unconfirmed form's: something was loaded.
+    with pytest.raises(ValueError, match="^brake_fired's not_unloaded with nothing unloaded is unload_unanswered's"):
+        say("brake_fired", **{**FIRED, "unloaded": [], "not_unloaded": [("Gemma", "HTTP 401")]})
 
 
 def test_falling_is_for_a_first_alert():

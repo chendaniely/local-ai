@@ -12,6 +12,7 @@ is the gate's side of its events call, answering every drain at once unless a te
 file in the test's folder. Every time, boot id, uid and pid here is a stand-in; none was read from the box."""
 
 import asyncio
+import errno
 import logging
 import socket
 import time
@@ -1357,6 +1358,28 @@ async def test_a_release_whose_save_fails_lifts_nothing(tmp_path, caplog):
         assert await world.room.check_brake(T + 300, above_since=T) == "wait"
         assert read_hold(world.brake) is not None and world.state.last_auto_release_at is None
         assert any("couldn't save" in r.getMessage() for r in caplog.records if r.name == "spark.gate.room")
+        caplog.clear()
+
+
+@pytest.mark.anyio
+async def test_a_release_hold_that_raises_says_one_true_thing(tmp_path, caplog):
+    # The controller's ruling, at Task 23: a filesystem gone read-only under release_hold. Its own line says what
+    # happened to the hold (hold.py); the room's says, once, that nothing was lifted, never also that the hold no longer
+    # stands as it was.
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path, models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)
+
+        def read_only(expected):
+            raise OSError(errno.EROFS, "Read-only file system")
+
+        world.room._release_hold = read_only
+        world.clock.now = T + 300
+        assert await world.room.check_brake(T + 300, above_since=T) == "wait"
+        said = [r.getMessage() for r in caplog.records if r.name == "spark.gate.room" and r.levelno >= logging.WARNING]
+        assert len(said) == 1 and "couldn't be lifted" in said[0] and "Read-only file system" in said[0]
+        assert "no longer stands as it was" not in said[0]
+        assert world.state.last_auto_release_at is None and world.emitted.of("brake_released") == []
         caplog.clear()
 
 

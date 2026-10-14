@@ -865,25 +865,74 @@ def _brake_unloaded(unloaded: list[tuple[str, str | None]]) -> str:
     return _and([f"{label} ({state})" if state else label for label, state in items])
 
 
+# Why llama-swap's refusal of the brake's unload matters, by its status (the controller's ruling, at Task 23).
+_UNLOAD_WHY = {401: "the brake's key", 404: "its config may not match the registry"}
+_UNLOAD_STATUS = re.compile(r"(?:^|: )HTTP (\d{3})$")  # the brake's `HTTP <status>`, or LlamaSwap's own line
+
+
+def _unload_cause(reason: str | None) -> tuple[str, str]:
+    """How llama-swap answered an unload the brake recorded as failed (brakeevents' unload_failed `reason`): `refused`
+    with its status, shown only where pi's list doesn't match it, as _swap_refused shows one, and what it means where
+    that is known; `unread`, an answer that broke off or couldn't be read; or `unconfirmed`, Task 14's words, for a
+    reason these words don't know."""
+    text = _one_line(reason or "")
+    found = _UNLOAD_STATUS.search(text)
+    if found:
+        status = int(found[1])
+        shown = f"HTTP {status}" if pi_retry_match(str(status)) is None else ""
+        why = _UNLOAD_WHY.get(status, "")
+        detail = ": ".join(part for part in (shown, why) if part)
+        return "refused", f" ({detail})" if detail else ""
+    if "broken answer" in text or "can't read" in text:
+        return "unread", ""
+    return "unconfirmed", ""
+
+
+def _not_unloaded(items: list[tuple[str, str | None]]) -> str:
+    """Why llama-swap didn't unload each model the brake asked it to, from (label, reason): models with the same cause
+    together, *llama-swap refused its unloads of the coder and Gemma (HTTP 401: the brake's key)*."""
+    causes: dict[tuple[str, str], list[str]] = {}
+    for label, reason in items:
+        causes.setdefault(_unload_cause(reason), []).append(label)
+    said = []
+    for (kind, detail), labels in causes.items():
+        unloads = f"{'its unload' if len(labels) == 1 else 'its unloads'} of {_and(labels)}"
+        if kind == "refused":
+            said.append(f"llama-swap refused {unloads}{detail}")
+        elif kind == "unread":
+            said.append(f"llama-swap's answer to {unloads} couldn't be read")
+        else:
+            said.append(f"llama-swap hasn't confirmed {unloads}")
+    return "; ".join(said)
+
+
 def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     _needs("brake_fired", f, "at")
-    if f["follow_up"]:  # always an unload: an empty list is a field left out
-        _needs("brake_fired", f, "unloaded")
+    not_unloaded = f["not_unloaded"] or []
+    if f["follow_up"]:  # always an unload, or an unload llama-swap didn't do: an empty list is a field left out
+        if not not_unloaded:
+            _needs("brake_fired", f, "unloaded")
         if f["unload_unanswered"]:
             raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
         if f["falling"]:  # a follow-up names no reading
             raise ValueError("brake_fired's falling is for a first alert, which names the reading")
-        return f"Brake, {_clock(f['at'])}: also unloaded {_brake_unloaded(f['unloaded'])}."
+        steps = ([f"also unloaded {_brake_unloaded(f['unloaded'])}"] if f["unloaded"] else []) + (
+            [_not_unloaded(not_unloaded)] if not_unloaded else [])
+        return f"Brake, {_clock(f['at'])}: {'; '.join(steps)}."
     if f["unloaded"] is None:
         raise ValueError("brake_fired's words need unloaded")
     if f["unload_unanswered"] and f["unloaded"]:
         raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
+    if not_unloaded and not f["unloaded"] and not f["unload_unanswered"]:  # llama-swap refused one: one was loaded
+        raise ValueError("brake_fired's not_unloaded with nothing unloaded is unload_unanswered's")
     # An empty list: the brake paused new loads with nothing of the stack's loaded, the memory taken by something
     # outside it (the controller's ruling at Task 7's review, worded at Task 13); or, with unload_unanswered, with
     # something loaded and no unload by FIRED_ALONE_S: slow, failed, refused or never sent, llama-swap hasn't confirmed
     # it, and the brake's journal says which (the controller's rulings, at Task 14 and its review).
     unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
                 else "Nothing of the stack's was loaded, so there was nothing to unload")
+    if f["unloaded"] and not_unloaded:  # and why the others asked are still loaded (Task 23)
+        unloaded += f"; {_not_unloaded(not_unloaded)}"
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
     if f["release_waits_for_dan"] and f["release_assumed"]:  # no real release to name (Task 13's re-review)
         resume = ("New loads stay paused until you release them: the gate's saved state was damaged, so it can't tell "
@@ -903,9 +952,10 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     where = " and falling fast toward" if f["falling"] else ", under"
     reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available{where} the "
                f"{_line(f['line_gib'])} line")
-    if f["unload_unanswered"]:
-        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: llama-swap hasn't confirmed its "
-                f"unload. On the Spark, `make logs s=brake` shows why. {resume}")
+    if f["unload_unanswered"]:  # why, where the brake's events say it (Task 23); else Task 14's words
+        why = _not_unloaded(not_unloaded) if not_unloaded else "llama-swap hasn't confirmed its unload"
+        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: {why}. On the Spark, `make logs "
+                f"s=brake` shows why. {resume}")
     return f"{reading}. {unloaded}; new loads are paused. {resume}"
 
 
@@ -1405,7 +1455,7 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
-                    "release_assumed": False, "unload_unanswered": False, "falling": False},
+                    "release_assumed": False, "unload_unanswered": False, "falling": False, "not_unloaded": []},
     "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": [], "recovered": False,
                             "rebooted": False},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},

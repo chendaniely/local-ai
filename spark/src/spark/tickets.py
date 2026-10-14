@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spark import procs
 from spark.registry import NAME
 
 TICKETS, STARTED = "tickets", "started"  # launch's folder's two, beside launch.REFUSALS
@@ -99,9 +100,16 @@ def claim(folder: Path, model: str, now: float, *, boot_id: str) -> Claim:
 
 
 def mark_started(folder: Path, ticket: dict, now: float) -> None:
-    """Launch, just before its exec: the claimed ticket with `started_at` and launch's pid, which the engine keeps
-    across the exec, at `<folder>/started/<model>.json`."""
-    write_whole(record_path(folder, STARTED, ticket["model"]), ticket | {"started_at": now, "pid": os.getpid()})
+    """Launch, just before its exec: the claimed ticket with `started_at`, launch's pid, which the engine keeps across
+    the exec, and that pid's own start time (procs.start_time, clock ticks since boot), which the exec keeps too, at
+    `<folder>/started/<model>.json`. The brake matches the engine's start time exactly, and dates the load by the
+    boot's clock, never the wall clock (the controller's ruling, at Task 23). A start time /proc won't give is left
+    out, and the brake then judges the record by its age, the stricter way."""
+    record = ticket | {"started_at": now, "pid": os.getpid()}
+    own = procs.start_time(os.getpid())
+    if own is not None:
+        record["start_time"] = own
+    write_whole(record_path(folder, STARTED, ticket["model"]), record)
 
 
 def started(folder: Path, *, now: float, boot_id: str) -> list[dict]:
@@ -125,6 +133,9 @@ def started(folder: Path, *, now: float, boot_id: str) -> list[dict]:
             continue
         pid = record.get("pid")
         if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 0):
+            continue
+        began = record.get("start_time", 0)  # launch's own start time, in ticks: none in a record from before it
+        if not (isinstance(began, int) and not isinstance(began, bool) and began >= 0):
             continue
         if record["boot_id"] == boot_id and 0 <= now - record["started_at"] <= STARTED_EXPIRES_S:
             records.append(record)

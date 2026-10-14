@@ -58,7 +58,8 @@ class BrakeEvent:
     available_gib: float  # MemAvailable when the brake acted
     line_gib: float  # the line the writer acted on, its own registry's, so a drill's raised line is worded as itself
     sent_by_brake: bool  # the brake sent its own alert, the gate being down: the gate doesn't send it again
-    reason: str | None = None  # why an unload failed, one line (unload_failed); None for the rest
+    # Why an unload failed (unload_failed): `HTTP <status>` for a refusal, else the error's own line; None for the rest.
+    reason: str | None = None
     # The rate-of-fall watch acted, above the line (Task 23): memory was falling toward the line, not under it. A line
     # written before Task 23 has neither of these two, and reads as no reason and not falling.
     falling: bool = False

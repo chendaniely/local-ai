@@ -17,7 +17,8 @@ from spark.brakeevents import EVENTS_FILE, BrakeEvent, append_event, read_events
 from spark.gate.state import GateState, save_state
 from spark.gateclient import GateForbidden, GateUnavailable
 from spark.hold import Hold, read_hold, release_hold, write_hold
-from spark.llamaswap import LlamaSwapError, LlamaSwapUnreachable, Running
+from spark.gate.notify import ingest_brake_events
+from spark.llamaswap import LlamaSwapAnswered, LlamaSwapError, LlamaSwapUnreachable, Running
 from spark.memory import MemInfo
 from spark.registry import BrakeThresholds, RegistryError, load_registry
 from test_procs import process
@@ -132,8 +133,9 @@ class Box:
     run ends. MemAvailable reads `noise` GiB high on even polls and low on odd ones."""
 
     def __init__(self, avail, running, *, registry=REG, hold_dir=None, delay=1, stuck=(), hung=(), fail=(),
-                 late=(), fall=0.0, noise=0.0, polls=12, errors=None, reload=None, set_avail=None, on_unload=None):
-        self.avail, self.registry, self.hold_dir = avail, registry, hold_dir
+                 late=(), fall=0.0, noise=0.0, polls=12, errors=None, reload=None, set_avail=None, on_unload=None,
+                 fail_status=500):
+        self.avail, self.registry, self.hold_dir, self.fail_status = avail, registry, hold_dir, fail_status
         self.states = dict(running) if isinstance(running, dict) else {m: "ready" for m in running}
         self.delay, self.fall, self.polls, self.errors, self.on_unload = delay, fall, polls, errors or {}, on_unload
         self.noise, self.reload, self.set_avail = noise, reload or {}, set_avail or {}
@@ -156,8 +158,9 @@ class Box:
             self.held_at_unload.append(read_hold(self.hold_dir) is not None)
         if self.on_unload:
             self.on_unload(model)
-        if model in self.fail:
-            raise LlamaSwapError(f"llama-swap POST /api/models/unload/{model}: HTTP 500")
+        if model in self.fail:  # as llama-swap answers a refused call: with its status (Task 23)
+            raise LlamaSwapAnswered(f"llama-swap POST /api/models/unload/{model}: HTTP {self.fail_status}",
+                                    status=self.fail_status)
         if model not in self.stuck and self.states.get(model) in ("starting", "ready"):
             if self.states[model] == "ready":
                 self.states[model] = "stopping"
@@ -836,12 +839,21 @@ def write_activity(folder: Path, written_at: float, models: dict, *, boot: str =
 
 
 def started_record(folder: Path, model: str = CODER, *, footprint: float = 41.0, available: float = 74.0,
-                   started_at: float = T0, pid: int = ENGINE_PID, boot: str = BOOT) -> None:
-    """launch's started/ record of a claimed ticket, as tickets.mark_started writes it."""
+                   started_at: float = T0, pid: int = ENGINE_PID, boot: str = BOOT,
+                   start_time: int | None = None) -> None:
+    """launch's started/ record of a claimed ticket, as tickets.mark_started writes it: with launch's own start time
+    (`start_time`, its pid's ticks since boot, which the engine keeps across the exec), or without it, as a record
+    written before the controller's ruling at Task 23."""
     ticket = {"model": model, "id": "stand-in-ticket", "issued_at": started_at - 1, "deadline": started_at + 200,
               "nonce": "stand-in-nonce", "boot_id": boot, "footprint_gib": footprint, "available_gib": available}
+    extra = {} if start_time is None else {"start_time": start_time}
     tickets.write_whole(tickets.record_path(folder, tickets.STARTED, model),
-                        ticket | {"started_at": started_at, "pid": pid})
+                        ticket | {"started_at": started_at, "pid": pid} | extra)
+
+
+def ticks(forked_at: float) -> int:
+    """The start time /proc/<pid>/stat gives a process llama-swap forked at the wall time `forked_at`."""
+    return round((U0 - (T0 - forked_at)) * CLK_TCK)
 
 
 def an_engine(proc: Path, model: str = CODER, *, pid: int = ENGINE_PID, forked_at: float = T0 - 0.5,
@@ -849,9 +861,8 @@ def an_engine(proc: Path, model: str = CODER, *, pid: int = ENGINE_PID, forked_a
     """The model's engine in a /proc stand-in: spark's (this test's uid), on its port, forked by llama-swap at the wall
     time `forked_at`, which /proc/<pid>/stat's start time holds in clock ticks since boot."""
     port = brake.engine_ports(REG2A)[model] if port is None else port
-    ticks = round((U0 - (T0 - forked_at)) * CLK_TCK)
     process(proc, pid, comm, uid=os.geteuid() if uid is None else uid,
-            argv=(comm, "--host", "127.0.0.1", "--port", str(port)), start=ticks)
+            argv=(comm, "--host", "127.0.0.1", "--port", str(port)), start=ticks(forked_at))
 
 
 @pytest.fixture
@@ -866,10 +877,10 @@ def box_folders(tmp_path):
 
 
 class Timeline(Box):
-    """Box on 2a's registry, with the brake's two clocks, each poll 250 ms on both: MemAvailable is `readings[i]` at poll
-    i (the last one held), plus what its unloads gave back, less any `fall`; /proc/uptime moves with the clocks. While
-    `gate_up`, the gate's activity record is written at each poll, as the gate writes it every second, with `models` in
-    it; otherwise it stays as it was."""
+    """Box on 2a's registry, with the brake's two clocks, each poll 250 ms on both: MemAvailable is `readings[i]` at
+    poll i (the last one held), plus what its unloads gave back, less any `fall`; /proc/uptime moves with the clocks.
+    While `gate_up`, the gate's activity record is written at each poll, as the gate writes it every second, with
+    `models` in it; otherwise it stays as it was."""
 
     def __init__(self, readings, running, *, folders, models=None, gate_up=True, registry=REG2A, **kw):
         kw.setdefault("polls", len(readings))
@@ -1109,10 +1120,11 @@ def test_a_started_record_that_isnt_its_models_engine_is_no_load_in_progress(box
                                    readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid()) == []
 
 
-def test_with_the_gate_down_the_claimed_ticket_gives_the_load(box_folders):
+@pytest.mark.parametrize("written", ["with launch's start time", "from before it"])
+def test_with_the_gate_down_the_claimed_ticket_gives_the_load(box_folders, written):
     f = box_folders
     write_activity(f.gate, T0 - 4, {})  # stale: the gate is down
-    started_record(f.launch)
+    started_record(f.launch, start_time=ticks(T0 - 0.5) if written.startswith("with") else None)
     an_engine(f.proc)
     box = Timeline(fall(74, 40, 2.5), {GEMMA: "ready", CODER: "starting"}, folders=f, gate_up=False)
     run_2a(box)
@@ -1199,12 +1211,13 @@ def test_the_floor_uses_the_admitted_footprint(box_folders):
 
 
 def test_a_slow_fall_doesnt_trip_the_rate_watch(box_folders):
+    # Accepted, the controller's ruling at Task 23: at 0.2 GiB/s the brake acts just under 22 GiB, never above 22.
     readings = fall(40.02, 18, 0.2)
     box = Timeline(readings, {GEMMA: "ready", EMBED: "ready"}, folders=box_folders,
                    models={GEMMA: ready(0, T0 - 100), EMBED: ready()})
     run_2a(box)
-    # Nothing early: the watch looks UNLOAD_LEAD_S ahead, and a 0.2 GiB/s fall covers 2 GiB in that time, so it acts
-    # within those 2 GiB of the 20 GiB line, at the first poll whose reading less them passes under it, never higher.
+    # The watch looks UNLOAD_LEAD_S ahead, and a 0.2 GiB/s fall covers 2 GiB in that time: nothing above 22, then the
+    # first poll whose reading less those 2 GiB passes under the 20 GiB line, just under 22.
     lead = 0.2 * brake.UNLOAD_LEAD_S
     first, model = box.requests[0]
     assert 20 < readings[first] < 20 + lead <= readings[first - 1] and model == GEMMA
@@ -1320,11 +1333,12 @@ def test_a_failed_unload_leaves_an_event_with_its_reason(box_folders, tmp_path):
                    delay=99)
     run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
     assert [(e.kind, e.model, e.reason) for e in events(box_folders)] == [
-        ("fired", None, None), ("unload_failed", GEMMA, "llama-swap POST /api/models/unload/vision-chat: HTTP 500"),
-        ("unload", EMBED, None)]
-    # Its own alert, the gate being down, says the unload is unconfirmed; the next unload follows up.
+        ("fired", None, None), ("unload_failed", GEMMA, "HTTP 500"), ("unload", EMBED, None)]
+    # Its own alert, the gate being down, says llama-swap refused it (500 is on pi's list: no number); the next unload
+    # follows up.
     first, then = (curl_config(child.stdin.data)["data-binary"][0] for child in curl.started)
-    assert first == first_alert(unloaded=[], unload_unanswered=True)
+    assert first == first_alert(unloaded=[], unload_unanswered=True, not_unloaded=[(LABELS[GEMMA], "HTTP 500")])
+    assert "It hasn't unloaded anything yet: llama-swap refused its unload of the vision model." in first
     assert then == messages.notification("brake_fired", REG2A, at=T0 + TICK, unloaded=[(LABELS[EMBED], None)],
                                          follow_up=True).message
 
@@ -1476,7 +1490,8 @@ def test_a_key_credential_that_cant_be_read_still_leaves_a_brake(tmp_path, monke
 
 
 class Gate:
-    """GateClient as `make brake-release` meets it: `answer` is what POST /v1/release answers, or the error it raises."""
+    """GateClient as `make brake-release` meets it: `answer` is what POST /v1/release answers, or the error it
+    raises."""
 
     def __init__(self, answer):
         self.answer, self.calls = answer, []
@@ -1510,8 +1525,8 @@ def test_release_goes_through_the_gate_and_falls_back_when_it_doesnt_answer(tmp_
 
 
 def test_a_gate_that_answers_is_never_bypassed(tmp_path, capsys):
-    # An answer the client can't take is a plain GateError: the gate is up, so the hold file stays its to lift (Task 10's
-    # re-review). A gate that lifted nothing says why, and only a hold that still stands is a failure.
+    # An answer the client can't take is a plain GateError: the gate is up, so the hold file stays its to lift (Task
+    # 10's re-review). A gate that lifted nothing says why, and only a hold that still stands is a failure.
     sock = tmp_path / "gate-control.sock"
     write_hold(tmp_path, Hold("t", "r", ()))
     assert brake.release_through_gate(sock, tmp_path, client=Gate(brake.GateError("stand-in: too large"))) == 1
@@ -1560,3 +1575,62 @@ def test_without_ntfy_set_up_the_brake_sends_nothing_and_says_so(box_folders, tm
     release_hold(f.state)
     assert brake.run(argparse.Namespace(release=False, once=True, key_env="SPARK_API_KEY", key_credential=None)) == 0
     assert curl.started == [] and read_hold(f.state).unloaded == (WHISPER,)
+
+
+
+def test_a_failed_unload_while_the_gate_is_down_follows_up_with_why(box_folders, tmp_path):
+    # The controller's ruling, at Task 23: the follow-up says why llama-swap didn't unload.
+    curl = Curl()
+    box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False, fail={EMBED},
+                   fail_status=401, delay=99, fall=1.5, polls=2)
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    first, then = (curl_config(child.stdin.data)["data-binary"][0] for child in curl.started)
+    assert first == first_alert(unloaded=[(LABELS[GEMMA], None)])
+    assert then == messages.notification("brake_fired", REG2A, at=T0 + TICK, unloaded=[],
+                                         not_unloaded=[(LABELS[EMBED], "HTTP 401")], follow_up=True).message
+    assert then.endswith("llama-swap refused its unload of the embeddings (HTTP 401: the brake's key).")
+    assert [(e.kind, e.reason, e.sent_by_brake) for e in events(box_folders)] == [
+        ("fired", None, True), ("unload", None, True), ("unload_failed", "HTTP 401", True)]
+
+
+def test_a_model_marked_starting_without_the_gates_record_was_seen_using_nothing(box_folders):
+    # Task 14's Q2 ruling, checked at Task 23: the brake names a model llama-swap shows starting `starting` even with
+    # the gate's record missing, so the gate marks it; with no reading of where its load began, what it was seen using
+    # is None, never a guess.
+    box = Timeline([18], {CODER: "starting"}, folders=box_folders, gate_up=False)
+    run_2a(box, once=True)
+    gate = GateState()
+    ingest_brake_events(box_folders.state / EVENTS_FILE, gate, REG2A, boot_id=BOOT, now=T0 + 6, starts={})
+    mark = gate.brake_marks[CODER]
+    assert (mark.model, mark.at, mark.seen_gib) == (CODER, T0, None)
+
+
+def test_a_started_record_with_its_start_time_is_matched_exactly(box_folders):
+    # The controller's ruling, at Task 23: launch writes its own start time, so the brake matches the engine's exactly,
+    # and judges the load's age by the boot's clock, never the wall clock: a clock stepped since the record (here the
+    # record says T0, the engine forked 100 s before by /proc) no longer rejects it.
+    f = box_folders
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    an_engine(f.proc, forked_at=T0 - 100)
+
+    def loads():
+        return brake.loads_in_progress(None, f.launch, now=T0 + 5, boot_id=BOOT, registry=REG2A,
+                                       readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid())
+
+    started_record(f.launch, start_time=ticks(T0 - 100))
+    assert loads() == [brake.LoadInProgress(CODER, 41.0, 74.0, T0)]
+    started_record(f.launch, start_time=ticks(T0 - 100) + 1)  # a tick off: another process's, or a pid reused
+    assert loads() == []
+    started_record(f.launch)  # the same record without the field, from before the ruling: its age disagrees by 100 s
+    assert loads() == []
+
+
+def test_a_started_record_naming_a_long_running_engine_is_no_load_even_with_its_start_time(box_folders):
+    # An engine runs as spark and can write started/, copying its own start time: it has still run an hour by the
+    # boot's clock, longer than any load in progress.
+    f = box_folders
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    an_engine(f.proc, forked_at=T0 - 3600)
+    started_record(f.launch, start_time=ticks(T0 - 3600))
+    assert brake.loads_in_progress(None, f.launch, now=T0 + 5, boot_id=BOOT, registry=REG2A,
+                                   readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid()) == []
