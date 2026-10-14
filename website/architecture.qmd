@@ -23,6 +23,7 @@ flowchart TB
     orca["Orca"]
     claude_mac["Claude Code,<br/>Claude Desktop"]
     pi_mac["pi"]
+    oc_mac["opencode, Hermes"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
   end
@@ -57,10 +58,12 @@ flowchart TB
 
   orca -- starts --> claude_mac
   orca -- starts --> pi_mac
+  orca -- starts --> oc_mac
   claude_mac --> anthropic
   webapp -- "HTTPS over Tailscale" --> tss
   pwa -- "HTTPS over Tailscale" --> tss
   pi_mac -- "SSH tunnel, make tunnel" --> swap
+  oc_mac -- "same tunnel" --> swap
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -97,7 +100,7 @@ flowchart TB
 flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  piT["pi on the Mac<br/>in a terminal or Orca"]
+  piT["pi, opencode or Hermes on the Mac<br/>in a terminal or Orca"]
   ui["web UI<br/>on the Mac or the phone"]
   piA["pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
@@ -128,7 +131,8 @@ flowchart LR
 
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
 beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
-alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. From
+alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
+Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`). From
 Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and
 friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only the Spark,
 and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's network only.
