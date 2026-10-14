@@ -405,7 +405,8 @@ stack must account for to run it. Its numbers are its own, not measured here.
 - **The architecture diagrams are kept true first.** [Architecture](website/architecture.qmd)'s
   diagrams are the quickest way to see what runs and how a request gets through, so any change to a
   part or a path, or a planned part built, updates them in the same commit. Diagrams live only
-  there. Full rule in [`CLAUDE.md`](CLAUDE.md).
+  there; the overview among them is one file, `website/_overview.qmd`, that the home page includes
+  too (2026-10-14). Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
   zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,
