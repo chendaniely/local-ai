@@ -499,11 +499,16 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       One whose `fired` says the brake couldn't write its hold (`hold_written` false) says so, and that new loads
       weren't paused (the controller's ruling on Task 23's fix round 2).
     - A `hold_written` event (a later try wrote that hold: the controller's ruling on Task 23's fix round 3) read with
-      its episode's first alert, which the gate sends, has it worded as paused, the ordinary form. Read after the
-      first alert went, the gate's or the brake's own, saying new loads weren't paused, it is a follow-up of its own,
-      *Brake, 03:13: its pause now stands: new loads are paused until …*, with rule 5's ending; unless the brake sent
-      it itself, or the pause has lifted by then (said in the gate's log). One from an earlier boot sends nothing:
-      Task 17 speaks for that hold.
+      its episode's first alert, which the gate sends, has it worded as paused, the ordinary form, whether the brake
+      said the pause now stands itself or not (the ruling on its fix round 4). Read after the first alert went, the
+      gate's or the brake's own, saying new loads weren't paused, it is a follow-up of its own, *Brake, 03:13: its
+      pause now stands: new loads are paused until …*, with rule 5's ending; unless the brake sent it itself, or the
+      pause has lifted by then (said in the gate's log). One from an earlier boot sends nothing: Task 17 speaks for
+      that hold.
+    - A `first_alert_by_brake` event: the brake sent the episode's first alert itself, late, with everything before it
+      (the gate up when it fired, down since: the controller's ruling on Task 23's fix round 4). The gate sends no
+      first alert of its own for the episode, nor anything else before that event in the read; only what comes after
+      it, as follow-ups.
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -557,6 +562,12 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
         if e.kind == "hold_written":
             _written_late(e, firsts, fired_by, groups, boot_id)
             continue
+        if e.kind == "first_alert_by_brake":  # the brake sent this episode's first alert itself, with all before it
+            groups[:] = [each for each in groups if each.episode != episode]
+            firsts.pop(episode, None)
+            begun.add(episode)
+            group = None
+            continue
         if e.kind == "fired":
             group = firsts[episode] = _Group(episode, e, first=True, sent=e.sent_by_brake)
             groups.append(group)
@@ -584,11 +595,13 @@ def _written_late(e: BrakeEvent, firsts: dict[tuple[str, int], _Group], fired_by
     3): its episode's first alert, still to go from the gate in this read, is worded as paused; once the first alert
     has gone saying new loads weren't paused, the gate's or the brake's own, a follow-up says the pause now stands."""
     episode = _episode(e)
-    if e.boot_id != boot_id or e.sent_by_brake:  # Task 17 speaks for an earlier boot's hold; the brake said it itself
+    if e.boot_id != boot_id:  # Task 17 speaks for an earlier boot's hold
         return
     first = firsts.get(episode)
-    if first is not None and not first.sent:
+    if first is not None and not first.sent:  # whoever said the pause now stands (Task 23's third re-review, Minor 1)
         first.written_late = True
+        return
+    if e.sent_by_brake:  # the brake said it itself
         return
     fired = fired_by.get(episode)
     if fired is not None and not fired.hold_written:  # only a first alert that said new loads weren't paused

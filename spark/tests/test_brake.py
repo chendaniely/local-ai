@@ -2294,6 +2294,114 @@ def test_a_once_runs_last_try_records_the_hold_written_late(box_folders, tmp_pat
     assert len(sent) == 2 and sent[1] == LATE_BY_BRAKE
 
 
+def gate_goes_down_after_the_first_poll(box: Timeline) -> None:
+    """The gate stops writing its activity record after the first poll: the brake takes it as down once the record is
+    ACTIVITY_STALE_S old."""
+    poll = box.sleep
+
+    def sleep(seconds):
+        box.gate_up = False
+        poll(seconds)
+
+    box.sleep = sleep
+
+
+@pytest.mark.parametrize("writable", [True, False], ids=["its hold written", "its hold never written"])
+def test_with_the_gate_gone_after_the_fire_the_brakes_first_word_is_the_first_alert(box_folders, tmp_path,
+                                                                                    monkeypatch, writable):
+    # Re-review 3's out-of-scope edge, the controller's ruling: the gate up at the fire, its record stale before the
+    # gate read the steps. The brake's first message is the first alert, naming everything unloaded so far, never
+    # "also unloaded"; it records first_alert_by_brake after the unload that brought it, then follows up as usual. Its
+    # words say the pause as it stands then: not paused while the hold still can't be written.
+    def full_disk(state_dir, hold):
+        raise OSError(28, "No space left on device")
+
+    if not writable:
+        monkeypatch.setattr(brake, "write_hold", full_disk)
+    curl = Curl(finishes_after=0)
+    names = [f"stand-in-{n}" for n in range(1, 21)]
+    box = Timeline([18] * 18, dict.fromkeys(names, "ready"), folders=box_folders, gate_up=True, delay=99999, polls=18)
+    gate_goes_down_after_the_first_poll(box)
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    steps = [(e.kind, e.model, e.sent_by_brake) for e in events(box_folders)]
+    k = next(place for place, (_, _, by_brake) in enumerate(steps) if by_brake)  # the first step the brake alerted
+    unloaded = [model for kind, model, _ in steps[:k + 1] if kind == "unload"]
+    assert steps[0] == ("fired", None, False) and all(not by_brake for _, _, by_brake in steps[:k])
+    assert steps[k:k + 2] == [("unload", unloaded[-1], True), ("first_alert_by_brake", None, True)]
+    later = [model for _, model, _ in steps[k + 2:]]
+    assert all(kind == "unload" and by_brake for kind, _, by_brake in steps[k + 2:]) and later
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
+    assert sent == [first_alert(unloaded=[(model, None) for model in unloaded], hold_written=writable)] + [
+        f"Brake, 01:00: also unloaded {model}." for model in later]
+
+
+def test_a_hold_written_late_with_the_gate_gone_since_the_fire_is_the_first_alert(box_folders, tmp_path,
+                                                                                 monkeypatch):
+    # Re-review 3's Minor 1, end to end (its probe): the gate up at the fire, down when the sixth try writes the hold.
+    # The brake's first message is the first alert, saying new loads are paused, with everything unloaded so far,
+    # never "its pause now stands" before any first alert; and the gate, back, sends nothing more for the episode.
+    real, tries = brake.write_hold, []
+
+    def full_then_freed(state_dir, hold):
+        tries.append(len(box.sleeps))
+        if len(tries) < 6:
+            raise OSError(28, "No space left on device")
+        real(state_dir, hold)
+
+    monkeypatch.setattr(brake, "write_hold", full_then_freed)
+    curl = Curl(finishes_after=0)
+    box = Timeline([18] * 24, dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=True, delay=99999, polls=24)
+    gate_goes_down_after_the_first_poll(box)
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert [(e.kind, e.hold_written, e.sent_by_brake) for e in events(box_folders)] == [
+        ("fired", False, False), ("unload", True, False), ("unload", True, False), ("hold_written", True, True),
+        ("first_alert_by_brake", True, True)]
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
+    assert sent == [first_alert(unloaded=[("stand-in-1", None), ("stand-in-2", None)])]
+    assert ingest_brake_events(box_folders.state / EVENTS_FILE, GateState(), REG2A, boot_id=BOOT,
+                               now=box.wall() + 10) == []
+
+
+def test_a_poll_whose_retry_writes_the_hold_unloads_before_the_rest(box_folders, tmp_path, monkeypatch):
+    # Re-review 3's Minor 2 (its probe): the retry's hold write stays before the poll's unload; the gate's saved state,
+    # which can be large, and the brake's own alert come after it.
+    order, tries = [], []
+    real_write, real_load = brake.write_hold, brake.load_state
+
+    def full_then_freed(state_dir, hold):
+        tries.append(hold)
+        order.append("hold try")
+        if len(tries) < 2:
+            raise OSError(28, "No space left on device")
+        real_write(state_dir, hold)
+
+    def load_state(*args, **kw):
+        order.append("gate's saved state")
+        return real_load(*args, **kw)
+
+    monkeypatch.setattr(brake, "write_hold", full_then_freed)
+    monkeypatch.setattr(brake, "load_state", load_state)
+    curl = Curl(finishes_after=0)
+    names = [f"stand-in-{n}" for n in range(1, 9)]
+    box = Timeline([18] * 6, dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=6,
+                   on_unload=lambda model: order.append(f"unload {model}"))
+    poll = box.sleep
+
+    def sleep(seconds):
+        order.append("next poll")
+        poll(seconds)
+
+    box.sleep = sleep
+    alert = alerter(curl, ntfy_env(tmp_path))
+    real_alert = alert.alert_without_gate
+    alert.alert_without_gate = lambda text, priority: (order.append(f"alert: {text}"), real_alert(text, priority))[1]
+    run_2a(box, alerter=alert)
+    polls = "|".join(order).split("|next poll|")
+    assert polls[4].split("|") == ["hold try", "unload stand-in-5", "hold try", "alert: Brake, 01:00: also unloaded "
+                                   "stand-in-5.", "gate's saved state", f"alert: {LATE_BY_BRAKE}"]
+
+
 def test_an_unwritten_pause_ends_once_memory_stays_above_the_warn_line_for_5_minutes(box_folders, monkeypatch):
     # With no hold ever written, the episode ends after the gate's five minutes above the warn line, saying no pause
     # stood; the next fall is a new episode.

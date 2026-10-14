@@ -634,14 +634,15 @@ class _Unwritten:
 
 @dataclass
 class _Fired:
-    """The brake fired this poll: what its first alert says, once the poll's unload is known."""
+    """The brake fired: what its first alert says, once the poll's unload is known; kept for the episode, with every
+    model unloaded since, so a first alert the brake sends late has them all (first_alert_instead)."""
 
     at: float  # wall clock
     available_gib: float
     line_gib: float
     hold: Hold
     falling: bool
-    sending: bool  # the brake sends the alert itself, the gate being down
+    sending: bool  # the brake sends the first alert itself, the gate being down; or, since it did late, has sent it
     written: bool  # a hold of this episode stands (write)
     waits: bool = False  # release_waits_for_dan for its hold: only `make brake-release` lifts it (after the unload)
     saved: Any = None  # the gate's saved state, read after the unload (gate.state.GateState), or None with no gate
@@ -683,6 +684,10 @@ class _Brake:
         self.episode: int | None = None  # the events' episode this brake is in, once it has fired or unloaded
         self.said: set[tuple[str, int]] = set()  # what its journal said once an episode: (what, episode)
         self.unwritten: _Unwritten | None = None  # a fired hold it couldn't write, with none standing
+        self.written_late: tuple[Hold, float] | None = None  # a hold a retry wrote this poll, with the reading
+        self.first: _Fired | None = None  # the last fire, its episode's first alert's words (first_of)
+        self.first_due = False  # this poll sends that first alert late, in place of a follow-up (first_alert_instead)
+        self.loaded = True  # whether something was loaded, by this poll's /running, for a first alert's words
         self._activity: Any = _UNREAD
 
     def check_state_dir(self) -> None:
@@ -732,11 +737,17 @@ class _Brake:
                 self.unload(action.model, mem, states.get(action.model), wall=wall, falling=falling, fired=fired)
         # After the hold and the unload: the journal's line, the brake's own alert, then the steps for the gate, so
         # neither the gate's saved state, which can be large, nor a lock another process can hold comes before either
-        # (Task 23's re-review, Minors 8 and 9).
+        # (Task 23's re-review, Minors 8 and 9); a hold a retry wrote this poll included (its third re-review, Minor 2).
+        self.loaded = listed is None or bool(listed)
         if fired is not None:
             self.after_fire(fired, wall)
             if fired.sending:
-                self.first_alert(fired, something_loaded=listed is None or bool(listed))
+                self.first_alert(fired, something_loaded=self.loaded)
+        if self.written_late is not None:
+            (hold, gib), self.written_late = self.written_late, None
+            self.hold_stands_late(hold, gib, wall)
+        if self.first_due:
+            self.first_alert_instead(wall)
         if self.pending:
             self.flush(0.0 if self.lock_held else LOCK_WAIT_S)
 
@@ -869,7 +880,8 @@ class _Brake:
         sending = self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "fired", None, None, mem.available_gib, line, sending,
                                falling=falling, hold_written=written))
-        return _Fired(wall, mem.available_gib, line, hold, falling, sending, written)
+        self.first = _Fired(wall, mem.available_gib, line, hold, falling, sending, written)
+        return self.first
 
     def after_fire(self, fired: _Fired, wall: float) -> None:
         """After the poll's unload: the gate's saved state, read once for the journal's line and the alert, and the
@@ -890,8 +902,9 @@ class _Brake:
         """An episode whose hold couldn't be written, with none standing (the controller's ruling on Task 23's second
         re-review). It stands in the brake's memory, for firing: no new episode and no new first alert, and Phase 1's
         grace and unload rules go on as with a hold. The write is tried again at most every HOLD_RETRY_S; once one
-        succeeds, the hold stands as usual (hold_stands_late). Should memory stay above the warn line for the gate's
-        RELEASE_AFTER_S first, the episode ends, and the journal says no pause ever stood."""
+        succeeds, the hold stands as usual, and the rest waits until after the poll's unload (hold_stands_late, Task
+        23's third re-review, Minor 2). Should memory stay above the warn line for the gate's RELEASE_AFTER_S first,
+        the episode ends, and the journal says no pause ever stood."""
         unwritten = self.unwritten
         if mem.available_gib > self.registry.brake.warn_gib:  # the gate's test (core): above, never at
             if unwritten.above_since_s is None:
@@ -902,7 +915,7 @@ class _Brake:
             unwritten.tried_s = mono
             if self.write(unwritten.hold):
                 self.unwritten = None
-                self.hold_stands_late(unwritten.hold, mem.available_gib, wall)
+                self.written_late = (unwritten.hold, mem.available_gib)
                 return
         if unwritten.above_since_s is not None and mono - unwritten.above_since_s >= RELEASE_AFTER_S:
             self.unwritten = None
@@ -911,15 +924,18 @@ class _Brake:
                      f"episode {unwritten.hold.episode} is over; its hold was never written, so no pause ever stood")
 
     def hold_stands_late(self, hold: Hold, available_gib: float, wall: float) -> None:
-        """A hold a later try wrote, after its fired said it wasn't (the controller's ruling on Task 23's fix round 3):
-        the journal's line for the pause, a `hold_written` step for the gate, queued as every step is, so the words
-        catch up, and, while the gate is down, the brake's own follow-up: its pause now stands, and how it ends by rule
-        5."""
+        """A hold a later try wrote, after its fired said it wasn't (the controller's ruling on Task 23's fix round 3),
+        after the poll's unload: the journal's line for the pause, a `hold_written` step for the gate, queued as every
+        step is, so the words catch up, and, while the gate is down, the brake's own follow-up: its pause now stands,
+        and how it ends by rule 5. When the brake never sent the episode's first alert itself, it sends that instead,
+        saying new loads are paused (first_alert_instead)."""
         saved, waits = self.how_it_ends(hold, wall)
         self.log(self.paused(waits, saved))
         sending = self.will_alert(wall, hold.episode)
         self.record(BrakeEvent(1, wall, self.boot_id, hold.episode, "hold_written", None, None, available_gib,
                                self.registry.brake.brake_gib, sending))
+        if sending and self.instead_of_follow_up(hold.episode):
+            return
         if sending:  # will_alert is false with no gate, so its saved state was read
             fields: dict[str, Any] = {
                 "at": wall, "follow_up": True, "pause_stands": True, "by_brake": True, "release_waits_for_dan": waits,
@@ -978,9 +994,10 @@ class _Brake:
             sending = fired.sending if fired is not None else self.will_alert(wall, episode)
             self.record(BrakeEvent(1, wall, self.boot_id, episode, "unload_failed", model, said, mem.available_gib,
                                    line, sending, reason=reason, falling=falling))
-            if fired is not None:
-                fired.failed.append((self.label(model), reason))
-            elif sending:
+            first = fired if fired is not None else self.first_of(episode)
+            if first is not None:
+                first.failed.append((self.label(model), reason))
+            if fired is None and sending and not self.instead_of_follow_up(episode):
                 self.follow_up(wall, model, said, reason=reason)
             return
         else:
@@ -1008,10 +1025,41 @@ class _Brake:
         sending = fired.sending if fired is not None else self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "unload", model, said, mem.available_gib, line, sending,
                                falling=falling))
-        if fired is not None:
-            fired.unloaded.append((self.label(model), said))
-        elif sending:
+        first = fired if fired is not None else self.first_of(episode)
+        if first is not None:
+            first.unloaded.append((self.label(model), said))
+        if fired is None and sending and not self.instead_of_follow_up(episode):
             self.follow_up(wall, model, said)
+
+    def first_of(self, episode: int) -> _Fired | None:
+        """The episode's fire, as this brake keeps it; None for an episode it didn't fire, such as one whose hold stood
+        when it started."""
+        first = self.first
+        return first if first is not None and first.hold.episode == episode else None
+
+    def instead_of_follow_up(self, episode: int) -> bool:
+        """Whether a follow-up the brake would send itself is the episode's first alert instead: the gate was up when it
+        fired, so the brake never sent that first alert, and the gate, down since, may not have either (the
+        controller's ruling on Task 23's fix round 4). It goes after the poll's unload (first_alert_instead)."""
+        first = self.first_of(episode)
+        if first is None or first.sending:
+            return False
+        self.first_due = True
+        return True
+
+    def first_alert_instead(self, wall: float) -> None:
+        """The episode's first alert, sent late by the brake in place of a follow-up: the fire's reading, every model
+        unloaded and every unload refused since, and the pause as it stands now, written, or not while its hold still
+        can't be. Then a `first_alert_by_brake` step, so the gate, once back, sends no first alert of its own for the
+        episode, only what comes after (the controller's ruling on Task 23's fix round 4)."""
+        self.first_due = False
+        first = self.first
+        first.saved, first.waits = self.how_it_ends(first.hold, wall)
+        first.written = self.unwritten is None
+        first.sending = True
+        self.first_alert(first, something_loaded=self.loaded)
+        self.record(BrakeEvent(1, wall, self.boot_id, first.hold.episode, "first_alert_by_brake", None, None,
+                               first.available_gib, first.line_gib, True))
 
     def fresh_hold(self, reason: str, mem: MemInfo, fired: _Fired | None) -> Hold:
         """A hold written again by an unload (Phase 1's I1 and M1), with 2a's fields: the fired one's when the brake
@@ -1115,6 +1163,8 @@ class _Brake:
         if self.unwritten is not None and self.write(self.unwritten.hold):
             hold, self.unwritten = self.unwritten.hold, None
             self.hold_stands_late(hold, self.readings[-1][1] if self.readings else hold.available_gib, self.wall())
+            if self.first_due:
+                self.first_alert_instead(self.wall())
 
     def flush_last(self) -> None:
         """A --once run's end: one last bounded try for the steps still waiting, then the journal says what went
@@ -1162,11 +1212,12 @@ class _Brake:
         return True
 
     def first_alert(self, fired: _Fired, *, something_loaded: bool) -> None:
-        """Task 7's brake_fired, `by_brake`: what this poll's unload did, and why llama-swap didn't unload a model it
-        refused (the controller's ruling, at Task 23); or, with none, that nothing of the stack's was loaded, or that
-        llama-swap hasn't confirmed its unload; and how the pause ends, by rule 5, from the last automatic release in
-        the gate's saved state, or, with its hold never written, that new loads weren't paused (the controller's ruling
-        on Task 23's fix round 2)."""
+        """Task 7's brake_fired, `by_brake`: what the fire's poll unloaded (or, sent late, every unload since: the
+        controller's ruling on Task 23's fix round 4), and why llama-swap didn't unload a model it refused (the
+        controller's ruling, at Task 23); or, with none, that nothing of the stack's was loaded, or that llama-swap
+        hasn't confirmed its unload; and how the pause ends, by rule 5, from the last automatic release in the gate's
+        saved state, or, with its hold never written, that new loads weren't paused (the controller's ruling on Task
+        23's fix round 2)."""
         state = fired.saved or load_state(self.gate_state, now=fired.at)[0]  # never raises; damage: release_assumed
         waits = fired.waits
         fields: dict[str, Any] = {

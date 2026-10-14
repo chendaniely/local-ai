@@ -882,6 +882,65 @@ def test_a_hold_written_late_the_brake_sent_itself_lifted_or_from_an_earlier_boo
     assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id="boot-2", now=at(4, 11, 1)) == []
 
 
+def test_a_first_alert_read_with_the_brakes_own_pause_now_stands_is_worded_as_paused(tmp_path):
+    # Re-review 3's Minor 1: the gate up at the fire, down when the retry wrote the hold, so the brake said "its pause
+    # now stands" itself (a brake restarted since the fire, which no longer knows whether it sent the first alert);
+    # the gate, back, reads all three at once. Its first alert, still to go, is the ordinary one, never "weren't
+    # paused".
+    standing(tmp_path, at(3, 13))
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle"), event("hold_written", at(3, 13), by_brake=True))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT, now=at(3, 14))
+    assert texts(found) == ["Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the "
+                            "coder, which was idle; new loads are paused. They resume by themselves after 5 min above "
+                            "28 GiB available."]
+
+
+def test_a_first_alert_the_brake_sent_itself_late_leaves_the_gate_only_what_comes_after(tmp_path):
+    # Re-review 3's out-of-scope edge, the controller's ruling: the gate up at the fire, down before it read the steps.
+    # The brake sent the first alert itself, with everything unloaded so far, and recorded first_alert_by_brake; the
+    # gate, back, sends no first alert of its own for that episode, only what comes after.
+    standing(tmp_path)
+    write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"),
+          event("unload", at(3, 12, 5), model=GEMMA, by_brake=True),
+          event("first_alert_by_brake", at(3, 12, 5), by_brake=True),
+          event("unload", at(3, 12, 6), model="stand-in", by_brake=True),  # the brake's own follow-up
+          event("unload", at(3, 12, 30), model=EMBED, state="idle"))  # the gate back: its own follow-up
+    state = GateState()
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 31))
+    assert texts(found) == ["Brake, 03:12: also unloaded the embeddings, which was idle."]
+    # The gate's first alert had gone before it went down: the brake's, later, changes nothing it sends.
+    write(tmp_path, event("fired", at(3, 20), episode=2), event("unload", at(3, 20, 1), episode=2, model=CODER,
+                                                                state="idle"))
+    standing(tmp_path, at(3, 20), episode=2)
+    assert len(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 20, 2))) == 1
+    write(tmp_path, event("unload", at(3, 20, 5), episode=2, model=GEMMA, by_brake=True),
+          event("first_alert_by_brake", at(3, 20, 5), episode=2, by_brake=True))
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 20, 6)) == []
+
+
+def test_after_the_brakes_late_first_alert_a_hold_written_late_is_the_gates_follow_up(tmp_path):
+    # The brake's late first alert said new loads weren't paused, its hold still unwritten; the gate came back before
+    # a retry wrote it, so the hold_written is the gate's to say: its pause now stands.
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle"),
+          event("unload", at(3, 12, 5), model=GEMMA, by_brake=True),
+          event("first_alert_by_brake", at(3, 12, 5), by_brake=True))
+    standing(tmp_path, at(3, 13))
+    write(tmp_path, event("hold_written", at(3, 13)))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT, now=at(3, 13, 1))
+    assert texts(found) == [LATE_WORDS]
+
+
+def test_a_first_alert_by_brake_with_no_fired_in_the_file_still_leaves_only_follow_ups(tmp_path):
+    # A file started again holds no fired for the episode: what follows the brake's first alert is still a follow-up.
+    standing(tmp_path)
+    write(tmp_path, event("first_alert_by_brake", at(3, 12, 5), by_brake=True),
+          event("unload", at(3, 12, 30), model=EMBED, state="idle"))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT, now=at(3, 12, 31))
+    assert texts(found) == ["Brake, 03:12: also unloaded the embeddings, which was idle."]
+
+
 def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):
     # Task 23's rate-of-fall watch acts above the line: its first alert says memory was falling toward the line, never
     # that it was under it.

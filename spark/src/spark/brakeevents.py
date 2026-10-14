@@ -41,9 +41,11 @@ EVENTS_FILE = "events.jsonl"  # in the brake's folder, beside hold.FILE
 # unload_failed: an unload llama-swap refused, or that failed, with its reason, so the gate can word the cause (Task 23;
 # the controller's ruling at Task 14). It unloaded nothing: the gate never reads it as an unload. hold_written: a hold
 # the brake fired without writing, written by a later try, so the gate can say the pause now stands (the controller's
-# ruling on Task 23's fix round 3). A reader older than a kind passes its lines over, as any line that isn't a whole
-# event.
-Kind = Literal["fired", "unload", "unload_failed", "warn", "hold_written"]
+# ruling on Task 23's fix round 3). first_alert_by_brake: the brake sent an episode's first alert itself, late, in
+# place of a follow-up that would have reached Dan before any first alert (the gate up when it fired, down since), so
+# the gate sends no first alert of its own for that episode (the controller's ruling on Task 23's fix round 4). A reader
+# older than a kind passes its lines over, as any line that isn't a whole event.
+Kind = Literal["fired", "unload", "unload_failed", "warn", "hold_written", "first_alert_by_brake"]
 KINDS: tuple[str, ...] = get_args(Kind)
 # An unload's model was starting, idle or answering, by the gate's activity record; None when that was missing or
 # stale (the controller's ruling at Task 7). messages words each.
@@ -58,8 +60,9 @@ class BrakeEvent:
     boot_id: str
     episode: int  # episode_for's
     # The step: fired (the brake fired), unload (it unloaded `model`), unload_failed (llama-swap refused the unload of
-    # `model`, or it failed: `reason` says how), hold_written (a later try wrote the hold its fired couldn't), or warn,
-    # which Task 23's brake never writes (memory_warning is the gate's own) and the gate passes over.
+    # `model`, or it failed: `reason` says how), hold_written (a later try wrote the hold its fired couldn't),
+    # first_alert_by_brake (the brake sent the episode's first alert itself, late), or warn, which Task 23's brake
+    # never writes (memory_warning is the gate's own) and the gate passes over.
     kind: Kind
     model: str | None  # an unload's model, or a failed unload's; None for the rest
     state: str | None  # that model's state, one of UNLOAD_STATES, or None
