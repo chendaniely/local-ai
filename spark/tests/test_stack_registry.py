@@ -21,13 +21,8 @@ NATIVE_CTX = {
     ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
      "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
 }
-# A model Dan holds below its native context, by (repo, revision, file), at exactly this many tokens. Qwen3.8-27B, the
-# coder, runs at 163,840 (Dan's decision, 2026-10-08), so the set fits Phase 1's budget, which sums every listed model;
-# Phase 2a's Task 42 gives it all 262,144, and its entry here goes then.
-BELOW_NATIVE_CTX = {
-    ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-     "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 163840,
-}
+# Qwen3.8-27B, the coder, was held at 163,840 by an exception here from its early swap on 2026-10-08 until render's
+# corrected budget check reached main the same day (Dan's decision), which let it run at all 262,144.
 
 
 def flag(args: tuple[str, ...], *spellings: str) -> int | None:
@@ -63,10 +58,7 @@ def test_every_llama_cpp_model_runs_at_its_full_context():
     llama = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "llama.cpp"]
     assert llama
     for model in llama:
-        native = NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)]
-        held = BELOW_NATIVE_CTX.get((model.source.repo, model.source.revision, model.source.file))
-        assert held is None or held < native, model.name
-        assert model.ctx == (native if held is None else held), model.name
+        assert model.ctx == NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)], model.name
 
 
 def test_an_embedding_model_pools_its_last_token_or_holds_its_whole_context_in_one_ubatch():

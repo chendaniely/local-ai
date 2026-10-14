@@ -1,4 +1,4 @@
-budget: {allocatable_gib: 102, reserve_gib: 24}
+budget: {allocatable_gib: 102, reserve_gib: 24, idle_available_gib: 117}
 brake: {warn_gib: 28, brake_gib: 20, poll_ms: 250}
 engines:
   llama.cpp: /opt/local-ai/bin/llama.cpp/b11146/llama-server

@@ -8,6 +8,20 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-08 — The coder is Qwen3.8-27B, at 160K for now (Dan's decision)
+
+**Deployed** by Dan, **on the Spark**, from a `main` worktree: the apply restarted llama-swap with
+the new registry at 16:24, and `make pull` fetched `Qwen3.8-27B-UD-Q4_K_XL.gguf` (17.6 GB) at its
+pinned revision, done at 16:28. The coder is `qwen3.8-27b`, at 163,840 of its 262,144 tokens, so
+the four footprints fill the 78 GiB budget (32, 8, 3 and 35); Phase 2a's Task 42 gives it its full
+context. `qwen3.6-35b-a3b` left the registry, and its files stay on disk.
+
+**Checked**, by the Phase 2a session: one short chat request to `qwen3.8-27b` through llama-swap
+loaded it and answered. With nothing else loaded, `MemAvailable` fell 30.6 GiB across the cold load
+(120.0 → 89.4 GiB), inside the 35 GiB estimate; the file was still in the page cache from the pull,
+so the load took about 6 s. Not yet measured: the footprint under a long request, and whether its
+MTP drafting runs. The residents load on their first request after the restart, as in Phase 1.
+
 ## 2026-09-28 — Phase 1's council fixes deployed (Phase 1, Task 17)
 
 **Deployed** by Dan, **on the Spark**, at 21:19: `make apply` staged the new config and the two

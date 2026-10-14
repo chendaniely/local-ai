@@ -62,7 +62,7 @@ In order of how much they constrain the design:
 | Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI. PDF chat later. |
 | Speech | *"Optimize for English, but make room for other languages or be able to swap."* Vocabulary prompts, word timestamps, ~170 MB uploads (90 minutes of WAV). Works whether Dan's audio pipeline runs on the Mac or the Spark (decided later). |
 | Loading | *"If it fits just load it. If it doesn't, tell me what's happening so I can decide. Don't just auto-load a small model where it might seem like you are talking from a large model."* The same rule applies to unattended requests. Doesn't fit → **wait (per key), then refuse** with a reason. |
-| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* |
+| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* |
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
@@ -71,7 +71,7 @@ In order of how much they constrain the design:
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by Phase 5's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by Phase 5's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -520,7 +520,9 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
   gate (preloaded one at a time) · idle policy, pins, sessions, scheduled preload · make-room ·
   `spark try` with the lab instance · `spark doctor` v1 · harness hooks for `agent` · once `spark
   try` works, Qwen3.8-27B's routes A and B on it (Phase 5's table; Dan, 2026-10-05). *(2026-10-08:
-  route A is already the registry's coder, at 163,840 tokens; Revisions.)*
+  route A is already the registry's coder, at 163,840 tokens; Revisions.)* *(Changed the same day,
+  Dan's decision: with Phase 2a's corrected budget check ported to `main`'s render, the registry
+  gives the coder its full 262,144 tokens now; Revisions.)*
 - [Mac] SwiftBar plugin · harness hooks on the Mac.
 - [Dan] ntfy + watchdog in Container Manager on the Synology.
 - *From Phase 1's close (2026-09-28; its forward look is in Revisions):* llama-swap moves behind
@@ -593,6 +595,8 @@ was the decisions recorded here, Orca's two settings (Manual, telemetry off) and
     (Dan, 2026-10-05); C and D wait for this phase. *(2026-10-08, Dan's decision: route A, with
     `Qwen3.8-27B-UD-Q4_K_XL.gguf`, became the registry's coder early, at 163,840 tokens, and
     Phase 2a's Task 42 gives it its full context; the rest of this phase's comparison stands.)*
+    *(Changed the same day, Dan's decision: it has its full context on `main` already, since
+    render's corrected budget check came there; Revisions.)*
     TensorRT-LLM is out for now: it doesn't yet load Qwen3.8-27B NVFP4 on this GPU (its issue
     #17723).
   - **Measured in that order.** Speed: decode and time to first token in pi, and prefill — vLLM
@@ -724,7 +728,9 @@ Each item gets its own design pass when its turn comes.
   registry's coder, now Qwen3.8-27B, is already set below its maximum, at 163,840 of its 262,144
   tokens, until Phase 2a's Task 42. The coder's 2.8 GiB above was Qwen3.6-35B-A3B's; for
   Qwen3.8-27B a `q8_0` KV cache would save about 5 GiB at 163,840 tokens, by arithmetic from its
-  header. Its prompt cache stays 2 GiB.)*
+  header. Its prompt cache stays 2 GiB.)* *(Changed the same day, Dan's decision: with render's
+  corrected budget check on `main`, the registry's coder is at its maximum, 262,144 tokens, where
+  a `q8_0` KV cache would save about 8 GiB, by the same arithmetic. Revisions.)*
 - **Orca on the Spark, and on the phone** (Dan, 2026-09-28: *"i want a way for the spark to act as
   the main orca server so i can also use orca on my phone"*; parked the same day to wait for the
   upstream fixes below). Two routes, each with its costs, from that day's research and council on
@@ -793,7 +799,12 @@ Each item gets its own design pass when its turn comes.
   serialize loads, so two engines started close together can both pass while memory outside the
   stack is in use. `spark render` refuses a model set that doesn't fit, so the stack alone can't
   open the gap. → The brake is the backstop until the gate adds both in Phase 2 (*Admission and
-  memory rules*, rule 1).
+  memory rules*, rule 1). *(Changed 2026-10-08, Dan's decision, with render's corrected budget
+  check on `main`: render refuses always-loaded models, or an on-demand model beside them, that
+  don't fit with the reserve kept, but a set that would leave less than the brake's warn line with
+  every model loaded is only a warning. Today's four leave 33 GiB of the 117 available at idle,
+  above the warn line, 28, so the stack alone still can't open the gap; a registry that renders
+  with that warning could. Revisions.)*
 - **Anyone on the box can take 127.0.0.1:9100** (found 2026-09-26, in Phase 1 Task 3's review).
   Ports from 1024 up are open to every user (checked on the box), so while llama-swap isn't holding
   9100 — after a crash, or in `spark apply`'s restart window — any local user, `agent` included, can
@@ -1466,6 +1477,28 @@ Each item gets its own design pass when its turn comes.
   line, Phase 5's routes, the Backlog's model settings and *To verify* gain dated notes, and so do
   `README.md` §Current state, `pi.md` and S09. The box changes once Dan runs `make apply` and `make
   pull`, and pi's lists once the clients are written again; `changelog.md` records it then.
+  *(Changed the same day: the coder gets its full context on `main` already; the next line.)*
+- **2026-10-08** — Dan's decision: Phase 2a's corrected budget check comes to `main` early, so the
+  registry gives the coder its full 262,144 tokens now, not from Phase 2a's Task 42. Phase 1's
+  render summed every footprint against allocatable − reserve, 102 − 24 = 78 GiB, which counted the
+  reserve twice: the CUDA-allocatable ceiling is itself about 15 GiB below idle `MemAvailable`
+  (117 GiB on this box), and the launch check keeps the reserve free again at every load.
+  `spark render` now has Phase 2a's Task 5 check (rule 9 of the plan on the `phase-2a` branch),
+  trimmed to what `main` has. It refuses always-loaded models that don't fit idle `MemAvailable`
+  less the reserve, within the ceiling, and an on-demand model that doesn't fit beside them, by
+  `min(idle − residents − reserve, ceiling − residents)`: Phase 2a's gate formula at idle, with
+  nothing still owed. It only warns when every model loaded at once would pass the ceiling or leave
+  memory under the brake's warn line. The registry gains `budget.idle_available_gib: 117`, from the
+  117.8 GiB available before Phase 1's first load (`changelog.md`, 2026-09-28). The coder's
+  footprint is estimated at 41 GiB at 262,144 tokens (weights ~16.4, a KV cache of ~17.0 at 68 KiB
+  a token, ~7.5 for the rest; not measured), so the set comes to 84 of the 102 GiB ceiling, the
+  coder fits beside the residents, 41 of the 50 free for a load, and every model loaded at once
+  leaves 33 GiB of the 117, above the warn line, 28. The launch check and the brake don't change.
+  The *Always loaded* and *Models* requirements, Phase 2's line, Phase 5's routes, the Backlog's
+  model settings and the open item on Phase 1's static launch check gain dated notes, and so do
+  `CLAUDE.md`'s memory gotcha, `README.md` §Current state, `pi.md` and S09. The box changes once
+  Dan runs `make apply`, and pi's lists once the clients are written again; `changelog.md` records
+  it then.
 
 ## Sources
 

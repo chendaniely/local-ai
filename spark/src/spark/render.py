@@ -170,22 +170,77 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
 
 
 def _gib(value: float) -> Decimal:
-    """The number as the registry gave it. In binary floats 72.1 − 22.1 is 49.99999999999999, which would refuse a
-    50 GiB set that fits exactly."""
+    """The number as the registry gave it. In binary floats 72.1 − 22 is 50.099999999999994, which would refuse a
+    50.1 GiB model that fits exactly."""
     return Decimal(repr(value))
 
 
-def check_budget(registry: Registry) -> None:
-    budget = registry.budget
-    with localcontext(prec=400):  # every digit of any finite float, so even an absurd number sums and rounds exactly
-        allocatable, reserve = _gib(budget.allocatable_gib), _gib(budget.reserve_gib)
-        room = allocatable - reserve
-        total = sum((_gib(m.footprint_gib) for m in registry.models.values()), Decimal(0))
-        if total > room:
-            # One decimal, each rounded against the set: the need up, the room down. So the two can't read as a fit.
-            raise RenderError(f"the model set needs {total.quantize(TENTH, ROUND_CEILING):f} GiB but the budget "
-                              f"allows {room.quantize(TENTH, ROUND_FLOOR):f} GiB "
-                              f"(allocatable {allocatable:f} − reserve {reserve:f})")
+def _up(value: Decimal) -> str:
+    """A need, to one decimal, rounded up: with the room rounded down, the two never read as a fit."""
+    return f"{value.quantize(TENTH, ROUND_CEILING):f}"
+
+
+def _down(value: Decimal) -> str:
+    """A room, to one decimal, rounded down."""
+    return f"{value.quantize(TENTH, ROUND_FLOOR):f}"
+
+
+def _free(room: Decimal) -> str:
+    """What is free for a load, in plain words, which never show a negative number: a room that rounds down to 0 (below
+    0.1 GiB) reads *nothing is free for a load*, not "0.0 GiB is free"."""
+    shown = room.quantize(TENTH, ROUND_FLOOR)
+    return f"{shown:f} GiB is free for a load" if shown > 0 else "nothing is free for a load"
+
+
+def _free_for_a_load(*, idle: Decimal, reserve: Decimal, ceiling: Decimal, loaded: Decimal) -> Decimal:
+    """What is free for a load at idle, with `loaded` GiB of footprints loaded and nothing else running:
+    min(idle − loaded − reserve, ceiling − loaded). It is Phase 2a's formula for its gate (rule 9 of the plan on the
+    `phase-2a` branch), min(MemAvailable − reserve − owed, ceiling − committed) − starting − held, at idle, where the
+    growth still owed, a model still starting and make-room's hold are 0: main has neither the gate nor make-room."""
+    return min(idle - loaded - reserve, ceiling - loaded)
+
+
+def check_budget(registry: Registry) -> list[str]:
+    """Phase 2a's corrected budget check (its Task 5), on main since 2026-10-08 (Dan's decision; plan.md, Revisions):
+    the first error refuses the registry, as a RenderError, and the warnings come back, for `spark render` to say.
+    Errors: the always-loaded models don't fit with nothing loaded (idle MemAvailable less the reserve, within the
+    ceiling); an on-demand model doesn't fit beside them with nothing else running. Warnings, since `spark launch`
+    admits each load against live memory and the whole registry needn't fit at once (Dan's decision for Phase 2a,
+    2026-10-07): every model loaded at once would pass the ceiling, or leave memory available under the brake's warn
+    line. Until then render summed every footprint against allocatable − reserve, 78 GiB, which counted the reserve
+    twice: the ceiling is itself about 15 GiB below idle MemAvailable, and the launch check keeps the reserve free
+    again at every load."""
+    # Decimal's default 28 digits can't hold an absurd registry number, 1e30 say, to a tenth, and a refusal would crash
+    # instead of saying why: 400 hold every digit of any finite float. So the messages are made inside too.
+    with localcontext(prec=400):
+        b = registry.budget
+        idle, reserve, ceiling = _gib(b.idle_available_gib), _gib(b.reserve_gib), _gib(b.allocatable_gib)
+        models = list(registry.models.values())
+        residents = sum((_gib(m.footprint_gib) for m in models if m.resident), Decimal(0))
+        everything = sum((_gib(m.footprint_gib) for m in models), Decimal(0))
+        room = _free_for_a_load(idle=idle, reserve=reserve, ceiling=ceiling, loaded=Decimal(0))
+        if residents > room:
+            raise RenderError(f"the always-loaded models need {_up(residents)} GiB together, but {_free(room)} with "
+                              "nothing loaded at all, so they can't all load")
+        room = _free_for_a_load(idle=idle, reserve=reserve, ceiling=ceiling, loaded=residents)
+        for m in models:
+            need = _gib(m.footprint_gib)
+            if not m.resident and need > room:
+                raise RenderError(f"{m.name}: needs {_up(need)} GiB, but {_free(room)} beside the always-loaded models "
+                                  "with nothing else running, so it wouldn't fit even then")
+        warnings = []
+        if everything > ceiling:
+            warnings.append(f"every model loaded at once would take {_up(everything)} GiB, above the CUDA-allocatable "
+                            f"ceiling, {_down(ceiling)} GiB: they can't all be loaded together, and the launch check "
+                            "admits each load only as memory allows")
+        left, warn = idle - everything, _gib(registry.brake.warn_gib)
+        if left < 0:
+            warnings.append(f"every model loaded at once would need {_up(-left)} GiB more than the {_down(idle)} GiB "
+                            "available with no model loaded")
+        elif left < warn:
+            warnings.append(f"every model loaded at once would leave {_down(left)} GiB available, under the brake's "
+                            f"warn line, {_up(warn)} GiB")
+        return warnings
 
 
 def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
@@ -332,4 +387,6 @@ def run(args: argparse.Namespace) -> int:
     files = render(registry, versions, _load("registry", args.registry, Path.read_text))
     write_tree(files, args.out)
     print(f"render: {len(files)} files → {args.out}")
+    for warning in check_budget(registry):  # render() refused the registry on any error, so only the warnings are left
+        print(f"render: warning — {warning}")
     return 0

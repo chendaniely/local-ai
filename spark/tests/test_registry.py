@@ -24,6 +24,7 @@ def test_loads_the_fixture():
     assert registry.models["vision-chat"].source.mmproj == "vision-mmproj.gguf"
     assert registry.models["coder"].resident is False
     assert registry.static_total_gib() == 50.0
+    assert registry.budget.idle_available_gib == 117
 
 
 def test_revision_must_be_a_pinned_commit(tmp_path):
@@ -47,6 +48,14 @@ def test_roles_are_unique(tmp_path):
 def test_reserve_must_exceed_the_brake(tmp_path):
     path = mutated(tmp_path, lambda d: d["budget"].update(reserve_gib=18))
     with pytest.raises(RegistryError, match="reserve"):
+        load_registry(path)
+
+
+def test_idle_available_must_exceed_the_reserve(tmp_path):
+    # Render's budget check starts from MemAvailable with no model loaded, of which every load must leave the reserve
+    # free (plan.md, Revisions, 2026-10-08). As Phase 2a's loader has it.
+    path = mutated(tmp_path, lambda d: d["budget"].update(idle_available_gib=24, reserve_gib=24))
+    with pytest.raises(RegistryError, match=re.escape("budget: idle_available_gib (24) must exceed reserve_gib (24)")):
         load_registry(path)
 
 
@@ -228,6 +237,16 @@ def test_a_malformed_model_names_the_model_and_the_field(tmp_path, change, messa
             lambda d: d["budget"].pop("reserve_gib"),
             "budget: reserve_gib is required",
             id="budget-key-missing",
+        ),
+        pytest.param(
+            lambda d: d["budget"].pop("idle_available_gib", None),
+            "budget: idle_available_gib is required",
+            id="idle-available-missing",
+        ),
+        pytest.param(
+            lambda d: d["budget"].update(idle_available_gib="117"),
+            "budget: idle_available_gib must be a number",
+            id="idle-available-quoted",
         ),
         pytest.param(lambda d: d["brake"].update(x=1), "brake: 'x' is not one of", id="brake-key-unknown"),
         pytest.param(
