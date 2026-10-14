@@ -48,7 +48,8 @@ answered `busy`, and the model keeps serving. Otherwise `drained` is posted once
   post begins, so a post the gate took but whose answer was lost never leads to an undrain.
 - **A `drained` the gate didn't take** (the post failed) is sent again at each snapshot's turn, while the drain is
   held and the gate's call is open, until the gate takes it; its answer to a repeat changes nothing (the controller's
-  ruling, at Task 22's review).
+  ruling, at Task 22's review). None is sent again while a post of it is under way, counted from the step that sends
+  it, so a turn that ends before a new post has begun never sends that drain twice.
 
 **What the front lists** (`running_models`): the models the gate's last `state` listed, ready, starting or draining,
 as llama-swap v257 lists running models as loaded; the app's answer to `GET /v1/models` reads it (the controller's
@@ -139,7 +140,7 @@ class _Drain:
     why: str
     reported: bool = False  # `drained` posted for it, from the post's start
     taken: bool = False  # the gate took that post, under the drain's id now
-    posting: bool = False  # a post of `drained` is under way
+    posting: int = 0  # posts of `drained` under way, each counted from the step that spawned it
     ended: str | None = None  # how it ended: undrain, unloaded, or dropped (the front's own undrain)
 
 
@@ -602,25 +603,31 @@ class GateLink:
 
     def _report_drained(self, model: str, drain: _Drain) -> None:
         drain.reported = True  # from the post's start: an answer lost on the way never undrains it
+        self._send_drained(model, drain)
+
+    def _send_drained(self, model: str, drain: _Drain) -> None:
+        """`drained` posted for `drain`, in a task of its own, counted as under way from this step, not from the task's
+        first step: a snapshot's turn that ends in between, in the same turn of the loop, finds it under way and doesn't
+        send it again."""
+        drain.posting += 1
         self._spawn(self._post_drained(model, drain))
 
     async def _post_drained(self, model: str, drain: _Drain) -> None:
         """`drained` posted for `drain`; `taken` once the gate took it under the id the drain still has."""
         drain_id = drain.drain_id
-        drain.posting = True
         try:
             taken = await self.drained(model, drain_id)
         finally:
-            drain.posting = False
+            drain.posting -= 1
         if taken and drain.drain_id == drain_id:
             drain.taken = True
 
     def _drained_again(self) -> None:
         """Each held drain whose `drained` the gate didn't take, posted again (the controller's ruling, at Task 22's
-        review)."""
+        review), but none with a post under way."""
         for model, drain in list(self._drains.items()):
             if drain.reported and not drain.taken and not drain.posting:
-                self._spawn(self._post_drained(model, drain))
+                self._send_drained(model, drain)
 
     def _count_changed(self, model: str) -> None:
         """InFlight's hook, on every enter and leave, in its step."""

@@ -281,6 +281,27 @@ async def test_a_drained_post_the_gate_didnt_take_is_sent_again():
 
 
 @pytest.mark.anyio
+async def test_a_drained_post_under_way_is_never_sent_again():
+    # A snapshot's turn can end in the same turn of the loop as a drain's report, after the post is spawned but before
+    # its first step, as when the front's first snapshot is still on its way as the drain comes. The post counts as
+    # under way from the step that spawned it, so that turn leaves it be: one drained, never two.
+    async with rig(ready=[CODER]) as r:
+        handlers = r.link._handlers
+        on_drain = handlers["drain"]
+
+        def drain_then_a_snapshots_turn(event):
+            on_drain(event)
+            r.link._drained_again()  # the snapshot's turn, ending in the same step
+
+        handlers["drain"] = drain_then_a_snapshots_turn
+        with anyio.fail_after(BOUND_S):
+            r.gate.send(drain(CODER, "d1", "unload"))
+            await until(lambda: r.gate.drained != [])
+            await asyncio.sleep(0.3)
+        assert r.gate.drained == [{"model": CODER, "drain_id": "d1"}]
+
+
+@pytest.mark.anyio
 async def test_a_step_that_raises_never_ends_the_links_tasks(caplog):
     async with rig(ready=[CODER], snapshot_every_s=0.1) as r:
         handlers, snapshot = r.link._handlers, r.link.inflight.snapshot
@@ -694,13 +715,18 @@ async def test_a_held_model_is_released_by_unloaded_after_the_gates_damaged_star
         with anyio.fail_after(BOUND_S):
             r.gate.send(drain(CODER, "d1", "unload"))
             r.gate.send(drain(GEMMA, "d2", "make-room"))
-            await until(lambda: len(r.gate.drained) == 2)
+            await until(lambda: len(r.gate.drained) >= 2)
+            assert sorted(each["drain_id"] for each in r.gate.drained) == ["d1", "d2"]  # each once, none twice
             await r.gate.stop("crash")
             await until(lambda: not r.link.connected)
-            before = len(r.gate.snapshots)
+            dropped = r.link.inflight.snapshot()["seq"]  # each snapshot the front makes from now has a higher seq
             await r.gate.start()
-            await until(lambda: len(r.gate.snapshots) > before)
-            assert sorted(r.gate.snapshots[before]["draining"]) == sorted([CODER, GEMMA])
+            # The front's call open again, so what the gate sends from now reaches it, and a snapshot the front made
+            # since. A count of the snapshots kept says neither: one the front posted before the crash can be kept
+            # after it, even after the restart, and say only what it held then.
+            await until(lambda: r.link.connected and any(each["seq"] > dropped for each in r.gate.snapshots))
+            first = next(each for each in r.gate.snapshots if each["seq"] > dropped)
+            assert sorted(first["draining"]) == sorted([CODER, GEMMA])
             r.gate.send(drain(GEMMA, "new-id", "unknown"))
             await until(lambda: {"model": GEMMA, "drain_id": "new-id"} in r.gate.drained)
             r.gate.send(unloaded(CODER))
