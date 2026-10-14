@@ -6341,6 +6341,10 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   (`validation_env`), `spark/tests/test_apply.py` (its two tests of `KEY_ENVS` move to
   `INTERNAL_KEY_ENVS`), `spark/tests/test_render.py`, `spark/tests/test_stack_registry.py`,
   `website/design/plan.md` (Step 3's ruling, and a Revisions line)
+- *(Added 2026-10-14, at the task:)* Modify: `spark/src/spark/gate/core.py` and
+  `spark/src/spark/brake.py` (their `engine_ports` read `render.ENGINE_START_PORT`, Task 18's
+  note), `spark/tests/test_brake.py` (the one constant, and the brake's imports), and this file
+  (Task 45's check of the ruling)
 
 **Interfaces:**
 
@@ -6378,12 +6382,21 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   naming it. One line per problem with its path; render refuses a config with any. The vendored
   file is `https://raw.githubusercontent.com/mostlygeek/llama-swap/v257/config-schema.json`, whose
   SHA-256 read `d75ebf1e18806194ce674ebd59cb70b6f8bf93cb6ec65c2392e0e17fc9d0b076` on 2026-10-07:
-  Step 1 compares it, and records it in `test_schema.py`.
+  Step 1 compares it, and records it in `test_schema.py`. *(Added 2026-10-14, at the task:)* two
+  readings go past JSON Schema's letter, each stricter, never looser. An object whose schema lists
+  its `properties` and says nothing of `additionalProperties` is read as closed: v257 decodes its
+  config with yaml.v3, which drops a key it doesn't know (`internal/config/load.go`), and its schema
+  leaves the top level, a model and a group open, so the `swapp` of
+  `test_a_mistyped_group_key_fails_the_schema_check` would pass both, and leave the group at v257's
+  default, `swap: true`. And `$ref` is checked beside its sibling keywords, not instead of them (the
+  file gives it none). Neither holds under `not`, `if` or `oneOf`, where a stricter subschema could
+  let more through.
 - `--slot-prompt-similarity`: read b11146's code for what it does to a slot's choice, weigh it for
   Gemma's two slots (Phase 1's council: at 0.10 a short new prompt can take a long chat's slot and
   its cache), and put it to the controller, who rules and tells Dan (*Values the box decides*);
   only then does `ALLOWED` gain `("-sps", "--slot-prompt-similarity")` and Gemma's `args` the
-  value, with a comment saying why.
+  value, with a comment saying why. *(Ruled 2026-10-14, the controller: 0.5; plan.md's dated note,
+  in the Phase 2a line, says why, and Task 45 checks it.)*
 
 **Tests** (`spark/tests/test_render.py`, `test_schema.py`, `test_stack_registry.py`):
 
@@ -8382,6 +8395,14 @@ line), `changelog.md`, `README.md`
 - [ ] **Step 2:** for each engine, its `RssAnon` growth against `MemAvailable`'s fall and
   `nvidia-smi`'s per-process figure. `owed_reads_rss` turns on, for an engine kind, only if
   `RssAnon` accounts for the growth `MemAvailable` shows for that kind.
+  *(Added 2026-10-14, at Task 24, the controller's ruling on Gemma's `--slot-prompt-similarity`,
+  0.5:)* the soak checks it too. Through Step 1's use of the web UI, Gemma's log (`spark logs
+  gemma-4-26b-a4b`) shows each choice of slot by similarity as `selected slot by LCP similarity`,
+  with its `f_sim_best` and `f_keep` (b11146's `tools/server/server-context.cpp:1600`). One with a
+  low `f_keep`, under 0.5, took a slot whose cache it mostly drops: a wrong pick. Count how often one
+  happens, out of all Gemma's requests, and record it in plan.md, in the ruling's dated note in the
+  Phase 2a line; if wrong picks are common, the value is weighed again, the controller's ruling
+  (*Values the box decides*).
 - [ ] **Step 3:** the registry's footprints become the measured ones; render passes; **[Dan]**
   decides whether the reserve moves. **If render refuses the measured set** (a footprint over what
   the set leaves it), **stop and ask Dan**, as Task 44 does: Task 42's way back, or his

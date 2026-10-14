@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -110,9 +111,13 @@ def test_args_may_not_turn_up_an_engines_logging(tmp_path, model, flag):
         rendered(path)
 
 
-def test_api_keys_are_env_references_only():
-    keys = yaml.safe_load(rendered()["llama-swap.yaml"])["apiKeys"]
-    assert keys and all(k.startswith("${env.LLAMASWAP_KEY_") and k.endswith("}") for k in keys)
+def test_llama_swap_takes_only_the_three_internal_keys(files):
+    # From the cutover, llama-swap's callers are the front, the gate and the brake, each with an internal key of its
+    # own; the client keys reach only the front, as digests, and LLAMASWAP_KEY_SPARK retires (plan.md, *The keys*).
+    assert spark.render.INTERNAL_KEY_ENVS == ("LLAMASWAP_KEY_FRONT", "LLAMASWAP_KEY_GATE", "LLAMASWAP_KEY_BRAKE")
+    assert yaml.safe_load(files["llama-swap.yaml"])["apiKeys"] == [
+        "${env.LLAMASWAP_KEY_FRONT}", "${env.LLAMASWAP_KEY_GATE}", "${env.LLAMASWAP_KEY_BRAKE}"]
+    assert not hasattr(spark.render, "KEY_ENVS")
 
 
 def test_compose_binds_locally_and_pins_images(files):
@@ -162,8 +167,132 @@ def test_open_webuis_lockdown_keeps_its_values(files):
     assert {name: webui.get(name) for name in LOCKDOWN} == LOCKDOWN
 
 
-def test_llama_swap_listens_on_localhost_only():
-    assert "-listen 127.0.0.1:9100" in rendered()["systemd/local-ai-llama-swap.service"]
+def unit_settings(text: str, section: str) -> dict[str, list[str]]:
+    """A rendered unit's settings in one section, each name with every value it's given, in order."""
+    lines = text.split(f"\n[{section}]\n", 1)[1].split("\n[", 1)[0].splitlines()
+    settings: dict[str, list[str]] = {}
+    for line in lines:
+        if line and not line.startswith("#"):
+            name, value = line.split("=", 1)
+            settings.setdefault(name, []).append(value)
+    return settings
+
+
+LLAMA_SWAP_UNIT = "systemd/local-ai-llama-swap.service"
+
+
+def llama_swap_unit(section: str = "Service") -> dict[str, list[str]]:
+    return unit_settings(rendered()[LLAMA_SWAP_UNIT], section)
+
+
+def test_llama_swap_listens_on_900_and_the_engines_start_at_800(files):
+    # Below 1024, so no unprivileged account can take either while llama-swap restarts (plan.md, Phase 2a); the front
+    # holds 9100 from the cutover.
+    assert (spark.render.LLAMASWAP_LISTEN, spark.render.ENGINE_START_PORT) == ("127.0.0.1:900", 800)
+    [start] = unit_settings(files[LLAMA_SWAP_UNIT], "Service")["ExecStart"]
+    assert start.endswith(" -config /opt/local-ai/etc/llama-swap.yaml -listen 127.0.0.1:900"), start
+    assert yaml.safe_load(files["llama-swap.yaml"])["startPort"] == 800
+
+
+def stand_ins(tmp_path, count: int) -> Path:
+    """The fixture registry with on-demand stand-ins added, `count` models in all."""
+    def add(data):
+        coder = data["models"]["coder"]
+        for i in range(count - len(data["models"])):
+            data["models"][f"stand-in-{i:03}"] = copy.deepcopy(coder) | {
+                "label": f"stand-in {i:03}", "roles": [], "footprint_gib": 1}
+    return registry_with(tmp_path, add)
+
+
+def test_render_refuses_engine_ports_that_would_reach_900(tmp_path):
+    # v257 hands each model a port from startPort, one each in their names' order: a 101st model would get 900,
+    # llama-swap's own.
+    with pytest.raises(RenderError, match=r"^101 models would take engine ports 800 to 900, reaching llama-swap's own "
+                                          r"port, 900: .* at most 100 "):
+        rendered(stand_ins(tmp_path, 101))
+    cfg = yaml.safe_load(rendered(stand_ins(tmp_path, 100))["llama-swap.yaml"])
+    assert len(cfg["models"]) == 100
+
+
+def test_every_llama_cpp_engine_answers_as_its_registry_name(files):
+    # A reply names its model as the registry does, not by its file (Phase 1's close), and the memory sampler and the
+    # drills find an engine by it.
+    cfg = yaml.safe_load(files["llama-swap.yaml"])
+    for name, model in cfg["models"].items():
+        words = shlex.split(model["cmd"])
+        if "whisper-server" in words[4]:
+            assert not {"-a", "--alias"} & set(words), name
+        else:
+            assert values(words, "--alias") == [name] and "-a" not in words, name
+
+
+@pytest.mark.parametrize("flag", ["-a", "--alias"])
+def test_alias_is_render_owned_in_every_spelling(tmp_path, flag):
+    path = registry_with(tmp_path, lambda d: d["models"]["coder"]["args"].extend([flag, "other"]))
+    with pytest.raises(RenderError, match=f"^coder: args may not set {re.escape(flag)}: render sets it"):
+        rendered(path)
+
+
+def test_gemmas_slots_are_chosen_by_prompt_only_when_half_of_it_matches():
+    # The controller's ruling, 2026-10-14, at Task 24: at b11146's default, 0.10, a short new prompt takes a long chat's
+    # slot, and with a 1 GiB prompt cache a chat with checkpoints can't be saved, so it re-reads whole.
+    assert ("-sps", "--slot-prompt-similarity") in spark.render.ALLOWED["llama.cpp"]
+    cfg = yaml.safe_load(real()["llama-swap.yaml"])
+    assert values(shlex.split(cfg["models"]["gemma-4-26b-a4b"]["cmd"]), "--slot-prompt-similarity") == ["0.5"]
+
+
+def test_llama_swap_binds_below_1024_with_only_cap_net_bind_service():
+    # The engines inherit it across `spark launch`'s exec; no other unit gets it (plan.md, Phase 2a).
+    service = llama_swap_unit()
+    assert service["AmbientCapabilities"] == ["CAP_NET_BIND_SERVICE"]
+    assert service["CapabilityBoundingSet"] == ["CAP_NET_BIND_SERVICE"]
+    others = {rel: text for rel, text in rendered().items() if rel.startswith("systemd/") and rel != LLAMA_SWAP_UNIT}
+    assert others and not [rel for rel, text in others.items() if "CAP_NET_BIND_SERVICE" in text]
+
+
+SANDBOX = {
+    "NoNewPrivileges": "yes", "ProtectSystem": "strict", "ProtectHome": "yes", "PrivateTmp": "yes",
+    "InaccessiblePaths": "/etc/local-ai/secrets", "RestrictSUIDSGID": "yes", "ProtectKernelTunables": "yes",
+    "ProtectControlGroups": "yes",
+}
+
+
+def test_llama_swap_is_sandboxed_without_private_devices_or_mdwe():
+    # Dan's decision, 2026-10-07; CUDA needs the GPU's device nodes and memory it can write and run.
+    service = llama_swap_unit()
+    assert {name: service.get(name) for name in SANDBOX} == {name: [value] for name, value in SANDBOX.items()}
+    assert "PrivateDevices" not in service and "MemoryDenyWriteExecute" not in service
+
+
+def test_llama_swap_restarts_always_and_alerts_on_failure():
+    # v257 answers a stray SIGTERM with a clean exit, which on-failure left down (plan.md, Phase 2a).
+    service = llama_swap_unit()
+    assert (service["Restart"], service["RestartSec"]) == (["always"], ["5"])
+    assert llama_swap_unit("Unit")["OnFailure"] == ["local-ai-notify@%n.service"]
+
+
+def test_llama_swap_starts_after_what_loads_nvidia_uvm():
+    # On this box DGX OS's nvidia-cdi-refresh.service loads nvidia-uvm, which an engine can't load itself under
+    # NoNewPrivileges= (the setuid nvidia-modprobe).
+    after = " ".join(llama_swap_unit("Unit")["After"]).split()
+    assert {"nvidia-cdi-refresh.service", "nvidia-persistenced.service"} <= set(after)
+
+
+def test_only_the_tickets_folder_whispers_tmp_and_the_caches_are_writable_to_llama_swap():
+    # The fourth is launch's whole folder, never only launch/tickets: launch, inside the sandbox, renames in tickets/
+    # and writes started/ and refusals/ (the controller's ruling at Task 11's review). The brake's hold folder stays
+    # read-only, so an engine can't delete the hold.
+    service = llama_swap_unit()
+    assert " ".join(service["ReadWritePaths"]).split() == [
+        "/var/lib/local-ai/whisper-tmp", "/var/lib/local-ai/cache", "/var/lib/local-ai/cuda-cache",
+        "/var/lib/local-ai/launch"]
+    assert "SPARK_LAUNCH=/var/lib/local-ai/launch" in service["Environment"]
+    assert "SPARK_STATE=/var/lib/local-ai/brake" in service["Environment"]
+
+
+def test_llama_swap_reads_only_internal_keys_env():
+    # Its EnvironmentFile holds the three internal keys only; the client keys' file isn't read (plan.md, *The keys*).
+    assert llama_swap_unit()["EnvironmentFile"] == ["/etc/local-ai/secrets/internal-keys.env"]
 
 
 def test_health_check_timeout_is_180(files):
@@ -656,7 +785,7 @@ def test_a_restart_of_the_brake_or_llama_swap_fails_when_its_binary_cant_start()
     # even when the binary is missing. Type=exec waits until it runs, so `spark apply` hears of a binary that can't be
     # run. One that stops once it runs still passes: apply checks each unit afterwards (Phase 1's council).
     files = rendered()
-    for unit, kept in (("local-ai-llama-swap.service", ["Restart=on-failure", "RestartSec=5", "KillMode=control-group"]),
+    for unit, kept in (("local-ai-llama-swap.service", ["Restart=always", "RestartSec=5", "KillMode=control-group"]),
                        ("local-ai-brake.service", ["Restart=always", "RestartSec=2", "OOMScoreAdjust=-900"])):
         service = files[f"systemd/{unit}"].split("\n[Service]\n", 1)[1].split("\n[", 1)[0].splitlines()
         assert [line for line in service if line.startswith("Type=")] == ["Type=exec"], unit

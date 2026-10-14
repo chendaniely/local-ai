@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import spark.render
 from spark import brake, cli, messages, tickets
 from spark.brake import Action, plan_brake, run_brake
 from spark.brakeevents import EVENTS_FILE, BrakeEvent, append_event, read_events
@@ -1058,8 +1059,35 @@ def test_a_stale_or_missing_activity_record_falls_back_to_phase_1s_order(tmp_pat
 def test_the_brake_reads_the_gates_record_and_ports_where_the_gate_writes_them():
     from spark.gate import core  # the gate's own: its record's name, and the ports llama-swap v257 hands out
     assert brake.ACTIVITY_FILE == core.ACTIVITY_FILE
-    assert brake.ENGINE_START_PORT == core.ENGINE_START_PORT
     assert brake.engine_ports(REG2A) == core.engine_ports(REG2A)
+
+
+def test_the_brake_and_the_gate_find_the_engines_from_renders_one_start_port(monkeypatch):
+    # Task 24: render writes llama-swap's startPort, and the brake and the gate's core read that one constant, so the
+    # three can't drift. Each keeps its own engine_ports, so the brake never imports the gate's core.
+    from spark.gate import core
+    assert min(core.engine_ports(REG2A).values()) == spark.render.ENGINE_START_PORT == 800
+    monkeypatch.setattr(spark.render, "ENGINE_START_PORT", 1800)
+    assert sorted(brake.engine_ports(REG2A).values()) == sorted(core.engine_ports(REG2A).values()) == [
+        1800, 1801, 1802, 1803]
+    assert not hasattr(brake, "ENGINE_START_PORT") and not hasattr(core, "ENGINE_START_PORT")
+
+
+BRAKE_IMPORTS = """
+import sys
+import spark.brake
+print(sorted(name for name in sys.modules
+             if name.split(".")[0] in ("httpx", "starlette", "uvicorn", "anyio") or name == "spark.gate.core"))
+"""
+
+
+def test_the_brake_imports_neither_the_gates_core_nor_a_web_stack(tmp_path):
+    # The brake runs its own loop, apart from the gate: a module of the gate's that it imported could pull in httpx,
+    # Starlette, uvicorn or anyio, and with them whatever breaks in them (Task 24, with render's ENGINE_START_PORT).
+    result = subprocess.run([sys.executable, "-c", BRAKE_IMPORTS], cwd=tmp_path, capture_output=True, text=True,
+                            timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[]\n"
 
 
 def test_an_admitted_coder_load_never_trips_the_rate_watch(box_folders):

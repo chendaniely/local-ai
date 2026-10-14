@@ -30,7 +30,7 @@ from pathlib import Path
 from spark import paths
 from spark.llamaswap import LlamaSwap, LlamaSwapAnswered, LlamaSwapError, LlamaSwapUnreachable, key_from_env
 from spark.registry import load_registry
-from spark.render import DEPLOY, KEY_ENVS, _load, installed_path, render, write_atomic, write_tree
+from spark.render import DEPLOY, INTERNAL_KEY_ENVS, _load, installed_path, render, write_atomic, write_tree
 from spark.versions import load_versions, unpinned
 
 LLAMA_SWAP_UNIT = "local-ai-llama-swap.service"
@@ -376,10 +376,11 @@ def read_copies(files: dict[str, str],
 
 
 def validation_env(env: Mapping[str, str]) -> dict[str, str]:
-    """llama-swap's environment for -validate: `env`'s PATH, and a placeholder for each key, each its own,
+    """llama-swap's environment for -validate: `env`'s PATH, and a placeholder for each internal key, each its own,
     since the real ones are in a file Dan can't read. Nothing else: Dan's environment can hold secrets
     of his own, and -validate needs none of it."""
-    return {"PATH": env.get("PATH", os.defpath)} | {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
+    return {"PATH": env.get("PATH", os.defpath)} | {
+        name: f"validate-only-{i}" for i, name in enumerate(INTERNAL_KEY_ENVS)}
 
 
 def _validate_llama_swap(config: str, binary: Path) -> bool:

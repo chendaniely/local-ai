@@ -1,8 +1,11 @@
 # Rendered by `spark render` — edit stack/templates/, not this file.
 [Unit]
 Description=local-ai: llama-swap, the model supervisor
-After=network-online.target
+# On this box DGX OS's nvidia-cdi-refresh.service loads nvidia-uvm, which an engine can't load itself under
+# NoNewPrivileges= and the bounding set below: they strip the setuid nvidia-modprobe's powers.
+After=network-online.target nvidia-cdi-refresh.service nvidia-persistenced.service
 Wants=network-online.target
+OnFailure=local-ai-notify@%n.service
 
 [Service]
 # exec: `systemctl restart` waits until the binary is running, so one that can't be run at all fails the
@@ -11,18 +14,38 @@ Wants=network-online.target
 Type=exec
 User=spark
 Group=spark
-EnvironmentFile=/etc/local-ai/secrets/llama-swap.env
+# The three internal keys only, the front's, the gate's and the brake's: llama-swap's apiKeys. systemd reads it from
+# its own file system, before the sandbox below hides the folder (systemd.exec(5), EnvironmentFile=).
+EnvironmentFile=/etc/local-ai/secrets/internal-keys.env
 Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
 Environment=SPARK_STATE=/var/lib/local-ai/brake
+Environment=SPARK_LAUNCH=/var/lib/local-ai/launch
 Environment=HF_HOME=/var/lib/local-ai/hf
 # spark's home, /var/lib/local-ai, is root's: caches go to folders bootstrap gives spark.
 Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache
 Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache
-ExecStart=/opt/local-ai/bin/llama-swap/{llama_swap_version}/llama-swap -config /opt/local-ai/etc/llama-swap.yaml -listen 127.0.0.1:9100
-Restart=on-failure
+ExecStart=/opt/local-ai/bin/llama-swap/{llama_swap_version}/llama-swap -config /opt/local-ai/etc/llama-swap.yaml -listen {llamaswap_listen}
+# always: v257 answers a stray SIGTERM with a clean exit, which on-failure left down.
+Restart=always
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=60
+# 900 and the engines' 800 and up are below 1024; the engines inherit the capability across `spark launch`'s exec.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# The sandbox (Dan, 2026-10-07). Writable: whisper's --tmp-dir, the caches, and launch's whole folder, where launch
+# renames tickets and writes started/ and refusals/. The brake's hold folder stays read-only, so an engine can't
+# delete the hold. No PrivateDevices= or MemoryDenyWriteExecute=: CUDA needs the GPU's device nodes, and memory it
+# can write and run.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/local-ai/whisper-tmp /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache /var/lib/local-ai/launch
+ProtectHome=yes
+PrivateTmp=yes
+InaccessiblePaths=/etc/local-ai/secrets
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
 
 [Install]
 WantedBy=multi-user.target

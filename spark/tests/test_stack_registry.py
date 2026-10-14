@@ -169,3 +169,12 @@ def test_the_example_key_list_loads_and_names_no_real_key():
     assert keys["example-mac"] == ClientKey("example-mac", "dan", "pi on the Mac", None)
     assert keys["example-web-ui"] == ClientKey("example-web-ui", "dan", "the web UI", None)
     assert keys["example-agent"] == ClientKey("example-agent", "agent", "agent", "agent")
+
+
+def test_whisper_writes_its_temporary_files_outside_the_hf_cache():
+    # Its own folder, which llama-swap's sandbox opens (ReadWritePaths=), and not the Hugging Face cache, which moves to
+    # spark-pull and which spark only reads (Phase 2a; paths.WHISPER_TMP).
+    whisper = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "whisper.cpp"]
+    assert whisper
+    for model in whisper:
+        assert option(model.args, "--tmp-dir") == "/var/lib/local-ai/whisper-tmp", model.name

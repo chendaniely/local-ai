@@ -66,7 +66,12 @@ models:
     # slot's are thinned only once it holds the cap: at the default 32 per slot, one long chat could keep ~19 GiB,
     # whatever the context. A continuing chat restores its latest (an edit further back re-reads the whole prompt), so
     # cap them at 4 per slot, 8 in all (~5 GiB).
-    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4"]
+    # A new prompt takes an idle slot only when that slot's cache holds more than half of it, else the least recently
+    # used slot: at the default, 0.10, a short prompt takes a long chat's slot, and with a 1 GiB --cache-ram a chat
+    # with checkpoints can't be saved, so it re-reads whole. Set by the controller on 2026-10-14, at Task 24; the soak
+    # (Task 45) checks it.
+    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4",
+           --slot-prompt-similarity, "0.5"]
   qwen3-embedding-0.6b:
     label: the embeddings
     capability: embeddings
@@ -103,7 +108,9 @@ models:
     cache_ram_mib: 0
     footprint_gib: 3
     footprint_measured: false
-    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp, --threads, "8"]
+    # Its temporary files go to a folder of its own, which llama-swap's sandbox opens (ReadWritePaths=); the Hugging
+    # Face cache stays read-only there.
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
   qwen3.6-35b-a3b:
     label: the coder
     capability: chat

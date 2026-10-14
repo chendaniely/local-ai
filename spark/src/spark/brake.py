@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from spark import messages, paths, procs, tickets
+from spark import messages, paths, procs, render, tickets
 from spark.brakeevents import EVENTS_FILE, BrakeEvent, EventsFileNotRegular, append_event, episode_for
 from spark.credentials import CredentialError, read_credential, read_header_credential
 from spark.gate.state import load_state
@@ -121,9 +121,6 @@ HOLD_RETRY_S = 1.0
 # journal says how many (the controller's ruling on Task 23's fix round 1).
 PENDING_MAX = 64
 ACTIVITY_FILE = "activity.json"  # the gate's record, in its state folder (gate/core.py's ACTIVITY_FILE)
-# llama-swap v257 hands each model whose cmd holds ${PORT} a port from startPort, in their names' sorted order: the
-# gate's core.engine_ports, kept here so the brake never imports the gate's core (and with it httpx and uvicorn).
-ENGINE_START_PORT = 800
 # A started/ record's process must have been forked when the record says its load started. Launch writes its own start
 # time (the controller's ruling, at Task 23): the engine's, exactly, since it is exec'd in place, and the load's age is
 # then read by the boot's clock, /proc/uptime less that start time, at most STARTED_EXPIRES_S and LAUNCH_SLACK_S (the
@@ -344,8 +341,10 @@ class LoadInProgress:
 
 
 def engine_ports(registry) -> dict[str, int]:
-    """Each model's engine port, as llama-swap v257 hands them out (gate/core.py's engine_ports)."""
-    return {name: ENGINE_START_PORT + place for place, name in enumerate(sorted(registry.models))}
+    """Each model's engine port, as llama-swap v257 hands them out: from startPort, render's ENGINE_START_PORT, one each
+    in the models' sorted names. The gate's core.engine_ports, kept here so the brake never imports the gate's core
+    (and with it httpx and uvicorn); both read render's one constant."""
+    return {name: render.ENGINE_START_PORT + place for place, name in enumerate(sorted(registry.models))}
 
 
 def _nearest(readings: Iterable[tuple[float, float]], when: float) -> float | None:

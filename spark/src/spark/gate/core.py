@@ -66,7 +66,7 @@ from typing import Any
 
 from spark import hold as holdfile
 from spark import launch as launches
-from spark import memory, messages, procs, sdnotify, tickets
+from spark import memory, messages, procs, render, sdnotify, tickets
 from spark.brakeevents import EVENTS_FILE, read_events
 from spark.gate import units as unitwatch
 from spark.gate.admission import Admitted, Admitter
@@ -90,8 +90,6 @@ MEMORY_EVERY_S = 0.25  # MemAvailable, as the brake polls it
 RUNNING_EVERY_S = 1.0  # llama-swap's /running
 SECOND_S = 1.0  # the brake's events, apply's lapse, the activity record (ACTIVITY_EVERY_S)
 FIVE_S = 5.0  # the units, the idle check, the ends, the brake's release, the holders and the bypass check
-# llama-swap's startPort from the cutover: render's ENGINE_START_PORT once Task 24 adds it there.
-ENGINE_START_PORT = 800
 # The ticket id the core records, in state.ticketed, for an engine found running at a start after damage: the damage
 # lost which ticket started it, and it is the stack's, so the bypass check never reports it (the controller's ruling
 # at Task 13's review).
@@ -108,10 +106,11 @@ BACKSTOP_CODES = (tickets.NO_TICKET, tickets.TICKET_EXPIRED)  # launch refusing 
 REPORT_POLLS = 120
 
 
-def engine_ports(registry: Registry, start: int = ENGINE_START_PORT) -> dict[str, int]:
-    """Each model's engine port, as llama-swap v257 hands them out: from startPort, one each to the models whose cmd
-    holds ${PORT} (render gives every one), in their names' sorted order (v257's internal/config/macros.go:150-186)."""
-    return {name: start + place for place, name in enumerate(sorted(registry.models))}
+def engine_ports(registry: Registry) -> dict[str, int]:
+    """Each model's engine port, as llama-swap v257 hands them out: from startPort, render's ENGINE_START_PORT, one each
+    to the models whose cmd holds ${PORT} (render gives every one), in their names' sorted order (v257's
+    internal/config/macros.go:150-186)."""
+    return {name: render.ENGINE_START_PORT + place for place, name in enumerate(sorted(registry.models))}
 
 
 def _said(err: BaseException) -> str:

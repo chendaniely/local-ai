@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from spark import schema
 from spark.budget import check_set
 from spark.messages import duration, pi_retry_match
 from spark.registry import Model, Registry, Source, load_registry
@@ -24,7 +25,16 @@ TEMPLATES = Path("stack/templates")
 DEPLOY = "/opt/local-ai"
 HF_HOME = "/var/lib/local-ai/hf"
 SPARK_BIN = f"{DEPLOY}/app/.venv/bin/spark"
-KEY_ENVS = ("LLAMASWAP_KEY_DAN_MAC", "LLAMASWAP_KEY_AGENT", "LLAMASWAP_KEY_OPENWEBUI", "LLAMASWAP_KEY_SPARK")
+# llama-swap's keys from the cutover: one per caller, the front, the gate and the brake, each reaching its caller by
+# LoadCredential= and llama-swap from its EnvironmentFile=. The client keys reach only the front, as digests, and
+# LLAMASWAP_KEY_SPARK retires: Dan's commands need no key (plan.md, *The keys*).
+INTERNAL_KEY_ENVS = ("LLAMASWAP_KEY_FRONT", "LLAMASWAP_KEY_GATE", "LLAMASWAP_KEY_BRAKE")
+# Below 1024, so no unprivileged account can take either while llama-swap restarts; the front holds 9100 from the
+# cutover (plan.md, Phase 2a). v257 hands each model whose cmd holds ${PORT} a port from startPort, one each in their
+# names' sorted order (internal/config/macros.go:150-186): the gate's core and the brake find the engines from this
+# constant (their engine_ports), so the three can't drift.
+LLAMASWAP_LISTEN = "127.0.0.1:900"
+ENGINE_START_PORT = 800
 # llama-swap's one deadline for a start, after which it kills the engine: 180 s in 2a, down from Phase 1's 600, since
 # nothing waits inside cmd any more and it has only a load to cover (plan.md, the session's ruling). The gate's load
 # call waits it plus 20 s (llamaswap_async.load_timeout_for), and a started record counts for twice it (tickets.py).
@@ -45,7 +55,8 @@ COMPOSE_DIR = "/etc/local-ai/compose"
 # entry only when it has more than one spelling.
 SPELLINGS = {
     "llama.cpp": (
-        ("--host",), ("--port",), ("-m", "--model"), ("-mm", "--mmproj"), ("-c", "--ctx-size"), ("-np", "--parallel"),
+        ("--host",), ("--port",), ("-m", "--model"), ("-a", "--alias"), ("-mm", "--mmproj"), ("-c", "--ctx-size"),
+        ("-np", "--parallel"),
         ("-ngl", "--gpu-layers", "--n-gpu-layers"), ("-cram", "--cache-ram"), ("--embedding", "--embeddings"),
         ("--offline",), ("-hft", "--hf-token"), ("-hf", "-hfr", "--hf-repo"), ("-hff", "--hf-file"),
         ("--spec-draft-hf", "-hfd", "-hfrd", "--hf-repo-draft"), ("-mu", "--model-url"), ("-mmu", "--mmproj-url"),
@@ -87,6 +98,9 @@ ALLOWED = {
     "llama.cpp": (
         ("-lm", "--load-mode"), ("-ub", "--ubatch-size"), ("--image-max-tokens",),
         ("-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"), ("--pooling",), ("--spec-type",), ("--spec-draft-n-max",),
+        # How much of a new prompt an idle slot's cache must hold for the prompt to take that slot, before the least
+        # recently used one is taken (b11146's tools/server/server-context.cpp:1561-1633); added 2026-10-14, at Task 24.
+        ("-sps", "--slot-prompt-similarity"),
     ),
     "whisper.cpp": (("-l", "--language"), ("--convert",), ("--tmp-dir",), ("-t", "--threads")),
 }
@@ -144,6 +158,10 @@ def engine_cmd(model: Model, registry: Registry) -> list[str]:
                "--inference-path", "/v1/audio/transcriptions"]
     else:
         cmd = [binary, "--host", "127.0.0.1", "--port", "${PORT}", "--model", main,
+               # A reply names its model as the registry does, not by its file (Phase 1's close), and the memory
+               # sampler and the drills find the engine by it. b11146 splits --alias at commas; a registry name holds
+               # none (registry.NAME).
+               "--alias", model.name,
                "--ctx-size", str(model.ctx), "--parallel", str(model.parallel),
                "--gpu-layers", "all", "--cache-ram", str(model.cache_ram_mib),
                # Defense in depth: a download option the refusals miss still fetches nothing (llama.cpp b11146's
@@ -219,7 +237,30 @@ def _one_word_and_nothing_filled_in(name: str, words: list[str]) -> list[str]:
     return words
 
 
+def check_ports(registry: Registry) -> None:
+    """Refuse a registry whose engines' ports would reach llama-swap's own: v257 hands one to each model, from
+    ENGINE_START_PORT, in their names' order."""
+    listen = int(LLAMASWAP_LISTEN.rsplit(":", 1)[1])
+    last = ENGINE_START_PORT + len(registry.models) - 1
+    if last >= listen:
+        raise RenderError(f"{len(registry.models)} models would take engine ports {ENGINE_START_PORT} to {last}, "
+                          f"reaching llama-swap's own port, {listen}: it hands one to each model from "
+                          f"{ENGINE_START_PORT}, so at most {listen - ENGINE_START_PORT} fit below it")
+
+
+def check_schema(config: dict, templates: Path = TEMPLATES) -> None:
+    """Refuse a llama-swap config its own schema rejects, read as spark.schema reads it. The schema is vendored beside
+    the templates, at stack/llama-swap/config-schema.<version>.json, the version TESTED_AGAINST names."""
+    version = TESTED_AGAINST["llama-swap"]
+    path = Path(templates).parent / "llama-swap" / f"config-schema.{version}.json"
+    problems = schema.check(config, _load(f"llama-swap {version} schema", path, lambda p: schema.load(p.read_text())))
+    if problems:
+        raise RenderError(f"llama-swap's config doesn't pass its {version} schema ({path}):\n"
+                          + "\n".join(f"  {problem}" for problem in problems))
+
+
 def llama_swap_config(registry: Registry) -> dict:
+    check_ports(registry)
     models = {}
     for m in registry.models.values():
         cmd = _one_word_and_nothing_filled_in(m.name, [SPARK_BIN, "launch", m.name, "--", *engine_cmd(m, registry)])
@@ -238,7 +279,7 @@ def llama_swap_config(registry: Registry) -> dict:
         "healthCheckTimeout": HEALTH_CHECK_TIMEOUT_S,
         "captureBuffer": 0,
         "globalTTL": 0,
-        "startPort": 5800,
+        "startPort": ENGINE_START_PORT,
         "logLevel": "info",
         # Only llama-swap's own lines reach the journal: the engines' output, a refused start's reason (`spark
         # launch`'s stderr) and an engine's crash included, stays in its in-memory buffer, which every restart wipes.
@@ -247,7 +288,7 @@ def llama_swap_config(registry: Registry) -> dict:
         # whisper-server logs each upload's file name and its ffmpeg conversion's metadata report, which the journal
         # would keep. Phase 2 revisits it with a check that covers speech.
         "logToStdout": "proxy",
-        "apiKeys": [f"${{env.{name}}}" for name in KEY_ENVS],
+        "apiKeys": [f"${{env.{name}}}" for name in INTERNAL_KEY_ENVS],
         "models": models,
         "routing": {"router": {"use": "group", "settings": {"groups": {"stack": {
             "swap": False, "exclusive": False, "persistent": True, "members": sorted(models)}}}}},
@@ -281,14 +322,17 @@ def render(registry: Registry, versions: dict[str, Component], registry_text: st
     check_words(registry)
     fields = {
         "llama_swap_version": _component(versions, "llama-swap").version,
+        "llamaswap_listen": LLAMASWAP_LISTEN,
         "open_webui_image": _image(_component(versions, "open-webui")),
         "searxng_image": _image(_component(versions, "searxng")),
         "task_model": _only(registry, "model with the 'small' role", lambda m: "small" in m.roles),
         "embedding_model": _only(registry, "embeddings model", lambda m: m.capability == "embeddings"),
         "stt_model": _only(registry, "transcription model", lambda m: m.capability == "transcription"),
     }
+    config = llama_swap_config(registry)
+    check_schema(config, templates)
     files = {
-        "llama-swap.yaml": yaml.safe_dump(llama_swap_config(registry), sort_keys=False),
+        "llama-swap.yaml": yaml.safe_dump(config, sort_keys=False),
         "models.yaml": registry_text,
         "compose/compose.yaml": (templates / "compose.yaml").read_text().format(**fields),
         "compose/searxng/settings.yml": (templates / "searxng-settings.yml").read_text(),

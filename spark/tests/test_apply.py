@@ -16,7 +16,7 @@ from spark.apply import (RUNNING_UNITS, UNKNOWN_START, app_diff, apply_files, di
                          outdated_units, read_copies, start_times, started_at, units_to_restart, validation_env)
 from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
 from spark.registry import load_registry
-from spark.render import KEY_ENVS, installed_path, render
+from spark.render import INTERNAL_KEY_ENVS, installed_path, render
 from spark.versions import load_versions
 
 LLAMA, BRAKE, COMPOSE = "local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service"
@@ -275,10 +275,10 @@ def test_a_llama_swap_that_takes_the_call_and_never_answers_counts_as_cant_tell(
 
 
 def test_validate_gives_each_key_its_own_placeholder():
-    env = validation_env({"PATH": "/usr/bin", "LLAMASWAP_KEY_AGENT": "real"})
+    env = validation_env({"PATH": "/usr/bin", "LLAMASWAP_KEY_GATE": "real"})
     assert env["PATH"] == "/usr/bin"
-    values = [env[name] for name in KEY_ENVS]
-    assert len(set(values)) == len(KEY_ENVS) and "real" not in values
+    values = [env[name] for name in INTERNAL_KEY_ENVS]
+    assert len(set(values)) == len(INTERNAL_KEY_ENVS) and "real" not in values
 
 
 @pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root reads any file")
@@ -475,7 +475,7 @@ def test_only_a_brake_apply_restarted_is_checked(tmp_path, how):
 
 def test_validate_gets_path_and_a_placeholder_for_each_key_and_nothing_else():
     # Minor 9: Dan's environment can hold secrets of his own, and -validate needs none of it.
-    placeholders = {name: f"validate-only-{i}" for i, name in enumerate(KEY_ENVS)}
+    placeholders = {name: f"validate-only-{i}" for i, name in enumerate(INTERNAL_KEY_ENVS)}
     assert validation_env({"PATH": "/usr/bin", "HOME": "/home/dan", "SPARK_API_KEY": "k"}) == {"PATH": "/usr/bin",
                                                                                               **placeholders}
     assert validation_env({}) == {"PATH": os.defpath, **placeholders}
@@ -509,6 +509,7 @@ class Box:
         self.repo, self.opt = tmp_path / "repo", tmp_path / "opt"
         self.etc, self.app = self.opt / "etc", self.opt / "app"
         shutil.copytree(ROOT / "stack/templates", self.repo / "stack/templates")
+        shutil.copytree(ROOT / "stack/llama-swap", self.repo / "stack/llama-swap")  # the schema render checks against
         shutil.copy(FIX / "models.yaml", self.repo / "stack/models.yaml")
         pinned = (FIX / "versions.yaml").read_text().replace("pin: null", "pin: sha256:" + "0" * 64)
         (self.repo / "stack/versions.yaml").write_text(pinned)

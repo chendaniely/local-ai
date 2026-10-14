@@ -1796,7 +1796,17 @@ council, with Dan's fourteen decisions (Revisions).*
   `FLOOR_TOLERANCE_GIB`), and the lag before an unloaded engine's memory shows in `MemAvailable`;
   earlyoom's order, and swap and swappiness, at the real thresholds (swap down to 24 GiB available
   only: corrected 2026-10-07, after the implementation plan's re-check); SearXNG's request timeout;
-  a higher `--slot-prompt-similarity` for Gemma, weighed, with the registry's other changes; a test
+  a higher `--slot-prompt-similarity` for Gemma, weighed, with the registry's other changes
+  *(settled 2026-10-14, at the implementation plan's Task 24, the controller's ruling: **0.5**. In
+  llama.cpp b11146 a new prompt takes the idle slot whose cache holds the largest share of it above
+  the threshold, never an empty slot, and only then the least recently used one. At the default,
+  0.10, a short prompt that shares only the template's first tokens takes a long chat's slot (Phase
+  1 saw a 26-token one do it), and a chat with two of Gemma's context checkpoints is too big for its
+  1 GiB prompt cache, so its next turn re-reads it whole. At 0.5 such a prompt takes the empty or
+  older slot, and a miss costs at most re-reading half a prompt. No value helps where the chat's own
+  slot is the least recently used one, as when Open WebUI's task calls, which go to Gemma, run back
+  to back after a turn; nor against a system prompt shared between chats, which counts in the shared
+  start. The soak, Task 45, counts the wrong picks in Gemma's log)*; a test
   that ties the code's version assumptions — the front's and the gate's on llama-swap v257 among
   them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own user,
   `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's sandboxing.
@@ -3773,6 +3783,12 @@ Each item gets its own design pass when its turn comes.
   ending in one step keeps its floor. The implementation plan's Task 23 has the rest: a hold that
   stands counts as written, a hold that can never be written is one episode with one first alert,
   and a poll's flush waits 0.2 s in all.
+- **2026-10-14** — Phase 2a's Task 24, the controller's ruling (*Values the box decides*): Gemma's
+  `--slot-prompt-similarity` is 0.5, from a reading of llama.cpp b11146's slot choice
+  (`tools/server/server-context.cpp`, `get_available_slot`). A dated note is in the Phase 2a line's
+  item from Phase 1's close, with the two cases no value fixes: a chat's own slot taken by task calls
+  back to back when it is the least recently used, and a system prompt shared between chats. The
+  registry's Gemma gains it, with a comment saying why; the soak (Task 45) counts the wrong picks.
 
 ## Sources
 
