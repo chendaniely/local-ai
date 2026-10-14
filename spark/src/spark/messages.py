@@ -867,7 +867,7 @@ def _brake_unloaded(unloaded: list[tuple[str, str | None]]) -> str:
 
 _BRAKE_LOGS = "On the Spark, `make logs s=brake` shows why."  # the brake's journal: why an unload went as it did
 _LIFTED = "it paused new loads, and the pause has since lifted"  # a first alert read after its pause ended
-_UNWRITTEN = "it couldn't write its pause, so new loads weren't paused"  # a fired whose hold never reached the disk
+_UNWRITTEN = "it couldn't write its pause, so new loads weren't paused"  # a fired whose hold the brake couldn't write
 # Why llama-swap's refusal of the brake's unload matters, by its status (the controller's ruling, at Task 23).
 _UNLOAD_WHY = {401: "the brake's key", 404: "its config may not match the registry"}
 _UNLOAD_STATUS = re.compile(r"(?:^|: )HTTP (\d{3})$")  # the brake's `HTTP <status>`, or LlamaSwap's own line

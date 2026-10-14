@@ -650,7 +650,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      implementation plan's Task 23 review:)* the watch acts only on a fall of at least 1.5 GiB within
      its window (`MIN_FALL_GIB`, which Task 47 tunes with the others), so noise and a model's
      ordinary growth near the reserve don't trip it, and an admitted load's floor stands for the
-     window after the load ends, while the window still holds its fall.
+     window after the load ends, while the window still holds its fall. *(Added the same day, the
+     controller's ruling, at Task 23's second re-review:)* the brake reads the loads in progress on
+     every poll the watch runs, so a load's floor is known from the first poll that finds it in
+     progress, whatever its pace: a load too slow to fall 1.5 GiB within the window, then a step the
+     gate marks ready as it lands, tripped the watch while they were read only on a fall.
    - **The gate lifts the hold** once memory has stayed above the warn line for 5 minutes (5 is the
      plan's figure for Dan's "a few minutes"), and only if the models it would reload fit, by rule
      9's formula, with the reserve, the growth owed and any make-room hold. Each reload goes
@@ -3747,6 +3751,11 @@ Each item gets its own design pass when its turn comes.
   for the window after the load ends. The implementation plan's Task 23 has the rest: no lock
   another process holds comes before the brake's hold, its journal says how the pause ends in 2a,
   and a failed unload's words tell a refusal from a server error.
+- **2026-10-14** — Phase 2a's Task 23 second re-review, the controller's rulings. A dated note is
+  in rule 5: the brake reads the loads in progress on every poll the watch runs, so a slow load
+  ending in one step keeps its floor. The implementation plan's Task 23 has the rest: a hold that
+  stands counts as written, a hold that can never be written is one episode with one first alert,
+  and a poll's flush waits 0.2 s in all.
 
 ## Sources
 

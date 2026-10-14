@@ -848,6 +848,19 @@ def test_a_brake_from_before_a_reboot_with_no_hold_left_sends_nothing(tmp_path):
     assert notified_key("brake_fired", f"brake:{BOOT}:1:{written[0].seq}") in state.notified
 
 
+@pytest.mark.parametrize("written", [True, False], ids=["its hold written", "its hold never written"])
+def test_the_journal_says_why_a_brake_from_before_a_reboot_sends_nothing(tmp_path, caplog, written):
+    # Re-review 2's out-of-scope words, the controller's ruling: a hold the brake couldn't write never "no longer
+    # stands"; it may never have stood.
+    caplog.set_level(logging.INFO)
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=written),
+          event("unload", at(3, 12, 1), model=GEMMA, state="idle"))
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=LATER_BOOT, now=at(4, 1)) == []
+    fired_at = datetime.fromtimestamp(at(3, 12)).isoformat(timespec="seconds")
+    how = "and its hold no longer stands" if written else "couldn't write its hold then, and none of its stands now"
+    assert f"notify: the brake fired at {fired_at} before the reboot, {how}, so nothing is sent" in caplog.messages
+
+
 @pytest.mark.anyio
 async def test_the_reboots_alert_and_the_holds_are_one(tmp_path):
     # Task 17 sends brake_needs_release for the hold it finds after a reboot under the same key, so one goes.

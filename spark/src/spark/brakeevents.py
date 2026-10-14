@@ -68,8 +68,9 @@ class BrakeEvent:
     # The rate-of-fall watch acted, above the line (Task 23): memory was falling toward the line, not under it. A line
     # written before Task 23 has neither of these two, and reads as no reason and not falling.
     falling: bool = False
-    # A fired's hold reached the disk; False when the brake couldn't write it, so nothing paused new loads (the
-    # controller's ruling on Task 23's fix round 2). A line without it reads as written.
+    # A fired's hold stands, one whose folder's fsync failed after its rename included; False when the brake couldn't
+    # write it, so nothing paused new loads when it fired (the controller's rulings on Task 23's fix round 2, and on
+    # its second re-review). A line without it reads as written.
     hold_written: bool = True
 
 

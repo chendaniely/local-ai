@@ -493,8 +493,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       under it.
     - A first alert read after its pause ended (no hold stands, or a newer one does: the brake's queue held it back,
       Task 23's re-review) says the brake paused new loads and the pause has since lifted, never that they are paused.
-      One whose `fired` says its hold was never written (`hold_written` false) says the brake couldn't write its
-      pause, so new loads weren't paused (the controller's ruling on Task 23's fix round 2).
+      One whose `fired` says the brake couldn't write its hold (`hold_written` false) says so, and that new loads
+      weren't paused (the controller's ruling on Task 23's fix round 2).
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -625,8 +625,12 @@ def _after_reboot(group: _Group, path: Path, state: GateState, registry: Registr
     state.notified[notified_key("brake_fired", f"brake:{boot}:{episode}:{reading.seq}")] = now
     hold = read_hold(path.parent)
     if hold is None or (hold.boot_id, hold.episode) != group.episode:  # Task 17 speaks for any other hold
-        _log.info("notify: the brake fired at %s before the reboot, and its hold no longer stands, so nothing is sent",
-                  datetime.fromtimestamp(reading.at).isoformat(timespec="seconds"))
+        # A hold the brake couldn't write when it fired may never have stood, or stood once a later try wrote it (the
+        # controller's ruling on Task 23's second re-review): either way none of its stands now.
+        how = ("couldn't write its hold then, and none of its stands now" if group.fired is not None
+               and not group.fired.hold_written else "and its hold no longer stands")
+        _log.info("notify: the brake fired at %s before the reboot, %s, so nothing is sent",
+                  datetime.fromtimestamp(reading.at).isoformat(timespec="seconds"), how)
         return None
     labels = list(dict.fromkeys(_label(registry, e.model or "") for e in group.unloads))
     return ("brake_needs_release", f"brake-needs:{boot}:{episode}",

@@ -534,7 +534,9 @@ def test_a_state_folder_it_cant_search_is_reported(tmp_path):
 
 
 def test_a_hold_written_after_a_failure_says_so(tmp_path, monkeypatch):
-    # The first write finds the disk full; the next goes through, and the log says the hold is back (N3: M).
+    # The first write finds the disk full; the next goes through, and the log says the hold is back (N3: M). Since the
+    # controller's ruling on Task 23's second re-review, the next is a --once run's last try (brake.hold_last), not the
+    # unload's write in the same poll.
     real, calls = brake.write_hold, []
 
     def full_disk_once(state_dir, hold):
@@ -1606,7 +1608,6 @@ def test_without_ntfy_set_up_the_brake_sends_nothing_and_says_so(box_folders, tm
     assert curl.started == [] and read_hold(f.state).unloaded == (WHISPER,)
 
 
-
 def test_a_failed_unload_while_the_gate_is_down_follows_up_with_why(box_folders, tmp_path):
     # The controller's ruling, at Task 23: the follow-up says why llama-swap didn't unload.
     curl = Curl()
@@ -1798,10 +1799,12 @@ def test_steps_waiting_for_the_lock_are_bounded_and_the_oldest_dropped(box_folde
         poll(seconds)
 
     box.sleep = sleep
+    real_fsync, os.fsync = os.fsync, lambda fd: None  # this measures the lock's waits, not the disk (re-review 2)
     begun = time.monotonic()
     try:
         logs = run_2a(box)
     finally:
+        os.fsync = real_fsync
         release_the_lock(holder)
     # Once a try has found the lock held, the polls after it don't wait: one wait, not 66 (the re-review's Minor 2).
     assert time.monotonic() - begun < 10 * brake.LOCK_WAIT_S
@@ -1978,15 +1981,32 @@ def test_ready_a_poll_or_two_before_the_fall_ends_never_trips_the_watch(box_fold
 
 def test_an_events_file_that_isnt_a_regular_file_is_said_once_an_episode(box_folders):
     # The re-review's Minor 3: the file is at fault, not the step; said once an episode, not once a step, and the steps
-    # wait, as for a lock.
-    os.mkfifo(box_folders.state / EVENTS_FILE)
+    # wait, as for a lock. Re-review 2's Minor 3: keyed on the newest step waiting, the episode being fired or recorded,
+    # not the oldest, so a second episode says it again; and once the file is put right, the journal says the steps are
+    # recorded again.
+    path = box_folders.state / EVENTS_FILE
+    os.mkfifo(path)
     names = ["stand-in-1", "stand-in-2", "stand-in-3"]
-    box = Timeline([18], dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=3)
+    box = Timeline([18, 18, 60, 18, 18, 18], dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False,
+                   delay=999, polls=6)
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 1:
+            release_hold(box_folders.state)  # the pause lifted: the next fall is a second episode
+        if len(box.sleeps) == 4:
+            path.unlink()  # put right: the next poll writes the steps
+        poll(seconds)
+
+    box.sleep = sleep
     logs = run_2a(box)
-    assert len(box.requests) == 3 and read_hold(box_folders.state) is not None
     said = [line for line in logs if "regular file" in line]
-    assert said == [f"brake: ALERT — the brake's events file {box_folders.state / EVENTS_FILE} isn't a regular file, "
-                    "so its steps can't be recorded for the gate"]
+    line = (f"brake: ALERT — the brake's events file {path} isn't a regular file, so its steps can't be recorded "
+            "for the gate")
+    assert said == [line, line]  # episodes 1 and 2
+    assert sum("recorded for the gate again" in each for each in logs) == 1
+    assert [(e.kind, e.episode) for e in events(box_folders)] == [
+        ("fired", 1), ("unload", 1), ("unload", 1), ("fired", 2), ("unload", 2)]
 
 
 def test_a_new_episode_counts_past_the_steps_still_waiting(box_folders):
@@ -2050,6 +2070,46 @@ def test_a_firing_poll_writes_the_hold_then_unloads_then_records(box_folders, mo
                                                       "step fired", "step unload"]
 
 
+def test_steps_waiting_from_an_earlier_poll_still_come_after_the_hold_and_the_unload(box_folders, monkeypatch):
+    # Re-review 2's Minor 5: the case its Minor 8 named. Steps queued while another process held the lock, the lock then
+    # freed and the pause lifted, the next poll fires again: its hold and unload come before any step is written, the
+    # earlier ones included. A poll-start flush (the reviewer's mutant) writes them first, and fails this.
+    order = []
+    real_write, real_append = brake.write_hold, brake.append_event
+
+    def write_hold(folder, hold):
+        order.append("hold")
+        return real_write(folder, hold)
+
+    def append_event(path, event, **kw):
+        order.append(f"step {event.kind} {event.episode}")
+        return real_append(path, event, **kw)
+
+    monkeypatch.setattr(brake, "write_hold", write_hold)
+    monkeypatch.setattr(brake, "append_event", append_event)
+    holder = hold_the_events_lock(box_folders.state / EVENTS_FILE)
+    box = Timeline([18, 18], dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=False, delay=999, polls=2, on_unload=lambda model: order.append(f"unload {model}"))
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 0:
+            release_the_lock(holder)
+            release_hold(box_folders.state)
+            order.append("next poll")
+        poll(seconds)
+
+    box.sleep = sleep
+    try:
+        run_2a(box)
+    finally:
+        release_the_lock(holder)
+    second = order[order.index("next poll") + 1:]
+    assert second[:2] == ["hold", "unload stand-in-2"]
+    assert [each for each in second if each.startswith("step")] == [
+        "step fired 1", "step unload 1", "step fired 2", "step unload 2"]
+    assert second.index("step fired 1") > second.index("unload stand-in-2")
+
 
 def test_a_hold_it_couldnt_write_is_recorded_and_its_alert_says_loads_werent_paused(box_folders, tmp_path,
                                                                                      monkeypatch):
@@ -2067,3 +2127,203 @@ def test_a_hold_it_couldnt_write_is_recorded_and_its_alert_says_loads_werent_pau
     words = curl_config(child.stdin.data)["data-raw"][0]
     assert words == first_alert(unloaded=[(LABELS[GEMMA], None)], hold_written=False)
     assert "couldn't write its pause, so new loads weren't paused" in words and "resume" not in words
+
+
+# Task 23's second re-review, the controller's rulings (fix round 3).
+
+@pytest.mark.parametrize("rate", [0.0, 0.5, 0.7], ids=["no fall", "0.5 GiB/s", "0.7 GiB/s"])
+@pytest.mark.parametrize("gap", [0, 1, 2], ids=["ready with the step", "a poll after", "two polls after"])
+def test_a_load_too_slow_for_the_window_then_a_step_with_ready_never_trips_the_watch(box_folders, rate, gap):
+    # Re-review 2's Minor 1, its probe: the weights fall slower than MIN_FALL_GIB over the window (or not at all), then
+    # the KV cache and compute buffers come as a 20 GiB step, the gate marking the load ready on that poll. The loads
+    # are read on every poll the watch runs, so the floor is known before the step.
+    f = box_folders
+    readings = [74 - rate * TICK * i for i in range(57)] + [40.0] * 20
+    started_record(f.launch, CODER, footprint=41, available=74, start_time=ticks(T0 - 0.5))
+    an_engine(f.proc, CODER)
+    box = ReadyAt(readings, {GEMMA: "ready", CODER: "starting"}, folders=f, model=CODER, ready_poll=57 + gap,
+                  models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+def test_a_small_load_landing_as_one_step_with_ready_never_trips_the_watch(box_folders):
+    # Re-review 2's Minor 1: whisper's 3 GiB in one poll at 27.5, ready on that poll, would project to 16.5.
+    f = box_folders
+    readings = [27.5] * 57 + [24.5] * 20
+    started_record(f.launch, WHISPER, footprint=3, available=27.5, start_time=ticks(T0 - 0.5))
+    an_engine(f.proc, WHISPER, comm="whisper-server")
+    box = ReadyAt(readings, {GEMMA: "ready", WHISPER: "starting"}, folders=f, model=WHISPER, ready_poll=57,
+                  models={GEMMA: ready(), WHISPER: starting(admitted=3, available_at_start=27.5)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+def test_a_hold_that_stands_though_its_folders_fsync_failed_counts_as_written(box_folders, monkeypatch):
+    # Re-review 2's Minor 2: write_hold renamed the hold into place, then the folder's fsync failed. The hold stands, so
+    # new loads are paused: hold_written is true, and the journal says only that the fsync failed.
+    real = brake.write_hold
+
+    def fsync_fails(state_dir, hold):
+        real(state_dir, hold)
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(brake, "write_hold", fsync_fails)
+    logs = run_2a(Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False), once=True)
+    hold = read_hold(box_folders.state)
+    assert hold is not None and hold.episode == 1
+    assert [(e.kind, e.hold_written) for e in events(box_folders)] == [("fired", True), ("unload", True)]
+    assert sum("fsync failed" in line and "stands" in line for line in logs) == 1
+    assert not any("can't write the hold" in line for line in logs)
+    assert any("new loads paused" in line for line in logs)
+
+
+def test_a_hold_update_it_cant_write_says_the_standing_hold_still_pauses_loads(box_folders, monkeypatch):
+    # The same ruling's other half: the unload's write of the hold, listing the model, fails before its rename, so the
+    # fired hold still stands and pauses new loads; the journal says so, never that new loads aren't held.
+    real, calls = brake.write_hold, []
+
+    def full_after_the_first(state_dir, hold):
+        calls.append(hold)
+        if len(calls) > 1:
+            raise OSError(28, "No space left on device")
+        real(state_dir, hold)
+
+    monkeypatch.setattr(brake, "write_hold", full_after_the_first)
+    logs = run_2a(Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False), once=True)
+    hold = read_hold(box_folders.state)
+    assert (hold.episode, hold.unloaded) == (1, ())
+    assert [line for line in logs if "ALERT" in line] == [
+        f"brake: ALERT — can't write the hold in {box_folders.state}: [Errno 28] No space left on device. The hold "
+        "that stands still pauses new loads, but doesn't list every model unloaded"]
+
+
+def test_a_hold_that_can_never_be_written_is_one_episode_with_one_first_alert(box_folders, tmp_path, monkeypatch):
+    # Re-review 2's out-of-scope storm, the controller's ruling: no hold stands and none can be written. The episode
+    # stands in memory: no new episode, no new first alert, the unloads go on as with a hold, and the write is tried
+    # again at most once a second.
+    tries = []
+
+    def full_disk(state_dir, hold):
+        tries.append(len(box.sleeps))
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(brake, "write_hold", full_disk)
+    curl = Curl(finishes_after=0)
+    names = ["stand-in-1", "stand-in-2", "stand-in-3", "stand-in-4"]
+    box = Timeline([18] * 12, dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=12)
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    steps = [(e.kind, e.episode, e.hold_written) for e in events(box_folders)]
+    assert steps == [("fired", 1, False)] + [("unload", 1, True)] * 4
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
+    assert len([words for words in sent if words.startswith("Brake on")]) == 1  # one first alert; the rest follow up
+    assert all(words.startswith("Brake, ") for words in sent[1:])
+    assert tries == [0, 4, 8]  # at the fire, then once a second (every 4th 250 ms poll), never more
+
+
+def test_a_hold_written_later_ends_the_unwritten_episode_as_a_standing_hold(box_folders, monkeypatch):
+    real, tries = brake.write_hold, []
+
+    def disk_full_then_freed(state_dir, hold):
+        tries.append(len(box.sleeps))
+        if len(tries) < 3:
+            raise OSError(28, "No space left on device")
+        real(state_dir, hold)
+
+    monkeypatch.setattr(brake, "write_hold", disk_full_then_freed)
+    box = Timeline([18] * 10, dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=False, delay=999, polls=10)
+    logs = run_2a(box)
+    hold = read_hold(box_folders.state)
+    assert hold is not None and (hold.episode, hold.unloaded) == (1, ("stand-in-1", "stand-in-2"))
+    assert "brake: the hold is written again" in logs
+    assert [e.kind for e in events(box_folders)].count("fired") == 1
+
+
+def test_an_unwritten_pause_ends_once_memory_stays_above_the_warn_line_for_5_minutes(box_folders, monkeypatch):
+    # With no hold ever written, the episode ends after the gate's five minutes above the warn line, saying no pause
+    # stood; the next fall is a new episode.
+    def full_disk(state_dir, hold):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(brake, "write_hold", full_disk)
+    above = int(brake.RELEASE_AFTER_S / TICK)
+    readings = [18] + [60] * (above + 2) + [18]
+    box = Timeline(readings, dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=False, delay=99999, polls=len(readings))
+    logs = run_2a(box)
+    assert [line for line in logs if "stood" in line] == [
+        "brake: memory has stayed above the warn line for 5 minutes, so episode 1 is over; its hold was never written, "
+        "so no pause ever stood"]
+    assert [(e.kind, e.episode) for e in events(box_folders) if e.kind == "fired"] == [("fired", 1), ("fired", 2)]
+
+
+def test_an_unwritten_pause_needs_5_minutes_above_the_warn_line_in_one_stretch(box_folders, monkeypatch):
+    # Four minutes above it, a dip under it, four more: the episode stands on, as the gate's pause would.
+    def full_disk(state_dir, hold):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(brake, "write_hold", full_disk)
+    four_minutes = int(240 / TICK)
+    readings = [18] + [60] * four_minutes + [25] + [60] * four_minutes + [18]
+    box = Timeline(readings, dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=False, delay=99999, polls=len(readings))
+    logs = run_2a(box)
+    assert not any("stood" in line for line in logs)
+    assert [(e.kind, e.episode) for e in events(box_folders)] == [("fired", 1), ("unload", 1), ("unload", 1)]
+
+
+def test_a_flapping_lock_costs_a_poll_its_budget_at_most(box_folders, monkeypatch):
+    # Re-review 2's out-of-scope stall, the controller's ruling: a reader that takes the lock back after each of the
+    # brake's appends would make one flush wait up to LOCK_WAIT_S a step. A poll's flush waits LOCK_WAIT_S in all,
+    # counting the waits that succeed; what is left waits for the next poll. Here 21 steps wait behind a FIFO (no lock
+    # found held), then the file is put right, with a reader that takes the real lock again after each step the brake
+    # writes and holds it 0.15 s: 21 steps would cost a poll about 3 s.
+    path = box_folders.state / EVENTS_FILE
+    os.mkfifo(path)
+    names = [f"stand-in-{n}" for n in range(1, 21)]
+    box = Timeline([18] * 24, dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=24)
+    stamps, flapper = [], []
+    real_append = brake.append_event
+
+    def take_the_lock():
+        flapper[0].stdin.write("take\n")
+        flapper[0].stdin.flush()
+        assert flapper[0].stdout.readline().strip() == "held"
+
+    def append_event(events_path, event, **kw):
+        real_append(events_path, event, **kw)
+        if flapper and flapper[0].poll() is None:
+            take_the_lock()  # the reader takes it back at once, before the brake's next try
+
+    monkeypatch.setattr(brake, "append_event", append_event)
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 20:  # every model asked, 21 steps waiting
+            path.unlink()
+            path.touch()
+            flapper.append(subprocess.Popen(
+                [sys.executable, "-c", "import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDONLY)\n"
+                 "for _ in sys.stdin:\n    fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(0.15);"
+                 " fcntl.flock(fd, fcntl.LOCK_UN)", str(path)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True))
+            take_the_lock()
+        if len(box.sleeps) == 22:
+            release_the_lock(flapper[0])
+        stamps.append(time.monotonic())
+        poll(seconds)
+
+    box.sleep = sleep
+    real_fsync, os.fsync = os.fsync, lambda fd: None  # this measures the lock's waits, not the disk
+    try:
+        run_2a(box)
+    finally:
+        os.fsync = real_fsync
+        for each in flapper:
+            release_the_lock(each)
+    flapping = stamps[21] - stamps[20]  # poll 21: 21 steps to write, under the flapping lock
+    assert flapping < 2 * brake.LOCK_WAIT_S, flapping
+    written = events(box_folders)
+    assert [e.seq for e in written] == list(range(1, 22))  # every step, in order, by the polls after it
+    assert [e.model for e in written] == [None] + names

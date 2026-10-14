@@ -2704,8 +2704,10 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   step the rate-of-fall watch took above the line. Both have defaults, so a line written before
   them reads as no reason and not falling. The brake never writes `warn`: `memory_warning` is the
   gate's own. *(Added 2026-10-14, the controller's ruling on Task 23's fix round 2:)* and
-  `hold_written: bool = True`, which a `fired` sets from whether its hold reached the disk; a line
-  without it reads as written. *(Added 2026-10-14, the controller's ruling, at Task 23's review: `append_event(path, event, *, wait_s=None)` waits for
+  `hold_written: bool = True`, which a `fired` sets from whether its hold ~~reached the disk~~ stands
+  *(corrected 2026-10-14, the controller's ruling, at Task 23's second re-review: one renamed into
+  place whose folder's fsync then failed stands, and counts as written)*; a line without it reads as
+  written. *(Added 2026-10-14, the controller's ruling, at Task 23's review: `append_event(path, event, *, wait_s=None)` waits for
   the lock `wait_s` at most, then raises BlockingIOError, nothing written, and `episode_for(…,
   locked=True)` reads without the lock when `locked` is false: flock needs no write access, so any
   process that can read the file can hold its lock, and the brake's poll never waits on it.)*
@@ -6104,7 +6106,9 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
     too); or, when `release_waits_for_dan` holds, *brake: new
     loads paused until `make brake-release`: it fired within an hour of the gate's last automatic
     release* (or *… the gate's saved state was damaged, so it can't tell when its last automatic
-    release was*). The gate's saved state is read once at the fire, for this line and the alert.
+    release was*). The gate's saved state is read once ~~at the fire~~ after the poll's unload
+    *(corrected 2026-10-14, at Task 23's second re-review: the re-review's Minor 9 moved it there)*,
+    for this line and the alert.
   - **M1, M5:** Task 7's field table.
   - **M2, M3:** the dated notes at Task 14's ingest and Task 11's `mark_started`.
   - **M4, the start reading by the boot's clock.** The brake keeps each reading's `CLOCK_BOOTTIME`
@@ -6131,10 +6135,15 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
 
 - *(Added 2026-10-14, the controller's rulings, at Task 23's re-review: nine Minors, each fixed
   with its test.)*
-  - **The loads are read whenever the window shows a fall of `MIN_FALL_GIB`**, not only when the
-    projection passes the line, so a load's floor is known, and kept, for any fall the watch could
-    need it for: a slow 1 GiB/s load, then a 20 GiB step with the gate marking it ready on that
-    poll, trips nothing.
+  - **The loads are read ~~whenever the window shows a fall of `MIN_FALL_GIB`~~ on every poll the
+    watch runs** *(corrected 2026-10-14, the controller's ruling, at Task 23's second re-review: read
+    only on a fall, a load too slow to fall `MIN_FALL_GIB` within the window, then a step the gate
+    marked ready as it landed, had no floor)*, not only when the projection passes the line, so a
+    load's floor is known, and kept, ~~for any fall the watch could need it for~~ from the first poll
+    that finds it in progress: a slow 1 GiB/s load, then a 20 GiB step with the gate marking it
+    ready on that poll, trips nothing; since the correction, neither does one falling 0.7 or
+    0.5 GiB/s before the step, or not falling at all, nor whisper's 3 GiB landing as one step at
+    27.5.
   - **`LOCK_WAIT_S`'s words:** a try waits 0.2 s at most; once one has found the lock held, the
     polls after it try without waiting until one takes it.
   - **A poll that fires** writes the hold, then sends the unload, then logs its journal line (the
@@ -6151,9 +6160,42 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   - **The gate's ingest** words a first alert read after its pause lifted (Task 14's note).
   - **Task 26's notifier** takes the same curl hardening (its note).
   - *(Added the same day, the controller's ruling on the fix round's concern 1:)* **a hold never
-    written.** A `fired` records whether its hold reached the disk (`hold_written`, Task 13's note),
+    written.** A `fired` records whether its hold ~~reached the disk~~ stands *(corrected the same
+    day, at the second re-review)* (`hold_written`, Task 13's note),
     and when it didn't, the first alert, the gate's or the brake's own, says the brake couldn't
     write its pause, so new loads weren't paused, never that a pause lifted (Task 7's table).
+
+- *(Added 2026-10-14, the controller's rulings, at Task 23's second re-review: six Minors and
+  three out-of-scope points, each fixed with its test.)*
+  - **The loads are read on every poll the watch runs** (the bullet above, corrected).
+  - **A hold that stands counts as written.** After a failed `write_hold`, the brake reads the hold
+    back: when it is this hold (the rename went through, the folder's fsync failed), `hold_written`
+    is true and the journal says *the hold stands in …, but its folder's fsync failed (…), so a
+    power cycle may lose it. New loads are paused*. When an unload's write, listing the model,
+    fails and the episode's hold still stands, the journal says *the hold that stands still pauses
+    new loads, but doesn't list every model unloaded*. Only with no hold of the episode standing is
+    it *new loads aren't held*.
+  - **The events-file line** is said once for each episode whose steps wait on the file, keyed on
+    the newest waiting step's, and once the file is put right the journal says *its steps are
+    recorded for the gate again*, once.
+  - **A hold the brake can never write** no longer makes every poll a new episode with an alert.
+    With the write failed and no hold standing, the episode stands in the brake's memory, for
+    firing: no new episode and no new first alert (each later unload is a follow-up, as with a
+    hold), and Phase 1's grace and unload rules go on as with a hold. The write is tried again at
+    most once a second (`HOLD_RETRY_S`), with every model unloaded since; once one succeeds, the
+    hold stands as usual and the journal gives its *new loads paused* line. Should memory stay above
+    the warn line for the gate's 5 minutes first, in one stretch, the episode ends: *brake: memory
+    has stayed above the warn line for 5 minutes, so episode N is over; its hold was never written,
+    so no pause ever stood*. A `--once` run makes one last try before it exits, since it won't poll
+    again. The `fired` keeps `hold_written` false: when it fired, no pause stood.
+  - **A poll's flush waits `LOCK_WAIT_S` in all**, the waits that succeed counted too, so a reader
+    that takes the lock back after each step costs a poll 0.2 s, not 0.2 s a step; what is left
+    waits for the next poll.
+  - **The gate's `_after_reboot` line** for an earlier boot's episode whose `fired` says its hold
+    wasn't written: *the brake fired at … before the reboot, couldn't write its hold then, and none
+    of its stands now, so nothing is sent*.
+  - **Tests:** the overflow test stubs fsync; the order test gains steps queued from an earlier poll,
+    which the reviewer's poll-start-flush mutant fails.
 
 **Tests** (`spark/tests/test_brake.py`; Phase 1's kept):
 
@@ -8026,7 +8068,8 @@ every step, is its guard against a `MemAvailable` that reports late.
 The rate watch is accounted for by pace, not paused: 0.25 GiB every 2.5 s is Task 40's hog's pace,
 under Task 23's trigger ~~while more than 22 GiB is available~~ *(corrected 2026-10-14, the controller's ruling, at Task 23's re-review:
 always, since the trigger needs a fall of `brake.MIN_FALL_GIB`, 1.5 GiB, within its window, which a
-0.25 GiB step never makes)*, and the script stops at the reserve, 24. So the
+0.25 GiB step never makes; the controller's ruling at Task 23's review first added this beside the
+struck clause, and this correction takes its place)*, and the script stops at the reserve, 24. So the
 measurement sends `memory_warning` once, as it passes 28, and no `brake_fired`. About 16 minutes
 for the 93 GiB the box can give.
 

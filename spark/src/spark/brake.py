@@ -14,8 +14,8 @@ still, a synchronous loop that never shares an event loop with the gate and neve
 - **Each step is recorded for the gate** in `brake/events.jsonl` (brakeevents): fired, each unload, and each unload
   llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is. In a poll, the hold is
   written first, then the unload is sent, and only then are the steps written: no lock another process can hold comes
-  before either, and a try for it waits LOCK_WAIT_S at most (Task 23's review). A step held up waits, in order, for a
-  poll that can write it.
+  before either, and a poll's tries for it wait LOCK_WAIT_S at most in all (Task 23's review, and its second
+  re-review). A step held up waits, in order, for a poll that can write it.
 - **While the gate is down** (its record missing or stale) it sends its own `brake_fired`, and each follow-up, to ntfy
   through Ubuntu's curl, never waited on, its address, topic and text on curl's stdin, never a command line. Until ntfy
   is set up (Task 2, Phase 5) it sends nothing, says so in its journal once an episode, and the gate, once back, tries.
@@ -109,10 +109,14 @@ LOAD_FLOOR_MARGIN_GIB = 2.0  # below where the loads in progress should leave me
 # s ahead, would pass the line; none falls 1.5 GiB in 2 s, and a runaway faster than ~0.75 GiB/s does. Task 47 sets it
 # from the measured noise and the soak's growth bursts.
 MIN_FALL_GIB = 1.5
-# A try for the events file's lock, which another process can hold, waits this long at most (Task 23's review, I1).
-# The steps are written only after a poll's hold and unload, so neither waits on it; and once a try has found the lock
-# held, the polls after it try without waiting until one takes it, so a lock held for long costs one wait.
+# A poll's tries for the events file's lock, which another process can hold, wait this long at most in all, the waits
+# that succeed counted too (Task 23's review, I1; the controller's ruling on its second re-review). The steps are
+# written only after a poll's hold and unload, so neither waits on it; and once a try has found the lock held, the
+# polls after it try without waiting until one takes it, so a lock held for long costs one wait.
 LOCK_WAIT_S = 0.2
+# A hold the brake couldn't write, with none standing, is tried again at most this often while its episode stands in
+# the brake's memory (the controller's ruling on Task 23's second re-review).
+HOLD_RETRY_S = 1.0
 # At most this many steps for the gate wait, in order, for the events file's lock: past it the oldest go, and the
 # journal says how many (the controller's ruling on Task 23's fix round 1).
 PENDING_MAX = 64
@@ -601,6 +605,10 @@ class _Once:
     def forget(self, what: str) -> None:
         self._last.pop(what, None)
 
+    def mark(self, what: str, line: str) -> None:
+        """A failure said some other way (once an episode): its clearing is still said, once."""
+        self._last[what] = line
+
 
 @dataclass
 class _Returning:
@@ -614,6 +622,17 @@ class _Returning:
 
 
 @dataclass
+class _Unwritten:
+    """A hold the brake fired but couldn't write, with none standing (the controller's ruling on Task 23's second
+    re-review): its episode stands in the brake's memory, for firing, until a write succeeds or memory has stayed above
+    the warn line for RELEASE_AFTER_S. No pause stands meanwhile: nothing on disk tells the gate to refuse a load."""
+
+    hold: Hold  # what is written once a write succeeds: the fired hold, with the models unloaded since
+    tried_s: float  # the last try to write it, on the brake's monotonic clock
+    above_since_s: float | None = None  # since when memory has stayed above the warn line, or None
+
+
+@dataclass
 class _Fired:
     """The brake fired this poll: what its first alert says, once the poll's unload is known."""
 
@@ -623,7 +642,7 @@ class _Fired:
     hold: Hold
     falling: bool
     sending: bool  # the brake sends the alert itself, the gate being down
-    written: bool  # the hold reached the disk
+    written: bool  # a hold of this episode stands (write)
     waits: bool = False  # release_waits_for_dan for its hold: only `make brake-release` lifts it (after the unload)
     saved: Any = None  # the gate's saved state, read after the unload (gate.state.GateState), or None with no gate
     unloaded: list[tuple[str, str | None]] = field(default_factory=list)  # (label, state)
@@ -663,6 +682,7 @@ class _Brake:
         self.unrecorded_why = ""  # why the last write of `pending` failed, for the journal
         self.episode: int | None = None  # the events' episode this brake is in, once it has fired or unloaded
         self.said: set[tuple[str, int]] = set()  # what its journal said once an episode: (what, episode)
+        self.unwritten: _Unwritten | None = None  # a fired hold it couldn't write, with none standing
         self._activity: Any = _UNREAD
 
     def check_state_dir(self) -> None:
@@ -696,16 +716,18 @@ class _Brake:
         if not actions:
             self.warned = False
             self.asked.clear()
-            self.episode = None
+            self.episode = None  # an episode whose hold couldn't be written stands on all the same (episode_now)
             # A credit no longer counted would keep a later one for the same model from being counted.
             self.returning = {m: r for m, r in self.returning.items() if r.counted}
+        if self.unwritten is not None:  # before the unload, where the hold comes
+            self.unwritten_episode(mem, wall, mono)
         fired: _Fired | None = None
         for action in actions:
             if action.kind == "warn" and not self.warned:
                 self.log(f"brake: warning — {mem.available_gib:.1f} GiB available (warns below {thresholds.warn_gib:g})")
                 self.warned = True
-            elif action.kind == "hold" and read_hold(self.state_dir) is None:
-                fired = self.fire(mem, wall, falling, self.loading(order, states, activity))
+            elif action.kind == "hold" and self.unwritten is None and read_hold(self.state_dir) is None:
+                fired = self.fire(mem, wall, mono, falling, self.loading(order, states, activity))
             elif action.kind == "unload":
                 self.unload(action.model, mem, states.get(action.model), wall=wall, falling=falling, fired=fired)
         # After the hold and the unload: the journal's line, the brake's own alert, then the steps for the gate, so
@@ -737,15 +759,22 @@ class _Brake:
 
     def watch(self, wall: float, mono: float) -> float | None:
         """The rate-of-fall watch: the reading UNLOAD_LEAD_S ahead when it would pass the brake line, else None. The
-        loads in progress are read whenever the window shows a fall of MIN_FALL_GIB, so their floor is known for any
-        fall the watch could need it for, a slow one included (Task 23's re-review, Minor 1). Whatever fails in reading
-        them is no load in progress, the stricter way, and is said once. Once they have left (the gate marks a load
-        ready as its fall ends, or a moment after), their floor stands FALL_WINDOW_S and a poll more, while the window
-        still holds their fall (Task 23's review, C1)."""
+        loads in progress are read on every poll it runs, so a load's floor is known from the first poll that finds it in
+        progress, whatever its pace: a load too slow for the window, then a step the gate marks ready as it lands,
+        included (the controller's ruling on Task 23's second re-review, Minor 1). Whatever fails in reading them is no load in progress, the
+        stricter way, and is said once. Once they have left (the gate marks a load ready as its fall ends, or a moment
+        after), their floor stands FALL_WINDOW_S and a poll more, while the window still holds their fall (Task 23's
+        review, C1)."""
         line = self.registry.brake.brake_gib
+        floor = self.load_floor(wall, mono)
         rough = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=None)
-        if rough is None:  # no fall of MIN_FALL_GIB in the window
-            return None
+        if rough is None or rough >= line:  # no fall of MIN_FALL_GIB in the window, or none that would pass the line:
+            return None  # their floor can only hold the projection back
+        ahead = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=floor)
+        return ahead if ahead is not None and ahead < line else None
+
+    def load_floor(self, wall: float, mono: float) -> float | None:
+        """The floor of the loads in progress, or of the last ones while it stands (watch)."""
         if self.launch is not None:
             try:
                 tickets.started(self.launch, now=wall, boot_id=self.boot_id)
@@ -767,10 +796,7 @@ class _Brake:
         elif (self.floor_kept is not None
               and mono - self.floor_kept[1] <= FALL_WINDOW_S + self.registry.brake.poll_ms / 1000):
             floor = self.floor_kept[0]
-        if rough >= line:  # their floor can only hold the projection back: no breach either way
-            return None
-        ahead = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=floor)
-        return ahead if ahead is not None and ahead < line else None
+        return floor
 
     def listed(self, mem: MemInfo, falling: bool = False) -> list[tuple[str, str]] | None:
         """What llama-swap runs, asked only below the warn line, while memory is on its way back, or when the rate of
@@ -826,10 +852,11 @@ class _Brake:
                 return name
         return min(starting) if starting else None
 
-    def fire(self, mem: MemInfo, wall: float, falling: bool, loading: str | None) -> _Fired:
+    def fire(self, mem: MemInfo, wall: float, mono: float, falling: bool, loading: str | None) -> _Fired:
         """No hold stands: write one, of a new episode, with this boot, the model loading and the reading, before
         anything that could wait: its episode comes from an unlocked read of the events (Task 23's review, I1). Then
-        queue `fired` for the gate, saying whether the brake sends the alert itself; it is written after the unload."""
+        queue `fired` for the gate, saying whether the brake sends the alert itself; it is written after the unload. A
+        hold it can't write stands in its memory instead (unwritten_episode)."""
         line = self.registry.brake.brake_gib
         episode = self.episode = self.next_episode()
         reason = f"{mem.available_gib:.1f} GiB available"
@@ -837,6 +864,8 @@ class _Brake:
             reason += f", falling fast toward the {line:g} GiB line"
         hold = Hold(self.now(), reason, (), self.boot_id, episode, loading, mem.available_gib)
         written = self.write(hold)
+        if not written:
+            self.unwritten = _Unwritten(hold, mono)
         sending = self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "fired", None, None, mem.available_gib, line, sending,
                                falling=falling, hold_written=written))
@@ -846,12 +875,41 @@ class _Brake:
         """After the poll's unload: the gate's saved state, read once for the journal's line and the alert, and the
         line saying how the pause ends (Task 23's re-review, Minor 9: a file of up to 16 MiB is never decoded before the
         unload)."""
-        fired.saved = None if self.gate_state is None else load_state(self.gate_state, now=wall)[0]  # never raises
-        fired.waits = release_waits_for_dan(
-            fired.hold, boot_id=self.boot_id, now=wall,
-            last_auto_release_at=None if fired.saved is None else fired.saved.last_auto_release_at)
+        fired.saved, fired.waits = self.how_it_ends(fired.hold, wall)
         if fired.written:
             self.log(self.paused(fired.waits, fired.saved))
+
+    def how_it_ends(self, hold: Hold, wall: float) -> tuple[Any, bool]:
+        """The gate's saved state (None with no gate), and whether the hold's release waits for Dan by rule 5."""
+        saved = None if self.gate_state is None else load_state(self.gate_state, now=wall)[0]  # never raises
+        waits = release_waits_for_dan(hold, boot_id=self.boot_id, now=wall,
+                                      last_auto_release_at=None if saved is None else saved.last_auto_release_at)
+        return saved, waits
+
+    def unwritten_episode(self, mem: MemInfo, wall: float, mono: float) -> None:
+        """An episode whose hold couldn't be written, with none standing (the controller's ruling on Task 23's second
+        re-review). It stands in the brake's memory, for firing: no new episode and no new first alert, and Phase 1's
+        grace and unload rules go on as with a hold. The write is tried again at most every HOLD_RETRY_S; once one
+        succeeds, the hold stands as usual. Should memory stay above the warn line for the gate's RELEASE_AFTER_S first,
+        the episode ends, and the journal says no pause ever stood."""
+        unwritten = self.unwritten
+        if mem.available_gib > self.registry.brake.warn_gib:  # the gate's test (core): above, never at
+            if unwritten.above_since_s is None:
+                unwritten.above_since_s = mono
+        else:
+            unwritten.above_since_s = None
+        if mono - unwritten.tried_s >= HOLD_RETRY_S:
+            unwritten.tried_s = mono
+            if self.write(unwritten.hold):
+                self.unwritten = None
+                saved, waits = self.how_it_ends(unwritten.hold, wall)
+                self.log(self.paused(waits, saved))
+                return
+        if unwritten.above_since_s is not None and mono - unwritten.above_since_s >= RELEASE_AFTER_S:
+            self.unwritten = None
+            self.episode = None
+            self.log(f"brake: memory has stayed above the warn line for {messages.duration(RELEASE_AFTER_S)}, so "
+                     f"episode {unwritten.hold.episode} is over; its hold was never written, so no pause ever stood")
 
     def next_episode(self) -> int:
         """The next episode: one past the last in the file for this boot, read without the lock, and past any of the
@@ -915,13 +973,17 @@ class _Brake:
         self.returning[model] = _Returning(self.footprint(model), mem.available_gib, self.clock,
                                            STAGES.get(state, STAGES["ready"]))
         reason = f"{mem.available_gib:.1f} GiB available"
-        hold = read_hold(self.state_dir)
-        if hold is None:  # released while the unload was on its way, or never written: memory was below the line,
-            # or falling fast toward it
-            hold = self.fresh_hold(reason, mem, fired)
+        unwritten = self.unwritten
+        if unwritten is not None:  # the hold it couldn't write lists the model, for the write's next try
+            if model not in unwritten.hold.unloaded:
+                unwritten.hold = replace(unwritten.hold, unloaded=unwritten.hold.unloaded + (model,))
+        elif (hold := read_hold(self.state_dir)) is None:  # released while the unload was on its way: memory was
+            # below the line, or falling fast toward it
+            self.write(replace(self.fresh_hold(reason, mem, fired), unloaded=(model,)))
         elif hold.since == UNREADABLE_SINCE:  # read_hold's stand-in for a damaged file: never write it back
-            hold = self.fresh_hold(f"{reason}; the hold file before this one was damaged ({hold.reason})", mem, fired)
-        if model not in hold.unloaded:
+            self.write(replace(self.fresh_hold(f"{reason}; the hold file before this one was damaged ({hold.reason})",
+                                               mem, fired), unloaded=(model,)))
+        elif model not in hold.unloaded:
             self.write(replace(hold, unloaded=hold.unloaded + (model,)))
         if state == "starting" or said == "starting":
             self.forget_started(model)
@@ -952,11 +1014,14 @@ class _Brake:
         return "starting" if state == "starting" else None
 
     def episode_now(self) -> int:
-        """The events' episode: the standing hold's while a hold of this boot stands; else this brake's own since it
-        fired or first unloaded; else the next in the file (episode_for)."""
+        """The events' episode: the standing hold's while a hold of this boot stands, or the one it couldn't write while
+        that episode stands in its memory (unwritten_episode); else this brake's own since it fired or first unloaded;
+        else the next in the file (episode_for)."""
         hold = read_hold(self.state_dir)
         if hold is not None and hold.boot_id == self.boot_id and hold.episode is not None:
             self.episode = hold.episode
+        elif self.unwritten is not None:
+            self.episode = self.unwritten.hold.episode
         elif self.episode is None:
             self.episode = self.next_episode()
         return self.episode
@@ -988,19 +1053,23 @@ class _Brake:
 
     def flush(self, wait_s: float) -> None:
         """Write the waiting steps, in order, each fsynced (brakeevents.append_event, whose seq comes from the file
-        under its lock, so it goes on across restarts). Each try for the lock waits `wait_s` at most: any process that
-        can read the file can hold it (Task 23's review, I1); once one finds it held, the polls after it try without
-        waiting until one takes it. A write that fails leaves that step and those after it waiting, and never stops the
-        brake; it is said once, and an events file that isn't a regular file once an episode (the re-review's Minor 3).
-        A step the file would never take (any other ValueError) is dropped, and said."""
+        under its lock, so it goes on across restarts). The tries for the lock wait `wait_s` at most in all, the waits
+        that succeed counted too: any process that can read the file can hold it, and take it back after each step
+        (Task 23's review, I1; the controller's ruling on its second re-review). Once a try finds it held, the polls
+        after it try without waiting until one takes it. A write that fails leaves that step and those after it waiting,
+        for the next poll, and never stops the brake; it is said once, and an events file that isn't a regular file
+        once for each episode whose steps wait on it (the re-review's Minor 3, and its second's), and once the steps are
+        recorded again. A step the file would never take (any other ValueError) is dropped, and said."""
+        deadline = time.monotonic() + wait_s
         while self.pending:
             try:
-                append_event(self.events, self.pending[0], wait_s=wait_s)
+                append_event(self.events, self.pending[0], wait_s=max(0.0, deadline - time.monotonic()))
             except EventsFileNotRegular:  # the file's fault, not the step's: they wait, as for a lock
                 self.unrecorded_why = f"the brake's events file {self.events} isn't a regular file"
-                self.say_once("events-file", self.pending[0].episode,
-                              f"brake: ALERT — the brake's events file {self.events} isn't a regular file, so its "
-                              "steps can't be recorded for the gate")
+                line = (f"brake: ALERT — the brake's events file {self.events} isn't a regular file, so its steps "
+                        "can't be recorded for the gate")
+                self.say_once("events-file", self.pending[-1].episode, line)  # the newest step's: fired or recorded
+                self.once.mark("events", line)
                 return
             except ValueError as err:  # never a whole event: no wait will make it one
                 self.pending.popleft()
@@ -1022,6 +1091,14 @@ class _Brake:
             self.log(f"brake: ALERT — {self.dropped} of its steps for the gate were dropped, the oldest first, while "
                      f"it couldn't record them; the newest {PENDING_MAX} are recorded")
             self.dropped = 0
+
+    def hold_last(self) -> None:
+        """A --once run's end: one last try for a hold it couldn't write, with the models unloaded since, as Phase 1's
+        unload tried it again in the same poll. This run won't poll again, so the once-a-second limit gives way."""
+        if self.unwritten is not None and self.write(self.unwritten.hold):
+            hold, self.unwritten = self.unwritten.hold, None
+            saved, waits = self.how_it_ends(hold, self.wall())
+            self.log(self.paused(waits, saved))
 
     def flush_last(self) -> None:
         """A --once run's end: one last bounded try for the steps still waiting, then the journal says what went
@@ -1082,7 +1159,7 @@ class _Brake:
             "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed,
             "unload_unanswered": not fired.unloaded and (something_loaded or bool(fired.failed)),
             "falling": fired.falling, "not_unloaded": list(fired.failed),
-            "hold_written": fired.written}  # its hold never reached the disk: new loads weren't paused
+            "hold_written": fired.written}  # False: no hold of its stood when it fired, so new loads weren't paused
         if waits and not state.release_assumed:
             fields["released_at"] = state.last_auto_release_at
         self.send("brake_fired", fields)
@@ -1113,9 +1190,21 @@ class _Brake:
             self.log(f"brake: ALERT — its own alert wasn't sent: {trouble}; the gate won't send it")
 
     def write(self, hold: Hold) -> bool:
+        """Write the hold: True when a hold of its episode stands afterwards, so new loads are paused. A write that
+        failed after its rename (the folder's fsync) left it standing (the controller's ruling on Task 23's second
+        re-review, Minor 2), and one that failed before it left any earlier hold of the episode standing."""
         try:
             write_hold(self.state_dir, hold)
         except OSError as err:  # a missing or read-only folder, a full disk: the unload must still go out
+            stands = read_hold(self.state_dir)
+            if stands == hold:
+                self.once.failed("hold", f"brake: ALERT — the hold stands in {self.state_dir}, but its folder's fsync "
+                                         f"failed ({err}), so a power cycle may lose it. New loads are paused")
+                return True
+            if stands is not None and (stands.boot_id, stands.episode) == (hold.boot_id, hold.episode):
+                self.once.failed("hold", f"brake: ALERT — can't write the hold in {self.state_dir}: {err}. The hold "
+                                         "that stands still pauses new loads, but doesn't list every model unloaded")
+                return True
             self.once.failed("hold", f"brake: ALERT — can't write the hold in {self.state_dir}: {err}. Models are "
                                      "still unloaded, but new loads aren't held")
             return False
@@ -1224,6 +1313,7 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
             brake.once.cleared("memory", "brake: memory reads again")
             brake.poll(mem)
         if once:
+            brake.hold_last()
             if alerter is not None:  # systemd ends a oneshot unit's leftover processes: its alerts go first
                 for code in alerter.wait(ALERT_WAIT_S):
                     log(_alert_failed(code))
