@@ -8,6 +8,21 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-14 — DCGM's host engine masked (Dan's decision)
+
+**Found** by Dan, **on the Spark**: NVIDIA's DCGM, `datacenter-gpu-manager` 1:3.3.9, is installed,
+with btop, by `apt install btop datacenter-gpu-manager` (apt's own log). PR #9, never merged, dated
+that install 2026-10-13; the date isn't checked here. The host engine's service, `nvidia-dcgm`, was
+already disabled at boot.
+
+**Changed** by Dan, **on the Spark**: `sudo systemctl disable --now nvidia-dcgm`, then
+`sudo systemctl mask nvidia-dcgm`. Checked after: `systemctl is-active nvidia-dcgm` says it is
+inactive, and `pgrep -a nv-hostengine` finds no host engine. Why (Dan's decision; the plan's Phase
+2b): the host engine runs as root and takes commands from any account on the box, `agent`
+included, among them GPU diagnostics that take GPU memory without asking the gate, and clock and
+power settings. The GPU is watched with `nvidia-smi` instead. `sudo systemctl unmask nvidia-dcgm`
+undoes the mask. btop stays.
+
 ## 2026-10-08 — The coder is Qwen3.8-27B, at 160K for now (Dan's decision)
 
 **Deployed** by Dan, **on the Spark**, from a `main` worktree: the apply restarted llama-swap with
