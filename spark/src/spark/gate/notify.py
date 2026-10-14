@@ -491,6 +491,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       It also says something was loaded, whatever the gate's state holds.
     - A first alert from the rate-of-fall watch (`falling`, Task 23) says memory was falling toward the line, never
       under it.
+    - A first alert read after its pause ended (no hold stands, or a newer one does: the brake's queue held it back,
+      Task 23's re-review) says the brake paused new loads and the pause has since lifted, never that they are paused.
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -598,6 +600,8 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
         fields["released_at"] = state.last_auto_release_at
     if reading.falling:  # the rate-of-fall watch acted above the line (Task 23)
         fields["falling"] = True
+    if _pause_lifted(path, (boot, episode)):  # read after its pause ended: never "new loads are paused" now
+        fields["lifted"] = True
     if not_unloaded:  # why llama-swap didn't unload these (Task 23)
         fields["not_unloaded"] = not_unloaded
     # Something is loaded (the gate holds a model, or llama-swap refused to unload one), and no unload came by
@@ -623,6 +627,19 @@ def _after_reboot(group: _Group, path: Path, state: GateState, registry: Registr
     labels = list(dict.fromkeys(_label(registry, e.model or "") for e in group.unloads))
     return ("brake_needs_release", f"brake-needs:{boot}:{episode}",
             {"fired_at": reading.at, "available_gib": reading.available_gib, "unloaded": labels})
+
+
+def _pause_lifted(path: Path, episode: tuple[str, int]) -> bool:
+    """Whether the episode's pause has ended by the time the gate reads its first alert: no hold stands, or a newer
+    one does (another episode's). The brake's queue can hold its steps back past the pause's end, when another process
+    held the events file's lock (the controller's ruling, at Task 23's re-review). A hold that names no episode (Phase
+    1's, or a damaged file's) can't be told apart, and counts as the episode's, so the words err toward paused."""
+    hold = read_hold(path.parent)
+    if hold is None:
+        return True
+    if hold.boot_id is None or hold.episode is None:
+        return False
+    return (hold.boot_id, hold.episode) != episode
 
 
 def _waits_for_dan(fired: BrakeEvent, path: Path, state: GateState, now: float) -> bool:

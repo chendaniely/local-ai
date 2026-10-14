@@ -86,7 +86,9 @@ def test_the_hold_names_the_command_that_lifts_it(tmp_path):
     # is the brake's word.
     run_brake(REG, FakeClient([Running("coder", "ready")]), tmp_path, read_mem=lambda: MemInfo(121.7, 18),
               sleep=lambda s: None, log=logs.append, now=lambda: "t", once=True)
-    assert ("brake: new loads paused; the gate lifts the pause once memory has stayed above 28 GiB available for 5 "
+    # It names no figure: a drill's copy of the registry raises its own lines, never the gate's (the re-review's
+    # Minor 5).
+    assert ("brake: new loads paused; the gate lifts the pause once memory has stayed above the gate's warn line for 5 "
             "minutes, at most once an hour, or `make brake-release` lifts it now") in logs
 
 
@@ -1725,11 +1727,13 @@ def release_the_lock(holder: subprocess.Popen) -> None:
 
 def test_a_lock_another_process_holds_never_stops_the_hold_or_the_unload(box_folders):
     # The review's I1: flock needs no write access, so any process that can read the brake's events can hold their
-    # lock. The hold is written first, its episode from an unlocked read; each lock is tried for about 0.2 s a poll, in
-    # all, then the brake goes on, and says so once. A --once run makes one last bounded try, then says what went
-    # unrecorded (the controller's ruling on fix round 1's concern 2).
+    # lock. The hold is written first, its episode from an unlocked read, and the unload goes out before any step is
+    # written (the re-review's Minor 8); a try for the lock waits LOCK_WAIT_S at most, then the brake goes on, and says
+    # so once. A --once run makes one last bounded try, then says what went unrecorded (the controller's ruling on fix
+    # round 1's concern 2). The disk's fsyncs are stubbed: this measures the lock's waits (the re-review's Minor 7).
     holder = hold_the_events_lock(box_folders.state / EVENTS_FILE)
-    sent = []
+    sent, real_fsync = [], os.fsync
+    os.fsync = lambda fd: None
     try:
         box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False,
                        on_unload=lambda model: sent.append(time.monotonic()))
@@ -1737,11 +1741,13 @@ def test_a_lock_another_process_holds_never_stops_the_hold_or_the_unload(box_fol
         logs = run_2a(box, once=True)
         took = time.monotonic() - begun
     finally:
+        os.fsync = real_fsync
         release_the_lock(holder)
     hold = read_hold(box_folders.state)
     assert hold is not None and (hold.episode, hold.unloaded) == (1, (GEMMA,)) and box.requests == [(0, GEMMA)]
-    assert sent[0] - begun < 0.35, sent[0] - begun  # one wait of LOCK_WAIT_S (measured 0.21 s) before the unload
-    assert took < 0.55, took  # and one last try at the end: never one wait per step
+    assert sent[0] - begun < brake.LOCK_WAIT_S / 2, sent[0] - begun  # no lock waited for before the unload
+    # One try at the poll's end and one last try: each LOCK_WAIT_S at most, never one per step (measured 0.41 s).
+    assert 2 * brake.LOCK_WAIT_S <= took < 3 * brake.LOCK_WAIT_S, took
     assert sum("another process holds" in line for line in logs) == 1
     assert [line for line in logs if "went unrecorded" in line] == [
         "brake: ALERT — 2 of its steps for the gate went unrecorded (fired, unload vision-chat): another process held "
@@ -1792,10 +1798,13 @@ def test_steps_waiting_for_the_lock_are_bounded_and_the_oldest_dropped(box_folde
         poll(seconds)
 
     box.sleep = sleep
+    begun = time.monotonic()
     try:
         logs = run_2a(box)
     finally:
         release_the_lock(holder)
+    # Once a try has found the lock held, the polls after it don't wait: one wait, not 66 (the re-review's Minor 2).
+    assert time.monotonic() - begun < 10 * brake.LOCK_WAIT_S
     assert len(box.requests) == 66
     written = events(box_folders)
     assert [e.seq for e in written] == list(range(1, 65))
@@ -1934,3 +1943,108 @@ def test_curl_sends_the_alert_as_it_is_and_reads_no_curlrc(tmp_path):
     assert (with_q["priority"], with_q["auth"]) == ("high", "Bearer stand-in-token-z9")
     assert with_q["planted"] is None and without_q["planted"] == "yes"  # -q is what keeps the .curlrc out
     assert bare == with_q  # an empty environment is all it needs
+
+
+
+# Task 23's re-review, the controller's rulings (fix round 2).
+
+@pytest.mark.parametrize("gap", [0, 1, 2], ids=["ready with the step", "a poll after", "two polls after"])
+def test_a_slow_load_then_a_step_with_ready_at_once_never_trips_the_watch(box_folders, gap):
+    # The re-review's Minor 1, its probe: the coder's weights fall at 1 GiB/s, 74 to 60, which never projects under the
+    # line; then its KV cache and compute buffers come as a 20 GiB step in one poll, with the gate marking it ready on
+    # that poll. Its loads are read whenever the window shows a fall of MIN_FALL_GIB, so its floor (31) is kept.
+    f = box_folders
+    readings = [74 - 1.0 * TICK * i for i in range(57)] + [40.0] * 20
+    started_record(f.launch, CODER, footprint=41, available=74, start_time=ticks(T0 - 0.5))
+    an_engine(f.proc, CODER)
+    box = ReadyAt(readings, {GEMMA: "ready", CODER: "starting"}, folders=f, model=CODER, ready_poll=57 + gap,
+                  models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+@pytest.mark.parametrize("before", [1, 2])
+def test_ready_a_poll_or_two_before_the_fall_ends_never_trips_the_watch(box_folders, before):
+    f = box_folders
+    readings = fall(74, 33, 2.5, then=16)
+    end = next(i for i in range(1, len(readings)) if readings[i] == readings[i - 1])
+    started_record(f.launch, CODER, footprint=41, available=74, start_time=ticks(T0 - 0.5))
+    an_engine(f.proc, CODER)
+    box = ReadyAt(readings, {GEMMA: "ready", CODER: "starting"}, folders=f, model=CODER, ready_poll=end - before,
+                  models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+def test_an_events_file_that_isnt_a_regular_file_is_said_once_an_episode(box_folders):
+    # The re-review's Minor 3: the file is at fault, not the step; said once an episode, not once a step, and the steps
+    # wait, as for a lock.
+    os.mkfifo(box_folders.state / EVENTS_FILE)
+    names = ["stand-in-1", "stand-in-2", "stand-in-3"]
+    box = Timeline([18], dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=3)
+    logs = run_2a(box)
+    assert len(box.requests) == 3 and read_hold(box_folders.state) is not None
+    said = [line for line in logs if "regular file" in line]
+    assert said == [f"brake: ALERT — the brake's events file {box_folders.state / EVENTS_FILE} isn't a regular file, "
+                    "so its steps can't be recorded for the gate"]
+
+
+def test_a_new_episode_counts_past_the_steps_still_waiting(box_folders):
+    # The re-review's Minor 4: the lock held past the hold's release, the brake fires again; its episode is past both
+    # the file's and the waiting steps', so the gate never takes two pauses for one.
+    path = box_folders.state / EVENTS_FILE
+    holder = hold_the_events_lock(path)
+    names = ["stand-in-1", "stand-in-2", "stand-in-3"]
+    box = Timeline([18, 60, 60, 18, 18], dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False,
+                   delay=999, polls=5)
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 0:
+            release_hold(box_folders.state)  # the gate's release, or Dan's, while the lock stays held
+        if len(box.sleeps) == 3:
+            release_the_lock(holder)
+        poll(seconds)
+
+    box.sleep = sleep
+    try:
+        run_2a(box)
+    finally:
+        release_the_lock(holder)
+    assert [(e.kind, e.episode, e.model) for e in events(box_folders)] == [
+        ("fired", 1, None), ("unload", 1, "stand-in-1"), ("fired", 2, None), ("unload", 2, "stand-in-2"),
+        ("unload", 2, "stand-in-3")]
+    assert read_hold(box_folders.state).episode == 2
+
+
+def test_a_firing_poll_writes_the_hold_then_unloads_then_records(box_folders, monkeypatch):
+    # The re-review's Minors 8 and 9: the hold first, then the unload, then the journal's line and the gate's steps,
+    # even with steps still waiting from before; nothing that could wait or decode comes before the unload.
+    order = []
+    real_write, real_append, real_load = brake.write_hold, brake.append_event, brake.load_state
+
+    def write_hold(folder, hold):
+        order.append("hold")
+        return real_write(folder, hold)
+
+    def append_event(path, event, **kw):
+        order.append(f"step {event.kind}")
+        return real_append(path, event, **kw)
+
+    def load_state(*args, **kw):
+        order.append("gate's state")
+        return real_load(*args, **kw)
+
+    monkeypatch.setattr(brake, "write_hold", write_hold)
+    monkeypatch.setattr(brake, "append_event", append_event)
+    monkeypatch.setattr(brake, "load_state", load_state)
+    box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False,
+                   on_unload=lambda model: order.append(f"unload {model}"))
+    logs = []
+    run_brake(box.registry, box, box_folders.state, read_mem=box.read_mem, sleep=box.sleep,
+              log=lambda line: (order.append("journal") if "new loads paused" in line else None, logs.append(line)),
+              now=lambda: FIRED_AT, once=True, monotonic=box.now_s, wall=box.wall, boottime=box.boot_s, boot_id=BOOT,
+              gate_state=box_folders.gate, launch=box_folders.launch, proc=box_folders.proc, spark_uid=os.geteuid())
+    assert order[:order.index(f"unload {GEMMA}") + 1] == ["hold", f"unload {GEMMA}"]
+    assert order[order.index(f"unload {GEMMA}"):] == [f"unload {GEMMA}", "hold", "gate's state", "journal",
+                                                      "step fired", "step unload"]

@@ -543,9 +543,18 @@ def texts(found: list[tuple[str, str, dict]]) -> list[str]:
     return [text(kind, **fields) for kind, _, fields in found]
 
 
+def standing(folder: Path, when: float | None = None, *, episode: int = 1) -> None:
+    """The brake's hold for `episode`, as the brake writes it before its steps: its pause still stands as the gate
+    reads them (since Task 23's re-review, a first alert read after its pause lifted says so)."""
+    when = at(3, 12) if when is None else when
+    write_hold(folder, Hold(datetime.fromtimestamp(when).isoformat(timespec="seconds"), "19.6 GiB available", (),
+                            boot_id=BOOT, episode=episode, available_gib=19.6))
+
+
 def plans_episode(folder: Path, *, by_brake: bool = False) -> list[BrakeEvent]:
     """Task 7's example: fired at 03:12 at 19.6; the coder unloaded while starting; at 03:13 Gemma and the embeddings,
-    both idle."""
+    both idle. The brake's hold stands, as it wrote it first."""
+    standing(folder)
     return write(folder, event("fired", at(3, 12), by_brake=by_brake),
                  event("unload", at(3, 12, 1), model=CODER, state="starting", available=19.9, by_brake=by_brake),
                  event("unload", at(3, 13), model=GEMMA, state="idle", available=24.1, by_brake=by_brake),
@@ -604,9 +613,11 @@ def test_a_drill_lines_event_is_worded_with_its_own_line(tmp_path):
 def test_two_episodes_send_two_brake_fired(tmp_path):
     path = tmp_path / EVENTS_FILE
     state = GateState()
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"))
     first = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
     state.last_auto_release_at = at(3, 40)  # the gate's automatic release between the two
+    standing(tmp_path, at(3, 50), episode=2)
     write(tmp_path, event("fired", at(3, 50), episode=2), event("unload", at(3, 50, 1), episode=2, model=GEMMA,
                                                                 state="idle"))
     second = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 50, 2))
@@ -620,6 +631,7 @@ def test_two_episodes_send_two_brake_fired(tmp_path):
 
 def test_after_a_damaged_start_a_brake_never_names_an_automatic_release(tmp_path):
     state = GateState(last_auto_release_at=at(3, 0), release_assumed=True)
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"))
     (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)))
     assert words.endswith("New loads stay paused until you release them: the gate's saved state was damaged, so it "
@@ -632,6 +644,7 @@ def test_a_lone_fired_event_waits_for_its_unload(tmp_path):
     # FIRED_ALONE_S (the controller's ruling, at Task 14).
     path = tmp_path / EVENTS_FILE
     state = GateState()
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)))
     assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, FIRED_ALONE_S - 0.5)) == []
     assert state.brake_events_after is None  # left to read again
@@ -641,6 +654,7 @@ def test_a_lone_fired_event_waits_for_its_unload(tmp_path):
 
 
 def test_a_brake_with_nothing_loaded_says_so_once_its_wait_is_over(tmp_path):
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)))
     found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
                                 now=at(3, 12, FIRED_ALONE_S))
@@ -655,6 +669,7 @@ def test_a_brake_whose_unload_went_unanswered_says_so_then_follows_up(tmp_path):
     state = GateState(models={GEMMA: ModelRecord(name=GEMMA, footprint_gib=32, loaded_at=at(1, 0), load_fall_gib=27,
                                                  fall_flagged=False, rss_anon_at_load_gib=None, last_use=at(3, 0),
                                                  state="ready")})
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)), event("warn", at(3, 12, 1)))  # a warn is no unload
     found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 6))
     assert texts(found) == [
@@ -682,6 +697,7 @@ def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path)
     state = GateState(models={GEMMA: ModelRecord(name=GEMMA, footprint_gib=32, loaded_at=at(1, 0), load_fall_gib=27,
                                                  fall_flagged=False, rss_anon_at_load_gib=None, last_use=at(3, 0),
                                                  state="ready")})
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)), replace(refused(at(3, 12, 1), CODER, "HTTP 401"), state="starting"))
     assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)) == []
     write(tmp_path, event("unload", at(3, 12, 2), model=GEMMA, state="idle"))
@@ -692,6 +708,7 @@ def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path)
         "`make logs s=brake` shows why. They resume by themselves after 5 min above 28 GiB available."]
     assert CODER not in state.brake_marks
     # Alone past FIRED_ALONE_S, it says why nothing was unloaded, in place of "hasn't confirmed".
+    standing(tmp_path, at(3, 20), episode=2)
     write(tmp_path, event("fired", at(3, 20), episode=2), refused(at(3, 20, 1), CODER, "HTTP 401", episode=2))
     (words,) = texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 20, FIRED_ALONE_S)))
     assert ("It hasn't unloaded anything yet: llama-swap refused its unload of the coder (HTTP 401: the brake's key). "
@@ -701,6 +718,7 @@ def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path)
 def test_a_failed_unload_with_nothing_the_gate_holds_still_says_what_was_loaded(tmp_path):
     # llama-swap refused an unload, so something was loaded, whatever the gate's state holds; a reason the words don't
     # know keeps Task 14's "hasn't confirmed", naming the model.
+    standing(tmp_path)
     write(tmp_path, event("fired", at(3, 12)), refused(at(3, 12, 1), CODER, "llama-swap POST …: a request it couldn't "
                                                                              "send (ValueError)"))
     (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
@@ -738,9 +756,29 @@ def test_a_failed_unload_before_a_reboot_isnt_named_as_unloaded(tmp_path):
     assert [(kind, fields["unloaded"]) for kind, _, fields in found] == [("brake_needs_release", ["the coder"])]
 
 
+@pytest.mark.parametrize("standing", ["none", "a newer one", "its own"])
+def test_a_brake_read_after_its_pause_lifted_says_so(tmp_path, standing):
+    # The re-review's out-of-scope observation, the controller's ruling at Task 23: the brake's queue can hold a fired
+    # back past the pause's end. The ingest words it against the hold as it stands then: with none, or a newer one,
+    # the brake paused new loads at 03:12 and the pause has since lifted; never that loads are paused now.
+    if standing != "none":
+        episode = 2 if standing == "a newer one" else 1
+        write_hold(tmp_path, Hold("2026-10-08T03:30:00", "19.6 GiB available", (), boot_id=BOOT, episode=episode,
+                                  available_gib=19.6))
+    write(tmp_path, event("fired", at(3, 12)), event("unload", at(3, 12, 1), model=CODER, state="idle"))
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
+                                         now=at(3, 40)))
+    if standing == "its own":
+        assert words.endswith("new loads are paused. They resume by themselves after 5 min above 28 GiB available.")
+    else:
+        assert words == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, "
+                         "which was idle; it paused new loads, and the pause has since lifted.")
+
+
 def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):
     # Task 23's rate-of-fall watch acts above the line: its first alert says memory was falling toward the line, never
     # that it was under it.
+    standing(tmp_path)
     write(tmp_path, replace(event("fired", at(3, 12), available=44.6), falling=True),
           replace(event("unload", at(3, 12, 1), model=GEMMA, state="idle", available=44.0), falling=True))
     (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,

@@ -12,9 +12,10 @@ still, a synchronous loop that never shares an event loop with the gate and neve
   engine can write those) give a floor that much fall may reach, which stands for the window after they end; a fall
   past it, or one nothing explains, counts, once memory has fallen MIN_FALL_GIB within the window.
 - **Each step is recorded for the gate** in `brake/events.jsonl` (brakeevents): fired, each unload, and each unload
-  llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is. The hold is written first,
-  and no lock another process can hold is waited for more than LOCK_WAIT_S a poll (Task 23's review); a step held up
-  waits, in order, for a poll that can write it.
+  llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is. In a poll, the hold is
+  written first, then the unload is sent, and only then are the steps written: no lock another process can hold comes
+  before either, and a try for it waits LOCK_WAIT_S at most (Task 23's review). A step held up waits, in order, for a
+  poll that can write it.
 - **While the gate is down** (its record missing or stale) it sends its own `brake_fired`, and each follow-up, to ntfy
   through Ubuntu's curl, never waited on, its address, topic and text on curl's stdin, never a command line. Until ntfy
   is set up (Task 2, Phase 5) it sends nothing, says so in its journal once an episode, and the gate, once back, tries.
@@ -41,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from spark import messages, paths, procs, tickets
-from spark.brakeevents import EVENTS_FILE, BrakeEvent, append_event, episode_for
+from spark.brakeevents import EVENTS_FILE, BrakeEvent, EventsFileNotRegular, append_event, episode_for
 from spark.credentials import CredentialError, read_credential, read_header_credential
 from spark.gate.state import load_state
 from spark.gateclient import GateClient, GateError, GateForbidden, GateUnavailable
@@ -108,7 +109,10 @@ LOAD_FLOOR_MARGIN_GIB = 2.0  # below where the loads in progress should leave me
 # s ahead, would pass the line; none falls 1.5 GiB in 2 s, and a runaway faster than ~0.75 GiB/s does. Task 47 sets it
 # from the measured noise and the soak's growth bursts.
 MIN_FALL_GIB = 1.5
-LOCK_WAIT_S = 0.2  # a poll waits this long, in all, for a lock another process holds (Task 23's review, I1)
+# A try for the events file's lock, which another process can hold, waits this long at most (Task 23's review, I1).
+# The steps are written only after a poll's hold and unload, so neither waits on it; and once a try has found the lock
+# held, the polls after it try without waiting until one takes it, so a lock held for long costs one wait.
+LOCK_WAIT_S = 0.2
 # At most this many steps for the gate wait, in order, for the events file's lock: past it the oldest go, and the
 # journal says how many (the controller's ruling on Task 23's fix round 1).
 PENDING_MAX = 64
@@ -619,8 +623,9 @@ class _Fired:
     hold: Hold
     falling: bool
     sending: bool  # the brake sends the alert itself, the gate being down
-    waits: bool  # release_waits_for_dan for its hold: only `make brake-release` lifts it
-    saved: Any  # the gate's saved state as read at the fire (gate.state.GateState), or None with no gate
+    written: bool  # the hold reached the disk
+    waits: bool = False  # release_waits_for_dan for its hold: only `make brake-release` lifts it (after the unload)
+    saved: Any = None  # the gate's saved state, read after the unload (gate.state.GateState), or None with no gate
     unloaded: list[tuple[str, str | None]] = field(default_factory=list)  # (label, state)
     failed: list[tuple[str, str]] = field(default_factory=list)  # (label, reason): unloads llama-swap didn't do
 
@@ -652,7 +657,7 @@ class _Brake:
         # The floor of the loads last in progress, with when it was last read (monotonic): it stands FALL_WINDOW_S and a
         # poll after they leave, while the window still holds their fall (Task 23's review, C1).
         self.floor_kept: tuple[float, float] | None = None
-        self.lock_left = LOCK_WAIT_S  # what this poll may still wait for a lock another process holds (I1)
+        self.lock_held = False  # a try found the events lock held elsewhere, and none has taken it since (I1)
         self.pending: deque[BrakeEvent] = deque()  # steps not yet written for the gate, in order (record)
         self.dropped = 0  # steps dropped from `pending` since it last emptied, the oldest first
         self.unrecorded_why = ""  # why the last write of `pending` failed, for the journal
@@ -678,9 +683,6 @@ class _Brake:
         wall, mono = self.wall(), self.monotonic()
         self.remember(mono, wall, self.boottime(), mem.available_gib)
         self._activity = _UNREAD
-        self.lock_left = LOCK_WAIT_S
-        if self.pending:  # held up last poll: written now if the lock is free, never waited for
-            self.flush(0.0)
         projected = self.watch(wall, mono) if mem.available_gib >= thresholds.brake_gib else None
         falling = projected is not None
         listed = self.listed(mem, falling)
@@ -706,8 +708,15 @@ class _Brake:
                 fired = self.fire(mem, wall, falling, self.loading(order, states, activity))
             elif action.kind == "unload":
                 self.unload(action.model, mem, states.get(action.model), wall=wall, falling=falling, fired=fired)
-        if fired is not None and fired.sending:
-            self.first_alert(fired, something_loaded=listed is None or bool(listed))
+        # After the hold and the unload: the journal's line, the brake's own alert, then the steps for the gate, so
+        # neither the gate's saved state, which can be large, nor a lock another process can hold comes before either
+        # (Task 23's re-review, Minors 8 and 9).
+        if fired is not None:
+            self.after_fire(fired, wall)
+            if fired.sending:
+                self.first_alert(fired, something_loaded=listed is None or bool(listed))
+        if self.pending:
+            self.flush(0.0 if self.lock_held else LOCK_WAIT_S)
 
     def remember(self, mono: float, wall: float, boot: float, gib: float) -> None:
         self.readings.append((mono, gib))
@@ -728,13 +737,14 @@ class _Brake:
 
     def watch(self, wall: float, mono: float) -> float | None:
         """The rate-of-fall watch: the reading UNLOAD_LEAD_S ahead when it would pass the brake line, else None. The
-        loads in progress are read only when the fall alone would pass it, since their floor can only hold it back.
-        Whatever fails in reading them is no load in progress, the stricter way, and is said once. Once they have left
-        (the gate marks a load ready as its fall ends, or a moment after), their floor stands FALL_WINDOW_S and a poll
-        more, while the window still holds their fall (Task 23's review, C1)."""
+        loads in progress are read whenever the window shows a fall of MIN_FALL_GIB, so their floor is known for any
+        fall the watch could need it for, a slow one included (Task 23's re-review, Minor 1). Whatever fails in reading
+        them is no load in progress, the stricter way, and is said once. Once they have left (the gate marks a load
+        ready as its fall ends, or a moment after), their floor stands FALL_WINDOW_S and a poll more, while the window
+        still holds their fall (Task 23's review, C1)."""
         line = self.registry.brake.brake_gib
         rough = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=None)
-        if rough is None or rough >= line:
+        if rough is None:  # no fall of MIN_FALL_GIB in the window
             return None
         if self.launch is not None:
             try:
@@ -757,6 +767,8 @@ class _Brake:
         elif (self.floor_kept is not None
               and mono - self.floor_kept[1] <= FALL_WINDOW_S + self.registry.brake.poll_ms / 1000):
             floor = self.floor_kept[0]
+        if rough >= line:  # their floor can only hold the projection back: no breach either way
+            return None
         ahead = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=floor)
         return ahead if ahead is not None and ahead < line else None
 
@@ -817,28 +829,43 @@ class _Brake:
     def fire(self, mem: MemInfo, wall: float, falling: bool, loading: str | None) -> _Fired:
         """No hold stands: write one, of a new episode, with this boot, the model loading and the reading, before
         anything that could wait: its episode comes from an unlocked read of the events (Task 23's review, I1). Then
-        say how the pause ends, and record `fired` for the gate, saying whether the brake sends the alert itself."""
+        queue `fired` for the gate, saying whether the brake sends the alert itself; it is written after the unload."""
         line = self.registry.brake.brake_gib
-        try:
-            episode = episode_for(self.events, None, boot_id=self.boot_id, locked=False)
-        except (OSError, ValueError) as err:  # the events file can't be read: carry on, numbered from this brake
-            self.once.failed("episode", f"brake: its steps in {self.events} can't be read ({err})")
-            episode = (self.episode or 0) + 1
-        self.episode = episode
+        episode = self.episode = self.next_episode()
         reason = f"{mem.available_gib:.1f} GiB available"
         if falling:
             reason += f", falling fast toward the {line:g} GiB line"
         hold = Hold(self.now(), reason, (), self.boot_id, episode, loading, mem.available_gib)
         written = self.write(hold)
-        saved = None if self.gate_state is None else load_state(self.gate_state, now=wall)[0]  # never raises
-        waits = release_waits_for_dan(hold, boot_id=self.boot_id, now=wall,
-                                      last_auto_release_at=None if saved is None else saved.last_auto_release_at)
-        if written:
-            self.log(self.paused(waits, saved))
         sending = self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "fired", None, None, mem.available_gib, line, sending,
                                falling=falling))
-        return _Fired(wall, mem.available_gib, line, hold, falling, sending, waits, saved)
+        return _Fired(wall, mem.available_gib, line, hold, falling, sending, written)
+
+    def after_fire(self, fired: _Fired, wall: float) -> None:
+        """After the poll's unload: the gate's saved state, read once for the journal's line and the alert, and the
+        line saying how the pause ends (Task 23's re-review, Minor 9: a file of up to 16 MiB is never decoded before the
+        unload)."""
+        fired.saved = None if self.gate_state is None else load_state(self.gate_state, now=wall)[0]  # never raises
+        fired.waits = release_waits_for_dan(
+            fired.hold, boot_id=self.boot_id, now=wall,
+            last_auto_release_at=None if fired.saved is None else fired.saved.last_auto_release_at)
+        if fired.written:
+            self.log(self.paused(fired.waits, fired.saved))
+
+    def next_episode(self) -> int:
+        """The next episode: one past the last in the file for this boot, read without the lock, and past any of the
+        steps still waiting to be written, so a pause after a release never takes the number of one queued (Task 23's
+        re-review, Minor 4)."""
+        try:
+            from_file = episode_for(self.events, None, boot_id=self.boot_id, locked=False)
+        except EventsFileNotRegular:  # said once an episode, as its steps can't be written (flush)
+            from_file = (self.episode or 0) + 1
+        except (OSError, ValueError) as err:  # the events file can't be read: carry on, numbered from this brake
+            self.once.failed("episode", f"brake: its steps in {self.events} can't be read ({err})")
+            from_file = (self.episode or 0) + 1
+        queued = max((event.episode for event in self.pending if event.boot_id == self.boot_id), default=0) + 1
+        return max(from_file, queued)
 
     def paused(self, waits: bool, saved: Any) -> str:
         """The journal's line for a hold just written: how the pause ends in 2a (Task 23's review, I3). By rule 5 the
@@ -849,9 +876,9 @@ class _Brake:
                    if saved is not None and saved.release_assumed
                    else "it fired within an hour of the gate's last automatic release")
             return f"brake: new loads paused until `make brake-release`: {why}"
-        return (f"brake: new loads paused; the gate lifts the pause once memory has stayed above "
-                f"{self.registry.brake.warn_gib:g} GiB available for {messages.duration(RELEASE_AFTER_S)}, at most "
-                "once an hour, or `make brake-release` lifts it now")
+        # No figure: a drill's copy of the registry raises its own lines, never the gate's (the re-review's Minor 5).
+        return (f"brake: new loads paused; the gate lifts the pause once memory has stayed above the gate's warn line "
+                f"for {messages.duration(RELEASE_AFTER_S)}, at most once an hour, or `make brake-release` lifts it now")
 
     def unload(self, model: str, mem: MemInfo, state: str | None, *, wall: float, falling: bool = False,
                fired: _Fired | None = None) -> None:
@@ -931,11 +958,7 @@ class _Brake:
         if hold is not None and hold.boot_id == self.boot_id and hold.episode is not None:
             self.episode = hold.episode
         elif self.episode is None:
-            try:
-                self.episode = episode_for(self.events, None, boot_id=self.boot_id, locked=False)
-            except (OSError, ValueError) as err:
-                self.once.failed("episode", f"brake: its steps in {self.events} can't be read ({err})")
-                self.episode = 1
+            self.episode = self.next_episode()
         return self.episode
 
     def forget_started(self, model: str) -> None:
@@ -951,39 +974,48 @@ class _Brake:
             self.once.cleared("clear", "brake: started records clear again")
 
     def record(self, event: BrakeEvent) -> None:
-        """A step for the gate: queued behind any still waiting, then written (flush). Up to PENDING_MAX of them, no
-        step is lost to a lock another process holds (the controller's ruling on Task 23's fix round 1): what can't be
-        written now waits, in order, for the next poll that gets the lock. Past PENDING_MAX the oldest go, said once,
-        and how many once the rest are written."""
+        """A step for the gate: queued behind any still waiting, and written at the poll's end, after its hold and
+        unload (flush). Up to PENDING_MAX of them, no step is lost to a lock another process holds (the controller's
+        ruling on Task 23's fix round 1): what can't be written then waits, in order, for the next poll that gets the
+        lock. Past PENDING_MAX the oldest go, said once, and how many once the rest are written."""
         if len(self.pending) >= PENDING_MAX:
             self.pending.popleft()
             self.dropped += 1
             if self.dropped == 1:
                 self.log(f"brake: ALERT — more than {PENDING_MAX} of its steps for the gate are waiting to be "
                          "recorded, so the oldest are dropped")
-        self.pending.append(event)
-        self.flush(self.lock_left)
+        self.pending.append(event)  # written at the poll's end, after its hold and unload (poll)
 
     def flush(self, wait_s: float) -> None:
         """Write the waiting steps, in order, each fsynced (brakeevents.append_event, whose seq comes from the file
-        under its lock, so it goes on across restarts). The lock is waited for `wait_s` at most: any process that can
-        read the file can hold it (Task 23's review, I1). A write that fails leaves that step and those after it
-        waiting, and never stops the brake; it is said once. A step the file would never take (ValueError) is dropped,
-        and said."""
+        under its lock, so it goes on across restarts). Each try for the lock waits `wait_s` at most: any process that
+        can read the file can hold it (Task 23's review, I1); once one finds it held, the polls after it try without
+        waiting until one takes it. A write that fails leaves that step and those after it waiting, and never stops the
+        brake; it is said once, and an events file that isn't a regular file once an episode (the re-review's Minor 3).
+        A step the file would never take (any other ValueError) is dropped, and said."""
         while self.pending:
             try:
                 append_event(self.events, self.pending[0], wait_s=wait_s)
+            except EventsFileNotRegular:  # the file's fault, not the step's: they wait, as for a lock
+                self.unrecorded_why = f"the brake's events file {self.events} isn't a regular file"
+                self.say_once("events-file", self.pending[0].episode,
+                              f"brake: ALERT — the brake's events file {self.events} isn't a regular file, so its "
+                              "steps can't be recorded for the gate")
+                return
             except ValueError as err:  # never a whole event: no wait will make it one
                 self.pending.popleft()
                 self.log(f"brake: ALERT — a step for the gate isn't a whole event ({err}), so it isn't recorded")
                 continue
             except OSError as err:  # BlockingIOError among them: the lock, held elsewhere
-                self.lock_left = 0.0  # no more waiting this poll
-                self.unrecorded_why = (f"another process held the lock on {self.events}"
-                                       if isinstance(err, BlockingIOError) else str(err))
+                if isinstance(err, BlockingIOError):
+                    self.lock_held = True  # no more waiting for it until a try takes it
+                    self.unrecorded_why = f"another process held the lock on {self.events}"
+                else:
+                    self.unrecorded_why = str(err)
                 self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events} yet: "
                                            f"{err}. They wait, in order, for a poll that can; the brake goes on")
                 return
+            self.lock_held = False
             self.pending.popleft()
         self.once.cleared("events", "brake: its steps are recorded for the gate again")
         if self.dropped:

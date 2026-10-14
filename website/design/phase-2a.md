@@ -2980,6 +2980,13 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
     nothing, or in a follow-up, *Brake, 03:13: llama-swap refused its unload of Gemma (HTTP 404: its
     config may not match the registry).* A refusal also says something was loaded, whatever the
     gate's state holds; an episode from before a reboot names only what was unloaded.
+  - *(Added 2026-10-14, the controller's ruling, at Task 23's re-review:)* **A first alert read after its pause lifted.** The brake's
+    queue can hold its steps back past the pause's end, while another process holds the events
+    file's lock. So the ingest words a first alert against the hold as it stands when it reads it:
+    with none, or a newer one (another episode's), `brake_fired` takes `lifted`, *… Unloaded the
+    coder, which was idle; it paused new loads, and the pause has since lifted.*, never that loads
+    are paused now. A hold that names no episode (Phase 1's, or a damaged file's) counts as the
+    episode's, so the words err toward paused.
   - **A first alert from the rate-of-fall watch** passes `falling` from its reading's event, so it
     says memory was falling toward the line, never under it.
 - `MemoryWarning` — `check(available_gib, warn_gib) -> bool`: true once per fall under the warn
@@ -5926,10 +5933,16 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   line is recorded as it was), and its episode from `episode_for`. A run unloads one model per
   tick, as Phase 1's does, so a `--once` drill unloads one model per start of its unit.
 - `alert_without_gate(text: str, priority: str)` — only while `read_activity` is None (the gate's
-  record missing or stale): `subprocess.Popen(["/usr/bin/curl", "--fail", "--silent",
+  record missing or stale): ~~`subprocess.Popen(["/usr/bin/curl", "--fail", "--silent",
   "--max-time", "10", "--config", "-"], stdin=PIPE, start_new_session=True, stdout=DEVNULL,
-  stderr=DEVNULL)`, its config written to stdin and closed — `url`, the token header's file
-  (`header = "@<credentials>/ntfy-token"`), `header = "Priority: <priority>"` and `data-binary` —
+  stderr=DEVNULL)`~~ `subprocess.Popen(["/usr/bin/curl", "-q", "--fail", "--silent", "--max-time",
+  "10", "--config", "-"], stdin=PIPE, start_new_session=True, stdout=DEVNULL, stderr=DEVNULL,
+  env={})` *(corrected 2026-10-14, the controller's rulings, at Task 23's review, M9 and M10:
+  `-q` first, so curl reads no `.curlrc` the engines' account could plant, and an empty
+  environment, since curl needs nothing of the brake's)*, its config written to stdin and closed —
+  `url`, the token header's file (`header = "@<credentials>/ntfy-token"`), `header = "Priority:
+  <priority>"` and ~~`data-binary`~~ `data-raw` *(corrected the same day: `data-binary` reads a file
+  for a leading `@`; `data-raw` takes it as itself)* —
   so neither ntfy's address, its topic nor the text is on a command line `agent` can read; each
   value in curl's config quoting, `"` and `\` escaped with a backslash; never waited on by the
   running brake; finished children reaped each tick; the event recorded `sent_by_brake: true`. The
@@ -5961,8 +5974,14 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
 - `spark brake --release` (`make brake-release`) — through `GateClient(GATE_CONTROL_SOCKET,
   5).post("/v1/release", {"brake": true})`, which ends the brake's pause and never Dan's hold,
   printing Task 7's `brake_released_by_dan`; on `GateUnavailable`, Phase
-  1's direct release of the hold file, printing *The gate isn't answering, so the hold file was
-  removed directly; nothing reloads until the gate is back.*; on `GateForbidden`, its text, and
+  1's direct release of the hold file, printing ~~*The gate isn't answering, so the hold file was
+  removed directly; nothing reloads until the gate is back.*~~ *(corrected 2026-10-14, the
+  controller's ruling, at Task 23's review, M7: the mapping stays, its words become what is true of
+  each case)* with nothing reached, *The gate isn't answering, so the hold file was removed
+  directly; nothing reloads until the gate is back.*; after no answer within 5 s, the connection or
+  the request taken, *The gate didn't answer within 5 s, so the hold file was removed directly. If
+  the gate is up, it reloads as usual; if not, nothing reloads until it answers.*; after an answer
+  broken off, the same with *stopped answering partway*; on `GateForbidden`, its text, and
   exit 1. *(Added 2026-10-07, at Task 7, the controller's ruling: that text is
   `messages.BRAKE_RELEASED_WITHOUT_GATE`.)*
 
@@ -5990,7 +6009,8 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
     run, one reading, has none. Below the brake line it plays no part: Phase 1's rules act there.
     True above the line, `plan_brake` takes the projection, `projected_gib`, in place of the reading
     for the shortfall, so an unload's memory on its way still counts against it. The loads in
-    progress are read only when the fall alone would pass the line. A 0.2 GiB/s fall covers 2 GiB in
+    progress are read ~~only when the fall alone would pass the line~~ whenever the window shows a
+    fall of `MIN_FALL_GIB` *(corrected 2026-10-14, the controller's ruling, at Task 23's re-review)*. A 0.2 GiB/s fall covers 2 GiB in
     `UNLOAD_LEAD_S`, so the watch acts within 2 GiB above the line, under 22, as Tasks 40 and 41
     say; `test_a_slow_fall_doesnt_trip_the_rate_watch` reads *acts at 20 as before* so, and checks
     that it never acts higher (accepted, the controller's ruling below). *(Superseded the same day,
@@ -6058,20 +6078,28 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
     after every load.)
   - **I1, no lock before the hold.** The hold is written first, its episode from an unlocked read
     of the events. Each lock on the poll path, the events' append the only one, is tried with
-    `LOCK_NB` for what is left of `LOCK_WAIT_S` (0.2 s) that poll, in all; then ~~the step goes
-    unrecorded~~ the journal says so once, and the unload still goes out. The hold, `started/` and
+    `LOCK_NB` ~~for what is left of `LOCK_WAIT_S` (0.2 s) that poll, in all~~ *(corrected 2026-10-14,
+    the controller's ruling, at Task 23's re-review: a wait that succeeds cost nothing, so it wasn't "in all": a try waits `LOCK_WAIT_S`,
+    0.2 s, at most, and once one has found the lock held, the polls after it try without waiting
+    until one takes it; and the steps are written at the poll's end, after its hold and unload, so
+    neither waits on the lock at all)*; then ~~the step goes unrecorded~~ the journal says so once,
+    and the unload still goes out. The hold, `started/` and
     the gate's files are written or read with no lock. *(Corrected the same day, the controller's
     ruling on the fix round's concern 2: no step is lost for the gate.)* A step not written waits
     in memory, in order, behind any before it, and is appended at the next poll that gets the lock,
-    its seq from the file then; each poll first tries once, never waiting. At most `PENDING_MAX`
+    its seq from the file then; ~~each poll first tries once, never waiting~~ *(corrected the same
+    day, the controller's ruling, at Task 23's re-review: the steps are written at each poll's end, after its hold and unload, so no step
+    comes before either)*. At most `PENDING_MAX`
     (64) wait: past it the oldest go, the journal says so once, and how many once the rest are
     written. A `--once` run that ends with steps waiting makes one last try of `LOCK_WAIT_S`, then
     says in the journal which went unrecorded.
   - **I2, `MIN_FALL_GIB = 1.5`**, at `predict_breach`'s interface above. A 0.2 GiB/s fall no
     longer trips the watch: the brake acts at the line.
   - **I3, the journal's line** says how the pause ends in 2a: *brake: new loads paused; the gate
-    lifts the pause once memory has stayed above 28 GiB available for 5 minutes, at most once an
-    hour, or `make brake-release` lifts it now*; or, when `release_waits_for_dan` holds, *brake: new
+    lifts the pause once memory has stayed above the gate's warn line for 5 minutes, at most once
+    an hour, or `make brake-release` lifts it now* (it read *above 28 GiB available* until the
+    controller's ruling, at Task 23's re-review, 2026-10-14: no figure, so it is true in the drill
+    too); or, when `release_waits_for_dan` holds, *brake: new
     loads paused until `make brake-release`: it fired within an hour of the gate's last automatic
     release* (or *… the gate's saved state was damaged, so it can't tell when its last automatic
     release was*). The gate's saved state is read once at the fire, for this line and the alert.
@@ -6098,6 +6126,28 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
     read. Its arguments begin `-q`, so no `.curlrc` is read: the brake runs as spark, the engines'
     account, which could plant one. It runs with an empty environment. A test runs Ubuntu's curl
     against a stand-in HTTP server on a free port and shows each.
+
+- *(Added 2026-10-14, the controller's rulings, at Task 23's re-review: nine Minors, each fixed
+  with its test.)*
+  - **The loads are read whenever the window shows a fall of `MIN_FALL_GIB`**, not only when the
+    projection passes the line, so a load's floor is known, and kept, for any fall the watch could
+    need it for: a slow 1 GiB/s load, then a 20 GiB step with the gate marking it ready on that
+    poll, trips nothing.
+  - **`LOCK_WAIT_S`'s words:** a try waits 0.2 s at most; once one has found the lock held, the
+    polls after it try without waiting until one takes it.
+  - **A poll that fires** writes the hold, then sends the unload, then logs its journal line (the
+    gate's saved state read there, after the unload), then writes the steps. No step, and no lock,
+    comes before the hold or the unload.
+  - **An events file that isn't a regular file** is said as the file's fault, once an episode:
+    *the brake's events file … isn't a regular file, so its steps can't be recorded for the gate*.
+    Its steps wait, as for a lock (`brakeevents.EventsFileNotRegular`, a ValueError).
+  - **A new episode** is one past both the file's last and the steps still waiting.
+  - **The journal's line** names no figure: *… once memory has stayed above the gate's warn line
+    for 5 minutes …*, true in the drill too, whose copy of the registry raises its own lines.
+  - **Plan text** corrected in place: `alert_without_gate`'s argv and `data-raw`, the quote test,
+    the release's words, Tasks 40 and 41's pace sentences, and the I1 note above.
+  - **The gate's ingest** words a first alert read after its pause lifted (Task 14's note).
+  - **Task 26's notifier** takes the same curl hardening (its note).
 
 **Tests** (`spark/tests/test_brake.py`; Phase 1's kept):
 
@@ -6149,7 +6199,8 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   `sent_by_brake: false`.
 - `test_finished_alerts_are_reaped` — a finished stand-in is polled and dropped on the next tick.
 - `test_a_quote_in_the_text_is_escaped_for_curls_config` — a text holding `"` and `\` → the
-  config's `data-binary` line holds them escaped, and reads back as the text.
+  config's ~~`data-binary`~~ `data-raw` line *(corrected 2026-10-14, at Task 23's review, M9)* holds
+  them escaped, and reads back as the text.
 - `test_once_waits_for_its_alert_before_exiting` — `--once`, the record stale, a `Popen` stand-in
   that finishes after 0.2 s → the run returns after it, not before.
 - `test_the_brake_reads_its_key_from_its_credential` — `--key-credential llamaswap-key` with a
@@ -6528,7 +6579,10 @@ git commit -m "feat(stack): 🤖 units for the front, the gate, the failure noti
   stdin: the `url` (`$NTFY_URL/$NTFY_TOPIC_NOTIFY`), `header = "@$CREDENTIALS_DIRECTORY/ntfy-token"`,
   `header = "Priority: <p>"` and `data-binary`, each value in curl's config quoting with `"` and
   `\` escaped, so neither the address, the topic nor the text is on a command line; never a
-  journal line. (`CURL` is for the tests; the unit never sets it.)
+  journal line. (`CURL` is for the tests; the unit never sets it.) *(Added 2026-10-14, the controller's ruling, at Task 23's re-review:
+  the brake's curl hardening, Task 23's review M9 and M10, holds here too: `-q` as curl's first
+  argument, so no `.curlrc` is read; `data-raw` in place of `data-binary`, so a leading `@` is
+  never a file to read; and a minimal environment for curl, with nothing of the unit's.)*
 - *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5.)* **Without ntfy set up, it does nothing, successfully.** With `NTFY_URL` or
   `NTFY_TOPIC_NOTIFY` unset, or the `ntfy-token` credential Task 25's placeholder (`not-set-up`) or
@@ -7856,12 +7910,12 @@ never a fixed size (the controller's ruling, 2026-10-07).
   `--floor` frees everything at once and stops `floor`, exit 3. It prints each step's total and
   `MemAvailable`, and frees everything on every way out, Ctrl-C and SIGTERM included.
 - The pace: 0.25 GiB every 2.5 s is 0.1 GiB/s, and one step inside the rate watch's 2 s window reads
-  as under 0.2 GiB/s, which Task 23's watch (10 s ahead, the brake at 20) takes for a breach only
-  under 22 GiB available, below the floor. So a drill trips the brake only where it raises the
-  brake's thresholds on purpose (Task 48). *(Added 2026-10-14, the controller's ruling, at Task 23's review: and the watch acts only on
-  a fall of `brake.MIN_FALL_GIB`, 1.5 GiB, within its window; one step falls 0.25 GiB, so the pace
-  never trips it at all. Its pace test reads `MIN_FALL_GIB` too, through `predict_breach`'s
-  default.)*
+  as under 0.2 GiB/s, which Task 23's watch ~~(10 s ahead, the brake at 20) takes for a breach only
+  under 22 GiB available, below the floor~~ never takes for a breach: it acts only on a fall of
+  `brake.MIN_FALL_GIB`, 1.5 GiB, within its window, and one step falls 0.25 GiB *(corrected
+  2026-10-14, the controller's ruling, at Task 23's re-review; the controller's ruling at Task 23's review first added this beside the
+  struck clause)*. So a drill trips the brake only where it raises the brake's thresholds on
+  purpose (Task 48). Its pace test reads `MIN_FALL_GIB` too, through `predict_breach`'s default.
 
 **Tests** (`spark/tests/test_hog.py`, the script loaded from its path, a stand-in reader and
 allocator):
@@ -7964,9 +8018,9 @@ don't show in a process's RSS, so earlyoom can't pick this script: its own readi
 every step, is its guard against a `MemAvailable` that reports late.
 
 The rate watch is accounted for by pace, not paused: 0.25 GiB every 2.5 s is Task 40's hog's pace,
-under Task 23's trigger while more than 22 GiB is available, and the script stops at the reserve,
-24 *(added 2026-10-14, the controller's ruling, at Task 23's review: and the trigger needs a fall of `brake.MIN_FALL_GIB`, 1.5 GiB,
-within its window, which a 0.25 GiB step never makes)*. So the
+under Task 23's trigger ~~while more than 22 GiB is available~~ *(corrected 2026-10-14, the controller's ruling, at Task 23's re-review:
+always, since the trigger needs a fall of `brake.MIN_FALL_GIB`, 1.5 GiB, within its window, which a
+0.25 GiB step never makes)*, and the script stops at the reserve, 24. So the
 measurement sends `memory_warning` once, as it passes 28, and no `brake_fired`. About 16 minutes
 for the 93 GiB the box can give.
 

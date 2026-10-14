@@ -866,6 +866,7 @@ def _brake_unloaded(unloaded: list[tuple[str, str | None]]) -> str:
 
 
 _BRAKE_LOGS = "On the Spark, `make logs s=brake` shows why."  # the brake's journal: why an unload went as it did
+_LIFTED = "it paused new loads, and the pause has since lifted"  # a first alert read after its pause ended
 # Why llama-swap's refusal of the brake's unload matters, by its status (the controller's ruling, at Task 23).
 _UNLOAD_WHY = {401: "the brake's key", 404: "its config may not match the registry"}
 _UNLOAD_STATUS = re.compile(r"(?:^|: )HTTP (\d{3})$")  # the brake's `HTTP <status>`, or LlamaSwap's own line
@@ -920,6 +921,8 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
             raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
         if f["falling"]:  # a follow-up names no reading
             raise ValueError("brake_fired's falling is for a first alert, which names the reading")
+        if f["lifted"]:  # nor the pause
+            raise ValueError("brake_fired's lifted is for a first alert, which names the pause")
         steps = ([f"also unloaded {_brake_unloaded(f['unloaded'])}"] if f["unloaded"] else []) + (
             [_not_unloaded(not_unloaded)] if not_unloaded else [])
         logs = f" {_BRAKE_LOGS}" if not_unloaded else ""  # each form naming a failed unload says where to look (M1)
@@ -963,10 +966,16 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     where = " and falling fast toward" if f["falling"] else ", under"
     reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available{where} the "
                f"{_line(f['line_gib'])} line")
-    if f["unload_unanswered"]:  # why, where the brake's events say it (Task 23); else Task 14's words
-        why = _not_unloaded(not_unloaded) if not_unloaded else "llama-swap hasn't confirmed its unload"
-        return f"{reading}; new loads are paused. It hasn't unloaded anything yet: {why}. {_BRAKE_LOGS} {resume}"
+    why = _not_unloaded(not_unloaded) if not_unloaded else "llama-swap hasn't confirmed its unload"
     logs = f" {_BRAKE_LOGS}" if not_unloaded else ""
+    if f["lifted"]:  # read after the pause lifted (the brake's queue held it back): never "are paused" now (Task 23)
+        if f["by_brake"]:
+            raise ValueError("brake_fired's lifted is the gate's: the brake sends its own alert while the pause stands")
+        if f["unload_unanswered"]:
+            return f"{reading}; {_LIFTED}. It hadn't unloaded anything: {why}. {_BRAKE_LOGS}"
+        return f"{reading}. {unloaded}; {_LIFTED}.{logs}"
+    if f["unload_unanswered"]:  # why, where the brake's events say it (Task 23); else Task 14's words
+        return f"{reading}; new loads are paused. It hasn't unloaded anything yet: {why}. {_BRAKE_LOGS} {resume}"
     return f"{reading}. {unloaded}; new loads are paused.{logs} {resume}"
 
 
@@ -1466,7 +1475,8 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
-                    "release_assumed": False, "unload_unanswered": False, "falling": False, "not_unloaded": []},
+                    "release_assumed": False, "unload_unanswered": False, "falling": False, "not_unloaded": [],
+                    "lifted": False},
     "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": [], "recovered": False,
                             "rebooted": False},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},

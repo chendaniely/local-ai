@@ -123,9 +123,15 @@ def _events(data: bytes) -> list[BrakeEvent]:
     return [event for event in map(_parse, lines) if event is not None]
 
 
+class EventsFileNotRegular(ValueError):
+    """The events file is a FIFO, a folder or anything else but a regular file: no step can be written to it or read
+    from it. A ValueError, as the gate's readers take it; the brake words it as the file's fault, not a step's (Task
+    23's re-review)."""
+
+
 def _read_all(fd: int) -> bytes:
     if not stat.S_ISREG(os.fstat(fd).st_mode):
-        raise ValueError("the brake's events file isn't a regular file")
+        raise EventsFileNotRegular("the brake's events file isn't a regular file")
     os.lseek(fd, 0, os.SEEK_SET)
     chunks = []
     while chunk := os.read(fd, 1 << 16):

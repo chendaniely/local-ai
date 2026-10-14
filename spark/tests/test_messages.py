@@ -1261,6 +1261,29 @@ def test_the_releases_words_when_the_gate_may_still_be_up():
     assert messages.pi_retry_match(timed_out) is None and messages.pi_retry_match(broke) is None
 
 
+def test_a_brake_whose_pause_has_since_lifted_never_says_loads_are_paused():
+    # The re-review's out-of-scope observation, the controller's ruling: a fired the brake's queue held back can reach
+    # the gate after the pause lifted; its words say the brake paused new loads then, never that loads are paused now.
+    lifted = say("brake_fired", **{**FIRED, "lifted": True})
+    assert lifted == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, "
+                      "which was loading; it paused new loads, and the pause has since lifted.")
+    nothing = say("brake_fired", **{**FIRED, "unloaded": [], "lifted": True})
+    assert nothing.endswith("Nothing of the stack's was loaded, so there was nothing to unload; it paused new loads, "
+                            "and the pause has since lifted.")
+    unanswered = say("brake_fired", **{**FIRED, "unloaded": [], "unload_unanswered": True, "lifted": True,
+                                       "not_unloaded": [("the coder", "HTTP 401")]})
+    assert unanswered == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; it paused new "
+                          "loads, and the pause has since lifted. It hadn't unloaded anything: llama-swap refused its "
+                          "unload of the coder (HTTP 401: the brake's key). On the Spark, `make logs s=brake` shows "
+                          "why.")
+    for text in (lifted, nothing, unanswered):
+        assert "are paused" not in text and messages.pi_retry_match(text) is None
+    with pytest.raises(ValueError, match="^brake_fired's lifted is for a first alert"):
+        say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "lifted": True})
+    with pytest.raises(ValueError, match="^brake_fired's lifted is the gate's"):
+        say("brake_fired", **{**FIRED, "lifted": True, "by_brake": True})
+
+
 def test_falling_is_for_a_first_alert():
     # A follow-up names no reading, so it can't say memory was falling (Task 23).
     with pytest.raises(ValueError, match="^brake_fired's falling is for a first alert"):
