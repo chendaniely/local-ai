@@ -242,7 +242,11 @@ brainstorm's scenario questions and the council's decisions, as questions and an
     *Your phone has the alert* (`messages._ALERT`, from plan.md's refusal table), and the
     notifications page's opening, which says the alerts go to the phone *once they are deployed
     (Task 38 …)* (`docs.py`). Neither is true until Phase 5. The controller rules their words, and
-    Task 29 changes them, with their tests, and regenerates the page.
+    Task 29 changes them, with their tests, and regenerates the page. *(Done the same day, ahead of
+    Task 29, Dan's decision: the two refusals end "On the Spark, `make doctor` shows what's wrong."
+    and, for `agent`, "`make doctor` on the Spark shows Dan what's wrong.", and the page's opening
+    says the notifications reach the phone once ntfy is set up, in Phase 5, and until then show in
+    `spark status` and `make doctor`. The phone clause returns with ntfy: plan.md's Phase 5.)*
   - Until Phase 5, what a notification would say shows only in `spark status` and `make doctor`,
     on the Spark, and, from 2b, in the Mac's menu bar, which reads `spark status --json`.
 - **The failure notifier:** "`local-ai-notify@.service`, a template unit that `OnFailure=` starts
@@ -6540,7 +6544,10 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     Constraints*): `messages._ALERT`, in the `gate_down` and `llama_swap_down` refusals, and
     `docs.py`'s opening of the notifications page. The controller rules their words before this
     task starts; this task changes them, with `test_messages.py`, plan.md's refusal table and the
-    page regenerated (`spark docs notifications --write`), and its commit adds those paths.
+    page regenerated (`spark docs notifications --write`), and its commit adds those paths. *(Done
+    the same day, ahead of this task, Dan's decision, in its own commit: both texts, their tests
+    in `test_messages.py`, `test_gate_admission.py`, `test_gateclient.py` and `test_scenarios.py`,
+    plan.md's refusal table and the page. This task has nothing left to change in them.)*
 
 - *(Added 2026-10-08, the controller's ruling, at Task 17:)* the `recent` rows take, beside the
   refusals, `GateState.recent` (Task 17), the gate's events that aren't refusals, all in one list

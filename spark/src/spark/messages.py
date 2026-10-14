@@ -103,9 +103,10 @@ _STATUS = {**dict.fromkeys(CODES_409, 409), **dict.fromkeys(CODES_503, 503), **F
 _SERVED = ("/v1/models", "/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/messages", "/v1/embeddings",
            "/v1/audio/transcriptions")
 _DANS_KEYS = "pi on the Mac or the web UI"  # Dan's keys, by their labels in the private key list, as plan.md names them
-# Where to look when a service is down: the phone's alert and `make doctor`, both Dan's.
-_ALERT = {"dan": "Your phone has the alert; on the Spark, `make doctor` shows what's wrong.",
-          "agent": "Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong."}
+# Where to look when a service is down: `make doctor`, Dan's. No phone clause until ntfy arrives with Phase 5 (Dan's
+# decision, 2026-10-14): it returns then, in the words plan.md's refusal table keeps for it.
+_ALERT = {"dan": "On the Spark, `make doctor` shows what's wrong.",
+          "agent": "`make doctor` on the Spark shows Dan what's wrong."}
 # The command agent's pi list is updated with after the cutover (phase-2a.md, Task 34): the deployed CLI against the
 # deployed registry. Without --http-idle-timeout-ms it leaves pi's settings.json as it is.
 _AGENTS_CLIENTS = "/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml"

@@ -43,9 +43,10 @@ restarting). Loaded models still answer; new loads are refused until it's back. 
 `make doctor` shows what's wrong.*; and once it has been back for a minute, at default priority,
 *The gate on brightroar has been running again for a minute, after 12 s down. New loads work
 again.* A request that needs a load meanwhile reads *No new model can load: the gate on the Spark
-isn't running. Models already loaded still answer. Your phone has the alert; on the Spark, `make
-doctor` shows what's wrong.* The front, llama-swap and the brake each have an alert of their own,
-worded the same way. The plan's [*What you see in Phase
+isn't running. Models already loaded still answer. ~~Your phone has the alert; on the Spark,~~ On
+the Spark, `make doctor` shows what's wrong.* *(2026-10-14: no phone alert until ntfy arrives with
+Phase 5, Dan's decision; the clause returns then.)* The front, llama-swap and the brake each have
+an alert of their own, worded the same way. The plan's [*What you see in Phase
 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
 The drill, in 2a: each of the four services killed in turn; the front frozen with SIGSTOP to trip

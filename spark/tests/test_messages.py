@@ -106,10 +106,11 @@ MODEL_NOT_FOUND_TEXT = (
 )
 CONCURRENCY_TEXT = "Too many requests for the coder at once; try again in a moment."
 GATE_DOWN_TEXT = (
-    "No new model can load: the gate on the Spark isn't running. Models already loaded still answer. Your phone has "
-    "the alert; on the Spark, `make doctor` shows what's wrong."
+    "No new model can load: the gate on the Spark isn't running. Models already loaded still answer. On the Spark, "
+    "`make doctor` shows what's wrong."
 )
-DANS_ALERT = "Dan's phone has the alert, and `make doctor` on the Spark shows Dan what's wrong."
+# No phone clause until ntfy arrives with Phase 5 (Dan's decision, 2026-10-14; plan.md's refusal table has the note).
+DANS_ALERT = "`make doctor` on the Spark shows Dan what's wrong."
 
 # plan.md's refusal table, each row with the inputs phase-2a.md's Task 6 gives it: (id, code, moment, the text).
 ROWS = [
@@ -137,8 +138,8 @@ ROWS = [
      "The coder isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB)."),
     ("restarting", "restarting", Moment(**CODER, **DAN), RESTARTING_TEXT),
     ("llama_swap_down", "llama_swap_down", Moment(**CODER, **DAN),
-     "The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, "
-     "`make doctor` shows what's wrong."),
+     "The model service on the Spark isn't answering, and your 30 s ran out. On the Spark, `make doctor` shows "
+     "what's wrong."),
     ("draining, Dan", "draining", DRAINING_DAN,
      "The coder is being unloaded for make-room once its 1 request in flight finishes, and your 30 s ran out. Try "
      "again in a minute: your request can load it again, into the room make-room holds for you, if it fits."),
@@ -182,7 +183,7 @@ AGENT_ROWS = [
      "Not loading the coder now: memory ran low at 03:12 (19.6 GiB available), and new loads stay paused until Dan "
      "releases them: on the Spark, `make brake-release`."),
     ("gate_down, agent", "gate_down", Moment(**AGENT), GATE_DOWN_TEXT.replace(
-        "Your phone has the alert; on the Spark, `make doctor` shows what's wrong.", DANS_ALERT)),
+        "On the Spark, `make doctor` shows what's wrong.", DANS_ALERT)),
     ("load_failed, agent", "load_failed", replace(LOAD_FAILED, **AGENT), LOAD_FAILED_TEXT.replace(
         "On the Spark, `spark logs coder` shows the engine's last lines.",
         "Dan can see why with `spark logs coder` on the Spark.")),
@@ -484,6 +485,17 @@ def test_agent_is_never_told_to_run_what_only_dan_can():
     # make-room's end (no_fit's and draining's, one sentence), the brake's release (two forms), spark load, spark logs,
     # make pull and make doctor.
     assert len(checked) == 7
+
+
+def test_no_refusal_promises_a_phone_alert_before_ntfy_arrives():
+    # ntfy is set up in Phase 5 (Dan's decision, 2026-10-14), so until then no refusal names the phone; gate_down's and
+    # llama_swap_down's phone clause returns with it (plan.md's refusal table has the note).
+    for _, code, moment, _ in EVERY_ROW:
+        for words in ("dan", "agent"):
+            message = refusal(code, replace(moment, words=words)).message
+            assert "phone" not in message.lower(), message
+    for words in messages._ALERT.values():
+        assert not pi_retries(words), words
 
 
 def test_dans_own_hold_is_never_counted_against_dan():

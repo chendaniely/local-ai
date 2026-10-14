@@ -34,7 +34,8 @@ ANSWER_MAX = 1 << 20  # a single answer above 1 MiB, far more than any of the ga
 LINE_MAX = 64 << 10  # and so is a stream's line above 64 KiB, its newline counted
 MESSAGE_MAX = 2000  # a refusal's message above this many characters isn't shown, nor one that isn't a printable line
 # Where to look when the gate is down: `make doctor`, Dan's, as Task 6's refusals say it for a service that is down
-# (messages._ALERT, whose phone half doesn't hold here: a socket can be missing with no alert sent).
+# (messages._ALERT, the same words until ntfy arrives with Phase 5; its phone half, back then, won't hold here: a
+# socket can be missing with no alert sent).
 _STEP = {"dan": "On the Spark, `make doctor` shows what's wrong.",
          "agent": "`make doctor` on the Spark shows Dan what's wrong."}
 

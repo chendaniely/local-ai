@@ -407,8 +407,8 @@ RESTARTING_TEXT = (
     "minute.")
 DRAINING_TEXT = "The coder is being unloaded, and your 30 s ran out. Try again in a minute."
 LLAMA_SWAP_DOWN_TEXT = (
-    "The model service on the Spark isn't answering, and your 30 s ran out. Your phone has the alert; on the Spark, "
-    "`make doctor` shows what's wrong.")
+    "The model service on the Spark isn't answering, and your 30 s ran out. On the Spark, `make doctor` shows what's "
+    "wrong.")
 
 
 def refused(asked: Asked, code: str) -> str:

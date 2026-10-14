@@ -75,6 +75,11 @@ def test_the_notifications_page_is_generated_from_the_registry():
     prose = " ".join(page.split("| Type |")[0].split())
     assert "the words from `spark/src/spark/messages.py`" in prose
     assert "then `make apply` on the Spark" in prose
+    # Nothing reaches the phone until ntfy is set up, in Phase 5 (Dan's decision, 2026-10-14), and the page says so.
+    assert "the notifications Phase 2a's gate, brake and failure notifier build" in prose
+    assert "They reach Dan's phone, through ntfy, once ntfy is set up, in Phase 5" in prose
+    assert "until then, what they report shows in `spark status` and `make doctor`, on the Spark" in prose
+    assert "send these to Dan's phone" not in prose
     assert "| Type | Priority | When | Example |" in page
     rows = _rows(page)
     assert len(rows) == 20

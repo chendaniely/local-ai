@@ -594,9 +594,9 @@ def test_the_next_step_is_dans_only_for_a_login_that_can_take_it(monkeypatch, so
     with pytest.raises(GateUnavailable) as raised:
         GateClient(path, 1).get("/v1/status")
     assert str(raised.value) == f"The gate can't be reached: there is no socket at {path}. {AGENT_STEP}"
-    # The same steps as Task 6's refusals give for a service that is down, each in its own words.
-    assert messages._ALERT["dan"].endswith(" on the Spark, `make doctor` shows what's wrong.")
-    assert messages._ALERT["agent"].endswith(f" and {AGENT_STEP}")
+    # The same steps as Task 6's refusals give for a service that is down, each in its own words: until ntfy arrives
+    # with Phase 5 they have no phone clause, so they are these words exactly (Dan's decision, 2026-10-14).
+    assert messages._ALERT == {"dan": DAN_STEP, "agent": AGENT_STEP}
 
 
 def test_a_stream_yields_each_line_as_json(sockdir):
