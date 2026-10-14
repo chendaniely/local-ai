@@ -13,7 +13,8 @@ still, a synchronous loop that never shares an event loop with the gate and neve
   past it, or one nothing explains, counts, once memory has fallen MIN_FALL_GIB within the window.
 - **Each step is recorded for the gate** in `brake/events.jsonl` (brakeevents): fired, each unload, and each unload
   llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is. The hold is written first,
-  and no lock another process can hold is waited for more than LOCK_WAIT_S a poll (Task 23's review).
+  and no lock another process can hold is waited for more than LOCK_WAIT_S a poll (Task 23's review); a step held up
+  waits, in order, for a poll that can write it.
 - **While the gate is down** (its record missing or stale) it sends its own `brake_fired`, and each follow-up, to ntfy
   through Ubuntu's curl, never waited on, its address, topic and text on curl's stdin, never a command line. Until ntfy
   is set up (Task 2, Phase 5) it sends nothing, says so in its journal once an episode, and the gate, once back, tries.
@@ -108,6 +109,9 @@ LOAD_FLOOR_MARGIN_GIB = 2.0  # below where the loads in progress should leave me
 # from the measured noise and the soak's growth bursts.
 MIN_FALL_GIB = 1.5
 LOCK_WAIT_S = 0.2  # a poll waits this long, in all, for a lock another process holds (Task 23's review, I1)
+# At most this many steps for the gate wait, in order, for the events file's lock: past it the oldest go, and the
+# journal says how many (the controller's ruling on Task 23's fix round 1).
+PENDING_MAX = 64
 ACTIVITY_FILE = "activity.json"  # the gate's record, in its state folder (gate/core.py's ACTIVITY_FILE)
 # llama-swap v257 hands each model whose cmd holds ${PORT} a port from startPort, in their names' sorted order: the
 # gate's core.engine_ports, kept here so the brake never imports the gate's core (and with it httpx and uvicorn).
@@ -649,6 +653,9 @@ class _Brake:
         # poll after they leave, while the window still holds their fall (Task 23's review, C1).
         self.floor_kept: tuple[float, float] | None = None
         self.lock_left = LOCK_WAIT_S  # what this poll may still wait for a lock another process holds (I1)
+        self.pending: deque[BrakeEvent] = deque()  # steps not yet written for the gate, in order (record)
+        self.dropped = 0  # steps dropped from `pending` since it last emptied, the oldest first
+        self.unrecorded_why = ""  # why the last write of `pending` failed, for the journal
         self.episode: int | None = None  # the events' episode this brake is in, once it has fired or unloaded
         self.said: set[tuple[str, int]] = set()  # what its journal said once an episode: (what, episode)
         self._activity: Any = _UNREAD
@@ -672,6 +679,8 @@ class _Brake:
         self.remember(mono, wall, self.boottime(), mem.available_gib)
         self._activity = _UNREAD
         self.lock_left = LOCK_WAIT_S
+        if self.pending:  # held up last poll: written now if the lock is free, never waited for
+            self.flush(0.0)
         projected = self.watch(wall, mono) if mem.available_gib >= thresholds.brake_gib else None
         falling = projected is not None
         listed = self.listed(mem, falling)
@@ -942,21 +951,58 @@ class _Brake:
             self.once.cleared("clear", "brake: started records clear again")
 
     def record(self, event: BrakeEvent) -> None:
-        """Append a step for the gate, fsynced (brakeevents.append_event, whose seq comes from the file under its lock,
-        so it goes on across restarts). One that can't be written never stops the brake, and is said once. The lock is
-        waited for what is left of LOCK_WAIT_S this poll, then the step goes unrecorded: any process that can read the
-        file can hold its lock (Task 23's review, I1)."""
-        try:
-            append_event(self.events, event, wait_s=self.lock_left)
-        except BlockingIOError as err:  # held elsewhere: no more waiting this poll
-            self.lock_left = 0.0
-            self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events}: {err}. "
-                                       "The brake goes on, but the gate won't hear of these steps")
-        except (OSError, ValueError) as err:
-            self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events}: {err}. "
-                                       "The brake goes on, but the gate won't hear of these steps")
-        else:
-            self.once.cleared("events", "brake: its steps are recorded for the gate again")
+        """A step for the gate: queued behind any still waiting, then written (flush). Up to PENDING_MAX of them, no
+        step is lost to a lock another process holds (the controller's ruling on Task 23's fix round 1): what can't be
+        written now waits, in order, for the next poll that gets the lock. Past PENDING_MAX the oldest go, said once,
+        and how many once the rest are written."""
+        if len(self.pending) >= PENDING_MAX:
+            self.pending.popleft()
+            self.dropped += 1
+            if self.dropped == 1:
+                self.log(f"brake: ALERT — more than {PENDING_MAX} of its steps for the gate are waiting to be "
+                         "recorded, so the oldest are dropped")
+        self.pending.append(event)
+        self.flush(self.lock_left)
+
+    def flush(self, wait_s: float) -> None:
+        """Write the waiting steps, in order, each fsynced (brakeevents.append_event, whose seq comes from the file
+        under its lock, so it goes on across restarts). The lock is waited for `wait_s` at most: any process that can
+        read the file can hold it (Task 23's review, I1). A write that fails leaves that step and those after it
+        waiting, and never stops the brake; it is said once. A step the file would never take (ValueError) is dropped,
+        and said."""
+        while self.pending:
+            try:
+                append_event(self.events, self.pending[0], wait_s=wait_s)
+            except ValueError as err:  # never a whole event: no wait will make it one
+                self.pending.popleft()
+                self.log(f"brake: ALERT — a step for the gate isn't a whole event ({err}), so it isn't recorded")
+                continue
+            except OSError as err:  # BlockingIOError among them: the lock, held elsewhere
+                self.lock_left = 0.0  # no more waiting this poll
+                self.unrecorded_why = (f"another process held the lock on {self.events}"
+                                       if isinstance(err, BlockingIOError) else str(err))
+                self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events} yet: "
+                                           f"{err}. They wait, in order, for a poll that can; the brake goes on")
+                return
+            self.pending.popleft()
+        self.once.cleared("events", "brake: its steps are recorded for the gate again")
+        if self.dropped:
+            self.log(f"brake: ALERT — {self.dropped} of its steps for the gate were dropped, the oldest first, while "
+                     f"it couldn't record them; the newest {PENDING_MAX} are recorded")
+            self.dropped = 0
+
+    def flush_last(self) -> None:
+        """A --once run's end: one last bounded try for the steps still waiting, then the journal says what went
+        unrecorded, since this run won't poll again."""
+        if not self.pending:
+            return
+        self.flush(LOCK_WAIT_S)
+        if self.pending:
+            steps = ", ".join(event.kind if event.model is None else f"{event.kind} {event.model}"
+                              for event in self.pending)
+            dropped = f", and {self.dropped} older ones were dropped" if self.dropped else ""
+            self.log(f"brake: ALERT — {len(self.pending)} of its steps for the gate went unrecorded ({steps})"
+                     f"{dropped}: {self.unrecorded_why}")
 
     def say_once(self, what: str, episode: int, line: str) -> None:
         if (what, episode) not in self.said:
@@ -1147,6 +1193,7 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
             if alerter is not None:  # systemd ends a oneshot unit's leftover processes: its alerts go first
                 for code in alerter.wait(ALERT_WAIT_S):
                     log(_alert_failed(code))
+            brake.flush_last()
             return
         pause = registry.brake.poll_ms / 1000
         sleep(pause)

@@ -1706,29 +1706,103 @@ def test_an_admitted_load_never_trips_the_watch_as_it_ends(box_folders, model, s
     assert box.requests == [] and read_hold(f.state) is None
 
 
-def test_a_lock_another_process_holds_never_stops_the_hold_or_the_unload(box_folders):
-    # The review's I1: flock needs no write access, so any process that can read the brake's events can hold their
-    # lock. The hold is written first, its episode from an unlocked read; each lock is tried for about 0.2 s a poll, in
-    # all, then the brake goes on, and says so once.
-    path = box_folders.state / EVENTS_FILE
+def hold_the_events_lock(path: Path) -> subprocess.Popen:
+    """A second process that takes the events file's lock through a read-only fd, as any reader can, and holds it until
+    it is killed."""
     path.touch()
     holder = subprocess.Popen(
         [sys.executable, "-c", "import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDONLY); "
          "fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(30)", str(path)],
         stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def release_the_lock(holder: subprocess.Popen) -> None:
+    holder.kill()
+    holder.wait()
+
+
+def test_a_lock_another_process_holds_never_stops_the_hold_or_the_unload(box_folders):
+    # The review's I1: flock needs no write access, so any process that can read the brake's events can hold their
+    # lock. The hold is written first, its episode from an unlocked read; each lock is tried for about 0.2 s a poll, in
+    # all, then the brake goes on, and says so once. A --once run makes one last bounded try, then says what went
+    # unrecorded (the controller's ruling on fix round 1's concern 2).
+    holder = hold_the_events_lock(box_folders.state / EVENTS_FILE)
+    sent = []
     try:
-        assert holder.stdout.readline().strip() == "held"
-        box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False)
+        box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False,
+                       on_unload=lambda model: sent.append(time.monotonic()))
         begun = time.monotonic()
         logs = run_2a(box, once=True)
         took = time.monotonic() - begun
     finally:
-        holder.kill()
-        holder.wait()
+        release_the_lock(holder)
     hold = read_hold(box_folders.state)
     assert hold is not None and (hold.episode, hold.unloaded) == (1, (GEMMA,)) and box.requests == [(0, GEMMA)]
-    assert took < 0.35, took  # one wait of LOCK_WAIT_S (measured 0.21 s), never one per lock taken
+    assert sent[0] - begun < 0.35, sent[0] - begun  # one wait of LOCK_WAIT_S (measured 0.21 s) before the unload
+    assert took < 0.55, took  # and one last try at the end: never one wait per step
     assert sum("another process holds" in line for line in logs) == 1
+    assert [line for line in logs if "went unrecorded" in line] == [
+        "brake: ALERT — 2 of its steps for the gate went unrecorded (fired, unload vision-chat): another process held "
+        f"the lock on {box_folders.state / EVENTS_FILE}"]
+    assert events(box_folders) == []
+
+
+def test_steps_the_lock_held_up_are_written_in_order_on_the_next_poll_that_gets_it(box_folders):
+    # The controller's ruling on fix round 1's concern 2: no step is lost for the gate. Held across one poll, the lock
+    # then released, the next poll appends the fired event and the unload's, in order, their seq from the file then.
+    path = box_folders.state / EVENTS_FILE
+    append_event(path, BrakeEvent(0, T0 - 3600, "boot-0", 1, "unload", GEMMA, None, 19.0, 20, False))  # earlier boot
+    holder = hold_the_events_lock(path)
+    box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False, delay=99, polls=2)
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 0:
+            assert len(events(box_folders)) == 1  # nothing of this boot's written while the lock was held
+            release_the_lock(holder)
+        poll(seconds)
+
+    box.sleep = sleep
+    try:
+        logs = run_2a(box)
+    finally:
+        release_the_lock(holder)
+    mine = [e for e in events(box_folders) if e.boot_id == BOOT]
+    assert [(e.seq, e.kind, e.model, e.episode) for e in mine] == [(2, "fired", None, 1), (3, "unload", GEMMA, 1)]
+    assert mine[0].at == T0 and mine[1].at == T0  # written a poll later, as they were at poll 0
+    assert "brake: its steps are recorded for the gate again" in logs
+
+
+def test_steps_waiting_for_the_lock_are_bounded_and_the_oldest_dropped(box_folders):
+    # At most PENDING_MAX steps wait: past it the oldest go, the journal says so once, and how many, once the rest are
+    # written. 66 models the registry doesn't know (so no memory comes back), one unloaded a poll while the lock is
+    # held: 67 steps, so 3 dropped.
+    assert brake.PENDING_MAX == 64
+    path = box_folders.state / EVENTS_FILE
+    holder = hold_the_events_lock(path)
+    names = [f"stand-in-{n}" for n in range(1, 67)]
+    box = Timeline([18], dict.fromkeys(names, "ready"), folders=box_folders, gate_up=False, delay=999, polls=68)
+    poll = box.sleep
+
+    def sleep(seconds):
+        if len(box.sleeps) == 66:  # every model asked: free the lock for the next poll
+            release_the_lock(holder)
+        poll(seconds)
+
+    box.sleep = sleep
+    try:
+        logs = run_2a(box)
+    finally:
+        release_the_lock(holder)
+    assert len(box.requests) == 66
+    written = events(box_folders)
+    assert [e.seq for e in written] == list(range(1, 65))
+    assert [e.model for e in written] == names[2:]  # the newest 64: fired and the first two unloads were dropped
+    assert sum("more than 64 of its steps" in line for line in logs) == 1
+    assert ("brake: ALERT — 3 of its steps for the gate were dropped, the oldest first, while it couldn't record them; "
+            "the newest 64 are recorded") in logs
 
 
 @pytest.mark.parametrize("level", [24, 25])

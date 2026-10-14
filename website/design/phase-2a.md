@@ -6058,9 +6058,15 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
     after every load.)
   - **I1, no lock before the hold.** The hold is written first, its episode from an unlocked read
     of the events. Each lock on the poll path, the events' append the only one, is tried with
-    `LOCK_NB` for what is left of `LOCK_WAIT_S` (0.2 s) that poll, in all; then the step goes
-    unrecorded, the journal says so once, and the unload still goes out. The hold, `started/` and
-    the gate's files are written or read with no lock.
+    `LOCK_NB` for what is left of `LOCK_WAIT_S` (0.2 s) that poll, in all; then ~~the step goes
+    unrecorded~~ the journal says so once, and the unload still goes out. The hold, `started/` and
+    the gate's files are written or read with no lock. *(Corrected the same day, the controller's
+    ruling on the fix round's concern 2: no step is lost for the gate.)* A step not written waits
+    in memory, in order, behind any before it, and is appended at the next poll that gets the lock,
+    its seq from the file then; each poll first tries once, never waiting. At most `PENDING_MAX`
+    (64) wait: past it the oldest go, the journal says so once, and how many once the rest are
+    written. A `--once` run that ends with steps waiting makes one last try of `LOCK_WAIT_S`, then
+    says in the journal which went unrecorded.
   - **I2, `MIN_FALL_GIB = 1.5`**, at `predict_breach`'s interface above. A 0.2 GiB/s fall no
     longer trips the watch: the brake acts at the line.
   - **I3, the journal's line** says how the pause ends in 2a: *brake: new loads paused; the gate
