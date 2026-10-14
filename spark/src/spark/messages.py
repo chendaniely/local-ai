@@ -871,6 +871,8 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
         _needs("brake_fired", f, "unloaded")
         if f["unload_unanswered"]:
             raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
+        if f["falling"]:  # a follow-up names no reading
+            raise ValueError("brake_fired's falling is for a first alert, which names the reading")
         return f"Brake, {_clock(f['at'])}: also unloaded {_brake_unloaded(f['unloaded'])}."
     if f["unloaded"] is None:
         raise ValueError("brake_fired's words need unloaded")
@@ -897,7 +899,9 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
             resume = f"They resume once the gate is back and memory has stayed above {warn} available for {after}."
         else:
             resume = f"They resume by themselves after {after} above {warn} available."
-    reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available, under the "
+    # falling: the rate-of-fall watch acted above the line, so memory was falling toward it, never under it (Task 23).
+    where = " and falling fast toward" if f["falling"] else ", under"
+    reading = (f"Brake on {_host()} at {_clock(f['at'])}: {_reading(f['available_gib'])} available{where} the "
                f"{_line(f['line_gib'])} line")
     if f["unload_unanswered"]:
         return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: llama-swap hasn't confirmed its "
@@ -1401,7 +1405,7 @@ def _memory_warning(registry: Registry, f: dict[str, Any]) -> str:
 _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
-                    "release_assumed": False, "unload_unanswered": False},
+                    "release_assumed": False, "unload_unanswered": False, "falling": False},
     "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": [], "recovered": False,
                             "rebooted": False},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},

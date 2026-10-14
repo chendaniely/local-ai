@@ -33,7 +33,9 @@ from typing import Any, Literal, get_args
 from spark.hold import Hold
 
 EVENTS_FILE = "events.jsonl"  # in the brake's folder, beside hold.FILE
-Kind = Literal["fired", "unload", "warn"]
+# unload_failed: an unload llama-swap refused, or that failed, with its reason, so the gate can word the cause (Task 23;
+# the controller's ruling at Task 14). It unloaded nothing: the gate never reads it as an unload.
+Kind = Literal["fired", "unload", "unload_failed", "warn"]
 KINDS: tuple[str, ...] = get_args(Kind)
 # An unload's model was starting, idle or answering, by the gate's activity record; None when that was missing or
 # stale (the controller's ruling at Task 7). messages words each.
@@ -47,12 +49,19 @@ class BrakeEvent:
     at: float  # Unix seconds
     boot_id: str
     episode: int  # episode_for's
-    kind: Kind  # the step: fired (the brake fired), unload (it unloaded `model`), or warn (Task 23 says when)
-    model: str | None  # an unload's model; None for the rest
-    state: str | None  # an unload's model's state, one of UNLOAD_STATES, or None
+    # The step: fired (the brake fired), unload (it unloaded `model`), unload_failed (llama-swap refused the unload of
+    # `model`, or it failed: `reason` says how), or warn, which Task 23's brake never writes (memory_warning is the
+    # gate's own) and the gate passes over.
+    kind: Kind
+    model: str | None  # an unload's model, or a failed unload's; None for the rest
+    state: str | None  # that model's state, one of UNLOAD_STATES, or None
     available_gib: float  # MemAvailable when the brake acted
     line_gib: float  # the line the writer acted on, its own registry's, so a drill's raised line is worded as itself
     sent_by_brake: bool  # the brake sent its own alert, the gate being down: the gate doesn't send it again
+    reason: str | None = None  # why an unload failed, one line (unload_failed); None for the rest
+    # The rate-of-fall watch acted, above the line (Task 23): memory was falling toward the line, not under it. A line
+    # written before Task 23 has neither of these two, and reads as no reason and not falling.
+    falling: bool = False
 
 
 def _whole(value: Any, least: int) -> bool:
@@ -81,6 +90,8 @@ def _problem(data: dict[str, Any]) -> str | None:
         "available_gib": _finite(data.get("available_gib")),
         "line_gib": _finite(data.get("line_gib")),
         "sent_by_brake": isinstance(data.get("sent_by_brake"), bool),
+        "reason": data.get("reason") is None or isinstance(data.get("reason"), str),
+        "falling": isinstance(data.get("falling", False), bool),
     }
     wrong = [name for name, ok in checks.items() if not ok]
     return f"not a brake event: {', '.join(wrong)}" if wrong else None
@@ -95,7 +106,8 @@ def _parse(line: bytes) -> BrakeEvent | None:
     if not isinstance(data, dict) or _problem(data):
         return None
     return BrakeEvent(data["seq"], float(data["at"]), data["boot_id"], data["episode"], data["kind"], data["model"],
-                      data["state"], float(data["available_gib"]), float(data["line_gib"]), data["sent_by_brake"])
+                      data["state"], float(data["available_gib"]), float(data["line_gib"]), data["sent_by_brake"],
+                      data.get("reason"), data.get("falling", False))
 
 
 def _events(data: bytes) -> list[BrakeEvent]:

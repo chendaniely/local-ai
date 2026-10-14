@@ -666,6 +666,40 @@ def test_a_brake_whose_unload_went_unanswered_says_so_then_follows_up(tmp_path):
         "Brake, 03:13: also unloaded Gemma, which was idle."]
 
 
+def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path):
+    # Task 23 writes an unload llama-swap refused as an event of its own, with the reason (the controller's ruling at
+    # Task 14): it unloaded nothing and marks nothing, and a lone fired still waits for the brake's next unload.
+    path = tmp_path / EVENTS_FILE
+    state = GateState(models={GEMMA: ModelRecord(name=GEMMA, footprint_gib=32, loaded_at=at(1, 0), load_fall_gib=27,
+                                                 fall_flagged=False, rss_anon_at_load_gib=None, last_use=at(3, 0),
+                                                 state="ready")})
+    refused = replace(event("unload_failed", at(3, 12, 1), model=CODER, state="starting"),
+                      reason="llama-swap POST /api/models/unload/coder: HTTP 500")
+    write(tmp_path, event("fired", at(3, 12)), refused)
+    assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)) == []
+    write(tmp_path, event("unload", at(3, 12, 2), model=GEMMA, state="idle"))
+    found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 3))
+    assert texts(found) == [
+        "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded Gemma, which was idle; new "
+        "loads are paused. They resume by themselves after 5 min above 28 GiB available."]
+    assert CODER not in state.brake_marks
+    # Alone past FIRED_ALONE_S, with something loaded, it goes as unconfirmed, and its failed unload names nothing.
+    write(tmp_path, event("fired", at(3, 20), episode=2), replace(refused, at=at(3, 20, 1), episode=2))
+    (words,) = texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 20, FIRED_ALONE_S)))
+    assert "It hasn't unloaded anything yet: llama-swap hasn't confirmed its unload." in words
+
+
+def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):
+    # Task 23's rate-of-fall watch acts above the line: its first alert says memory was falling toward the line, never
+    # that it was under it.
+    write(tmp_path, replace(event("fired", at(3, 12), available=44.6), falling=True),
+          replace(event("unload", at(3, 12, 1), model=GEMMA, state="idle", available=44.0), falling=True))
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT,
+                                         now=at(3, 12, 2)))
+    assert words.startswith("Brake on brightroar at 03:12: 44.6 GiB available and falling fast toward the 20 GiB "
+                            "line. Unloaded Gemma, which was idle; new loads are paused.")
+
+
 def test_memory_warning_once_per_fall():
     warning = MemoryWarning()
     assert [warning.check(reading, 28) for reading in (30, 27.4, 27, 26, 29, 27)] == [

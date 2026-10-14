@@ -8,6 +8,7 @@ hold written by Phase 1's brake has none of the four, and reads with each None."
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import secrets
@@ -21,11 +22,15 @@ from spark.gateproto import AUTO_RELEASE_EVERY_S
 FILE = "hold.json"
 UNREADABLE_SINCE = "an unknown time"  # the `since` of read_hold's stand-in for a hold file it can't read
 _PHASE_1 = ("since", "reason", "unloaded")  # the fields Phase 1's brake writes and reads
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Hold:
-    since: str  # local time, to the second, with no zone, as Phase 1 wrote it: 2026-10-08T03:12:00
+    # Local time, to the second: Phase 1's brake wrote it with no zone (2026-10-08T03:12:00); 2a's writes its UTC offset
+    # too (2026-10-08T03:12:00-07:00), so it reads unambiguously across a clock going back (Task 23). Phase 1's reader
+    # takes either as text.
+    since: str
     reason: str
     unloaded: tuple[str, ...]
     boot_id: str | None = None  # the boot the brake wrote it on; None (Phase 1's) counts as another boot's
@@ -103,7 +108,9 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
     The gate's automatic release passes the hold it judged, and only that one goes (Task 17; the controller's ruling
     there): the file is first moved aside under a name of this call's own, then read. One that isn't `expected` (the
     brake fired again between the gate's reading and now, or it can't be read) is put back, but never over a newer hold
-    the brake wrote meanwhile, which then stands. The folder is fsynced, so what was done survives a power cycle."""
+    the brake wrote meanwhile, which then stands. The folder is fsynced, so what was done survives a power cycle. Should
+    neither the link nor a rename put it back (a filesystem gone read-only since the move aside), it says so in the
+    journal and raises: no hold stands until the gate's next start puts it back (recover_release)."""
     path = Path(state_dir) / FILE
     if expected is None:  # Dan's: whatever stands, and any hold left aside, so the gate's start never puts it back
         lifted = False
@@ -132,7 +139,12 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
         except FileExistsError:
             pass
         except OSError:
-            os.rename(aside, path)  # no link here: renamed back, so a hold always stands; should that fail, it raises
+            try:
+                os.rename(aside, path)  # no link here: renamed back, so a hold always stands
+            except OSError as err:  # a filesystem gone read-only since the move aside: no hold stands, and it says so
+                _log.error("the brake's hold, moved aside as %s, couldn't be put back (%s): no hold stands until the "
+                           "gate's next start puts it back", aside.name, err)
+                raise
         aside.unlink(missing_ok=True)
     try:
         _fsync_folder(state_dir)

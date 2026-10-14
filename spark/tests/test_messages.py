@@ -1052,6 +1052,13 @@ COMPOSED = [
     ("brake_fired", {**FIRED, "available_gib": 52.3, "line_gib": 56, "release_after_s": 600},
      "52.3 GiB available, under the 56 GiB line. Unloaded the coder, which was loading; new loads are paused. They "
      "resume by themselves after 10 min above 28 GiB available."),
+    # The rate-of-fall watch acts above the line (Task 23): memory was falling toward it, not under it.
+    ("brake_fired", {**FIRED, "available_gib": 44.6, "falling": True},
+     "Brake on brightroar at 03:12: 44.6 GiB available and falling fast toward the 20 GiB line. Unloaded the coder, "
+     "which was loading; new loads are paused."),
+    ("brake_fired", {**FIRED, "available_gib": 44.6, "falling": True, "unloaded": [], "unload_unanswered": True},
+     "Brake on brightroar at 03:12: 44.6 GiB available and falling fast toward the 20 GiB line; new loads are paused. "
+     "It hasn't unloaded anything yet"),
     ("brake_down", {**DOWN, "result_words": "it stopped answering"},
      "The memory brake on brightroar stopped at 09:14 (it stopped answering; it is restarting within 2 s)."),
     ("llama_swap_down", {**DOWN, "result_words": "it ran out of memory"},
@@ -1183,6 +1190,12 @@ def test_a_brake_after_a_damaged_start_never_names_an_automatic_release():
                          "`make brake-release` resumes them.")
     assert "automatic release at" not in text
     assert say("brake_fired", **WITHIN_THE_HOUR).endswith(DANS_RELEASE)  # a real release keeps its words
+
+
+def test_falling_is_for_a_first_alert():
+    # A follow-up names no reading, so it can't say memory was falling (Task 23).
+    with pytest.raises(ValueError, match="^brake_fired's falling is for a first alert"):
+        say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "falling": True})
 
 
 UNANSWERED_HEAD = ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It "

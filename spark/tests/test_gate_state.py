@@ -827,6 +827,34 @@ def test_a_crash_between_release_holds_rename_and_its_link_back_leaves_a_hold_th
     assert read_hold(tmp_path) == standing and sorted(path.name for path in tmp_path.iterdir()) == [hold.FILE]
 
 
+def test_a_hold_release_hold_cant_put_back_is_said_and_the_next_start_restores_it(tmp_path, caplog):
+    # A filesystem gone read-only between the move aside and the link back (Task 17's second re-review; the
+    # controller's note for Task 23): neither the link nor the rename puts the hold back. release_hold says so in the
+    # journal, truthfully, and raises; the gate's next start puts it back (recover_release).
+    judged = Hold(local(T), "19.6 GiB available", (CODER,), boot_id=BOOT, episode=1, available_gib=19.6)
+    standing = replace(judged, since=local(T + 60), episode=2)
+    write_hold(tmp_path, standing)
+    real_link, real_rename = os.link, os.rename
+
+    def read_only(*args):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    def aside_then_read_only(src, dst):
+        os.rename = read_only
+        real_rename(src, dst)
+
+    os.link, os.rename = read_only, aside_then_read_only
+    try:
+        with caplog.at_level(logging.ERROR, logger="spark.hold"), pytest.raises(OSError, match="Read-only"):
+            release_hold(tmp_path, judged)
+    finally:
+        os.link, os.rename = real_link, real_rename
+    assert read_hold(tmp_path) is None and len(list(tmp_path.glob(f"{hold.FILE}.releasing-*"))) == 1
+    (line,) = [record.getMessage() for record in caplog.records if record.name == "spark.hold"]
+    assert "couldn't be put back" in line and "Read-only file system" in line and "next start" in line
+    assert hold.recover_release(tmp_path) == standing
+
+
 def test_dans_release_also_lifts_a_hold_left_aside_so_it_never_comes_back(tmp_path):
     # The controller's ruling at Task 17's re-review (its Minor 6): `make brake-release`, through the gate or its
     # fallback with the gate down, removes the hold and any left aside, so the gate's start never puts back a hold Dan

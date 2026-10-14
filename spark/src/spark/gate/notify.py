@@ -437,13 +437,18 @@ def _new_from(events: list[BrakeEvent], after: tuple[str, int, float] | None) ->
     return 0
 
 
+# The steps that unload nothing, which the gate passes over: a warn (memory_warning is the gate's own), and an unload
+# that failed (Task 23), after which the brake tries the next model at its next poll.
+_NO_UNLOAD = ("warn", "unload_failed")
+
+
 def _held_back(events: list[BrakeEvent], now: float, boot_id: str) -> int:
     """How many of `events` are left for the next read: from a last `fired` of this boot with nothing after it but
-    `warn` events, while it is younger than FIRED_ALONE_S, since its first unload may be a moment away. One from an
-    earlier boot has no unload to wait for."""
+    steps that unload nothing (`warn`, `unload_failed`), while it is younger than FIRED_ALONE_S, since its first unload
+    may be a moment away. One from an earlier boot has no unload to wait for."""
     for place in range(len(events) - 1, -1, -1):
         e = events[place]
-        if e.kind == "warn":
+        if e.kind in _NO_UNLOAD:
             continue
         if e.kind == "fired" and e.boot_id == boot_id and abs(now - e.at) < FIRED_ALONE_S:
             return len(events) - place
@@ -466,7 +471,11 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     - Each later unload of the episode is a follow-up, *Brake, 03:13: also unloaded …*. The unloads of one read at the
       same local minute go together.
     - A line the brake sent itself (`sent_by_brake`) isn't sent again. A `warn` sends nothing: memory_warning is the
-      gate's own (MemoryWarning).
+      gate's own (MemoryWarning). Nor does an `unload_failed` (Task 23): it unloaded nothing, so it marks nothing, and
+      a `fired` before it still waits for the brake's next unload; past FIRED_ALONE_S the first alert says llama-swap
+      hasn't confirmed the unload, which stays true. Its `reason` is kept in the file for the words that name it.
+    - A first alert from the rate-of-fall watch (`falling`, Task 23) says memory was falling toward the line, never
+      under it.
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -496,7 +505,7 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     reboots: dict[tuple[str, int], _Group] = {}
     for e in taken:
         episode = _episode(e)
-        if e.kind == "warn":
+        if e.kind in _NO_UNLOAD:
             continue
         if e.kind == "unload":
             if not e.model:  # an unload names its model (Task 23): one that doesn't has nothing to say
@@ -567,6 +576,8 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
                               "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed}
     if waits and not state.release_assumed:
         fields["released_at"] = state.last_auto_release_at
+    if reading.falling:  # the rate-of-fall watch acted above the line (Task 23)
+        fields["falling"] = True
     if not unloaded and state.models:  # something is loaded, and no unload came by FIRED_ALONE_S
         fields["unload_unanswered"] = True
     return "brake_fired", f"brake:{boot}:{episode}:{reading.seq}", fields

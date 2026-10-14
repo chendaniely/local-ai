@@ -1627,7 +1627,7 @@ true sentence in every case the gate sends it, can be built.)*
 
 | Type | Fields |
 |---|---|
-| `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*). Added: `release_after_s` (gateproto's `RELEASE_AFTER_S`, which `messages` can't import, so the caller passes it: required, with no default to go stale); the 28 GiB is the registry's `brake.warn_gib`; a follow-up needs neither reading nor line; each `state` is `starting` (*loading*), `idle` or `answering`, or None when the gate's record was missing; and `release_waits_for_dan: bool`, required (a brake within the hour after an automatic release, rule 5), with `released_at`, the automatic release's time, whose last sentence is then *It fired within an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, `make brake-release`.*, ending in `held_by_brake`'s words for Dan, in place of *They resume …*, `by_brake` or not, and needing no `release_after_s`; added 2026-10-08, the controller's ruling, at Task 14: `unload_unanswered: bool`, for a first alert that unloaded nothing while something was loaded, *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't unloaded anything yet: ~~llama-swap didn't answer its unload~~ llama-swap hasn't confirmed its unload. On the Spark, `make logs s=brake` shows why.*, then the pause sentence (corrected 2026-10-08, the controller's ruling, at Task 14's review) |
+| `brake_fired` | `at`, `available_gib`, `line_gib`, `unloaded: list[(label, state)]`, `follow_up: bool`, `by_brake: bool` (sent by the brake with the gate down: its last sentence then reads *They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.*). Added: `release_after_s` (gateproto's `RELEASE_AFTER_S`, which `messages` can't import, so the caller passes it: required, with no default to go stale); the 28 GiB is the registry's `brake.warn_gib`; a follow-up needs neither reading nor line; each `state` is `starting` (*loading*), `idle` or `answering`, or None when the gate's record was missing; and `release_waits_for_dan: bool`, required (a brake within the hour after an automatic release, rule 5), with `released_at`, the automatic release's time, whose last sentence is then *It fired within an hour of the automatic release at 03:40, so they stay paused until you release them: on the Spark, `make brake-release`.*, ending in `held_by_brake`'s words for Dan, in place of *They resume …*, `by_brake` or not, and needing no `release_after_s`; added 2026-10-08, the controller's ruling, at Task 14: `unload_unanswered: bool`, for a first alert that unloaded nothing while something was loaded, *Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't unloaded anything yet: ~~llama-swap didn't answer its unload~~ llama-swap hasn't confirmed its unload. On the Spark, `make logs s=brake` shows why.*, then the pause sentence (corrected 2026-10-08, the controller's ruling, at Task 14's review); added 2026-10-14, at Task 23, for the controller's ruling: `falling: bool`, for a first alert the rate-of-fall watch fired above the line, whose reading then begins *Brake on brightroar at 03:12: 44.6 GiB available and falling fast toward the 20 GiB line.*, since *under the 20 GiB line* would be untrue there; a follow-up, which names no reading, refuses it |
 | `brake_needs_release` | `fired_at`; added 2026-10-08, the controller's ruling, at Task 14's review: `available_gib` and `unloaded: list[label]`, each shown when known, *After the reboot, new loads are still paused from the brake at 03:12 (19.6 GiB available; it unloaded the coder). …*~~, `why: "reboot" \| "again"`, `released_at` (for `again`: *The brake fired again at 03:50, within an hour of its automatic release at 03:40, so new loads stay paused until you release them: on the Spark, `make brake-release`.*)~~ — sent only for a hold found after a reboot (corrected 2026-10-07, at Task 7, the controller's ruling: rule 5's alert for a brake within the hour is that brake's own `brake_fired`, with `release_waits_for_dan`, so one event sends one notification) |
 | `gate_down`, `front_down`, `llama_swap_down`, `brake_down` | `at`, `result_words` — added: the notifier's result in words (Task 26's, *it crashed* …), to which the words add *; it is restarting* (*within 2 s* for the brake); ~~None, as for llama-swap that stopped answering with its unit up, gives no parenthesis~~ (struck 2026-10-08, the controller's ruling, at Task 14's re-review: superseded by the hang form at this row's end); and for `llama_swap_down` (added 2026-10-08, the controller's ruling, at Task 12's second re-review) a second form: `why: "stuck_stopping"`, `model_label`, `since`, sent by the gate once when a model is still stopping `STUCK_STOPPING_S` (5 min) after its unload call began, worded *llama-swap has been stopping the coder for 5 min; its engine may be stuck. On the Spark, `make logs s=llama-swap` shows why.*; Task 16 adds it to `messages.py`; corrected 2026-10-08, the controller's ruling, at Task 14's review: `llama_swap_down` with `result_words` None, the gate's hang, reads *The model service on brightroar isn't answering (since 09:14). …*, never *stopped* |
 | `back_up` | `unit`, `down_s`; its second sentence per unit: the gate *New loads work again.*, the front *Requests go through again.*, llama-swap *Models answer again.*, the brake *Memory is watched again.* Added: `unit` is `gate`, `front`, `llama-swap` or `brake`; added 2026-10-08, the controller's ruling, at Task 14: `state_damaged: bool`, the gate's alone, with no `down_s`, *The gate on brightroar has been running again for a minute; how long it was down isn't known: its saved state was damaged. New loads work again.*; added 2026-10-08, the controller's ruling, at Task 14's review: `down_unknown: bool`, with no `down_s`, *… has been running again for a minute; how long it was down isn't known. …*, and `state_damaged` only when the downtime isn't known either |
@@ -2685,7 +2685,13 @@ git commit -m "feat(spark): 🤖 the gate's async llama-swap client, tested agai
   (`brake/events.jsonl`). *(Added 2026-10-08, the controller's ruling, at Task 13's review: the key
   keeps the event's `at` too, (boot id, seq, at), as `GateState.brake_events_after` holds it, so a
   file removed within a boot, whose seq starts from 1 again, hides nothing either.)* It reads without the lock, so it skips a last line with no newline (a
-  write in progress), and never returns or advances past it.
+  write in progress), and never returns or advances past it. *(Added 2026-10-14, at Task 23, for
+  the controller's ruling:)* `kind` gains `unload_failed`, an unload llama-swap refused or that
+  failed, with `reason: str | None`, one line of at most 200 characters, never the key, so the gate
+  can word the cause (the controller's ruling at Task 14); and every event gains `falling: bool`, a
+  step the rate-of-fall watch took above the line. Both have defaults, so a line written before
+  them reads as no reason and not falling. The brake never writes `warn`: `memory_warning` is the
+  gate's own.
 - *(Added 2026-10-08, at Task 13, what its code gives beyond the lines above, for the tasks that
   use it:)*
   - `ModelRecord` gains `unload_requested_at: float | None = None`, the "unload requested" record
@@ -2945,6 +2951,14 @@ git commit -m "feat(spark): 🤖 the gate's state, kept across restarts" \
     never sends two alerts, and a pause that ended is never said to stand)*; with none, nothing is
     paused, and nothing goes. An episode of an earlier boot whose first alert went before the reboot
     still sends its later unloads as follow-ups.
+  *(Added 2026-10-14, at Task 23, what its brake's events ask of the ingest, for the controller's
+  ruling:)*
+  - **A failed unload** (`unload_failed`) is passed over as a `warn` is: it unloaded nothing, so it
+    marks nothing, and a lone `fired` before it still waits up to `FIRED_ALONE_S` for the brake's
+    next unload, a poll later; past that, the `unload_unanswered` form stays true. Its `reason` isn't
+    worded yet: words that name the cause are the controller's to rule.
+  - **A first alert from the rate-of-fall watch** passes `falling` from its reading's event, so it
+    says memory was falling toward the line, never under it.
 - `MemoryWarning` — `check(available_gib, warn_gib) -> bool`: true once per fall under the warn
   line, re-armed only above it.
 - `gate/units.py`: `unit_state(unit: str, run=subprocess.run) -> UnitState(active: bool,
@@ -5924,6 +5938,49 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   `since` with its UTC offset (`datetime.now().astimezone().isoformat(timespec="seconds")`), so the
   gate reads when it fired unambiguously across a clock going back; Phase 1's reader takes it as
   text. The gate also floors rule 5's five minutes at when it first saw the hold.
+
+- *(Added 2026-10-14, at Task 23, what its code gives beyond the lines above, for the tasks that use
+  it and the controller's ruling:)*
+  - **`loads_in_progress`** takes, beside the plan's arguments, `registry`, `readings` (the brake's
+    own readings as (wall time, GiB), kept `STARTED_EXPIRES_S` and 10 s back), `proc` and
+    `spark_uid`. A `started/` record's engine is found by its model's port (`brake.engine_ports`,
+    the gate core's v257 order from 800, a test holding the two equal) through `procs.engine_pid`'s
+    scan, which must find the record's `pid`. The record holds no start time, so the process's age
+    (`/proc/uptime` less its start time) must agree with the record's: at most `LAUNCH_SLACK_S`
+    (30 s) older, at most `AGE_TOLERANCE_S` (2 s) younger; an engine that has run an hour isn't a
+    load just begun. A model the registry doesn't know is no load. A model in the gate's record is
+    taken from it, and its `admitted_gib` is capped at the registry's footprint too.
+  - **`read_activity(path, now, *, boot_id=None)`**: another boot's record, or one more than
+    `ACTIVITY_STALE_S` ahead of `now`, is None too.
+  - **The watch** judges a fall only once its readings span half of `FALL_WINDOW_S`, so a `--once`
+    run, one reading, has none. Below the brake line it plays no part: Phase 1's rules act there.
+    True above the line, `plan_brake` takes the projection, `projected_gib`, in place of the reading
+    for the shortfall, so an unload's memory on its way still counts against it. The loads in
+    progress are read only when the fall alone would pass the line. A 0.2 GiB/s fall covers 2 GiB in
+    `UNLOAD_LEAD_S`, so the watch acts within 2 GiB above the line, under 22, as Tasks 40 and 41
+    say; `test_a_slow_fall_doesnt_trip_the_rate_watch` reads *acts at 20 as before* so, and checks
+    that it never acts higher.
+  - **The hold** a rate-of-fall brake writes says *44.6 GiB available, falling fast toward the 20
+    GiB line*. Its events carry `falling`, and the first alert says so (Task 7's field table).
+  - **An unload's `state`** is the gate's record's; without it, `starting` for a model llama-swap
+    shows starting, and None for the rest, whose requests only the front counts. llama-swap's
+    `starting` is known without the gate, and rule 5 wants that model marked.
+  - **The brake clears the `started/` record of a load it stopped.** `clear_started`'s OSError, and
+    `started`'s, are said once in its journal, and stop nothing.
+  - **Its own alerts:** the first alert with each `fired`, and a follow-up for each later unload while
+    the gate is down. Whether it sends is decided before the event is written, so the gate never
+    sends twice. Should curl then fail to start, an ALERT line says the alert wasn't sent and the
+    gate won't send it. Finished curls are reaped each poll, a failed one logged by its exit code
+    only. With the registry's `brake_fired` off, or no registry (its words need one), nothing goes.
+  - **`make brake-release`:** a gate that answers having lifted nothing gives *brake: no hold to
+    release*, or, with the hold still standing, says the gate couldn't lift it and exits 1. Any
+    `GateError` but `GateUnavailable` is said, and the hold file kept.
+  - **`--key-credential`:** a credential that can't be read is an ALERT line, and the brake runs on
+    without a key: it holds, but can't unload, as with an unset `--key-env`.
+  - **`hold.release_hold`** logs, itself, a hold it moved aside and couldn't put back (a filesystem
+    gone read-only), then raises; the gate's next start restores it (`recover_release`).
+  - **Not done:** `events.jsonl` isn't trimmed (the deferred note's option; 2a doesn't need it), and
+    the gate doesn't yet word a failed unload's `reason`.
 
 **Tests** (`spark/tests/test_brake.py`; Phase 1's kept):
 

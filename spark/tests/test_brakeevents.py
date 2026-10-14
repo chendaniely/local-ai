@@ -7,6 +7,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -204,3 +205,23 @@ def test_the_events_file_is_never_followed_through_a_link(path, tmp_path):
     os.mkfifo(path)
     with pytest.raises(ValueError, match="regular file"):
         read_events(path, None)  # never waits for a writer
+
+
+def test_a_failed_unload_is_an_event_with_its_reason_and_older_lines_still_read(path):
+    # Task 23 (the controller's ruling at Task 14): an unload llama-swap refused, or that failed, is a step of its own,
+    # with the reason, so the gate can word the cause; and the rate-of-fall watch marks the steps it took above the line.
+    failed = append_event(path, replace(event("unload_failed"), reason="llama-swap POST /api/models/unload/coder: HTTP 500"))
+    early = append_event(path, replace(event("fired", model=None, state=None), falling=True))
+    assert read_events(path, None) == [failed, early]
+    assert (failed.kind, failed.reason, failed.falling) == ("unload_failed", "llama-swap POST /api/models/unload/coder: "
+                                                             "HTTP 500", False)
+    assert (early.reason, early.falling) == (None, True)
+    # A line written before Task 23, with neither field, reads as no reason and not falling.
+    first = json.loads(path.read_text().splitlines()[0])
+    path.write_text(json.dumps({k: v for k, v in first.items() if k not in ("reason", "falling")}) + "\n")
+    (back,) = read_events(path, None)
+    assert (back.kind, back.reason, back.falling) == ("unload_failed", None, False)
+    with pytest.raises(ValueError, match="reason"):
+        append_event(path, replace(event(), reason=5))
+    with pytest.raises(ValueError, match="falling"):
+        append_event(path, replace(event(), falling="yes"))

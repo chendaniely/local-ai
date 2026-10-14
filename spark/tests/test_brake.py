@@ -1,23 +1,38 @@
 import argparse
 import os
+import subprocess
 import threading
+import time
+from collections import deque
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from spark import brake, cli
+from spark import brake, cli, messages, tickets
 from spark.brake import Action, plan_brake, run_brake
+from spark.brakeevents import EVENTS_FILE, BrakeEvent, append_event, read_events
+from spark.gate.state import GateState, save_state
+from spark.gateclient import GateForbidden, GateUnavailable
 from spark.hold import Hold, read_hold, release_hold, write_hold
 from spark.llamaswap import LlamaSwapError, LlamaSwapUnreachable, Running
 from spark.memory import MemInfo
 from spark.registry import BrakeThresholds, RegistryError, load_registry
+from test_procs import process
 
 REG = load_registry(Path(__file__).parent / "fixtures" / "models.yaml")
 
 
 def plan(available, running):
     return plan_brake(MemInfo(121.7, available), REG.brake, REG, running)
+
+
+def phase_1(hold):
+    """The three fields Phase 1's brake wrote and its tests compare; Phase 2a's four (the boot, the episode, the model
+    loading and the reading) are Task 23's tests'."""
+    return None if hold is None else Hold(hold.since, hold.reason, hold.unloaded)
 
 
 def test_above_warn_does_nothing():
@@ -58,7 +73,7 @@ def test_loop_unloads_and_records_the_hold(tmp_path):
     run_brake(REG, client, tmp_path, read_mem=lambda: MemInfo(121.7, 18), sleep=lambda s: None,
               log=logs.append, now=lambda: "2026-09-23T10:00:00", once=True)
     assert client.unloaded == ["coder"]
-    assert read_hold(tmp_path) == Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",))
+    assert phase_1(read_hold(tmp_path)) == Hold("2026-09-23T10:00:00", "18.0 GiB available", ("coder",))
 
 
 def test_the_hold_names_the_command_that_lifts_it(tmp_path):
@@ -235,14 +250,14 @@ def test_the_hold_is_on_disk_before_the_unload_goes_out(tmp_path):
 
 def test_a_failed_unload_still_holds_and_says_why(tmp_path):
     logs = brake_loop(Box(18, ["coder"], fail={"coder"}), tmp_path, once=True)
-    assert read_hold(tmp_path) == Hold("T", "18.0 GiB available", ())
+    assert phase_1(read_hold(tmp_path)) == Hold("T", "18.0 GiB available", ())
     assert any("coder" in line and "HTTP 500" in line for line in logs)
 
 
 def test_a_release_during_an_unload_holds_again_with_the_unload_in_it(tmp_path):
     # `spark brake --release` lands while the unload is on its way, and memory is still below the line (I1).
     brake_loop(Box(18, ALL, on_unload=lambda model: release_hold(tmp_path)), tmp_path, once=True)
-    assert read_hold(tmp_path) == Hold("T", "18.0 GiB available", ("coder",))
+    assert phase_1(read_hold(tmp_path)) == Hold("T", "18.0 GiB available", ("coder",))
 
 
 @pytest.mark.parametrize("damage", ["{garbage", "[" * 100_000], ids=["not JSON", "nested too deep"])
@@ -269,7 +284,7 @@ def test_one_unload_whenever_its_memory_shows(tmp_path, delay):
     brake_loop(box, tmp_path)
     assert box.requests == [(0, "coder")] and box.avail == 46
     assert box.sleeps == [TICK] * 12  # a poll every 250 ms
-    assert read_hold(tmp_path) == Hold("T", "18.0 GiB available", ("coder",))  # still held once memory is back
+    assert phase_1(read_hold(tmp_path)) == Hold("T", "18.0 GiB available", ("coder",))  # still held, memory back
 
 
 def test_it_stops_waiting_when_memory_keeps_falling(tmp_path):
@@ -521,7 +536,7 @@ def test_a_hold_written_after_a_failure_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(brake, "write_hold", full_disk_once)
     logs = brake_loop(Box(18, ALL), tmp_path, once=True)
     assert "brake: the hold is written again" in logs
-    assert read_hold(tmp_path) == Hold("T", "18.0 GiB available", ("coder",))
+    assert phase_1(read_hold(tmp_path)) == Hold("T", "18.0 GiB available", ("coder",))
 
 
 # Task 5's fix round 1: a release this account can't make says who can, not a traceback.
@@ -536,6 +551,8 @@ def test_a_release_this_account_cant_make_says_who_can(tmp_path, monkeypatch, ca
     state.mkdir()
     write_hold(state, Hold("t", "r", ()))
     monkeypatch.setattr(brake.paths, "STATE", state)
+    # Never the live gate's socket: a missing one here, so the release falls back to the hold file (Task 23).
+    monkeypatch.setattr(brake.paths, "GATE_CONTROL_SOCKET", tmp_path / "no-gate.sock")
     state.chmod(mode)
     try:
         code = cli.main(["brake", "--release"])
@@ -768,3 +785,778 @@ def test_a_missing_state_folder_is_said_and_never_made_by_the_start_check(tmp_pa
     logs = run_with_check(Answers([]), state)
     assert not state.exists()
     assert sum(f"can't record its start check in {state}" in line for line in logs) == 2
+
+
+# Task 23: the brake for 2a. The gate's activity record orders the unloads; the rate-of-fall watch acts early on a fall
+# the gate didn't admit; each step is recorded for the gate; while the gate is down, the brake sends its own alert; its
+# key comes from its credential, and `make brake-release` goes through the gate. Every time, boot id, pid, address,
+# topic, token and key here is a stand-in.
+
+BOOT = "boot-1"
+T0 = 1_800_000_000.0  # the wall clock at the first poll
+U0 = 5000.0  # /proc/uptime at the first poll
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+CODER, GEMMA, EMBED, WHISPER = "coder", "vision-chat", "embed", "stt"
+# The stack's sizes, the coder at 2a's ~41 GiB: Phase 1's order (on-demand first, then by size) reads the coder, Gemma,
+# the embeddings, whisper, as the plan's test has it.
+REG2A = replace(REG, models={**REG.models,
+                             CODER: replace(REG.models[CODER], footprint_gib=41.0),
+                             GEMMA: replace(REG.models[GEMMA], footprint_gib=32.0),
+                             EMBED: replace(REG.models[EMBED], footprint_gib=8.0),
+                             WHISPER: replace(REG.models[WHISPER], footprint_gib=3.0)})
+LABELS = {name: model.label for name, model in REG2A.models.items()}
+ENGINE_PID = 4242
+FIRED_AT = datetime.fromtimestamp(T0).astimezone().isoformat(timespec="seconds")  # the hold's `since` at T0
+CURL_ARGS = ["/usr/bin/curl", "--fail", "--silent", "--max-time", "10", "--config", "-"]
+NTFY = {"NTFY_URL": "http://ntfy.stand-in.invalid:8080", "NTFY_TOPIC_BRAKE": "stand-in-topic-b7"}
+TOKEN_LINE = "Authorization: Bearer stand-in-token-z9"
+
+
+def fall(start: float, end: float, per_s: float, *, then: int = 8) -> list[float]:
+    """MemAvailable at each 250 ms poll, falling `per_s` GiB a second from `start` while the next reading stays at or
+    above `end`, then holding there for `then` polls. Each is worked out from `start`, so no rounding builds up."""
+    readings = [start]
+    while start - per_s * TICK * len(readings) >= end:
+        readings.append(start - per_s * TICK * len(readings))
+    return readings + [readings[-1]] * then
+
+
+def ready(inflight: int = 0, last_use: float = T0 - 60) -> dict:
+    return {"state": "ready", "inflight": inflight, "last_use": last_use}
+
+
+def starting(admitted: float = 41.0, started_at: float = T0, available_at_start: float | None = 74.0) -> dict:
+    return {"state": "starting", "inflight": 0, "last_use": started_at, "admitted_gib": admitted,
+            "started_at": started_at, "available_at_start": available_at_start}
+
+
+def write_activity(folder: Path, written_at: float, models: dict, *, boot: str = BOOT) -> None:
+    """The gate's activity record, as its core writes it (tickets.write_whole)."""
+    tickets.write_whole(folder / brake.ACTIVITY_FILE, {"written_at": written_at, "boot_id": boot, "models": models})
+
+
+def started_record(folder: Path, model: str = CODER, *, footprint: float = 41.0, available: float = 74.0,
+                   started_at: float = T0, pid: int = ENGINE_PID, boot: str = BOOT) -> None:
+    """launch's started/ record of a claimed ticket, as tickets.mark_started writes it."""
+    ticket = {"model": model, "id": "stand-in-ticket", "issued_at": started_at - 1, "deadline": started_at + 200,
+              "nonce": "stand-in-nonce", "boot_id": boot, "footprint_gib": footprint, "available_gib": available}
+    tickets.write_whole(tickets.record_path(folder, tickets.STARTED, model),
+                        ticket | {"started_at": started_at, "pid": pid})
+
+
+def an_engine(proc: Path, model: str = CODER, *, pid: int = ENGINE_PID, forked_at: float = T0 - 0.5,
+              port: int | None = None, comm: str = "llama-server", uid: int | None = None) -> None:
+    """The model's engine in a /proc stand-in: spark's (this test's uid), on its port, forked by llama-swap at the wall
+    time `forked_at`, which /proc/<pid>/stat's start time holds in clock ticks since boot."""
+    port = brake.engine_ports(REG2A)[model] if port is None else port
+    ticks = round((U0 - (T0 - forked_at)) * CLK_TCK)
+    process(proc, pid, comm, uid=os.geteuid() if uid is None else uid,
+            argv=(comm, "--host", "127.0.0.1", "--port", str(port)), start=ticks)
+
+
+@pytest.fixture
+def box_folders(tmp_path):
+    """The brake's folder, the gate's, launch's, and a /proc stand-in whose uptime is U0."""
+    folders = SimpleNamespace(state=tmp_path / "brake", gate=tmp_path / "gate", launch=tmp_path / "launch",
+                              proc=tmp_path / "proc")
+    for folder in vars(folders).values():
+        folder.mkdir()
+    (folders.proc / "uptime").write_text(f"{U0:.2f} 1000.00\n")
+    return folders
+
+
+class Timeline(Box):
+    """Box on 2a's registry, with the brake's two clocks, each poll 250 ms on both: MemAvailable is `readings[i]` at poll
+    i (the last one held), plus what its unloads gave back, less any `fall`; /proc/uptime moves with the clocks. While
+    `gate_up`, the gate's activity record is written at each poll, as the gate writes it every second, with `models` in
+    it; otherwise it stays as it was."""
+
+    def __init__(self, readings, running, *, folders, models=None, gate_up=True, registry=REG2A, **kw):
+        kw.setdefault("polls", len(readings))
+        super().__init__(readings[0], running, registry=registry, **kw)
+        self.readings, self.folders, self.models, self.gate_up = list(readings), folders, models or {}, gate_up
+        self.start_avail = self.avail
+        self.tick()
+
+    def now_s(self) -> float:
+        return len(self.sleeps) * TICK
+
+    def wall(self) -> float:
+        return T0 + self.now_s()
+
+    def read_mem(self):
+        moved = self.avail - self.start_avail
+        return MemInfo(121.7, self.readings[min(len(self.sleeps), len(self.readings) - 1)] + moved)
+
+    def tick(self):
+        (self.folders.proc / "uptime").write_text(f"{U0 + self.now_s():.2f} 1000.00\n")
+        if self.gate_up:
+            write_activity(self.folders.gate, self.wall(), self.models)
+
+    def sleep(self, seconds):
+        try:
+            super().sleep(seconds)
+        finally:
+            self.tick()
+
+
+def run_2a(box: Timeline, *, once: bool = False, alerter=None, now=lambda: FIRED_AT) -> list[str]:
+    """The brake as its unit runs it, on the box's folders and clocks; its journal lines."""
+    logs, f = [], box.folders
+    try:
+        run_brake(box.registry, box, f.state, read_mem=box.read_mem, sleep=box.sleep, log=logs.append, now=now,
+                  once=once, monotonic=box.now_s, wall=box.wall, boot_id=BOOT, gate_state=f.gate, launch=f.launch,
+                  proc=f.proc, spark_uid=os.geteuid(), alerter=alerter)
+    except Enough:
+        pass
+    return logs
+
+
+def events(folders) -> list[BrakeEvent]:
+    return read_events(folders.state / EVENTS_FILE, None)
+
+
+class Curl:
+    """subprocess.Popen as the brake starts curl: each start recorded, with its arguments and what was written to its
+    stdin. `finishes_after` seconds after it starts it has exited with `code`; None: never."""
+
+    def __init__(self, finishes_after: float | None = None, code: int = 0):
+        self.finishes_after, self.code, self.started, self.polls = finishes_after, code, [], 0
+
+    def __call__(self, args, **kwargs):
+        child = _Child(self, args, kwargs)
+        self.started.append(child)
+        return child
+
+
+class _Pipe:
+    def __init__(self):
+        self.data, self.closed = b"", False
+
+    def write(self, data: bytes) -> int:
+        assert not self.closed
+        self.data += data
+        return len(data)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Child:
+    def __init__(self, curl: Curl, args, kwargs):
+        self.curl, self.args, self.kwargs, self.at = curl, args, kwargs, time.monotonic()
+        self.stdin, self.returncode = _Pipe(), None
+
+    def poll(self):
+        self.curl.polls += 1
+        after = self.curl.finishes_after
+        if after is not None and time.monotonic() - self.at >= after:
+            self.returncode = self.curl.code
+        return self.returncode
+
+    def wait(self, timeout=None):
+        after = self.curl.finishes_after
+        if after is None:  # one that never finishes: the wait runs out (a second at most, here)
+            time.sleep(min(timeout or 1, 1))
+            raise subprocess.TimeoutExpired(self.args, timeout)
+        time.sleep(max(0.0, self.at + after - time.monotonic()))
+        self.returncode = self.curl.code
+        return self.returncode
+
+
+def ntfy_env(tmp_path: Path, *, token: str = TOKEN_LINE) -> dict:
+    """The brake's environment with ntfy set up: the values file's two, and its credential folder holding the token's
+    header line (Task 25's placeholder, `not-set-up`, when `token` says so)."""
+    creds = tmp_path / "credentials"
+    creds.mkdir(exist_ok=True)
+    (creds / "ntfy-token").write_text(token + "\n")
+    return {**NTFY, "CREDENTIALS_DIRECTORY": str(creds)}
+
+
+def alerter(curl: Curl, env: dict):
+    return brake.Alerter(env=env, popen=curl, curl_ok=lambda: True)
+
+
+def curl_config(data: bytes) -> dict[str, list[str]]:
+    """curl's --config text, each `name = "value"` line read back as curl reads it: a backslash takes the next
+    character as itself (\\n, \\t, \\r and \\v as their controls), and an unescaped quote can't come before the last."""
+    found: dict[str, list[str]] = {}
+    for line in data.decode().splitlines():
+        name, sep, quoted = line.partition(" = ")
+        assert sep and len(quoted) >= 2 and quoted[0] == quoted[-1] == '"', line
+        chars, value, i = quoted[1:-1], [], 0
+        while i < len(chars):
+            if chars[i] == "\\":
+                i += 1
+                value.append({"n": "\n", "t": "\t", "r": "\r", "v": "\v"}.get(chars[i], chars[i]))
+            else:
+                assert chars[i] != '"', line
+                value.append(chars[i])
+            i += 1
+        found.setdefault(name, []).append("".join(value))
+    return found
+
+
+def first_alert(**fields) -> str:
+    """Task 7's brake_fired, as the brake words its own: at T0, from 18 GiB, under the 20 GiB line, the gate down."""
+    given = {"at": T0, "available_gib": 18, "line_gib": 20, "by_brake": True, "release_waits_for_dan": False,
+             "release_after_s": 300} | fields
+    return messages.notification("brake_fired", REG2A, **given).message
+
+
+def test_a_loading_engine_goes_first_then_idle_models_of_any_class_then_lru(tmp_path):
+    write_activity(tmp_path, T0, {GEMMA: ready(0, T0 - 10), EMBED: ready(0, T0 - 100), CODER: starting(),
+                                  WHISPER: ready(2, T0 - 1)})
+    record = brake.read_activity(tmp_path / brake.ACTIVITY_FILE, T0 + 1, boot_id=BOOT)
+    running = [(GEMMA, "ready"), (EMBED, "ready"), (CODER, "starting"), (WHISPER, "ready")]
+    assert brake.brake_order(running, record, REG2A) == [CODER, EMBED, GEMMA, WHISPER]
+
+
+@pytest.mark.parametrize("record", ["stale", "missing", "damaged", "another boot's"])
+def test_a_stale_or_missing_activity_record_falls_back_to_phase_1s_order(tmp_path, record):
+    models = {GEMMA: ready(0, T0 - 10), EMBED: ready(0, T0 - 100), CODER: starting(), WHISPER: ready(2, T0 - 1)}
+    path = tmp_path / brake.ACTIVITY_FILE
+    if record == "stale":
+        write_activity(tmp_path, T0 - 4, models)
+        assert brake.read_activity(path, T0 - 1, boot_id=BOOT) is not None  # 3 s old is still fresh
+    elif record == "damaged":
+        path.write_text('{"written_at": ')
+    elif record == "another boot's":
+        write_activity(tmp_path, T0, models, boot="boot-0")
+    found = brake.read_activity(path, T0, boot_id=BOOT)
+    assert found is None
+    running = [(WHISPER, "ready"), (EMBED, "ready"), (GEMMA, "ready"), (CODER, "starting")]
+    assert brake.brake_order(running, found, REG2A) == [CODER, GEMMA, EMBED, WHISPER]
+
+
+def test_the_brake_reads_the_gates_record_and_ports_where_the_gate_writes_them():
+    from spark.gate import core  # the gate's own: its record's name, and the ports llama-swap v257 hands out
+    assert brake.ACTIVITY_FILE == core.ACTIVITY_FILE
+    assert brake.ENGINE_START_PORT == core.ENGINE_START_PORT
+    assert brake.engine_ports(REG2A) == core.engine_ports(REG2A)
+
+
+def test_an_admitted_coder_load_never_trips_the_rate_watch(box_folders):
+    box = Timeline(fall(74, 40, 2.5), {GEMMA: "ready", CODER: "starting"}, folders=box_folders,
+                   models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(box_folders.state) is None
+    assert box.running_calls == 0  # above the warn line, with nothing to act on, llama-swap isn't asked
+
+
+def test_an_unexplained_fall_at_the_same_rate_trips_it(box_folders):
+    readings = fall(74, 40, 2.5)
+    box = Timeline(readings, {GEMMA: "ready", EMBED: "ready"}, folders=box_folders,
+                   models={GEMMA: ready(0, T0 - 100), EMBED: ready(0, T0 - 10)})
+    run_2a(box)
+    first = next(i for i, gib in enumerate(readings) if gib < 45)  # 45 − 25 = 20
+    assert readings[first] == 44.625
+    assert box.requests == [(first, GEMMA)]  # once, the idle model unused longest, well above 28
+    hold = read_hold(box_folders.state)
+    assert (hold.available_gib, hold.unloaded) == (44.625, (GEMMA,))
+    assert hold.reason == "44.6 GiB available, falling fast toward the 20 GiB line"
+    assert [(e.kind, e.falling) for e in events(box_folders)] == [("fired", True), ("unload", True)]
+
+
+def test_a_load_that_runs_past_its_admission_trips_it(box_folders):
+    readings = fall(74, 25, 2.5)
+    box = Timeline(readings, {GEMMA: "ready", CODER: "starting"}, folders=box_folders,
+                   models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    first = next(i for i, gib in enumerate(readings) if gib < 31)  # its floor: 74 − 41 − 2
+    assert readings[first] == 30.875
+    assert box.requests == [(first, CODER)]  # the loading engine first
+    assert read_hold(box_folders.state).loading == CODER
+
+
+def test_a_started_record_is_bounded_by_what_the_brake_reads(box_folders):
+    f = box_folders
+    now = T0 + 5
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    an_engine(f.proc)
+    own = deque([(T0 - 1, 61.0), (T0, 60.0), (T0 + 1, 58.0)])  # the brake's own readings: 60 at the record's start
+
+    def loads(activity=None):
+        return brake.loads_in_progress(activity, f.launch, now=now, boot_id=BOOT, registry=REG2A, readings=own,
+                                       proc=f.proc, spark_uid=os.geteuid())
+
+    started_record(f.launch, available=74)  # it claims 74 available at its start
+    assert loads() == [brake.LoadInProgress(CODER, 41.0, 60.0, T0)]
+    assert brake.expected_floor(loads()) == 60 - 41 - brake.LOAD_FLOOR_MARGIN_GIB
+    started_record(f.launch, footprint=90)  # more than the coder's footprint
+    assert [load.admitted_gib for load in loads()] == [41.0]
+    # The gate's record fresh, without the coder starting: the record still counts.
+    gate = brake.Activity(now, BOOT, {GEMMA: brake.ModelActivity("ready", 0, T0 - 60)})
+    assert [load.model for load in loads(gate)] == [CODER]
+
+
+@pytest.mark.parametrize("case", ["its pid gone", "another process at its pid", "the engine of another port",
+                                  "another account's engine", "an engine forked long before"])
+def test_a_started_record_that_isnt_its_models_engine_is_no_load_in_progress(box_folders, case):
+    f = box_folders
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    started_record(f.launch)
+    if case == "another process at its pid":
+        process(f.proc, ENGINE_PID, "python3", uid=os.geteuid(),
+                argv=("python3", "--port", str(brake.engine_ports(REG2A)[CODER])))
+    elif case == "the engine of another port":
+        an_engine(f.proc, port=brake.engine_ports(REG2A)[GEMMA])
+    elif case == "another account's engine":
+        an_engine(f.proc, uid=os.geteuid() + 1)
+    elif case == "an engine forked long before":  # an engine that has run an hour: no record of a load just begun
+        an_engine(f.proc, forked_at=T0 - 3600)
+    assert brake.loads_in_progress(None, f.launch, now=T0 + 5, boot_id=BOOT, registry=REG2A,
+                                   readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid()) == []
+
+
+def test_with_the_gate_down_the_claimed_ticket_gives_the_load(box_folders):
+    f = box_folders
+    write_activity(f.gate, T0 - 4, {})  # stale: the gate is down
+    started_record(f.launch)
+    an_engine(f.proc)
+    box = Timeline(fall(74, 40, 2.5), {GEMMA: "ready", CODER: "starting"}, folders=f, gate_up=False)
+    run_2a(box)
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+@pytest.mark.parametrize("record", ["361 s old", "another boot's"])
+def test_a_stale_started_record_gives_no_floor(box_folders, record):
+    f = box_folders
+    write_activity(f.gate, T0 - 4, {})
+    if record == "361 s old":
+        started_record(f.launch, started_at=T0 - 361)
+        an_engine(f.proc, forked_at=T0 - 361.5)
+    else:
+        started_record(f.launch, boot="boot-0")
+        an_engine(f.proc)
+    readings = fall(74, 40, 2.5)
+    box = Timeline(readings, {GEMMA: "ready", CODER: "starting"}, folders=f, gate_up=False)
+    run_2a(box)
+    first = next(i for i, gib in enumerate(readings) if gib < 45)
+    assert box.requests == [(first, CODER)]  # as with nothing loading; Phase 1's order, the gate's record stale
+
+
+def test_a_started_folder_it_cant_read_is_no_load_in_progress(box_folders):
+    if os.geteuid() == 0:
+        pytest.skip("root reads any folder")
+    f = box_folders
+    write_activity(f.gate, T0 - 4, {})
+    started_record(f.launch)
+    an_engine(f.proc)
+    (f.launch / "started").chmod(0o000)
+    readings = fall(74, 40, 2.5)
+    box = Timeline(readings, {GEMMA: "ready", CODER: "starting"}, folders=f, gate_up=False)
+    try:
+        logs = run_2a(box)
+    finally:
+        (f.launch / "started").chmod(0o750)
+    first = next(i for i, gib in enumerate(readings) if gib < 45)
+    assert box.requests == [(first, CODER)]  # no record read is no load in progress, the stricter way
+    assert sum("started records" in line and "can't be read" in line for line in logs) == 1
+
+
+def test_a_load_marked_starting_or_started_counts_once(box_folders):
+    f = box_folders
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    started_record(f.launch)
+    an_engine(f.proc)
+    gate = brake.Activity(T0 + 5, BOOT, {CODER: brake.ModelActivity("starting", 0, T0, 41.0, T0, 74.0)})
+    loads = brake.loads_in_progress(gate, f.launch, now=T0 + 5, boot_id=BOOT, registry=REG2A,
+                                    readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid())
+    assert loads == [brake.LoadInProgress(CODER, 41.0, 74.0, T0)]
+    assert brake.expected_floor(loads) == 74 - 41 - 2
+    # Two loads: from the earliest start's reading, less both footprints; none, no floor.
+    both = loads + [brake.LoadInProgress(GEMMA, 32.0, 60.0, T0 + 10)]
+    assert brake.expected_floor(both) == 74 - 41 - 32 - 2 and brake.expected_floor([]) is None
+
+
+def test_two_once_runs_with_a_release_between_are_two_episodes(box_folders):
+    f = box_folders
+    # Dan's raised drill copy: its line above what the unloads give back, so each run finds memory under it. Each engine
+    # has gone by the time v257 answers its unload (delay 0), as between two starts of the drill's unit.
+    drill = replace(REG2A, brake=BrakeThresholds(warn_gib=110, brake_gib=100, poll_ms=250))
+    box = Timeline([52], {GEMMA: "ready", EMBED: "ready", WHISPER: "ready"}, folders=f, gate_up=False, registry=drill,
+                   delay=0)
+    run_2a(box, once=True)
+    release_hold(f.state)
+    run_2a(box, once=True)
+    run_2a(box, once=True)  # while the second hold stands
+    assert [(e.kind, e.episode, e.model, e.line_gib) for e in events(f)] == [
+        ("fired", 1, None, 100), ("unload", 1, GEMMA, 100),
+        ("fired", 2, None, 100), ("unload", 2, EMBED, 100),
+        ("unload", 2, WHISPER, 100)]
+    assert read_hold(f.state).episode == 2
+
+
+def test_the_floor_uses_the_admitted_footprint(box_folders):
+    # The coder's cold load measured at 33 (Task 45), admitted at its footprint, 41; 3 GiB of other memory moves during
+    # its load, so memory falls from 74 to 37: past a floor from the cold load (39), never past the admitted one (31).
+    registry = replace(REG2A, models={**REG2A.models, CODER: replace(REG2A.models[CODER], cold_load_gib=33.0)})
+    box = Timeline(fall(74, 37, 2.5), {GEMMA: "ready", CODER: "starting"}, folders=box_folders, registry=registry,
+                   models={GEMMA: ready(), CODER: starting(admitted=41, available_at_start=74)})
+    run_2a(box)
+    assert box.requests == [] and read_hold(box_folders.state) is None
+
+
+def test_a_slow_fall_doesnt_trip_the_rate_watch(box_folders):
+    readings = fall(40.02, 18, 0.2)
+    box = Timeline(readings, {GEMMA: "ready", EMBED: "ready"}, folders=box_folders,
+                   models={GEMMA: ready(0, T0 - 100), EMBED: ready()})
+    run_2a(box)
+    # Nothing early: the watch looks UNLOAD_LEAD_S ahead, and a 0.2 GiB/s fall covers 2 GiB in that time, so it acts
+    # within those 2 GiB of the 20 GiB line, at the first poll whose reading less them passes under it, never higher.
+    lead = 0.2 * brake.UNLOAD_LEAD_S
+    first, model = box.requests[0]
+    assert 20 < readings[first] < 20 + lead <= readings[first - 1] and model == GEMMA
+    assert read_hold(box_folders.state).available_gib == readings[first]
+
+
+@pytest.mark.parametrize("period", [2, 8, 16], ids=["every poll", "a 2 s square wave", "a 4 s square wave"])
+def test_noise_doesnt_trip_the_rate_watch(box_folders, period):
+    readings = [30 + (0.5 if (i // (period // 2)) % 2 == 0 else -0.5) for i in range(240)]  # a minute, 4 a second
+    box = Timeline(readings, {GEMMA: "ready"}, folders=box_folders, models={GEMMA: ready()})
+    run_2a(box)
+    assert box.requests == [] and read_hold(box_folders.state) is None and box.running_calls == 0
+
+
+def test_predict_breach_reads_the_fall_over_its_window():
+    def line(start: float, per_s: float, polls: int = 9) -> deque:
+        return deque((i * TICK, start + per_s * i * TICK) for i in range(polls))
+
+    def breach(readings, floor=None, window_s=brake.FALL_WINDOW_S):
+        return brake.predict_breach(readings, brake_gib=20, lead_s=brake.UNLOAD_LEAD_S, window_s=window_s,
+                                    floor_gib=floor)
+
+    assert breach(line(46, -2.5)) and not breach(line(51, -2.5))  # ends at 41 (16 ahead) and 46 (21 ahead)
+    assert not breach(line(30, 0)) and not breach(line(21, 1))  # flat, and rising
+    assert not breach(line(46, -2.5), floor=31) and breach(line(46, -2.5), floor=19)  # its floor, above or below 20
+    assert breach(line(30, -2.5), floor=31)  # past its floor: an unexplained fall
+    assert not breach(line(46, -2.5, polls=1)) and not breach(line(46, -2.5, polls=3))  # too short a span to judge
+    # Only the window counts: a fall long over, then a flat line, is no fall.
+    over = deque(list(line(60, -5, polls=8)) + [(2.0 + i * TICK, 25.0) for i in range(1, 10)])
+    assert not breach(over)
+
+
+def test_the_hold_records_the_boot_the_episode_and_the_loading_model(box_folders):
+    box = Timeline([18], {GEMMA: "ready", CODER: "starting"}, folders=box_folders,
+                   models={GEMMA: ready(), CODER: starting()})
+    run_2a(box, once=True)
+    hold = read_hold(box_folders.state)
+    assert (hold.boot_id, hold.episode, hold.loading, hold.available_gib) == (BOOT, 1, CODER, 18)
+    assert (hold.since, hold.reason, hold.unloaded) == (FIRED_AT, "18.0 GiB available", (CODER,))
+
+
+def test_the_holds_since_carries_its_utc_offset(box_folders):
+    # The controller's ruling at Task 17's review: so the gate reads when it fired unambiguously across a clock going
+    # back. Phase 1's reader takes it as text.
+    box = Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False)
+    run_2a(box, once=True, now=brake._now)
+    since = datetime.fromisoformat(read_hold(box_folders.state).since)
+    assert since.utcoffset() is not None and abs(since.timestamp() - time.time()) < 60
+
+
+def test_each_step_is_recorded_for_the_gate_with_a_rising_seq(box_folders):
+    f = box_folders
+    for n in range(2):  # an earlier boot's
+        append_event(f.state / EVENTS_FILE, BrakeEvent(0, T0 - 3600 + n, "boot-0", 1, "unload", GEMMA, None, 19.0, 20,
+                                                        False))
+    n = 3
+    box = Timeline([18], {CODER: "ready", GEMMA: "ready", EMBED: "ready"}, folders=f, gate_up=False, delay=99,
+                   fall=1.5, polls=2)
+    run_2a(box)
+    mine = [e for e in events(f) if e.boot_id == BOOT]
+    assert [(e.seq, e.kind, e.model) for e in mine] == [(n, "fired", None), (n + 1, "unload", CODER),
+                                                        (n + 2, "unload", GEMMA)]
+    assert [(e.episode, e.line_gib, e.available_gib) for e in mine] == [(1, 20, 18), (1, 20, 18), (1, 20, 16.5)]
+    again = Timeline([18], {EMBED: "ready"}, folders=f, gate_up=False)  # a brake started again, on the same file
+    run_2a(again, once=True)
+    assert [(e.seq, e.episode, e.model) for e in events(f)][-1] == (n + 3, 1, EMBED)
+
+
+def test_each_unload_names_its_models_state_as_the_gate_saw_it(box_folders):
+    f = box_folders
+    up = Timeline([18], {CODER: "starting", GEMMA: "ready", EMBED: "ready"}, folders=f, delay=99, fall=1.5, polls=3,
+                  models={CODER: starting(), GEMMA: ready(0), EMBED: ready(2)})
+    run_2a(up)
+    assert [(e.model, e.state) for e in events(f) if e.kind == "unload"] == [
+        (CODER, "starting"), (GEMMA, "idle"), (EMBED, "answering")]
+    # With the gate down there are no counts: only a model llama-swap shows starting has a state.
+    release_hold(f.state)
+    write_activity(f.gate, T0 - 4, {})
+    down = Timeline([18], {CODER: "starting", GEMMA: "ready"}, folders=f, gate_up=False, delay=99, fall=1.5, polls=2)
+    run_2a(down)
+    assert [(e.model, e.state) for e in events(f) if e.kind == "unload"][3:] == [(CODER, "starting"), (GEMMA, None)]
+
+
+def test_the_started_record_of_a_load_it_stopped_goes(box_folders):
+    f = box_folders
+    started_record(f.launch)
+    an_engine(f.proc)
+    box = Timeline([18], {CODER: "starting"}, folders=f, gate_up=False)
+    run_2a(box, once=True)
+    assert box.requests == [(0, CODER)] and not tickets.record_path(f.launch, tickets.STARTED, CODER).exists()
+
+
+def test_a_started_record_it_cant_clear_stops_nothing(box_folders):
+    if os.geteuid() == 0:
+        pytest.skip("root writes through a read-only mode")
+    f = box_folders
+    started_record(f.launch)
+    (f.launch / "started").chmod(0o550)
+    box = Timeline([18], {CODER: "starting", GEMMA: "ready"}, folders=f, gate_up=False, delay=99, fall=1.5, polls=2)
+    try:
+        logs = run_2a(box)
+    finally:
+        (f.launch / "started").chmod(0o750)
+    assert box.requests == [(0, CODER), (1, GEMMA)]
+    assert sum("can't clear" in line for line in logs) == 1
+
+
+def test_a_failed_unload_leaves_an_event_with_its_reason(box_folders, tmp_path):
+    # The controller's ruling at Task 14: when an unload fails or llama-swap refuses it, the brake writes an event with
+    # the reason, so the gate can word the cause.
+    curl = Curl()
+    box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False, fail={GEMMA}, polls=2,
+                   delay=99)
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert [(e.kind, e.model, e.reason) for e in events(box_folders)] == [
+        ("fired", None, None), ("unload_failed", GEMMA, "llama-swap POST /api/models/unload/vision-chat: HTTP 500"),
+        ("unload", EMBED, None)]
+    # Its own alert, the gate being down, says the unload is unconfirmed; the next unload follows up.
+    first, then = (curl_config(child.stdin.data)["data-binary"][0] for child in curl.started)
+    assert first == first_alert(unloaded=[], unload_unanswered=True)
+    assert then == messages.notification("brake_fired", REG2A, at=T0 + TICK, unloaded=[(LABELS[EMBED], None)],
+                                         follow_up=True).message
+
+
+def test_with_the_gate_down_the_brake_sends_brake_fired_itself_without_waiting(box_folders, tmp_path):
+    f = box_folders
+    write_activity(f.gate, T0 - 4, {GEMMA: ready()})  # stale
+    curl = Curl()  # never finishes
+    box = Timeline([18], {GEMMA: "ready"}, folders=f, gate_up=False, polls=2, delay=99)
+    begun = time.monotonic()
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert time.monotonic() - begun < 1  # nothing waited on curl
+    (child,) = curl.started
+    assert child.args == CURL_ARGS
+    assert child.kwargs == {"stdin": subprocess.PIPE, "start_new_session": True, "stdout": subprocess.DEVNULL,
+                            "stderr": subprocess.DEVNULL}
+    words = first_alert(unloaded=[(LABELS[GEMMA], None)])
+    assert words.endswith("They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.")
+    assert curl_config(child.stdin.data) == {
+        "url": [f"{NTFY['NTFY_URL']}/{NTFY['NTFY_TOPIC_BRAKE']}"],
+        "header": [f"@{tmp_path / 'credentials' / 'ntfy-token'}", "Priority: high"],
+        "data-binary": [words]}
+    assert child.stdin.closed
+    argv = "\0".join(child.args)
+    for private in (NTFY["NTFY_URL"], NTFY["NTFY_TOPIC_BRAKE"], "stand-in-token-z9", "ntfy-token", words[:30]):
+        assert private not in argv
+    assert [(e.kind, e.sent_by_brake) for e in events(f)] == [("fired", True), ("unload", True)]
+
+
+def test_with_the_gate_up_the_brake_sends_nothing_itself(box_folders, tmp_path):
+    curl = Curl()
+    box = Timeline([18], {GEMMA: "ready"}, folders=box_folders, models={GEMMA: ready()})
+    run_2a(box, once=True, alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert curl.started == []
+    assert [(e.kind, e.state, e.sent_by_brake) for e in events(box_folders)] == [
+        ("fired", None, False), ("unload", "idle", False)]
+
+
+@pytest.mark.parametrize("code", [0, 22])
+def test_finished_alerts_are_reaped(box_folders, tmp_path, code):
+    curl = Curl(finishes_after=0, code=code)
+    alert = alerter(curl, ntfy_env(tmp_path))
+    box = Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False, polls=2, delay=99)
+    logs = run_2a(box, alerter=alert)
+    assert len(curl.started) == 1 and curl.polls >= 1 and alert.children == []
+    failed = [line for line in logs if "curl exited" in line]
+    assert failed == ([] if code == 0 else ["brake: its own alert didn't go through: curl exited 22"])
+
+
+def test_a_quote_in_the_text_is_escaped_for_curls_config(tmp_path):
+    text = 'Brake on "brightroar": a back\\slash, and a "quote"'
+    data = brake.curl_config("http://ntfy.stand-in.invalid/topic", tmp_path / "ntfy-token", "high", text)
+    (line,) = [each for each in data.decode().splitlines() if each.startswith("data-binary")]
+    assert line == 'data-binary = "Brake on \\"brightroar\\": a back\\\\slash, and a \\"quote\\""'
+    assert curl_config(data)["data-binary"] == [text]
+
+
+def test_once_waits_for_its_alert_before_exiting(box_folders, tmp_path):
+    curl = Curl(finishes_after=0.2)
+    box = Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False)
+    begun = time.monotonic()
+    run_2a(box, once=True, alerter=alerter(curl, ntfy_env(tmp_path)))
+    (child,) = curl.started
+    assert time.monotonic() - begun >= 0.2 and child.returncode == 0
+
+
+def test_with_nothing_loaded_the_brakes_own_alert_says_so(box_folders, tmp_path):
+    # The controller's ruling at Task 7's review, worded at Task 13: brake_fired takes unloaded=[].
+    curl = Curl(finishes_after=0)
+    run_2a(Timeline([18], {}, folders=box_folders, gate_up=False), once=True, alerter=alerter(curl, ntfy_env(tmp_path)))
+    (child,) = curl.started
+    words = curl_config(child.stdin.data)["data-binary"][0]
+    assert words == first_alert(unloaded=[]) and "Nothing of the stack's was loaded" in words
+
+
+@pytest.mark.parametrize("saved", ["released within the hour", "damaged"])
+def test_the_brakes_own_alert_says_when_the_pause_waits_for_dan(box_folders, tmp_path, saved):
+    f = box_folders
+    if saved == "damaged":
+        (f.gate / "state.json").write_text("{not json")
+    else:
+        save_state(f.gate, GateState(last_auto_release_at=T0 - 600), now=T0 - 600)
+    curl = Curl(finishes_after=0)
+    run_2a(Timeline([18], {GEMMA: "ready"}, folders=f, gate_up=False), once=True,
+           alerter=alerter(curl, ntfy_env(tmp_path)))
+    words = curl_config(curl.started[0].stdin.data)["data-binary"][0]
+    if saved == "damaged":
+        assert words.endswith("New loads stay paused until you release them: the gate's saved state was damaged, so it "
+                              "can't tell when the last automatic release was. On the Spark, `make brake-release` "
+                              "resumes them.")
+    else:
+        assert words.endswith(f"It fired within an hour of the automatic release at "
+                              f"{datetime.fromtimestamp(T0 - 600):%H:%M}, so they stay paused until you release them: "
+                              "on the Spark, `make brake-release`.")
+
+
+def test_the_brake_never_waits_on_the_gate_a_socket_or_ntfy(box_folders, tmp_path):
+    curl, stamps = Curl(), []  # a curl that never finishes; the gate's record missing
+    box = Timeline([18], {CODER: "ready", GEMMA: "ready", EMBED: "ready", WHISPER: "ready"}, folders=box_folders,
+                   gate_up=False, delay=99, fall=1.5, polls=6)
+    poll = box.sleep
+
+    def sleep(seconds):
+        stamps.append(time.monotonic())
+        poll(seconds)
+
+    box.sleep = sleep
+    begun = time.monotonic()
+    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    ticks = [later - earlier for earlier, later in zip([begun, *stamps], stamps)]
+    assert len(ticks) == 6 and max(ticks) < 0.05
+    sent = [curl_config(child.stdin.data)["data-binary"][0] for child in curl.started]
+    assert len(sent) == 4 and sent[0].startswith("Brake on") and all(s.startswith("Brake, ") for s in sent[1:])
+
+
+def test_the_brake_reads_its_key_from_its_credential(tmp_path, monkeypatch):
+    creds = tmp_path / "credentials"
+    creds.mkdir()
+    (creds / "llamaswap-key").write_text("stand-in-brake-key-q4\n")
+    stand_in = (creds / "llamaswap-key").read_text().strip()  # compared by name, so no literal key sits in an assert
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
+    monkeypatch.setenv("SPARK_API_KEY", "not-this-one")
+    monkeypatch.setattr(brake.paths, "STATE", tmp_path)
+    monkeypatch.setattr(brake, "load_registry", lambda path: REG)
+    seen = {}
+    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(kw, client=client))
+    args = cli.build_parser().parse_args(["brake", "--key-credential", "llamaswap-key"])
+    assert brake.run(args) == 0
+    assert seen["client"].api_key == stand_in == seen["start_check"].client.api_key
+    check, _ = brake.read_key_check(tmp_path)
+    assert check.key_env == "credential llamaswap-key"
+    assert stand_in not in (tmp_path / brake.KEY_CHECK_FILE).read_text()
+    # Its answer names the credential, never the key.
+    answered = brake.StartCheck(Answers([]), tmp_path, "credential llamaswap-key", lambda line: None, now=lambda: "T")
+    answered.ask()
+    assert brake.read_key_check(tmp_path)[0].detail == ("llama-swap answers GET /running with the key in credential "
+                                                        "llamaswap-key")
+
+
+def test_a_key_credential_that_cant_be_read_still_leaves_a_brake(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(brake.paths, "STATE", tmp_path)
+    monkeypatch.setattr(brake, "load_registry", lambda path: REG)
+    seen = {}
+    monkeypatch.setattr(brake, "run_brake", lambda registry, client, state, **kw: seen.update(kw, client=client))
+    assert brake.run(argparse.Namespace(release=False, once=True, key_env="SPARK_API_KEY",
+                                        key_credential="llamaswap-key")) == 0
+    out = capsys.readouterr().out
+    assert seen["client"].api_key is None and "ALERT" in out and "llamaswap-key" in out
+
+
+class Gate:
+    """GateClient as `make brake-release` meets it: `answer` is what POST /v1/release answers, or the error it raises."""
+
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+
+    def __call__(self, path, timeout_s):
+        self.calls.append((path, timeout_s))
+        return self
+
+    def post(self, route, body):
+        self.calls.append((route, body))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+def test_release_goes_through_the_gate_and_falls_back_when_it_doesnt_answer(tmp_path, capsys):
+    sock = tmp_path / "gate-control.sock"
+    write_hold(tmp_path, Hold("t", "r", ()))
+    gate = Gate({"room": None, "brake": True, "reloading": ["Gemma", "the embeddings"]})
+    assert brake.release_through_gate(sock, tmp_path, client=gate) == 0
+    assert capsys.readouterr().out == "New loads resume. Reloading Gemma, then the embeddings…\n"
+    assert gate.calls == [(sock, 5), ("/v1/release", {"brake": True})]
+    assert read_hold(tmp_path) is not None  # the gate's to lift, which this stand-in doesn't
+    forbidden = "Stand-in words: only spark-admin's members can use that socket."
+    assert brake.release_through_gate(sock, tmp_path, client=Gate(GateForbidden(forbidden))) == 1
+    out = capsys.readouterr()
+    assert (out.out, out.err) == ("", forbidden + "\n") and read_hold(tmp_path) is not None
+    assert brake.release_through_gate(sock, tmp_path, client=Gate(GateUnavailable("stand-in: no socket"))) == 0
+    assert capsys.readouterr().out == messages.BRAKE_RELEASED_WITHOUT_GATE + "\n"
+    assert read_hold(tmp_path) is None
+
+
+def test_a_gate_that_answers_is_never_bypassed(tmp_path, capsys):
+    # An answer the client can't take is a plain GateError: the gate is up, so the hold file stays its to lift (Task 10's
+    # re-review). A gate that lifted nothing says why, and only a hold that still stands is a failure.
+    sock = tmp_path / "gate-control.sock"
+    write_hold(tmp_path, Hold("t", "r", ()))
+    assert brake.release_through_gate(sock, tmp_path, client=Gate(brake.GateError("stand-in: too large"))) == 1
+    assert capsys.readouterr().err == "stand-in: too large\n" and read_hold(tmp_path) is not None
+    lifted_nothing = {"room": None, "brake": False, "reloading": []}
+    assert brake.release_through_gate(sock, tmp_path, client=Gate(lifted_nothing)) == 1
+    assert "still stands" in capsys.readouterr().err
+    release_hold(tmp_path)
+    assert brake.release_through_gate(sock, tmp_path, client=Gate(lifted_nothing)) == 0
+    assert capsys.readouterr().out == "brake: no hold to release\n"
+
+
+def test_make_brake_release_falls_back_when_no_gate_listens(tmp_path, monkeypatch, capsys):
+    # The CLI's own path, on a socket that isn't there: never the live gate's.
+    write_hold(tmp_path, Hold("t", "r", ()))
+    monkeypatch.setattr(brake.paths, "STATE", tmp_path)
+    monkeypatch.setattr(brake.paths, "GATE_CONTROL_SOCKET", tmp_path / "no-gate.sock")
+    assert cli.main(["brake", "--release"]) == 0
+    assert capsys.readouterr().out == messages.BRAKE_RELEASED_WITHOUT_GATE + "\n" and read_hold(tmp_path) is None
+
+
+@pytest.mark.parametrize("missing", ["NTFY_URL", "NTFY_TOPIC_BRAKE", "the credential ntfy-token"])
+def test_without_ntfy_set_up_the_brake_sends_nothing_and_says_so(box_folders, tmp_path, monkeypatch, missing):
+    f = box_folders
+    env = ntfy_env(tmp_path, token="not-set-up" if missing.startswith("the credential") else TOKEN_LINE)
+    env.pop(missing, None)
+    curl = Curl()
+    box = Timeline([18], {CODER: "ready", GEMMA: "ready", EMBED: "ready"}, folders=f, gate_up=False, delay=99, fall=1.5,
+                   polls=2)
+    logs = run_2a(box, alerter=alerter(curl, env))
+    assert curl.started == [] and len(box.requests) == 2  # two unloads in the episode
+    said = [line for line in logs if "ntfy isn't set up" in line]
+    assert len(said) == 1 and missing in said[0] and "(Task 2, Phase 5)" in said[0]
+    assert "stand-in" not in said[0]  # what is missing, by its name, never a value
+    assert {e.sent_by_brake for e in events(f)} == {False}
+    # A --once run, as the drill's unit runs it, exits 0 all the same, and starts no curl.
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(brake.paths, "STATE", f.state)
+    monkeypatch.setattr(brake.paths, "GATE_STATE", f.gate)
+    monkeypatch.setattr(brake.paths, "LAUNCH", f.launch)
+    monkeypatch.setattr(brake, "load_registry", lambda path: REG2A)
+    monkeypatch.setattr(brake, "read_meminfo", lambda: MemInfo(121.7, 18))
+    monkeypatch.setattr(brake, "LlamaSwap", lambda url, key, timeout: Box(18, {WHISPER: "ready"}, registry=REG2A))
+    monkeypatch.setattr(brake.subprocess, "Popen", curl)
+    release_hold(f.state)
+    assert brake.run(argparse.Namespace(release=False, once=True, key_env="SPARK_API_KEY", key_credential=None)) == 0
+    assert curl.started == [] and read_hold(f.state).unloaded == (WHISPER,)
