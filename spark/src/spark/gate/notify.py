@@ -49,6 +49,9 @@ from spark.hold import Hold, read_hold, release_waits_for_dan
 from spark.llamaswap import _url_ok
 from spark.messages import Moment, Notification
 from spark.registry import Registry
+# The gate's logging setup quiets httpx and httpcore with it (serve.configure_logging); kept here by name for the
+# callers that knew it as notify's, where it was until the front came to need it too (Task 21).
+from spark.serve import quiet_http_loggers  # noqa: F401
 
 _log = logging.getLogger(__name__)
 # The types that carry a refusal: a burst of one refusal collapses into one notification with its count.
@@ -347,17 +350,6 @@ class NtfyError(Exception):
         self.outcome = outcome
 
 
-def quiet_http_loggers() -> None:
-    """httpx logs every request's URL, the topic in its path, at INFO, and httpcore the host at DEBUG: the gate's
-    journal never gets either. The gate's logging setup calls it (Task 19), whether or not ntfy is set up, so the
-    journal's content never depends on that; it quiets the gate's llama-swap client's request lines too, a line a
-    second (the controller's ruling at Task 14's review)."""
-    for name in ("httpx", "httpcore"):
-        logger = logging.getLogger(name)
-        if logger.level < logging.WARNING:
-            logger.setLevel(logging.WARNING)
-
-
 # Each phase of a publish has a bound of its own, together within the Notifier's NTFY_TIMEOUT_S, so the publisher
 # knows which failed (the controller's ruling at Task 14's re-review): a connection or a write that fails, ntfy never
 # had it; a read that times out, after the request was written, it may have.
@@ -372,7 +364,7 @@ class NtfyPublisher:
     URL. httpx with `trust_env=False`, so no proxy from the environment gets the token, and no redirect followed; each
     phase bounded by NTFY_PHASES (`timeout`), so its NtfyError says which failed. `transport` is for the tests. It
     never logs the URL, the topic or the header, and its errors (NtfyError) hold none of them; httpx's own request
-    lines are quieted by the gate's logging setup (quiet_http_loggers). The gate builds it from
+    lines are quieted by the gate's logging setup (serve.quiet_http_loggers). The gate builds it from
     the values file's NTFY_URL and NTFY_TOPIC_GATE and its credential; close it with `aclose()`."""
 
     def __init__(self, url: str, topic: str, header: tuple[str, str], *, timeout: httpx.Timeout = NTFY_PHASES,

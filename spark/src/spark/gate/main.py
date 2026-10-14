@@ -19,11 +19,11 @@ it, `local-ai-gate.service` as `spark`, on the two Unix sockets `local-ai-gate-s
   then closes the llama-swap client and ntfy's: so nothing meets httpx's RuntimeError on a closed client, and nothing
   saves after the core's last save. As the stop begins, the answers that wait end (gate/app.py), so the stop never
   waits out GRACEFUL_S for the front's events call. A stop during the start cancels it (serve.run_servers).
-- **Its logging** (configure_logging, called before anything else): the gate's lines on stderr, which the journal
-  takes; httpx's and httpcore's request lines quieted (notify.quiet_http_loggers), since they carry ntfy's topic and
-  host; and on uvicorn's, no traceback, whose exception's text code can build from a request (`int()` of a header
-  quotes it), and none of the "Unsupported upgrade request" warnings any local process can cause, `ws="none"` turning
-  every upgrade down (Task 9).
+- **Its logging** (configure_logging, called before anything else; serve's, which the front shares since Task 21):
+  the gate's lines on stderr, which the journal takes; httpx's and httpcore's request lines quieted
+  (serve.quiet_http_loggers), since they carry ntfy's topic and host; and on uvicorn's, no traceback, whose
+  exception's text code can build from a request (`int()` of a header quotes it), and none of the "Unsupported upgrade
+  request" warnings any local process can cause, `ws="none"` turning every upgrade down (Task 9).
 
 A startup refusal is one line on stderr, exit 1: a socket missing, a credential missing or malformed (named, never
 quoted), a registry or a key list that won't load (a key's name, group or line, never a key or a digest, which the
@@ -44,7 +44,6 @@ import yaml
 
 from spark import paths, render
 from spark.credentials import CredentialError, read_credential, read_credential_text, read_header_credential
-from spark.gate import notify
 from spark.gate.app import build_apps, finish_work
 from spark.gate.core import GateCore
 from spark.gate.notify import NtfyError, NtfyPublisher
@@ -54,7 +53,7 @@ from spark.llamaswap_async import AsyncLlamaSwap, load_timeout_for
 from spark.messages import Notification
 from spark.protocols import make_protocol
 from spark.registry import load_registry, parse_keys
-from spark.serve import run_servers
+from spark.serve import configure_logging, run_servers
 from spark.sockets import CONTROL, STATUS, SocketsError, listen_fds
 
 # The gate's load and unload calls, its /running reads and its logs speak llama-swap v257's API (Task 12's client).
@@ -63,45 +62,10 @@ HEADER_TIMEOUT_S = 10  # a request's head, and a body nobody will read, past whi
 FRONT_ACCOUNT = "spark-front"
 ADMINS_TTL_S = 5.0  # spark-admin's members are read again once the last copy is this old
 _log = logging.getLogger(__name__)
-_HANDLER_MARK = "_spark_gate"  # the stderr handler configure_logging adds, once
 
 
 class GateStartError(Exception):
     """An account or a group the gate needs doesn't exist, or a stand-in for one isn't a uid."""
-
-
-class _QuietUvicorn(logging.Filter):
-    """On uvicorn's lines: no traceback, and none of the upgrade warnings any local process can cause. Its other lines
-    are fixed text, or a startup's error, never a request's content."""
-
-    DROPPED = ("Unsupported upgrade request.", "No supported WebSocket library detected")
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if not record.name.startswith("uvicorn"):
-            return True
-        message = str(record.msg)
-        if message.startswith(self.DROPPED):
-            return False
-        record.exc_info = record.exc_text = record.stack_info = None
-        record.msg = message.rstrip("\n")  # "Exception in ASGI application\n", its traceback gone
-        return True
-
-
-def configure_logging() -> None:
-    """The gate's logging, before it serves: INFO and up on stderr, uvicorn's lines filtered, httpx's and httpcore's
-    quieted. Called again, it adds nothing."""
-    root = logging.getLogger()
-    if not any(getattr(handler, _HANDLER_MARK, False) for handler in root.handlers):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-        setattr(handler, _HANDLER_MARK, True)
-        handler.addFilter(_QuietUvicorn())  # a uvicorn logger below uvicorn.error is filtered here too
-        root.addHandler(handler)
-    root.setLevel(logging.INFO)
-    uvicorn = logging.getLogger("uvicorn.error")
-    if not any(isinstance(each, _QuietUvicorn) for each in uvicorn.filters):
-        uvicorn.addFilter(_QuietUvicorn())
-    notify.quiet_http_loggers()
 
 
 class _NoNtfy:

@@ -14,7 +14,14 @@ and `started`, set once a server listens.
 A service whose own tasks must run in the servers' loop (the gate's core, Task 19) gives `startup`, awaited before any
 server serves, and cancelled by a stop that comes meanwhile; `stopping`, called as the stop begins, so an answer that
 waits (the gate's events stream, a held admit) can end rather than hold the stop for its graceful time; and `shutdown`,
-awaited once every server has stopped."""
+awaited once every server has stopped.
+
+**Logging** (configure_logging), which each service sets before it serves: its lines on stderr, which the journal
+takes; on uvicorn's, no traceback, whose exception's text code can build from a request (`int()` of a header quotes
+it), and none of the "Unsupported upgrade request" warnings any local process can cause, `ws="none"` turning every
+upgrade down (Task 9); and httpx's and httpcore's request lines quieted, which carry ntfy's topic and host in the
+gate, and llama-swap's address in both (quiet_http_loggers). It was the gate's (Task 19), and moved here when the
+front came to need the same (Task 21), since the front imports no module of the gate's."""
 
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ import contextlib
 import logging
 import signal
 import socket
+import sys
 from collections.abc import Awaitable, Callable, Generator
 
 import uvicorn
@@ -34,6 +42,51 @@ TESTED_AGAINST = {"pypi:uvicorn": "0.54.0"}
 SIGNALS = (signal.SIGTERM, signal.SIGINT)
 _STARTED_POLL_S = 0.01
 _log = logging.getLogger(__name__)
+_HANDLER_MARK = "_spark_service"  # the stderr handler configure_logging adds, once
+
+
+class QuietUvicorn(logging.Filter):
+    """On uvicorn's lines: no traceback, and none of the upgrade warnings any local process can cause. Its other lines
+    are fixed text, or a startup's error, never a request's content."""
+
+    DROPPED = ("Unsupported upgrade request.", "No supported WebSocket library detected")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not record.name.startswith("uvicorn"):
+            return True
+        message = str(record.msg)
+        if message.startswith(self.DROPPED):
+            return False
+        record.exc_info = record.exc_text = record.stack_info = None
+        record.msg = message.rstrip("\n")  # "Exception in ASGI application\n", its traceback gone
+        return True
+
+
+def quiet_http_loggers() -> None:
+    """httpx logs every request's URL at INFO, and httpcore the host at DEBUG: neither reaches the journal. In the gate
+    that keeps out ntfy's topic, which is private, and its host; and in both services it quiets the clients' request
+    lines to llama-swap, a line a request (the controller's ruling at Task 14's review)."""
+    for name in ("httpx", "httpcore"):
+        logger = logging.getLogger(name)
+        if logger.level < logging.WARNING:
+            logger.setLevel(logging.WARNING)
+
+
+def configure_logging() -> None:
+    """A service's logging, before it serves: INFO and up on stderr, uvicorn's lines filtered (QuietUvicorn),
+    httpx's and httpcore's quieted (quiet_http_loggers). Called again, it adds nothing."""
+    root = logging.getLogger()
+    if not any(getattr(handler, _HANDLER_MARK, False) for handler in root.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        setattr(handler, _HANDLER_MARK, True)
+        handler.addFilter(QuietUvicorn())  # a uvicorn logger below uvicorn.error is filtered here too
+        root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    uvicorn_error = logging.getLogger("uvicorn.error")
+    if not any(isinstance(each, QuietUvicorn) for each in uvicorn_error.filters):
+        uvicorn_error.addFilter(QuietUvicorn())
+    quiet_http_loggers()
 
 
 class QuietServer(uvicorn.Server):
@@ -66,7 +119,8 @@ def _config(app: ASGIApp, protocol: type, graceful_s: float) -> uvicorn.Config:
         ws="none",
         lifespan="off",
         # uvicorn configures no logging, so its WARNING-and-up lines and tracebacks ("Exception in ASGI application")
-        # reach stderr, and so the journal, through logging's last-resort handler. Tasks 19 and 21 set the policy.
+        # would reach stderr, and so the journal, through logging's last-resort handler: each service calls
+        # configure_logging first, which filters them.
         log_config=None,
         access_log=False,  # an access line names the client and the path; the front logs what it means to
         server_header=False,

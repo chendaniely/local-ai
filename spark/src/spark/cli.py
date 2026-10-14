@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.register(subparsers)
     gate = subparsers.add_parser("gate", help="run the gate on the two sockets systemd holds (local-ai-gate.service)")
     gate.set_defaults(func=_gate)
+    front = subparsers.add_parser("front", help="run the front on 127.0.0.1:9100, the socket systemd holds "
+                                                "(local-ai-front.service)")
+    front.set_defaults(func=_front)
     return parser
 
 
@@ -56,6 +59,13 @@ def _gate(args: argparse.Namespace) -> int:
     from spark.gate import main as gate_main
 
     return gate_main.run()
+
+
+def _front(args: argparse.Namespace) -> int:
+    # Imported here, as the front runs, for the same reason: it brings uvicorn and httpx.
+    from spark.front import main as front_main
+
+    return front_main.run()
 
 
 def main(argv: list[str] | None = None) -> int:

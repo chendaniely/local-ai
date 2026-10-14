@@ -4891,6 +4891,9 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
 - *(Added 2026-10-08, the controller's ruling, at Task 14's review:)* `spark gate`'s logging setup calls `notify.quiet_http_loggers()`,
   whether or not ntfy is set up, so neither httpx's request lines, which carry ntfy's topic, nor
   httpcore's, which carry its host, reach the journal. `NtfyPublisher` no longer does it itself.
+  *(Added 2026-10-14, at Task 21: the setup moved, unchanged, to `serve.configure_logging`,
+  which the front shares, with `quiet_http_loggers`; `notify.quiet_http_loggers` is the same
+  function.)*
   *(Added 2026-10-08, the controller's ruling, at Task 14's re-review:)* its test, in `test_gate_app.py`:
   `test_spark_gates_logging_setup_quiets_httpx_and_httpcore` — after the gate's logging setup runs,
   the `httpx` and `httpcore` loggers are at WARNING, and an httpx request to a stand-in leaves no
@@ -5342,6 +5345,46 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   the same filter drops uvicorn's "Unsupported upgrade request." warning and the "No supported
   WebSocket library detected" line after it. Any local process can cause them, since `ws="none"`
   (Task 9) turns every upgrade down.
+- *(Added 2026-10-14, as Task 21 was built; the implementer's choices, for the controller's
+  review:)*
+  - **The last events, checked against b11146.** The copy of llama-server's sources that the
+    earlier reviews read (taken 2026-09-28) is byte for byte tag b11146's (commit `7fe450e`,
+    fetched from GitHub and compared). In it, `server-context.cpp`'s stream loop ends
+    `/v1/chat/completions` and `/v1/completions` with `data: [DONE]`, and the other two routes
+    with nothing after their final result's events. `server-task.cpp` makes those last events
+    `message_stop` for `/v1/messages` and `response.completed` for `/v1/responses`. An error
+    mid-stream ends the stream with `format_error`'s event: `data: {"error": …}`, or
+    `event: error` on `/v1/messages`. A quiet stream gets the ping `:` and a blank line.
+    `upstream.StreamEnd` reads each line's first 256 bytes only. A stream it watches goes to the
+    client chunked, with upstream's `Content-Length` dropped, so a cut shows in the client's
+    framing.
+  - **The upload cap: 4 uploads forwarded at once, front-wide** (`app.UPLOADS_AT_ONCE`). That
+    is at most 800 MiB of the pool in llama-swap, and whisper transcribes one at a time anyway.
+    The fifth gets a 429, code `uploads_busy`, `Retry-After: 30`: *The front is already sending
+    4 uploads on to the model service, the most it sends at once; try again in a minute.* It is
+    refused after its form is read and before it is forwarded, since only a forwarded upload
+    costs llama-swap memory. A JSON body needs no cap: the front holds each one it forwards,
+    within its body budget, until its request ends.
+  - **llama-swap giving no answer** (no connection, or one closed before the head) is a 502 of
+    the front's own until Task 22 asks the gate: code `llama_swap_unreached`, *The front
+    couldn't reach the model service on the Spark. On the Spark, `make logs s=llama-swap` shows
+    why.* (`agent`'s: *Dan can see why with … on the Spark.*). Retrying is right for a
+    llama-swap that is restarting, so it carries no `x-should-retry`.
+  - **`spark front` asks no gate before Task 22.** It takes every model as loaded, so every
+    request is forwarded. Its subprocess test therefore gets no gate stand-in; Task 22 adds one
+    with GateLink. The count starts when a request is forwarded, not while it waits for
+    admission.
+  - **One logging setup for both services.** `serve.configure_logging` now holds the gate's
+    setup, `QuietUvicorn` and `quiet_http_loggers`, which `spark gate` and `spark front` both
+    call. The front imports no module of the gate's. `notify.quiet_http_loggers` is the same
+    function. The journal lines go out under the `spark.front` logger. Each cut also leaves
+    uvicorn's own fixed line, *ASGI callable returned without completing response.*, beside the
+    front's `cut`.
+  - **The chunked form through the real v257, checked.** A private v257 binary on a scratch
+    port was given the front's own upload path (`encode_form` through `Upstream`) and a
+    stand-in engine. It took the chunked multipart form, a 3 MiB spooled part included,
+    routed it by its `model` field, and passed it on whole, still chunked. Whether
+    whisper-server takes a chunked body stays Task 33's `--full` check.
 
 **Tests** (`spark/tests/test_front_forward.py`; the front on a real uvicorn, against the v257
 stand-in):

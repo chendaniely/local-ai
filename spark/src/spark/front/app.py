@@ -35,10 +35,27 @@ doesn't come in time.
 8. **A model not loaded** waits for the gate's admission, within the key's waiting cap (429 past it), its deadline
    when the front received the request plus the key's wait; the gate's refusal goes to the client as the gate words
    it, with its status and headers.
-9. **Forwarded, rebuilt**: to the route's own path, without the query; the client's headers less its credentials,
-   its framing, the hop-by-hop ones and the addresses it may claim (parse.clean_headers), with the front's own
-   Content-Type for the body it rebuilt: the JSON re-serialized, the form re-encoded. Task 21's Upstream adds the
-   internal key.
+9. **An upload** (a form) goes on only while fewer than UPLOADS_AT_ONCE are forwarded, front-wide; past that, 429
+   `uploads_busy`, never forwarded. llama-swap v257 reads every POST body whole into memory before its per-model limit
+   applies (internal/swaputil/http.go:542), so each 200 MiB upload forwarded costs it about 200 MiB of the unified
+   pool (the controller's ruling, at Task 20's review). A JSON body needs no such cap: the front holds each one it
+   forwards, within its body budget, until its request ends, so llama-swap's copies are within that budget too.
+10. **Forwarded, rebuilt** (upstream.Upstream): to the route's own path, without the query; the client's headers less
+   its credentials, its framing, the hop-by-hop ones and the addresses it may claim (parse.clean_headers), with the
+   front's own Content-Type for the body it rebuilt: the JSON re-serialized, the form re-encoded, at each send, so a
+   resend (Task 22's) encodes the form again. Upstream adds the internal key, over a connection of the asking key's
+   own, with no read timeout. A request for a model is counted in flight (upstream.InFlight) from here until its
+   response ends, however it ends: the counts the gate's drains read (rule 4).
+11. **The answer goes back as it comes**, chunk by chunk, while receive() is watched beside it for the client's
+   disconnect, which cancels the upstream call, so llama-swap and the engine stop too. llama-swap's own 429
+   (`concurrency_limit`) comes back worded, with its Retry-After (Task 6's words). An event stream on a route with a
+   last event (upstream.StreamEnd) that ends without it, or any answer whose connection breaks off, is a **cut**: the
+   front ends the client's response without its last chunk, so uvicorn closes the connection and the client's HTTP
+   library reports a body that never ended, and it injects nothing (plan.md, *Nothing is injected into a reply
+   stream*; the controller's ruling, at Task 12's review). An event stream the front watches so goes to the client
+   chunked, its Content-Length dropped, so a cut shows in the client's framing. A stream whose last event is the
+   engine's own error event ends as the engine ended it. llama-swap giving no answer at all is a 502 of the front's
+   own, `llama_swap_unreached` (Task 22 asks the gate instead).
 
 **At start**, `spark front` (Task 21) reads the private key list and the key digests from their credentials
 (read_keys), and FrontApp refuses to start, naming the key, when the two disagree (check_keys).
@@ -47,17 +64,22 @@ Every refusal of the front's own is in the asking key's words (refusal()): its l
 `model_not_found`'s next step is the Mac's `make clients` for Dan's pi and agent's own command for agent's (Task 6).
 Nothing reaches a client as a traceback: an error of the front's own is logged by where it broke, never its text,
 which code can build from a request, and answered 500 in words, with `x-should-retry: false`. Each request but
-`/health` leaves one journal line (parse.journal_line): its key's name, its model's, its status and its duration.
+`/health` leaves one journal line (parse.journal_line): its key's name, its model's, and its status, or how it ended
+without one whole: `gone` (its client went first), `cut` (its answer broke off, or was cut short by the front's own
+stop) or `error` (its stream ended with the engine's error event); and its duration.
 
-The stand-ins this task's tests give, and the calls the app makes on them:
-- `upstream` (Task 21's Upstream): `await forward(method, path, headers, body, key)`, `body` None, bytes or an async
-  iterator of bytes, giving a response with `status`, `headers`, `aiter_raw()` and `await aclose()`;
-- `gate` (Task 22's GateLink): `await loaded(model) -> bool`, and `await admit(model, key, deadline, request_id)`,
-  giving gateproto's AdmitAnswer."""
+The calls the app makes, on Task 21's Upstream and Task 22's GateLink, or the tests' stand-ins:
+- `upstream`: `await forward(method, path, headers, body, key)`, `body` None, bytes or an async iterator of bytes,
+  giving a response with `status`, `headers`, `aiter_raw()` and `await aclose()`; upstream.Unreached for no answer,
+  and upstream.Broken from `aiter_raw()` for a body that broke off;
+- `gate`: `await loaded(model) -> bool`, and `await admit(model, key, deadline, request_id)`, giving gateproto's
+  AdmitAnswer."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -72,9 +94,14 @@ from typing import TYPE_CHECKING, Any
 from spark import messages
 from spark.credentials import parse_digests, read_credential_text
 from spark.front import parse
+from spark.front.upstream import (Broken, InFlight, StreamEnd, Unreached, concurrency_limited,
+                                  retry_after)
 from spark.registry import parse_keys
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from spark.gateproto import ModelEntry
     from spark.registry import ClientKey, KeyGroup
 
 KEYS_CREDENTIAL = "keys"  # the private key list, /etc/local-ai/keys.yaml, by LoadCredential=
@@ -93,7 +120,26 @@ JSON = (b"content-type", b"application/json")
 # The 500's: OpenAI's SDKs retry any 5xx unless told, so a deterministic error of the front's would be sent again (the
 # controller's ruling, at Task 20's review). pi's own retry still matches the status.
 NO_RETRY = (b"x-should-retry", b"false")
+# The uploads forwarded at once, front-wide: llama-swap v257 holds each whole in memory, up to MAX_BODY_BYTES, so at
+# most 800 MiB of the unified pool; whisper transcribes one at a time, so more at once would only wait in llama-swap.
+UPLOADS_AT_ONCE = 4
+UPLOADS_BUSY_CODE = "uploads_busy"
+UPLOADS_RETRY_AFTER_S = 30
+# llama-swap giving no answer: no connection, or one that failed before its head. A 502, which pi and OpenAI's SDKs
+# retry, as is sensible for a llama-swap that is restarting. Task 22 asks the gate instead.
+UNREACHED_CODE = "llama_swap_unreached"
+UNREACHED = {"dan": "The front couldn't reach the model service on the Spark. On the Spark, `make logs s=llama-swap` "
+                    "shows why.",
+             "agent": "The front couldn't reach the model service on the Spark. Dan can see why with "
+                      "`make logs s=llama-swap` on the Spark."}
+ANSWER_MAX = 64 << 10  # a 429's body read to tell llama-swap's own, far more than its few hundred bytes
 _log = logging.getLogger(__name__)
+
+
+def uploads_busy(at_once: int) -> parse.Refused:
+    """429: the front is already forwarding `at_once` uploads, the most it sends llama-swap at once."""
+    return parse.Refused(429, UPLOADS_BUSY_CODE, f"The front is already sending {at_once} uploads on to the model "
+                         "service, the most it sends at once; try again in a minute.", UPLOADS_RETRY_AFTER_S)
 
 
 class KeyListError(ValueError):
@@ -145,8 +191,22 @@ class _Request:
     route: tuple[str, str] | None = None  # set once it is one of parse.ROUTES
     key: str | None = None  # the key's name, once known
     model: str | None = None  # the model's registry name, once resolved
+    entry: ModelEntry | None = None  # the model's entry in the model list, once resolved
     status: int | None = None  # the status sent, once its head is
+    complete: bool = False  # its answer was sent whole
+    ended: str | None = None  # how it ended without its answer whole, or with an error event: gone, cut, error
+    json: bytes | None = None  # its JSON body as it goes on, held until it ends, so it can go again
     form: parse.Form | None = None  # its spooled form, deleted when it ends
+
+    def outcome(self) -> int | str:
+        """Its journal line's status: how it ended, else its status, `gone` when it ended before any answer (its
+        client went first), and `cut` when its answer began and never ended whole (cancelled, as by the front's own
+        stop, or broken by an error of the front's own)."""
+        if self.ended is not None:
+            return self.ended
+        if self.status is None:
+            return "gone"
+        return self.status if self.complete else "cut"
 
 
 class FrontApp:
@@ -156,13 +216,17 @@ class FrontApp:
     def __init__(self, models: parse.ModelList, keys: dict[str, ClientKey], groups: dict[str, KeyGroup],
                  digests: dict[str, bytes], *, upstream: Any, gate: Any, caps: parse.KeyCaps,
                  log: Callable[[str], None], clock: Callable[[], float] = time.time, spool_dir: Path = SPOOL_DIR,
-                 budget: parse.BodyBudget | None = None):
+                 budget: parse.BodyBudget | None = None, inflight: InFlight | None = None,
+                 uploads_at_once: int = UPLOADS_AT_ONCE):
         check_keys(keys, digests)
         self.models = models
         self.keys, self.groups, self.digests = keys, groups, digests
         self.upstream, self.gate, self.caps = upstream, gate, caps
         self.log, self.clock, self.spool_dir = log, clock, spool_dir
         self.budget = parse.BodyBudget(BODY_BUDGET_BYTES) if budget is None else budget
+        self.inflight = InFlight(clock) if inflight is None else inflight
+        self.uploads_at_once = uploads_at_once
+        self.uploading = 0  # the uploads forwarded now, front-wide
 
     def refusal(self, code: str, key: str, **fields: Any) -> messages.Refusal:
         """The front's own refusal `code` for `key`, in its words: its label, and its group's `words`,
@@ -187,16 +251,14 @@ class FrontApp:
             route = " ".join(request.route) if request.route else "request"  # a path it serves, never a client's
             _log.error("the front's %s broke: %s at %s", route, type(err).__name__, _where(err))
             if request.status is None:
-                words = self.groups[self.keys[request.key].group].words if request.key else "dan"
                 with contextlib.suppress(Exception):  # a client already gone
-                    await self._send(send, request, 500, {"error": {"message": BROKE[words], "code": BROKE_CODE}},
-                                     [JSON, NO_RETRY])
+                    await self._send(send, request, 500, {"error": {"message": BROKE[self._words(request)],
+                                                                    "code": BROKE_CODE}}, [JSON, NO_RETRY])
         finally:
             request.held.release()
             if request.form is not None:
                 request.form.close()
-            self.log(parse.journal_line(request.key or "-", request.model or "-",
-                                        "gone" if request.status is None else request.status,
+            self.log(parse.journal_line(request.key or "-", request.model or "-", request.outcome(),
                                         self.clock() - request.started))
 
     async def _serve(self, scope: dict, receive, send, request: _Request) -> None:
@@ -226,41 +288,135 @@ class FrontApp:
     async def _open(self, headers: parse.Headers, receive, send, request: _Request) -> None:
         method, path = request.route
         sent_headers = parse.clean_headers(headers)
-        body = None
         if method == "POST":
             try:
-                name, body, content_type = await self._read(path, headers, receive, request)
+                name = await self._read(path, headers, receive, request)
             except parse.Refused as refused:
                 await self._refuse(send, request, refused)
                 return
             except parse.ClientGone:
                 return
-            sent_headers.append((b"content-type", content_type))
             entry = parse.resolve(name, self.models)
             if entry is None:
                 await self._refuse(send, request, self.refusal("model_not_found", request.key, asked_name=name,
                                                                models=self._listed()))
                 return
-            request.model = entry["name"]
+            request.model, request.entry = entry["name"], entry
             if not await self.gate.loaded(entry["name"]):
                 refused = await self._wait_for_load(entry["name"], request)
                 if refused is not None:
                     await self._refuse(send, request, refused)
                     return
-        response = await self.upstream.forward(method, path, sent_headers, body, request.key)
+        if request.form is None:
+            await self._forward(method, path, sent_headers, receive, send, request)
+            return
+        if self.uploading >= self.uploads_at_once:
+            await self._refuse(send, request, uploads_busy(self.uploads_at_once))
+            return
+        self.uploading += 1  # nothing awaits between the check and the take: one event loop
         try:
-            await send({"type": "http.response.start", "status": response.status, "headers": response.headers})
-            request.status = response.status
-            async for chunk in response.aiter_raw():
-                if chunk:
-                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
-            await send({"type": "http.response.body", "body": b""})
+            await self._forward(method, path, sent_headers, receive, send, request)
         finally:
+            self.uploading -= 1
+
+    async def _forward(self, method: str, path: str, headers: parse.Headers, receive, send,
+                       request: _Request) -> None:
+        """The request forwarded and its answer relayed (_relay), counted in flight for its model from here until the
+        relay has ended, however it ends; receive() watched beside it, and the relay, with its upstream call,
+        cancelled when the client goes first. An error of the relay's is raised once it has ended."""
+        counted = None if request.model is None else self.inflight.enter(request.model, request.key)
+        try:
+            relay = asyncio.ensure_future(self._relay(method, path, headers, send, request))
+            watch = asyncio.ensure_future(_disconnected(receive))
+            try:
+                await asyncio.wait((relay, watch), return_when=asyncio.FIRST_COMPLETED)
+                # uvicorn also gives http.disconnect once the answer is whole: then the relay is only closing.
+                if not relay.done() and not request.complete:
+                    request.ended = "gone"
+                    relay.cancel()
+            except BaseException:  # this task cancelled, as by the front's own stop: the relay with it
+                relay.cancel()
+                raise
+            finally:
+                watch.cancel()
+                await asyncio.wait((relay, watch))  # the relay's own cleanup closes the upstream answer
+                if not watch.cancelled():
+                    watch.exception()  # taken, so it is never reported as unretrieved
+            if not relay.cancelled():
+                relay.result()
+        finally:
+            if counted is not None:
+                self.inflight.leave(counted)
+
+    async def _relay(self, method: str, path: str, headers: parse.Headers, send, request: _Request) -> None:
+        """One send to llama-swap, its body made for it (_body), and its answer back to the client as it comes."""
+        content_type, body = self._body(request)
+        sent = headers if content_type is None else [*headers, (b"content-type", content_type)]
+        try:
+            response = await self.upstream.forward(method, path, sent, body, request.key)
+        except Unreached:
+            await self._send(send, request, 502, {"error": {"message": UNREACHED[self._words(request)],
+                                                            "code": UNREACHED_CODE}})
+            return
+        chunks = response.aiter_raw()
+        try:
+            head, broke = b"", False
+            if response.status == 429 and request.entry is not None:
+                head, broke = await _upto(chunks, ANSWER_MAX)
+                if not broke and concurrency_limited(response.status, head):
+                    worded = self.refusal("concurrency_limit", request.key, model_label=request.entry["label"])
+                    await self._refuse(send, request, dataclasses.replace(
+                        worded, retry_after_s=retry_after(response.headers)))
+                    return
+            end = StreamEnd.watching(path, response.status, response.headers)
+            sent_back = response.headers
+            if end is not None:  # chunked to the client, so a cut shows in its framing, which a length would hide
+                sent_back = [(name, value) for name, value in sent_back if name != b"content-length"]
+            await send({"type": "http.response.start", "status": response.status, "headers": sent_back})
+            request.status = response.status
+            if head:
+                await send({"type": "http.response.body", "body": head, "more_body": True})
+            try:
+                if broke:
+                    raise Broken
+                async for chunk in chunks:
+                    if chunk:
+                        if end is not None:
+                            end.feed(chunk)
+                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            except Broken:
+                request.ended = "cut"
+                return  # without the last chunk: uvicorn closes the connection, and the client sees a cut
+            if end is not None and end.outcome() != "done":
+                request.ended = end.outcome()
+                if request.ended == "cut":
+                    return  # an event stream without its last event: a cut, passed on as one
+            await send({"type": "http.response.body", "body": b""})
+            request.complete = True
+        finally:
+            closing = getattr(chunks, "aclose", None)
+            if closing is not None:
+                await closing()
             await response.aclose()
 
-    async def _read(self, path: str, headers: parse.Headers, receive, request: _Request):
-        """The body: (the model it names, the body to send on, its Content-Type). Refused by its Content-Length
-        before any of it is read, by its cap or the body budget, then as parse reads it."""
+    @staticmethod
+    def _body(request: _Request) -> tuple[bytes | None, bytes | AsyncIterator[bytes] | None]:
+        """(its Content-Type, the body to send on), made at each send: a form encoded again, from its spooled files,
+        which live until the request ends; a JSON body's bytes, held; none for a GET."""
+        if request.form is not None:
+            kind, body = parse.encode_form(request.form)
+            return kind.encode(), body
+        if request.json is not None:
+            return JSON[1], request.json
+        return None, None
+
+    def _words(self, request: _Request) -> str:
+        """Whose words the request's answers of the front's own are in: its key's group's, Dan's for no key."""
+        return self.groups[self.keys[request.key].group].words if request.key else "dan"
+
+    async def _read(self, path: str, headers: parse.Headers, receive, request: _Request) -> str:
+        """The body, kept in `request` (its form, or its JSON as it goes on); the model it names. Refused by its
+        Content-Length before any of it is read, by its cap or the body budget, then as parse reads it."""
         content_type = next((value for name, value in headers if name == b"content-type"), b"").decode("latin-1")
         is_form = path in parse.FORM_PATHS
         limit = MAX_BODY_BYTES if is_form else MAX_JSON_BYTES
@@ -270,14 +426,13 @@ class FrontApp:
         if is_form:
             request.held.take(parse.FORM_IN_MEMORY)
             request.form = await parse.read_form(receive, content_type, spool_dir=self.spool_dir, max_bytes=limit)
-            kind, body = parse.encode_form(request.form)
-            return request.form.model, body, kind.encode()
+            return request.form.model
         if content_type.split(";", 1)[0].strip().lower().startswith("multipart/"):
             raise parse.Refused(400, parse.BAD_REQUEST, parse.FORM_NOT_TAKEN)
         if length is not None:
             request.held.take(length)  # before any of it is read
-        parsed, sent = await parse.read_json(receive, max_bytes=limit, held=request.held)
-        return parsed["model"], sent, JSON[1]
+        parsed, request.json = await parse.read_json(receive, max_bytes=limit, held=request.held)
+        return parsed["model"]
 
     async def _wait_for_load(self, model: str, request: _Request) -> messages.Refusal | None:
         """The gate's answer for a model not loaded: None once admitted, else its refusal. The request waits within
@@ -316,3 +471,25 @@ async def _answer(send, status: int, payload: dict, headers: parse.Headers | Non
     if request is not None:
         request.status = status
     await send({"type": "http.response.body", "body": data})
+    if request is not None:
+        request.complete = True
+
+
+async def _disconnected(receive) -> None:
+    """Until receive() gives http.disconnect: the client gone, or, from uvicorn, the answer whole."""
+    while (await receive())["type"] != "http.disconnect":
+        pass
+
+
+async def _upto(chunks: AsyncIterator[bytes], limit: int) -> tuple[bytes, bool]:
+    """The body's bytes from `chunks` until it ends or passes `limit`, and whether it broke off meanwhile; what is
+    left of it stays in `chunks`."""
+    data = bytearray()
+    try:
+        while len(data) <= limit:
+            data += await anext(chunks)
+    except StopAsyncIteration:
+        pass
+    except Broken:
+        return bytes(data), True
+    return bytes(data), False

@@ -197,7 +197,11 @@ Four services, three sockets that systemd holds, and a notifier:
     parsed, and a form with two `model` fields is refused, since llama-swap takes the first value
     where Python's parser keeps the last, and the two would then disagree on the model. A model
     the registry doesn't list gets a `404`, code `model_not_found`, that names the registry's
-    models, the old coder's name after the swap included.
+    models, the old coder's name after the swap included. *(Added 2026-10-14, at the implementation
+    plan's Task 21, which had been asked to cap the uploads forwarded at once, since llama-swap v257
+    reads every POST body whole into memory: at most 4 uploads are forwarded at once, front-wide,
+    so llama-swap holds at most about 800 MiB of them. A fifth gets a `429`, code `uploads_busy`,
+    with `Retry-After: 30`.)*
   - **Its journal lines** name the key, the model, the status and the duration, never a key, a
     digest, a body, a header or an upload's file name, so it doesn't undo what the llama-swap row
     keeps out of the journal.
@@ -3400,6 +3404,13 @@ Each item gets its own design pass when its turn comes.
     the form's. The figures were measured on the Spark.
   - Task 21 caps the uploads forwarded at once, since llama-swap v257 reads every POST body whole
     into memory.
+- **2026-10-14** — Phase 2a's Task 21, as it was built. A dated note is in *The front and the
+  gate* (*Its limits*), and the implementation plan's Task 21 has the rest.
+  - The front forwards at most 4 uploads at once, front-wide. A fifth gets `429 uploads_busy`.
+  - The streams' last events were checked against llama.cpp b11146's source:
+    - `[DONE]` for chat and completions;
+    - `message_stop` for `/v1/messages`;
+    - `response.completed` for `/v1/responses`.
 
 ## Sources
 
