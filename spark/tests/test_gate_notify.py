@@ -688,8 +688,8 @@ def test_a_failed_unload_is_no_unload_and_its_fired_waits_for_the_next(tmp_path)
     found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 3))
     assert texts(found) == [
         "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded Gemma, which was idle; "
-        "llama-swap refused its unload of the coder (HTTP 401: the brake's key); new loads are paused. They resume by "
-        "themselves after 5 min above 28 GiB available."]
+        "llama-swap refused its unload of the coder (HTTP 401: the brake's key); new loads are paused. On the Spark, "
+        "`make logs s=brake` shows why. They resume by themselves after 5 min above 28 GiB available."]
     assert CODER not in state.brake_marks
     # Alone past FIRED_ALONE_S, it says why nothing was unloaded, in place of "hasn't confirmed".
     write(tmp_path, event("fired", at(3, 20), episode=2), refused(at(3, 20, 1), CODER, "HTTP 401", episode=2))
@@ -717,11 +717,13 @@ def test_a_failed_unload_after_the_first_alert_follows_up_with_why(tmp_path):
     write(tmp_path, refused(at(3, 13), GEMMA, "HTTP 404"), event("unload", at(3, 13, 1), model=EMBED, state="idle"))
     found = ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 2))
     assert texts(found) == ["Brake, 03:13: also unloaded the embeddings, which was idle; llama-swap refused its unload "
-                            "of Gemma (HTTP 404: its config may not match the registry)."]
+                            "of Gemma (HTTP 404: its config may not match the registry). On the Spark, `make logs "
+                            "s=brake` shows why."]
     assert found[0][2]["follow_up"] is True
     write(tmp_path, refused(at(3, 15), name_of("whisper"), "HTTP 401"))  # a refusal alone, a follow-up of its own
     assert texts(ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 15, 1))) == [
-        "Brake, 03:15: llama-swap refused its unload of whisper (HTTP 401: the brake's key)."]
+        "Brake, 03:15: llama-swap refused its unload of whisper (HTTP 401: the brake's key). On the Spark, `make logs "
+        "s=brake` shows why."]
     # One the brake sent itself, the gate being down, isn't sent again.
     write(tmp_path, refused(at(3, 16), GEMMA, "HTTP 401", by_brake=True))
     assert ingest_brake_events(path, state, REGISTRY, boot_id=BOOT, now=at(3, 16, 1)) == []

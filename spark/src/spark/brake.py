@@ -9,14 +9,17 @@ still, a synchronous loop that never shares an event loop with the gate and neve
 - **The rate-of-fall watch** acts early: when the fall over the last FALL_WINDOW_S, carried UNLOAD_LEAD_S ahead, would
   pass the brake line, the brake holds and unloads as at the line. A fall the gate knowingly admitted is not a crash:
   the loads in progress (the gate's record's `starting` models, and launch's `started/` records, bounded, since an
-  engine can write those) give a floor that much fall may reach; a fall past it, or one nothing explains, counts.
+  engine can write those) give a floor that much fall may reach, which stands for the window after they end; a fall
+  past it, or one nothing explains, counts, once memory has fallen MIN_FALL_GIB within the window.
 - **Each step is recorded for the gate** in `brake/events.jsonl` (brakeevents): fired, each unload, and each unload
-  llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is.
+  llama-swap refused, with the line it acted on and its episode, fsynced, as the hold is. The hold is written first,
+  and no lock another process can hold is waited for more than LOCK_WAIT_S a poll (Task 23's review).
 - **While the gate is down** (its record missing or stale) it sends its own `brake_fired`, and each follow-up, to ntfy
   through Ubuntu's curl, never waited on, its address, topic and text on curl's stdin, never a command line. Until ntfy
   is set up (Task 2, Phase 5) it sends nothing, says so in its journal once an episode, and the gate, once back, tries.
 - **Its hold** carries the boot, the episode, the model that was loading and the reading, and its `since` its UTC
-  offset; `make brake-release` goes through the gate, and lifts the hold file itself only when the gate isn't there.
+  offset; `make brake-release` goes through the gate, and lifts the hold file itself only when the gate isn't there or
+  gives no whole answer within 5 s, saying which.
 """
 
 from __future__ import annotations
@@ -98,6 +101,13 @@ KEY_CHECK_RETRY_S = 1.0
 FALL_WINDOW_S = 2.0  # the fall is read over this long: a least-squares slope of MemAvailable against time
 UNLOAD_LEAD_S = 10.0  # and carried this far ahead
 LOAD_FLOOR_MARGIN_GIB = 2.0  # below where the loads in progress should leave memory, before a fall is past them
+# The watch acts only when memory has actually fallen this much within its window, the window's highest reading less the
+# latest (the controller's ruling at Task 23's review, I2). Near the 24 GiB reserve, where memory sits after an admitted
+# load, noise of ±0.5 GiB, a 1 GiB step, the drills' 0.1 GiB/s hog and a context checkpoint of ~0.6 GiB, each carried 10
+# s ahead, would pass the line; none falls 1.5 GiB in 2 s, and a runaway faster than ~0.75 GiB/s does. Task 47 sets it
+# from the measured noise and the soak's growth bursts.
+MIN_FALL_GIB = 1.5
+LOCK_WAIT_S = 0.2  # a poll waits this long, in all, for a lock another process holds (Task 23's review, I1)
 ACTIVITY_FILE = "activity.json"  # the gate's record, in its state folder (gate/core.py's ACTIVITY_FILE)
 # llama-swap v257 hands each model whose cmd holds ${PORT} a port from startPort, in their names' sorted order: the
 # gate's core.engine_ports, kept here so the brake never imports the gate's core (and with it httpx and uvicorn).
@@ -117,7 +127,12 @@ HISTORY_S = tickets.STARTED_EXPIRES_S + 10
 HISTORY_MAX = 4 * HISTORY_S + 100  # four a second, and a bound should the wall clock go back
 # The brake's own alert while the gate is down: Ubuntu's curl, outside the app's venv, its config on stdin.
 CURL = "/usr/bin/curl"
-CURL_ARGS = (CURL, "--fail", "--silent", "--max-time", "10", "--config", "-")
+# -q first, so curl reads no .curlrc: the brake runs as spark, the engines' account, which could plant one (Task 23's
+# review, M10). curl runs with an empty environment: it needs nothing of the brake's.
+CURL_ARGS = (CURL, "-q", "--fail", "--silent", "--max-time", "10", "--config", "-")
+# curl's exit codes, in the journal's words (Task 23's review, M6); any other is said by its number.
+CURL_FAILURES = {22: "ntfy answered with an error", 28: "ntfy didn't answer within 10 s", 6: "it couldn't reach ntfy",
+                 7: "it couldn't reach ntfy"}
 ALERT_WAIT_S = 15.0  # a --once run waits this long at most for its alerts: curl's --max-time 10, and its exit
 NTFY_TOKEN = "ntfy-token"  # the credential: one `Authorization: Bearer …` line, which curl reads with `header = @file`
 NTFY_TOPIC = re.compile(r"[-_A-Za-z0-9]{1,64}")  # ntfy's own rule for a topic's name
@@ -195,6 +210,13 @@ def plan_brake(mem: MemInfo, thresholds: BrakeThresholds, registry: Registry, ru
     level = min(mem.available_gib, projected_gib) if breach else mem.available_gib
     short = level + inflight_gib < thresholds.brake_gib
     return [Action("hold")] + ([Action("unload", victims[0])] if victims and short else [])
+
+
+def _boottime() -> float:
+    """CLOCK_BOOTTIME, the clock /proc/uptime and a process's start time count by (Linux); the monotonic clock where
+    there is none, as on the Mac, which has no /proc to compare it with."""
+    clock = getattr(time, "CLOCK_BOOTTIME", None)
+    return time.clock_gettime(clock) if clock is not None else time.monotonic()
 
 
 def _now() -> str:
@@ -355,17 +377,20 @@ def _is_its_engine(record: dict, port: int, *, now: float, proc: Path, spark_uid
 
 
 def loads_in_progress(activity: Activity | None, launch: Path | None, *, now: float, boot_id: str, registry,
-                      readings: Iterable[tuple[float, float]] = (), proc: Path = procs.PROC,
-                      spark_uid: int | None = None) -> list[LoadInProgress]:
+                      readings: Iterable[tuple[float, float]] = (), boot_readings: Iterable[tuple[float, float]] = (),
+                      proc: Path = procs.PROC, spark_uid: int | None = None) -> list[LoadInProgress]:
     """The loads in progress, oldest first: the union, by model, of the gate's record's `starting` models (when the
     record is fresh, `activity`) and the records under `launch/started/` that tickets.started returns (this boot's,
     under STARTED_EXPIRES_S old), whether or not the gate's record is fresh. The gate's record is the gate's own; an
     engine runs as spark and can write started/, so what a record gives is bounded (the controller's ruling at Task
     11's review): its start is the brake's own reading nearest its `started_at` (`readings`, (wall time, GiB) pairs),
     never its `available_gib`; its footprint at most the registry's; and it counts only while its pid is its model's
-    engine (_is_its_engine). started/ unreadable (tickets.started's OSError) is no record, no load in progress, the
+    engine (_is_its_engine). For a record with launch's start time, its start reading is the brake's own nearest the
+    engine's start on the boot's clock (`boot_readings`, (CLOCK_BOOTTIME, GiB) pairs; the start time in ticks over
+    CLK_TCK), which a stepped wall clock doesn't move (Task 23's review, M4); a record from before it keeps the wall
+    clock's nearest `started_at`. started/ unreadable (tickets.started's OSError) is no record, no load in progress, the
     stricter way; the brake's watch says so in its journal."""
-    readings = list(readings)
+    readings, boot_readings = list(readings), list(boot_readings)
     loads: dict[str, LoadInProgress] = {}
     for name, seen in (activity.models.items() if activity is not None else ()):
         if seen.state != "starting" or seen.admitted_gib is None or seen.started_at is None:
@@ -389,7 +414,10 @@ def loads_in_progress(activity: Activity | None, launch: Path | None, *, now: fl
                 continue
             if not _is_its_engine(record, ports[name], now=now, proc=proc, spark_uid=uid):
                 continue
-            start = _nearest(readings, record["started_at"])
+            if "start_time" in record and boot_readings:
+                start = _nearest(boot_readings, record["start_time"] / os.sysconf("SC_CLK_TCK"))
+            else:
+                start = _nearest(readings, record["started_at"])
             if start is not None:
                 admitted = max(0.0, min(float(record["footprint_gib"]), model.footprint_gib))
                 loads[name] = LoadInProgress(name, admitted, start, float(record["started_at"]))
@@ -406,18 +434,21 @@ def expected_floor(loads: list[LoadInProgress]) -> float | None:
 
 
 def projected_gib(readings: Iterable[tuple[float, float]], *, lead_s: float, window_s: float,
-                  floor_gib: float | None) -> float | None:
+                  floor_gib: float | None, min_fall_gib: float = MIN_FALL_GIB) -> float | None:
     """The reading `lead_s` ahead, from the fall over the last `window_s` of (time, GiB) readings: a least-squares slope
-    of MemAvailable against time, carried on from the last reading. None for a rise or a flat line, or with too little
-    to judge: fewer than two readings, or ones spanning less than half the window. With a floor, while the last reading
-    is still above it, the projection stops at the floor, since that much fall was admitted; past it, the fall is
-    unexplained, and goes on as it is."""
+    of MemAvailable against time, carried on from the last reading. None for a rise or a flat line, for a fall of less
+    than `min_fall_gib` within the window (its highest reading less the last), or with too little to judge: fewer than
+    two readings, or ones spanning less than half the window. With a floor, while the last reading is still above it,
+    the projection stops at the floor, since that much fall was admitted; past it, the fall is unexplained, and goes
+    on as it is."""
     points = list(readings)
     if not points:
         return None
     last_at, last = points[-1]
     points = [(at, gib) for at, gib in points if 0 <= last_at - at <= window_s]
     if len(points) < 2 or last_at - points[0][0] < window_s / 2:
+        return None
+    if max(gib for _, gib in points) - last < min_fall_gib:  # noise, a small step, a model's growth (I2)
         return None
     mean_at = sum(at for at, _ in points) / len(points)
     mean_gib = sum(gib for _, gib in points) / len(points)
@@ -434,11 +465,12 @@ def projected_gib(readings: Iterable[tuple[float, float]], *, lead_s: float, win
 
 
 def predict_breach(readings: deque[tuple[float, float]], *, brake_gib: float, lead_s: float, window_s: float,
-                   floor_gib: float | None) -> bool:
+                   floor_gib: float | None, min_fall_gib: float = MIN_FALL_GIB) -> bool:
     """Whether the fall over the last `window_s`, carried `lead_s` ahead, passes under `brake_gib` (projected_gib). A
-    rise or a flat line is false. Since admission leaves the reserve (24) and the growth owed free, an admitted load's
-    floor is above the brake line (20), so an ordinary load never trips it; a load that runs past its floor does."""
-    ahead = projected_gib(readings, lead_s=lead_s, window_s=window_s, floor_gib=floor_gib)
+    rise, a flat line, or a fall of less than `min_fall_gib` within the window is false. Since admission leaves the
+    reserve (24) and the growth owed free, an admitted load's floor is above the brake line (20), so an ordinary load
+    never trips it; a load that runs past its floor does."""
+    ahead = projected_gib(readings, lead_s=lead_s, window_s=window_s, floor_gib=floor_gib, min_fall_gib=min_fall_gib)
     return ahead is not None and ahead < brake_gib
 
 
@@ -455,19 +487,21 @@ def _curl_quoted(value: str) -> str:
 
 def curl_config(url: str, header_file: Path, priority: str, text: str) -> bytes:
     """curl's --config for one ntfy alert: the URL (ntfy's address and the brake's topic), the token's header from its
-    credential's file, the priority, and the text as the body."""
+    credential's file, the priority, and the text as the body, by `data-raw`, which takes a leading @ as itself, never
+    as a file to read (Task 23's review, M9)."""
     lines = [f"url = {_curl_quoted(url)}", f"header = {_curl_quoted('@' + str(header_file))}",
-             f"header = {_curl_quoted('Priority: ' + priority)}", f"data-binary = {_curl_quoted(text)}"]
+             f"header = {_curl_quoted('Priority: ' + priority)}", f"data-raw = {_curl_quoted(text)}"]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 class Alerter:
-    """The brake's own ntfy alert, sent only while the gate is down: `alert_without_gate` starts Ubuntu's curl and
-    writes its config to curl's stdin, so neither ntfy's address, its topic nor the text is on a command line `agent`
-    can read; it is never waited on by the running brake (`reap` drops the finished each poll), and a --once run waits
-    for it (`wait`), since systemd ends a oneshot unit's leftover processes. ntfy is set up when NTFY_URL and
-    NTFY_TOPIC_BRAKE are set (the values file) and the `ntfy-token` credential is one header line: Task 25's placeholder
-    isn't. `env`, `popen` and `curl_ok` are for the tests."""
+    """The brake's own ntfy alert, sent only while the gate is down: `alert_without_gate` starts Ubuntu's curl, with
+    `-q` first and an empty environment, so it reads no `.curlrc` and nothing of the brake's, and writes its config to
+    curl's stdin, so neither ntfy's address, its topic nor the text is on a command line `agent` can read; it is never
+    waited on by the running brake (`reap` drops the finished each poll), and a --once run waits for it (`wait`),
+    since systemd ends a oneshot unit's leftover processes. ntfy is set up when NTFY_URL and NTFY_TOPIC_BRAKE are set
+    (the values file) and the `ntfy-token` credential is one header line: Task 25's placeholder isn't. `env`, `popen`
+    and `curl_ok` are for the tests."""
 
     def __init__(self, *, env: Mapping[str, str] | None = None, popen: Callable[..., Any] | None = None,
                  curl_ok: Callable[[], bool] | None = None):
@@ -500,7 +534,7 @@ class Alerter:
         config = curl_config(url, Path(self.env["CREDENTIALS_DIRECTORY"]) / NTFY_TOKEN, priority, text)
         try:
             child = self.popen(list(CURL_ARGS), stdin=subprocess.PIPE, start_new_session=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={})
         except OSError as err:
             return f"curl couldn't be started ({err.strerror or type(err).__name__})"
         self.children.append(child)
@@ -581,6 +615,8 @@ class _Fired:
     hold: Hold
     falling: bool
     sending: bool  # the brake sends the alert itself, the gate being down
+    waits: bool  # release_waits_for_dan for its hold: only `make brake-release` lifts it
+    saved: Any  # the gate's saved state as read at the fire (gate.state.GateState), or None with no gate
     unloaded: list[tuple[str, str | None]] = field(default_factory=list)  # (label, state)
     failed: list[tuple[str, str]] = field(default_factory=list)  # (label, reason): unloads llama-swap didn't do
 
@@ -591,10 +627,12 @@ class _Brake:
     /running and loaded again. The events' episode is the hold's while a hold of this boot stands (brakeevents)."""
 
     def __init__(self, registry, client, state_dir: Path, log, now, *, wall=time.time, monotonic=time.monotonic,
-                 boot_id: str = UNKNOWN_BOOT, gate_state: Path | None = None, launch: Path | None = None,
-                 proc: Path = procs.PROC, spark_uid: int | None = None, alerter: Alerter | None = None):
+                 boottime=None, boot_id: str = UNKNOWN_BOOT, gate_state: Path | None = None,
+                 launch: Path | None = None, proc: Path = procs.PROC, spark_uid: int | None = None,
+                 alerter: Alerter | None = None):
         self.registry, self.client, self.state_dir, self.log, self.now = registry, client, Path(state_dir), log, now
         self.wall, self.monotonic, self.boot_id = wall, monotonic, boot_id
+        self.boottime = boottime or _boottime
         self.gate_state = None if gate_state is None else Path(gate_state)
         self.launch = None if launch is None else Path(launch)
         self.proc, self.spark_uid, self.alerter = proc, spark_uid, alerter
@@ -606,6 +644,11 @@ class _Brake:
         self.returning: dict[str, _Returning] = {}
         self.readings: deque[tuple[float, float]] = deque()  # (monotonic, GiB): the rate-of-fall watch's window
         self.history: deque[tuple[float, float]] = deque(maxlen=HISTORY_MAX)  # (wall, GiB): the brake's own readings
+        self.boot_history: deque[tuple[float, float]] = deque(maxlen=HISTORY_MAX)  # (CLOCK_BOOTTIME, GiB): the same
+        # The floor of the loads last in progress, with when it was last read (monotonic): it stands FALL_WINDOW_S and a
+        # poll after they leave, while the window still holds their fall (Task 23's review, C1).
+        self.floor_kept: tuple[float, float] | None = None
+        self.lock_left = LOCK_WAIT_S  # what this poll may still wait for a lock another process holds (I1)
         self.episode: int | None = None  # the events' episode this brake is in, once it has fired or unloaded
         self.said: set[tuple[str, int]] = set()  # what its journal said once an episode: (what, episode)
         self._activity: Any = _UNREAD
@@ -625,10 +668,11 @@ class _Brake:
 
     def poll(self, mem: MemInfo) -> None:
         thresholds = self.registry.brake
-        wall = self.wall()
-        self.remember(self.monotonic(), wall, mem.available_gib)
+        wall, mono = self.wall(), self.monotonic()
+        self.remember(mono, wall, self.boottime(), mem.available_gib)
         self._activity = _UNREAD
-        projected = self.watch(wall) if mem.available_gib >= thresholds.brake_gib else None
+        self.lock_left = LOCK_WAIT_S
+        projected = self.watch(wall, mono) if mem.available_gib >= thresholds.brake_gib else None
         falling = projected is not None
         listed = self.listed(mem, falling)
         self.settle(mem, listed)
@@ -656,13 +700,14 @@ class _Brake:
         if fired is not None and fired.sending:
             self.first_alert(fired, something_loaded=listed is None or bool(listed))
 
-    def remember(self, mono: float, wall: float, gib: float) -> None:
+    def remember(self, mono: float, wall: float, boot: float, gib: float) -> None:
         self.readings.append((mono, gib))
         while self.readings and mono - self.readings[0][0] > 2 * FALL_WINDOW_S:
             self.readings.popleft()
-        self.history.append((wall, gib))
-        while self.history and wall - self.history[0][0] > HISTORY_S:
-            self.history.popleft()
+        for history, at in ((self.history, wall), (self.boot_history, boot)):
+            history.append((at, gib))
+            while history and at - history[0][0] > HISTORY_S:
+                history.popleft()
 
     def activity(self, wall: float) -> Activity | None:
         """The gate's record, read once a poll and only when needed; None while it is missing or stale, or with no
@@ -672,10 +717,12 @@ class _Brake:
                               else read_activity(self.gate_state / ACTIVITY_FILE, wall, boot_id=self.boot_id))
         return self._activity
 
-    def watch(self, wall: float) -> float | None:
+    def watch(self, wall: float, mono: float) -> float | None:
         """The rate-of-fall watch: the reading UNLOAD_LEAD_S ahead when it would pass the brake line, else None. The
         loads in progress are read only when the fall alone would pass it, since their floor can only hold it back.
-        Whatever fails in reading them is no load in progress, the stricter way, and is said once."""
+        Whatever fails in reading them is no load in progress, the stricter way, and is said once. Once they have left
+        (the gate marks a load ready as its fall ends, or a moment after), their floor stands FALL_WINDOW_S and a poll
+        more, while the window still holds their fall (Task 23's review, C1)."""
         line = self.registry.brake.brake_gib
         rough = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=None)
         if rough is None or rough >= line:
@@ -690,13 +737,18 @@ class _Brake:
                 self.once.cleared("started", "brake: launch's started records read again")
         try:
             loads = loads_in_progress(self.activity(wall), self.launch, now=wall, boot_id=self.boot_id,
-                                      registry=self.registry, readings=self.history, proc=self.proc,
-                                      spark_uid=self.spark_uid)
+                                      registry=self.registry, readings=self.history, boot_readings=self.boot_history,
+                                      proc=self.proc, spark_uid=self.spark_uid)
         except Exception as err:  # noqa: BLE001 (a load misread must never stop the brake: none, the stricter way)
             self.once.failed("loads", f"brake: the loads in progress couldn't be read ({err}): counting none")
             loads = []
-        ahead = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S,
-                              floor_gib=expected_floor(loads))
+        floor = expected_floor(loads)
+        if floor is not None:
+            self.floor_kept = (floor, mono)
+        elif (self.floor_kept is not None
+              and mono - self.floor_kept[1] <= FALL_WINDOW_S + self.registry.brake.poll_ms / 1000):
+            floor = self.floor_kept[0]
+        ahead = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=floor)
         return ahead if ahead is not None and ahead < line else None
 
     def listed(self, mem: MemInfo, falling: bool = False) -> list[tuple[str, str]] | None:
@@ -754,11 +806,12 @@ class _Brake:
         return min(starting) if starting else None
 
     def fire(self, mem: MemInfo, wall: float, falling: bool, loading: str | None) -> _Fired:
-        """No hold stands: write one, of a new episode, with this boot, the model loading and the reading; then record
-        `fired` for the gate, saying whether the brake sends the alert itself."""
+        """No hold stands: write one, of a new episode, with this boot, the model loading and the reading, before
+        anything that could wait: its episode comes from an unlocked read of the events (Task 23's review, I1). Then
+        say how the pause ends, and record `fired` for the gate, saying whether the brake sends the alert itself."""
         line = self.registry.brake.brake_gib
         try:
-            episode = episode_for(self.events, None, boot_id=self.boot_id)
+            episode = episode_for(self.events, None, boot_id=self.boot_id, locked=False)
         except (OSError, ValueError) as err:  # the events file can't be read: carry on, numbered from this brake
             self.once.failed("episode", f"brake: its steps in {self.events} can't be read ({err})")
             episode = (self.episode or 0) + 1
@@ -767,12 +820,29 @@ class _Brake:
         if falling:
             reason += f", falling fast toward the {line:g} GiB line"
         hold = Hold(self.now(), reason, (), self.boot_id, episode, loading, mem.available_gib)
-        if self.write(hold):
-            self.log("brake: holding new loads until `make brake-release`")
+        written = self.write(hold)
+        saved = None if self.gate_state is None else load_state(self.gate_state, now=wall)[0]  # never raises
+        waits = release_waits_for_dan(hold, boot_id=self.boot_id, now=wall,
+                                      last_auto_release_at=None if saved is None else saved.last_auto_release_at)
+        if written:
+            self.log(self.paused(waits, saved))
         sending = self.will_alert(wall, episode)
         self.record(BrakeEvent(1, wall, self.boot_id, episode, "fired", None, None, mem.available_gib, line, sending,
                                falling=falling))
-        return _Fired(wall, mem.available_gib, line, hold, falling, sending)
+        return _Fired(wall, mem.available_gib, line, hold, falling, sending, waits, saved)
+
+    def paused(self, waits: bool, saved: Any) -> str:
+        """The journal's line for a hold just written: how the pause ends in 2a (Task 23's review, I3). By rule 5 the
+        gate lifts it, at most once an hour, unless it waits for Dan: a brake within the hour after an automatic
+        release, or after the gate's saved state was damaged. *Paused* is the brake's word."""
+        if waits:
+            why = ("the gate's saved state was damaged, so it can't tell when its last automatic release was"
+                   if saved is not None and saved.release_assumed
+                   else "it fired within an hour of the gate's last automatic release")
+            return f"brake: new loads paused until `make brake-release`: {why}"
+        return (f"brake: new loads paused; the gate lifts the pause once memory has stayed above "
+                f"{self.registry.brake.warn_gib:g} GiB available for {messages.duration(RELEASE_AFTER_S)}, at most "
+                "once an hour, or `make brake-release` lifts it now")
 
     def unload(self, model: str, mem: MemInfo, state: str | None, *, wall: float, falling: bool = False,
                fired: _Fired | None = None) -> None:
@@ -853,7 +923,7 @@ class _Brake:
             self.episode = hold.episode
         elif self.episode is None:
             try:
-                self.episode = episode_for(self.events, None, boot_id=self.boot_id)
+                self.episode = episode_for(self.events, None, boot_id=self.boot_id, locked=False)
             except (OSError, ValueError) as err:
                 self.once.failed("episode", f"brake: its steps in {self.events} can't be read ({err})")
                 self.episode = 1
@@ -873,9 +943,15 @@ class _Brake:
 
     def record(self, event: BrakeEvent) -> None:
         """Append a step for the gate, fsynced (brakeevents.append_event, whose seq comes from the file under its lock,
-        so it goes on across restarts). One that can't be written never stops the brake, and is said once."""
+        so it goes on across restarts). One that can't be written never stops the brake, and is said once. The lock is
+        waited for what is left of LOCK_WAIT_S this poll, then the step goes unrecorded: any process that can read the
+        file can hold its lock (Task 23's review, I1)."""
         try:
-            append_event(self.events, event)
+            append_event(self.events, event, wait_s=self.lock_left)
+        except BlockingIOError as err:  # held elsewhere: no more waiting this poll
+            self.lock_left = 0.0
+            self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events}: {err}. "
+                                       "The brake goes on, but the gate won't hear of these steps")
         except (OSError, ValueError) as err:
             self.once.failed("events", f"brake: ALERT — can't record its steps for the gate in {self.events}: {err}. "
                                        "The brake goes on, but the gate won't hear of these steps")
@@ -919,9 +995,8 @@ class _Brake:
         refused (the controller's ruling, at Task 23); or, with none, that nothing of the stack's was loaded, or that
         llama-swap hasn't confirmed its unload; and how the pause ends, by rule 5, from the last automatic release in
         the gate's saved state."""
-        state, _ = load_state(self.gate_state, now=fired.at)  # never raises; damage reads as release_assumed
-        waits = release_waits_for_dan(fired.hold, boot_id=self.boot_id, last_auto_release_at=state.last_auto_release_at,
-                                      now=fired.at)
+        state = fired.saved or load_state(self.gate_state, now=fired.at)[0]  # never raises; damage: release_assumed
+        waits = fired.waits
         fields: dict[str, Any] = {
             "at": fired.at, "available_gib": fired.available_gib, "line_gib": fired.line_gib,
             "unloaded": list(fired.unloaded), "by_brake": True, "release_waits_for_dan": waits,
@@ -1037,28 +1112,30 @@ class StartCheck:
 
 def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep=time.sleep,
               log=print, now=_now, once: bool = False, start_check: StartCheck | None = None,
-              monotonic=time.monotonic, wall=time.time, boot_id: str | None = None, gate_state: Path | None = None,
-              launch: Path | None = None, proc: Path = procs.PROC, spark_uid: int | None = None,
-              alerter: Alerter | None = None) -> None:
+              monotonic=time.monotonic, wall=time.time, boottime=None, boot_id: str | None = None,
+              gate_state: Path | None = None, launch: Path | None = None, proc: Path = procs.PROC,
+              spark_uid: int | None = None, alerter: Alerter | None = None) -> None:
     """The brake's loop, one poll every `poll_ms`, and one model unloaded a poll at most, so a --once run unloads one.
     `gate_state` and `launch` are the gate's folder and launch's (None: no gate, no records, Phase 1's brake), `alerter`
-    the brake's own alert while the gate is down (None: none). `monotonic` times the rate-of-fall watch and `wall` the
-    records and events; `proc`, `spark_uid` and `boot_id` are for the tests (this boot's, read when None)."""
+    the brake's own alert while the gate is down (None: none). `monotonic` times the rate-of-fall watch, `wall` the
+    records and events, and `boottime` (CLOCK_BOOTTIME by default) the readings a started record's start time is
+    matched to; `proc`, `spark_uid` and `boot_id` are for the tests (this boot's, read when None)."""
     if boot_id is None:
         try:
             boot_id = read_boot_id()
         except OSError as err:
             log(f"brake: this boot's id can't be read ({err}): its hold and steps say {UNKNOWN_BOOT}")
             boot_id = UNKNOWN_BOOT
-    brake = _Brake(registry, client, state_dir, log, now, wall=wall, monotonic=monotonic, boot_id=boot_id,
-                   gate_state=gate_state, launch=launch, proc=proc, spark_uid=spark_uid, alerter=alerter)
+    brake = _Brake(registry, client, state_dir, log, now, wall=wall, monotonic=monotonic, boottime=boottime,
+                   boot_id=boot_id, gate_state=gate_state, launch=launch, proc=proc, spark_uid=spark_uid,
+                   alerter=alerter)
     brake.check_state_dir()
     if start_check is not None:
         start_check.start()
     while True:
         if alerter is not None:
             for code in alerter.reap():
-                log(f"brake: its own alert didn't go through: curl exited {code}")
+                log(_alert_failed(code))
         try:
             mem = read_mem()
         except (OSError, ValueError) as err:  # nothing to act on this poll; the next one tries again
@@ -1069,16 +1146,24 @@ def run_brake(registry, client, state_dir: Path, *, read_mem=read_meminfo, sleep
         if once:
             if alerter is not None:  # systemd ends a oneshot unit's leftover processes: its alerts go first
                 for code in alerter.wait(ALERT_WAIT_S):
-                    log(f"brake: its own alert didn't go through: curl exited {code}")
+                    log(_alert_failed(code))
             return
         pause = registry.brake.poll_ms / 1000
         sleep(pause)
         brake.clock += pause
 
 
-def release(state_dir: Path, *, without_gate: bool = False) -> int:
+def _alert_failed(code: int) -> str:
+    """The journal's line for the brake's own alert whose curl failed, its exit code in words (Task 23's review, M6).
+    The event already says the brake sent it, so the gate won't send it either."""
+    why = CURL_FAILURES.get(code, f"curl exited {code}")
+    return (f"brake: its own alert didn't go through: {why}; the gate won't send it either, since the brake's event "
+            "records it as sent by the brake")
+
+
+def release(state_dir: Path, *, without_gate: bool | str = False) -> int:
     """Phase 1's release: the hold file removed directly. `without_gate`: as `make brake-release`'s fallback, when the
-    gate isn't answering, worded so (messages.BRAKE_RELEASED_WITHOUT_GATE)."""
+    gate isn't answering, worded so (messages.BRAKE_RELEASED_WITHOUT_GATE), or with the words given."""
     try:
         released = release_hold(state_dir)
     except OSError as err:  # say what stands in the way, not a traceback
@@ -1090,6 +1175,8 @@ def release(state_dir: Path, *, without_gate: bool = False) -> int:
         return 1
     if not released:
         print("brake: no hold to release")
+    elif isinstance(without_gate, str):
+        print(without_gate)
     else:
         print(messages.BRAKE_RELEASED_WITHOUT_GATE if without_gate else "brake: hold released")
     return 0
@@ -1101,12 +1188,19 @@ GATE_RELEASE_TIMEOUT_S = 5  # `make brake-release`'s wait for the gate's answer
 def release_through_gate(socket_path: Path, state_dir: Path, *, client=GateClient) -> int:
     """`make brake-release`: through the gate's control socket (`POST /v1/release` with `brake`), which ends the
     brake's pause, never Dan's own hold, and queues the reloads; worded as messages.brake_released_by_dan. Only when
-    the gate isn't there to ask (GateUnavailable) is the hold file removed directly, Phase 1's way, and nothing reloads
-    until the gate is back. A gate that answers is never bypassed: a refused login (GateForbidden) or an answer the
-    client can't take (GateError) is said, and the file kept."""
+    the gate isn't there to ask, or gives no whole answer in time (GateUnavailable, the brief's mapping), is the hold
+    file removed directly, Phase 1's way. Its words say what is true of each (Task 23's review, M7): with nothing
+    reached, nothing reloads until the gate is back; with the connection or the request taken (a timeout, or an answer
+    broken off), the gate may be up, finds the hold gone and reloads as usual, and if not, nothing reloads until it
+    answers. A gate that answers is never bypassed: a refused login (GateForbidden) or an answer the client can't take
+    (GateError) is said, and the file kept."""
     try:
         answer = client(socket_path, GATE_RELEASE_TIMEOUT_S).post("/v1/release", {"brake": True})
-    except GateUnavailable:
+    except GateUnavailable as err:
+        if isinstance(err.__cause__, TimeoutError):
+            return release(state_dir, without_gate=messages.brake_released_without_answer(GATE_RELEASE_TIMEOUT_S))
+        if getattr(err, "sent", False):
+            return release(state_dir, without_gate=messages.brake_released_without_answer(None))
         return release(state_dir, without_gate=True)
     except GateError as err:  # GateForbidden among them: the gate is there, and has its say
         print(err, file=sys.stderr)

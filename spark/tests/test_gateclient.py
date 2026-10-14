@@ -297,6 +297,7 @@ def test_a_missing_socket_reads_as_gate_unavailable(sockdir):
     with pytest.raises(GateUnavailable) as raised:
         GateClient(path, 1).get("/v1/status")
     assert str(raised.value) == f"The gate can't be reached: there is no socket at {path}. {DAN_STEP}"
+    assert raised.value.sent is False  # nothing went out: `make brake-release`'s words say the gate isn't there
 
 
 def test_a_socket_nobody_listens_on_reads_as_gate_unavailable(sockdir):
@@ -329,6 +330,8 @@ def test_a_gate_that_accepts_and_never_answers_is_unavailable_even_when_its_stre
     assert finished and took < 2
     [error] = raised
     assert str(error) == f"The gate didn't answer on {path} within 0.5 s. {DAN_STEP}"
+    # The request went out and the gate may be up (Task 23's review, M7): `make brake-release` words it so.
+    assert error.sent is True and isinstance(error.__cause__, TimeoutError)
 
 
 def test_a_stream_waits_out_a_quiet_gate_only_when_told_to(sockdir):

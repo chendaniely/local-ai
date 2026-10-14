@@ -646,7 +646,11 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      knowingly admitted is not a crash.** The watch subtracts the expected fall of the loads in
      progress, each admitted footprint from its start, which the gate's ticket and its activity
      record carry, so an admitted load never trips it; it acts on a fall past that, or on one
-     nothing explains (the controller's ruling).
+     nothing explains (the controller's ruling). *(Added 2026-10-14, the controller's rulings, at the
+     implementation plan's Task 23 review:)* the watch acts only on a fall of at least 1.5 GiB within
+     its window (`MIN_FALL_GIB`, which Task 47 tunes with the others), so noise and a model's
+     ordinary growth near the reserve don't trip it, and an admitted load's floor stands for the
+     window after the load ends, while the window still holds its fall.
    - **The gate lifts the hold** once memory has stayed above the warn line for 5 minutes (5 is the
      plan's figure for Dan's "a few minutes"), and only if the models it would reload fit, by rule
      9's formula, with the reserve, the growth owed and any make-room hold. Each reload goes
@@ -3737,6 +3741,12 @@ Each item gets its own design pass when its turn comes.
   `spark watch`. Dated notes are in the *Orca* requirement, the *Mac and agent clients* component,
   Phase 2b and Phase 4a; the architecture page draws opencode and Hermes on the Mac, through the
   tunnel, as `main`'s does with #7.
+- **2026-10-14** — Phase 2a's Task 23 review, the controller's rulings. A dated note is in rule 5
+  (the rate-of-fall watch): it acts only on a fall of at least 1.5 GiB within its window, so noise
+  and a model's ordinary growth near the reserve don't trip it, and an admitted load's floor stands
+  for the window after the load ends. The implementation plan's Task 23 has the rest: no lock
+  another process holds comes before the brake's hold, its journal says how the pause ends in 2a,
+  and a failed unload's words tell a refusal from a server error.
 
 ## Sources
 

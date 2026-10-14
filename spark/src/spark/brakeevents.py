@@ -5,8 +5,11 @@ file and goes on.
 
 Each event is keyed by the boot it was written on and its sequence number, `seq`, which comes from the file itself,
 read under an exclusive `fcntl.flock`, so two writers (the brake and the S05 drill's `--once`, Task 25) never share
-one, and `seq` goes on across the brake's restarts and across boots. The gate keeps the key of the last event it read,
-with that event's `at` (GateState.brake_events_after), and reads the events after it, by their place in the file: a
+one, and `seq` goes on across the brake's restarts and across boots. flock needs no write access, so any process that
+can read the file can hold that lock: the brake waits for it only briefly (append_event's `wait_s`), and reads its
+episode without it (episode_for's `locked`), so no such lock stands before its hold (Task 23's review). The gate keeps
+the key of the last event it read, with that event's `at` (GateState.brake_events_after), and reads the events after
+it, by their place in the file: a
 file removed, trimmed or started again no longer holds that event, and then every event it holds is new to the gate,
 so none is hidden. A file removed within a boot starts its seq from 1 again, so it can come to the gate's seq: the
 `at` tells its event from the gate's (the controller's ruling at Task 13's review).
@@ -21,11 +24,13 @@ The standard library only: the gate and the brake import it."""
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import math
 import os
 import stat
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, get_args
@@ -145,10 +150,33 @@ def _read_locked(path: Path) -> bytes | None:
         os.close(fd)  # and its lock with it
 
 
-def append_event(path: Path, event: BrakeEvent) -> BrakeEvent:
+LOCK_RETRY_S = 0.02  # how often a bounded wait for the lock tries again
+
+
+def _lock(fd: int, kind: int, path: Path, wait_s: float | None) -> None:
+    """`kind` on `fd`, waiting as long as it takes with `wait_s` None; else trying again every LOCK_RETRY_S for
+    `wait_s` at most, then BlockingIOError. flock needs no write access, so any process that can read the file can hold
+    its lock: the brake waits for it only so long (Task 23's review, I1)."""
+    if wait_s is None:
+        fcntl.flock(fd, kind)
+        return
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            fcntl.flock(fd, kind | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise BlockingIOError(errno.EAGAIN, f"another process holds the lock on {path}") from None
+            time.sleep(min(LOCK_RETRY_S, max(0.0, deadline - time.monotonic())))
+
+
+def append_event(path: Path, event: BrakeEvent, *, wait_s: float | None = None) -> BrakeEvent:
     """Append `event` as one JSON line, its seq one past the file's last event, taken under an exclusive lock, so two
     writers never share one; fsynced before it returns. Returns the event as written. An event the reader would pass
-    over is refused (ValueError) before anything is written, and so is root (PermissionError)."""
+    over is refused (ValueError) before anything is written, and so is root (PermissionError). With `wait_s`, the lock
+    is waited for that long at most, then BlockingIOError (an OSError), nothing written: the brake's poll never waits on
+    a lock another process holds (Task 23's review, I1)."""
     if os.geteuid() == 0:
         raise PermissionError(f"root never writes in the brake's folder, so {path} isn't written")
     problem = _problem(asdict(replace(event, seq=1)))
@@ -156,7 +184,7 @@ def append_event(path: Path, event: BrakeEvent) -> BrakeEvent:
         raise ValueError(problem)
     fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | _OPEN_FLAGS, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _lock(fd, fcntl.LOCK_EX, path, wait_s)
         data = _read_all(fd)
         written = replace(event, seq=_last_seq(data) + 1)
         line = json.dumps(asdict(written), allow_nan=False).encode() + b"\n"
@@ -176,13 +204,27 @@ def next_seq(path: Path) -> int:
     return 1 if data is None else _last_seq(data) + 1
 
 
-def episode_for(path: Path, hold: Hold | None, *, boot_id: str) -> int:
+def _read_unlocked(path: Path) -> bytes | None:
+    """The file's bytes, read without the lock, as read_events reads them: a last line with no newline, a write in
+    progress, is left out by _events. None for a file that isn't there."""
+    try:
+        fd = os.open(path, os.O_RDONLY | _OPEN_FLAGS)
+    except FileNotFoundError:
+        return None
+    try:
+        return _read_all(fd)
+    finally:
+        os.close(fd)
+
+
+def episode_for(path: Path, hold: Hold | None, *, boot_id: str, locked: bool = True) -> int:
     """The brake episode a step belongs to: the standing hold's while a hold of this boot stands; otherwise the last
     episode in the file for this boot plus one (1 for none), so each drill run after a release is an episode of its
-    own. The file is read under its lock."""
+    own. The file is read under its lock, or, with `locked` false, as read_events reads it, without one: the brake, so
+    that a lock another process holds never stands before its hold (Task 23's review, I1)."""
     if hold is not None and hold.boot_id == boot_id and hold.episode is not None:
         return hold.episode
-    data = _read_locked(path)
+    data = _read_locked(path) if locked else _read_unlocked(path)
     events = [] if data is None else _events(data)
     return max((event.episode for event in events if event.boot_id == boot_id), default=0) + 1
 

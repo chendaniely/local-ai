@@ -1065,15 +1065,22 @@ COMPOSED = [
      "Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line; new loads are paused. It hasn't "
      "unloaded anything yet: llama-swap refused its unload of the coder (HTTP 401: the brake's key). On the Spark, "
      "`make logs s=brake` shows why. They resume by themselves after 5 min above 28 GiB available."),
+    # A 5xx is no refusal: llama-swap couldn't do it (the review's M1), its number left out where pi's list matches it;
+    # every form that names a failed unload says where to look.
     ("brake_fired", {**FIRED, "unloaded": [("the embeddings", "idle")], "not_unloaded": [("Gemma", "HTTP 503")]},
-     "Unloaded the embeddings, which was idle; llama-swap refused its unload of Gemma; new loads are paused."),
+     "Unloaded the embeddings, which was idle; llama-swap couldn't do its unload of Gemma; new loads are paused. On "
+     "the Spark, `make logs s=brake` shows why. They resume by themselves after 5 min above 28 GiB available."),
     ("brake_fired", {"at": at(3, 13), "unloaded": [], "not_unloaded": [("Gemma", "HTTP 404")], "follow_up": True},
-     "Brake, 03:13: llama-swap refused its unload of Gemma (HTTP 404: its config may not match the registry)."),
+     "Brake, 03:13: llama-swap refused its unload of Gemma (HTTP 404: its config may not match the registry). On the "
+     "Spark, `make logs s=brake` shows why."),
+    ("brake_fired", {"at": at(3, 13), "unloaded": [], "not_unloaded": [("Gemma", "HTTP 507")], "follow_up": True},
+     "Brake, 03:13: llama-swap couldn't do its unload of Gemma (HTTP 507). On the Spark, `make logs s=brake` shows "
+     "why."),
     ("brake_fired", {"at": at(3, 13), "unloaded": [("the embeddings", "idle")], "follow_up": True,
                      "not_unloaded": [("Gemma", "llama-swap POST /api/models/unload/small: a broken answer "
                                                 "(BadStatusLine)")]},
      "Brake, 03:13: also unloaded the embeddings, which was idle; llama-swap's answer to its unload of Gemma couldn't "
-     "be read."),
+     "be read. On the Spark, `make logs s=brake` shows why."),
     ("brake_fired", {**FIRED, "unloaded": [], "unload_unanswered": True,
                      "not_unloaded": [("the coder", "HTTP 401"), ("Gemma", "HTTP 401"), ("whisper", None)]},
      "It hasn't unloaded anything yet: llama-swap refused its unloads of the coder and Gemma (HTTP 401: the brake's "
@@ -1219,11 +1226,39 @@ def test_why_llama_swap_didnt_unload_never_matches_pis_list():
                      follow_up=True)
         first = say("brake_fired", **{**FIRED, "unloaded": [], "unload_unanswered": True,
                                      "not_unloaded": [("Gemma", f"HTTP {status}")]})
-        assert messages.pi_retry_match(follow) is None and messages.pi_retry_match(first) is None, status
+        both = say("brake_fired", **{**FIRED, "unloaded": [("the coder", "idle")],
+                                    "not_unloaded": [("Gemma", f"HTTP {status}")]})
+        for text in (follow, first, both):
+            assert messages.pi_retry_match(text) is None, (status, text)
+            assert "On the Spark, `make logs s=brake` shows why." in text  # each names where to look (M1)
         assert (f"HTTP {status}" in follow) is (messages.pi_retry_match(str(status)) is None)
+        done = "couldn't do its unload" if status >= 500 else "refused its unload"  # a 5xx is no refusal (M1)
+        assert done in follow and done in first and done in both, status
     # Nothing unloaded, with a refusal, is the unconfirmed form's: something was loaded.
     with pytest.raises(ValueError, match="^brake_fired's not_unloaded with nothing unloaded is unload_unanswered's"):
         say("brake_fired", **{**FIRED, "unloaded": [], "not_unloaded": [("Gemma", "HTTP 401")]})
+
+
+def test_brake_fired_refuses_a_reading_its_words_would_misstate():
+    # The review's M5: *falling … toward* the line only for a reading at or above it, *under* only below it.
+    with pytest.raises(ValueError, match="^brake_fired's falling is for a reading at or above the line"):
+        say("brake_fired", **{**FIRED, "falling": True})
+    with pytest.raises(ValueError, match="^brake_fired's reading is at or above the line, which only falling words"):
+        say("brake_fired", **{**FIRED, "available_gib": 20})
+    assert say("brake_fired", **{**FIRED, "available_gib": 20, "falling": True})
+    assert say("brake_fired", **{**FIRED, "available_gib": 19.99})
+
+
+def test_the_releases_words_when_the_gate_may_still_be_up():
+    # The review's M7: `make brake-release` lifts the hold file itself on any GateUnavailable (the brief's mapping);
+    # when the gate took the connection, or the request, it may be up, and these say so.
+    timed_out = messages.brake_released_without_answer(5)
+    broke = messages.brake_released_without_answer(None)
+    assert timed_out == ("The gate didn't answer within 5 s, so the hold file was removed directly. If the gate is up, "
+                         "it reloads as usual; if not, nothing reloads until it answers.")
+    assert broke == ("The gate stopped answering partway, so the hold file was removed directly. If the gate is up, it "
+                     "reloads as usual; if not, nothing reloads until it answers.")
+    assert messages.pi_retry_match(timed_out) is None and messages.pi_retry_match(broke) is None
 
 
 def test_falling_is_for_a_first_alert():
@@ -1747,6 +1782,8 @@ def _every_text() -> list[tuple[str, str]]:
     texts.append(("confirmation room_list", messages.room_list(40, 9, CANDIDATES, ["qwen3.8-27b"], 50,
                                                                registry=PLAN_REGISTRY)))
     texts.append(("confirmation brake release without the gate", messages.BRAKE_RELEASED_WITHOUT_GATE))
+    texts.append(("confirmation brake release, no answer", messages.brake_released_without_answer(5)))
+    texts.append(("confirmation brake release, an answer broken off", messages.brake_released_without_answer(None)))
     return texts
 
 
@@ -1763,7 +1800,7 @@ def test_no_message_says_free_alone():
         assert not re.search(FREE_WORD, FREE_ALLOWED.sub("", text)), (source, text)
         checked += 1
     assert checked == (len(EVERY_ROW) + len(NOTIFICATION_ROWS) + len(PLAN_VARIANTS) + len(COMPOSED) + len(REFUSED_ROWS)
-                       + len(CONFIRMATIONS) + len(COMPOSED_CONFIRMATIONS) + 2)
+                       + len(CONFIRMATIONS) + len(COMPOSED_CONFIRMATIONS) + 4)  # room_list and the 3 releases
     # The test can fail: "free" alone, and a verb phrase outside the allowance.
     for stray in ("18 GiB free now", "Free 61 GiB", "once memory frees", "18 GiB freed"):
         assert re.search(FREE_WORD, FREE_ALLOWED.sub("", stray)), stray

@@ -865,16 +865,18 @@ def _brake_unloaded(unloaded: list[tuple[str, str | None]]) -> str:
     return _and([f"{label} ({state})" if state else label for label, state in items])
 
 
+_BRAKE_LOGS = "On the Spark, `make logs s=brake` shows why."  # the brake's journal: why an unload went as it did
 # Why llama-swap's refusal of the brake's unload matters, by its status (the controller's ruling, at Task 23).
 _UNLOAD_WHY = {401: "the brake's key", 404: "its config may not match the registry"}
 _UNLOAD_STATUS = re.compile(r"(?:^|: )HTTP (\d{3})$")  # the brake's `HTTP <status>`, or LlamaSwap's own line
 
 
 def _unload_cause(reason: str | None) -> tuple[str, str]:
-    """How llama-swap answered an unload the brake recorded as failed (brakeevents' unload_failed `reason`): `refused`
-    with its status, shown only where pi's list doesn't match it, as _swap_refused shows one, and what it means where
-    that is known; `unread`, an answer that broke off or couldn't be read; or `unconfirmed`, Task 14's words, for a
-    reason these words don't know."""
+    """How llama-swap answered an unload the brake recorded as failed (brakeevents' unload_failed `reason`): a 4xx,
+    `refused`; a 5xx, `failed`, since a server error is no refusal (Task 23's review, M1); each with its status, shown
+    only where pi's list doesn't match it, as _swap_refused shows one, and what it means where that is known; `unread`,
+    an answer that broke off or couldn't be read; or `unconfirmed`, Task 14's words, for a reason these words don't
+    know."""
     text = _one_line(reason or "")
     found = _UNLOAD_STATUS.search(text)
     if found:
@@ -882,7 +884,7 @@ def _unload_cause(reason: str | None) -> tuple[str, str]:
         shown = f"HTTP {status}" if pi_retry_match(str(status)) is None else ""
         why = _UNLOAD_WHY.get(status, "")
         detail = ": ".join(part for part in (shown, why) if part)
-        return "refused", f" ({detail})" if detail else ""
+        return "failed" if status >= 500 else "refused", f" ({detail})" if detail else ""
     if "broken answer" in text or "can't read" in text:
         return "unread", ""
     return "unconfirmed", ""
@@ -899,6 +901,8 @@ def _not_unloaded(items: list[tuple[str, str | None]]) -> str:
         unloads = f"{'its unload' if len(labels) == 1 else 'its unloads'} of {_and(labels)}"
         if kind == "refused":
             said.append(f"llama-swap refused {unloads}{detail}")
+        elif kind == "failed":
+            said.append(f"llama-swap couldn't do {unloads}{detail}")
         elif kind == "unread":
             said.append(f"llama-swap's answer to {unloads} couldn't be read")
         else:
@@ -918,20 +922,27 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
             raise ValueError("brake_fired's falling is for a first alert, which names the reading")
         steps = ([f"also unloaded {_brake_unloaded(f['unloaded'])}"] if f["unloaded"] else []) + (
             [_not_unloaded(not_unloaded)] if not_unloaded else [])
-        return f"Brake, {_clock(f['at'])}: {'; '.join(steps)}."
+        logs = f" {_BRAKE_LOGS}" if not_unloaded else ""  # each form naming a failed unload says where to look (M1)
+        return f"Brake, {_clock(f['at'])}: {'; '.join(steps)}.{logs}"
     if f["unloaded"] is None:
         raise ValueError("brake_fired's words need unloaded")
     if f["unload_unanswered"] and f["unloaded"]:
         raise ValueError("brake_fired's unload_unanswered is for a first alert that unloaded nothing")
     if not_unloaded and not f["unloaded"] and not f["unload_unanswered"]:  # llama-swap refused one: one was loaded
         raise ValueError("brake_fired's not_unloaded with nothing unloaded is unload_unanswered's")
+    _needs("brake_fired", f, "available_gib", "line_gib")
+    # The words say *under* the line or *falling fast toward* it: each only for a reading that is (the review's M5).
+    if f["falling"] and f["available_gib"] < f["line_gib"]:
+        raise ValueError("brake_fired's falling is for a reading at or above the line; under it, the words say under")
+    if not f["falling"] and f["available_gib"] >= f["line_gib"]:
+        raise ValueError("brake_fired's reading is at or above the line, which only falling words; under says under")
     # An empty list: the brake paused new loads with nothing of the stack's loaded, the memory taken by something
     # outside it (the controller's ruling at Task 7's review, worded at Task 13); or, with unload_unanswered, with
     # something loaded and no unload by FIRED_ALONE_S: slow, failed, refused or never sent, llama-swap hasn't confirmed
     # it, and the brake's journal says which (the controller's rulings, at Task 14 and its review).
     unloaded = (f"Unloaded {_brake_unloaded(f['unloaded'])}" if f["unloaded"]
                 else "Nothing of the stack's was loaded, so there was nothing to unload")
-    if f["unloaded"] and not_unloaded:  # and why the others asked are still loaded (Task 23)
+    if f["unloaded"] and not_unloaded:  # and why the others asked are still loaded (Task 23), and where to look
         unloaded += f"; {_not_unloaded(not_unloaded)}"
     _needs("brake_fired", f, "available_gib", "line_gib", "release_waits_for_dan")
     if f["release_waits_for_dan"] and f["release_assumed"]:  # no real release to name (Task 13's re-review)
@@ -954,9 +965,9 @@ def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
                f"{_line(f['line_gib'])} line")
     if f["unload_unanswered"]:  # why, where the brake's events say it (Task 23); else Task 14's words
         why = _not_unloaded(not_unloaded) if not_unloaded else "llama-swap hasn't confirmed its unload"
-        return (f"{reading}; new loads are paused. It hasn't unloaded anything yet: {why}. On the Spark, `make logs "
-                f"s=brake` shows why. {resume}")
-    return f"{reading}. {unloaded}; new loads are paused. {resume}"
+        return f"{reading}; new loads are paused. It hasn't unloaded anything yet: {why}. {_BRAKE_LOGS} {resume}"
+    logs = f" {_BRAKE_LOGS}" if not_unloaded else ""
+    return f"{reading}. {unloaded}; new loads are paused.{logs} {resume}"
 
 
 def _brake_needs_release(registry: Registry, f: dict[str, Any]) -> str:
@@ -1512,6 +1523,15 @@ def sent_late(n: Notification, failed_at: datetime | float, outcome: str) -> Not
 
 BRAKE_RELEASED_WITHOUT_GATE = ("The gate isn't answering, so the hold file was removed directly; nothing reloads until "
                                "the gate is back.")  # make brake-release, falling back to Phase 1's release (Task 23)
+
+
+def brake_released_without_answer(wait_s: float | None) -> str:
+    """`make brake-release`'s fallback when the gate may still be up (Task 23's review, M7): it took the connection, or
+    the request, then gave no answer within `wait_s`, or (None) an answer that broke off. A gate that is up finds the
+    hold gone and reloads as usual; one that isn't reloads nothing until it answers."""
+    why = "stopped answering partway" if wait_s is None else f"didn't answer within {_brief(wait_s)}"
+    return (f"The gate {why}, so the hold file was removed directly. If the gate is up, it reloads as usual; if not, "
+            "nothing reloads until it answers.")
 
 
 def _until(at: datetime | float, now: datetime | None) -> str:

@@ -77,7 +77,13 @@ class GateError(Exception):
 
 class GateUnavailable(GateError):
     """No socket, nothing listening on it, no answer within the timeout, or an answer that broke off partway or isn't
-    HTTP at all (worded, never named by http.client's class): the gate isn't there to ask, or stopped answering."""
+    HTTP at all (worded, never named by http.client's class): the gate isn't there to ask, or stopped answering.
+    `sent` is true once the connection was made and the request may have gone out, so the gate may be up: `make
+    brake-release` words its fallback so (Task 23's review, M7); its `__cause__` says whether it timed out."""
+
+    def __init__(self, message: str, *, sent: bool = False) -> None:
+        super().__init__(message)
+        self.sent = sent
 
 
 class GateForbidden(GateError):
@@ -179,7 +185,7 @@ class GateStream:
             data = self._client._talk(lambda: self._response.read1(LINE_MAX), self._quiet)
             if not data:
                 if self._response.length:
-                    raise GateUnavailable(self._client._broke_off())
+                    raise GateUnavailable(self._client._broke_off(), sent=True)
                 self._ended = True
             self._buffer += data
 
@@ -292,7 +298,7 @@ class GateClient:
             raise GateError(f"The gate's answer on {self.path} was larger than 1 MiB, more than any of its answers "
                             f"holds. {_step()}")
         if response.length:
-            raise GateUnavailable(self._broke_off())
+            raise GateUnavailable(self._broke_off(), sent=True)
         return raw
 
     def _broke_off(self) -> str:
@@ -304,9 +310,10 @@ class GateClient:
         try:
             return step()
         except TimeoutError as err:
-            raise GateUnavailable(quiet()) from err
+            raise GateUnavailable(quiet(), sent=True) from err
         except (OSError, http.client.HTTPException) as err:
-            raise GateUnavailable(f"The gate stopped answering on {self.path}: {_reason(err)}. {_step()}") from err
+            raise GateUnavailable(f"The gate stopped answering on {self.path}: {_reason(err)}. {_step()}",
+                                  sent=True) from err
 
     def _no_answer(self) -> str:
         return f"The gate didn't answer on {self.path} within {self.timeout_s:g} s. {_step()}"

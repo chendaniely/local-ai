@@ -208,13 +208,15 @@ def test_the_events_file_is_never_followed_through_a_link(path, tmp_path):
 
 
 def test_a_failed_unload_is_an_event_with_its_reason_and_older_lines_still_read(path):
-    # Task 23 (the controller's ruling at Task 14): an unload llama-swap refused, or that failed, is a step of its own,
-    # with the reason, so the gate can word the cause; and the rate-of-fall watch marks the steps it took above the line.
-    failed = append_event(path, replace(event("unload_failed"), reason="llama-swap POST /api/models/unload/coder: HTTP 500"))
+    # Task 23 (the controller's ruling at Task 14): an unload llama-swap refused, or that failed, is a step of its
+    # own, with the reason, so the gate can word the cause; and the rate-of-fall watch marks the steps it took above
+    # the line.
+    failed = append_event(path, replace(event("unload_failed"),
+                                        reason="llama-swap POST /api/models/unload/coder: HTTP 500"))
     early = append_event(path, replace(event("fired", model=None, state=None), falling=True))
     assert read_events(path, None) == [failed, early]
-    assert (failed.kind, failed.reason, failed.falling) == ("unload_failed", "llama-swap POST /api/models/unload/coder: "
-                                                             "HTTP 500", False)
+    assert (failed.kind, failed.reason, failed.falling) == (
+        "unload_failed", "llama-swap POST /api/models/unload/coder: HTTP 500", False)
     assert (early.reason, early.falling) == (None, True)
     # A line written before Task 23, with neither field, reads as no reason and not falling.
     first = json.loads(path.read_text().splitlines()[0])
@@ -225,3 +227,26 @@ def test_a_failed_unload_is_an_event_with_its_reason_and_older_lines_still_read(
         append_event(path, replace(event(), reason=5))
     with pytest.raises(ValueError, match="falling"):
         append_event(path, replace(event(), falling="yes"))
+
+
+def test_a_lock_another_process_holds_is_waited_for_only_so_long(path):
+    # Task 23's review, I1: flock needs no write access, so any reader can hold the lock. The brake waits for it only
+    # `wait_s`, then is refused (BlockingIOError, an OSError) and goes on; its episode comes from an unlocked read.
+    path.touch()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDONLY); "
+         "fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(30)", str(path)],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        begun = time.monotonic()
+        with pytest.raises(BlockingIOError, match="another process holds"):
+            append_event(path, event(), wait_s=0.1)
+        assert 0.1 <= time.monotonic() - begun < 0.5
+        begun = time.monotonic()
+        assert episode_for(path, None, boot_id=B1, locked=False) == 1
+        assert time.monotonic() - begun < 0.1
+    finally:
+        holder.kill()
+        holder.wait()
+    assert append_event(path, event(), wait_s=0.1).seq == 1  # free again: it takes it

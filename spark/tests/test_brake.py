@@ -1,6 +1,8 @@
 import argparse
+import http.server
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -80,9 +82,12 @@ def test_loop_unloads_and_records_the_hold(tmp_path):
 def test_the_hold_names_the_command_that_lifts_it(tmp_path):
     # `spark` isn't on Dan's PATH: the Makefile runs it through uv, from the clone.
     logs = []
+    # In 2a the gate lifts the pause too, by rule 5 (the review's I3, the controller's ruling at Task 23), and *paused*
+    # is the brake's word.
     run_brake(REG, FakeClient([Running("coder", "ready")]), tmp_path, read_mem=lambda: MemInfo(121.7, 18),
               sleep=lambda s: None, log=logs.append, now=lambda: "t", once=True)
-    assert "brake: holding new loads until `make brake-release`" in logs
+    assert ("brake: new loads paused; the gate lifts the pause once memory has stayed above 28 GiB available for 5 "
+            "minutes, at most once an hour, or `make brake-release` lifts it now") in logs
 
 
 def test_loop_survives_llama_swap_being_down(tmp_path):
@@ -810,7 +815,9 @@ REG2A = replace(REG, models={**REG.models,
 LABELS = {name: model.label for name, model in REG2A.models.items()}
 ENGINE_PID = 4242
 FIRED_AT = datetime.fromtimestamp(T0).astimezone().isoformat(timespec="seconds")  # the hold's `since` at T0
-CURL_ARGS = ["/usr/bin/curl", "--fail", "--silent", "--max-time", "10", "--config", "-"]
+# -q first, so curl reads no .curlrc: the brake runs as spark, the engines' account, which could plant one (the review's
+# M10).
+CURL_ARGS = ["/usr/bin/curl", "-q", "--fail", "--silent", "--max-time", "10", "--config", "-"]
 NTFY = {"NTFY_URL": "http://ntfy.stand-in.invalid:8080", "NTFY_TOPIC_BRAKE": "stand-in-topic-b7"}
 TOKEN_LINE = "Authorization: Bearer stand-in-token-z9"
 
@@ -895,6 +902,10 @@ class Timeline(Box):
     def wall(self) -> float:
         return T0 + self.now_s()
 
+    def boot_s(self) -> float:
+        """CLOCK_BOOTTIME, as /proc/uptime gives it."""
+        return U0 + self.now_s()
+
     def read_mem(self):
         moved = self.avail - self.start_avail
         return MemInfo(121.7, self.readings[min(len(self.sleeps), len(self.readings) - 1)] + moved)
@@ -916,8 +927,8 @@ def run_2a(box: Timeline, *, once: bool = False, alerter=None, now=lambda: FIRED
     logs, f = [], box.folders
     try:
         run_brake(box.registry, box, f.state, read_mem=box.read_mem, sleep=box.sleep, log=logs.append, now=now,
-                  once=once, monotonic=box.now_s, wall=box.wall, boot_id=BOOT, gate_state=f.gate, launch=f.launch,
-                  proc=f.proc, spark_uid=os.geteuid(), alerter=alerter)
+                  once=once, monotonic=box.now_s, wall=box.wall, boottime=box.boot_s, boot_id=BOOT, gate_state=f.gate,
+                  launch=f.launch, proc=f.proc, spark_uid=os.geteuid(), alerter=alerter)
     except Enough:
         pass
     return logs
@@ -1211,16 +1222,15 @@ def test_the_floor_uses_the_admitted_footprint(box_folders):
 
 
 def test_a_slow_fall_doesnt_trip_the_rate_watch(box_folders):
-    # Accepted, the controller's ruling at Task 23: at 0.2 GiB/s the brake acts just under 22 GiB, never above 22.
+    # At 0.2 GiB/s the window holds a fall of 0.4 GiB, under MIN_FALL_GIB (the review's I2, the controller's ruling at
+    # Task 23), so the watch never acts: the brake acts at the line, as before. (It acted just under 22 until then,
+    # which the controller's first ruling had accepted.)
     readings = fall(40.02, 18, 0.2)
     box = Timeline(readings, {GEMMA: "ready", EMBED: "ready"}, folders=box_folders,
                    models={GEMMA: ready(0, T0 - 100), EMBED: ready()})
     run_2a(box)
-    # The watch looks UNLOAD_LEAD_S ahead, and a 0.2 GiB/s fall covers 2 GiB in that time: nothing above 22, then the
-    # first poll whose reading less those 2 GiB passes under the 20 GiB line, just under 22.
-    lead = 0.2 * brake.UNLOAD_LEAD_S
     first, model = box.requests[0]
-    assert 20 < readings[first] < 20 + lead <= readings[first - 1] and model == GEMMA
+    assert readings[first] < 20 <= readings[first - 1] and model == GEMMA
     assert read_hold(box_folders.state).available_gib == readings[first]
 
 
@@ -1248,6 +1258,12 @@ def test_predict_breach_reads_the_fall_over_its_window():
     # Only the window counts: a fall long over, then a flat line, is no fall.
     over = deque(list(line(60, -5, polls=8)) + [(2.0 + i * TICK, 25.0) for i in range(1, 10)])
     assert not breach(over)
+    # The watch acts only on a fall of MIN_FALL_GIB within its window, the highest reading less the latest (the review's
+    # I2): 1.4 GiB over 2 s, near the line, projects under it, and isn't one; 1.5 is.
+    assert brake.MIN_FALL_GIB == 1.5
+    assert not breach(line(21.4, -0.7)) and breach(line(21.5, -0.75))
+    assert brake.predict_breach(line(21.4, -0.7), brake_gib=20, lead_s=brake.UNLOAD_LEAD_S,
+                                window_s=brake.FALL_WINDOW_S, floor_gib=None, min_fall_gib=0)
 
 
 def test_the_hold_records_the_boot_the_episode_and_the_loading_model(box_folders):
@@ -1334,11 +1350,11 @@ def test_a_failed_unload_leaves_an_event_with_its_reason(box_folders, tmp_path):
     run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
     assert [(e.kind, e.model, e.reason) for e in events(box_folders)] == [
         ("fired", None, None), ("unload_failed", GEMMA, "HTTP 500"), ("unload", EMBED, None)]
-    # Its own alert, the gate being down, says llama-swap refused it (500 is on pi's list: no number); the next unload
-    # follows up.
-    first, then = (curl_config(child.stdin.data)["data-binary"][0] for child in curl.started)
+    # Its own alert, the gate being down, says llama-swap couldn't do it (a 500 is no refusal, and is on pi's list: no
+    # number); the next unload follows up.
+    first, then = (curl_config(child.stdin.data)["data-raw"][0] for child in curl.started)
     assert first == first_alert(unloaded=[], unload_unanswered=True, not_unloaded=[(LABELS[GEMMA], "HTTP 500")])
-    assert "It hasn't unloaded anything yet: llama-swap refused its unload of the vision model." in first
+    assert "It hasn't unloaded anything yet: llama-swap couldn't do its unload of the vision model." in first
     assert then == messages.notification("brake_fired", REG2A, at=T0 + TICK, unloaded=[(LABELS[EMBED], None)],
                                          follow_up=True).message
 
@@ -1354,13 +1370,13 @@ def test_with_the_gate_down_the_brake_sends_brake_fired_itself_without_waiting(b
     (child,) = curl.started
     assert child.args == CURL_ARGS
     assert child.kwargs == {"stdin": subprocess.PIPE, "start_new_session": True, "stdout": subprocess.DEVNULL,
-                            "stderr": subprocess.DEVNULL}
+                            "stderr": subprocess.DEVNULL, "env": {}}  # nothing of the brake's environment (M10)
     words = first_alert(unloaded=[(LABELS[GEMMA], None)])
     assert words.endswith("They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.")
     assert curl_config(child.stdin.data) == {
         "url": [f"{NTFY['NTFY_URL']}/{NTFY['NTFY_TOPIC_BRAKE']}"],
         "header": [f"@{tmp_path / 'credentials' / 'ntfy-token'}", "Priority: high"],
-        "data-binary": [words]}
+        "data-raw": [words]}
     assert child.stdin.closed
     argv = "\0".join(child.args)
     for private in (NTFY["NTFY_URL"], NTFY["NTFY_TOPIC_BRAKE"], "stand-in-token-z9", "ntfy-token", words[:30]):
@@ -1377,23 +1393,28 @@ def test_with_the_gate_up_the_brake_sends_nothing_itself(box_folders, tmp_path):
         ("fired", None, False), ("unload", "idle", False)]
 
 
-@pytest.mark.parametrize("code", [0, 22])
-def test_finished_alerts_are_reaped(box_folders, tmp_path, code):
+@pytest.mark.parametrize("code, why", [(0, None), (22, "ntfy answered with an error"),
+                                       (28, "ntfy didn't answer within 10 s"), (6, "it couldn't reach ntfy"),
+                                       (7, "it couldn't reach ntfy"), (35, "curl exited 35")])
+def test_finished_alerts_are_reaped(box_folders, tmp_path, code, why):
+    # A failed one is said in words, with what follows from it: the gate won't send it either (the review's M6).
     curl = Curl(finishes_after=0, code=code)
     alert = alerter(curl, ntfy_env(tmp_path))
     box = Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False, polls=2, delay=99)
     logs = run_2a(box, alerter=alert)
     assert len(curl.started) == 1 and curl.polls >= 1 and alert.children == []
-    failed = [line for line in logs if "curl exited" in line]
-    assert failed == ([] if code == 0 else ["brake: its own alert didn't go through: curl exited 22"])
+    failed = [line for line in logs if "didn't go through" in line]
+    assert failed == ([] if why is None else [
+        f"brake: its own alert didn't go through: {why}; the gate won't send it either, since the brake's event "
+        "records it as sent by the brake"])
 
 
 def test_a_quote_in_the_text_is_escaped_for_curls_config(tmp_path):
     text = 'Brake on "brightroar": a back\\slash, and a "quote"'
     data = brake.curl_config("http://ntfy.stand-in.invalid/topic", tmp_path / "ntfy-token", "high", text)
-    (line,) = [each for each in data.decode().splitlines() if each.startswith("data-binary")]
-    assert line == 'data-binary = "Brake on \\"brightroar\\": a back\\\\slash, and a \\"quote\\""'
-    assert curl_config(data)["data-binary"] == [text]
+    (line,) = [each for each in data.decode().splitlines() if each.startswith("data-raw")]
+    assert line == 'data-raw = "Brake on \\"brightroar\\": a back\\\\slash, and a \\"quote\\""'
+    assert curl_config(data)["data-raw"] == [text]
 
 
 def test_once_waits_for_its_alert_before_exiting(box_folders, tmp_path):
@@ -1410,7 +1431,7 @@ def test_with_nothing_loaded_the_brakes_own_alert_says_so(box_folders, tmp_path)
     curl = Curl(finishes_after=0)
     run_2a(Timeline([18], {}, folders=box_folders, gate_up=False), once=True, alerter=alerter(curl, ntfy_env(tmp_path)))
     (child,) = curl.started
-    words = curl_config(child.stdin.data)["data-binary"][0]
+    words = curl_config(child.stdin.data)["data-raw"][0]
     assert words == first_alert(unloaded=[]) and "Nothing of the stack's was loaded" in words
 
 
@@ -1424,7 +1445,7 @@ def test_the_brakes_own_alert_says_when_the_pause_waits_for_dan(box_folders, tmp
     curl = Curl(finishes_after=0)
     run_2a(Timeline([18], {GEMMA: "ready"}, folders=f, gate_up=False), once=True,
            alerter=alerter(curl, ntfy_env(tmp_path)))
-    words = curl_config(curl.started[0].stdin.data)["data-binary"][0]
+    words = curl_config(curl.started[0].stdin.data)["data-raw"][0]
     if saved == "damaged":
         assert words.endswith("New loads stay paused until you release them: the gate's saved state was damaged, so it "
                               "can't tell when the last automatic release was. On the Spark, `make brake-release` "
@@ -1446,11 +1467,17 @@ def test_the_brake_never_waits_on_the_gate_a_socket_or_ntfy(box_folders, tmp_pat
         poll(seconds)
 
     box.sleep = sleep
-    begun = time.monotonic()
-    run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    # The disk's fsyncs aren't what this measures (the review's M8): the brake's own work, never waiting on curl.
+    real_fsync = os.fsync
+    os.fsync = lambda fd: None
+    try:
+        begun = time.monotonic()
+        run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    finally:
+        os.fsync = real_fsync
     ticks = [later - earlier for earlier, later in zip([begun, *stamps], stamps)]
     assert len(ticks) == 6 and max(ticks) < 0.05
-    sent = [curl_config(child.stdin.data)["data-binary"][0] for child in curl.started]
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
     assert len(sent) == 4 and sent[0].startswith("Brake on") and all(s.startswith("Brake, ") for s in sent[1:])
 
 
@@ -1584,11 +1611,12 @@ def test_a_failed_unload_while_the_gate_is_down_follows_up_with_why(box_folders,
     box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False, fail={EMBED},
                    fail_status=401, delay=99, fall=1.5, polls=2)
     run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
-    first, then = (curl_config(child.stdin.data)["data-binary"][0] for child in curl.started)
+    first, then = (curl_config(child.stdin.data)["data-raw"][0] for child in curl.started)
     assert first == first_alert(unloaded=[(LABELS[GEMMA], None)])
     assert then == messages.notification("brake_fired", REG2A, at=T0 + TICK, unloaded=[],
                                          not_unloaded=[(LABELS[EMBED], "HTTP 401")], follow_up=True).message
-    assert then.endswith("llama-swap refused its unload of the embeddings (HTTP 401: the brake's key).")
+    assert then.endswith("llama-swap refused its unload of the embeddings (HTTP 401: the brake's key). On the Spark, "
+                         "`make logs s=brake` shows why.")
     assert [(e.kind, e.reason, e.sent_by_brake) for e in events(box_folders)] == [
         ("fired", None, True), ("unload", None, True), ("unload_failed", "HTTP 401", True)]
 
@@ -1634,3 +1662,201 @@ def test_a_started_record_naming_a_long_running_engine_is_no_load_even_with_its_
     started_record(f.launch, start_time=ticks(T0 - 3600))
     assert brake.loads_in_progress(None, f.launch, now=T0 + 5, boot_id=BOOT, registry=REG2A,
                                    readings=deque([(T0, 74.0)]), proc=f.proc, spark_uid=os.geteuid()) == []
+
+
+
+# Task 23's review, the controller's rulings: an admitted load's floor stands for the window after it ends (C1); no lock
+# another process holds stops the hold or the unload (I1); the watch acts only on a fall of MIN_FALL_GIB within its
+# window (I2); the journal says how the pause ends in 2a (I3); a started record's start reading by the boot's clock
+# (M4); the release's words when the gate may be up (M7); and curl as the brake runs it (M9, M10).
+
+class ReadyAt(Timeline):
+    """Timeline whose loading `model` becomes ready `ready_poll` polls in, as the gate makes it on its load call's
+    success: its record says ready, /running shows it ready, and launch's started/ record is cleared."""
+
+    def __init__(self, *args, model, ready_poll, **kw):
+        self.model, self.ready_poll = model, ready_poll
+        super().__init__(*args, **kw)
+
+    def tick(self):
+        if len(self.sleeps) >= self.ready_poll and self.states.get(self.model) == "starting":
+            self.models = {**self.models, self.model: ready(0, self.wall())}
+            self.states[self.model] = "ready"
+            tickets.clear_started(self.folders.launch, self.model)
+        super().tick()
+
+
+@pytest.mark.parametrize("model, start, admitted", [(CODER, 74, 41), (EMBED, 32.5, 8), (WHISPER, 27.5, 3)],
+                         ids=["the coder, 74 to 33", "the embeddings, 32.5 to 24.5", "whisper, 27.5 to 24.5"])
+@pytest.mark.parametrize("after_polls", [0, 2, 4, 6, 8], ids=["at its end", "0.5 s after", "1 s after", "1.5 s after",
+                                                             "2 s after"])
+def test_an_admitted_load_never_trips_the_watch_as_it_ends(box_folders, model, start, admitted, after_polls):
+    # The review's C1: the gate marks the load ready, and clears its started/ record, as its fall ends or a moment
+    # after, while the 2 s window still holds the fall. Its floor stands for FALL_WINDOW_S and a poll after it leaves
+    # the loads in progress. The embeddings' and whisper's loads end near the 24 GiB reserve.
+    f = box_folders
+    readings = fall(start, start - admitted, 2.5, then=16)
+    end = next(i for i in range(1, len(readings)) if readings[i] == readings[i - 1])
+    started_record(f.launch, model, footprint=admitted, available=start, start_time=ticks(T0 - 0.5))
+    an_engine(f.proc, model)
+    box = ReadyAt(readings, {GEMMA: "ready", model: "starting"}, folders=f, model=model, ready_poll=end + after_polls,
+                  models={GEMMA: ready(), model: starting(admitted=admitted, available_at_start=start)})
+    run_2a(box)
+    assert box.states[model] == "ready" and not tickets.record_path(f.launch, tickets.STARTED, model).exists()
+    assert box.requests == [] and read_hold(f.state) is None
+
+
+def test_a_lock_another_process_holds_never_stops_the_hold_or_the_unload(box_folders):
+    # The review's I1: flock needs no write access, so any process that can read the brake's events can hold their
+    # lock. The hold is written first, its episode from an unlocked read; each lock is tried for about 0.2 s a poll, in
+    # all, then the brake goes on, and says so once.
+    path = box_folders.state / EVENTS_FILE
+    path.touch()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDONLY); "
+         "fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(30)", str(path)],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        box = Timeline([18], {GEMMA: "ready", EMBED: "ready"}, folders=box_folders, gate_up=False)
+        begun = time.monotonic()
+        logs = run_2a(box, once=True)
+        took = time.monotonic() - begun
+    finally:
+        holder.kill()
+        holder.wait()
+    hold = read_hold(box_folders.state)
+    assert hold is not None and (hold.episode, hold.unloaded) == (1, (GEMMA,)) and box.requests == [(0, GEMMA)]
+    assert took < 0.35, took  # one wait of LOCK_WAIT_S (measured 0.21 s), never one per lock taken
+    assert sum("another process holds" in line for line in logs) == 1
+
+
+@pytest.mark.parametrize("level", [24, 25])
+@pytest.mark.parametrize("shape", ["±0.3, a 2 s square wave", "±0.5, a 2 s square wave", "±0.5, a 4 s square wave",
+                                   "±0.5 every poll", "a 1 GiB step over 2 s"])
+def test_near_the_reserve_noise_and_small_steps_dont_trip_the_watch(box_folders, level, shape):
+    # The review's I2: memory sits near the 24 GiB reserve after an admitted load, where noise of ±0.5 GiB, or a 1 GiB
+    # step, projected 10 s ahead, would pass the line. The watch acts only on a fall of MIN_FALL_GIB within its window.
+    if shape.startswith("a 1 GiB"):
+        readings = [level] * 12 + [level - min(1.0, (k + 1) * TICK / 2.0) for k in range(40)]
+    else:
+        amp = 0.3 if shape.startswith("±0.3") else 0.5
+        half = 1 if "every poll" in shape else 4 if "2 s" in shape else 8
+        readings = [level + (amp if (i // half) % 2 == 0 else -amp) for i in range(240)]
+    box = Timeline(readings, {GEMMA: "ready"}, folders=box_folders, models={GEMMA: ready()})
+    run_2a(box)
+    assert box.requests == [] and read_hold(box_folders.state) is None
+
+
+def test_an_unexplained_fast_fall_near_the_reserve_still_trips_before_the_line(box_folders):
+    readings = fall(30, 15, 2.5)
+    box = Timeline(readings, {GEMMA: "ready"}, folders=box_folders, models={GEMMA: ready()})
+    run_2a(box)
+    first, model = box.requests[0]
+    assert model == GEMMA and readings[first] > 20 + brake.MIN_FALL_GIB and first <= 5
+
+
+@pytest.mark.parametrize("saved, why", [
+    ("released within the hour", "it fired within an hour of the gate's last automatic release"),
+    ("damaged", "the gate's saved state was damaged, so it can't tell when its last automatic release was")])
+def test_the_journal_says_a_pause_that_waits_for_dan_waits_for_him(box_folders, saved, why):
+    # The review's I3: when release_waits_for_dan holds, the pause waits for `make brake-release`, and the line says so.
+    if saved == "damaged":
+        (box_folders.gate / "state.json").write_text("{not json")
+    else:
+        save_state(box_folders.gate, GateState(last_auto_release_at=T0 - 600), now=T0 - 600)
+    logs = run_2a(Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False), once=True)
+    assert f"brake: new loads paused until `make brake-release`: {why}" in logs
+    assert not any("the gate lifts the pause" in line for line in logs)
+
+
+def test_a_started_records_start_reading_is_the_brakes_own_at_the_engines_start_by_the_boot_clock(box_folders):
+    # The review's M4: with launch's start time, the start reading is the brake's own nearest the engine's start on the
+    # boot's clock, whatever the wall clock did since (here it stepped 50 s ahead, so started_at reads T0 + 50); a
+    # record from before it keeps the wall clock's nearest.
+    f = box_folders
+    (f.proc / "uptime").write_text(f"{U0 + 55:.2f} 1000.00\n")
+    an_engine(f.proc, forked_at=T0 - 0.5)
+    started_record(f.launch, started_at=T0 + 50, start_time=ticks(T0 - 0.5))
+    wall, boot = deque([(T0, 74.0), (T0 + 50, 60.0)]), deque([(U0, 74.0), (U0 + 50, 60.0)])
+
+    def loads(now):
+        return brake.loads_in_progress(None, f.launch, now=now, boot_id=BOOT, registry=REG2A, readings=wall,
+                                       boot_readings=boot, proc=f.proc, spark_uid=os.geteuid())
+
+    assert [(load.available_at_start, load.started_at) for load in loads(T0 + 55)] == [(74.0, T0 + 50)]
+    (f.proc / "uptime").write_text(f"{U0 + 5:.2f} 1000.00\n")
+    started_record(f.launch)  # from before the ruling: started_at T0, no start time
+    wall, boot = deque([(T0, 74.0), (T0 + 3, 60.0)]), deque([(U0 + 3, 60.0)])  # the boot clock's would give 60
+    assert [load.available_at_start for load in loads(T0 + 5)] == [74.0]
+
+
+def unavailable(text: str, *, cause: BaseException, sent: bool) -> GateUnavailable:
+    err = GateUnavailable(text, sent=sent)
+    err.__cause__ = cause
+    return err
+
+
+@pytest.mark.parametrize("cause, sent, wait_s", [
+    pytest.param(FileNotFoundError, False, ..., id="no gate there"),
+    pytest.param(TimeoutError, True, 5, id="no answer within 5 s"),
+    pytest.param(TimeoutError, False, 5, id="no connection within 5 s"),
+    pytest.param(ConnectionResetError, True, None, id="its answer broke off")])
+def test_the_releases_fallback_says_whether_the_gate_may_still_be_up(tmp_path, capsys, cause, sent, wait_s):
+    # The review's M7: the fallback stays the brief's, on any GateUnavailable; its words are true in every case. A gate
+    # that may be up (it took the connection, or the request) reloads as usual once it finds the hold gone.
+    error = unavailable("stand-in: the gate's answer", cause=cause(), sent=sent)
+    words = messages.BRAKE_RELEASED_WITHOUT_GATE if wait_s is ... else messages.brake_released_without_answer(wait_s)
+    write_hold(tmp_path, Hold("t", "r", ()))
+    assert brake.release_through_gate(tmp_path / "gate-control.sock", tmp_path, client=Gate(error)) == 0
+    assert capsys.readouterr().out == words + "\n" and read_hold(tmp_path) is None
+
+
+def test_curl_sends_the_alert_as_it_is_and_reads_no_curlrc(tmp_path):
+    # The review's M9 and M10, with Ubuntu's curl against a stand-in HTTP server on a free port (never ntfy's, nor a
+    # live one): data-raw sends a leading @, quotes, backslashes and line breaks as they are, -q keeps a planted
+    # .curlrc from being read, and curl needs nothing of the brake's environment.
+    if not os.access(brake.CURL, os.X_OK):
+        pytest.skip(f"no {brake.CURL} here")
+    seen = []
+
+    class Answer(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            seen.append({"path": self.path, "body": body, "priority": self.headers.get("Priority"),
+                         "auth": self.headers.get("Authorization"), "planted": self.headers.get("X-Planted")})
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+    port = server.server_address[1]
+    assert port not in (9100, 900, 3000, 8888) and not 800 <= port < 1024 and not 5800 <= port < 6000
+    header = tmp_path / "ntfy-token"
+    header.write_text(TOKEN_LINE + "\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".curlrc").write_text('header = "X-Planted: yes"\n')  # what an engine, running as spark, could plant
+    text = '@not-a-file "quoted" a back\\slash\nand a second line'
+    config = brake.curl_config(f"http://127.0.0.1:{port}/stand-in-topic", header, "high", text)
+    try:
+        for args in (list(brake.CURL_ARGS), [arg for arg in brake.CURL_ARGS if arg != "-q"]):
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+            run = subprocess.run(args, input=config, env={"HOME": str(home)}, capture_output=True, timeout=30)
+            thread.join(10)
+            assert run.returncode == 0, run.returncode
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        thread.start()
+        run = subprocess.run(list(brake.CURL_ARGS), input=config, env={}, capture_output=True, timeout=30)
+        thread.join(10)
+        assert run.returncode == 0, run.returncode
+    finally:
+        server.server_close()
+    with_q, without_q, bare = seen
+    assert with_q["body"].decode() == text and with_q["path"] == "/stand-in-topic"
+    assert (with_q["priority"], with_q["auth"]) == ("high", "Bearer stand-in-token-z9")
+    assert with_q["planted"] is None and without_q["planted"] == "yes"  # -q is what keeps the .curlrc out
+    assert bare == with_q  # an empty environment is all it needs
