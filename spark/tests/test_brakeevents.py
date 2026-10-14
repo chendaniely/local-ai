@@ -263,3 +263,16 @@ def test_a_fired_records_whether_its_hold_was_written_and_older_lines_read_as_wr
     assert back.hold_written is True
     with pytest.raises(ValueError, match="hold_written"):
         append_event(path, replace(event("fired", model=None, state=None), hold_written="no"))
+
+
+def test_a_hold_written_late_is_an_event_and_a_kind_a_reader_doesnt_know_is_passed_over(path):
+    # The controller's ruling on Task 23's fix round 3: a hold a retry wrote after its fire is a step of its own, kind
+    # hold_written, so the gate can say the pause now stands. A kind the reader doesn't know is passed over, as before,
+    # which is how a reader older than this kind takes it.
+    late = append_event(path, event("hold_written", model=None, state=None))
+    assert read_events(path, None) == [late] and late.kind == "hold_written"
+    line = json.loads(path.read_text().splitlines()[0])
+    with open(path, "a") as f:
+        f.write(json.dumps({**line, "seq": 2, "kind": "held_later"}) + "\n")
+    assert read_events(path, None) == [late]
+

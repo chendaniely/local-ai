@@ -24,7 +24,7 @@ from spark.gate.notify import (MemoryWarning, Notifier, NtfyError, NtfyPublisher
                                quiet_http_loggers)
 from spark.gate.state import BrakeMark, GateState, ModelRecord, load_state, notified_key, save_state
 from spark.gateproto import FIRED_ALONE_S, NTFY_LATE_KEEP_S, NTFY_LATE_RETRY_S, NTFY_QUEUE_MAX, RELEASE_AFTER_S
-from spark.hold import Hold, write_hold
+from spark.hold import Hold, release_hold, write_hold
 from spark.messages import Moment, Notification
 from spark.registry import NOTIFICATION_TYPES, load_registry
 
@@ -785,6 +785,101 @@ def test_a_brake_whose_hold_was_never_written_never_says_the_pause_lifted(tmp_pa
     assert words == ("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the coder, "
                      "which was idle; it couldn't write its pause, so new loads weren't paused. On the Spark, `make "
                      "logs s=brake` shows why.")
+
+
+LATE_WORDS = ("Brake, 03:13: its pause now stands: new loads are paused until memory has stayed above 28 GiB "
+              "available for 5 min.")
+
+
+def test_a_hold_written_late_before_the_first_alert_went_is_worded_as_paused(tmp_path):
+    # The controller's ruling on Task 23's fix round 3's concern 2: the retry wrote the hold before the gate read the
+    # episode, so its first alert is the ordinary one: new loads are paused, and how they resume. Nothing else goes.
+    standing(tmp_path, at(3, 12, 2))
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle"), event("hold_written", at(3, 12, 2)))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, GateState(), REGISTRY, boot_id=BOOT, now=at(3, 12, 3))
+    assert texts(found) == ["Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Unloaded the "
+                            "coder, which was idle; new loads are paused. They resume by themselves after 5 min above "
+                            "28 GiB available."]
+
+
+def test_a_lone_fired_waits_past_its_hold_written_late_for_its_first_unload(tmp_path):
+    # hold_written unloads nothing: a fired with only that after it still waits FIRED_ALONE_S for its first unload.
+    standing(tmp_path, at(3, 12, 1))
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False), event("hold_written", at(3, 12, 1)))
+    state = GateState()
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)) == []
+    (words,) = texts(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT,
+                                         now=at(3, 12) + FIRED_ALONE_S))
+    assert words.startswith("Brake on brightroar at 03:12: 19.6 GiB available, under the 20 GiB line. Nothing of the "
+                            "stack's was loaded, so there was nothing to unload; new loads are paused.")
+
+
+@pytest.mark.parametrize("first_by", ["the gate", "the brake", "the brake, read with it"])
+def test_a_hold_written_late_after_the_first_alert_went_says_the_pause_now_stands(tmp_path, first_by):
+    # The first alert, the gate's or the brake's own, said new loads weren't paused; the retry's hold_written, which
+    # the brake didn't send itself (the gate was back), is a follow-up from the gate, with rule 5's ending. The
+    # brake's own first alert has gone even when the gate reads it with the hold_written.
+    by_brake = first_by != "the gate"
+    write(tmp_path, replace(event("fired", at(3, 12), by_brake=by_brake), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle", by_brake=by_brake))
+    state = GateState()
+    if first_by != "the brake, read with it":
+        first = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))
+        assert len(first) == (0 if by_brake else 1)
+    standing(tmp_path, at(3, 13))
+    (late,) = write(tmp_path, event("hold_written", at(3, 13)))
+    found = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 1))
+    assert texts(found) == [LATE_WORDS]
+    assert [key for _, key, _ in found] == [f"brake:{BOOT}:1:{late.seq}"]
+
+
+def test_a_pause_written_late_within_the_hour_after_an_automatic_release_waits_for_dan(tmp_path):
+    # Rule 5, as the first alert has it: within the hour after the gate's last automatic release, only Dan lifts it.
+    state = GateState(last_auto_release_at=at(3, 0))
+    write(tmp_path, replace(event("fired", at(3, 12)), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle"))
+    assert len(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2))) == 1
+    standing(tmp_path, at(3, 13))
+    write(tmp_path, event("hold_written", at(3, 13)))
+    assert texts(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 1))) == [
+        "Brake, 03:13: its pause now stands: new loads are paused until you release them, since it fired within an "
+        "hour of the automatic release at 03:00: on the Spark, `make brake-release`."]
+
+
+def test_a_hold_written_late_the_brake_sent_itself_lifted_or_from_an_earlier_boot_sends_nothing(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    write(tmp_path, replace(event("fired", at(3, 12), by_brake=True), hold_written=False),
+          event("unload", at(3, 12, 1), model=CODER, state="idle", by_brake=True))
+    state = GateState()
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 12, 2)) == []
+    standing(tmp_path, at(3, 13))
+    write(tmp_path, event("hold_written", at(3, 13), by_brake=True))  # the brake said it itself, the gate being down
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 13, 1)) == []
+    release_hold(tmp_path)  # the gate's release, or Dan's
+    write(tmp_path, replace(event("fired", at(3, 20), episode=2, by_brake=True), hold_written=False),
+          event("unload", at(3, 20, 1), episode=2, model=GEMMA, state="idle", by_brake=True))
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 20, 2)) == []
+    write(tmp_path, event("hold_written", at(3, 21), episode=2))  # read once its pause has lifted: never "now stands"
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 21, 1)) == []
+    late_at = datetime.fromtimestamp(at(3, 21)).isoformat(timespec="seconds")
+    assert (f"notify: the brake's hold for episode 2, written late at {late_at}, has since lifted, so nothing is sent"
+            in caplog.messages)
+    # Episode 3's first alert went on this boot; its hold_written is read only after a reboot: Task 17 speaks for it.
+    write(tmp_path, replace(event("fired", at(3, 30), episode=3), hold_written=False),
+          event("unload", at(3, 30, 1), episode=3, model=EMBED, state="idle"))
+    assert len(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=at(3, 30, 2))) == 1
+    standing(tmp_path, at(3, 31), episode=3)
+    write(tmp_path, event("hold_written", at(3, 31), episode=3))
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id="boot-2", now=at(4, 0)) == []
+    # Nor one whose first alert said new loads were paused: its fired's hold was written.
+    write(tmp_path, event("fired", at(4, 10), episode=1, boot="boot-2"),
+          event("unload", at(4, 10, 1), episode=1, model=CODER, state="idle", boot="boot-2"))
+    assert len(ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id="boot-2", now=at(4, 10, 2))) == 1
+    write_hold(tmp_path, Hold(datetime.fromtimestamp(at(4, 10)).isoformat(timespec="seconds"), "19.6 GiB available",
+                              (CODER,), boot_id="boot-2", episode=1, available_gib=19.6))
+    write(tmp_path, event("hold_written", at(4, 11), episode=1, boot="boot-2"))
+    assert ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id="boot-2", now=at(4, 11, 1)) == []
 
 
 def test_a_brake_the_rate_watch_fired_says_memory_was_falling(tmp_path):

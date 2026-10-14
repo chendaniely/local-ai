@@ -2240,6 +2240,60 @@ def test_a_hold_written_later_ends_the_unwritten_episode_as_a_standing_hold(box_
     assert [e.kind for e in events(box_folders)].count("fired") == 1
 
 
+LATE_BY_BRAKE = ("Brake, 01:00: its pause now stands: new loads are paused until the gate is back and memory has "
+                 "stayed above 28 GiB available for 5 min.")
+
+
+@pytest.mark.parametrize("gate_up", [False, True], ids=["the gate down", "the gate up"])
+def test_a_hold_written_late_is_recorded_and_said_to_stand_now(box_folders, tmp_path, monkeypatch, gate_up):
+    # The controller's ruling on fix round 3's concern 2: the first alert said new loads weren't paused. Once a retry
+    # writes the hold, the brake records hold_written for the gate, through the same queue, and, the gate being down,
+    # sends the follow-up itself: the pause now stands, and how it ends.
+    real, tries = brake.write_hold, []
+
+    def disk_full_then_freed(state_dir, hold):
+        tries.append(len(box.sleeps))
+        if len(tries) < 2:
+            raise OSError(28, "No space left on device")
+        real(state_dir, hold)
+
+    monkeypatch.setattr(brake, "write_hold", disk_full_then_freed)
+    curl = Curl(finishes_after=0)
+    box = Timeline([18] * 6, dict.fromkeys(["stand-in-1", "stand-in-2"], "ready"), folders=box_folders,
+                   gate_up=gate_up, delay=999, polls=6)
+    logs = run_2a(box, alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert tries == [0, 4]
+    assert [(e.kind, e.episode, e.hold_written, e.sent_by_brake) for e in events(box_folders)] == [
+        ("fired", 1, False, not gate_up), ("unload", 1, True, not gate_up), ("unload", 1, True, not gate_up),
+        ("hold_written", 1, True, not gate_up)]
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
+    if gate_up:
+        assert sent == []
+    else:
+        assert len(sent) == 3 and "new loads weren't paused" in sent[0] and sent[2] == LATE_BY_BRAKE
+    assert sum("new loads paused" in line for line in logs) == 1
+
+
+def test_a_once_runs_last_try_records_the_hold_written_late(box_folders, tmp_path, monkeypatch):
+    real, tries = brake.write_hold, []
+
+    def full_once(state_dir, hold):
+        tries.append(hold)
+        if len(tries) == 1:
+            raise OSError(28, "No space left on device")
+        real(state_dir, hold)
+
+    monkeypatch.setattr(brake, "write_hold", full_once)
+    curl = Curl(finishes_after=0)
+    run_2a(Timeline([18], {GEMMA: "ready"}, folders=box_folders, gate_up=False), once=True,
+           alerter=alerter(curl, ntfy_env(tmp_path)))
+    assert [(e.kind, e.hold_written) for e in events(box_folders)] == [
+        ("fired", False), ("unload", True), ("hold_written", True)]
+    assert read_hold(box_folders.state).unloaded == (GEMMA,)
+    sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
+    assert len(sent) == 2 and sent[1] == LATE_BY_BRAKE
+
+
 def test_an_unwritten_pause_ends_once_memory_stays_above_the_warn_line_for_5_minutes(box_folders, monkeypatch):
     # With no hold ever written, the episode ends after the gate's five minutes above the warn line, saying no pause
     # stood; the next fall is a new episode.

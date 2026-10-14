@@ -912,9 +912,36 @@ def _not_unloaded(items: list[tuple[str, str | None]]) -> str:
     return "; ".join(said)
 
 
+def _paused_until(registry: Registry, f: dict[str, Any]) -> str:
+    """What a pause written late lasts until, by rule 5, as the brake's journal line has it (Task 23's I3): Dan's
+    release, within the hour after an automatic release or after a damaged state, or else memory above the warn line
+    for the release's time, with the gate back when the brake sends it itself (the controller's ruling on Task 23's fix
+    round 3)."""
+    _needs("brake_fired", f, "release_waits_for_dan")
+    if f["release_waits_for_dan"] and f["release_assumed"]:
+        return ("you release them: the gate's saved state was damaged, so it can't tell when the last automatic "
+                "release was. On the Spark, `make brake-release` resumes them.")
+    if f["release_waits_for_dan"]:
+        _needs("brake_fired", f, "released_at")
+        return (f"you release them, since it fired within an hour of the automatic release at "
+                f"{_clock(f['released_at'])}: on the Spark, `make brake-release`.")
+    _needs("brake_fired", f, "release_after_s")
+    above = f"memory has stayed above {_line(registry.brake.warn_gib)} available for {_brief(f['release_after_s'])}."
+    return f"the gate is back and {above}" if f["by_brake"] else above
+
+
 def _brake_fired(registry: Registry, f: dict[str, Any]) -> str:
     _needs("brake_fired", f, "at")
     not_unloaded = f["not_unloaded"] or []
+    if f["pause_stands"]:  # a hold written late, after a first alert that said new loads weren't paused
+        if not f["follow_up"]:
+            raise ValueError("brake_fired's pause_stands is a follow-up's: a first alert names the pause itself")
+        if f["unloaded"] or not_unloaded:
+            raise ValueError("brake_fired's pause_stands names no unload: each unload has its own follow-up")
+        if f["falling"] or f["lifted"] or not f["hold_written"] or f["unload_unanswered"]:
+            raise ValueError("brake_fired's pause_stands names neither the reading nor the unload, as first alerts do")
+        until = _paused_until(registry, f)
+        return f"Brake, {_clock(f['at'])}: its pause now stands: new loads are paused until {until}"
     if f["follow_up"]:  # always an unload, or an unload llama-swap didn't do: an empty list is a field left out
         if not not_unloaded:
             _needs("brake_fired", f, "unloaded")
@@ -1483,7 +1510,7 @@ _TAKES: dict[str, dict[str, Any]] = {
     "brake_fired": {"at": None, "available_gib": None, "line_gib": None, "unloaded": None, "follow_up": False,
                     "by_brake": False, "release_waits_for_dan": None, "released_at": None, "release_after_s": None,
                     "release_assumed": False, "unload_unanswered": False, "falling": False, "not_unloaded": [],
-                    "lifted": False, "hold_written": True},
+                    "lifted": False, "hold_written": True, "pause_stands": False},
     "brake_needs_release": {"fired_at": None, "available_gib": None, "unloaded": [], "recovered": False,
                             "rebooted": False},
     **{kind: dict.fromkeys(("at", "result_words")) for kind in _DOWN},

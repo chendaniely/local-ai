@@ -415,6 +415,8 @@ class _Group:
     failed: list[BrakeEvent] = field(default_factory=list)  # unload_failed: an unload refused, or that failed
     sent: bool = False  # the brake sent it itself (sent_by_brake): the gate doesn't send it again
     reboot: bool = False  # an earlier boot's episode, never notified: one brake_needs_release, whatever was sent
+    written_late: bool = False  # a first alert whose hold a later try wrote before it went: worded as paused
+    stands: BrakeEvent | None = None  # a follow-up of its own: a hold written late, after the first alert went
 
 
 def _minute(at: float) -> str:
@@ -439,9 +441,10 @@ def _new_from(events: list[BrakeEvent], after: tuple[str, int, float] | None) ->
 
 
 # The steps that unload nothing, which a lone fired goes on waiting past for its first unload: a warn (memory_warning is
-# the gate's own, so it sends nothing), and an unload that failed (Task 23), after which the brake tries the next model
-# at its next poll; the alert then says why that one is still loaded.
-_NO_UNLOAD = ("warn", "unload_failed")
+# the gate's own, so it sends nothing), an unload that failed (Task 23), after which the brake tries the next model at
+# its next poll, and the alert then says why that one is still loaded; and a hold written late (the controller's ruling
+# on Task 23's fix round 3).
+_NO_UNLOAD = ("warn", "unload_failed", "hold_written")
 _STEPS = ("unload", "unload_failed")  # what a notification names: an unload, or one llama-swap didn't do
 
 
@@ -456,8 +459,8 @@ def _add(group: _Group, e: BrakeEvent) -> None:
 
 def _held_back(events: list[BrakeEvent], now: float, boot_id: str) -> int:
     """How many of `events` are left for the next read: from a last `fired` of this boot with nothing after it but
-    steps that unload nothing (`warn`, `unload_failed`), while it is younger than FIRED_ALONE_S, since its first unload
-    may be a moment away. One from an earlier boot has no unload to wait for."""
+    steps that unload nothing (`warn`, `unload_failed`, `hold_written`), while it is younger than FIRED_ALONE_S, since
+    its first unload may be a moment away. One from an earlier boot has no unload to wait for."""
     for place in range(len(events) - 1, -1, -1):
         e = events[place]
         if e.kind in _NO_UNLOAD:
@@ -495,6 +498,12 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       Task 23's re-review) says the brake paused new loads and the pause has since lifted, never that they are paused.
       One whose `fired` says the brake couldn't write its hold (`hold_written` false) says so, and that new loads
       weren't paused (the controller's ruling on Task 23's fix round 2).
+    - A `hold_written` event (a later try wrote that hold: the controller's ruling on Task 23's fix round 3) read with
+      its episode's first alert, which the gate sends, has it worded as paused, the ordinary form. Read after the
+      first alert went, the gate's or the brake's own, saying new loads weren't paused, it is a follow-up of its own,
+      *Brake, 03:13: its pause now stands: new loads are paused until …*, with rule 5's ending; unless the brake sent
+      it itself, or the pause has lifted by then (said in the gate's log). One from an earlier boot sends nothing:
+      Task 17 speaks for that hold.
     - An unload of a model that was `starting` marks it (rule 5: it doesn't reload by itself), with when the brake
       fired and what it was seen using: its fall from `starts` to the brake's reading, or None without a reading.
     - A first alert's pause sentence follows rule 5: `release_waits_for_dan` is hold.release_waits_for_dan for the
@@ -508,7 +517,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
       key is Task 17's, `brake-needs:<boot id>:<episode>`, so the two are one.
 
     The keys: `brake:<boot id>:<episode>:<seq>`, the seq of the `fired` event for a first alert (of its first unload
-    when the file holds no `fired` for the episode) and of the first unload for a follow-up."""
+    when the file holds no `fired` for the episode), of the first unload for a follow-up, and of the `hold_written`
+    event for the follow-up saying the pause now stands."""
     now = time.time() if now is None else now
     events = read_events(path, None)
     start = _new_from(events, state.brake_events_after)
@@ -519,8 +529,10 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     read_before = {_episode(e) for e in events[:start]}  # an episode read before: its first alert went then
     begun = set(read_before)
     fired_at = {_episode(e): e.at for e in events if e.kind == "fired"}
+    fired_by = {_episode(e): e for e in events if e.kind == "fired"}
     groups: list[_Group] = []
     group: _Group | None = None
+    firsts: dict[tuple[str, int], _Group] = {}  # this read's first alerts, by episode
     reboots: dict[tuple[str, int], _Group] = {}
     for e in taken:
         episode = _episode(e)
@@ -542,8 +554,11 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
             elif e.kind == "unload":  # only what it did unload: brake_needs_release names it
                 reboots[episode].unloads.append(e)
             continue
+        if e.kind == "hold_written":
+            _written_late(e, firsts, fired_by, groups, boot_id)
+            continue
         if e.kind == "fired":
-            group = _Group(episode, e, first=True, sent=e.sent_by_brake)
+            group = firsts[episode] = _Group(episode, e, first=True, sent=e.sent_by_brake)
             groups.append(group)
             begun.add(episode)
             continue
@@ -552,6 +567,8 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
             continue
         # The file holds no fired for an episode not yet begun: its first unload is its first alert.
         group = _Group(episode, None, first=episode not in begun, sent=e.sent_by_brake)
+        if group.first:
+            firsts[episode] = group
         _add(group, e)
         groups.append(group)
         begun.add(episode)
@@ -559,6 +576,23 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     state.brake_events_after = (last.boot_id, last.seq, last.at)
     found = [_notification(group, path, state, registry, now, boot_id) for group in groups if not group.sent]
     return [each for each in found if each is not None]
+
+
+def _written_late(e: BrakeEvent, firsts: dict[tuple[str, int], _Group], fired_by: dict[tuple[str, int], BrakeEvent],
+                  groups: list[_Group], boot_id: str) -> None:
+    """A hold the brake fired without writing, written by a later try (the controller's ruling on Task 23's fix round
+    3): its episode's first alert, still to go from the gate in this read, is worded as paused; once the first alert
+    has gone saying new loads weren't paused, the gate's or the brake's own, a follow-up says the pause now stands."""
+    episode = _episode(e)
+    if e.boot_id != boot_id or e.sent_by_brake:  # Task 17 speaks for an earlier boot's hold; the brake said it itself
+        return
+    first = firsts.get(episode)
+    if first is not None and not first.sent:
+        first.written_late = True
+        return
+    fired = fired_by.get(episode)
+    if fired is not None and not fired.hold_written:  # only a first alert that said new loads weren't paused
+        groups.append(_Group(episode, fired, first=False, stands=e))
 
 
 def _joins(group: _Group | None, e: BrakeEvent) -> bool:
@@ -584,6 +618,8 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
     boot, episode = group.episode
     if group.reboot:
         return _after_reboot(group, path, state, registry, now, boot_id)
+    if group.stands is not None:
+        return _pause_stands(group, path, state, now)
     unloaded = [(_label(registry, e.model or ""), e.state) for e in group.unloads]
     not_unloaded = [(_label(registry, e.model or ""), e.reason) for e in group.failed]
     steps = _steps(group)
@@ -602,8 +638,8 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
         fields["released_at"] = state.last_auto_release_at
     if reading.falling:  # the rate-of-fall watch acted above the line (Task 23)
         fields["falling"] = True
-    if not reading.hold_written:  # the brake couldn't write its hold: no pause stood, so none lifted either
-        fields["hold_written"] = False
+    if not reading.hold_written and not group.written_late:  # the brake couldn't write its hold: no pause stood,
+        fields["hold_written"] = False  # so none lifted either
     elif _pause_lifted(path, (boot, episode)):  # read after its pause ended: never "new loads are paused" now
         fields["lifted"] = True
     if not_unloaded:  # why llama-swap didn't unload these (Task 23)
@@ -613,6 +649,24 @@ def _notification(group: _Group, path: Path, state: GateState, registry: Registr
     if not unloaded and (state.models or not_unloaded):
         fields["unload_unanswered"] = True
     return "brake_fired", f"brake:{boot}:{episode}:{reading.seq}", fields
+
+
+def _pause_stands(group: _Group, path: Path, state: GateState, now: float) -> tuple[str, str, dict[str, Any]] | None:
+    """The follow-up for a hold written late, after a first alert that said new loads weren't paused: its pause now
+    stands, and how it ends by rule 5, as a first alert's pause sentence has it. Read once that pause has lifted, it
+    would be untrue: nothing goes, and the gate's log says so."""
+    late, fired = group.stands, group.fired
+    boot, episode = group.episode
+    if _pause_lifted(path, group.episode):
+        _log.info("notify: the brake's hold for episode %s, written late at %s, has since lifted, so nothing is sent",
+                  episode, datetime.fromtimestamp(late.at).isoformat(timespec="seconds"))
+        return None
+    waits = _waits_for_dan(fired, path, state, now)
+    fields: dict[str, Any] = {"at": late.at, "follow_up": True, "pause_stands": True, "release_waits_for_dan": waits,
+                              "release_after_s": RELEASE_AFTER_S, "release_assumed": state.release_assumed}
+    if waits and not state.release_assumed:
+        fields["released_at"] = state.last_auto_release_at
+    return "brake_fired", f"brake:{boot}:{episode}:{late.seq}", fields
 
 
 def _after_reboot(group: _Group, path: Path, state: GateState, registry: Registry, now: float,

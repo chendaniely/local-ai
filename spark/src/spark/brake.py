@@ -759,12 +759,12 @@ class _Brake:
 
     def watch(self, wall: float, mono: float) -> float | None:
         """The rate-of-fall watch: the reading UNLOAD_LEAD_S ahead when it would pass the brake line, else None. The
-        loads in progress are read on every poll it runs, so a load's floor is known from the first poll that finds it in
-        progress, whatever its pace: a load too slow for the window, then a step the gate marks ready as it lands,
-        included (the controller's ruling on Task 23's second re-review, Minor 1). Whatever fails in reading them is no load in progress, the
-        stricter way, and is said once. Once they have left (the gate marks a load ready as its fall ends, or a moment
-        after), their floor stands FALL_WINDOW_S and a poll more, while the window still holds their fall (Task 23's
-        review, C1)."""
+        loads in progress are read on every poll it runs, so a load's floor is known from the first poll that finds it
+        in progress, whatever its pace: a load too slow for the window, then a step the gate marks ready as it lands,
+        included (the controller's ruling on Task 23's second re-review, Minor 1). Whatever fails in reading them is no
+        load in progress, the stricter way, and is said once. Once they have left (the gate marks a load ready as its
+        fall ends, or a moment after), their floor stands FALL_WINDOW_S and a poll more, while the window still holds
+        their fall (Task 23's review, C1)."""
         line = self.registry.brake.brake_gib
         floor = self.load_floor(wall, mono)
         rough = projected_gib(self.readings, lead_s=UNLOAD_LEAD_S, window_s=FALL_WINDOW_S, floor_gib=None)
@@ -890,8 +890,8 @@ class _Brake:
         """An episode whose hold couldn't be written, with none standing (the controller's ruling on Task 23's second
         re-review). It stands in the brake's memory, for firing: no new episode and no new first alert, and Phase 1's
         grace and unload rules go on as with a hold. The write is tried again at most every HOLD_RETRY_S; once one
-        succeeds, the hold stands as usual. Should memory stay above the warn line for the gate's RELEASE_AFTER_S first,
-        the episode ends, and the journal says no pause ever stood."""
+        succeeds, the hold stands as usual (hold_stands_late). Should memory stay above the warn line for the gate's
+        RELEASE_AFTER_S first, the episode ends, and the journal says no pause ever stood."""
         unwritten = self.unwritten
         if mem.available_gib > self.registry.brake.warn_gib:  # the gate's test (core): above, never at
             if unwritten.above_since_s is None:
@@ -902,14 +902,31 @@ class _Brake:
             unwritten.tried_s = mono
             if self.write(unwritten.hold):
                 self.unwritten = None
-                saved, waits = self.how_it_ends(unwritten.hold, wall)
-                self.log(self.paused(waits, saved))
+                self.hold_stands_late(unwritten.hold, mem.available_gib, wall)
                 return
         if unwritten.above_since_s is not None and mono - unwritten.above_since_s >= RELEASE_AFTER_S:
             self.unwritten = None
             self.episode = None
             self.log(f"brake: memory has stayed above the warn line for {messages.duration(RELEASE_AFTER_S)}, so "
                      f"episode {unwritten.hold.episode} is over; its hold was never written, so no pause ever stood")
+
+    def hold_stands_late(self, hold: Hold, available_gib: float, wall: float) -> None:
+        """A hold a later try wrote, after its fired said it wasn't (the controller's ruling on Task 23's fix round 3):
+        the journal's line for the pause, a `hold_written` step for the gate, queued as every step is, so the words
+        catch up, and, while the gate is down, the brake's own follow-up: its pause now stands, and how it ends by rule
+        5."""
+        saved, waits = self.how_it_ends(hold, wall)
+        self.log(self.paused(waits, saved))
+        sending = self.will_alert(wall, hold.episode)
+        self.record(BrakeEvent(1, wall, self.boot_id, hold.episode, "hold_written", None, None, available_gib,
+                               self.registry.brake.brake_gib, sending))
+        if sending:  # will_alert is false with no gate, so its saved state was read
+            fields: dict[str, Any] = {
+                "at": wall, "follow_up": True, "pause_stands": True, "by_brake": True, "release_waits_for_dan": waits,
+                "release_after_s": RELEASE_AFTER_S, "release_assumed": saved.release_assumed}
+            if waits and not saved.release_assumed:
+                fields["released_at"] = saved.last_auto_release_at
+            self.send("brake_fired", fields)
 
     def next_episode(self) -> int:
         """The next episode: one past the last in the file for this boot, read without the lock, and past any of the
@@ -1097,8 +1114,7 @@ class _Brake:
         unload tried it again in the same poll. This run won't poll again, so the once-a-second limit gives way."""
         if self.unwritten is not None and self.write(self.unwritten.hold):
             hold, self.unwritten = self.unwritten.hold, None
-            saved, waits = self.how_it_ends(hold, self.wall())
-            self.log(self.paused(waits, saved))
+            self.hold_stands_late(hold, self.readings[-1][1] if self.readings else hold.available_gib, self.wall())
 
     def flush_last(self) -> None:
         """A --once run's end: one last bounded try for the steps still waiting, then the journal says what went

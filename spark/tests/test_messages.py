@@ -1309,6 +1309,40 @@ def test_a_brake_whose_hold_was_never_written_says_loads_werent_paused():
         say("brake_fired", **{**NOTIFICATION_ROWS[1][1], "hold_written": False})
 
 
+def test_a_pause_written_late_says_it_now_stands_with_rule_5s_ending():
+    # The controller's ruling on Task 23's fix round 3's concern 2: a hold a retry wrote after the first alert said new
+    # loads weren't paused is a follow-up of its own, and how the pause ends follows rule 5, as the brake's journal
+    # line has it.
+    late = {"at": at(3, 13), "follow_up": True, "pause_stands": True, "release_waits_for_dan": False,
+            "release_after_s": 300}
+    by_gate = say("brake_fired", **late)
+    assert by_gate == ("Brake, 03:13: its pause now stands: new loads are paused until memory has stayed above 28 GiB "
+                       "available for 5 min.")
+    by_brake = say("brake_fired", **late, by_brake=True)
+    assert by_brake == ("Brake, 03:13: its pause now stands: new loads are paused until the gate is back and memory "
+                        "has stayed above 28 GiB available for 5 min.")
+    waits = say("brake_fired", **{**late, "release_waits_for_dan": True, "released_at": at(3, 0)})
+    assert waits == ("Brake, 03:13: its pause now stands: new loads are paused until you release them, since it fired "
+                     "within an hour of the automatic release at 03:00: on the Spark, `make brake-release`.")
+    damaged = say("brake_fired", **{**late, "release_waits_for_dan": True, "release_assumed": True})
+    assert damaged == ("Brake, 03:13: its pause now stands: new loads are paused until you release them: the gate's "
+                       "saved state was damaged, so it can't tell when the last automatic release was. On the Spark, "
+                       "`make brake-release` resumes them.")
+    for text in (by_gate, by_brake, waits, damaged):
+        assert messages.pi_retry_match(text) is None
+    with pytest.raises(ValueError, match="^brake_fired's pause_stands is a follow-up's"):
+        say("brake_fired", **{**FIRED, "pause_stands": True})
+    with pytest.raises(ValueError, match="^brake_fired's pause_stands names no unload"):
+        say("brake_fired", **late, unloaded=[("Gemma", "idle")])
+    for first_alerts in ({"falling": True}, {"lifted": True}, {"hold_written": False}, {"unload_unanswered": True}):
+        with pytest.raises(ValueError, match="^brake_fired's pause_stands names neither the reading nor the unload"):
+            say("brake_fired", **late, **first_alerts)
+    with pytest.raises(ValueError, match="^brake_fired's words need release_waits_for_dan"):
+        say("brake_fired", **{**late, "release_waits_for_dan": None})
+    with pytest.raises(ValueError, match="^brake_fired's words need released_at"):
+        say("brake_fired", **{**late, "release_waits_for_dan": True})
+
+
 def test_falling_is_for_a_first_alert():
     # A follow-up names no reading, so it can't say memory was falling (Task 23).
     with pytest.raises(ValueError, match="^brake_fired's falling is for a first alert"):
