@@ -259,7 +259,8 @@ Architecture page now, and git history keeps the drawing.)*
   reference (for Dan's own code; the model table is generated from the registry) · Stack (generated
   from `versions.yaml`) · **Scenarios** · design notes (this plan and the implementation plans, in
   `website/design/`). There is no top-level `docs/`. A SHA-pinned GitHub Actions workflow publishes
-  to GitHub Pages — Dan confirms before the first publish.
+  to GitHub Pages — Dan confirms before the first publish. *(First published 2026-10-13. Since
+  2026-10-14, Dan's decision, it publishes on every push to `main`, and by hand.)*
 - **Scenarios** have IDs that `spark doctor` checks and the phases' "done when" criteria refer to.
   Each page gives the situation · what happens · what Dan sees · how to override · status (planned /
   built / verified with a date). A behaviour change updates its scenario page **and** its check in

@@ -1,10 +1,15 @@
 name: publish-website
-# Manual only. Publishing is outward-facing: Dan triggers it. One-time setup by Dan: create an empty
-# gh-pages branch (git checkout --orphan gh-pages; git reset --hard; git commit --allow-empty -m
-# "Initialising gh-pages branch"; git push origin gh-pages), then Settings → Pages → deploy from
-# gh-pages.
+# Publishes the site on every push to main, and by hand from the Actions tab (Dan's decision,
+# 2026-10-14; until then it was manual only, since publishing is outward-facing, and main is public
+# already). One at a time: a push while a publish runs waits for it. One-time setup, done
+# 2026-10-13: an empty orphan gh-pages branch, and Settings → Pages deploying from it.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+concurrency:
+  group: publish-website
+  cancel-in-progress: false
 permissions:
   contents: write
 
