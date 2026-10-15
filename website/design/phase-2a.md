@@ -8535,7 +8535,7 @@ registry names `qwen3.8-27b` at 262,144 tokens, while `phase-2a`'s still names
 entry, among 12 files. Resolve it to `main`'s `qwen3.8-27b`, keeping `phase-2a`'s own changes
 around it: whisper's `--tmp-dir` and Gemma's `--slot-prompt-similarity`. A resolution that keeps
 `phase-2a`'s side makes the cutover put the box back on `qwen3.6-35b-a3b`, whose files are still
-on disk. Task 38 checks the coder's name in the rendered config before it deploys. Task 42's coder
+on disk. Task 38's Step 2 checks the coder's name in the registry before it deploys. Task 42's coder
 swap then finds the registry already swapped, and keeps only its measurements and its pull.
 
 **Files** (in the `main` worktree, then merged):
@@ -8704,7 +8704,11 @@ systemctl start local-ai-llama-swap.service local-ai-brake.service
 
 - [ ] **Step 2:** `make apply`. Expected: it lists root's ten new or changed unit files (the
   compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 32),
-  since no gate runs yet.
+  since no gate runs yet. *(Added 2026-10-15, with Task 37's note on the coder:)* before this
+  step, check the coder the cutover will deploy, from the clone, **on the Spark**:
+  `grep -c 'qwen3.8-27b' stack/models.yaml; grep -c 'qwen3.6-35b-a3b' stack/models.yaml`.
+  Expected: at least `1`, then `0`. Anything else means Task 37's merge kept `phase-2a`'s old
+  coder. Stop, and resolve `stack/models.yaml` to `main`'s `qwen3.8-27b` before going on.
 - [ ] **Step 3 [Dan, on the Spark]:** `make install-units`. Read every file it shows: they are what
   root will run. It installs root's copies and enables the sockets and the services, and starts
   nothing new. Step 4 follows at once, with no reboot between: a boot now would start the front
