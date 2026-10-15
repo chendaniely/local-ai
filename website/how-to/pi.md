@@ -72,9 +72,10 @@ over the same tunnel ([Orca on the Mac](orca.md)). Orca adds three extensions of
 
 ## On the Spark, as `agent`
 
-`agent` needs Node 22.19 or later, its own llama-swap key, uv, pi and a clone of this repo. Two
-people set that up: you, with sudo, then `agent` itself. First, before `agent` holds a key, its
-Claude Code gets the secrets guard.
+`agent` needs Node 22.19 or later, its own llama-swap key, uv and pi. Two people set that up: you,
+with sudo, then `agent` itself. First, before `agent` holds a key, its Claude Code gets the secrets
+guard. *(Changed 2026-10-15, Phase 2a's Task 34: `agent` needed a clone of this repo too, until it
+ran the Spark's deployed `spark` instead; see below.)*
 
 ### The secrets guard, before the key
 
@@ -184,19 +185,28 @@ builtin, so the value never reaches a command line. If the key is missing, the l
 writes nothing, as step 5 of [Secret files](secret-files.md) does. Run again, it rewrites the file
 with the same line.
 
+From Phase 2a's cutover, its Task 38, the front checks each client key against its SHA-256 digest
+in `client-keys.sha256`. Step 12 of [Secret files](secret-files.md) makes the digest of the key
+this line gives `agent`, the one in `llama-swap.env`, so the line serves until 2a's close, its Task
+51, removes that file; from then it finds no key and writes nothing. A new key for `agent`, after
+2a, comes from Secret files' [*A new client key, after 2a*](secret-files.md#a-new-client-key-after-2a):
+its step 19 writes `agent`'s `~/.secrets` in the same way, as `agent`, and keeps only the key's
+digest, in `client-keys.sha256`.
+
 Then become `agent`, still on the Spark: `sudo -iu agent`. **On the Spark, as `agent`:** load the
-key in every shell, install uv and pi into `agent`'s own `~/.local`, and clone this repo.
+key in every shell, and install uv and pi into `agent`'s own `~/.local`.
 
 ```bash
 grep -q '\.secrets' ~/.bashrc || sed -i '1i [ -f ~/.secrets ] && . ~/.secrets' ~/.bashrc
 curl -LsSf https://astral.sh/uv/install.sh | sh
 npm install -g --prefix ~/.local --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
-git clone https://github.com/chendaniely/local-ai ~/work/local-ai   # makes ~/work too
 exit
 ```
 
-`agent` makes its own `~/work` with that clone; bootstrap doesn't, since it runs as root. The clone
-is only for `spark clients`: `agent` never commits to this repo.
+*(Changed 2026-10-15, Phase 2a's Task 34: this block also cloned this repo into
+`~/work/local-ai`, which made `~/work` too, only so that `agent` could run `spark clients`. It runs
+the Spark's deployed `spark` now, below, and needs no clone. The clone `agent` made on 2026-09-28
+is no longer used by these steps.)*
 
 The key and `~/.local/bin` load in a fresh login. **On the Mac**, log in as `agent`:
 
@@ -204,11 +214,32 @@ The key and `~/.local/bin` load in a fresh login. **On the Mac**, log in as `age
 ssh brightroar-agent
 ```
 
-**On the Spark, as `agent`**, from its clone, add the `spark` provider to its pi:
+**On the Spark, as `agent`**, add the `spark` provider to its pi, and give pi 15 minutes to wait for
+a response. This runs the Spark's deployed `spark`, against the registry the Spark serves:
 
 ```bash
-cd ~/work/local-ai && uv run --frozen --project spark spark clients pi --write
+/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml --http-idle-timeout-ms 900000
 ```
+
+It writes the provider into `agent`'s `~/.pi/agent/models.json`, as `make clients` does on the
+Mac, and `httpIdleTimeoutMs`, 900,000, into `~/.pi/agent/settings.json`, keeping every other
+setting there. The previous file of each, if there was one, is kept beside it as `models.json.bak`
+or `settings.json.bak`, at its own mode, and the two lines the command prints say which. A
+settings file pi couldn't read, one that isn't JSON or isn't an object, is refused, and so is one
+that's a link, since the command never writes through one: then nothing is written, the provider
+included. pi reads its settings when it starts, so restart a pi that's running.
+
+The 15 minutes are for Phase 2a's front. From its cutover, a request of `agent`'s can wait there
+up to 10 minutes for room for its model, and then for the model to load, before it's answered or
+refused. pi 0.85.1 gives up on a request with no response after `httpIdleTimeoutMs`, 300,000 (5
+minutes) by default, so it would give up first. The Mac's pi keeps its default, well above its
+key's 30 s wait and a load: `make clients` doesn't set it.
+
+*(Changed 2026-10-15, Phase 2a's Task 34: `agent` ran `spark clients` from its clone,
+`cd ~/work/local-ai && uv run --frozen --project spark spark clients pi --write`.)* Until the
+cutover deploys Task 34's code, the deployed `spark` doesn't know `--http-idle-timeout-ms`: it stops
+at it, with *unrecognized arguments*, and writes nothing. Until then, run the line without it, and
+pi keeps its default.
 
 Work inside tmux. **On the Spark, as `agent`**:
 
@@ -232,7 +263,8 @@ read again.
 pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`, which
 `make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on
 the Spark and pushed, pull and run `make clients` again **on the Mac**, and **on the Spark, as
-`agent`**, pull its clone and run the `spark clients pi --write` line above again. Not before: pi
+`agent`**, run the `spark clients` line above again: it reads the deployed registry, so it needs no
+pull. *(Changed 2026-10-15, Phase 2a's Task 34: `agent` pulled its clone first.)* Not before: pi
 told a bigger window than the engine serves sends requests the engine refuses with a `400`. pi
 compacts a session by itself once it passes `contextWindow` minus `reserveTokens`, and `/compact`
 does it by hand.

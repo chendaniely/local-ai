@@ -77,8 +77,9 @@ an outer `sudo` it would give your groups to root.
    the Spark. *(Added 2026-09-28: its secrets guard comes in [pi](pi.md), before `agent` gets a
    key.)*
 
-`agent` makes its own `~/work` too, the same way: its first `git clone` into it creates it.
-Bootstrap doesn't, since it runs as root.
+`agent` makes its own `~/work` too, when it wants one, the same way: its first `git clone` into it
+creates it. Bootstrap doesn't, since it runs as root. *(Changed 2026-10-15: [pi](pi.md)'s steps
+made it, cloning this repo there, until Phase 2a's Task 34 had `agent` run the deployed `spark`.)*
 
 ## Live checks (you run these — they need sudo)
 
