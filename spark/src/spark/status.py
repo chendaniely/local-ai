@@ -39,6 +39,9 @@ TIMEOUT_S = 3.0  # each call to the gate: the connection, and the whole answer
 # line the box is on (Phase 1's rule).
 NEAR_GIB = 10
 COLUMN = 12  # the width of a row's name: `not loaded` and two spaces
+# *recent*'s rows shown, the newest; `--json` keeps every one the gate sends (the controller's ruling at Task 29: up to
+# 100 whole refusals is a wall).
+RECENT_SHOWN = 10
 _STEP = {"dan": "make doctor", "agent": "make doctor shows Dan what's wrong"}  # the gate not answering
 
 
@@ -280,15 +283,18 @@ def _held(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) ->
 
 
 def _recent(view: Mapping[str, Any], now: float, tz: tzinfo | None) -> list[str]:
-    """Newest first, each its whole text, a refusal's after whom it was for (the controller's ruling at Task 29: the
-    truth beats a short line)."""
+    """The newest RECENT_SHOWN, newest first, each its whole text, a refusal's after whom it was for, then how many
+    older ones `--json` has (the controller's rulings at Task 29: the truth beats a short line, and a wall of them isn't
+    read)."""
     rows = sorted(view["recent"], key=lambda each: each["at"], reverse=True)
     if not rows:
         return [_row("recent", "nothing")]
     lines = []
-    for n, item in enumerate(rows):
+    for n, item in enumerate(rows[:RECENT_SHOWN]):
         said = f"for {item['key_label']}: {item['text']}" if item["key_label"] else item["text"]
         lines.append(_row("recent" if n == 0 else "", f"{_when(item['at'], now, tz)}  {said}"))
+    if len(rows) > RECENT_SHOWN:
+        lines.append(_under(f"… and {len(rows) - RECENT_SHOWN} older: spark status --json shows them all"))
     return lines
 
 

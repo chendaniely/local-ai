@@ -1253,7 +1253,9 @@ keeps can give: it keeps each refusal's whole message, in the asker's words, so 
 text after whom it was for, never shortened, since the truth beats a short line. In `agent`'s view
 the same row names *a process of Dan's*. The `health` row's *key checked 09:00* is the brake's
 start check, which the gate reads from the brake's record since Task 29; a check that failed, or
-none recorded, reads as that, with `make logs s=brake`, never *brake ok*.)*
+none recorded, reads as that, with `make logs s=brake`, never *brake ok*. *Recent* shows the newest
+10 rows, then, when there are more, *… and N older: spark status --json shows them all*; `--json`
+keeps every row.)*
 
 *(Corrected 2026-10-08, at the implementation plan's Task 17, the controller's ruling: the release
 line read *reloaded*, but the gate records it as it releases, with the reloads queued, so it reads

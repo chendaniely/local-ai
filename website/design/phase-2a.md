@@ -7009,6 +7009,15 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 **Files:**
 
 - Modify: `spark/src/spark/status.py`, `spark/tests/test_status.py`, `Makefile` (`status`'s help)
+- *(Added 2026-10-14, at Task 29, as built, with the controller's rulings below:)* Modify also:
+  `spark/src/spark/gate/core.py` and `spark/tests/test_gate_core.py` (ntfy `not_set_up`, the brake's
+  start check), `spark/src/spark/gate/main.py` (`_NoNtfy.not_set_up`), `spark/src/spark/gateproto.py`
+  (`BrakeHealth`'s and `NtfyHealth`'s comments), `spark/tests/test_gate_app.py` (the examples'
+  moment carries a passed check at 09:00), `spark/src/spark/launch.py` and
+  `spark/tests/test_launch.py` (`newest_refusal` deleted, D14), `spark/src/spark/brake.py` and
+  `spark/tests/test_cli.py` (a comment each), `website/design/plan.md` (the example's dated
+  correction and a Revisions line) and `website/scenarios/s05-memory-critically-low.md` (a dated
+  note).
 
 **Interfaces:**
 
@@ -7096,6 +7105,53 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
   when its `uids` is empty, a system event, which every caller sees *(corrected 2026-10-08, the
   controller's ruling, at Task 17's review: both releases of the brake's hold are recorded so, and
   the note hid them from every caller)*.
+- *(Added 2026-10-14, the controller's rulings, at Task 29, after its NEEDS_CONTEXT; as built in
+  `593fed8` and the commit after it:)*
+  - **Q1, `paused`:** it reads `paused      no` when no hold stands. The view carries no last-fired
+    or released time then (Task 18's `paused` is null, and the gate times only automatic releases);
+    the release shows in *recent*, and a marked model's mark says when the brake fired. plan.md's
+    example is corrected with it.
+  - **Q2, a refusal in *recent*:** `HH:MM  for <key label>: <text>`, its whole one-line text, never
+    shortened, since the gate keeps each refusal's whole message in the asker's words; newest first;
+    `agent`'s view keeps *a process of Dan's*. plan.md's example is corrected with it. The human
+    view shows the newest 10 rows, then, when there are more, `… and N older: spark status --json
+    shows them all`; `--json` keeps every row (the controller's ruling at the same task: up to 100
+    whole refusals is a wall).
+  - **Q3, the brake's start check:** the gate reads the brake's `key-check.json` on each view
+    (`GateCore._brake_health`). `health.brake.status` is `ok`, with `key_checked_at`, only for a unit
+    that is up and a check that passed; otherwise `down`, `unknown` (its unit not read yet), `start
+    check failed: <why>`, `start check waiting for llama-swap`, `start check not recorded` or `start
+    check unreadable`. Status prints `brake ok (key checked 09:00)`, or `brake <that> (make logs
+    s=brake)`, never *brake ok*. Task 25's gate unit already reads the brake's folder (it runs as
+    `spark`, the folder's owner, and its `ReadWritePaths=` lists it), so the unit is unchanged. S05
+    gains a dated note.
+  - **D1–D15**, in brief:
+    - D1: next steps name Dan in a non-admin caller's view (`format_status`'s `words`, from
+      `gateclient._words()`): *only Dan can load it again*, *waiting for Dan: …*, *waits for Dan:
+      make brake-release*, *… for Dan … Dan's spark make-room --done ends it*, *make doctor shows Dan
+      what's wrong*, *make logs s=brake shows Dan why*.
+    - D2: `spark load` names the model's first role, from the deployed registry, else its name.
+    - D3: `health` shows the model service only when it isn't ok; the damage, read problems,
+      unticketed engines, no-ticket refusals and a stale activity record each get a line under it;
+      each of the view's `problems` is a `problem` line.
+    - D4: *free for a load*'s breakdown adds up as shown, as `messages._breakdown` does, with Dan's
+      hold only where the figure counts it (*the 40 GiB make-room holds for Dan*); where the GPU's
+      ceiling or a starting load gave the figure, *(the GPU's ceiling or a load still starting
+      holds it below … available, less …)*.
+    - D5: the header in tenths within 10 GiB of the brake line, `below` past it, never `-0`.
+    - D6: times as `HH:MM` within a day of the view's `at`, else with their day, in the box's zone.
+    - D7: *recent* newest first.
+    - D8: a loaded row's last column: `loading`, `unloading`, `stopping`, `answering N (oldest M
+      min)`.
+    - D9: a gate error other than not answering is said as its sentence; an answer status can't read
+      says so; exit 0.
+    - D10: every line escaped.
+    - D11: a pin with no end, *pins the coder with no end set*.
+    - D12: *sessions: agent's pi, since 08:40*, or *sessions none*.
+    - D13: waits as *2 min of 10*, *12 s of 30*, *40 s of 10 min*.
+    - D14: `launch.newest_refusal` deleted.
+    - D15: the Makefile's help, *room for a load, what's loaded, waiting, paused or held, recent,
+      health (from the gate)*.
 
 **Tests** (`spark/tests/test_status.py`; a gate stand-in on a short Unix socket):
 

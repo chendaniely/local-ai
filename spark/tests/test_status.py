@@ -461,6 +461,27 @@ def test_status_sends_no_key(box, monkeypatch):
 
 # The rulings' and the interface's other words.
 
+def test_recent_shows_the_newest_ten_and_says_how_many_more_json_has(box):
+    # The controller's ruling at Task 29: up to 100 rows of whole refusals is a wall, so the human view shows the newest
+    # 10 and says how many older ones `--json` keeps.
+    view = example_view()
+    view["recent"] = [{"at": at(9, minute), "text": f"event {minute}", "code": None, "model": None, "key_label": None}
+                      for minute in range(13)]
+    assert row(view, "recent") == [
+        "recent      09:12  event 12",
+        *(f"            09:{minute:02d}  event {minute}" for minute in range(11, 2, -1)),
+        "            … and 3 older: spark status --json shows them all"]
+    view["recent"] = view["recent"][3:]  # exactly ten: no line
+    assert len(row(view, "recent")) == 10 and "older" not in text(view)
+    view["recent"] = view["recent"][:1] + view["recent"]  # eleven, one older
+    assert row(view, "recent")[-1] == "            … and 1 older: spark status --json shows them all"
+    view["recent"] = [{"at": at(9, minute), "text": f"event {minute}", "code": None, "model": None, "key_label": None}
+                      for minute in range(13)]
+    with serving(box.folder / "control.sock", view):
+        code, out = box("--json")
+    assert code == 0 and standard(out)["recent"] == view["recent"]  # every row
+
+
 def test_a_brake_mark_with_no_reading_says_not_known():
     view = example_view()
     view["models"][3]["brake_mark"]["seen_gib"] = None
