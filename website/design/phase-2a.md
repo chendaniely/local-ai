@@ -8327,6 +8327,19 @@ git commit -m "feat(spark): 🤖 spark doctor checks the front, the gate, the br
 - `test_without_the_flag_settings_are_untouched` — a settings file's bytes and time unchanged.
 - `test_a_settings_file_that_isnt_an_object_is_refused` — `[]` → refused, naming the file, nothing
   written.
+- *(Added 2026-10-15, at Task 34, as built (c1c3fa3), the controller's review:)* beyond the
+  interface:
+  - `settings.json` is read without following a link and without waiting on a FIFO, and only from a
+    regular file. A link there is refused, naming the file, and nothing is written.
+  - The flag without `--write` is refused, and nothing is written.
+  - The backup and the new file are each written whole into a new file in the same folder, then
+    renamed over the old one.
+  - `models.json` is still written as before, through a link if one is there: that is on the phase's
+    list for its close.
+  - A `retry.provider.timeoutMs` in agent's settings, or a project's own `.pi/settings.json`,
+    overrides pi's idle timeout. `pi.md` doesn't say so yet: that is on the phase's list for its
+    close too.
+  - `bootstrap.md` gains one sentence pointing at the command.
 
 **Steps:**
 
