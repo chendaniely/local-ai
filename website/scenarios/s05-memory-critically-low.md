@@ -29,7 +29,20 @@ which leaves out the models' GPU memory, and its dry run in Phase 1's Task 13, w
 `oom_score_adj`, picked Gemma, a resident, before the on-demand coder. *(Corrected 2026-09-28, from
 Phase 1's council: `spark launch` now gives a resident engine `oom_score_adj` 900 and an on-demand
 one 1000, so earlyoom picks the on-demand coder first, as the brake does. Checked after that day's
-deploy: earlyoom's dry run picked the coder's engine.)*
+deploy: earlyoom's dry run picked the coder's engine.)* *(2026-10-14, Phase 2a's Task 28, built, not
+yet deployed (Task 36's bootstrap brings it):*
+
+- *Root gives `agent`'s processes `oom_score_adj` 1000, which `agent` can't lower: at its SSH logins,
+  through a hook in sshd's PAM stack, and for its user manager, through a drop-in. `agent` can't use
+  cron.*
+- *earlyoom loses `--prefer`, so it ranks as the kernel does. A job of `agent`'s goes before the
+  coder's engine once it holds more memory than that engine, and before every resident. The engines
+  still go before any process of mine.*
+- *Task 40 tests it as `agent`, against earlyoom's dry run.*
+
+*A GPU job's CUDA memory isn't in its RSS, as an engine's isn't. So a GPU job of `agent`'s goes
+before the coder's engine only once its RSS passes that engine's, and it goes before the
+residents either way.)*
 
 **How to override.** `spark brake --release` once memory is back. *(Corrected 2026-09-26:
 `make brake-release`, on the Spark, in its clone, from an account in `spark-admin` — `spark` isn't

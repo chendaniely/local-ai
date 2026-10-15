@@ -476,7 +476,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `stack/templates/compose.yaml`, `searxng-settings.yml` | `cap_drop: [ALL]`, only what each needs added back; SearXNG's request timeout |
 | `stack/host/local-ai-notify` (new) | The notifier's script: unit, result and time only; once per unit per 5 minutes; token by header file |
 | `stack/host/local-ai-agent-oom`, `stack/host/agent-oom.conf` (new) | Root sets `agent`'s `oom_score_adj` at login, for sshd and its user manager |
-| `stack/host/bootstrap.sh` | 2a's users, root-only secrets, the new folders, the cache moved to `spark-pull`, the notifier's script, `agent`'s OOM hook, install-units' new units |
+| `stack/host/earlyoom.default` | No `--prefer` *(Task 28, the controller's ruling, 2026-10-14)* |
+| `stack/host/bootstrap.sh` | 2a's users, root-only secrets, the new folders, the cache moved to `spark-pull`, the notifier's script, `agent`'s OOM hook, install-units' new units *(and, Task 28: the hook's line before sshd's first session line, the drop-in, `/etc/cron.deny`)* |
 | `stack/host/50-local-ai.rules` | The polkit rule: seven services (the six, and the S05 drill's oneshot), no sockets, no notifier |
 | `stack/measure/cuda_ceiling.py` (new) | PEP 723, standard library: allocates and touches 0.25 GiB steps at the hog's pace, each confirmed in `MemAvailable`, and stops at `MemAvailable` less the reserve |
 | `stack/measure/hog.py` (new) | PEP 723, standard library: the drills' one memory hog, sized from `MemAvailable` at the time (`--leave`), paced under the brake's rate watch, each step confirmed, never under its floor |
@@ -6983,7 +6984,8 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
 **Interfaces:**
 
 - `/usr/local/libexec/local-ai-agent-oom` (`0755 root:root`), run by a root-owned line, `session
-  optional pam_exec.so /usr/local/libexec/local-ai-agent-oom`, that bootstrap appends to
+  optional pam_exec.so /usr/local/libexec/local-ai-agent-oom`, that bootstrap ~~appends to~~
+  *inserts before the first session line of (corrected 2026-10-14, at Task 28: below)*
   `/etc/pam.d/sshd` once; for `PAM_USER=agent` and `PAM_TYPE=open_session` only, it writes
   `AGENT_OOM_SCORE_ADJ` to the session process's `oom_score_adj` as root, which also sets the floor
   its descendants can't go under.
@@ -6996,12 +6998,55 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
   change to the engines' scores or to `earlyoom.default`, is the controller's ruling, and Dan is
   told (*Values the box decides*). A change to `earlyoom.default` is said in the task's report,
   since Task 38's rollback runs Phase 1's doctor, whose `earlyoom` check then fails as well.
+- *(Added 2026-10-14, at Task 28, as built, with the controller's rulings:)*
+  - **The value is 1000, and `earlyoom.default` loses `--prefer`; launch's 900 and 1000 stay.**
+    - The kernel's score is (1000 + 1000 × RSS / (RAM + swap) + adj) × 2/3. On the box, a
+      llama-server at adj 1000 holding 2,643,628 kB read 1345, as the formula gives.
+    - `--prefer` added 300 after the 2/3, worth 450 points of adj, so no `agent` score could pass an
+      engine's. With it, the engines scored 1644 on demand and 1578 resident, against 1392 for a job
+      of `agent`'s holding a tenth of RAM at 1000.
+    - Without it: 1344 and 1278 against that 1392. An empty process of `agent`'s scores 1332, below
+      the on-demand engine and above a resident.
+    - A process of Dan's at 0 holding 90% of RAM scores 1196, below every engine.
+    - The script's comment has the arithmetic, and `test_the_values_put_a_large_agent_job_first`
+      checks it.
+  - **The line goes before sshd's first session line, not appended.** On the box, sshd's stack has
+    `session required pam_env.so user_readenv=1` further down, which reads `~/.pam_environment`, and
+    `pam_exec` hands the script the PAM environment. Appended, the hook would run as root in an
+    environment `agent` chose: `LD_PRELOAD` would run `agent`'s code before the script's first line.
+  - **The refusals.** Bootstrap refuses, changing nothing and naming the line, while:
+    - a line before that point names `user_readenv` or `user_envfile`, in sshd's file or a file it
+      includes there;
+    - a line names the hook but isn't the line exactly;
+    - the line stands after sshd's first session line;
+    - the file, its folder or `/var/backups` isn't root's own, or `pam_exec.so` is missing.
+  - **The swap.** Bootstrap backs the file up to `/var/backups/pam.d-sshd.<time>`, writes the new one
+    with `mktemp` in `/etc/pam.d`, checks it is the old one with only the line added, and swaps it in
+    with `mv`, `root:root 0644`, then reads it again. A re-run changes nothing.
+  - **The script.** It runs builtins only, with `PATH` fixed and `IFS` reset, and reads no variable
+    but `PAM_USER`, `PAM_TYPE` and the shell's `PPID`. It writes only `/proc/$PPID/oom_score_adj`,
+    once `$PPID` is past 1 and its comm is `sshd` or `sshd-session`. It exits 0 for anyone else and
+    any other `PAM_TYPE`, and 1 when `agent`'s open_session can't be given the score, which the
+    `optional` line ignores.
+  - **The drop-in's folder**, `user@<uid>.service.d`, is made `root:root 0755` directly in
+    `/etc/systemd/system` before the drop-in goes in. A folder already there that is a link, not a
+    folder, or not root's own is refused. `systemctl daemon-reload` follows.
+  - **cron.** `/etc/cron.deny` names `agent`, `root:root 0644`, made or appended once. A crontab's
+    jobs would start outside the hook and the user manager, at cron's score of 0. `cron.allow` is
+    left alone (none on the box), and a crontab of `agent`'s is named.
+  - **Files.** Also modified: `stack/host/earlyoom.default`, `website/design/plan.md`, phase-0.md
+    and phase-1.md (dated notes on `--prefer`), `website/how-to/qwen3.8-flash-next.md` (its `choom`
+    note) and `website/scenarios/s05-memory-critically-low.md`.
 
 **Tests** (`spark/tests/test_bootstrap.py`):
 
 - `test_bootstrap_installs_the_hook_for_sshd_and_agents_user_manager` — the dry run installs the
-  script, appends the `pam_exec` line only if it is missing, writes the drop-in with the value,
-  and reloads systemd.
+  script, ~~appends~~ *inserts (2026-10-14, as built)* the `pam_exec` line only if it is missing,
+  writes the drop-in with the value, and reloads systemd. *(As built, the PAM line's own tests run
+  the step for real against a stand-in `/etc/pam.d`, Ubuntu's stock sshd file:
+  `test_the_hook_line_goes_before_sshds_first_session_line`, `test_a_second_run_changes_nothing`,
+  the refusals' tests, and `test_the_line_bootstrap_writes_parses`. The drop-in's and
+  `/etc/cron.deny`'s run the same way. The hook's are split by case.)*
 - `test_the_hook_acts_only_for_agent` — the script run with a stand-in `/proc`: `PAM_USER=chendaniely`
   → writes nothing and exits 0 at once; `agent` and `open_session` → writes the value; `agent` and
   `close_session` → nothing; and the line bootstrap appends is `session optional`, so a failure of
@@ -7902,6 +7947,11 @@ private but not secret); and **[Dan]** the vault's entry note gains it.
   stack serves in Phase 1's layout meanwhile, reading the model files through the group.
   *(Added 2026-10-14, at Task 27's review: the move also refuses while any process runs as `spark`,
   in a unit or not, so bootstrap.md's step 3 checks `pgrep -l -u spark` before `make bootstrap`.)*
+  *(Added 2026-10-14, at Task 28, as built: "a fresh login" is one of Dan's and one of `agent`'s,
+  tested from the Mac before the second session closes. `agent`'s reads 1000 in
+  `/proc/self/oom_score_adj`. bootstrap.md's step 4 has both, and how to put
+  `/etc/pam.d/sshd` back from the copy the run made in `/var/backups`. Its step 6 checks the hook,
+  the drop-in, the line's place, `/etc/cron.deny` and earlyoom's arguments without `--prefer`.)*
 - [ ] **Step 2 [Spark]: Check it.** **On the Spark:**
 
 ```bash
@@ -8078,7 +8128,9 @@ make apply-now
   Then `make doctor` from that worktree passes every one of Phase 1's fifteen checks but *secrets
   folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 36), and is expected
   (and *earlyoom* too, if Task 28's ruling changed `earlyoom.default`, since Phase 1's file then
-  differs from the running arguments); a plan revision says what failed.
+  differs from the running arguments); a plan revision says what failed. *(It did, 2026-10-14:
+  Task 28 took `--prefer` out of `earlyoom.default`, so the rollback's doctor fails *earlyoom* as
+  well, as expected: none of the rollback's steps touches earlyoom, which keeps 2a's arguments.)*
 
 - [ ] **Step 2:** `make apply`. Expected: it lists root's ten new or changed unit files (the
   compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 32),
@@ -8371,7 +8423,10 @@ d=$(mktemp -d) && chmod 755 "$d" && install -m 644 stack/measure/hog.py "$d/hog.
   `-M` above the box's free memory so earlyoom believes it must act), with the `--prefer` and
   `--avoid` that `stack/host/earlyoom.default` holds now, for about five seconds, then Ctrl-C and
   `sudo -k`. Expected: the process it would kill is the hog, `agent`'s, and no engine. Then Ctrl-C
-  in `agent`'s pane (the hog frees everything), and, as you, `rm -r` the folder.
+  in `agent`'s pane (the hog frees everything), and, as you, `rm -r` the folder. *(2026-10-14, Task
+  28, the controller's ruling: `earlyoom.default` has no `--prefer` from then on, so the dry run
+  takes its `--avoid` alone. A hog of about 12 GiB at 1000 scores about 1392, against 1344 for the
+  coder's engine at 2% of RAM; the script's comment has the arithmetic.)*
 - [ ] **Step 5: Stop and ask Dan** if either check fails: whether Task 28's hook comes out in a
   revert commit, and the item moves to 2b with a plan revision, is his call, since a check run in
   a tmux server older than the hook reads a working hook as a broken one.

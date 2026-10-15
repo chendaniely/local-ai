@@ -6926,6 +6926,12 @@ sudo earlyoom --dryrun -r 1 -M 125829120,125829110 -s 100,100 \
 
 Expected: the process it would kill is an engine; note which one.
 
+*(2026-10-14, Phase 2a's Task 28, the controller's ruling: `stack/host/earlyoom.default` has no
+`--prefer` from Task 36's bootstrap on, so a re-run of this check leaves that line out.
+`--prefer` added 300 to an engine's score, worth 450 points of `oom_score_adj`, and no score of
+`agent`'s, which root now sets to 1000, could pass it. The engines' own 900 and 1000, above, still
+put them before every process at 0.)*
+
 - [x] **Step 6 [Spark]: Footprints** — a model's footprint is about *before − lowest*. Where a
   reading is above the registry's estimate (19, 1.5, 3 and 29 GiB), raise that model's
   `footprint_gib` to the reading, rounded up, and leave `footprint_measured: false` — Phase 2

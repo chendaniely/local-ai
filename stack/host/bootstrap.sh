@@ -808,6 +808,284 @@ notifier() {
   run install -o root -g root -m 0755 "$HERE/local-ai-notify" "$NOTIFIER"
 }
 
+# agent's processes get an OOM score that root sets and agent can't lower (Phase 2a, Task 28): AGENT_OOM_SCORE_ADJ,
+# in stack/host/local-ai-agent-oom, which has the arithmetic. Three ways in, each root's:
+#   - at each login over SSH, a pam_exec hook in sshd's stack writes it to the login's sshd, as root, so the shell
+#     and everything it starts inherit it and its floor (pam_sshd_hook);
+#   - agent's user manager, which PID 1 starts outside any login, gets it from a drop-in (agent_drop_in);
+#   - cron, the one other way agent could start a job, is closed to agent (cron_deny).
+# Tests point these at stand-ins.
+AGENT_HOOK="/usr/local/libexec/local-ai-agent-oom"
+PAM_LINE="session optional pam_exec.so $AGENT_HOOK"
+PAM_SSHD="${BOOTSTRAP_PAM_SSHD:-/etc/pam.d/sshd}"
+PAM_BACKUPS="${BOOTSTRAP_PAM_BACKUPS:-/var/backups}"
+# Where Linux-PAM keeps its modules, as globs (brightroar's pam_exec.so is in /usr/lib/aarch64-linux-gnu/security).
+PAM_MODULE_DIRS="${BOOTSTRAP_PAM_MODULE_DIRS:-/usr/lib/*/security /lib/*/security /usr/lib/security /lib/security}"
+CRON_DENY="${BOOTSTRAP_CRON_DENY:-/etc/cron.deny}"
+CRON_ALLOW="${BOOTSTRAP_CRON_ALLOW:-/etc/cron.allow}"
+CRON_SPOOL="${BOOTSTRAP_CRON_SPOOL:-/var/spool/cron/crontabs}"
+PAM_WORK=""   # the PAM step's copy in /etc/pam.d, removed on any way out before it is swapped in
+
+agent_oom() {
+  say "agent's OOM score, which root sets and agent can't lower: sshd's hook and a drop-in for agent's user manager"
+  # The script first, then the line that runs it: /usr/local/libexec is made in directories.
+  run install -o root -g root -m 0755 "$HERE/local-ai-agent-oom" "$AGENT_HOOK"
+  agent_drop_in
+  pam_sshd_hook
+}
+
+# The drop-in for agent's user manager, user@<agent's uid>.service. Its folder isn't on this box (checked 2026-10-14)
+# and install doesn't make folders, so it is made first, root:root 0755, directly in /etc/systemd/system, which only
+# root writes. A folder already there that is a link, not a folder, or not root's own is refused: install -d would
+# follow a link. The new value reaches the manager at its next start, after agent's last session ends (agent has no
+# linger) or at a reboot.
+agent_drop_in() {
+  local uid folder
+  if (( DRY_RUN )); then
+    folder="$UNIT_DIR/user@<agent's uid>.service.d"
+  else
+    uid="$(id -u agent 2>/dev/null)" || uid=""
+    if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+      echo "bootstrap: id -u agent gave no uid, so agent's user manager's drop-in can't be named: users_and_groups makes agent, before this step" >&2
+      exit 1
+    fi
+    folder="$UNIT_DIR/user@$uid.service.d"
+    if [[ -e "$folder" || -L "$folder" ]] && { [[ -L "$folder" || ! -d "$folder" ]] || ! roots_own "$folder"; }; then
+      echo "bootstrap: $folder isn't a folder root owns and only root writes, so agent's drop-in wasn't installed: look at it with ls -ld $folder" >&2
+      exit 1
+    fi
+  fi
+  run install -d -o root -g root -m 0755 "$folder"
+  run install -o root -g root -m 0644 "$HERE/agent-oom.conf" "$folder/local-ai-oom.conf"
+  run systemctl daemon-reload
+}
+
+# The hook's line goes before sshd's first session line (the controller's ruling, Task 28), never at the end. pam_exec
+# hands the script the PAM environment, and sshd's stack has `session required pam_env.so user_readenv=1`, which
+# reads the user's ~/.pam_environment: after that line, agent would choose the environment root's /bin/sh starts
+# with (LD_PRELOAD, for one, runs agent's code before the script's first line). Before sshd's first session line
+# only the auth and account modules have run, and on Ubuntu none of them reads a user's file.
+#
+# So the step refuses, changing nothing, and names each reason:
+#   - while sshd's file, or its folder, isn't root's own regular file and folder;
+#   - while pam_exec.so isn't where Linux-PAM keeps its modules;
+#   - while a line before sshd's first session line names user_readenv (or user_envfile), in the file or in a file a
+#     line there includes;
+#   - while a line names the hook but isn't PAM_LINE exactly (a `required` one would make a failing script block
+#     every login), or PAM_LINE stands anywhere but before sshd's other session lines;
+#   - while sshd's file has no session line at all.
+# Otherwise, if the line is in place, it changes nothing. If not, it backs the file up to /var/backups with the time
+# in its name, writes the new file with mktemp in /etc/pam.d, checks it is the old one with only the line added, and
+# swaps it in with mv, root:root 0644. /etc/pam.d is root's, so root writes through no path spark or agent controls.
+# It then reads the file again, as the hold checks apt-mark's work.
+
+# The PAM file's words with libpam's comments taken out (everything from a #): what each line does.
+pam_text() { printf '%s' "${1%%#*}"; }
+
+# A line of a PAM file as a reason shows it: tabs as spaces (PAM's files separate fields with both), anything else a
+# terminal could act on as ?.
+pam_shown() { printable "${1//$'\t'/ }"; }
+
+# Whether a line, comments taken out, names a setting that reads a user's environment file.
+reads_user_env() { [[ "$(pam_text "$1")" =~ (^|[[:space:]])user_(readenv|envfile)= ]]; }
+
+# Reads PAM_SSHD into PAM_POINT (the line number of sshd's first session line, the hook's own counted; 0 for none),
+# PAM_FIRST (that line), PAM_IN_PLACE (1 when that line is PAM_LINE), and adds to PAM_REASONS why the line can't go
+# in now, one reason a line.
+pam_plan() {
+  local n=0 raw text first second third inc incn incraw dir="${PAM_SSHD%/*}"
+  local -a includes=()
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    n=$((n + 1))
+    text="$(pam_text "$raw")"
+    first="" second="" third=""
+    read -r first second third _ <<<"$text" || true
+    [[ -n "$first" ]] || continue
+    if (( PAM_POINT == 0 )); then
+      if [[ "$first" == session || "$first" == -session || ( "$first" == @include && "$second" == common-session* ) ]]; then
+        PAM_POINT=$n
+        PAM_FIRST="$raw"
+        if [[ "$raw" == "$PAM_LINE" ]]; then PAM_IN_PLACE=1; fi
+      else
+        if reads_user_env "$raw"; then
+          PAM_REASONS+="$PAM_SSHD:$n reads a user's environment file before sshd's first session line, where the hook's line goes: $(pam_shown "$raw")"$'\n'
+        fi
+        if [[ "$first" == @include ]]; then includes+=("$n|$second")
+        elif [[ "$second" == include || "$second" == substack ]]; then includes+=("$n|$third")
+        fi
+      fi
+    fi
+    if [[ "$raw" == "$PAM_LINE" ]]; then
+      if (( n != PAM_POINT )); then
+        PAM_REASONS+="$PAM_SSHD:$n has the hook's line after sshd's first session line, line $PAM_POINT: take it out by hand (the backup bootstrap made, if any, is in $PAM_BACKUPS), then run this again: $(pam_shown "$raw")"$'\n'
+      fi
+    elif [[ "$text" == *"$AGENT_HOOK"* ]]; then
+      PAM_REASONS+="$PAM_SSHD:$n names the hook, but isn't the line bootstrap writes ($PAM_LINE): take it out by hand, then run this again: $(pam_shown "$raw")"$'\n'
+    fi
+  done < "$PAM_SSHD"
+  if (( PAM_POINT == 0 )); then
+    PAM_REASONS+="$PAM_SSHD has no session line, so there's no place for the hook's line before sshd's session modules"$'\n'
+  fi
+  for inc in "${includes[@]}"; do
+    incn="${inc%%|*}" inc="${inc#*|}"
+    [[ "$inc" == /* ]] || inc="$dir/$inc"
+    if [[ ! -r "$inc" || ! -f "$inc" ]]; then
+      PAM_REASONS+="$inc, which line $incn includes before sshd's first session line, can't be read"$'\n'
+      continue
+    fi
+    n=0
+    while IFS= read -r incraw || [[ -n "$incraw" ]]; do
+      n=$((n + 1))
+      if reads_user_env "$incraw"; then
+        PAM_REASONS+="$inc:$n reads a user's environment file before sshd's first session line, where the hook's line goes: $(pam_shown "$incraw")"$'\n'
+      fi
+    done < "$inc"
+  done
+  return 0
+}
+
+# Whether pam_exec.so is in one of PAM_MODULE_DIRS.
+pam_exec_found() {
+  local dir
+  # shellcheck disable=SC2086  # the folders are globs, expanded here on purpose
+  for dir in $PAM_MODULE_DIRS; do
+    if [[ -f "$dir/pam_exec.so" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# Sets PAM_REASONS to why the hook's line can't go in now, one reason a line, empty when it can; and PAM_POINT,
+# PAM_FIRST and PAM_IN_PLACE, as pam_plan does, when the file can be read.
+pam_check() {
+  local dir="${PAM_SSHD%/*}"
+  PAM_POINT=0 PAM_FIRST="" PAM_IN_PLACE=0 PAM_REASONS=""
+  if [[ -L "$PAM_SSHD" || ! -f "$PAM_SSHD" ]]; then
+    PAM_REASONS+="$PAM_SSHD is a link, a folder, or missing, not a regular file: look at it with ls -l $PAM_SSHD"$'\n'
+  elif ! roots_own "$PAM_SSHD"; then
+    PAM_REASONS+="$PAM_SSHD isn't root's own: its owner isn't root, or its group or others can write it"$'\n'
+  else
+    pam_plan
+  fi
+  if [[ -L "$dir" || ! -d "$dir" ]] || ! roots_own "$dir"; then
+    PAM_REASONS+="$dir isn't a folder root owns and only root writes, so the new file can't be written beside the old one"$'\n'
+  fi
+  if (( ! PAM_IN_PLACE )); then
+    if ! pam_exec_found; then
+      PAM_REASONS+="no pam_exec.so in $PAM_MODULE_DIRS: is libpam-modules installed?"$'\n'
+    fi
+    if [[ -L "$PAM_BACKUPS" || ! -d "$PAM_BACKUPS" ]] || ! roots_own "$PAM_BACKUPS"; then
+      PAM_REASONS+="$PAM_BACKUPS isn't a folder root owns and only root writes, so the old file can't be backed up there"$'\n'
+    fi
+  fi
+}
+
+pam_sshd_hook() {
+  local line all="" dir="${PAM_SSHD%/*}" backup point
+  pam_check
+  if [[ -n "$PAM_REASONS" ]]; then
+    if (( DRY_RUN )); then
+      while IFS= read -r line; do all+="${all:+; }$line"; done <<<"${PAM_REASONS%$'\n'}"
+      printf '+ insert "%s" into %s   (a real run stops here: %s)\n' "$PAM_LINE" "$PAM_SSHD" "$all"
+      return 0
+    fi
+    {
+      echo "bootstrap: $PAM_SSHD can't take the hook's line, so nothing was changed:"
+      while IFS= read -r line; do printf '  %s\n' "$line"; done <<<"${PAM_REASONS%$'\n'}"
+      echo "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
+    } >&2
+    exit 1
+  fi
+  if (( PAM_IN_PLACE )); then
+    say "$PAM_SSHD already runs the hook at line $PAM_POINT, before its other session lines: nothing to change"
+    return 0
+  fi
+  point=$PAM_POINT
+  if (( DRY_RUN )); then
+    printf '+ cp -p %s %s/pam.d-sshd.<time>\n' "$PAM_SSHD" "$PAM_BACKUPS"
+    printf "+ insert \"%s\" at line %s of a copy made with mktemp in %s, before sshd's first session line: %s\n" \
+      "$PAM_LINE" "$point" "$dir" "$(pam_shown "$PAM_FIRST")"
+    printf '+ mv <that copy, root:root 0644> %s\n' "$PAM_SSHD"
+    return 0
+  fi
+  backup="$PAM_BACKUPS/pam.d-sshd.$(date +%Y%m%dT%H%M%S)"
+  if [[ -e "$backup" || -L "$backup" ]]; then
+    echo "bootstrap: $backup is there already, so $PAM_SSHD wasn't backed up or changed: run this again in a second" >&2
+    exit 1
+  fi
+  cp -p -- "$PAM_SSHD" "$backup"
+  PAM_WORK="$(mktemp "$dir/.sshd.local-ai.XXXXXX")"
+  trap 'if [[ -n "$PAM_WORK" ]]; then rm -f -- "$PAM_WORK"; fi' EXIT
+  { head -n "$((point - 1))" -- "$PAM_SSHD"; printf '%s\n' "$PAM_LINE"; tail -n "+$point" -- "$PAM_SSHD"; } > "$PAM_WORK"
+  chown root:root "$PAM_WORK"
+  chmod 0644 "$PAM_WORK"
+  # The old file with only the line added: everything before line $point, the line, then everything from it on.
+  if ! cmp -s <(head -n "$((point - 1))" -- "$PAM_SSHD") <(head -n "$((point - 1))" -- "$PAM_WORK") ||
+    [[ "$(sed -n "${point}p" -- "$PAM_WORK")" != "$PAM_LINE" ]] ||
+    ! cmp -s <(tail -n "+$point" -- "$PAM_SSHD") <(tail -n "+$((point + 1))" -- "$PAM_WORK"); then
+    echo "bootstrap: the new $PAM_SSHD came out other than the old one with the hook's line added, so nothing was changed (the old file is backed up as $backup)" >&2
+    exit 1
+  fi
+  mv -f -- "$PAM_WORK" "$PAM_SSHD"
+  PAM_WORK=""
+  trap - EXIT
+  pam_check
+  if (( ! PAM_IN_PLACE )) || [[ -n "$PAM_REASONS" ]]; then
+    echo "bootstrap: $PAM_SSHD doesn't read as it should after the change: from a session still open, put the old one back with sudo cp -p $backup $PAM_SSHD" >&2
+    exit 1
+  fi
+  say "$PAM_SSHD: the hook's line is in at line $point, before sshd's first session line; the old file is $backup"
+}
+
+# cron.deny names agent (the controller's ruling, Task 28): a crontab's jobs start from cron, through cron's own PAM
+# stack, outside both sshd's hook and agent's user manager, at cron's score of 0. crontab(1): while cron.allow
+# doesn't exist, a user cron.deny names can't use crontab; when it exists, cron.allow alone decides, and cron.deny
+# isn't read. cron.allow is left as it is, and said. A file that exists gets agent appended once, after a newline if
+# its last line has none; a new one is root:root 0644, which cron needs (world-readable). A crontab agent already has
+# is only named: cron runs it whatever cron.deny says, and its jobs are agent's to lose, so removing it is Dan's call.
+cron_deny() {
+  say "cron: agent can't add a crontab, whose jobs would start outside its OOM score"
+  local work line
+  if [[ -e "$CRON_DENY" || -L "$CRON_DENY" ]]; then
+    if [[ -L "$CRON_DENY" || ! -f "$CRON_DENY" ]] || ! roots_own "$CRON_DENY"; then
+      if (( DRY_RUN )); then
+        printf "+ append agent to %s   (a real run stops here: it isn't root's own regular file)\n" "$CRON_DENY"
+        return 0
+      fi
+      echo "bootstrap: $CRON_DENY isn't root's own regular file, so agent wasn't added to it: look at it with ls -l $CRON_DENY" >&2
+      exit 1
+    fi
+    if grep -qx 'agent' -- "$CRON_DENY"; then
+      say "$CRON_DENY already names agent: nothing to change"
+    elif (( DRY_RUN )); then
+      printf '+ append agent to %s\n' "$CRON_DENY"
+    else
+      # A newline first when the last line has none, read before the append opens the file.
+      line=""
+      if [[ -s "$CRON_DENY" && -n "$(tail -c 1 -- "$CRON_DENY")" ]]; then line=$'\n'; fi
+      printf '%sagent\n' "$line" >> "$CRON_DENY"
+      say "$CRON_DENY names agent: agent can't add a crontab"
+    fi
+  elif (( DRY_RUN )); then
+    printf '+ install -o root -g root -m 0644 <a file holding agent> %s\n' "$CRON_DENY"
+  else
+    work="$(mktemp -d)"
+    printf 'agent\n' > "$work/cron.deny"
+    install -o root -g root -m 0644 "$work/cron.deny" "$CRON_DENY"
+    rm -rf -- "$work"
+    say "$CRON_DENY names agent: agent can't add a crontab"
+  fi
+  if [[ -e "$CRON_ALLOW" ]]; then
+    if grep -qx 'agent' -- "$CRON_ALLOW" 2>/dev/null; then
+      say "$CRON_ALLOW exists, so cron reads it and not $CRON_DENY: agent is in it, so agent can still use crontab: take agent out of it by hand"
+    else
+      say "$CRON_ALLOW exists, so cron reads it and not $CRON_DENY: agent isn't in it, so agent can't use crontab"
+    fi
+  fi
+  if (( ! DRY_RUN )) && [[ -e "$CRON_SPOOL/agent" ]]; then
+    say "agent already has a crontab, which cron runs whatever cron.deny says: read it with sudo crontab -l -u agent, and remove it with sudo crontab -r -u agent"
+  fi
+}
+
 headless() {
   say "boot to a console; start a desktop on demand with: sudo systemctl start display-manager"
   run systemctl set-default multi-user.target
@@ -1006,6 +1284,8 @@ main() {
   directories
   hf_cache_to_pull
   notifier
+  agent_oom
+  cron_deny
   headless
   earlyoom_config
   needrestart_config

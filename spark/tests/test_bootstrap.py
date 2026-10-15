@@ -205,14 +205,105 @@ def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
     }
 
 
+# Task 28: /etc/pam.d/sshd as Ubuntu 24.04's openssh-server 1:9.6p1-3ubuntu13 ships it, byte for byte the file on
+# brightroar (its md5 matched the package's conffile, 2026-10-14), and the rules of the two files it includes before
+# its first session line, as brightroar has them.
+STOCK_SSHD = """# PAM configuration for the Secure Shell service
+
+# Standard Un*x authentication.
+@include common-auth
+
+# Disallow non-root logins when /etc/nologin exists.
+account    required     pam_nologin.so
+
+# Uncomment and edit /etc/security/access.conf if you need to set complex
+# access limits that are hard to express in sshd_config.
+# account  required     pam_access.so
+
+# Standard Un*x authorization.
+@include common-account
+
+# SELinux needs to be the first session rule.  This ensures that any
+# lingering context has been cleared.  Without this it is possible that a
+# module could execute code in the wrong domain.
+session [success=ok ignore=ignore module_unknown=ignore default=bad]        pam_selinux.so close
+
+# Set the loginuid process attribute.
+session    required     pam_loginuid.so
+
+# Create a new session keyring.
+session    optional     pam_keyinit.so force revoke
+
+# Standard Un*x session setup and teardown.
+@include common-session
+
+# Print the message of the day upon successful login.
+# This includes a dynamically generated part from /run/motd.dynamic
+# and a static (admin-editable) part from /etc/motd.
+session    optional     pam_motd.so  motd=/run/motd.dynamic
+session    optional     pam_motd.so noupdate
+
+# Print the status of the user's mailbox upon successful login.
+session    optional     pam_mail.so standard noenv # [1]
+
+# Set up user limits from /etc/security/limits.conf.
+session    required     pam_limits.so
+
+# Read environment variables from /etc/environment and
+# /etc/security/pam_env.conf.
+session    required     pam_env.so # [1]
+# In Debian 4.0 (etch), locale-related environment variables were moved to
+# /etc/default/locale, so read that as well.
+session    required     pam_env.so user_readenv=1 envfile=/etc/default/locale
+
+# SELinux needs to intervene at login time to ensure that the process starts
+# in the proper default security context.  Only sessions which are intended
+# to run in the user's context should be run after this.
+session [success=ok ignore=ignore module_unknown=ignore default=bad]        pam_selinux.so open
+
+# Standard Un*x password updating.
+@include common-password
+"""
+STOCK_COMMON_AUTH = ("auth\t[success=1 default=ignore]\tpam_unix.so nullok\nauth\trequisite\t\t\tpam_deny.so\n"
+                     "auth\trequired\t\t\tpam_permit.so\nauth\toptional\t\t\tpam_cap.so \n")
+STOCK_COMMON_ACCOUNT = ("account\t[success=1 new_authtok_reqd=done default=ignore]\tpam_unix.so \n"
+                        "account\trequisite\t\t\tpam_deny.so\naccount\trequired\t\t\tpam_permit.so\n")
+
+
+def stand_in_pam(folder: Path, sshd: str = STOCK_SSHD) -> Path:
+    """A stand-in /etc/pam.d under `folder`, holding sshd and the two files it includes before its first session line,
+    0644 in a 0755 folder as Ubuntu leaves them; a stand-in for the folder of PAM's modules, holding pam_exec.so; and
+    an empty stand-in /var/backups, 0755. Returns the stand-in sshd."""
+    pam = folder / "pam.d"
+    pam.mkdir()
+    pam.chmod(0o755)
+    for name, text in (("sshd", sshd), ("common-auth", STOCK_COMMON_AUTH), ("common-account", STOCK_COMMON_ACCOUNT)):
+        (pam / name).write_text(text)
+        (pam / name).chmod(0o644)
+    (folder / "security").mkdir()
+    (folder / "security/pam_exec.so").write_text("")
+    (folder / "backups").mkdir()
+    (folder / "backups").chmod(0o755)
+    return pam / "sshd"
+
+
 # A host where dpkg-query finds no packages at all, as on the Mac. The default dry run uses it, so the
 # hold step reads the same everywhere: not the Spark's held GPU set, not whatever CI's runner
 # carries, and never a package state on the host that happens to stop the hold. Its Hugging Face
 # cache is a stand-in that doesn't exist, as on a new box (Task 27), so the cache's step never reads
-# the Spark's own cache, its units or its deployed registry either.
+# the Spark's own cache, its units or its deployed registry either. Task 28: nor the host's own sshd PAM file,
+# PAM's modules or cron's files: stand-ins hold Ubuntu's stock sshd file, whoever runs the tests stands in for root,
+# and neither cron file exists.
 _NO_PACKAGES_DIR = tempfile.TemporaryDirectory(prefix="test-bootstrap-")
-NO_PACKAGES = {**gpu_env(Path(_NO_PACKAGES_DIR.name), {}),
-               "BOOTSTRAP_HF_CACHE": str(Path(_NO_PACKAGES_DIR.name) / "no-hf-cache")}
+_NO_PACKAGES = Path(_NO_PACKAGES_DIR.name)
+NO_PACKAGES = {**gpu_env(_NO_PACKAGES, {}),
+               "BOOTSTRAP_HF_CACHE": str(_NO_PACKAGES / "no-hf-cache"),
+               "BOOTSTRAP_PAM_SSHD": str(stand_in_pam(_NO_PACKAGES)),
+               "BOOTSTRAP_PAM_BACKUPS": str(_NO_PACKAGES / "backups"),
+               "BOOTSTRAP_PAM_MODULE_DIRS": str(_NO_PACKAGES / "security"),
+               "BOOTSTRAP_ROOT_USER": pwd.getpwuid(os.getuid()).pw_name,
+               "BOOTSTRAP_CRON_DENY": str(_NO_PACKAGES / "no-cron.deny"),
+               "BOOTSTRAP_CRON_ALLOW": str(_NO_PACKAGES / "no-cron.allow")}
 
 
 def held(tmp_path: Path) -> set[str]:
@@ -1056,9 +1147,16 @@ def test_the_scripts_environment_is_built_not_copied(tmp_path):
     names, import_names = sorted(env), sorted(NO_PACKAGES)
     home, test_home, import_home = env["HOME"], os.environ["HOME"], NO_PACKAGES["HOME"]
     assert names == ["APT_MARK_HELD", "DPKG_FIXTURE", "HOME", "PATH"]
-    # Task 27: and the default dry run's stand-in for the Hugging Face cache, a path that doesn't exist.
-    assert import_names == ["APT_MARK_HELD", "BOOTSTRAP_HF_CACHE", "DPKG_FIXTURE", "HOME", "PATH"]
+    # Task 27: and the default dry run's stand-in for the Hugging Face cache, a path that doesn't exist. Task 28: and
+    # its stand-ins for sshd's PAM file, PAM's modules, root and cron's files, none of them the host's.
+    assert import_names == ["APT_MARK_HELD", "BOOTSTRAP_CRON_ALLOW", "BOOTSTRAP_CRON_DENY", "BOOTSTRAP_HF_CACHE",
+                            "BOOTSTRAP_PAM_BACKUPS", "BOOTSTRAP_PAM_MODULE_DIRS", "BOOTSTRAP_PAM_SSHD",
+                            "BOOTSTRAP_ROOT_USER", "DPKG_FIXTURE", "HOME", "PATH"]
     assert not Path(NO_PACKAGES["BOOTSTRAP_HF_CACHE"]).exists()
+    for name in ("BOOTSTRAP_PAM_SSHD", "BOOTSTRAP_PAM_MODULE_DIRS", "BOOTSTRAP_CRON_DENY", "BOOTSTRAP_CRON_ALLOW"):
+        assert NO_PACKAGES[name].startswith(_NO_PACKAGES_DIR.name + "/"), name
+    for name in ("BOOTSTRAP_CRON_DENY", "BOOTSTRAP_CRON_ALLOW"):
+        assert not Path(NO_PACKAGES[name]).exists(), name
     assert home != test_home and home != import_home
 
 
@@ -2633,3 +2731,737 @@ def test_a_second_name_or_an_acl_made_during_the_chown_stops_the_move_before_any
         named = (f"{root}/hf/xet/logs/linked ({STAND_IN_USER}:{STAND_IN_GROUP} 644, 2 links)" if case == "link" else
                  f"{root}/hf/xet/logs (an ACL beyond its mode)")
         assert result.stderr.startswith(f"bootstrap: after the chown, {named} isn't as the move must leave it"), case
+
+
+# Task 28: agent's processes get an OOM score that root sets and agent can't lower: a pam_exec hook for sshd, whose
+# line goes before sshd's first session line, a drop-in for agent's user manager, and a cron.deny naming agent. And
+# earlyoom loses --prefer, the controller's ruling: with it, no score of agent's could pass an engine's.
+
+HOOK = "/usr/local/libexec/local-ai-agent-oom"
+HOOK_SRC = ROOT / "stack/host/local-ai-agent-oom"
+DROP_IN_SRC = ROOT / "stack/host/agent-oom.conf"
+PAM_LINE = f"session optional pam_exec.so {HOOK}"
+DROP_IN_FOLDER = "/etc/systemd/system/user@<agent's uid>.service.d"
+FIRST_SESSION = 19  # the line of STOCK_SSHD the hook's line goes before: sshd's first session line
+LINUX_PAM_DIRS = ("/usr/lib/*/security", "/lib/*/security", "/usr/lib/security", "/lib/security")
+
+
+def agent_adj() -> int:
+    """AGENT_OOM_SCORE_ADJ, as the hook sets it."""
+    [value] = re.findall(r"^AGENT_OOM_SCORE_ADJ=(-?\d+)$", HOOK_SRC.read_text(), flags=re.M)
+    return int(value)
+
+
+def stock_with_line(at: int = FIRST_SESSION) -> str:
+    lines = STOCK_SSHD.splitlines(keepends=True)
+    return "".join(lines[:at - 1] + [PAM_LINE + "\n"] + lines[at - 1:])
+
+
+def test_bootstrap_installs_the_hook_for_sshd_and_agents_user_manager():
+    lines = dry_run()
+    sshd, backups = NO_PACKAGES["BOOTSTRAP_PAM_SSHD"], NO_PACKAGES["BOOTSTRAP_PAM_BACKUPS"]
+    [hook] = [line for line in lines if line.startswith("+ install ") and line.endswith(f" {HOOK}")]
+    assert hook.split()[1:8] == ["install", "-o", "root", "-g", "root", "-m", "0755"], hook
+    assert Path(hook.split()[8]).resolve() == HOOK_SRC
+    folder = f"+ install -d -o root -g root -m 0755 {DROP_IN_FOLDER}"
+    [drop_in] = [line for line in lines if line.endswith(f" {DROP_IN_FOLDER}/local-ai-oom.conf")]
+    assert drop_in.split()[1:8] == ["install", "-o", "root", "-g", "root", "-m", "0644"], drop_in
+    assert Path(drop_in.split()[8]).resolve() == DROP_IN_SRC
+    insert = (f'+ insert "{PAM_LINE}" at line {FIRST_SESSION} of a copy made with mktemp in {Path(sshd).parent}, '
+              "before sshd's first session line: session [success=ok ignore=ignore module_unknown=ignore "
+              "default=bad]        pam_selinux.so close")
+    order = [hook, folder, drop_in, "+ systemctl daemon-reload", f"+ cp -p {sshd} {backups}/pam.d-sshd.<time>",
+             insert, f"+ mv <that copy, root:root 0644> {sshd}"]
+    assert [lines.index(line) for line in order] == sorted(lines.index(line) for line in order)
+    # The script is in place before the line that runs it, and the drop-in before systemd reads it.
+    assert lines.index(hook) < lines.index(insert)
+    # The drop-in carries the hook's value.
+    text = DROP_IN_SRC.read_text()
+    assert "[Service]" in text.splitlines()
+    assert re.findall(r"^OOMScoreAdjust=(-?\d+)$", text, flags=re.M) == [str(agent_adj())]
+    # A dry run changes nothing.
+    assert Path(sshd).read_text() == STOCK_SSHD and list(Path(backups).iterdir()) == []
+
+
+def test_the_hook_and_drop_in_are_root_owned_and_not_agents():
+    lines = dry_run()
+    for path, mode in ((HOOK, "0755"), (f"{DROP_IN_FOLDER}/local-ai-oom.conf", "0644")):
+        [line] = [line for line in lines if line.startswith("+ install -o ") and line.endswith(f" {path}")]
+        assert f" -o root -g root -m {mode} " in line, line
+    # Each into a folder only root writes, made root's before anything goes in it: /usr/local/libexec by Task 27, the
+    # drop-in's own here. Nothing of it is under agent's home, and the drop-in's folder is directly under root's
+    # /etc/systemd/system.
+    folders = {"/usr/local/libexec": HOOK, DROP_IN_FOLDER: f"{DROP_IN_FOLDER}/local-ai-oom.conf"}
+    for folder, path in folders.items():
+        made = lines.index(f"+ install -d -o root -g root -m 0755 {folder}")
+        [into] = [i for i, line in enumerate(lines) if line.startswith("+ install -o ") and line.endswith(f" {path}")]
+        assert made < into, folder
+    assert Path(DROP_IN_FOLDER).parent == Path("/etc/systemd/system")
+    for path in (HOOK, f"{DROP_IN_FOLDER}/local-ai-oom.conf", DROP_IN_FOLDER):
+        assert not path.startswith("/home/"), path
+
+
+# The hook itself, run with a stand-in /proc: a copy of the script with its one PROC line pointing at it (and, for the
+# PID-1 case, its one PARENT line set to 1). The installed script has no switch to point it anywhere else.
+
+
+def hook_copy(tmp_path: Path, *, proc: Path, parent: str | None = None, path: str | None = None) -> Path:
+    text = HOOK_SRC.read_text()
+    swaps = {"PROC=/proc": f"PROC={proc}"}
+    if parent is not None:
+        swaps["PARENT=$PPID"] = f"PARENT={parent}"
+    if path is not None:
+        swaps["PATH=/usr/sbin:/usr/bin:/sbin:/bin"] = f"PATH={path}"
+    lines = text.splitlines(keepends=True)
+    for old, new in swaps.items():
+        assert [line for line in lines if line == old + "\n"] == [old + "\n"], old  # exactly once, a line of its own
+        lines = [new + "\n" if line == old + "\n" else line for line in lines]
+    copy = tmp_path / "local-ai-agent-oom"
+    copy.write_text("".join(lines))
+    copy.chmod(0o755)
+    return copy
+
+
+def stand_in_proc(proc: Path, pid: int, comm: str = "sshd") -> Path:
+    """proc/<pid>/comm and its oom_score_adj at 0, as the kernel shows them; returns the oom_score_adj."""
+    (proc / str(pid)).mkdir(parents=True)
+    (proc / str(pid) / "comm").write_text(comm + "\n")
+    (proc / str(pid) / "oom_score_adj").write_text("0\n")
+    return proc / str(pid) / "oom_score_adj"
+
+
+def run_hook(shell: str, copy: Path, user: str, pam_type: str, **extra: str) -> subprocess.CompletedProcess[str]:
+    """The hook as pam_exec runs it: its parent is this test's process (pam_exec's caller, sshd, on the box), and its
+    environment holds the PAM items, nothing else unless `extra` says."""
+    env = {"PAM_USER": user, "PAM_TYPE": pam_type, "PAM_SERVICE": "sshd", "PAM_RHOST": "mac", "PAM_TTY": "ssh",
+           **extra}
+    return subprocess.run([shutil.which(shell) or shell, str(copy)], capture_output=True, text=True, env=env,
+                          stdin=subprocess.DEVNULL)
+
+
+SHELLS = ["sh", "bash"]  # /bin/sh is dash on Ubuntu, which pam_exec runs it with; and bash 5.2, the box's
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_hook_acts_only_for_agent(tmp_path, shell):
+    proc = tmp_path / "proc"
+    adj = stand_in_proc(proc, os.getpid())
+    copy = hook_copy(tmp_path, proc=proc)
+    # agent's open_session: its parent, sshd, gets the value.
+    result = run_hook(shell, copy, "agent", "open_session")
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+    assert adj.read_text() == f"{agent_adj()}\n"
+    # Anyone else, or any other PAM_TYPE: exit 0 at once, without looking at /proc at all (none to look at here).
+    (tmp_path / "gone").mkdir()
+    gone = hook_copy(tmp_path / "gone", proc=tmp_path / "no-proc")
+    for user, pam_type in [("chendaniely", "open_session"), ("root", "open_session"), ("agent2", "open_session"),
+                           ("agent", "close_session"), ("agent", "auth"), ("agent", "account"), ("agent", "password"),
+                           ("", ""), ("AGENT", "open_session")]:
+        result = run_hook(shell, gone, user, pam_type)
+        assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (user, pam_type)
+    # Nor does it touch a /proc that is there.
+    adj.write_text("0\n")
+    for user, pam_type in [("chendaniely", "open_session"), ("agent", "close_session")]:
+        assert run_hook(shell, copy, user, pam_type).returncode == 0
+        assert adj.read_text() == "0\n", (user, pam_type)
+    # The line bootstrap writes is `optional`, so a failure of the script never stops a login.
+    assert PAM_LINE.split()[:2] == ["session", "optional"]
+    assert f'PAM_LINE="session optional pam_exec.so $AGENT_HOOK"' in SCRIPT.read_text()
+    assert f'AGENT_HOOK="{HOOK}"' in SCRIPT.read_text()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("comm", ["sshd", "sshd-session"])
+def test_the_hook_writes_sshds_score_from_openssh_9_6_or_9_8(tmp_path, shell, comm):
+    # OpenSSH 9.8 on runs a login as sshd-session; brightroar's 9.6p1 as sshd.
+    proc = tmp_path / "proc"
+    adj = stand_in_proc(proc, os.getpid(), comm)
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc), "agent", "open_session")
+    assert result.returncode == 0 and adj.read_text() == f"{agent_adj()}\n"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("comm", ["bash", "systemd", "sshd2", "sshd-sessionx", "", "sshd sshd"])
+def test_the_hook_refuses_a_parent_that_isnt_sshd(tmp_path, shell, comm):
+    proc = tmp_path / "proc"
+    adj = stand_in_proc(proc, os.getpid(), comm)
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc), "agent", "open_session")
+    assert result.returncode == 1 and adj.read_text() == "0\n"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_hook_refuses_a_parent_it_cant_see(tmp_path, shell):
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc), "agent", "open_session")
+    assert result.returncode == 1 and list(proc.iterdir()) == []
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("parent", ["1", "0"])
+def test_the_hook_never_writes_pid_1s_score(tmp_path, shell, parent):
+    # PID 1's score would pass to every service it starts afterwards. The script's parent can't really be PID 1 (it
+    # waits on the script), so the copy sets PARENT; the installed script takes the shell's own PPID.
+    proc = tmp_path / "proc"
+    adj = stand_in_proc(proc, int(parent), "sshd")
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc, parent=parent), "agent", "open_session")
+    assert result.returncode == 1 and adj.read_text() == "0\n"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_hook_runs_builtins_only_and_takes_nothing_from_its_environment(tmp_path, shell):
+    proc = tmp_path / "proc"
+    adj = stand_in_proc(proc, os.getpid())
+    # With no command to be found anywhere, it still works: builtins only.
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc, path="/nonexistent"), "agent", "open_session")
+    assert result.returncode == 0 and adj.read_text() == f"{agent_adj()}\n"
+    # An environment a user filled: the names the script uses, a PATH of planted commands, an IFS. None of it counts.
+    adj.write_text("0\n")
+    elsewhere = tmp_path / "elsewhere"
+    planted = stand_in_proc(elsewhere, os.getpid())
+    stand_in_proc(elsewhere, 1)
+    bindir = tmp_path / "planted"
+    bindir.mkdir()
+    for name in ("cat", "printf", "test", "[", "read", "echo", "id", "sh"):
+        (bindir / name).write_text(f'#!/bin/sh\necho "{name}" >> "{tmp_path}/ran"\n')
+        (bindir / name).chmod(0o755)
+    # (What acts before the script's first line, LD_PRELOAD or bash's BASH_ENV, it can't refuse: the line's place
+    # before sshd's first session line keeps those out, as the PAM tests below check. pam_exec runs it with /bin/sh,
+    # dash, which reads ENV only when interactive.)
+    hostile = {"PROC": str(elsewhere), "PARENT": "1", "AGENT_OOM_SCORE_ADJ": "-1000", "PATH": str(bindir),
+               "IFS": "e", "comm": "sshd", "now": "1000", "ENV": str(bindir / "cat")}
+    result = run_hook(shell, hook_copy(tmp_path, proc=proc), "agent", "open_session", **hostile)
+    assert result.returncode == 0, result.stderr
+    assert adj.read_text() == f"{agent_adj()}\n"
+    assert planted.read_text() == "0\n" and (elsewhere / "1/oom_score_adj").read_text() == "0\n"
+    assert not (tmp_path / "ran").exists()
+
+
+def test_the_hook_reads_no_variable_but_the_pam_items_it_needs():
+    text = HOOK_SRC.read_text()
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    used = set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", code))
+    assigned = set(re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=", code, flags=re.M))
+    assigned |= set(re.findall(r"\bread -r ([A-Za-z_][A-Za-z0-9_]*)", code))
+    # PAM_USER and PAM_TYPE from pam_exec, PPID the shell's own; every other name the script sets before it reads it.
+    assert used - assigned == {"PAM_USER", "PAM_TYPE", "PPID"}
+    assert text.startswith("#!/bin/sh\n")
+    for line in ("PATH=/usr/sbin:/usr/bin:/sbin:/bin", "unset IFS", "PROC=/proc", "PARENT=$PPID",
+                 f"AGENT_OOM_SCORE_ADJ={agent_adj()}"):
+        assert text.splitlines().count(line) == 1, line
+    # It writes one file, its parent's oom_score_adj, and appends to none; its own errors go nowhere.
+    assert ">>" not in code
+    redirects = re.findall(r"(\d?)>\s*\"?([^\s\"]+)", code)
+    assert {target for fd, target in redirects if target != "/dev/null"} == {"$PROC/$PARENT/oom_score_adj"}
+    assert {fd for fd, target in redirects if target == "/dev/null"} == {"2"}
+
+
+@pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")
+def test_the_hook_is_shellcheck_clean():
+    subprocess.run(["shellcheck", str(HOOK_SRC)], check=True)
+
+
+def test_make_lint_shellchecks_the_hook():
+    run = subprocess.run(["make", "-s", "-n", "-C", str(ROOT), "lint"], capture_output=True, text=True, check=True)
+    assert "stack/host/local-ai-agent-oom" in run.stdout.split()
+
+
+# The values: the kernel's score, as /proc/<pid>/oom_score shows it and earlyoom reads it, is
+# (1000 + 1000 * RSS / (RAM + swap) + oom_score_adj) * 2 / 3 (proc_oom_score over oom_badness); earlyoom 1.7 adds 300 to
+# it for --prefer and takes 300 off for --avoid. brightroar's /proc/meminfo, 2026-10-14:
+MEM_TOTAL_KB, SWAP_TOTAL_KB = 127533356, 16777212
+
+
+def oom_score(rss_kb: int, adj: int) -> int:
+    total = MEM_TOTAL_KB // 4 + SWAP_TOTAL_KB // 4  # pages of 4 KiB
+    badness = rss_kb // 4 + adj * (total // 1000)
+    return (1000 + badness * 1000 // total) * 2 // 3
+
+
+def earlyoom_score(name: str, rss_kb: int, adj: int) -> int:
+    args = earlyoom_args()
+    score = oom_score(rss_kb, adj)
+    for flag, bonus in (("--prefer", 300), ("--avoid", -300)):
+        if flag in args and re.search(args[args.index(flag) + 1], name):
+            score += bonus
+    return score
+
+
+def test_the_values_put_a_large_agent_job_first():
+    from spark import launch
+
+    # The formula, against the box: a llama-server at adj 1000 holding 2,643,628 kB read 1345 (2026-10-14).
+    assert oom_score(2643628, 1000) == 1345
+    agent = agent_adj()
+    two, tenth = MEM_TOTAL_KB * 2 // 100, MEM_TOTAL_KB // 10
+    engines = {(name, adj): earlyoom_score(name, two, adj) for name in ("llama-server", "whisper-server")
+               for adj in (launch.OOM_ADJ_ON_DEMAND, launch.OOM_ADJ_RESIDENT)}
+    # A job of agent's holding a tenth of memory scores above every engine holding 2%: earlyoom picks it first.
+    assert earlyoom_score("python3", tenth, agent) > max(engines.values()), (agent, engines)
+    # The controller's ruling: earlyoom has no --prefer, which put every engine above anything at adj 1000.
+    assert "--prefer" not in earlyoom_args()
+    assert agent == 1000 and (launch.OOM_ADJ_ON_DEMAND, launch.OOM_ADJ_RESIDENT) == (1000, 900)
+    # An empty process of agent's (a shell, pi) stays below the on-demand engine; it is above a resident at 2%.
+    assert earlyoom_score("bash", 0, agent) < earlyoom_score("llama-server", two, launch.OOM_ADJ_ON_DEMAND)
+    # Phase 1's aim stands: every engine goes before a process of Dan's at adj 0, even one holding 90% of RAM.
+    assert earlyoom_score("python3", MEM_TOTAL_KB * 9 // 10, 0) < min(engines.values())
+    # The drop-in gives agent's user manager the same value.
+    assert re.findall(r"^OOMScoreAdjust=(-?\d+)$", DROP_IN_SRC.read_text(), flags=re.M) == [str(agent)]
+
+
+def test_earlyoom_still_avoids_the_stacks_own_services_and_what_keeps_the_box_reachable():
+    args = earlyoom_args()
+    avoid = re.compile(args[args.index("--avoid") + 1])
+    # The front, the gate and the brake all run as `spark` (their process name), llama-swap as itself.
+    for name in ("spark", "llama-swap", "sshd", "sshd-session", "systemd", "systemd-journal", "tmux: server",
+                 "tailscaled", "dockerd", "containerd"):
+        assert avoid.search(name), name
+    for name in ("llama-server", "whisper-server", "python3", "bash"):
+        assert not avoid.search(name), name
+    assert args[:7] == ["-r", "3600", "-M", "12582912,9437184", "-s", "100,100", "--avoid"]
+
+
+# The PAM line, for real, against a stand-in /etc/pam.d (stand_in_pam) and /var/backups.
+
+
+def pam_env(tmp_path: Path, sshd: str = STOCK_SSHD, **settings: str) -> dict[str, str]:
+    """Stand-ins for the PAM step: /etc/pam.d with Ubuntu's stock sshd (or `sshd`), PAM's modules, /var/backups, and
+    chown and chmod that log to tmp_path/calls and change only tmp_path's files; whoever runs the tests stands in for
+    root. `settings` go in the environment as they are."""
+    stand_in_pam(tmp_path, sshd)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name in ("chown", "chmod"):
+        (bindir / name).write_text(FAKE_REAL_LOGGED)
+        (bindir / name).chmod(0o755)
+    return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"),
+                     STAND_IN_OWNER=f"{STAND_IN_USER}:{STAND_IN_GROUP}",
+                     BOOTSTRAP_PAM_SSHD=str(tmp_path / "pam.d/sshd"), BOOTSTRAP_PAM_BACKUPS=str(tmp_path / "backups"),
+                     BOOTSTRAP_PAM_MODULE_DIRS=str(tmp_path / "security"), BOOTSTRAP_ROOT_USER=STAND_IN_USER,
+                     **settings)
+
+
+def pam_step(env: dict[str, str], *, dry: bool = False) -> subprocess.CompletedProcess[str]:
+    """The PAM step for real (or its dry run), against pam_env's stand-ins (see real_hold); then the line the run goes
+    on with, if the step let it."""
+    return subprocess.run(
+        ["bash", "-c", f'source "$1" --dry-run && DRY_RUN={int(dry)} && pam_sshd_hook && echo "the run goes on"',
+         "bash", str(SCRIPT)], capture_output=True, text=True, env=env)
+
+
+def backups(tmp_path: Path) -> list[Path]:
+    return sorted((tmp_path / "backups").iterdir())
+
+
+def test_the_hook_line_goes_before_sshds_first_session_line(tmp_path):
+    env = pam_env(tmp_path)
+    sshd = tmp_path / "pam.d/sshd"
+    result = pam_step(env)
+    assert result.returncode == 0 and "the run goes on" in result.stdout, result.stderr
+    assert sshd.read_text() == stock_with_line()
+    new = sshd.read_text().splitlines()
+    assert new[FIRST_SESSION - 1] == PAM_LINE
+    # Before it, no session line, and nothing that reads a user's environment; after it, sshd's pam_env with
+    # user_readenv, which pam_exec would otherwise hand the script.
+    assert not [line for line in new[:FIRST_SESSION - 1] if line.startswith("session") or "user_readenv" in line]
+    assert [i for i, line in enumerate(new) if "user_readenv" in line][0] > FIRST_SESSION - 1
+    # Root's 0644, as it was, swapped in whole from a copy made beside it, which is gone.
+    assert mode(sshd) == 0o644
+    [work] = {line.split()[-1] for line in calls(tmp_path)}
+    assert Path(work).parent == sshd.parent and Path(work).name.startswith(".sshd.local-ai.")
+    assert calls(tmp_path) == [f"chown root:root {work}", f"chmod 0644 {work}"]
+    assert sorted(path.name for path in sshd.parent.iterdir()) == ["common-account", "common-auth", "sshd"]
+    # The old file, backed up first with a time in its name, as it was.
+    [backup] = backups(tmp_path)
+    assert re.fullmatch(r"pam\.d-sshd\.\d{8}T\d{6}", backup.name), backup.name
+    assert backup.read_text() == STOCK_SSHD and mode(backup) == 0o644
+    assert (f"==> {sshd}: the hook's line is in at line {FIRST_SESSION}, before sshd's first session line; the old "
+            f"file is {backup}") in result.stdout.splitlines()
+
+
+def test_a_second_run_changes_nothing(tmp_path):
+    env = pam_env(tmp_path)
+    sshd = tmp_path / "pam.d/sshd"
+    assert pam_step(env).returncode == 0
+    (tmp_path / "calls").unlink()
+    before = (os.lstat(sshd).st_ino, os.lstat(sshd).st_ctime_ns, sshd.read_text(), backups(tmp_path))
+    time.sleep(0.05)
+    result = pam_step(env)
+    assert result.returncode == 0 and "the run goes on" in result.stdout, result.stderr
+    assert (os.lstat(sshd).st_ino, os.lstat(sshd).st_ctime_ns, sshd.read_text(), backups(tmp_path)) == before
+    assert calls(tmp_path) == []
+    assert (f"==> {sshd} already runs the hook at line {FIRST_SESSION}, before its other session lines: nothing to "
+            "change") in result.stdout.splitlines()
+    # So does a dry run of it.
+    dry = pam_step(env, dry=True)
+    assert [line for line in dry.stdout.splitlines() if line.startswith("+ ")] == []
+
+
+def unchanged(tmp_path: Path, result: subprocess.CompletedProcess[str], sshd_text: str) -> None:
+    """The step refused: the run stops, and nothing changed or was backed up."""
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert (tmp_path / "pam.d/sshd").read_text() == sshd_text
+    assert backups(tmp_path) == [] and calls(tmp_path) == []
+    assert sorted(path.name for path in (tmp_path / "pam.d").iterdir()) == ["common-account", "common-auth", "sshd"]
+    assert result.stderr.startswith(f"bootstrap: {tmp_path}/pam.d/sshd can't take the hook's line, so nothing was "
+                                    "changed:\n")
+
+
+def test_a_pam_env_reading_a_users_file_before_the_first_session_line_is_refused(tmp_path):
+    # pam_env's auth half sets the environment too (pam_setcred, which sshd calls before the session opens): with
+    # user_readenv there, agent would choose the environment root's /bin/sh starts with.
+    lines = STOCK_SSHD.splitlines(keepends=True)
+    planted = "auth       optional     pam_env.so user_readenv=1\n"
+    text = "".join(lines[:4] + [planted] + lines[4:])
+    env = pam_env(tmp_path, text)
+    result = pam_step(env)
+    unchanged(tmp_path, result, text)
+    assert (f"  {tmp_path}/pam.d/sshd:5 reads a user's environment file before sshd's first session line, where the "
+            f"hook's line goes: {planted.strip()}") in result.stderr.splitlines()
+
+
+def test_one_in_a_file_included_before_the_first_session_line_is_refused_too(tmp_path):
+    env = pam_env(tmp_path)
+    (tmp_path / "pam.d/common-auth").write_text(STOCK_COMMON_AUTH + "auth\toptional\tpam_env.so user_readenv=1\n")
+    result = pam_step(env)
+    unchanged(tmp_path, result, STOCK_SSHD)
+    # Its tabs shown as spaces.
+    assert (f"  {tmp_path}/pam.d/common-auth:5 reads a user's environment file before sshd's first session line, "
+            "where the hook's line goes: auth optional pam_env.so user_readenv=1") in result.stderr.splitlines()
+
+
+def test_an_included_file_it_cant_read_is_refused(tmp_path):
+    env = pam_env(tmp_path)
+    (tmp_path / "pam.d/common-account").unlink()
+    result = pam_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert (tmp_path / "pam.d/sshd").read_text() == STOCK_SSHD and backups(tmp_path) == [] and calls(tmp_path) == []
+    assert (f"  {tmp_path}/pam.d/common-account, which line 14 includes before sshd's first session line, can't be "
+            "read") in result.stderr.splitlines()
+
+
+@pytest.mark.parametrize("case", ["appended", "required", "argument", "twice"])
+def test_a_line_naming_the_hook_anywhere_else_or_any_other_way_is_refused(tmp_path, case):
+    # Appended, after pam_env's user_readenv; `required`, which would make a failing script block every login; with
+    # another argument; or a second copy after the first.
+    if case == "appended":
+        text, n, line = STOCK_SSHD + PAM_LINE + "\n", 56, PAM_LINE
+    elif case == "twice":
+        text, n, line = stock_with_line() + PAM_LINE + "\n", 57, PAM_LINE
+    else:
+        line = (PAM_LINE.replace("optional", "required") if case == "required" else
+                PAM_LINE.replace("pam_exec.so", "pam_exec.so quiet"))
+        lines = STOCK_SSHD.splitlines(keepends=True)
+        text, n = "".join(lines[:FIRST_SESSION - 1] + [line + "\n"] + lines[FIRST_SESSION - 1:]), FIRST_SESSION
+    env = pam_env(tmp_path, text)
+    result = pam_step(env)
+    unchanged(tmp_path, result, text)
+    if case in ("appended", "twice"):
+        reason = (f"  {tmp_path}/pam.d/sshd:{n} has the hook's line after sshd's first session line, line "
+                  f"{FIRST_SESSION}: take it out by hand (the backup bootstrap made, if any, is in "
+                  f"{tmp_path}/backups), then run this again: {line}")
+    else:
+        reason = (f"  {tmp_path}/pam.d/sshd:{n} names the hook, but isn't the line bootstrap writes ({PAM_LINE}): "
+                  f"take it out by hand, then run this again: {line}")
+    assert reason in result.stderr.splitlines()
+
+
+@pytest.mark.parametrize("planted", ["link", "folder", "missing", "group-writable", "not-roots"])
+def test_a_pam_file_that_isnt_roots_own_regular_file_is_refused(tmp_path, planted):
+    env = pam_env(tmp_path)
+    sshd = tmp_path / "pam.d/sshd"
+    if planted == "link":
+        sshd.unlink()
+        (tmp_path / "elsewhere").write_text(STOCK_SSHD)
+        sshd.symlink_to(tmp_path / "elsewhere")
+    elif planted == "folder":
+        sshd.unlink()
+        sshd.mkdir()
+    elif planted == "missing":
+        sshd.unlink()
+    elif planted == "group-writable":
+        sshd.chmod(0o664)
+    else:
+        env["BOOTSTRAP_ROOT_USER"] = "nobody"
+    result = pam_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert backups(tmp_path) == [] and calls(tmp_path) == []
+    if planted in ("link", "folder", "missing"):
+        reason = f"  {sshd} is a link, a folder, or missing, not a regular file: look at it with ls -l {sshd}"
+    else:
+        reason = f"  {sshd} isn't root's own: its owner isn't root, or its group or others can write it"
+    assert reason in result.stderr.splitlines()
+    if planted == "link":
+        assert (tmp_path / "elsewhere").read_text() == STOCK_SSHD
+
+
+def test_a_pam_file_with_no_session_line_is_refused(tmp_path):
+    text = "".join(line for line in STOCK_SSHD.splitlines(keepends=True)
+                   if not line.startswith(("session", "@include common-session")))
+    env = pam_env(tmp_path, text)
+    result = pam_step(env)
+    unchanged(tmp_path, result, text)
+    assert (f"  {tmp_path}/pam.d/sshd has no session line, so there's no place for the hook's line before sshd's "
+            "session modules") in result.stderr.splitlines()
+
+
+@pytest.mark.parametrize("planted", ["open", "missing", "link"])
+def test_a_backups_folder_that_isnt_roots_own_is_refused(tmp_path, planted):
+    env = pam_env(tmp_path)
+    folder = tmp_path / "backups"
+    if planted == "open":
+        folder.chmod(0o777)
+    else:
+        folder.rmdir()
+        if planted == "link":
+            (tmp_path / "elsewhere").mkdir()
+            folder.symlink_to(tmp_path / "elsewhere")
+    result = pam_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout and calls(tmp_path) == []
+    assert (tmp_path / "pam.d/sshd").read_text() == STOCK_SSHD
+    assert (f"  {folder} isn't a folder root owns and only root writes, so the old file can't be backed up there"
+            ) in result.stderr.splitlines()
+
+
+def test_without_pam_exec_the_line_isnt_added(tmp_path):
+    env = pam_env(tmp_path)
+    (tmp_path / "security/pam_exec.so").unlink()
+    result = pam_step(env)
+    unchanged(tmp_path, result, STOCK_SSHD)
+    assert f"  no pam_exec.so in {tmp_path}/security: is libpam-modules installed?" in result.stderr.splitlines()
+
+
+def test_a_dry_run_shows_where_the_line_goes_or_why_a_real_run_would_stop(tmp_path):
+    env = pam_env(tmp_path)
+    sshd = tmp_path / "pam.d/sshd"
+    result = pam_step(env, dry=True)
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f"+ cp -p {sshd} {tmp_path}/backups/pam.d-sshd.<time>",
+        f'+ insert "{PAM_LINE}" at line {FIRST_SESSION} of a copy made with mktemp in {sshd.parent}, before sshd\'s '
+        "first session line: session [success=ok ignore=ignore module_unknown=ignore default=bad]        "
+        "pam_selinux.so close",
+        f"+ mv <that copy, root:root 0644> {sshd}",
+    ]
+    assert sshd.read_text() == STOCK_SSHD and backups(tmp_path) == [] and calls(tmp_path) == []
+    (tmp_path / "security/pam_exec.so").unlink()
+    result = pam_step(env, dry=True)
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f'+ insert "{PAM_LINE}" into {sshd}   (a real run stops here: no pam_exec.so in {tmp_path}/security: is '
+        "libpam-modules installed?)"]
+
+
+def test_the_line_bootstrap_writes_parses(tmp_path):
+    # A malformed line is the one way this hook could lock logins out: libpam takes a line it can't parse, or a
+    # control word it doesn't know, as `bad`, which fails the whole session stack, `optional` or not.
+    env = pam_env(tmp_path)
+    assert pam_step(env).returncode == 0
+    written = (tmp_path / "pam.d/sshd").read_text().splitlines()[FIRST_SESSION - 1]
+    assert written == PAM_LINE
+    fields = written.split()
+    assert len(fields) == 4, fields  # type, control, module, its one argument
+    kind, control, module, argument = fields
+    assert (kind, control, module, argument) == ("session", "optional", "pam_exec.so", HOOK)
+    assert "#" not in written and not written.endswith("\\") and written.isascii() and written.isprintable()
+    # The argument is where bootstrap installs the script.
+    [install] = [line for line in dry_run() if line.startswith("+ install ") and line.endswith(f" {argument}")]
+    assert install.split()[-1] == HOOK
+
+
+@pytest.mark.skipif(not any(Path("/").glob(d.lstrip("/")) for d in LINUX_PAM_DIRS), reason="not Linux-PAM")
+def test_the_module_the_line_names_exists_where_bootstrap_looks():
+    # bootstrap's own search, PAM_MODULE_DIRS, finds pam_exec.so on this host (brightroar: /usr/lib/aarch64-linux-gnu
+    # /security, 2026-10-14).
+    [default] = re.findall(r'^PAM_MODULE_DIRS="\$\{BOOTSTRAP_PAM_MODULE_DIRS:-([^}]*)\}"$', SCRIPT.read_text(),
+                           flags=re.M)
+    assert default.split() == list(LINUX_PAM_DIRS)
+    found = [path for d in LINUX_PAM_DIRS for path in Path("/").glob(d.lstrip("/") + "/pam_exec.so")]
+    assert found, "no pam_exec.so in any Linux-PAM module folder"
+
+
+# agent's user manager: the drop-in, for real, against stand-ins.
+
+FAKE_ID = """#!/usr/bin/env bash
+# Stands in for `id -u agent`: prints $AGENT_UID, or fails as id does for a user that doesn't exist when that is
+# empty. Anything else goes to the real id.
+if [[ "$*" == "-u agent" ]]; then
+  [[ -n "${AGENT_UID:-}" ]] || { echo "id: 'agent': no such user" >&2; exit 1; }
+  echo "$AGENT_UID"
+  exit 0
+fi
+PATH="${PATH#*:}" exec id "$@"
+"""
+
+
+def drop_in_env(tmp_path: Path, uid: str = "1001") -> dict[str, str]:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, text in (("id", FAKE_ID), ("install", FAKE_INSTALL), ("systemctl", FAKE_SYSTEMD)):
+        (bindir / name).write_text(text)
+        (bindir / name).chmod(0o755)
+    for folder in ("units", "systemd"):
+        (tmp_path / folder).mkdir()
+    (tmp_path / "units").chmod(0o755)
+    return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), SYSTEMD_STATE=str(tmp_path / "systemd"),
+                     BOOTSTRAP_UNIT_DIR=str(tmp_path / "units"), BOOTSTRAP_ROOT_USER=STAND_IN_USER, AGENT_UID=uid)
+
+
+def drop_in_step(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && agent_drop_in && echo "the run goes on"', "bash",
+         str(SCRIPT)], capture_output=True, text=True, env=env)
+
+
+def test_the_drop_in_goes_in_a_root_folder_named_for_agents_uid(tmp_path):
+    env = drop_in_env(tmp_path)
+    result = drop_in_step(env)
+    assert result.returncode == 0 and "the run goes on" in result.stdout, result.stderr
+    folder = tmp_path / "units/user@1001.service.d"
+    assert calls(tmp_path) == [f"install -d -o root -g root -m 0755 {folder}",
+                               f"install -o root -g root -m 0644 {ROOT}/stack/host/agent-oom.conf "
+                               f"{folder}/local-ai-oom.conf",
+                               "systemctl daemon-reload"]
+    assert (folder / "local-ai-oom.conf").read_text() == DROP_IN_SRC.read_text()
+    assert mode(folder) == 0o755 and mode(folder / "local-ai-oom.conf") == 0o644
+
+
+@pytest.mark.parametrize("planted", ["link", "file", "group-writable"])
+def test_a_drop_in_folder_that_isnt_roots_own_is_refused(tmp_path, planted):
+    env = drop_in_env(tmp_path)
+    folder = tmp_path / "units/user@1001.service.d"
+    (tmp_path / "elsewhere").mkdir()
+    if planted == "link":
+        folder.symlink_to(tmp_path / "elsewhere")
+    elif planted == "file":
+        folder.write_text("")
+    else:
+        folder.mkdir()
+        folder.chmod(0o775)
+    result = drop_in_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert calls(tmp_path) == [] and list((tmp_path / "elsewhere").iterdir()) == []
+    assert result.stderr == (f"bootstrap: {folder} isn't a folder root owns and only root writes, so agent's drop-in "
+                             f"wasn't installed: look at it with ls -ld {folder}\n")
+
+
+@pytest.mark.parametrize("uid", ["", "10x1"])
+def test_without_agents_uid_no_drop_in_is_named(tmp_path, uid):
+    env = drop_in_env(tmp_path, uid)
+    result = drop_in_step(env)
+    assert result.returncode == 1 and calls(tmp_path) == []
+    assert result.stderr.splitlines()[-1] == ("bootstrap: id -u agent gave no uid, so agent's user manager's drop-in "
+                                              "can't be named: users_and_groups makes agent, before this step")
+
+
+# cron.deny, for real, against stand-ins.
+
+
+def cron_env(tmp_path: Path, deny: str | None = None, allow: str | None = None) -> dict[str, str]:
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    etc.chmod(0o755)
+    if deny is not None:
+        (etc / "cron.deny").write_text(deny)
+        (etc / "cron.deny").chmod(0o644)
+    if allow is not None:
+        (etc / "cron.allow").write_text(allow)
+        (etc / "cron.allow").chmod(0o644)
+    (tmp_path / "spool").mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "install").write_text(FAKE_INSTALL)
+    (bindir / "install").chmod(0o755)
+    return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), BOOTSTRAP_CRON_DENY=str(etc / "cron.deny"),
+                     BOOTSTRAP_CRON_ALLOW=str(etc / "cron.allow"), BOOTSTRAP_CRON_SPOOL=str(tmp_path / "spool"),
+                     BOOTSTRAP_ROOT_USER=STAND_IN_USER)
+
+
+def cron_step(env: dict[str, str], *, dry: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'source "$1" --dry-run && DRY_RUN={int(dry)} && cron_deny && echo "the run goes on"', "bash",
+         str(SCRIPT)], capture_output=True, text=True, env=env)
+
+
+def test_a_new_cron_deny_names_agent_root_owned(tmp_path):
+    env = cron_env(tmp_path)
+    result = cron_step(env)
+    assert result.returncode == 0 and "the run goes on" in result.stdout, result.stderr
+    deny = tmp_path / "etc/cron.deny"
+    assert deny.read_text() == "agent\n" and mode(deny) == 0o644
+    [install] = calls(tmp_path)
+    words = install.split()
+    assert words[:7] == ["install", "-o", "root", "-g", "root", "-m", "0644"] and words[8] == str(deny), install
+    assert not Path(words[7]).exists()  # its mktemp -d folder is gone
+    assert f"==> {deny} names agent: agent can't add a crontab" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("before, after", [("alice\n", "alice\nagent\n"), ("alice", "alice\nagent\n"),
+                                           ("", "agent\n")])
+def test_agent_is_added_to_a_cron_deny_that_exists_once(tmp_path, before, after):
+    env = cron_env(tmp_path, deny=before)
+    deny = tmp_path / "etc/cron.deny"
+    assert cron_step(env).returncode == 0
+    assert deny.read_text() == after and mode(deny) == 0o644 and calls(tmp_path) == []
+    stamp = os.lstat(deny).st_ctime_ns
+    time.sleep(0.05)
+    result = cron_step(env)
+    assert result.returncode == 0 and deny.read_text() == after and os.lstat(deny).st_ctime_ns == stamp
+    assert f"==> {deny} already names agent: nothing to change" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("planted", ["link", "group-writable", "folder"])
+def test_a_cron_deny_that_isnt_roots_own_regular_file_is_refused(tmp_path, planted):
+    env = cron_env(tmp_path)
+    deny = tmp_path / "etc/cron.deny"
+    (tmp_path / "elsewhere").write_text("alice\n")
+    if planted == "link":
+        deny.symlink_to(tmp_path / "elsewhere")
+    elif planted == "group-writable":
+        deny.write_text("alice\n")
+        deny.chmod(0o664)
+    else:
+        deny.mkdir()
+    result = cron_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout and calls(tmp_path) == []
+    assert (tmp_path / "elsewhere").read_text() == "alice\n"
+    assert result.stderr == (f"bootstrap: {deny} isn't root's own regular file, so agent wasn't added to it: look at "
+                             f"it with ls -l {deny}\n")
+
+
+@pytest.mark.parametrize("allow, words", [("alice\n", "agent isn't in it, so agent can't use crontab"),
+                                          ("alice\nagent\n", "agent is in it, so agent can still use crontab: take "
+                                           "agent out of it by hand")])
+def test_a_cron_allow_is_left_as_it_is_and_named(tmp_path, allow, words):
+    # crontab(1): when cron.allow exists, it decides, and cron.deny isn't read.
+    env = cron_env(tmp_path, allow=allow)
+    result = cron_step(env)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "etc/cron.allow").read_text() == allow
+    assert (f"==> {tmp_path}/etc/cron.allow exists, so cron reads it and not {tmp_path}/etc/cron.deny: {words}"
+            ) in result.stdout.splitlines()
+
+
+def test_a_crontab_agent_already_has_is_named(tmp_path):
+    # cron.deny stops crontab adding one; cron still runs one already in the spool.
+    env = cron_env(tmp_path)
+    (tmp_path / "spool/agent").write_text("* * * * * true\n")
+    result = cron_step(env)
+    assert result.returncode == 0, result.stderr
+    assert ("==> agent already has a crontab, which cron runs whatever cron.deny says: read it with sudo crontab -l -u "
+            "agent, and remove it with sudo crontab -r -u agent") in result.stdout.splitlines()
+    assert (tmp_path / "spool/agent").read_text() == "* * * * * true\n"
+
+
+def test_the_dry_run_adds_cron_deny_and_the_steps_come_after_what_they_use():
+    lines = dry_run()
+    deny = NO_PACKAGES["BOOTSTRAP_CRON_DENY"]
+    assert f"+ install -o root -g root -m 0644 <a file holding agent> {deny}" in lines
+    says = [line for line in lines if line.startswith("==> ")]
+    order = ["==> users and groups", "==> directories",
+             "==> the failure notifier's script, which local-ai-notify@.service runs: root's own",
+             "==> agent's OOM score, which root sets and agent can't lower: sshd's hook and a drop-in for agent's "
+             "user manager",
+             "==> cron: agent can't add a crontab, whose jobs would start outside its OOM score",
+             "==> boot to a console; start a desktop on demand with: sudo systemctl start display-manager"]
+    assert [line for line in says if line in order] == order

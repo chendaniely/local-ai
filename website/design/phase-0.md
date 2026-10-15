@@ -1877,7 +1877,11 @@ EARLYOOM_ARGS="-r 3600 -M 12582912,9437184 -s 100,100 --prefer ^(llama-server|wh
 ```
 
 *Superseded 2026-09-25 — the code now differs; see commit 3735420 (`sshd.*` in `--avoid`, which
-also covers OpenSSH's `sshd-session`).*
+also covers OpenSSH's `sshd-session`).* *Superseded again 2026-10-14 (Phase 2a's Task 28, the
+controller's ruling; from Task 36's bootstrap on the box): `--prefer` is gone. It added 300 to an
+engine's score, worth 450 points of `oom_score_adj`, so no score of `agent`'s, which root now sets
+to 1000, could pass an engine's. The engines' own `oom_score_adj`, 1000 on demand and 900 resident
+(Phase 1), keeps them before every process at 0.*
 
 `stack/host/50-local-ai.rules`:
 
@@ -2249,7 +2253,10 @@ Expected: every line as commented; Dan's home (`/home/chendaniely`) and `/home/a
 `2775 root:spark-admin`.
 earlyoom's `--prefer` only adds 300 to `oom_score`, and GB10's GPU memory may not count toward that
 score — Phase 1's launch wrapper sets each engine's own `oom_score_adj` to 1000 to make engines the
-first victims regardless.
+first victims regardless. *(2026-10-14, Phase 2a's Task 28, the controller's ruling: `--prefer` is
+gone from `earlyoom.default`, and the engines' own `oom_score_adj` alone puts them first. 1000 on
+demand and 900 resident, since Phase 1's council. The journal line above then names no `--prefer`.
+A re-run of this check, or of Step 2's, uses the file's arguments as they are now.)*
 
 The `systemd-run` probe checks that the polkit rule doesn't grant *transient* units: a password
 prompt (cancel it) or a denial is right. If it runs without a password, anything running as Dan
@@ -2268,7 +2275,8 @@ The `-M` values sit above the box's free memory on purpose, so earlyoom believes
 Expected: it reports the process it *would* kill, and that process is none of the avoided ones.
 (Superseded 2026-09-25: `stack/host/earlyoom.default` now avoids `sshd.*`, which also covers
 OpenSSH's `sshd-session` — commit 3735420. A re-run of this check uses the file's current
-regexes.)
+regexes.) (Superseded again 2026-10-14, Phase 2a's Task 28: the file has no `--prefer`, so a
+re-run leaves that line out.)
 
 - [ ] **Step 3: Record the machine changes — both files, one commit**
 

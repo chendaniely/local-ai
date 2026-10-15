@@ -122,9 +122,43 @@ Phase 2a's bootstrap (its Task 27; Dan runs it in Task 36, before the cutover) a
   (Phase 2a's Task 51).
 - **The failure notifier's script**, `/usr/local/libexec/local-ai-notify`, root's `0755`, which
   `local-ai-notify@.service` runs when the front, the gate, the brake or llama-swap fails.
+- **An OOM score for `agent` that root sets and `agent` can't lower** (Task 28). The hook,
+  `/usr/local/libexec/local-ai-agent-oom`, root's `0755`, runs at every SSH login, from a line in
+  sshd's PAM stack. For `agent`'s logins alone, it sets the login's `oom_score_adj` to 1000, as root.
+  Everything `agent` runs from that login starts at 1000 and can't go lower: the shell, tmux, every
+  job. A drop-in, `/etc/systemd/system/user@<agent's uid>.service.d/local-ai-oom.conf`, gives
+  `agent`'s user manager the same. What 1000 does when earlyoom acts:
+  - a job of `agent`'s goes before the on-demand model's engine once it holds more memory than that
+    engine (about 2.5 GiB);
+  - every process of `agent`'s, even an empty shell, goes before a resident model's engine, unless
+    that engine holds about 13 GiB more (today they hold under 3 GiB each);
+  - every engine still goes before any process of yours.
 
-Until the move the cache is `spark`'s, so root works in folders `spark` controls. Just before the
-chown, the move refuses, failing the run and changing nothing in the cache, and says why, while:
+  Task 40 tests it as `agent`. The script's comment has the arithmetic.
+- **The hook's line in `/etc/pam.d/sshd`:** `session optional pam_exec.so
+  /usr/local/libexec/local-ai-agent-oom`. It goes in **before the file's first session line**
+  (line 19 of Ubuntu's file), never at the end. Further down, sshd's stack reads each user's
+  `~/.pam_environment` (`pam_env.so user_readenv=1`), and the script, which runs as root, would then
+  start with an environment `agent` chose. `optional` means a failing or missing script never stops a
+  login: the failure only shows in the journal and at that login.
+  - The run backs the file up first, to `/var/backups/pam.d-sshd.<time>`, writes the new file beside
+    it and swaps it in whole, `root:root 0644`.
+  - It refuses, changing nothing and naming the line, while a line before that point reads a user's
+    environment file, a line names the hook in any other way, or the file isn't root's own.
+  - Run again, it changes nothing.
+  - The file is openssh-server's: if an upgrade asks whether to replace `/etc/pam.d/sshd`, keep
+    yours, or the line is gone (`make bootstrap` puts it back).
+- **`agent` can't use cron:** `/etc/cron.deny` names `agent`. A crontab's jobs would start outside
+  sshd's hook and the user manager, at a score of 0. The run makes the file, `root:root 0644`, or
+  adds `agent` to the one there. It leaves `/etc/cron.allow` alone: if that exists, cron reads it
+  instead, and the run says whether it names `agent`. A crontab `agent` already has keeps running,
+  so the run names one if it finds it.
+- **earlyoom without `--prefer`** (Task 28). It added 300 to an engine's score, which no score of
+  `agent`'s could pass. The engines' own scores, 1000 on demand and 900 resident, still put them
+  before your work. `--avoid` is as it was.
+
+Until the cache's move (above), the cache is `spark`'s, so root works in folders `spark` controls.
+Just before the chown, the move refuses, failing the run and changing nothing in the cache, and says why, while:
 
 - any process runs as `spark` or `spark-pull`, in a unit or not (a crontab job, a shell), named
   by its pid and command name;
@@ -167,10 +201,11 @@ has been pulled since.
    its pid and command name, the brake (`spark`), llama-swap, its engines and the `nvidia-smi` it
    runs among them. A dry run as you can't look inside the cache, so it says nothing of what is in
    it; the real run checks.
-2. Open a second SSH session to the box, and leave it open until a fresh login works after the
-   run. *(Phase 2a's Task 28 makes bootstrap change sshd's PAM stack, for `agent`'s OOM score, and a
-   broken PAM stack would lock new logins out. Until Task 28 is built, this run doesn't touch PAM,
-   and the second session is only a precaution.)*
+2. Open a second SSH session to the box, and leave it open until fresh logins, yours and
+   `agent`'s, work after the run (step 4). This run changes sshd's PAM stack, for `agent`'s OOM
+   score, and a broken PAM stack would lock new logins out. The open session is how you'd put it
+   right. *(Until Task 28 was built, 2026-10-14, this run didn't touch PAM, and the second session
+   was only a precaution.)*
 3. Stop the brake and llama-swap, which stops every model. The polkit rule allows it without
    sudo. **On the Spark:**
 
@@ -187,7 +222,31 @@ has been pulled since.
 
    Expected: `nothing runs as spark`. A process it lists is stopped where it was started: a unit
    with `systemctl stop`, a crontab job by its crontab (`sudo crontab -u spark -l` shows it).
-4. `make bootstrap`.
+4. `make bootstrap`. Then, with the second session still open, test fresh logins, yours and
+   `agent`'s. **On the Mac:**
+
+   ```bash
+   ssh brightroar true && echo "your login: works"
+   ssh brightroar-agent cat /proc/self/oom_score_adj
+   ```
+
+   Expected: `your login: works`, then `1000` from `agent`'s login: the hook ran. Close the second
+   session only once both work.
+
+   If a login fails, use the session still open. **On the Spark**, put back the copy the run made
+   (the run's output names it, `/var/backups/pam.d-sshd.<time>`):
+
+   ```bash
+   sudo cp -p /var/backups/pam.d-sshd.<time> /etc/pam.d/sshd && sudo -k
+   ```
+
+   Then bring the failure to the Claude session working on the repo. A login of `agent`'s that
+   works but reads `0` means the hook didn't run, which never blocks a login. The journal says why:
+   bring what this prints too. **On the Spark:**
+
+   ```bash
+   journalctl -t sshd --since -5min | grep pam_exec
+   ```
 5. Start them again. The stack serves in Phase 1's layout until the cutover, reading the model
    files through the group. Until then `make pull` can't add a file to the cache: root's copy of
    the pull's unit still runs as `spark`, which now only reads it, and the cutover installs the
@@ -205,12 +264,21 @@ has been pulled since.
    getent group spark-admin
    stat -c '%U:%G %a %n' /var/lib/local-ai/hf /var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/whisper-tmp /var/lib/local-ai/pull-cache
    test -x /usr/local/libexec/local-ai-notify && echo "notifier: installed" || echo "notifier: missing"
+   stat -c '%U:%G %a %n' /usr/local/libexec/local-ai-agent-oom /etc/systemd/system/user@$(id -u agent).service.d/local-ai-oom.conf
+   grep -n -m1 -E '^[[:space:]]*-?session[[:space:]]' /etc/pam.d/sshd
+   grep -h '^OOMScoreAdjust=' /etc/systemd/system/user@$(id -u agent).service.d/local-ai-oom.conf
+   grep -x agent /etc/cron.deny
+   grep '^EARLYOOM_ARGS=' /etc/default/earlyoom | grep -c -e --prefer
    ```
 
    Expected: both users with `/usr/sbin/nologin`; `spark-front spark-users`; `spark-admin`'s last
    field naming you alone, since only its members reach the gate's control socket; `spark-pull:spark
    2750 /var/lib/local-ai/hf`; `spark:spark 750` for the gate's, launch's and whisper's folders;
-   `spark-pull:spark-pull 750` for the pull's cache; `notifier: installed`.
+   `spark-pull:spark-pull 750` for the pull's cache; `notifier: installed`. Then, for `agent`'s OOM
+   score: `root:root 755` for the hook and `root:root 644` for the drop-in;
+   `19:session optional pam_exec.so /usr/local/libexec/local-ai-agent-oom`, sshd's first session
+   line now; `OOMScoreAdjust=1000`; `agent`; and `0`, earlyoom's arguments without `--prefer`. (Its
+   comments still name `--prefer`, to say why it's gone.)
 
    Then, with sudo, what your account can't see: launch's own folders, `hf/tmp` and the model
    files. **On the Spark:**

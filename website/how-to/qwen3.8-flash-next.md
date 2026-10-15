@@ -130,7 +130,10 @@ choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
 - `-m` names the first shard; the server finds the other two beside it.
 - `choom -n 1000` makes it the kernel's first choice if memory runs out, as `spark launch` does for
   the stack's on-demand models. If `choom` is missing, drop it: earlyoom picks `llama-server` first
-  anyway.
+  anyway. *(Corrected 2026-10-14, Phase 2a's Task 28: true only until Task 36's bootstrap takes
+  `--prefer` out of earlyoom's arguments. After that, a `llama-server` started without `choom` runs
+  at 0, and earlyoom takes the stack's engines, and any job of `agent`'s, before it. Keep `choom`:
+  it's util-linux's, on every Ubuntu box.)*
 - `--load-mode none` reads the weights into memory instead of mapping the files, as the registry
   does for every model: loads are faster here, and `free -g` then shows what the model really
   holds. `--lazy-mode off` keeps the 51B n-gram table in memory too. Its default reads that table

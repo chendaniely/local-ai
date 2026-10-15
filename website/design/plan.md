@@ -129,7 +129,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. *(Phase 2a, the same: `cap_drop: [ALL]`, only what it needs added back, checked by a working search.)* |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
-| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* |
+| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* *(Phase 2a's Task 28, the controller's ruling, 2026-10-14; built, not yet deployed, which Task 36's bootstrap does: earlyoom has no `--prefer`. It added 300 to an engine's score, worth 450 points of `oom_score_adj`, which no score of `agent`'s could pass. The engines' own `oom_score_adj`, 1000 on demand and 900 resident, keeps them before every process at 0. Root gives `agent`'s processes 1000, which `agent` can't lower: at its SSH logins, through a `pam_exec` hook whose line goes before sshd's first session line, and for its user manager, through a drop-in. `/etc/cron.deny` names `agent`.)* |
 | **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
@@ -1856,6 +1856,16 @@ council, with Dan's fourteen decisions (Revisions).*
   `oom_score_adj` that `agent` can't lower, at login (a root-owned `pam_exec` line for sshd and a
   `user@` drop-in, for instance), with the engines' values reviewed so that `agent`'s job is killed
   first. In 2a if it holds when tested as `agent`; otherwise in 2b (*Open items and risks*).
+  *(Built 2026-10-14, the implementation plan's Task 28, with the controller's rulings; Task 36's
+  bootstrap deploys it, and Task 40 tests it as `agent`:*
+  - *`agent`'s score is 1000, which a root-owned `pam_exec` hook sets at its SSH logins and a `user@`
+    drop-in sets for its user manager.*
+  - *The hook's line goes before sshd's first session line, not at the end. Further down, sshd's
+    stack reads each user's `~/.pam_environment` (`pam_env.so user_readenv=1`), which would hand
+    the hook, run as root, an environment `agent` chose.*
+  - *The engines' values stay 1000 and 900, and earlyoom loses `--prefer`, which put every engine
+    above anything at 1000.*
+  - *`/etc/cron.deny` names `agent`, since a crontab's jobs would start outside both.)*
 - [Spark] `spark clients` writes `agent`'s pi `httpIdleTimeoutMs`, 900,000, beside its provider.
 - [Mac] pi's provider is rendered again after the deploy — `make clients` on the Mac, and the same
   for `agent` on the Spark — so pi lists the new coder.
@@ -3869,6 +3879,22 @@ Each item gets its own design pass when its turn comes.
   following a link, never waiting and only up to a cap, so neither can stall the gate or the brake.
   And the gate's events in *recent* read true for every caller: *Dan's pin on it ended*, not *your
   pin*.
+- **2026-10-14** — Phase 2a's Task 28, the controller's rulings (*Values the box decides*).
+  - **The value.** `agent`'s `oom_score_adj` is 1000, and earlyoom loses `--prefer`. The kernel's
+    score is (1000 + 1000 × RSS / (RAM + swap) + adj) × 2/3. A llama-server at adj 1000 read 1345 on
+    brightroar, as the formula gives. earlyoom's `--prefer` added 300 after the 2/3, worth 450
+    points of adj, so no score of `agent`'s, capped at 1000, could pass an engine's. Without it, an
+    engine holding 2% of RAM scores 1344 on demand and 1278 resident, and a job of `agent`'s holding
+    a tenth of RAM 1392. A process of Dan's at 0 stays below every engine, even holding 90% of RAM.
+    launch's 900 and 1000 stay.
+  - **The hook's line.** It goes before sshd's first session line, not at the end as first planned.
+    sshd's stack has `pam_env.so user_readenv=1` further down, and `pam_exec` hands the hook, run as
+    root, the PAM environment, which `agent` could then fill (`LD_PRELOAD` among it).
+  - **cron.** `/etc/cron.deny` names `agent`: a crontab's jobs start outside both the hook and the
+    user manager.
+
+  The *Host* row and the Phase 2a line's item gain dated notes. Task 38's rollback expects Phase 1's
+  doctor to fail its *earlyoom* check as well.
 
 ## Sources
 
