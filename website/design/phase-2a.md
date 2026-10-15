@@ -327,7 +327,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   controller's ruling, 2026-10-07).
 - **`make apply`:** "waits until no request has been in flight for ~60 s on any engine, by the
   front's counts"; "**The wait has a deadline:** up to 15 minutes … then apply offers 'drain now' …
-  and then `make apply-now`"; "**Nothing is written until the drain is done**"; the front restarts
+  and then `make apply-now`"; "**Nothing is written until the drain is done**" *(but the app's
+  sync, which now comes before the drain: 2026-10-15, the controller's ruling on Task 35's finding,
+  Task 32's note)*; the front restarts
   "only when its own modules change", ~~or the registry's model names and roles,~~ or the key
   digests (or, since Dan's decision of 2026-10-07, the key list; the registry's names and roles
   reach it through the gate). *(Added 2026-10-15, at Task 31's review: and for the app's
@@ -7986,6 +7988,35 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
     - **N4** (a signal during the cleanup's own `undrain-all` cuts it short, and the hold lapses
       within a minute, nothing cut) goes to the phase-end list. **N7**, doctor's S17 check against
       the fields apply now reads, goes to Task 33.
+  - *(Added 2026-10-15, the controller's ruling on Task 35's finding, the box reviewer's M-7:)*
+    **The app's sync comes before the hold.** `uv sync` takes the venv's lock and the project's in
+    `/tmp`, each `0666`, and `flock` works on a read-only file. Any account could make it wait,
+    silently, up to uv's 300 s per lock, while every new request on the box was held.
+    - Order: the sync runs in `drain()`, before `drain-all`, wherever a hold is taken. That is
+      after the quiet wait, after the yes to drain now (`wait_for_quiet`'s `drain_all`), or after
+      `--now`'s question. Without a hold it comes where it was. The registry, llama-swap's config
+      and the stamps are still written after the drain. Nothing else apply does under the hold can
+      wait on another account's lock: the files are written by atomic rename, the restarts go
+      through systemctl, and the gate's calls are bounded.
+    - Bound: `SYNC_TIMEOUT_S`, 180 s, on `uv sync -v`, with `UV_LOCK_TIMEOUT` set to 240 s, past
+      it. When it hits, uv is stopped. apply names the lock from uv's own *Waiting to acquire …
+      lock … at `<path>`* line, *the app's sync waited on a lock: <path>, which another process
+      holds, so apply stopped it after 3 minutes; …*, and exits 1, with no hold taken and nothing
+      restarted. A sync that is slow without a lock reads *didn't finish within 3 minutes*.
+    - uv's own lines are shown, its DEBUG, TRACE and INFO lines (from `-v`) never.
+    - A stop after the sync is worded for it. A decline at the deadline, or a gate error, reads
+      *the app is synced, but nothing else was deployed or restarted*. Ctrl-C reads *stopped by
+      Ctrl-C after syncing the app; … the next `make apply` restarts each unit still running older
+      files*.
+    - What this costs: during the sync no request is held, so a load in that window runs `spark
+      launch` from a part-synced app. That was already so for a change that restarts only the
+      brake and the gate (no hold), and in Phase 1.
+    - Tests: `test_the_sync_runs_before_drain_all` (the quiet path, drain now, `--now`),
+      `test_a_sync_that_waits_on_a_lock_takes_no_hold_and_restarts_nothing`,
+      `test_a_sync_shows_uvs_own_lines_and_never_its_debug_ones` and
+      `test_a_stop_after_the_sync_says_the_app_is_synced`. The brief's
+      `test_the_quiet_path_holds_new_requests_too` and
+      `test_nothing_is_written_until_the_drain_is_done` now pin the sync before `drain-all`.
   - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
     seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
     is a sixteenth `make doctor` line now; Task 33 adds the rest.
@@ -9821,7 +9852,13 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   until `UV_LOCK_TIMEOUT=2` ran out, when uv went on without it. `flock` takes an exclusive lock on
   a read-only file descriptor, so `0664` wouldn't stop `agent`: only a mode closed to others, or a
   lock out of its reach, would. deploy.md says what Dan sees, under Every later change, and that
-  Ctrl-C ends the hold; the remedy is the controller's to rule on.)*
+  Ctrl-C ends the hold; the remedy is the controller's to rule on.)* *(Resolved 2026-10-15, the
+  controller's ruling: no mode change. `make apply` runs the app's sync before taking its hold, so
+  a lock another account holds can only delay apply, never hold every request. The sync is
+  bounded at 3 minutes, `SYNC_TIMEOUT_S`, with uv's `UV_LOCK_TIMEOUT` set past it so uv never goes
+  on without the lock first. One that hits the bound is stopped, says *the app's sync waited on a
+  lock: <path>* (uv names it at `-v`), and exits 1, with nothing restarted and no hold taken.
+  Task 32's note has the rest.)*
 - **`agent`'s two curls in Task 38 Step 7 are prose** (the execution reviewer's m-9): written as a
   block there, run on stand-ins, when Task 38's runbook is.
 
