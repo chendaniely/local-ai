@@ -9383,6 +9383,31 @@ git commit -m "docs(machine): 🤖 both pis work with Qwen3.8-27B" \
   `changelog.md`; and, as the readings say, `stack/host/earlyoom.default` or a swappiness setting
   in `stack/host/bootstrap.sh`, each with its test first
 
+*(Added 2026-10-15, at Dan's request: a real event for this task's tuning. Read from the
+journal, `sar` and earlyoom's own lines. Nothing changed for it.)* On 2026-10-15, Phase 1's
+brake fired three times, unattended, and each time the cause was a test run of the build session's
+own, not a model. Every request and every model was idle; llama-swap logged only the brake's polls.
+- **04:30–04:40.** Committed memory rose from 17.4 to 55.0 GB in one `sar` interval, and
+  available fell from 49.7 GiB (earlyoom's 04:35:53 report) to 28.0 at 04:39:11, the warn line. At
+  04:40:58 it was 19.9 GiB: the brake held and unloaded `qwen3.8-27b`. By 04:50 committed memory
+  was back to 13.6 GB, so the process had ended. Which process it was isn't recorded. It came
+  during a Task 32 build session's test runs, and matches the event below in every reading.
+- **06:10–06:50.** Committed memory climbed about 25 GB every ten minutes, from 24 to 120 GB.
+  The brake unloaded `gemma-4-26b-a4b` at 06:35:48 and `whisper-large-v3-turbo` at 06:45:48, each
+  at 20.0 GiB available. Neither unload could stop it, because the brake unloads only models. At
+  06:50:24 earlyoom, at 9.87% available (12.3 GiB), sent SIGTERM to a `pytest` process of Dan's
+  account holding **107,882 MiB** of RSS. It exited in 0.1 s, and at 07:00 available was 117 GiB.
+  It was a Task 33 build session's run. Its likeliest cause, unproven: a deliberate mutation that
+  removed a read guard, so that a test's link to `/dev/zero` was read whole.
+- **What it shows for this task:**
+  - The line at 20 GiB held each time. At 04:40:58 the brake fired as available reached it, 107 s
+    after the warning at 04:39:11.
+  - The brake only buys time against a process that isn't a model. earlyoom's 12/9 GiB backstop is
+    what ended it, about 5 minutes after the brake's last unload.
+  - Phase 1's hold then stood until Dan released it, and refused `qwen3.8-27b` at 08:56:32.
+  - A test run on this box shares the one memory pool with the models. Capping test runs is
+    proposed to Dan, not built.
+
 - [ ] **Step 1: Measure,** each with the sampler: a busy engine's stop time, by Task 44's method
   (the drill brake unloading the coder while it answers, the only model loaded); how long after an
   engine leaves `/running` its memory shows in `MemAvailable`; `MemAvailable`'s noise while models
