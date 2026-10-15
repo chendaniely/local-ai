@@ -1,6 +1,7 @@
 import argparse
 import http.server
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -1011,11 +1012,15 @@ def alerter(curl: Curl, env: dict):
     return brake.Alerter(env=env, popen=curl, curl_ok=lambda: True)
 
 
-def curl_config(data: bytes) -> dict[str, list[str]]:
+def curl_config(data: bytes) -> dict[str, list[str | None]]:
     """curl's --config text, each `name = "value"` line read back as curl reads it: a backslash takes the next
-    character as itself (\\n, \\t, \\r and \\v as their controls), and an unescaped quote can't come before the last."""
-    found: dict[str, list[str]] = {}
+    character as itself (\\n, \\t, \\r and \\v as their controls), and an unescaped quote can't come before the last.
+    A bare option, such as `globoff`, reads as None."""
+    found: dict[str, list[str | None]] = {}
     for line in data.decode().splitlines():
+        if re.fullmatch(r"[a-z][a-z-]*", line):
+            found.setdefault(line, []).append(None)
+            continue
         name, sep, quoted = line.partition(" = ")
         assert sep and len(quoted) >= 2 and quoted[0] == quoted[-1] == '"', line
         chars, value, i = quoted[1:-1], [], 0
@@ -1413,6 +1418,7 @@ def test_with_the_gate_down_the_brake_sends_brake_fired_itself_without_waiting(b
     words = first_alert(unloaded=[(LABELS[GEMMA], None)])
     assert words.endswith("They resume once the gate is back and memory has stayed above 28 GiB available for 5 min.")
     assert curl_config(child.stdin.data) == {
+        "globoff": [None],  # the URL as it is, never a glob of several (Task 26's review)
         "url": [f"{NTFY['NTFY_URL']}/{NTFY['NTFY_TOPIC_BRAKE']}"],
         "header": [f"@{tmp_path / 'credentials' / 'ntfy-token'}", "Priority: high"],
         "data-raw": [words]}
@@ -1981,6 +1987,43 @@ def test_curl_sends_the_alert_as_it_is_and_reads_no_curlrc(tmp_path):
     assert (with_q["priority"], with_q["auth"]) == ("high", "Bearer stand-in-token-z9")
     assert with_q["planted"] is None and without_q["planted"] == "yes"  # -q is what keeps the .curlrc out
     assert bare == with_q  # an empty environment is all it needs
+
+
+def test_curl_sends_a_url_holding_a_glob_as_one_literal_post(tmp_path):
+    # Task 26's review: curl globs a config's url, so braces and brackets in NTFY_URL (whose path and host _url_ok
+    # passes) would fan one alert out into several POSTs; globoff sends one, to the URL as it is. Ubuntu's curl against
+    # a stand-in HTTP server on a free port, as above.
+    if not os.access(brake.CURL, os.X_OK):
+        pytest.skip(f"no {brake.CURL} here")
+    seen = []
+
+    class Answer(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            seen.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+    port = server.server_address[1]
+    assert port not in (9100, 900, 3000, 8888) and not 800 <= port < 1024 and not 5800 <= port < 6000
+    header = tmp_path / "ntfy-token"
+    header.write_text(TOKEN_LINE + "\n")
+    url = f"http://127.0.0.1:{port}/stand-in{{alpha,beta}}[1-2]/stand-in-topic"
+    config = brake.curl_config(url, header, "high", "a stand-in alert")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        run = subprocess.run(list(brake.CURL_ARGS), input=config, env={}, capture_output=True, timeout=30)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(10)
+    assert run.returncode == 0, run.returncode
+    assert seen == ["/stand-in{alpha,beta}[1-2]/stand-in-topic"]
 
 
 

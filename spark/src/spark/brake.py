@@ -499,8 +499,9 @@ def _curl_quoted(value: str) -> str:
 def curl_config(url: str, header_file: Path, priority: str, text: str) -> bytes:
     """curl's --config for one ntfy alert: the URL (ntfy's address and the brake's topic), the token's header from its
     credential's file, the priority, and the text as the body, by `data-raw`, which takes a leading @ as itself, never
-    as a file to read (Task 23's review, M9)."""
-    lines = [f"url = {_curl_quoted(url)}", f"header = {_curl_quoted('@' + str(header_file))}",
+    as a file to read (Task 23's review, M9). `globoff` first, so curl takes the URL as it is: a {a,b} or [1-2] in
+    NTFY_URL, which `_url_ok` passes, never fans one alert out into several POSTs (Task 26's review)."""
+    lines = ["globoff", f"url = {_curl_quoted(url)}", f"header = {_curl_quoted('@' + str(header_file))}",
              f"header = {_curl_quoted('Priority: ' + priority)}", f"data-raw = {_curl_quoted(text)}"]
     return ("\n".join(lines) + "\n").encode("utf-8")
 

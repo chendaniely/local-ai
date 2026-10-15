@@ -13,7 +13,9 @@
 #   - its config on stdin, so neither ntfy's address, the topic nor the text is on a command line;
 #   - the token's header read by curl itself from its credential's file (header = "@file"), so the token never
 #     passes through this script;
-#   - data-raw, which takes a leading @ as itself, never as a file to read.
+#   - data-raw, which takes a leading @ as itself, never as a file to read;
+#   - globoff, so curl takes the URL as it is: a {a,b} or [1-2] in the address or the topic never fans one alert out
+#     into several POSTs (Task 26's review).
 # curl's output and its errors go nowhere: an error can name ntfy's host, which is private, and the gate's and the
 # brake's logs never hold it. Its exit code is said in words instead.
 #
@@ -180,7 +182,8 @@ while :; do
         *) break ;;
     esac
 done
-config="url = $(curl_quoted "$url/$NTFY_TOPIC_NOTIFY")
+config="globoff
+url = $(curl_quoted "$url/$NTFY_TOPIC_NOTIFY")
 header = $(curl_quoted "@$token")
 header = $(curl_quoted "Priority: $priority")
 data-raw = $(curl_quoted "$text")"

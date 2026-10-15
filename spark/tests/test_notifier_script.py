@@ -52,18 +52,30 @@ class Call:
         self.config = curl_config(self.raw)
         self.env = (folder / "env").read_text().splitlines()
 
+    def value(self, name: str) -> str:
+        [value] = [value for each, value in self.config if each == name]
+        assert value is not None, name
+        return value
+
     @property
     def data(self) -> str:
-        [(name, text)] = [line for line in self.config if line[0] == "data-raw"]
-        return text
+        return self.value("data-raw")
+
+    @property
+    def priority(self) -> str:
+        [header] = [value for name, value in self.config if name == "header" and value.startswith("Priority: ")]
+        return header.removeprefix("Priority: ")
 
 
-def curl_config(text: str) -> list[tuple[str, str]]:
+def curl_config(text: str) -> list[tuple[str, str | None]]:
     """curl's --config text, each `name = "value"` line read back as curl reads it, in order: a backslash takes the
     next character as itself (\\n, \\t, \\r and \\v as their controls), and an unescaped quote can't come before the
-    last."""
-    found = []
+    last. A bare option, such as `globoff`, reads as None."""
+    found: list[tuple[str, str | None]] = []
     for line in text.splitlines():
+        if re.fullmatch(r"[a-z][a-z-]*", line):
+            found.append((line, None))
+            continue
         name, sep, quoted = line.partition(" = ")
         assert sep and len(quoted) >= 2 and quoted[0] == quoted[-1] == '"', line
         chars, value, i = quoted[1:-1], [], 0
@@ -174,7 +186,8 @@ def test_the_notifier_sends_unit_result_and_time_only(box):
     assert run.returncode == 0, run.stderr
     [call] = box.calls()
     assert call.args == CURL_ARGS  # -q first, so no .curlrc is read; its config on stdin
-    assert call.config == [("url", f"{URL}/{TOPIC}"), ("header", f"@{box.creds}/ntfy-token"),
+    # globoff: the URL as it is, never a glob of several (Task 26's review).
+    assert call.config == [("globoff", None), ("url", f"{URL}/{TOPIC}"), ("header", f"@{box.creds}/ntfy-token"),
                            ("header", "Priority: high"), ("data-raw", GATE_DOWN)]
     assert run.stdout == "" and lines(run) == ["Sent the alert: local-ai-gate.service failed at 09:14 (it crashed)."]
 
@@ -244,18 +257,21 @@ def test_a_priority_it_doesnt_know_sends_at_high_and_says_so(box, priority):
         "NOTIFY_GATE isn't high, default, low or off, so the alert goes at high.",
         "Sent the alert: local-ai-gate.service failed at 09:14 (it crashed)."]
     [call] = box.calls()
-    assert call.config[2] == ("header", "Priority: high")
+    assert call.priority == "high"
 
 
-@pytest.mark.parametrize("topic", ['stand-in "quoted" back\\slash', 'stand-in\nurl = "elsewhere"\ttab'],
-                         ids=["a quote and a backslash", "a line break and a tab"])
+@pytest.mark.parametrize("topic", ['stand-in "quoted" back\\slash',
+                                   'stand-in\nurl = "elsewhere"\ttab\rcarriage return\vvertical tab'],
+                         ids=["a quote and a backslash", "a line break, a tab, a carriage return and a vertical tab"])
 def test_a_quote_in_a_value_is_escaped_for_curls_config(box, topic):
     assert box.run(NTFY_TOPIC_NOTIFY=topic).returncode == 0
     [call] = box.calls()
-    url_line = call.raw.splitlines()[0]
-    escaped = topic.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t")
+    # splitlines splits at a bare \r or \v too, so an escape left out gives a line more here.
+    [url_line] = [line for line in call.raw.splitlines() if line.startswith("url = ")]
+    escaped = (topic.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t")
+               .replace("\r", "\\r").replace("\v", "\\v"))
     assert url_line == f'url = "{URL}/{escaped}"'
-    assert len(call.raw.splitlines()) == 4 and call.config[0] == ("url", f"{URL}/{topic}")
+    assert len(call.raw.splitlines()) == 5 and call.value("url") == f"{URL}/{topic}"
 
 
 def test_the_token_reaches_curl_as_a_header_file_never_argv(box):
@@ -281,7 +297,7 @@ def test_each_unit_sends_at_its_own_priority(box):
     priorities = {"NOTIFY_GATE": "low", "NOTIFY_FRONT": "default", "NOTIFY_LLAMA_SWAP": "high", "NOTIFY_BRAKE": "low"}
     for unit in UNITS:
         assert box.run(unit, **priorities).returncode == 0
-    assert [call.config[2] for call in box.calls()] == [("header", f"Priority: {p}") for p in priorities.values()]
+    assert [call.priority for call in box.calls()] == list(priorities.values())
 
 
 NOT_SET_UP = [
@@ -334,7 +350,7 @@ def test_the_script_and_messages_agree(box, monkeypatch, unit):
         assert box.run(unit, result).returncode == 0
         expected = messages.notification(kind, REGISTRY, at=at, result_words=words)
         assert box.calls()[-1].data == expected.message
-        assert box.calls()[-1].config[2] == ("header", f"Priority: {expected.priority}")
+        assert box.calls()[-1].priority == expected.priority
 
 
 @pytest.mark.parametrize(("code", "why"), [(22, "ntfy answered with an error"), (28, "ntfy didn't answer within 10 s"),
@@ -381,7 +397,7 @@ def test_it_runs_alike_under_dash_and_bash(box, shell):
     topic = 'stand-in "quoted" back\\slash\nline'
     assert box.run(shell=shell, NTFY_TOPIC_NOTIFY=topic).returncode == 0
     [call] = box.calls()
-    assert call.config == [("url", f"{URL}/{topic}"), ("header", f"@{box.creds}/ntfy-token"),
+    assert call.config == [("globoff", None), ("url", f"{URL}/{topic}"), ("header", f"@{box.creds}/ntfy-token"),
                            ("header", "Priority: high"), ("data-raw", GATE_DOWN)]
 
 
@@ -455,3 +471,35 @@ def test_ubuntus_curl_sends_it_as_its_config_says(box):
         "No alert was sent: local-ai-gate.service failed at 09:27 (it crashed), and it couldn't reach ntfy (curl's "
         "exit 7)."]
     assert "127.0.0.1" not in gone.stderr + run.stderr
+
+
+@pytest.mark.skipif(not os.access("/usr/bin/curl", os.X_OK), reason="no /usr/bin/curl here")
+def test_a_topic_holding_a_glob_reaches_ntfy_as_one_literal_post(box):
+    # Task 26's review: curl globs a config's url, so a topic holding {alpha,beta} or [1-2] would fan one alert out into
+    # several POSTs, to topics of their own; globoff sends one, to the topic as it is. Ubuntu's curl against a stand-in
+    # HTTP server on a free port, as above, serving until the script is done, so every POST curl makes is counted.
+    seen = []
+
+    class Answer(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            seen.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Answer)
+    port = server.server_address[1]
+    assert port not in (9100, 900, 3000, 8888) and not 800 <= port < 1024 and not 5800 <= port < 6000
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        run = box.run(CURL=None, NTFY_URL=f"http://127.0.0.1:{port}", NTFY_TOPIC_NOTIFY="stand-in{alpha,beta}[1-2]")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(10)
+    assert run.returncode == 0, run.stderr
+    assert seen == ["/stand-in{alpha,beta}[1-2]"]

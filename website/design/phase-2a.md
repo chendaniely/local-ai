@@ -6730,6 +6730,15 @@ git commit -m "feat(stack): 🤖 units for the front, the gate, the failure noti
     The script says curl's exit code in words instead, as `brake.CURL_FAILURES` does. It exits 1,
     so the notifier's unit shows as failed.
   - **Only a sent alert writes the stamp**, so a failed send holds nothing back.
+  - *(Added the same day, at Task 26's review.)* **The stamp fails open.** These three cases are
+    the only exceptions to at most one alert per unit per 300 s:
+    - a stamp that is damaged, or later than the clock (a clock since put back), holds nothing back;
+    - with no state folder, every failure sends, and its line says so;
+    - when the stamp can't be written, the alert still goes, and the next isn't held back.
+  - *(Added the same day, at Task 26's review.)* **`globoff` is the config's first line**, so curl
+    takes the URL as it is. Without it, a `{a,b}` or `[1-2]` in `NTFY_URL` or the topic fans one
+    alert out into several POSTs. The brake's `curl_config` takes the same line, since `NTFY_URL`
+    reaches it through `_url_ok`, which passes one.
   - **Each outcome has its journal line:** a sent alert, one held back and a failed send, as well
     as ntfy not set up. A priority of `off` writes none.
   - **A unit that isn't one of the four** exits 2, with no alert and a line that says so.
