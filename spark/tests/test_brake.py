@@ -820,15 +820,18 @@ REG2A = replace(REG, models={**REG.models,
 LABELS = {name: model.label for name, model in REG2A.models.items()}
 ENGINE_PID = 4242
 FIRED_AT = datetime.fromtimestamp(T0).astimezone().isoformat(timespec="seconds")  # the hold's `since` at T0
-# The brake's alerts tell the time on the box's own clock, so the tests read T0 in the runner's zone, as FIRED_AT does:
-# never a time written out, which holds in one zone only (CI runs in UTC). T0 falls on the minute, and no run here
-# lasts one.
-AT_T0 = f"{datetime.fromtimestamp(T0):%H:%M}"
 # -q first, so curl reads no .curlrc: the brake runs as spark, the engines' account, which could plant one (the review's
 # M10).
 CURL_ARGS = ["/usr/bin/curl", "-q", "--fail", "--silent", "--max-time", "10", "--config", "-"]
 NTFY = {"NTFY_URL": "http://ntfy.stand-in.invalid:8080", "NTFY_TOPIC_BRAKE": "stand-in-topic-b7"}
 TOKEN_LINE = "Authorization: Bearer stand-in-token-z9"
+
+
+def at_t0() -> str:
+    """T0 as the brake's alerts tell it, on the box's own clock: read as the test runs, in the zone it runs in, never a
+    time written out, which holds in one zone only (CI runs in UTC). T0 falls on the minute, and no run here lasts
+    one."""
+    return f"{datetime.fromtimestamp(T0):%H:%M}"
 
 
 def fall(start: float, end: float, per_s: float, *, then: int = 8) -> list[float]:
@@ -2272,8 +2275,10 @@ def test_a_hold_written_later_ends_the_unwritten_episode_as_a_standing_hold(box_
     assert [e.kind for e in events(box_folders)].count("fired") == 1
 
 
-LATE_BY_BRAKE = (f"Brake, {AT_T0}: its pause now stands: new loads are paused until the gate is back and memory has "
-                 "stayed above 28 GiB available for 5 min.")
+def late_by_brake() -> str:
+    """The brake's own follow-up, the gate down, once a retry has written the hold: at T0, as at_t0 tells it."""
+    return (f"Brake, {at_t0()}: its pause now stands: new loads are paused until the gate is back and memory has "
+            "stayed above 28 GiB available for 5 min.")
 
 
 @pytest.mark.parametrize("gate_up", [False, True], ids=["the gate down", "the gate up"])
@@ -2302,7 +2307,7 @@ def test_a_hold_written_late_is_recorded_and_said_to_stand_now(box_folders, tmp_
     if gate_up:
         assert sent == []
     else:
-        assert len(sent) == 3 and "new loads weren't paused" in sent[0] and sent[2] == LATE_BY_BRAKE
+        assert len(sent) == 3 and "new loads weren't paused" in sent[0] and sent[2] == late_by_brake()
     assert sum("new loads paused" in line for line in logs) == 1
 
 
@@ -2323,7 +2328,7 @@ def test_a_once_runs_last_try_records_the_hold_written_late(box_folders, tmp_pat
         ("fired", False), ("unload", True), ("hold_written", True)]
     assert read_hold(box_folders.state).unloaded == (GEMMA,)
     sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
-    assert len(sent) == 2 and sent[1] == LATE_BY_BRAKE
+    assert len(sent) == 2 and sent[1] == late_by_brake()
 
 
 def gate_goes_down_after_the_first_poll(box: Timeline) -> None:
@@ -2364,7 +2369,7 @@ def test_with_the_gate_gone_after_the_fire_the_brakes_first_word_is_the_first_al
     assert all(kind == "unload" and by_brake for kind, _, by_brake in steps[k + 2:]) and later
     sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
     assert sent == [first_alert(unloaded=[(model, None) for model in unloaded], hold_written=writable)] + [
-        f"Brake, {AT_T0}: also unloaded {model}." for model in later]
+        f"Brake, {at_t0()}: also unloaded {model}." for model in later]
 
 
 def test_a_hold_written_late_with_the_gate_gone_since_the_fire_is_the_first_alert(box_folders, tmp_path,
@@ -2430,8 +2435,9 @@ def test_a_poll_whose_retry_writes_the_hold_unloads_before_the_rest(box_folders,
     alert.alert_without_gate = lambda text, priority: (order.append(f"alert: {text}"), real_alert(text, priority))[1]
     run_2a(box, alerter=alert)
     polls = "|".join(order).split("|next poll|")
-    assert polls[4].split("|") == ["hold try", "unload stand-in-5", "hold try", f"alert: Brake, {AT_T0}: also unloaded "
-                                   "stand-in-5.", "gate's saved state", f"alert: {LATE_BY_BRAKE}"]
+    assert polls[4].split("|") == ["hold try", "unload stand-in-5", "hold try",
+                                   f"alert: Brake, {at_t0()}: also unloaded stand-in-5.", "gate's saved state",
+                                   f"alert: {late_by_brake()}"]
 
 
 def test_an_unwritten_pause_ends_once_memory_stays_above_the_warn_line_for_5_minutes(box_folders, monkeypatch):

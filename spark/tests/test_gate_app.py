@@ -937,11 +937,11 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         core = await gate.started()
         status, _ = apps(core)
         status.state.ping_every_s = 0.05
-        seen: list[str] = []  # each line's op, as the stream sends it
+        seen: list[str | None] = []  # each line's op as the stream sends it; None for a line without one
 
         async def watched(scope, receive, send):
             async def tap(message):
-                seen.extend(json.loads(line)["op"] for line in message.get("body", b"").splitlines())
+                seen.extend(json.loads(line).get("op") for line in message.get("body", b"").splitlines())
                 await send(message)
 
             await status(scope, receive, tap)
@@ -954,11 +954,17 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
                 break
             await asyncio.sleep(0.01)
         assert core.front.send({"op": "unloaded", "model": WHISPER})  # onto the open call's stream
-        # The stop waits for a ping after `unloaded`, never a fixed time: a sleep of 0.2 s, four pings' worth, saw none
-        # whenever the process stalled 0.15 s just after `unloaded` went out, as a busy runner can stall it. The sleep
-        # then ended before the stream's next ping was due (forced on the Spark, 2026-10-14).
-        while "unloaded" not in seen or "ping" not in seen[seen.index("unloaded"):]:
-            await asyncio.sleep(0.01)
+        # The stop waits for a ping after `unloaded`, never a fixed time. A sleep of 0.2 s, four pings' worth, saw none
+        # whenever the loop stalled 0.15 s just as `unloaded` went out: the stream arms its next ping only then, so the
+        # sleep ended first (forced on the Spark, 2026-10-14). The gate's own work can stall it there: admission's pass
+        # for the held admit, and the state save that pass leads to, with its two fsyncs, run on the loop; and so can a
+        # busy runner. Its own bound, twenty pings' worth, says what the stream sent if no ping came.
+        try:
+            with anyio.fail_after(1):
+                while "unloaded" not in seen or "ping" not in seen[seen.index("unloaded"):]:
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            pytest.fail(f"no ping within 1 s of `unloaded`; the stream sent {seen}")
         status.state.stopping.set()
         streamed, answered = await events, await held
         ops = [line["op"] for line in streamed.lines()]

@@ -1048,6 +1048,20 @@ def test_an_episode_its_own_hold_dates_is_judged_by_that_hold(tmp_path):
     assert other[2]["release_waits_for_dan"] is False  # 03:12 is 72 min after 02:00
 
 
+def test_an_episode_its_event_dates_is_judged_at_that_moment_in_an_hour_the_clock_repeats(tmp_path, monkeypatch):
+    # With no hold of its own, rule 5 dates the episode by its `fired` event, with its UTC offset, as the brake dates a
+    # hold. Without the offset, a time in the hour a clock going back repeats was read as its first: fired at 01:30
+    # PST, the second 01:30 of 2026-11-01, 61 min after the automatic release at 01:29 PDT, it was said to wait for Dan.
+    monkeypatch.setenv("TZ", "PST8PDT,M3.2.0,M11.1.0")  # a zone whose clock goes back an hour on 2026-11-01
+    time.tzset()
+    fired = datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc).timestamp()  # 01:30 PST
+    assert datetime.fromtimestamp(fired).fold == 1  # the hour's second time
+    write(tmp_path, event("fired", fired), event("unload", fired + 1, model=GEMMA, state="idle"))
+    state = GateState(last_auto_release_at=fired - 3660)  # 01:29 PDT, the hour's first time
+    (first,) = ingest_brake_events(tmp_path / EVENTS_FILE, state, REGISTRY, boot_id=BOOT, now=fired + 2)
+    assert first[2]["release_waits_for_dan"] is False
+
+
 # The publish queue (the controller's ruling at Task 14's review): at most NTFY_QUEUE_MAX; a high alert goes ahead of
 # default and low and is never dropped; when it is full, the oldest low goes first, then the oldest default.
 def low(n: int) -> tuple[str, str, dict]:

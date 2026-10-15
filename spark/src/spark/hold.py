@@ -214,7 +214,7 @@ def release_waits_for_dan(hold: Hold, *, boot_id: str, last_auto_release_at: flo
     if last_auto_release_at is None:
         return False
     try:
-        fired = datetime.fromisoformat(hold.since).timestamp()  # no zone: local time
+        fired = datetime.fromisoformat(hold.since).timestamp()  # by its UTC offset; with none (Phase 1's), local time
     except (ValueError, OverflowError, OSError):
         return True
     return min(fired, now) - last_auto_release_at < AUTO_RELEASE_EVERY_S

@@ -11,8 +11,9 @@ def fake_environment(monkeypatch, tmp_path_factory):
     uv's settings) and passes it on (to engines, `uv sync`, -validate, scripts), and a failing test prints what it was
     given: an assertion's diff, a traceback's arguments, a frame's locals. Dan's shell can hold secrets. So every
     variable goes, and only these come back: PATH, so the tools tests run are found; LANG, so they read text as they
-    would; TZ, when the run sets one, so every test, and every process a test starts, reads the clock in that zone; and
-    HOME, a new, empty folder. A test that needs another sets it, with a stand-in value.
+    would; TZ, when the run sets one, so every test that doesn't pin its own zone, and every process such a test
+    starts, reads the clock in that zone; and HOME, a new, empty folder. A test that needs another sets it, with a
+    stand-in value.
 
     Before TZ was kept (2026-10-14), a run given a zone didn't keep it: a process a test started read the system's
     zone, and the tests' own process read the run's only until something called tzset (datetime.strptime's first call

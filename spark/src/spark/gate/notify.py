@@ -723,7 +723,9 @@ def _waits_for_dan(fired: BrakeEvent, path: Path, state: GateState, now: float) 
     what that brake's pause waits for; a hold found after a reboot is Task 17's brake_needs_release."""
     hold = read_hold(path.parent)
     if hold is None or (hold.boot_id, hold.episode) != (fired.boot_id, fired.episode):
-        since = datetime.fromtimestamp(fired.at).isoformat(timespec="seconds")  # local, as the brake writes `since`
+        # Local time with its UTC offset, as the brake writes `since` (brake._now), so an hour a clock going back
+        # repeats is read as the moment it was.
+        since = datetime.fromtimestamp(fired.at).astimezone().isoformat(timespec="seconds")
         hold = Hold(since, "", (), fired.boot_id, fired.episode)
     return release_waits_for_dan(hold, boot_id=fired.boot_id, last_auto_release_at=state.last_auto_release_at,
                                  now=now)
