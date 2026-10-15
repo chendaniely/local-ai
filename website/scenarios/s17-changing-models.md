@@ -56,6 +56,26 @@ isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).*, and one f
 the Mac, `make clients` updates pi's list.* The plan's [*What you see in Phase
 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
+*(2026-10-15, Phase 2a's Task 32: built, not yet deployed or verified; Task 50's drill checks it on
+the box.)* `make apply` asks the gate what is in flight, never llama-swap, and says what it waits
+on each time that changes. It adds two lines of its own: one when the gate restarted and doesn't
+have the front's counts yet, and one when no request has come since the front started. Ctrl-C, or
+a dropped SSH session, changes nothing while it waits. "Drain now" holds new requests and waits,
+however long, for the requests in flight, naming whose they are. Even after a quiet minute, apply
+waits for a request that arrived just before the hold, rather than cut it off. From then until
+the restarts are done, every new request is held. Then apply syncs the app, writes the files and
+restarts the services, in the order above. It waits up to 30 s for the gate to answer after its
+own restart, and stops there if it doesn't. It waits up to 30 s more for the gate to see llama-swap
+answer again. Then the gate releases the held requests.
+
+`make apply-now` asks only when it would cut a request off, and holds new requests through the
+restart all the same. While the gate isn't answering and llama-swap runs, `make apply` changes
+nothing, since it can't see what's in flight; `make apply-now` restarts anyway. `make
+restart-front` waits in the same way.
+Its words never offer `make apply-now`, which wouldn't restart the front. For the drill, `spark
+apply --deadline-s 60` shortens the 15 minutes, and `--help` doesn't list that option. `make
+doctor`'s `S17` line checks that the gate answers what the wait reads.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

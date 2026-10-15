@@ -1467,11 +1467,11 @@ def test_install_units_shows_what_root_will_run_then_asks_and_installs_it(tmp_pa
         "systemctl daemon-reload",
         f"systemctl enable {' '.join(ENABLED_UNITS)}",
     ]  # the pull, the notifier and the drill run only when started
-    # Task 31's review: apply restarts no socket, and the front's restart waits as llama-swap's does (until Task 32's
-    # wait, while no model is loaded).
+    # Task 31's review: apply restarts no socket, and the front's restart waits as llama-swap's does: since Task 32, for
+    # a quiet moment, with nothing in flight.
     assert result.stdout.splitlines()[-1] == (
         "==> installed. make apply restarts each long-running service that runs an older definition, llama-swap and "
-        "the front only while no model is loaded (or make apply-now); it restarts no socket, which takes its new "
+        "the front only once nothing is in flight (or make apply-now); it restarts no socket, which takes its new "
         "definition only once it is started again, with sudo, or at the next boot")
 
 

@@ -3,7 +3,10 @@ import dataclasses
 import io
 import json
 import os
+import shutil
+import socketserver
 import subprocess
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -15,6 +18,7 @@ import pytest
 
 from spark import brake, cli, doctor
 from spark.doctor import SECRETS, UFW_CONF, UNITS, Probe, checks, earlyoom_args, report
+from spark.gateclient import GateRefused, GateUnavailable
 from spark.registry import load_registry
 from spark.render import COMPOSE_DIR, installed_path, render
 from spark.versions import load_versions
@@ -68,6 +72,8 @@ class FakeProbe:
         self.open_folders = set()
         self.pages = {f"{URL}/health": 200, "http://127.0.0.1:3000/": 200, "http://127.0.0.1:8888/": 200}
         self.keys_sent = []
+        # The gate's control socket (Task 32's S17 check): each route's answer, or the GateError it raises.
+        self.gate = {"/v1/quiet": {"quiet_for_s": 75.0, "last_label": "the coder", "inflight": []}}
 
     def run(self, argv):
         return self.commands.get(tuple(argv), (127, "", f"{argv[0]}: not found"))
@@ -86,6 +92,12 @@ class FakeProbe:
 
     def exists(self, path):
         return self.present.get(Path(path), False)
+
+    def gate_get(self, route):
+        answer = self.gate[route]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     def http(self, url, *, key=None, body=None, timeout=10.0):
         self.keys_sent.append(key)
@@ -108,7 +120,7 @@ def failures(probe, key=KEY):
 
 def test_a_healthy_spark_passes_every_check():
     results = checks(FakeProbe(), KEY, REG)
-    assert len(results) == 15 and [c.name for c in results if not c.ok] == []
+    assert len(results) == 16 and [c.name for c in results if not c.ok] == []  # S17's since Task 32
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -394,7 +406,7 @@ def test_an_active_brake_whose_start_check_didnt_pass_fails_the_stack_units_line
         probe.files[CHECK] = record
     results = checks(probe, KEY, REG)
     failed = {c.name: c.detail for c in results if not c.ok}
-    assert len(results) == 15 and set(failed) == {"stack units"}
+    assert len(results) == 16 and set(failed) == {"stack units"}
     assert failed["stack units"].startswith(detail), failed
 
 
@@ -520,7 +532,60 @@ def test_the_report_shows_every_check_and_never_the_key():
     text = report(checks(probe, KEY, REG))
     assert KEY in probe.keys_sent and KEY not in text
     assert text.splitlines()[0] == "ok    leak hooks: on in this clone"
-    assert text.splitlines()[-1] == "doctor: 15 of 15 checks pass"
+    assert text.splitlines()[-1] == "doctor: 16 of 16 checks pass"  # S17's since Task 32
+
+
+def test_doctor_checks_s17():
+    # Task 32: `make apply`'s quiet wait reads the gate's GET /v1/quiet, on its control socket.
+    assert {c.name: (c.ok, c.detail) for c in checks(FakeProbe(), KEY, REG)}["S17"] == (
+        True, "the gate answers GET /v1/quiet, which make apply's wait for a quiet moment reads")
+    probe = FakeProbe()
+    down = GateUnavailable("The gate can't be reached: there is no socket at /run/local-ai/gate-control.sock. On the "
+                           "Spark, `make doctor` shows what's wrong.")
+    probe.gate["/v1/quiet"] = down
+    assert failures(probe) == {"S17": f"the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: "
+                                      f"{down}"}
+    probe.gate["/v1/quiet"] = GateRefused(403, {"message": "Only spark-admin's members can ask that.", "code": None})
+    assert failures(probe) == {"S17": "the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: "
+                                      "Only spark-admin's members can ask that."}
+    probe.gate["/v1/quiet"] = {"quiet_for_s": "a while"}
+    assert failures(probe) == {"S17": "the gate's answer to GET /v1/quiet isn't one make apply can read: `make logs "
+                                      "s=gate`"}
+
+
+def test_the_probe_asks_the_gate_on_its_control_socket(tmp_path, monkeypatch):
+    # Doctor's Probe asks the gate through the CLI's client, on the control socket's path: here a stand-in's.
+    folder = Path(tempfile.mkdtemp(prefix="dr", dir="/tmp"))
+    path = folder / "control.sock"
+    seen = []
+
+    class Gate(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            seen.append(self.path)
+            data = b'{"quiet_for_s": 3.0, "last_label": null, "inflight": []}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = socketserver.ThreadingUnixStreamServer(str(path), Gate)
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        monkeypatch.setattr(doctor.paths, "GATE_CONTROL_SOCKET", path)
+        assert Probe(ROOT).gate_get("/v1/quiet") == {"quiet_for_s": 3.0, "last_label": None, "inflight": []}
+        assert seen == ["/v1/quiet"]
+        monkeypatch.setattr(doctor.paths, "GATE_CONTROL_SOCKET", folder / "missing.sock")
+        with pytest.raises(GateUnavailable):
+            Probe(ROOT).gate_get("/v1/quiet")
+    finally:
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def test_doctor_runs_only_from_the_repo_root(tmp_path, monkeypatch, capsys):

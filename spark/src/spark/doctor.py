@@ -25,6 +25,8 @@ from pathlib import Path
 
 from spark import paths, render
 from spark.brake import KEY_CHECK_FILE, parse_key_check
+from spark.gateclient import GateClient, GateError
+from spark.gateproto import REQUEST_TIMEOUT_S
 from spark.llamaswap import _KeyStaysHere, _url_ok, key_from_env
 from spark.registry import Registry, load_registry
 
@@ -152,6 +154,11 @@ class Probe:
         except OSError:
             return None
         return True
+
+    def gate_get(self, route: str) -> dict:
+        """The gate's answer to GET `route` on its control socket, as the CLI asks it (gateclient): needs no key, and
+        raises a GateError whose text says what state the socket is in."""
+        return GateClient(paths.GATE_CONTROL_SOCKET, REQUEST_TIMEOUT_S).get(route)
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
              timeout: float = 10.0) -> tuple[int, str]:
@@ -523,6 +530,23 @@ def model(probe: Probe, key: str | None, registry: Registry | None, problem: str
     return Check(name, False, f"{models[0]} answered {code}: `make status` says why a load was refused")
 
 
+# One check per Phase 2a scenario (Task 33 adds the rest).
+
+
+def s17(probe: Probe) -> Check:
+    """S17, changing models mid-task (Task 32): `make apply`'s wait for a quiet moment reads the gate's GET /v1/quiet,
+    on its control socket; without it, apply can't see what's in flight, and refuses a restart that would cut it off."""
+    try:
+        answer = probe.gate_get("/v1/quiet")
+    except GateError as err:
+        return Check("S17", False, f"the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: "
+                                   f"{err}")
+    quiet, inflight = answer.get("quiet_for_s"), answer.get("inflight")
+    if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or not isinstance(inflight, list):
+        return Check("S17", False, "the gate's answer to GET /v1/quiet isn't one make apply can read: `make logs s=gate`")
+    return Check("S17", True, "the gate answers GET /v1/quiet, which make apply's wait for a quiet moment reads")
+
+
 def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,
            key_env: str = KEY_ENV) -> list[Check]:
     """Every check, in order. `key` is what the shell's `key_env` holds, and the checks that need it name that
@@ -531,7 +555,7 @@ def checks(probe: Probe, key: str | None, registry: Registry | None, problem: st
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe),
         firewall(probe), secrets_folder(probe), spark_folders(probe),
         root_copies(probe), needrestart(probe), engine_config(probe), units(probe), llama_swap(probe, key, key_env),
-        web(probe), model(probe, key, registry, problem, key_env),
+        web(probe), model(probe, key, registry, problem, key_env), s17(probe),
     ]
 
 

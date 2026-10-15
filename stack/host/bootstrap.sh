@@ -1286,7 +1286,7 @@ install_units() {
   done
   if (( ${#enable[@]} )); then run systemctl enable "${enable[@]}"; fi
   if (( ! DRY_RUN && (folders || ${#changed[@]}) )); then
-    say "installed. make apply restarts each long-running service that runs an older definition, llama-swap and the front only while no model is loaded (or make apply-now); it restarts no socket, which takes its new definition only once it is started again, with sudo, or at the next boot"
+    say "installed. make apply restarts each long-running service that runs an older definition, llama-swap and the front only once nothing is in flight (or make apply-now); it restarts no socket, which takes its new definition only once it is started again, with sudo, or at the next boot"
   fi
 }
 

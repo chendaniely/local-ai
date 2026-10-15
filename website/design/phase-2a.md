@@ -7696,7 +7696,8 @@ git commit -m "feat(spark): 🤖 spark load, unload, pin, make-room, release, lo
     before the write, and touch none.)
   - Until Task 32's wait, an `after_quiet` restart goes ahead only while llama-swap has no model
     loaded (a stopped llama-swap has none), or with `--now`. Apply asks llama-swap again just before
-    each one, and a model found loaded holds back the rest of them.
+    each one, and a model found loaded holds back the rest of them. *(Replaced 2026-10-15 by Task
+    32's wait and hold: Task 32's note.)*
   - The diff escapes control characters, as `make install-units` refuses them. At the staging stop
     it shows only root's pending files. The app's changed files are named one to a line, and
     render's warnings print before the diff (the controller's note at Task 5).
@@ -7713,8 +7714,11 @@ git commit -m "feat(spark): 🤖 spark load, unload, pin, make-room, release, lo
     (`spark unload <model>`), then run `make restart-front` again, since no make target passes
     `--now` with `--restart`; Task 32 replaces that step. A failed sync says to run `make
     restart-front` again, not `make apply`, which wouldn't restart the front for the key list.
+    *(Replaced 2026-10-15, at Task 32: `make restart-front` waits for the quiet moment as `make
+    apply` does, and refuses only while the gate isn't answering.)*
   - `make install-units`' closing line says that apply restarts the front, as it does llama-swap,
-    only while no model is loaded, and restarts no socket.
+    only while no model is loaded, and restarts no socket. *(Since Task 32, 2026-10-15: only once
+    nothing is in flight.)*
   - `secret-files.md`, plan.md's *Deploy workflow* and S17 gain dated notes, with a Revisions line.
 
 **Tests** (`spark/tests/test_apply.py`):
@@ -7819,6 +7823,54 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   restarts anyway*); when llama-swap isn't running, it deploys without asking the gate (the
   cutover's case, Task 38).
 - doctor's S17 check — `GET /v1/quiet` answers.
+- *(Added 2026-10-15, at Task 32, as built; each for the controller's ruling:)*
+  - **apply never asks llama-swap.** From the cutover llama-swap refuses Dan's key, so Phase 1's
+    `models_loaded`, `wait_for_running` and `--key-env` are gone. Task 31's look before each
+    `after_quiet` restart went too: the hold replaces it.
+  - **"llama-swap answering again" is the gate's own end of the hold.** apply waits for the
+    gate's `health.llama_swap` `ok` *and* `applying` null. The gate ends the hold only once a
+    `/running` read sent after llama-swap's new start has answered (`_check_apply_end`). An `ok`
+    alone may come from a read before the restart. `apply/end` follows, a second end that does
+    nothing.
+  - **The quiet path waits under the hold too.** After `drain-all` it waits for nothing in flight,
+    so a request that arrived between the quiet reading and the hold isn't cut off. "Nothing in
+    flight" needs the front's counts: a reading with `quiet_for_s` 0 and nothing listed counts as
+    not knowing.
+  - **`--now` takes the hold too.** With the gate answering it asks only when requests are in
+    flight. It then posts `drain-all`, `begin` and `end`, and doesn't wait for the requests in
+    flight, which the restart cuts off. With the gate down it restarts without the hold, can't
+    confirm llama-swap, and exits 1.
+  - **The gate's answering check is `GET /v1/status`**, after every restart of the gate,
+    at-once path included. A gate that fails it stops every later restart, the compose unit's
+    too. apply still posts `undrain-all`, and says the hold lapses if that gets no answer.
+  - **With llama-swap stopped**, a front that must restart still asks the gate and waits while
+    it answers. apply deploys without the gate only when the gate doesn't answer. With nothing in
+    `after_quiet`, the cutover's Step 4, it asks the gate nothing.
+  - **`make restart-front` waits and drains as `make apply` does.** This replaces Task 31's interim
+    refusal. Its waiting sentence drops *`make apply-now` restarts now*. Its declined and gate-down
+    lines name `make restart-front` (and `make doctor`).
+  - **The waits outlast a gate restart.** A reading the gate doesn't answer is said once and tried
+    each second for up to 30 s. After that, "nothing was changed", exit 1. Any other gate error at
+    the first reading, in the wait, at `drain-all` or at `begin` is said, never a traceback.
+  - **Words of apply's own**, beside Task 7's:
+    - for a gate without the front's counts, and for no request since the front started;
+    - the drain's *Holding new requests while the 2 requests in flight finish (pi on the Mac,
+      agent). Ctrl-C ends the hold and leaves everything as it was.*;
+    - the line for a stop by Ctrl-C, SIGHUP or SIGTERM, which says what the run left;
+    - `apply: done: …`, and lines while it waits up to 30 s after a restart.
+
+    A model in flight is named by the oldest request's model, not `last_label`. A quiet moment under
+    a second old reads *answered 1 s ago*, never *is answering now*.
+  - **Interruptions.** Ctrl-C now exits 130, with a line, at any point, the at-once path included,
+    where it was a traceback. Only the first of Ctrl-C, SIGHUP and SIGTERM interrupts, so the
+    cleanup isn't cut short.
+  - **The hold's end.** `apply/end` only when every restart went through, `undrain-all` after any
+    failure. The hold ends before the compose unit's restart. A renewal answering `{ended: true}`
+    before `begin`, or before the front's or llama-swap's restart, stops apply there: requests
+    flow again, so that restart would cut them off.
+  - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
+    seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
+    is a sixteenth `make doctor` line now; Task 33 adds the rest.
 
 **Tests** (`spark/tests/test_apply.py`, a gate stand-in; `spark/tests/test_doctor.py`):
 

@@ -1,23 +1,32 @@
+import argparse
 import itertools
+import json
+import math
 import os
 import re
 import shutil
-import socket
+import signal
+import socketserver
 import subprocess
+import sys
+import tempfile
+import threading
 import time
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from spark import apply as spark_apply
-from spark import cli, llamaswap
+from spark import cli, gateproto, messages, paths
 from spark import render as spark_render
-from spark.apply import (RUNNING_UNITS, UNKNOWN_START, RestartPlan, app_diff, apply_files, diff_text, diff_tree,
-                         models_loaded, not_installed, outdated_units, plan_restarts, read_copies, restart_order,
-                         start_times, started_at, validation_env)
-from spark.llamaswap import LlamaSwap, LlamaSwapError, LlamaSwapUnreachable, Running
+from spark.apply import (RUNNING_UNITS, UNKNOWN_START, ApplyGate, RestartPlan, app_diff, apply_files, diff_text,
+                         diff_tree, not_installed, outdated_units, plan_restarts, read_copies, restart_order,
+                         start_times, started_at, validation_env, wait_for_drained, wait_for_quiet)
+from spark.gate.app import STILL_FINISHING
+from spark.gateclient import GateClient, GateRefused, GateUnavailable
 from spark.registry import load_registry
 from spark.render import INTERNAL_KEY_ENVS, installed_path, render
 from spark.versions import load_versions
@@ -40,22 +49,306 @@ def seeded(etc):
     return etc
 
 
+# Task 32: the gate, as `spark apply` sees it on its control socket. GateScript answers each of apply's routes as the
+# gate's core does (gate/core.py's quiet, drain_all, apply_renew, apply_begin, apply_end and undrain_all, and the
+# status view's health and applying), scripted by the test; ScriptClient hands it apply's calls in-process, raising as
+# GateClient does, and serve_script puts it on a short Unix socket for `spark apply` whole (Box) and for a `spark
+# apply` in a subprocess. FakeTime is the clock apply's waits are given.
+
+def idle(quiet_for_s, last_label="the coder"):
+    """/v1/quiet with nothing in flight for `quiet_for_s` (gateproto.QuietAnswer)."""
+    return {"quiet_for_s": float(quiet_for_s), "last_label": last_label, "inflight": []}
+
+
+def busy(*askers, label="the coder", age_s=20.0):
+    """/v1/quiet with a request in flight for each of `askers`, by its key's label, the oldest first."""
+    return {"quiet_for_s": 0.0, "last_label": label,
+            "inflight": [{"model": "coder", "model_label": label, "key_label": asker, "age_s": age_s - i}
+                         for i, asker in enumerate(askers)]}
+
+
+QUIET = idle(120)
+# What a dry run says of restarts that wait for the quiet moment, with the gate answering.
+WOULD_WAIT = ("apply: dry run — would wait until nothing has been in flight for 60 s (for up to 15 minutes, then offer "
+              "to drain now), then restart ")
+
+
+class Down(Exception):
+    """The gate doesn't answer this call: the socket holds it, or nothing listens."""
+
+
+class GateScript:
+    """The gate, for apply's calls. Each call is kept in `calls` as (method, route, body, time by `clock`), and named in
+    `events` as `gate <method> <route>`, a renewal's apart (`renewals`), since it comes from a thread of its own.
+    - GET /v1/quiet: `quiet`, a list of readings (the last repeated) or a function of (n, held), n counting from 0;
+      always quiet by default. `around` scripts the readings before drain-all and after it. A reading that is an
+      exception is raised, as a Ctrl-C during the wait.
+    - POST /v1/drain-all: apply's hold, from then: {since}. /v1/apply/renew: {ok} while it stands, {ended} once ended.
+    - POST /v1/apply/begin: {ok} while the hold stands, else {ended}. /v1/apply/end and /v1/undrain-all end it: {},
+      or `end_status` with STILL_FINISHING.
+    - GET /v1/status: health.llama_swap and applying. After llama-swap's restart (`restarted`), "not answering" for
+      `llama_back_after` readings (math.inf: for ever), then "ok", the hold ended, as the gate's own end does once
+      llama-swap answers again (gate/core.py's _check_apply_end).
+    - `down`: every call goes unanswered; after the gate's restart, `gate_back_after` calls do (math.inf: for ever).
+    A call the gate's routes don't have, or a POST whose body isn't an object, is answered 404 or 400 and kept in
+    `bad`, as the gate would answer it."""
+
+    def __init__(self, clock=time.monotonic, events=None):
+        self.clock = clock
+        self.events = [] if events is None else events
+        self.calls, self.renewals, self.bad = [], [], []
+        self.quiet = [QUIET]
+        self.readings = 0
+        self.down = False
+        self.gate_back_after = 0
+        self.llama_back_after = 0
+        self.end_status = 200
+        self.begin_answer = None  # None: as the hold stands; else this answer
+        self.hold = None  # {"since", "ended", "restarting"}
+        self._gate_down = 0
+        self._llama_wait = None
+        self.lock = threading.RLock()
+
+    def around(self, before=(QUIET,), after=(QUIET,)):
+        """The readings before drain-all, each in turn, the last repeated; then those after it."""
+        ahead, behind = list(before), list(after)
+        counts = {"before": 0, "after": 0}
+
+        def reading(n, held):
+            key, seq = ("after", behind) if held else ("before", ahead)
+            at = counts[key]
+            counts[key] += 1
+            return seq[min(at, len(seq) - 1)]
+
+        self.quiet = reading
+
+    def restarted(self, unit):
+        """`systemctl restart <unit>`, as the box saw it."""
+        with self.lock:
+            if unit == GATE:
+                self._gate_down = self.gate_back_after
+            if unit == LLAMA:
+                self._llama_wait = self.llama_back_after
+
+    def held(self):
+        return self.hold is not None and not self.hold["ended"]
+
+    def routes(self, route):
+        return [call for call in self.calls if call[1] == route]
+
+    def handle(self, method, route, body):
+        with self.lock:
+            self.calls.append((method, route, body, self.clock()))
+            (self.renewals if route == "/v1/apply/renew" else self.events).append(f"gate {method} {route}")
+            if self.down:
+                raise Down
+            if self._gate_down > 0:
+                self._gate_down -= 1
+                raise Down
+            known = {(r.method, r.path) for r in gateproto.ROUTES if r.socket == "control"}
+            if (method, route) not in known:
+                self.bad.append((method, route))
+                return 404, {"message": "no such route", "code": None}
+            if method == "POST" and not isinstance(body, dict):
+                self.bad.append((method, route))
+                return 400, {"message": "not an object", "code": None}
+            return self._answer(method, route, body)
+
+    def _answer(self, method, route, body):
+        if route == "/v1/quiet":
+            n, self.readings = self.readings, self.readings + 1
+            answer = self.quiet(n, self.held()) if callable(self.quiet) else self.quiet[min(n, len(self.quiet) - 1)]
+            if isinstance(answer, BaseException):
+                raise answer
+            return 200, answer
+        if route == "/v1/drain-all":
+            if not self.held():
+                self.hold = {"since": self.clock(), "ended": False, "restarting": []}
+            return 200, {"since": self.hold["since"]}
+        if route == "/v1/apply/renew":
+            if self.hold is None:
+                self.hold = {"since": body["since"], "ended": False, "restarting": []}
+            return 200, {"ended": True} if self.hold["ended"] else {"ok": True}
+        if route == "/v1/apply/begin":
+            if self.begin_answer is not None:
+                return 200, self.begin_answer
+            if not self.held():
+                return 200, {"ended": True}
+            self.hold["restarting"] = list(body["restarting"])
+            return 200, {"ok": True}
+        if route in ("/v1/apply/end", "/v1/undrain-all"):
+            if self.end_status != 200:
+                return self.end_status, {"message": STILL_FINISHING, "code": None}
+            if self.hold is not None:
+                self.hold["ended"] = True
+            return 200, {}
+        if route == "/v1/status":
+            answering = "ok"
+            if self._llama_wait is not None:
+                if self._llama_wait > 0:
+                    self._llama_wait -= 1
+                    answering = "not answering"
+                elif self.hold is not None:
+                    self.hold["ended"] = True  # the gate's own end: llama-swap answered after its restart
+            applying = {"since": self.hold["since"], "restarting": self.hold["restarting"]} if self.held() else None
+            return 200, {"health": {"llama_swap": answering}, "applying": applying}
+        raise AssertionError(f"GateScript has no answer for {method} {route}")
+
+
+class ScriptClient:
+    """GateClient's calls, answered by a GateScript in-process, with GateClient's errors."""
+
+    def __init__(self, script, timeout_s=gateproto.REQUEST_TIMEOUT_S):
+        self.script, self.timeout_s = script, timeout_s
+
+    def get(self, route):
+        return self._call("GET", route, None)
+
+    def post(self, route, body):
+        return self._call("POST", route, body)
+
+    def _call(self, method, route, body):
+        try:
+            status, payload = self.script.handle(method, route, body)
+        except Down:
+            raise GateUnavailable(f"The gate didn't answer on /run/local-ai/gate-control.sock within "
+                                  f"{self.timeout_s:g} s. On the Spark, `make doctor` shows what's wrong.",
+                                  sent=True) from None
+        if not 200 <= status < 300:
+            raise GateRefused(status, payload)
+        return payload
+
+
+class _ScriptHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def _any(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length)) if length else None
+        try:
+            status, payload = self.server.script.handle(self.command, self.path, body)
+        except Down:  # no answer: the connection closes, as a gate that died does
+            self.close_connection = True
+            return
+        data = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    do_GET = do_POST = _any
+
+
+class _ScriptServer(socketserver.ThreadingUnixStreamServer):
+    daemon_threads = True
+
+
+def serve_script(script, path):
+    """`script` on a Unix socket at `path`, in threads of its own; returns the server, to shut down."""
+    server = _ScriptServer(str(path), _ScriptHandler)
+    server.script = script
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    return server
+
+
+class FakeTime:
+    """apply's clock in a test: `sleep` moves it on at once, then waits until each watched hold's renewal thread has
+    made every renewal due by then and gone back to its `pause`, so a renewal lands at the time it is due."""
+
+    def __init__(self, start=1000.0):
+        self.now = start
+        self.slept = []
+        self.cond = threading.Condition()
+        self.waiting = {}  # each renewal thread in its pause, and when it wakes
+        self.holds = []  # the ApplyGates whose renewal thread `sleep` waits for
+
+    def clock(self):
+        return self.now
+
+    def pause(self, due, stopped):
+        me = threading.current_thread()
+        with self.cond:
+            self.waiting[me] = due
+            self.cond.notify_all()
+            try:
+                while self.now < due and not stopped.is_set():
+                    self.cond.wait(0.01)
+            finally:
+                del self.waiting[me]
+                self.cond.notify_all()
+            return stopped.is_set()
+
+    def _settled(self):
+        for hold in self.holds:
+            thread = hold._thread
+            if thread is None or not thread.is_alive():
+                continue
+            if self.waiting.get(thread, -math.inf) <= self.now:
+                return False
+        return True
+
+    def sleep(self, seconds):
+        with self.cond:
+            self.slept.append(seconds)
+            self.now += seconds
+            self.cond.notify_all()
+            deadline = time.monotonic() + 10
+            while not self._settled():
+                assert time.monotonic() < deadline, "the renewal thread didn't settle"
+                self.cond.wait(0.01)
+
+
+def apply_gate(script, clock=None, logs=None):
+    """An ApplyGate on `script`, timed by a FakeTime (`clock`) whose sleep waits for its renewals."""
+    clock = clock or FakeTime()
+    script.clock = clock.clock
+    gate = ApplyGate(ScriptClient(script), ScriptClient(script, spark_apply.END_TIMEOUT_S), clock=clock.clock,
+                     sleep=clock.sleep, pause=clock.pause, log=(logs.append if logs is not None else print))
+    clock.holds.append(gate)
+    return gate
+
+
 def run_apply(etc, files, *, installed=ROOTS, unreadable=(), outdated=(), active=(LLAMA, BRAKE, COMPOSE, FRONT, GATE),
-              app_changes=(), running=(), now_ok=False, dry_run=False, fails=(), stays_up=None,
-              registry_old=REGISTRY, registry_new=REGISTRY, restart_front=False, recheck=None):
-    ran, logs, synced = [], [], []
+              app_changes=(), now_ok=False, dry_run=False, fails=(), stays_up=None, registry_old=REGISTRY,
+              registry_new=REGISTRY, restart_front=False, script=None, clock=None, answers=(), deadline_s=None,
+              events=None):
+    """apply_files with stand-ins: systemctl (`fails` don't restart), the sync, and the gate (`script`, a quiet one by
+    default), timed by `clock`; `answers` answers apply's questions in turn. `events`, when given, gets each restart,
+    the sync and each call to the gate, in order."""
+    ran, logs, synced, asked = [], [], [], []
+    events = [] if events is None else events
+    script = GateScript() if script is None else script
+    script.events = events
+    gate = apply_gate(script, clock, logs)
+    replies = list(answers)
 
     def run_cmd(cmd):  # systemctl, as a stand-in: a unit in `fails` doesn't restart
         if cmd[-1] in fails:
             raise subprocess.CalledProcessError(1, cmd)
         ran.append(cmd)
+        events.append(f"restart {cmd[-1]}")
+        script.restarted(cmd[-1])
 
+    def ask(question):
+        asked.append(question)
+        return replies.pop(0) if replies else None
+
+    def sync():
+        synced.append(True)
+        events.append("sync")
+
+    extra = {} if deadline_s is None else {"deadline_s": deadline_s}
     code = apply_files(files, etc, installed=dict(installed), unreadable=set(unreadable), outdated=list(outdated),
-                       active=lambda unit: unit in active, app_changes=list(app_changes),
-                       running=None if running is None else list(running), now_ok=now_ok, dry_run=dry_run,
-                       sync_app=lambda: synced.append(True), run_cmd=run_cmd, log=logs.append, stays_up=stays_up,
-                       registry_old=registry_old, registry_new=registry_new, restart_front=restart_front,
-                       recheck=recheck)
+                       active=lambda unit: unit in active, app_changes=list(app_changes), now_ok=now_ok,
+                       dry_run=dry_run, sync_app=sync, run_cmd=run_cmd, log=logs.append, stays_up=stays_up,
+                       registry_old=registry_old, registry_new=registry_new, restart_front=restart_front, gate=gate,
+                       ask=ask, **extra)
+    run_apply.asked, run_apply.script, run_apply.gate = asked, script, gate
+    assert script.bad == []
     return code, ran, logs, synced
 
 
@@ -64,28 +357,18 @@ def test_nothing_changed_does_nothing(tmp_path):
     assert (code, ran, logs) == (0, [], ["apply: nothing to change"])
 
 
-def test_a_llama_swap_config_change_restarts_it_when_no_model_is_loaded(tmp_path):
+def test_a_llama_swap_config_change_restarts_it_after_a_quiet_moment(tmp_path):
+    # Task 32: whatever is loaded. Phase 1 restarted it only with no model loaded; the gate's quiet reading replaces that.
     code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"})
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
     assert (tmp_path / "llama-swap.yaml").read_text() == "b"
 
 
-def test_llama_swap_change_is_refused_while_models_are_loaded(tmp_path):
-    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
-                                        app_changes=["src/spark/brake.py"], running=["qwen3.6-35b-a3b"])
-    assert code == 1 and ran == [] and synced == []
-    assert (tmp_path / "llama-swap.yaml").read_text() == "a"
-    assert "--now" in logs[-1] and "qwen3.6-35b-a3b" in logs[-1]
-
-
-def test_not_knowing_what_is_loaded_counts_as_loaded(tmp_path):
-    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, running=None)
-    assert code == 1
-
-
 def test_now_restarts_llama_swap_anyway(tmp_path):
-    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
-                                running=["qwen3.6-35b-a3b"], now_ok=True)
+    script = GateScript()
+    script.quiet = [busy("pi on the Mac")]
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, now_ok=True, script=script,
+                                answers=[True])
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
 
 
@@ -125,11 +408,13 @@ def test_a_running_unit_is_restarted_once_its_new_definition_is_installed(tmp_pa
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-compose.service"]]
 
 
-def test_llama_swap_waits_for_idle_models_to_run_its_new_definition(tmp_path):
-    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"])
-    assert code == 1 and ran == [] and "--now" in logs[-1]
-    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], running=["qwen3.6-35b-a3b"], now_ok=True)
+def test_llama_swap_waits_for_a_quiet_moment_to_run_its_new_definition(tmp_path):
+    # Phase 1 waited for idle models, or --now; since Task 32, for 60 s with nothing in flight.
+    script, clock = GateScript(), FakeTime()
+    script.around(before=[busy("agent"), busy("agent"), *(idle(s) for s in range(0, 61))])
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, outdated=[LLAMA], script=script, clock=clock)
     assert code == 0 and ran == [["systemctl", "restart", "local-ai-llama-swap.service"]]
+    assert script.readings == 64 and sum(clock.slept) == 62  # each reading a second apart, the last one quiet
 
 
 def test_a_unit_that_isnt_running_is_never_started(tmp_path):
@@ -157,6 +442,8 @@ def test_a_restart_that_fails_says_the_files_are_deployed_and_how_to_finish(tmp_
     assert (tmp_path / "models.yaml").read_text() == "m2"
     assert ("apply: restarting local-ai-brake.service failed, and its new files are deployed: see "
             "`make logs s=brake`, and once it's fixed, `systemctl restart local-ai-brake.service`") in logs
+    # Task 32: a failure after drain-all ends apply's hold with undrain-all, never apply/end.
+    assert run_apply.script.routes("/v1/undrain-all") and not run_apply.script.routes("/v1/apply/end")
 
 
 def test_a_copy_apply_cant_read_is_not_called_missing(tmp_path):
@@ -172,8 +459,10 @@ def test_dry_run_changes_nothing(tmp_path):
                                         app_changes=["pyproject.toml"], outdated=[COMPOSE], dry_run=True)
     assert code == 0 and ran == [] and synced == []
     assert (tmp_path / "models.yaml").read_text() == "m"
-    # pyproject.toml is the app's environment, which the front runs too (Task 31).
-    assert logs[-1] == f"apply: dry run — would restart {BRAKE}, {GATE}, {FRONT}, {COMPOSE}"
+    # pyproject.toml is the app's environment, which the front runs too (Task 31), so they wait for a quiet moment
+    # (Task 32). The dry run reads /v1/quiet, to say what the real run would do, and nothing else of the gate.
+    assert logs[-1] == WOULD_WAIT + f"{BRAKE}, {GATE}, {FRONT}, {COMPOSE}"
+    assert [call[:2] for call in run_apply.script.calls] == [("GET", "/v1/quiet")]
 
 
 def test_a_dry_run_shows_what_it_would_stage_and_changes_nothing(tmp_path):
@@ -255,41 +544,8 @@ def test_a_running_unit_whose_start_cant_be_read_is_named_not_skipped():
                     "once no model is loaded (restarting it stops them all)"]
 
 
-class Client:
-    """Stands in for LlamaSwap: `running()` returns or raises what it was given."""
-
-    def __init__(self, answer):
-        self.answer = answer
-
-    def running(self):
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
-
-
-def test_what_llama_swap_has_loaded_is_unknown_while_its_unit_runs_and_it_doesnt_answer():
-    logs = []
-    assert models_loaded(Client([Running("coder", "ready")]), unit_active=True, log=logs.append) == ["coder"]
-    # Its unit isn't running: nothing is loaded, and restarting it stops nothing.
-    assert models_loaded(Client(LlamaSwapUnreachable("down")), unit_active=False, log=logs.append) == []
-    # Its unit runs and nothing answered in time: models may be loaded. Can't tell.
-    assert models_loaded(Client(LlamaSwapUnreachable("hung")), unit_active=True, log=logs.append) is None
-    # It answered but wouldn't say, a wrong key say.
-    assert models_loaded(Client(LlamaSwapError("HTTP 401")), unit_active=True, log=logs.append) is None
-    assert len(logs) == 2
-
-
-def test_a_llama_swap_that_takes_the_call_and_never_answers_counts_as_cant_tell():
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(1)  # the kernel completes the connection; nothing ever reads the request
-    try:
-        client = LlamaSwap(f"http://127.0.0.1:{listener.getsockname()[1]}", "key", timeout=0.5)
-        with pytest.raises(LlamaSwapUnreachable):
-            client.running()
-        assert models_loaded(client, unit_active=True, log=lambda line: None) is None
-    finally:
-        listener.close()
+# Phase 1's models_loaded and its tests went with Task 32: apply no longer asks llama-swap what is loaded, with Dan's
+# key, which llama-swap refuses from the cutover (only the internal keys reach it); it asks the gate what is in flight.
 
 
 def test_validate_gives_each_key_its_own_placeholder():
@@ -333,26 +589,22 @@ def put(path, text, at):
     os.utime(path, (at, at))
 
 
-class Answers:
-    """Stands in for LlamaSwap: each `running()` gives the next answer, the last one repeated, and raises an error."""
-
-    def __init__(self, *answers):
-        self.answers = list(answers)
-
-    def running(self):
-        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-
 def test_a_dry_run_refuses_what_the_real_run_refuses(tmp_path):
-    # Minor 5: it says what the real run would do, and exits as the real run would.
+    # Minor 5: it says what the real run would do, and exits as the real run would. Since Task 32 the real run refuses
+    # only while the gate isn't answering, with llama-swap running.
+    script = GateScript()
+    script.down = True
     code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
-                                        running=["qwen3.6-35b-a3b"], dry_run=True)
+                                        dry_run=True, script=script)
     assert code == 1 and ran == [] and synced == [] and (tmp_path / "llama-swap.yaml").read_text() == "a"
-    assert logs[-1] == ("apply: dry run — would refuse: models are loaded (qwen3.6-35b-a3b), and restarting llama-swap "
-                        f"stops every model; with --now it would restart {BRAKE}, {GATE}, {LLAMA}")
+    assert logs[-1] == ("apply: dry run — would refuse: apply can't see what's in flight while the gate isn't "
+                        f"answering; with --now it would restart {BRAKE}, {GATE}, {LLAMA}")
+    script.down = False
+    script.quiet = [busy("agent")]
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, dry_run=True, now_ok=True,
+                                 script=script)
+    assert code == 0 and logs[-1] == (f"apply: dry run — would restart {LLAMA} now, after asking whether to cut off "
+                                      "the 1 request in flight")
 
 
 def test_the_staging_stop_says_nothing_but_the_staging(tmp_path):
@@ -372,8 +624,7 @@ def test_the_staging_stop_says_nothing_but_the_staging(tmp_path):
 
 def test_a_llama_swap_whose_unit_is_stopped_is_never_refused_for(tmp_path):
     # Minor 6: however /running answered, a stopped unit has nothing loaded, and apply restarts nothing that's stopped.
-    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, active=(BRAKE, COMPOSE),
-                                   running=None)
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, active=(BRAKE, COMPOSE))
     assert code == 0 and ran == [] and (tmp_path / "llama-swap.yaml").read_text() == "b"
     assert logs[-1] == f"apply: {LLAMA} isn't running; it starts with the new config"
 
@@ -425,33 +676,27 @@ def test_app_diff_counts_every_file_until_a_sync_finishes_and_files_removed_from
     assert app_diff(src, app) == ["src/spark/cli.py", "src/spark/retired.py"]
 
 
-def test_after_a_restart_apply_waits_a_bounded_time_for_llama_swap_to_answer():
-    now, slept = [0.0], []
-
-    def sleep(seconds):
-        slept.append(seconds)
-        now[0] += seconds
-
-    def wait(*answers, timeout=30):
-        now[0], slept[:] = 0.0, []
-        return spark_apply.wait_for_running(Answers(*answers), timeout, sleep=sleep, clock=lambda: now[0])
-
-    down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")
-    assert wait(down, down, []) is None and slept == [1.0, 1.0]
-    assert wait(down, timeout=2.5) == ("llama-swap didn't answer GET /running within 2.5 s "
-                                      f"({down}): see `make logs s=llama-swap`")
-    assert slept == [1.0, 1.0, 0.5]  # never past its time
-    # Task 7's fix round 2 (M2): an answer, even an error, says llama-swap is up, and no wait changes it. Nor does one
-    # for a request that was never sent. So neither is waited out.
-    refused = llamaswap.LlamaSwapAnswered("llama-swap GET /running: HTTP 401")
-    assert wait(down, refused) == (f"llama-swap answered GET /running with an error ({refused}): it's up, but apply "
-                                   "can't confirm it serves the new config")
-    assert slept == [1.0]
-    unsent = LlamaSwapError("llama-swap GET /running: the API key isn't printable ASCII (a stray CR or LF?), so it "
-                            "wasn't sent")
-    assert wait(unsent) == (f"apply couldn't ask llama-swap GET /running ({unsent}), so it can't confirm llama-swap "
-                            "serves the new config")
-    assert slept == []
+def test_after_its_restart_apply_waits_a_bounded_time_for_the_gate_to_see_llama_swap_answer():
+    # Phase 1 asked llama-swap's GET /running with Dan's key, which llama-swap refuses from the cutover. Since Task 32
+    # the gate tells: its health.llama_swap ok, and apply's hold ended by the gate itself, which it does only once a
+    # /running read sent after llama-swap's new start has answered (gate/core.py's _check_apply_end).
+    for back_after, said in ((3, None), (math.inf, "the gate didn't see llama-swap answer within 30 s of its "
+                                                   "restart: see `make logs s=llama-swap`, and `make status`")):
+        script, clock, logs = GateScript(), FakeTime(), []
+        gate = apply_gate(script, clock, logs)
+        gate.drain_all()
+        script.llama_back_after = back_after
+        script.restarted(LLAMA)
+        assert gate.llama_swap_back() == said
+        assert logs == ["apply: waiting up to 30 s for the gate to see llama-swap answer again"]
+        assert sum(clock.slept) == (3 if said is None else 30)  # never past its time
+        gate.undrain()
+    # An "ok" while the hold still stands isn't enough: that reading may be from before the restart.
+    script, clock = GateScript(), FakeTime()
+    gate = apply_gate(script, clock, [])
+    gate.drain_all()
+    assert gate.llama_swap_back() is not None and sum(clock.slept) == 30
+    gate.undrain()
 
 
 # Phase 1's council (reliability I1): Type=exec counts the brake as started once its Python runs, before the app is
@@ -489,10 +734,10 @@ def test_a_brake_that_doesnt_stay_up_after_its_restart_is_said(tmp_path):
 
     code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
                                    app_changes=["src/spark/brake.py"], stays_up=stays_up)
-    assert code == 1 and asked == [BRAKE]  # not llama-swap, which apply asks /running instead, nor the gate (notify)
+    assert code == 1 and asked == [BRAKE]  # not llama-swap nor the gate (notify), which the gate's answers confirm
     assert ran == [["systemctl", "restart", BRAKE], ["systemctl", "restart", GATE], ["systemctl", "restart", LLAMA]]
-    assert logs[-1] == (f"apply: restarted {BRAKE}, but it isn't running 3 s later (activating, auto-restart): see "
-                        "`make logs s=brake`")
+    assert logs[-2:] == [f"apply: restarted {BRAKE}, but it isn't running 3 s later (activating, auto-restart): see "
+                         "`make logs s=brake`", "apply: the hold on new requests is ended"]  # Task 32: a failure
 
 
 @pytest.mark.parametrize("how", ["restart fails", "dry run", "not running"])
@@ -535,11 +780,13 @@ class Box:
     - the repo: the fixture registry, its versions pinned, stack's own templates, a small spark/ project;
     - /opt/local-ai (DEPLOY), with a llama-swap binary so -validate runs, and root's two folders;
     - systemd: `units`, when each unit's start began (None: not running); a restart starts it anew;
-    - llama-swap's GET /running: `answers`, one per call, the last repeated;
+    - the gate's control socket (Task 32): `gate`, a GateScript on a short Unix socket, reached through apply's own
+      GateClient; or, with `gate_path`, a socket some other process serves;
+    - its clock: a FakeTime, unless `fake_time` is False; and its questions: `replies`, answered in turn;
     - every command apply runs, each faked here; any other fails the test. Nothing real runs.
     `events` lists, in order, what apply asked of each."""
 
-    def __init__(self, tmp_path, monkeypatch, capsys):
+    def __init__(self, tmp_path, monkeypatch, capsys, *, fake_time=True, gate_path=None):
         self.capsys = capsys
         self.repo, self.opt = tmp_path / "repo", tmp_path / "opt"
         self.etc, self.app = self.opt / "etc", self.opt / "app"
@@ -554,41 +801,49 @@ class Box:
             put(self.repo / "spark" / rel, text, OLD)
         put(self.opt / "bin/llama-swap/v257/llama-swap", "", OLD)
         self.units = dict.fromkeys(RUNNING_UNITS)
-        self.answers = [LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")]
         self.interrupted, self.failing, self.uv_fails = set(), set(), False
         self.validate_code, self.validate_env, self.uv_env = 0, None, None
-        self.events = []
+        self.events, self.replies, self.questions = [], [], []
+        self.time = FakeTime(time.time()) if fake_time else None
+        self.gate = GateScript(self.time.clock if fake_time else time.monotonic, self.events)
+        self.server = None
+        if gate_path is None:
+            folder = Path(tempfile.mkdtemp(prefix="ap", dir="/tmp"))  # an AF_UNIX path is short (macOS: 104 bytes)
+            gate_path = folder / "control.sock"
+            self.server = serve_script(self.gate, gate_path)
+            self.folder = folder
+        monkeypatch.setattr(paths, "GATE_CONTROL_SOCKET", Path(gate_path))
+        if fake_time:
+            monkeypatch.setattr(spark_apply, "_clock", self.time.clock)
+            monkeypatch.setattr(spark_apply, "_sleep", self.time.sleep)
+        monkeypatch.setattr(spark_apply, "_ask", self.ask)
         monkeypatch.setattr(spark_apply, "DEPLOY", str(self.opt))
         monkeypatch.setattr(spark_render, "UNIT_DIR", str(tmp_path / "root/systemd"))
         monkeypatch.setattr(spark_render, "COMPOSE_DIR", str(tmp_path / "root/compose"))
         monkeypatch.setattr(spark_apply, "_show", lambda unit: systemctl_show(self.units[unit]))
-        monkeypatch.setattr(spark_apply, "LlamaSwap", self.client)
         monkeypatch.setattr(spark_apply, "subprocess",
                             SimpleNamespace(run=self.run, CalledProcessError=subprocess.CalledProcessError))
         monkeypatch.setattr(spark_apply, "write_tree", self.write_tree)
-        monkeypatch.setattr(spark_apply, "READY_SECONDS", 0.0)  # one try: no test waits
         # What systemd says of the brake after its restart, one answer per look, the last repeated: it stays up.
         self.brake_shows = ["ActiveState=active\nSubState=running\nNRestarts=0\n"]
         monkeypatch.setattr(spark_apply, "_show_restarts", self.show_restarts)
         monkeypatch.setattr(spark_apply, "STAY_UP_S", 0.0)  # no test waits
         monkeypatch.chdir(self.repo)
 
+    def close(self):
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+    def ask(self, question):
+        self.questions.append(question)
+        print(question)
+        return self.replies.pop(0) if self.replies else None
+
     def show_restarts(self, unit):
         assert unit == BRAKE, unit
         return self.brake_shows.pop(0) if len(self.brake_shows) > 1 else self.brake_shows[0]
-
-    def client(self, url, key, timeout):
-        box = self
-
-        class Client:
-            def running(self):
-                box.events.append("GET /running")
-                answer = box.answers.pop(0) if len(box.answers) > 1 else box.answers[0]
-                if isinstance(answer, Exception):
-                    raise answer
-                return answer
-
-        return Client()
 
     def run(self, cmd, **kwargs):
         cmd = [str(word) for word in cmd]
@@ -614,6 +869,7 @@ class Box:
                     raise subprocess.CalledProcessError(1, cmd)
                 return subprocess.CompletedProcess(cmd, 1)
             self.units[cmd[2]] = time.time()
+            self.gate.restarted(cmd[2])
             return subprocess.CompletedProcess(cmd, 0)
         raise AssertionError(f"apply ran {cmd}, which no test fakes")
 
@@ -647,25 +903,35 @@ class Box:
         self.units = dict.fromkeys(RUNNING_UNITS, T0 if running else None)
 
     def apply(self, *flags):
-        """`spark apply --key-env PROBE_KEY <flags>`: its exit code, what it printed, and what it asked of the fakes."""
-        self.events = []
+        """`spark apply <flags>`: its exit code, what it printed, and what it asked of the fakes."""
+        self.events.clear()
         try:
-            code = cli.main(["apply", "--key-env", "PROBE_KEY", *flags])
+            code = cli.main(["apply", *flags])
         finally:
             printed = self.capsys.readouterr()
-        return code, (printed.out + printed.err).splitlines(), self.events
+        return code, (printed.out + printed.err).splitlines(), list(self.events)
 
 
 @pytest.fixture
 def box(tmp_path, monkeypatch, capsys):
-    return Box(tmp_path, monkeypatch, capsys)
+    made = Box(tmp_path, monkeypatch, capsys)
+    yield made
+    made.close()
+    assert made.gate.bad == []
+
+
+# What `spark apply` asks of the gate (Task 32), as Box's events name each call.
+QUIET_READ, DRAIN = "gate GET /v1/quiet", "gate POST /v1/drain-all"
+BEGIN, STATUS = "gate POST /v1/apply/begin", "gate GET /v1/status"
+END, UNDRAIN = "gate POST /v1/apply/end", "gate POST /v1/undrain-all"
+HELD = [QUIET_READ, DRAIN, QUIET_READ]  # quiet at the first reading, the hold, and nothing in flight under it
 
 
 def test_run_stages_roots_files_first_and_says_and_changes_nothing_else(box):
     # The first deploy: root has no copies yet. apply stages them for `make install-units`, and stops there.
     roots = sorted(rel for rel in box.rendered() if installed_path(rel) is not None)
     code, lines, events = box.apply()
-    assert code == 0 and events == ["-validate", "GET /running", *(f"write {rel}" for rel in roots)]
+    assert code == 0 and events == ["-validate", *(f"write {rel}" for rel in roots)]
     assert sorted(p.relative_to(box.etc).as_posix() for p in box.etc.rglob("*") if p.is_file()) == roots
     assert not box.app.exists()
     said = [line for line in lines[:-1] if line.startswith("apply: ")]  # Task 31: the diff follows them
@@ -674,30 +940,30 @@ def test_run_stages_roots_files_first_and_says_and_changes_nothing_else(box):
     assert lines[-1].startswith(f"apply: staged in {box.etc}; nothing else is deployed or restarted")
 
 
-def test_run_refuses_to_restart_a_llama_swap_that_runs_and_doesnt_answer_unless_now(box):
-    # I4's first slip, `unit_active=… is None`, read a hung llama-swap as idle and restarted it over its models.
+def test_run_refuses_a_restart_that_waits_while_the_gate_isnt_answering_unless_now(box):
+    # Task 32 replaces Phase 1's look at llama-swap (I4's first slip read a hung one as idle): what is in flight comes
+    # from the gate, and while it doesn't answer, apply can't see it.
     box.deployed(old={"llama-swap.yaml": "old config"})
-    box.answers = [LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: timed out")]
+    box.gate.down = True
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running"])  # nothing written, nothing restarted
+    assert (code, events) == (1, ["-validate", QUIET_READ])  # nothing written, nothing restarted
     assert (box.etc / "llama-swap.yaml").read_text() == "old config"
-    assert lines[-1] == ("apply: can't tell which models are loaded, and restarting llama-swap stops every model; "
-                         "re-run when idle, or with --now (nothing was changed)")
-    box.answers = [LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: timed out"), []]
-    code, _, events = box.apply("--now")  # restarted, the new llama-swap answers
-    assert (code, events) == (0, ["-validate", "GET /running", "write llama-swap.yaml", f"restart {LLAMA}",
-                                  "GET /running"])
+    assert lines[-2].startswith(f"apply: The gate stopped answering on {paths.GATE_CONTROL_SOCKET}")
+    assert lines[-1] == ("apply: nothing was changed: apply can't see what's in flight while the gate isn't "
+                         "answering; `make apply-now` restarts anyway")
+    code, lines, events = box.apply("--now")  # restarted, with no hold, and no gate to confirm it
+    assert (code, events) == (1, ["-validate", QUIET_READ, "write llama-swap.yaml", f"restart {LLAMA}"])
+    assert lines[-1] == (f"apply: restarted {LLAMA}, but the gate isn't answering, so apply can't confirm llama-swap "
+                         "answers again: see `make logs s=llama-swap`, and `make status` once the gate is back")
 
 
-def test_run_restarts_llama_swap_over_loaded_models_only_with_now(box):
+def test_run_restarts_llama_swap_under_the_hold_after_the_quiet_moment(box):
     box.deployed(old={"llama-swap.yaml": "old config"})
-    box.answers = [[Running("coder", "ready")]]
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running"]) and "(coder)" in lines[-1] and "--now" in lines[-1]
-    box.answers = [[Running("coder", "ready")], []]
-    code, _, events = box.apply("--now")  # no second look before the restart: --now said to go ahead
-    assert (code, events) == (0, ["-validate", "GET /running", "write llama-swap.yaml", f"restart {LLAMA}",
-                                  "GET /running"])
+    assert (code, events) == (0, ["-validate", *HELD, "write llama-swap.yaml", BEGIN, f"restart {LLAMA}", STATUS, END])
+    assert box.gate.routes("/v1/apply/begin")[0][2] == {"restarting": [LLAMA]}
+    assert lines[-1] == ("apply: done: the gate has released the requests it held, and reloads the always-loaded "
+                         "models one at a time")
 
 
 def test_run_starts_no_unit_that_isnt_running(box):
@@ -705,7 +971,7 @@ def test_run_starts_no_unit_that_isnt_running(box):
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY}, running=False)
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     code, lines, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "uv sync", "write llama-swap.yaml", "write models.yaml"])
+    assert (code, events) == (0, ["-validate", "uv sync", "write llama-swap.yaml", "write models.yaml"])
     assert lines[-3:] == [f"apply: {BRAKE} isn't running; it starts with the new config",
                           f"apply: {GATE} isn't running; it starts with the new config",
                           f"apply: {LLAMA} isn't running; it starts with the new config"]
@@ -713,20 +979,20 @@ def test_run_starts_no_unit_that_isnt_running(box):
 
 def test_run_passes_dry_run_on_and_a_dry_run_changes_nothing(box):
     # Task 7's fix round 2 (M1): `make apply-dry-run` goes through run(). It writes, syncs and restarts nothing, and
-    # exits as the real run would: 0 when idle, 1 when the real run would refuse.
+    # exits as the real run would: 0 when it would deploy, 1 when the real run would refuse. Since Task 32 it reads the
+    # gate's /v1/quiet, and nothing else of the gate.
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY})
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
-    box.answers = [[]]
     code, lines, events = box.apply("--dry-run")
-    assert (code, events) == (0, ["-validate", "GET /running"])
-    assert lines[-1] == f"apply: dry run — would restart {BRAKE}, {GATE}, {LLAMA}"
+    assert (code, events) == (0, ["-validate", QUIET_READ])
+    assert lines[-1] == WOULD_WAIT + f"{BRAKE}, {GATE}, {LLAMA}"
     assert (box.etc / "llama-swap.yaml").read_text() == "old config"
     assert (box.app / "src/spark/brake.py").read_text() == "v1" and box.units == dict.fromkeys(RUNNING_UNITS, T0)
-    box.answers = [[Running("coder", "ready")]]
+    box.gate.down = True
     code, lines, events = box.apply("--dry-run")
-    assert (code, events) == (1, ["-validate", "GET /running"])
-    assert lines[-1] == ("apply: dry run — would refuse: models are loaded (coder), and restarting llama-swap stops "
-                         f"every model; with --now it would restart {BRAKE}, {GATE}, {LLAMA}")
+    assert (code, events) == (1, ["-validate", QUIET_READ])
+    assert lines[-1] == ("apply: dry run — would refuse: apply can't see what's in flight while the gate isn't "
+                         f"answering; with --now it would restart {BRAKE}, {GATE}, {LLAMA}")
 
 
 @pytest.mark.parametrize("stopped", [False, True], ids=["systemd refused it", "it couldn't start"])
@@ -736,11 +1002,10 @@ def test_run_says_when_a_restart_fails_and_the_next_run_does_what_it_can(box, st
     # (a session without spark-admin), the brake still runs its older files, so the next run restarts it; unable to
     # start (Type=exec: a binary missing, say), it's stopped, so only the line says how to finish.
     box.deployed(old={"models.yaml": OLDER_REGISTRY})
-    box.answers = [[]]
     box.failing = {BRAKE}
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "write models.yaml", f"restart {BRAKE}",
-                                  f"restart {GATE}"])
+    # Nothing waits for the quiet moment, so no hold; the gate's control socket answers after its restart (Task 32).
+    assert (code, events) == (1, ["-validate", "write models.yaml", f"restart {BRAKE}", f"restart {GATE}", STATUS])
     assert (f"apply: restarting {BRAKE} failed, and its new files are deployed: see `make logs s=brake`, "
             f"and once it's fixed, `systemctl restart {BRAKE}`") in lines
     box.failing = set()
@@ -748,26 +1013,26 @@ def test_run_says_when_a_restart_fails_and_the_next_run_does_what_it_can(box, st
         box.units[BRAKE] = None
     code, lines, events = box.apply()
     if stopped:
-        assert (code, events, lines) == (0, ["-validate", "GET /running"], ["apply: nothing to change"])
+        assert (code, events, lines) == (0, ["-validate"], ["apply: nothing to change"])
     else:
-        assert (code, events) == (0, ["-validate", "GET /running", f"restart {BRAKE}"])
+        assert (code, events) == (0, ["-validate", f"restart {BRAKE}"])
 
 
 def test_a_start_time_that_cant_be_read_is_named_after_a_run_that_was_cut_off(box, monkeypatch):
     # Task 7's fix round 2 (M3): a cut-off run wrote llama-swap's config and never restarted it, and now its start time
     # comes in another form. apply can't tell it's outdated, so it says what to run by hand, and why: its line names
-    # an apply that didn't restart it, not only `make install-units`.
+    # an apply that didn't restart it, not only `make install-units`. Since Task 32 the Ctrl-C ends apply's hold, and
+    # apply exits 130.
     box.deployed(old={"llama-swap.yaml": "old config"})
-    box.answers = [[]]
     box.interrupted = {LLAMA}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply()
+    code, lines, events = box.apply()
+    assert (code, events) == (130, ["-validate", *HELD, "write llama-swap.yaml", BEGIN, f"restart {LLAMA}", UNDRAIN])
     box.interrupted = set()
     shows = {unit: systemctl_show(box.units[unit]) for unit in RUNNING_UNITS}
     shows[LLAMA] = "ActiveState=active\nInactiveExitTimestamp=@1790371186\n"
     monkeypatch.setattr(spark_apply, "_show", shows.get)
     code, lines, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running"])
+    assert (code, events) == (0, ["-validate"])
     assert lines == [f"apply: can't read when {LLAMA} started (InactiveExitTimestamp='@1790371186'), so it can't tell "
                      f"whether {LLAMA} runs its latest files: if they changed since it started (`make install-units`, "
                      f"or an apply that didn't restart it), run `systemctl restart {LLAMA}` once no model is loaded "
@@ -781,63 +1046,63 @@ def test_a_failed_sync_is_said_and_tried_again_until_it_succeeds(box):
     box.installed()
     box.uv_fails = True
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "uv sync"])
+    assert (code, events) == (1, ["-validate", "uv sync"])
     assert lines[-1] == (f"apply: the app's files are copied into {box.app}, but `uv sync` failed (exit 2), so its "
                          "environment isn't synced; nothing else was deployed or restarted — once it's fixed, "
                          "`make apply` syncs it again")
     assert not (box.etc / "llama-swap.yaml").exists() and not (box.app / spark_apply.SYNC_STAMP).exists()
     box.uv_fails = False
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "uv sync", "write llama-swap.yaml", "write models.yaml"])
+    assert (code, events) == (0, ["-validate", "uv sync", "write llama-swap.yaml", "write models.yaml"])
     assert (box.app / ".venv/bin/spark").exists() and (box.app / spark_apply.SYNC_STAMP).exists()
     assert box.apply()[1] == ["apply: nothing to change"]
 
 
 def test_a_failed_sync_on_a_running_stack_restarts_the_brake_once_it_succeeds(box):
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.uv_fails = True
     code, _, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "uv sync"])
+    assert (code, events) == (1, ["-validate", "uv sync"])
     box.uv_fails = False
     code, _, events = box.apply()
     # Until a sync finishes every file of the app counts, the front's among them (Task 31): one that failed part-way
-    # may have changed the environment under it.
-    assert (code, events) == (0, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}",
-                                  "GET /running", f"restart {FRONT}"])
+    # may have changed the environment under it. The front's restart waits for the quiet moment (Task 32).
+    assert (code, events) == (0, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
+                                  f"restart {FRONT}", END])
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_a_copy_that_fails_is_said_and_tried_again(box):
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     (box.app / "src/spark").chmod(0o555)
     try:
         code, lines, events = box.apply()
     finally:
         (box.app / "src/spark").chmod(0o755)
-    assert (code, events) == (1, ["-validate", "GET /running"])
+    assert (code, events) == (1, ["-validate"])
     assert lines[-1].startswith(f"apply: copying the app into {box.app} failed (")
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}",
-                                  "GET /running", f"restart {FRONT}"])  # every file counts until a sync finishes
+    assert (code, events) == (0, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
+                                  f"restart {FRONT}", END])  # every file counts until a sync finishes
 
 
 def test_the_restarts_a_cut_off_run_owed_are_made_by_the_next(box):
     # I2: Ctrl-C after apply wrote llama-swap's config and the registry, before any restart (the brake's is the first,
-    # since Task 31's order).
+    # since Task 31's order). Since Task 32 the Ctrl-C ends apply's hold, and apply exits 130.
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY})
-    box.answers = [[]]
     box.interrupted = {BRAKE}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply()
+    code, lines, events = box.apply()
+    assert (code, events) == (130, ["-validate", *HELD, "write llama-swap.yaml", "write models.yaml", BEGIN,
+                                    f"restart {BRAKE}", UNDRAIN])
+    assert lines[-2:] == ["apply: stopped by Ctrl-C after deploying the files; the next `make apply` restarts each "
+                          "unit still running older ones", "apply: the hold on new requests is ended"]
     assert box.units == dict.fromkeys(RUNNING_UNITS, T0) and (box.etc / "llama-swap.yaml").read_text() != "old config"
     box.interrupted = set()
     code, lines, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", f"restart {BRAKE}", f"restart {GATE}", "GET /running",
-                                  f"restart {LLAMA}", "GET /running"])
+    assert (code, events) == (0, ["-validate", *HELD, BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
+                                  f"restart {LLAMA}", STATUS, END])
     for unit in (BRAKE, GATE, LLAMA):
         assert f"apply: {unit} started before its latest files were in place, so it still runs older ones" in lines
 
@@ -845,11 +1110,10 @@ def test_the_restarts_a_cut_off_run_owed_are_made_by_the_next(box):
 def test_apply_says_when_the_brake_it_restarted_doesnt_stay_up(box):
     # Phase 1's council (reliability I1): the app fails once it runs, so the restart passes and the unit loops.
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.brake_shows = [UP, "ActiveState=activating\nSubState=auto-restart\nNRestarts=1\n"]
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}"])
+    assert (code, events) == (1, ["-validate", "uv sync", f"restart {BRAKE}", f"restart {GATE}", STATUS])
     assert lines[-1] == (f"apply: restarted {BRAKE}, but it isn't running 0 s later (activating, auto-restart): see "
                          "`make logs s=brake`")  # the Box gives it no time (STAY_UP_S)
 
@@ -857,84 +1121,38 @@ def test_apply_says_when_the_brake_it_restarted_doesnt_stay_up(box):
 def test_a_brake_that_started_before_the_apps_last_sync_is_restarted(box):
     # I2, for the app: the sync finished, and the run was cut off before the brake's restart.
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.interrupted = {BRAKE}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply()
+    assert box.apply()[0] == 130
     box.interrupted = set()
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", f"restart {BRAKE}", f"restart {GATE}"])
+    assert (code, events) == (0, ["-validate", f"restart {BRAKE}", f"restart {GATE}", STATUS])
 
 
-def test_llama_swap_restarts_last_and_is_asked_again_just_before(box):
+def test_llama_swap_restarts_last_inside_the_hold_and_compose_after_it(box):
     # I3: nothing else between the second look and llama-swap's restart, not compose's restart of up to 15 minutes.
     # Phase 1 restarted llama-swap first; since Task 31 it goes last, after the brake and the gate, and the compose
-    # unit restarts on its own after it.
+    # unit restarts on its own after it. Since Task 32 the hold covers the four, and compose restarts after its end.
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY})
     os.utime(installed_path("compose/compose.yaml"), (T0 + 60, T0 + 60))  # installed after compose started
-    box.answers = [[]]
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "write llama-swap.yaml", "write models.yaml",
-                                  f"restart {BRAKE}", f"restart {GATE}", "GET /running", f"restart {LLAMA}",
-                                  "GET /running", f"restart {COMPOSE}"])
+    assert (code, events) == (0, ["-validate", *HELD, "write llama-swap.yaml", "write models.yaml", BEGIN,
+                                  f"restart {BRAKE}", f"restart {GATE}", STATUS, f"restart {LLAMA}", STATUS, END,
+                                  f"restart {COMPOSE}"])
+    assert box.gate.routes("/v1/apply/begin")[0][2] == {"restarting": [BRAKE, GATE, LLAMA]}  # never compose
 
 
-@pytest.mark.parametrize("second, said", [
-    ([Running("coder", "ready")], "models are now loaded (coder)"),
-    (LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: timed out"),
-     "can't tell which models are loaded"),
-], ids=["a model loaded meanwhile", "no answer the second time"])
-def test_llama_swap_keeps_running_when_the_second_look_isnt_idle(box, second, said):
-    # I3: a model that starts loading while apply syncs and writes is seen, and not stopped. The files are deployed
-    # and the other restarts made; llama-swap's restart waits for the next run, which owes it (I2).
-    box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY})
-    box.answers = [[], second]
-    code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "write llama-swap.yaml", "write models.yaml",
-                                  f"restart {BRAKE}", f"restart {GATE}", "GET /running"])
-    assert lines[-1] == (f"apply: didn't restart {LLAMA}: {said}, and restarting it stops every model; its new files "
-                         "are deployed, so re-run when idle, or with --now")
-    box.answers = [[]]
-    code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "GET /running", f"restart {LLAMA}", "GET /running"])
-
-
-def test_apply_says_when_a_restarted_llama_swap_doesnt_answer(box):
-    # The plan's rule: every config change is followed by a start and GET /running, not just -validate.
+def test_apply_says_when_the_gate_doesnt_see_a_restarted_llama_swap_answer(box):
+    # The plan's rule: every config change is followed by a start and llama-swap answering, not just -validate. Since
+    # Task 32 the gate tells, within 30 s; then the hold ends with undrain-all, and apply exits 1.
     box.deployed(old={"llama-swap.yaml": "old config"})
-    down = LlamaSwapUnreachable("llama-swap unreachable at http://127.0.0.1:9100: connection refused")
-    box.answers = [[], [], down]
+    box.gate.llama_back_after = math.inf
     code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "write llama-swap.yaml", "GET /running",
-                                  f"restart {LLAMA}", "GET /running"])
-    assert lines[-1] == (f"apply: restarted {LLAMA}, but llama-swap didn't answer GET /running within 0 s ({down}): "
-                         "see `make logs s=llama-swap`")  # the Box gives it no time (READY_SECONDS)
-
-
-def test_apply_says_when_a_restarted_llama_swap_answers_with_an_error(box):
-    # Task 7's fix round 2 (M2): an answer, even a 401 from a wrong or missing key, shows llama-swap is up. apply says
-    # that, and exits 1, instead of saying it didn't answer.
-    box.deployed(old={"llama-swap.yaml": "old config"})
-    refused = llamaswap.LlamaSwapAnswered("llama-swap GET /running: HTTP 401")
-    box.answers = [[], [], refused]
-    code, lines, events = box.apply()
-    assert (code, events) == (1, ["-validate", "GET /running", "write llama-swap.yaml", "GET /running",
-                                  f"restart {LLAMA}", "GET /running"])
-    assert lines[-1] == (f"apply: restarted {LLAMA}, but llama-swap answered GET /running with an error ({refused}): "
-                         "it's up, but apply can't confirm it serves the new config")
-
-
-def test_a_key_the_client_wont_send_blocks_nothing_while_llama_swaps_unit_is_stopped(box, monkeypatch):
-    # Minor 6, with the real client: it refuses the key before sending, which says nothing of what's loaded. But a
-    # stopped unit has nothing loaded, and apply restarts nothing that's stopped.
-    monkeypatch.setattr(spark_apply, "LlamaSwap", LlamaSwap)
-    monkeypatch.setenv("PROBE_KEY", "dummy\r")  # a stand-in, never a real key
-    box.deployed(old={"llama-swap.yaml": "old config"}, running=False)
-    code, lines, events = box.apply()
-    assert (code, events) == (0, ["-validate", "write llama-swap.yaml"])
-    assert "isn't printable ASCII" in lines[0]
-    assert lines[-1] == f"apply: {LLAMA} isn't running; it starts with the new config"
+    assert code == 1
+    assert events == ["-validate", *HELD, "write llama-swap.yaml", BEGIN, f"restart {LLAMA}", *[STATUS] * 31, UNDRAIN]
+    assert lines[-2:] == [f"apply: restarted {LLAMA}, but the gate didn't see llama-swap answer within 30 s of its "
+                          "restart: see `make logs s=llama-swap`, and `make status`",
+                          "apply: the hold on new requests is ended"]
 
 
 @pytest.mark.parametrize("what, text", [
@@ -956,7 +1174,6 @@ def test_uv_sync_is_given_the_tests_own_environment_and_uvs_settings_only(box):
     # traceback would print it. It's the test's own (conftest.py's fake_environment, which keeps TZ when the run sets
     # one). Names only, taken first: pytest prints the arguments of a call in a failing assert.
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.apply()
     names = set(box.uv_env) - {"PYTEST_CURRENT_TEST"}
@@ -968,7 +1185,6 @@ def test_validate_is_run_with_path_and_placeholder_keys_only(box, monkeypatch):
     # Dan's, and the expectation is built from that fake, never the shell's.
     monkeypatch.setenv("PROBE_SECRET", "not for llama-swap")
     box.deployed()
-    box.answers = [[]]
     box.apply()
     assert box.validate_env == validation_env({"PATH": os.environ["PATH"]})
     box.validate_code = 1
@@ -980,12 +1196,11 @@ def test_validate_is_run_with_path_and_placeholder_keys_only(box, monkeypatch):
 def test_the_app_is_replaced_file_by_file_and_loses_what_spark_no_longer_has(box):
     # Minor 8: a file removed from spark/ leaves the app; each changed file is replaced whole; the venv stays.
     box.deployed()
-    box.answers = [[]]
     put(box.app / "src/spark/retired/old.py", "gone from spark/", OLD)
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     before = (box.app / "src/spark/brake.py").stat().st_ino
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}"])
+    assert (code, events) == (0, ["-validate", "uv sync", f"restart {BRAKE}", f"restart {GATE}", STATUS])
     assert not (box.app / "src/spark/retired").exists()
     brake = box.app / "src/spark/brake.py"
     assert brake.read_text() == "v2" and brake.stat().st_ino != before
@@ -993,8 +1208,8 @@ def test_the_app_is_replaced_file_by_file_and_loses_what_spark_no_longer_has(box
 
 
 # Task 31: the diff, and what each change restarts. llama-swap's restart and the front's wait for the quiet moment (Task
-# 32's wait; until it is built, apply makes them only while no model is loaded, or with --now); the brake's and the
-# gate's are made at once, and the compose unit's on its own, as in Phase 1.
+# 32's wait, under apply's hold); the brake's and the gate's are made at once when nothing waits, and inside the hold
+# when something does; the compose unit's on its own, as in Phase 1.
 
 
 def plan(changed=(), app=(), *, old=REGISTRY, new=REGISTRY, outdated=(), restart_front=False,
@@ -1148,46 +1363,21 @@ def test_restarts_follow_a_fixed_order():
     assert restart_order([COMPOSE, LLAMA, BRAKE]) == [BRAKE, LLAMA, COMPOSE]
 
 
-def test_apply_restarts_in_that_order_and_looks_again_before_each_restart_that_waits(tmp_path):
+def test_apply_restarts_in_that_order_inside_the_hold_and_compose_after_it(tmp_path):
+    # Task 31's order; since Task 32 the first four inside apply's hold, from drain-all to apply/end, and compose after.
     events = []
-    code = apply_files(FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"}, seeded(tmp_path), installed=ROOTS,
-                       unreadable=set(), outdated=[COMPOSE], active=lambda unit: True,
-                       app_changes=["src/spark/front/app.py"], running=[], now_ok=False, dry_run=False,
-                       sync_app=lambda: events.append("sync"), run_cmd=lambda cmd: events.append(cmd[-1]),
-                       log=lambda line: None, registry_old=REGISTRY, registry_new=REGISTRY,
-                       recheck=lambda: events.append("look") or [])
-    assert code == 0 and events == ["sync", BRAKE, GATE, "look", FRONT, "look", LLAMA, COMPOSE]
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                              outdated=[COMPOSE], app_changes=["src/spark/front/app.py"], events=events)
+    assert code == 0 and events == [
+        "gate GET /v1/quiet", "gate POST /v1/drain-all", "gate GET /v1/quiet", "sync", "gate POST /v1/apply/begin",
+        f"restart {BRAKE}", f"restart {GATE}", "gate GET /v1/status", f"restart {FRONT}", f"restart {LLAMA}",
+        "gate GET /v1/status", "gate POST /v1/apply/end", f"restart {COMPOSE}"]
 
 
-def test_until_the_quiet_wait_the_fronts_restart_waits_for_no_model_loaded_or_now(tmp_path):
-    # Task 32 builds the wait. Until then the front's restart, which cuts off every request in flight, goes ahead as
-    # llama-swap's does in Phase 1: with no model loaded, or with --now.
-    front = ["src/spark/front/app.py"]
-    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES, app_changes=front, running=["coder"])
-    assert (code, ran, synced) == (1, [], [])
-    assert logs[-1] == ("apply: models are loaded (coder), and restarting the front cuts off every request in flight; "
-                        "re-run when idle, or with --now (nothing was changed)")
-    code, _, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, app_changes=front, running=None)
-    assert code == 1 and logs[-1] == ("apply: can't tell which models are loaded, and restarting the front cuts off "
-                                      "every request in flight, and restarting llama-swap stops every model; re-run "
-                                      "when idle, or with --now (nothing was changed)")
-    restarted = [["systemctl", "restart", unit] for unit in (BRAKE, GATE, FRONT)]
-    assert run_apply(seeded(tmp_path), FILES, app_changes=front, running=["coder"], now_ok=True)[:2] == (0, restarted)
-    assert run_apply(seeded(tmp_path), FILES, app_changes=front, running=[])[:2] == (0, restarted)
-    # A stopped llama-swap has nothing loaded, whatever /running said.
-    assert run_apply(seeded(tmp_path), FILES, app_changes=front, running=None,
-                     active=(BRAKE, COMPOSE, FRONT, GATE))[:2] == (0, restarted)
-
-
-def test_a_model_loaded_before_the_fronts_restart_holds_back_every_restart_that_waits(tmp_path):
-    looks = iter([["coder"]])  # one look only: once one is held back, so is the rest
-    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
-                                   app_changes=["src/spark/front/app.py"], recheck=lambda: next(looks))
-    assert code == 1 and ran == [["systemctl", "restart", BRAKE], ["systemctl", "restart", GATE]]
-    assert logs[-2:] == [f"apply: didn't restart {FRONT}: models are now loaded (coder), and restarting it cuts off "
-                         "every request in flight; once no model is loaded, `make restart-front` restarts it",
-                         f"apply: didn't restart {LLAMA}: models are now loaded (coder), and restarting it stops every "
-                         "model; its new files are deployed, so re-run when idle, or with --now"]
+# Task 31's interim rule, an after_quiet restart only with no model loaded or with --now, and its tests
+# (test_until_the_quiet_wait_the_fronts_restart_waits_for_no_model_loaded_or_now,
+# test_a_model_loaded_before_the_fronts_restart_holds_back_every_restart_that_waits), went with Task 32: the quiet wait
+# and apply's hold replace it.
 
 
 def test_the_gate_and_the_front_are_outdated_by_their_own_files():
@@ -1211,16 +1401,14 @@ def test_the_fronts_files_are_dated_by_their_last_write(tmp_path):
 
 def test_run_restarts_the_front_for_its_own_modules_and_a_cut_off_run_leaves_it_owed(box):
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/front/parse.py", "v2", time.time())
     box.interrupted = {FRONT}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply()
-    assert box.events == ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}",
-                          "GET /running", f"restart {FRONT}"]
+    code, _, events = box.apply()
+    assert (code, events) == (130, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}",
+                                    STATUS, f"restart {FRONT}", UNDRAIN])
     box.interrupted = set()
     code, lines, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "GET /running", f"restart {FRONT}"])
+    assert (code, events) == (0, ["-validate", *HELD, BEGIN, f"restart {FRONT}", END])
     assert f"apply: {FRONT} started before its latest files were in place, so it still runs older ones" in lines
 
 
@@ -1228,17 +1416,15 @@ def test_run_restarts_the_front_for_its_own_modules_and_a_cut_off_run_leaves_it_
                          ids=["other key groups", "one that won't load"])
 def test_run_restarts_the_front_for_the_deployed_registrys_key_groups(box, old):
     box.deployed(old={"models.yaml": old})
-    box.answers = [[]]
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", "GET /running", "write models.yaml", f"restart {BRAKE}",
-                                  f"restart {GATE}", "GET /running", f"restart {FRONT}"])
+    assert (code, events) == (0, ["-validate", *HELD, "write models.yaml", BEGIN, f"restart {BRAKE}",
+                                  f"restart {GATE}", STATUS, f"restart {FRONT}", END])
 
 
 def test_run_says_renders_warnings_before_its_diff(box, monkeypatch):
     # The controller's note at Task 5: only `spark render` and CI showed them.
     monkeypatch.setattr(spark_apply, "check_budget", lambda registry: ["every model loaded at once leaves 20 GiB"])
     box.deployed(old={"llama-swap.yaml": "old config\n"})
-    box.answers = [[]]
     code, lines, _ = box.apply("--dry-run")
     assert code == 0
     assert lines.index("apply: warning — every model loaded at once leaves 20 GiB") < lines.index(
@@ -1250,11 +1436,10 @@ def test_make_restart_front_is_apply_restarting_the_front(box):
     assert re.search(r"^restart-front: ## On the Spark: .*\n\t\$\(SPARK\) apply --restart local-ai-front\.service$",
                      makefile, re.M)
     assert "restart-front" in re.search(r"^\.PHONY: (.*)$", makefile, re.M).group(1).split()
-    # Through run(), with nothing else changed: the gate, then the front.
+    # Through run(), with nothing else changed: the gate, then the front, both inside the hold (Task 32).
     box.deployed()
-    box.answers = [[]]
     code, _, events = box.apply("--restart", FRONT)
-    assert (code, events) == (0, ["-validate", "GET /running", f"restart {GATE}", "GET /running", f"restart {FRONT}"])
+    assert (code, events) == (0, ["-validate", *HELD, BEGIN, f"restart {GATE}", STATUS, f"restart {FRONT}", END])
     with pytest.raises(SystemExit):
         cli.main(["apply", "--restart", BRAKE])  # the front's only
 
@@ -1265,28 +1450,44 @@ def test_restart_front_stages_roots_files_first_and_says_to_run_it_again(tmp_pat
     assert code == 0 and ran == [] and logs[-1].endswith("then run `make restart-front` again")
 
 
-def test_restart_fronts_refusal_gives_a_step_dan_can_run(tmp_path):
-    # Task 31's review: no make target passes --now with --restart. Until Task 32's wait, the step is to unload what's
-    # loaded, then run it again.
-    for running, what in ((["coder"], "models are loaded (coder)"), (None, "can't tell which models are loaded")):
-        code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, restart_front=True, running=running)
-        assert (code, ran) == (1, [])
-        assert logs[-1] == (f"apply: {what}, and restarting the front cuts off every request in flight; unload "
-                            "what's loaded (`spark unload <model>`), then run `make restart-front` again (nothing was "
-                            "changed)")
-    # `make apply`'s refusal still points at --now, which `make apply-now` passes.
-    code, _, logs, _ = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/front/app.py"], running=["coder"])
-    assert code == 1 and logs[-1].endswith("re-run when idle, or with --now (nothing was changed)")
+def test_restart_front_waits_for_the_quiet_moment_and_its_steps_name_make_restart_front(tmp_path):
+    # Task 31's review: no make target passes --now with --restart, and Task 31's interim refusal said to unload what's
+    # loaded first. Since Task 32 `make restart-front` waits for the quiet moment as `make apply` does, and drains at
+    # its deadline; so its words never offer `make apply-now`, which wouldn't restart the front for the key list.
+    script, clock = GateScript(), FakeTime()
+    script.quiet = [idle(20, "Gemma"), *(idle(s, "Gemma") for s in range(21, 61))]
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, restart_front=True, script=script, clock=clock)
+    assert (code, ran) == (0, [["systemctl", "restart", unit] for unit in (GATE, FRONT)])
+    assert ("Waiting for a quiet moment: Gemma answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C "
+            "leaves everything as it was.") in logs
+    assert not [line for line in logs if "apply-now" in line]
+    # Declined at the deadline, and with the gate down: the step is `make restart-front` again.
+    script = GateScript()
+    script.quiet = [busy("agent")]
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, restart_front=True, script=script, answers=[False])
+    assert (code, ran) == (1, []) and logs[-1] == ("apply: nothing was changed; `make restart-front` waits for a quiet "
+                                                   "minute again")
+    script = GateScript()
+    script.down = True
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, restart_front=True, script=script)
+    assert (code, ran) == (1, [])
+    assert logs[-1] == ("apply: nothing was changed: apply can't see what's in flight while the gate isn't answering; "
+                        "once it answers (`make doctor` shows what's wrong), `make restart-front` waits for a quiet "
+                        "moment")
+    # `make apply`'s points at `make apply-now`, which passes --now.
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/front/app.py"], script=script)
+    assert code == 1 and logs[-1].endswith("`make apply-now` restarts anyway")
 
 
 def test_restart_fronts_failed_sync_says_to_run_it_again(box):
-    # Task 31's review: `make apply` would sync the app and never restart the front for the key list.
+    # Task 31's review: `make apply` would sync the app and never restart the front for the key list. Since Task 32 the
+    # sync comes inside the hold, which undrain-all ends.
     box.deployed()
-    box.answers = [[]]
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.uv_fails = True
-    code, lines, _ = box.apply("--restart", FRONT)
-    assert code == 1 and lines[-1].endswith("once it's fixed, `make restart-front` syncs it again")
+    code, lines, events = box.apply("--restart", FRONT)
+    assert code == 1 and lines[-2].endswith("once it's fixed, `make restart-front` syncs it again")
+    assert events == ["-validate", *HELD, "uv sync", UNDRAIN] and lines[-1] == "apply: the hold on new requests is ended"
 
 
 # Task 31's review (I2): the front's restart for the registry's key groups, and the gate's and the front's for
@@ -1303,47 +1504,506 @@ def stamps(box):
 
 def test_a_run_cut_off_before_the_fronts_restart_for_the_key_groups_leaves_it_owed(box):
     box.deployed(old={"models.yaml": KEY_GROUPS_CHANGED})
-    box.answers = [[]]
     box.interrupted = {FRONT}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply()
-    assert box.events == ["-validate", "GET /running", "write models.yaml", f"restart {BRAKE}", f"restart {GATE}",
-                          "GET /running", f"restart {FRONT}"]
+    code, _, events = box.apply()
+    assert (code, events) == (130, ["-validate", *HELD, "write models.yaml", BEGIN, f"restart {BRAKE}",
+                                    f"restart {GATE}", STATUS, f"restart {FRONT}", UNDRAIN])
     assert box.units[FRONT] == T0  # cut off before systemd took the job
     box.interrupted = set()
     code, lines, events = box.apply()  # the registry is deployed now: only the stamp records the front's restart
-    assert (code, events) == (0, ["-validate", "GET /running", "GET /running", f"restart {FRONT}"])
+    assert (code, events) == (0, ["-validate", *HELD, BEGIN, f"restart {FRONT}", END])
     assert f"apply: {FRONT} started before its latest files were in place, so it still runs older ones" in lines
     assert box.apply()[1] == ["apply: nothing to change"]
 
 
 def test_a_run_cut_off_before_restart_fronts_restarts_leaves_the_gate_and_the_front_owed(box):
     box.deployed()
-    box.answers = [[]]
     box.interrupted = {GATE}
-    with pytest.raises(KeyboardInterrupt):
-        box.apply("--restart", FRONT)
-    assert box.events == ["-validate", "GET /running", f"restart {GATE}"]
+    code, _, events = box.apply("--restart", FRONT)
+    assert (code, events) == (130, ["-validate", *HELD, BEGIN, f"restart {GATE}", UNDRAIN])
     box.interrupted = set()
     code, _, events = box.apply()  # `make apply`, not `make restart-front`
-    assert (code, events) == (0, ["-validate", "GET /running", f"restart {GATE}", "GET /running", f"restart {FRONT}"])
+    assert (code, events) == (0, ["-validate", *HELD, BEGIN, f"restart {GATE}", STATUS, f"restart {FRONT}", END])
     assert box.apply()[1] == ["apply: nothing to change"]
 
 
 def test_a_dry_run_a_refusal_and_the_staging_stop_leave_no_stamp(box):
     box.deployed(old={"models.yaml": KEY_GROUPS_CHANGED})
-    box.answers = [[]]
     for flags in ((), ("--restart", FRONT)):
         assert box.apply("--dry-run", *flags)[0] == 0 and stamps(box) == []
-    box.answers = [[Running("coder", "ready")]]
+    box.gate.down = True  # since Task 32, the refusal: the gate isn't answering
     for flags in ((), ("--restart", FRONT)):
         assert box.apply(*flags)[0] == 1 and stamps(box) == []
+    box.gate.down = False
+    box.gate.quiet = [busy("agent")]  # and a no at the deadline
+    for flags in ((), ("--restart", FRONT)):
+        assert box.apply(*flags)[0] == 1 and stamps(box) == []
+    box.gate.quiet = [QUIET]
     unit = Path(installed_path("systemd/local-ai-front.service"))
     unit.write_text(unit.read_text() + "# an older copy\n")  # root's copy differs: apply stages and stops
     for flags in ((), ("--restart", FRONT)):
         code, lines, _ = box.apply(*flags)
         assert code == 0 and "make install-units" in lines[-1] and stamps(box) == []
     unit.write_text(unit.read_text().removesuffix("# an older copy\n"))
-    box.answers = [[]]
     box.apply("--restart", FRONT)  # a run that writes touches both
     assert stamps(box) == sorted([spark_apply.KEY_GROUPS_STAMP, spark_apply.RESTART_FRONT_STAMP])
+
+
+# Task 32: the quiet wait, drain now and apply-now.
+
+
+def test_apply_waits_for_60s_with_nothing_in_flight_and_says_what_its_waiting_on(tmp_path):
+    script, clock, said = GateScript(), FakeTime(), []
+    script.clock = clock.clock
+    script.quiet = [idle(20 + n) for n in range(41)]  # the coder answered 20 s ago; a reading each second
+    assert wait_for_quiet(ScriptClient(script), clock=clock.clock, sleep=clock.sleep, say=said.append,
+                          ask=lambda question: pytest.fail(question)) == "quiet"
+    assert said == ["Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in "
+                    "flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now."]
+    assert script.readings == 41 and clock.slept == [1.0] * 40  # quiet_for_s reached 60: it goes on
+    assert [call[:2] for call in script.calls] == [("GET", "/v1/quiet")] * 41  # nothing but readings until then
+    # Through apply_files: the sentence once, then the restart.
+    script = GateScript()
+    script.around(before=[idle(20 + n) for n in range(41)])
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
+    assert [line for line in logs if line.startswith("Waiting")] == said
+
+
+def test_the_waiting_sentence_is_said_again_only_when_what_it_waits_on_changes():
+    script, clock, said = GateScript(), FakeTime(), []
+    script.clock = clock.clock
+    script.quiet = [busy("agent"), busy("agent"), idle(1), idle(2), busy("pi on the Mac", label="Gemma"), idle(1, "Gemma"),
+                    idle(2, "Gemma"), idle(1, "Gemma"), idle(2, "Gemma"), idle(0, None), idle(5, None), idle(60, None)]
+    wait_for_quiet(ScriptClient(script), clock=clock.clock, sleep=clock.sleep, say=said.append, ask=lambda q: False)
+    tail = ", and it needs 60 s with nothing in flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now."
+    assert said == ["Waiting for a quiet moment: the coder is answering now" + tail,
+                    "Waiting for a quiet moment: the coder answered 1 s ago" + tail,
+                    "Waiting for a quiet moment: Gemma is answering now" + tail,
+                    "Waiting for a quiet moment: Gemma answered 1 s ago" + tail,
+                    # a request came and went between two readings: a new quiet moment begins
+                    "Waiting for a quiet moment: Gemma answered 1 s ago" + tail,
+                    # the gate restarted, and has no count from the front yet; then the front's, with no request yet
+                    "Waiting for a quiet moment: the gate doesn't have the front's counts yet, so it can't tell what's "
+                    "in flight" + tail,
+                    "Waiting for a quiet moment: nothing has been in flight since the front started 5 s ago" + tail]
+
+
+def test_ctrl_c_during_the_wait_leaves_nothing_changed(tmp_path, monkeypatch):
+    written = []
+    monkeypatch.setattr(spark_apply, "write_tree", lambda files, out: written.append(sorted(files)))
+    script = GateScript()
+    script.quiet = [busy("agent"), busy("agent"), KeyboardInterrupt()]
+    etc = seeded(tmp_path)
+    code, ran, logs, synced = run_apply(etc, FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                        app_changes=["src/spark/brake.py"], script=script)
+    assert (code, ran, synced, written) == (130, [], [], [])
+    assert [call[1] for call in script.calls] == ["/v1/quiet"] * 3  # no drain-all, so no hold to end
+    assert (etc / "llama-swap.yaml").read_text() == "a" and logs[-1] == "apply: stopped by Ctrl-C; nothing was changed"
+
+
+def test_after_15_minutes_apply_offers_drain_now(tmp_path):
+    for answer in (True, False):
+        script, clock = GateScript(), FakeTime()
+        script.around(before=[busy("pi on the Mac", "agent")], after=[busy("agent"), busy("agent"), QUIET])
+        events = []
+        code, ran, logs, synced = run_apply(seeded(tmp_path / str(answer)), FILES | {"llama-swap.yaml": "b"},
+                                            app_changes=["src/spark/brake.py"], script=script, clock=clock,
+                                            answers=[answer], events=events)
+        assert run_apply.asked == ["No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in "
+                                   "flight finish? [y/N]"]
+        drains = script.routes("/v1/drain-all")
+        if answer:  # drain-all at once, then on, with nothing in flight
+            assert code == 0 and drains[0][3] == 1000.0 + 900
+            assert events[events.index("gate POST /v1/drain-all"):events.index("sync")] == [
+                "gate POST /v1/drain-all", *["gate GET /v1/quiet"] * 3]
+            assert ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE, LLAMA)]
+        else:  # exit 1, nothing changed
+            assert (code, ran, synced, drains) == (1, [], [], [])
+            assert (tmp_path / str(answer) / "llama-swap.yaml").read_text() == "a"
+            assert logs[-1] == ("apply: nothing was changed; `make apply` waits for a quiet minute again, and `make "
+                                "apply-now` restarts now")
+
+
+def test_the_deadline_can_be_shortened_for_a_drill(box, capsys):
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    box.gate.quiet = [busy("agent")]
+    box.replies = [False]
+    code, lines, _ = box.apply("--deadline-s", "60")
+    assert code == 1 and box.questions == ["No quiet minute in 1 minute. Drain now, holding new requests while the 1 "
+                                           "in flight finishes? [y/N]"]
+    assert box.time.now - box.gate.calls[0][3] == 60  # asked at 60 s
+    with pytest.raises(SystemExit):
+        cli.main(["apply", "--help"])
+    assert "deadline" not in capsys.readouterr().out  # `--help` doesn't name it
+
+
+def test_drain_now_holds_new_requests_until_those_in_flight_finish(tmp_path):
+    # After drain-all apply waits for /v1/quiet's inflight to empty, and says what it waits on, once per change.
+    script, clock, events = GateScript(), FakeTime(), []
+    script.around(before=[busy("pi on the Mac", "agent")],
+                  after=[busy("pi on the Mac", "agent")] * 3 + [busy("agent")] * 2 + [idle(0.5)])
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, clock=clock,
+                                 answers=[True], events=events)
+    assert code == 0
+    drained = events.index("gate POST /v1/drain-all")
+    assert events[drained:events.index("gate POST /v1/apply/begin")] == ["gate POST /v1/drain-all",
+                                                                          *["gate GET /v1/quiet"] * 6]
+    assert [line for line in logs if line.startswith("Holding")] == [
+        "Holding new requests while the 2 requests in flight finish (pi on the Mac, agent). Ctrl-C ends the hold and "
+        "leaves everything as it was.",
+        "Holding new requests while the 1 request in flight finishes (agent). Ctrl-C ends the hold and leaves "
+        "everything as it was."]
+    assert "apply: nothing is in flight, and new requests are held until the restarts are done" in logs
+    # A failure after it: undrain-all, which ends the hold.
+    script = GateScript()
+    script.around(before=[busy("agent")])
+    code, _, logs, _ = run_apply(seeded(tmp_path / "failed"), FILES | {"llama-swap.yaml": "b"}, fails=(LLAMA,),
+                                 script=script, answers=[True])
+    assert code == 1 and script.routes("/v1/undrain-all") and not script.routes("/v1/apply/end")
+    assert logs[-1] == "apply: the hold on new requests is ended" and not script.held()
+
+
+def test_apply_renews_the_hold_while_it_runs(tmp_path):
+    script, clock = GateScript(), FakeTime()
+    script.around(before=[busy("agent")], after=[busy("agent")] * 100 + [QUIET])  # a drain wait of 100 s
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, clock=clock,
+                              answers=[True])
+    assert code == 0
+    drained_at = script.routes("/v1/drain-all")[0][3]
+    renewals = script.routes("/v1/apply/renew")
+    assert [at - drained_at for _, _, _, at in renewals] == [15, 30, 45, 60, 75, 90]
+    assert all(body == {"since": drained_at} for _, _, body, _ in renewals)
+    ended_at = script.routes("/v1/apply/end")[0][3]
+    clock.sleep(60)  # after apply/end, none
+    assert script.routes("/v1/apply/renew") == renewals and all(at < ended_at for *_, at in renewals)
+    assert not run_apply.gate._thread.is_alive()
+
+
+def test_the_renewals_come_from_a_thread_of_their_own_so_a_long_sync_never_lets_the_hold_lapse(tmp_path, monkeypatch):
+    # With the real clock: a sync that holds apply's own thread for 0.5 s, renewals every 0.05 s meanwhile.
+    script = GateScript()
+    gate = ApplyGate(ScriptClient(script), ScriptClient(script), renew_s=0.05, log=lambda line: None)
+    renewed_during = []
+
+    def sync():
+        before = len(script.routes("/v1/apply/renew"))
+        time.sleep(0.5)
+        renewed_during.append(len(script.routes("/v1/apply/renew")) - before)
+
+    code = apply_files(FILES | {"llama-swap.yaml": "b"}, seeded(tmp_path), installed=ROOTS, unreadable=set(),
+                       outdated=[], active=lambda unit: True, app_changes=["src/spark/brake.py"], now_ok=False,
+                       dry_run=False, sync_app=sync, run_cmd=lambda cmd: script.restarted(cmd[-1]),
+                       log=lambda line: None, registry_old=REGISTRY, registry_new=REGISTRY, gate=gate,
+                       ask=lambda question: None)
+    assert code == 0 and renewed_during[0] >= 4 and not gate._thread.is_alive()
+
+
+def test_sighup_and_sigterm_clean_up_like_ctrl_c(tmp_path):
+    # `spark apply` in a subprocess against the gate's stand-in: the quiet reading, drain-all, and then a request found
+    # in flight (it came between the reading and the hold), so apply waits; the signal comes during that drain wait.
+    for signum, code in ((signal.SIGHUP, 129), (signal.SIGTERM, 143)):
+        folder = Path(tempfile.mkdtemp(prefix="ap", dir="/tmp"))
+        script = GateScript()
+        script.around(before=[QUIET], after=[busy("agent")])
+        server = serve_script(script, folder / "control.sock")
+        work = tmp_path / signum.name
+        driver = (f"import sys\nsys.path.insert(0, {str(Path(__file__).parent)!r})\nimport pytest, test_apply\n"
+                  f"from pathlib import Path\nfrom spark import cli\n"
+                  f"box = test_apply.Box(Path({str(work)!r}), pytest.MonkeyPatch(), None, fake_time=False, "
+                  f"gate_path=Path({str(folder / 'control.sock')!r}))\n"
+                  "box.deployed(old={'llama-swap.yaml': 'old config'})\n"
+                  "sys.exit(cli.main(['apply']))\n")
+        process = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True)
+        try:
+            deadline = time.monotonic() + 60
+            while not [call for call in script.calls[1:] if call[1] == "/v1/quiet" and script.routes("/v1/drain-all")]:
+                assert process.poll() is None and time.monotonic() < deadline, process.communicate()[0]
+                time.sleep(0.05)
+            process.send_signal(signum)
+            out, _ = process.communicate(timeout=60)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            server.shutdown()
+            server.server_close()
+            shutil.rmtree(folder, ignore_errors=True)
+        assert process.returncode == code, out
+        assert "Holding new requests while the 1 request in flight finishes (agent)." in out  # the drain wait
+        assert script.routes("/v1/undrain-all") and not script.routes("/v1/apply/begin"), out
+        assert (work / "opt/etc/llama-swap.yaml").read_text() == "old config"  # nothing written
+        assert f"apply: stopped by {signum.name}; nothing was changed" in out.splitlines()
+
+
+def test_a_gate_that_fails_at_start_stops_apply(tmp_path):
+    script, clock = GateScript(), FakeTime()
+    script.gate_back_after = math.inf  # its socket doesn't answer after its restart
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                   app_changes=["src/spark/front/app.py"], script=script, clock=clock)
+    assert code == 1 and ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE)]  # no further restart
+    assert sum(clock.slept) >= 30
+    assert logs[-2:] == [
+        f"apply: restarted {GATE}, but the gate didn't answer on its control socket within 30 s: see `make logs s=gate`; "
+        "apply restarts nothing more",
+        "apply: the gate didn't answer undrain-all, so the hold on new requests ends a minute after its last renewal: "
+        "the gate lets it lapse, or the front drops it once the gate has been gone that long"]
+
+
+def test_the_quiet_path_holds_new_requests_too(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(spark_apply, "write_tree", lambda files, out: events.append("write"))
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, app_changes=["src/spark/brake.py"],
+                              events=events)
+    assert code == 0
+    assert events[:6] == ["gate GET /v1/quiet", "gate POST /v1/drain-all", "gate GET /v1/quiet", "sync", "write",
+                          "gate POST /v1/apply/begin"]
+    assert events.index("gate POST /v1/drain-all") < events.index(f"restart {BRAKE}")
+
+
+def test_root_files_pending_stage_before_any_gate_call(tmp_path):
+    # The cutover's Step 2: root's files pending, llama-swap active, the gate not answering.
+    script = GateScript()
+    script.down = True
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"systemd/local-ai-llama-swap.service": "u2",
+                                                                   "llama-swap.yaml": "b"},
+                                        app_changes=["src/spark/front/app.py"], script=script)
+    assert (code, ran, synced, script.calls) == (0, [], [], [])
+    assert "make install-units" in logs[-1]
+    run_apply(seeded(tmp_path), FILES | {"systemd/local-ai-llama-swap.service": "u2"}, dry_run=True, script=script)
+    assert script.calls == []
+
+
+def test_nothing_is_written_until_the_drain_is_done(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(spark_apply, "write_tree", lambda files, out: events.append("write"))
+    script = GateScript()
+    script.around(before=[busy("agent")], after=[busy("agent"), busy("agent"), QUIET])
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, app_changes=["src/spark/brake.py"],
+                              script=script, answers=[True], events=events)
+    assert code == 0
+    last_reading = len(events) - 1 - events[::-1].index("gate GET /v1/quiet")
+    assert events.index("sync") > last_reading and events.index("write") > last_reading
+    assert events.index("gate POST /v1/drain-all") < last_reading  # the drain's own wait came first
+
+
+def test_apply_now_names_the_requests_it_would_cut_off_and_asks(tmp_path):
+    for answer in (True, False):
+        script, events = GateScript(), []
+        script.quiet = [busy("pi on the Mac", "agent")]
+        code, ran, logs, _ = run_apply(seeded(tmp_path / str(answer)), FILES | {"llama-swap.yaml": "b"}, now_ok=True,
+                                       script=script, answers=[answer], events=events)
+        assert run_apply.asked == ["This restarts the model service now and cuts off the 2 requests in flight (pi on "
+                                   "the Mac, agent). Continue? [y/N]"]
+        if answer:  # restarts, under the hold, without waiting for those in flight
+            assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
+            assert events[:3] == ["gate GET /v1/quiet", "gate POST /v1/drain-all", "gate POST /v1/apply/begin"]
+        else:  # nothing
+            assert (code, ran, events) == (1, [], ["gate GET /v1/quiet"])
+            assert logs[-1] == "apply: nothing was changed"
+    # With nothing in flight it doesn't ask.
+    code, ran, _, _ = run_apply(seeded(tmp_path / "idle"), FILES | {"llama-swap.yaml": "b"}, now_ok=True)
+    assert (code, run_apply.asked) == (0, [])
+
+
+def test_the_gate_is_told_before_and_after_the_restart(tmp_path):
+    script, events = GateScript(), []
+    script.llama_back_after = 2
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, events=events)
+    assert code == 0
+    assert events[events.index("gate POST /v1/apply/begin"):] == [
+        "gate POST /v1/apply/begin", f"restart {LLAMA}", *["gate GET /v1/status"] * 3, "gate POST /v1/apply/end"]
+    assert script.routes("/v1/apply/begin")[0][2] == {"restarting": [LLAMA]}
+
+
+def test_the_restarts_run_in_their_fixed_order(tmp_path):
+    events = []
+    code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                              app_changes=["src/spark/front/app.py"], events=events)
+    assert code == 0
+    assert [event for event in events if event.startswith("restart")] == [f"restart {unit}" for unit in
+                                                                           (BRAKE, GATE, FRONT, LLAMA)]
+    assert events.index("gate POST /v1/apply/begin") < events.index(f"restart {BRAKE}")
+    between = events[events.index(f"restart {GATE}") + 1:events.index(f"restart {FRONT}")]
+    assert between == ["gate GET /v1/status"]  # the gate's control socket answered between its restart and the front's
+
+
+def test_a_front_whose_files_didnt_change_isnt_restarted(tmp_path):
+    (tmp_path / "registry").mkdir()
+    registry_new = registry_of(tmp_path / "registry", ("footprint_gib: 28", "footprint_gib: 30"))
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                registry_new=registry_new)
+    assert code == 0 and ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE, LLAMA)]
+
+
+def test_a_change_needing_no_restart_applies_at_once(tmp_path):
+    # Nothing waits for the quiet moment: no wait, no hold; the gate and the brake restarted at once, and the gate asked
+    # only whether it answers after its restart.
+    (tmp_path / "registry").mkdir()
+    registry_new = registry_of(tmp_path / "registry", ("footprint_gib: 28", "footprint_gib: 30"))
+    events = []
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"models.yaml": "m2"}, registry_new=registry_new,
+                                events=events)
+    assert code == 0 and ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE)]
+    assert events == [f"restart {BRAKE}", f"restart {GATE}", "gate GET /v1/status"]
+
+
+def test_with_the_gate_down_apply_restarts_llama_swap_only_with_now(tmp_path):
+    script = GateScript()
+    script.down = True
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert (code, ran, synced) == (1, [], []) and (tmp_path / "llama-swap.yaml").read_text() == "a"
+    assert logs[-1] == ("apply: nothing was changed: apply can't see what's in flight while the gate isn't answering; "
+                        "`make apply-now` restarts anyway")
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, now_ok=True)
+    assert code == 1 and ran == [["systemctl", "restart", LLAMA]]  # restarted, but not confirmed
+    assert ("apply: the gate isn't answering, so apply can't hold new requests; with --now it restarts anyway, and any "
+            "request in flight is cut off") in logs
+
+
+def test_with_llama_swap_stopped_apply_deploys_without_the_gate(tmp_path):
+    # The cutover's Step 4: llama-swap stopped, the front and the gate not started yet, the gate not answering.
+    script = GateScript()
+    script.down = True
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                        app_changes=["src/spark/front/app.py"], active=(COMPOSE,), script=script)
+    assert (code, ran, synced, script.calls) == (0, [], [True], [])
+    assert (tmp_path / "llama-swap.yaml").read_text() == "b" and (tmp_path / "models.yaml").read_text() == "m2"
+
+
+def test_a_front_that_must_restart_with_llama_swap_stopped_still_waits_while_the_gate_answers(tmp_path):
+    # The front holds requests waiting for admission even while llama-swap is stopped: the gate is asked.
+    script = GateScript()
+    script.quiet = [busy("agent"), QUIET]
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/front/app.py"],
+                                active=(BRAKE, COMPOSE, FRONT, GATE), script=script)
+    assert code == 0 and ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE, FRONT)]
+    assert script.routes("/v1/drain-all")
+    # And with the gate down too, it deploys and restarts anyway: nothing can be in flight to llama-swap.
+    script = GateScript()
+    script.down = True
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/front/app.py"],
+                                   active=(BRAKE, COMPOSE, FRONT, GATE), script=script, clock=FakeTime())
+    assert ran[:2] == [["systemctl", "restart", unit] for unit in (BRAKE, GATE)]
+
+
+def test_apply_end_and_undrain_all_wait_past_the_gates_own_bound(box, monkeypatch):
+    made = []
+    real = spark_apply.GateClient
+
+    def client(path, timeout_s):
+        made.append(timeout_s)
+        return real(path, timeout_s)
+
+    monkeypatch.setattr(spark_apply, "GateClient", client)
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    assert box.apply()[0] == 0
+    assert sorted(made) == [gateproto.REQUEST_TIMEOUT_S, spark_apply.END_TIMEOUT_S]
+    assert spark_apply.END_TIMEOUT_S > gateproto.APPLY_END_TIMEOUT_S
+
+
+@pytest.mark.parametrize("failing", [False, True], ids=["apply/end", "undrain-all"])
+def test_a_503_from_the_holds_end_is_said_and_never_counted_a_failure(box, failing):
+    # gate.app.STILL_FINISHING: the gate is still ending the hold, past its 15 s bound, and its work goes on.
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    box.gate.end_status = 503
+    if failing:
+        box.failing = {LLAMA}
+    code, lines, events = box.apply()
+    assert events[-1] == (UNDRAIN if failing else END)
+    assert code == (1 if failing else 0)  # only the failed restart counts
+    assert lines[-1] == ("apply: the restarts are done, and the gate is ending its hold on new requests. "
+                         if not failing else "apply: the gate is ending its hold on new requests. ") + STILL_FINISHING
+    assert "`spark status`" in lines[-1]
+
+
+def test_a_hold_the_gate_ended_before_begin_restarts_nothing(tmp_path):
+    script = GateScript()
+    script.begin_answer = {"ended": True}
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert (code, ran) == (1, []) and (tmp_path / "llama-swap.yaml").read_text() == "b"
+    assert ("apply: the gate's hold on new requests had already ended, so apply restarted nothing; the files are "
+            "deployed, and the next `make apply` restarts each unit still running older ones") in logs
+
+
+def test_the_makefiles_help_says_apply_and_apply_now_wait_for_and_cut_off_what(tmp_path):
+    makefile = (ROOT / "Makefile").read_text()
+    apply_help = re.search(r"^apply: ## (.*)$", makefile, re.M).group(1)
+    now_help = re.search(r"^apply-now: ## (.*)$", makefile, re.M).group(1)
+    assert "llama-swap and the front" in apply_help and "quiet minute" in apply_help
+    assert "llama-swap and the front" in now_help and "in flight" in now_help
+
+
+def test_a_gate_that_goes_away_during_the_wait_is_waited_for_then_changes_nothing(tmp_path):
+    # The gate restarted mid-wait: said once, asked again each second, and the wait goes on once it answers.
+    script, clock = GateScript(), FakeTime()
+    script.around(before=[busy("agent"), Down(), Down(), idle(70)])
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, clock=clock)
+    assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
+    assert len([line for line in logs if line.endswith("It asks again each second, for up to 30 s.")]) == 1
+    assert "apply: the gate answers again." in logs
+    # Gone 30 s: nothing was changed, and no hold was made.
+    script, clock = GateScript(), FakeTime()
+    script.around(before=[busy("agent"), Down()])
+    code, ran, logs, synced = run_apply(seeded(tmp_path / "gone"), FILES | {"llama-swap.yaml": "b"}, script=script,
+                                        clock=clock)
+    assert (code, ran, synced, script.routes("/v1/drain-all")) == (1, [], [], [])
+    assert logs[-1].startswith("apply: nothing was changed: The gate didn't answer") and sum(clock.slept) == 31
+    # Gone under the hold, in the drain wait: the same, and undrain-all ends the hold once the gate answers it.
+    script, clock = GateScript(), FakeTime()
+    script.around(before=[QUIET], after=[busy("agent"), Down()])
+    code, ran, logs, _ = run_apply(seeded(tmp_path / "held"), FILES | {"llama-swap.yaml": "b"}, script=script,
+                                   clock=clock)
+    assert (code, ran) == (1, []) and script.routes("/v1/undrain-all") and not script.held()
+    assert logs[-2].startswith("apply: nothing was changed: The gate didn't answer")
+
+
+def test_a_gate_that_refuses_apply_changes_nothing_and_says_why(tmp_path):
+    script = GateScript()
+    script.quiet = [GateRefused(403, {"message": "Only spark-admin's members can ask that.", "code": None})]
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert (code, ran) == (1, []) and logs[-1] == "apply: nothing was changed: Only spark-admin's members can ask that."
+    script = GateScript()
+    script.quiet = [{"quiet_for_s": "soon"}]  # an answer apply can't read
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert code == 1 and logs[-1].startswith("apply: nothing was changed: The gate's answer to GET /v1/quiet couldn't")
+
+
+def test_the_drain_wait_never_takes_a_reading_without_the_fronts_counts_for_nothing_in_flight():
+    # quiet_for_s 0 with nothing listed: the gate has no count from the front (gate/core.py's quiet, after its restart).
+    script, clock, said = GateScript(), FakeTime(), []
+    script.clock = clock.clock
+    script.quiet = [idle(0), idle(0), idle(0.5)]
+    wait_for_drained(ScriptClient(script), clock=clock.clock, sleep=clock.sleep, say=said.append)
+    assert script.readings == 3 and said == [
+        "Holding new requests; the gate doesn't have the front's counts yet, so apply waits until it can tell that "
+        "nothing is in flight. Ctrl-C ends the hold and leaves everything as it was."]
+
+
+def test_a_hold_the_gate_ended_meanwhile_stops_the_restarts_that_would_cut_requests_off(tmp_path):
+    # A renewal answered {ended: true}: the hold lapsed, or ended some other way, and requests flow again.
+    for when in ("sync", GATE):
+        script, logs, ran = GateScript(), [], []
+        gate = apply_gate(script, FakeTime(), logs)
+
+        def run_cmd(cmd):
+            ran.append(cmd[-1])
+            script.restarted(cmd[-1])
+            if cmd[-1] == when:
+                gate.ended.set()
+
+        code = apply_files(FILES | {"llama-swap.yaml": "b"}, seeded(tmp_path / when), installed=ROOTS,
+                           unreadable=set(), outdated=[], active=lambda unit: True,
+                           app_changes=["src/spark/front/app.py"], now_ok=False, dry_run=False,
+                           sync_app=lambda: gate.ended.set() if when == "sync" else None, run_cmd=run_cmd,
+                           log=logs.append, registry_old=REGISTRY, registry_new=REGISTRY, gate=gate,
+                           ask=lambda question: None)
+        assert code == 1 and script.routes("/v1/undrain-all") and not script.routes("/v1/apply/end")
+        if when == "sync":  # before begin: nothing restarted
+            assert ran == [] and not script.routes("/v1/apply/begin")
+            assert ("apply: the gate's hold on new requests had already ended, so apply restarted nothing; the files "
+                    "are deployed, and the next `make apply` restarts each unit still running older ones") in logs
+        else:  # before the front's restart: the brake and the gate only
+            assert ran == [BRAKE, GATE]
+            assert (f"apply: the gate's hold on new requests ended before {FRONT}'s restart, so apply restarts nothing "
+                    "more; its files are deployed, and the next `make apply` restarts it after a quiet moment") in logs

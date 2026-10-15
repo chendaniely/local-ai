@@ -14,7 +14,10 @@ Phase 0 is done, bootstrap and the secret files included, and the engines are in
 Phase 1 plan, Task 11).
 
 Your shells on the Spark need your own llama-swap key: `make status` and `make apply` ask
-llama-swap what's loaded (`GET /running`) with the key in `SPARK_API_KEY`. It's the same value as on
+llama-swap what's loaded (`GET /running`) with the key in `SPARK_API_KEY`. *(From the cutover, Phase
+2a's Task 38, neither does: llama-swap then answers only the internal keys, and both ask the gate,
+which needs no key; built in its Tasks 29 and 32, 2026-10-14 and 15. `make doctor` still uses this
+key.)* It's the same value as on
 the Mac, one key per person, not per machine, and [Secret files](secret-files.md) put it only in the
 Mac's `~/.secrets`. **On the Mac**, send it to the Spark's `~/.secrets`, without displaying it:
 
@@ -234,8 +237,18 @@ the Spark**, see what would change:
 make apply-dry-run
 ```
 
-If the real run would refuse, because llama-swap would restart while models are loaded, or while
-apply can't tell whether they are, the dry run says so:
+*From the cutover (Phase 2a's Task 38; built 2026-10-15, in its Task 32):* when llama-swap or the
+front would restart, the dry run asks the gate what's in flight and says what the real run would
+wait for: `apply: dry run — would wait until nothing has been in flight for 60 s (for up to 15
+minutes, then offer to drain now), then restart …`. It changes nothing, and asks the gate nothing
+else. If the gate isn't answering, the real run would refuse, and the dry run says so:
+`apply: dry run — would refuse: apply can't see what's in flight while the gate isn't answering;
+with --now it would restart …`. It exits 1 and ends in make's own error line,
+`make: *** … Error 1`. That line is the answer, not a fault: `make doctor` shows why the gate
+isn't answering.
+
+*Until the cutover, Phase 1's apply:* if the real run would refuse, because llama-swap would restart
+while models are loaded, or while apply can't tell whether they are, the dry run says so:
 `apply: dry run — would refuse: …; with --now it would restart …`. It exits 1 and ends in make's own
 error line, `make: *** … Error 1`. That line is the answer, not a fault: run it again when the
 models are idle, or `make apply-now`. The one exception is a refusal after
@@ -253,18 +266,66 @@ Spark**, check again that `git status --short -- Makefile stack/host` prints not
 but not the clone's own scripts, which sudo runs too. Then `make apply` again: that second apply
 restarts each unit still running its older definition.
 
-If llama-swap would restart, for its config or for its unit, while models are loaded, or while apply
-can't tell whether they are, apply changes nothing and says so. Run it again when they're idle, or
-`make apply-now` to restart llama-swap anyway. If it couldn't tell because llama-swap answered
-`HTTP 401`, neither helps: see *When something is wrong*.
+*From the cutover (Phase 2a's Task 38; built 2026-10-15, in its Task 32):* a restart of llama-swap
+stops every model, and one of the front cuts off every request it holds. So when either has to
+restart, apply first waits for a quiet moment: no request in flight for 60 s, by the front's
+counts. Requests are served as usual meanwhile. Each time what it waits on changes, apply says so:
 
-If a model starts loading after apply's first look, apply deploys the files, puts llama-swap's
-restart off, says so and exits 1; the next `make apply` makes the restart once the models are idle.
-A restarted llama-swap that doesn't answer within 30 s, or answers with an error such as a wrong
-key, gets a line saying so, and apply exits 1. So does a restarted brake that isn't still running
-3 s later, or that systemd has had to restart meanwhile. A run cut off part-way is finished by the
-next `make apply`, except for a unit whose start time apply can't read: it names that unit, with
-the command to restart it.
+> Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in
+> flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now.
+
+Ctrl-C changes nothing while it waits, and neither does a dropped SSH session, but a long wait is
+best run in tmux. After 15 minutes without a quiet minute, apply asks:
+
+> No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight finish?
+> [y/N]
+
+`y` holds new requests and waits, however long, for the requests in flight to finish, naming whose
+they are. Anything else changes nothing, and `make apply` waits again when it's run again.
+
+From the quiet moment, or from that `y`, the front holds every new request until the restarts are
+done, and apply waits until nothing is in flight. A request held past its key's wait gets
+`restarting`'s words, never `llama_swap_down`'s. Only then does apply sync the app and write the
+files. Then it restarts what the change needs, in order. The brake comes first, then the gate, after
+which apply waits up to 30 s for the gate to answer again. The front follows, only if its own files
+changed, its key groups changed, or for `make restart-front`. llama-swap goes last, after which apply
+waits up to 30 s for the gate to see it answer again. The gate then releases the held requests and
+reloads the always-loaded models one at a time, and apply ends `apply: done: …`. The compose unit,
+when it has to restart, restarts after that, on its own.
+
+`make apply-now` skips the wait. If requests are in flight, it asks first, naming whose they are:
+
+> This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent).
+> Continue? [y/N]
+
+It holds new requests through the restarts all the same. A change that restarts neither llama-swap
+nor the front applies at once, with no wait. `make restart-front` waits the same way as
+`make apply`. Its words don't offer `make apply-now`, which wouldn't restart the front for the key
+list.
+
+If the gate isn't answering, apply can't see what's in flight. It refuses a restart of llama-swap or
+the front, changes nothing, and says that `make apply-now` restarts anyway. `make apply-now` then
+restarts without holding new requests. When it restarts llama-swap it can't confirm that llama-swap
+answers again, so it says so and exits 1. With llama-swap stopped, as at the cutover, apply deploys
+without the gate. A gate that doesn't answer within 30 s of its own restart stops apply there: exit
+1, the gate named, nothing more restarted. apply still asks the gate to end the hold on new
+requests; if the gate doesn't answer that either, the hold ends by itself a minute after its last
+renewal. After any other failure once requests are held, Ctrl-C included, apply ends the hold at
+once and says what it left. The next `make apply` restarts each unit still running older files.
+
+*Until the cutover, Phase 1's apply:* if llama-swap would restart, for its config or for its unit,
+while models are loaded, or while apply can't tell whether they are, apply changes nothing and says
+so. Run it again when they're idle, or `make apply-now` to restart llama-swap anyway. If it couldn't
+tell because llama-swap answered `HTTP 401`, neither helps: see *When something is wrong*. If a model
+starts loading after apply's first look, apply deploys the files, puts llama-swap's restart off,
+says so and exits 1; the next `make apply` makes the restart once the models are idle. A restarted
+llama-swap that doesn't answer within 30 s, or answers with an error such as a wrong key, gets a
+line saying so, and apply exits 1.
+
+Either way, a restarted brake that isn't still running 3 s later, or that systemd has had to restart
+meanwhile, gets a line saying so, and apply exits 1. A run cut off part-way is finished by the next
+`make apply`, except for a unit whose start time apply can't read: it names that unit, with the
+command to restart it.
 
 Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass:
 
@@ -319,6 +380,8 @@ without that means llama-swap doesn't know the key this shell has. It should be 
 [Secret files](secret-files.md) step 9 added to `llama-swap.env` as `LLAMASWAP_KEY_DAN_MAC`. Until
 the key works, apply can't tell what's loaded, so it won't restart llama-swap, and `make apply-now`
 would restart it only to fail the check that follows, which asks llama-swap with the same key.
+*(Phase 1's apply. From the cutover apply asks the gate, never llama-swap, and needs no key: Phase
+2a's Task 32, 2026-10-15.)*
 
 Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass. Each `FAIL` says what
 to do. Its `root's copies` line fails when something root runs isn't root's own file, and says to

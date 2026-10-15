@@ -47,13 +47,13 @@ upgrade-gpu: ## Upgrade day: move the GPU set as one, in tmux (Dan; asks for sud
 	@test -n "$$TMUX" || { echo "make upgrade-gpu: run it inside tmux (tmux new -As upgrade), so a dropped SSH session can't stop apt halfway" >&2; exit 1; }
 	trap 'sudo -k' EXIT INT TERM HUP; sudo bash stack/host/bootstrap.sh --upgrade-gpu
 
-apply: ## On the Spark: render, validate, deploy; won't restart llama-swap under loaded models
+apply: ## On the Spark: render, validate, deploy; restarts llama-swap and the front only once nothing is in flight (a quiet minute, or drain now)
 	$(SPARK) apply
 
 apply-dry-run: ## On the Spark: show what apply would change
 	$(SPARK) apply --dry-run
 
-apply-now: ## On the Spark: apply even if restarting llama-swap stops loaded models
+apply-now: ## On the Spark: apply, restarting llama-swap and the front now; asks first when it would cut off requests in flight
 	$(SPARK) apply --now
 
 restart-front: ## On the Spark: apply, restarting the front (and the gate) after the key digests or the key list change
