@@ -462,26 +462,35 @@ class _Routes:
     async def events(self, exchange: _Exchange, uid: int, body: dict, params: dict) -> None:
         """The front's events call, kept open: `hello` and `state` at its head, every event the core sends as it
         comes, and a ping every PING_EVERY_S. It ends when the front goes, when a newer call replaces it, or at the
-        gate's stop; the words a drain is owed and didn't get go to the next call (FrontChannel.close)."""
+        gate's stop; the words a drain is owed and didn't get go to the next call (FrontChannel.close). A send that
+        breaks ends it too, logged by its type and place (the after-fix council's finding, 2026-10-14): the front
+        calls again, as after any drop, and the event whose line never went out is owed with the words still queued."""
         front = self.core.front
         queue = self.core.open_front_events()
         replaced = front.dropped()
+        unsent: list[dict] = []  # the event taken off the queue whose line hasn't gone out yet
         try:
             await exchange.head()
-            await _until_first([self._send_events(exchange, queue), exchange.wait_gone(), replaced.wait(),
-                                self.gate.stopping.wait()])
+            first = await _until_first([self._send_events(exchange, queue, unsent), exchange.wait_gone(),
+                                        replaced.wait(), self.gate.stopping.wait()])
+            if not first.cancelled() and first.exception() is not None:
+                _broke(exchange.route, first.exception())
         finally:
-            front.close(queue)
+            front.close(queue, unsent)
         await exchange.end()
 
-    async def _send_events(self, exchange: _Exchange, queue: asyncio.Queue) -> None:
+    async def _send_events(self, exchange: _Exchange, queue: asyncio.Queue, unsent: list[dict]) -> None:
+        """Each event as it comes, and a ping after ping_every_s with none. The event taken stays in `unsent` until its
+        line has gone, so one a send never wrote is still there when the call ends."""
         while True:
             try:
                 async with asyncio.timeout(self.status_state.ping_every_s):
                     event = await queue.get()
+                    unsent.append(event)
             except TimeoutError:
                 event = {"op": "ping", "at": time.time()}
             await exchange.line(event)
+            unsent.clear()
 
     async def inflight(self, uid: int, body: dict, params: dict, query: dict) -> tuple[int, Any]:
         self.core.inflight(_snapshot(body))

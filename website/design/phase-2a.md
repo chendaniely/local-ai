@@ -3842,7 +3842,10 @@ git commit -m "feat(spark): 🤖 the gate admits one load at a time, Dan's keys 
       - `open(first=()) -> asyncio.Queue`: the events route's queue, `hello` and `state` at its
         head; a new call drops the last.
       - `close(queue)`: a drop. Every drain still waiting hears `dropped`, and the words that end a
-        drain (`undrain`, `unloaded`) still unsent go to `undelivered`.
+        drain (`undrain`, `unloaded`) still unsent go to `undelivered`. *(Added 2026-10-14, from the
+        CI fixes' after-fix council: `close(queue, unsent=())`. The events route passes the event it
+        took off the queue and never wrote, and it is owed ahead of the queue, where it was. A send
+        that breaks now ends the call logged at ERROR, by its type and place.)*
       - `opened()`, `dropped() -> asyncio.Event`, `report(snapshot)` (`/v1/front/inflight`),
         `forget()`, and `expect(model, drain_id, *, takes_busy)`: only an idle drain takes `busy`,
         so a stray `busy` never ends another drain's wait.

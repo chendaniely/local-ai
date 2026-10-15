@@ -148,7 +148,8 @@ def _refusal(message: str) -> dict:
 
 
 def fired_at(hold: Hold) -> float | None:
-    """When the brake fired, from the hold's own time (local, as the brake writes it); None when it doesn't parse."""
+    """When the brake fired, from the hold's own time (local, with its UTC offset, as the brake writes it; Phase 1's,
+    with none, read as local); None when it doesn't parse."""
     try:
         return datetime.fromisoformat(hold.since).timestamp()
     except (ValueError, OverflowError, OSError):

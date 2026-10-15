@@ -958,13 +958,14 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         # whenever the loop stalled 0.15 s just as `unloaded` went out: the stream arms its next ping only then, so the
         # sleep ended first (forced on the Spark, 2026-10-14). The gate's own work can stall it there: admission's pass
         # for the held admit, and the state save that pass leads to, with its two fsyncs, run on the loop; and so can a
-        # busy runner. Its own bound, twenty pings' worth, says what the stream sent if no ping came.
+        # busy runner. Its own bound, 2 s, forty pings' worth, says what the stream sent if no ping came: twice the
+        # margin of 1 s for an fsync spike or a VM's pause, and still a failure for a stream that never pings.
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(2):
                 while "unloaded" not in seen or "ping" not in seen[seen.index("unloaded"):]:
                     await asyncio.sleep(0.01)
         except TimeoutError:
-            pytest.fail(f"no ping within 1 s of `unloaded`; the stream sent {seen}")
+            pytest.fail(f"no ping within 2 s of `unloaded`; the stream sent {seen}")
         status.state.stopping.set()
         streamed, answered = await events, await held
         ops = [line["op"] for line in streamed.lines()]
@@ -973,6 +974,60 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         assert [op for op in ops if op != "ping"][:3] == ["hello", "state", "unloaded"] and "ping" in ops
         assert answered.status == 503 and answered.json() == {"message": gate_app.GATE_STOPPING, "code": None}
         assert core.admitter.waiting() == [] and core.front.connected is False
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_an_event_whose_line_breaks_is_logged_and_owed_to_the_fronts_next_call(tmp_path, caplog):
+    # The after-fix council's finding: a send that broke ended the stream as if it had ended, logged nothing, and lost
+    # the event it had taken off the queue. Now the break is logged at ERROR, by its type and place, never its words;
+    # the stream ends, so the front calls again, as after any drop; and the event taken and never written is owed, as
+    # the words still queued at a call's end are (FrontChannel.close), so the next call sends it.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        broke: list[bytes] = []
+
+        async def breaks_once(scope, receive, send):
+            async def tap(message):
+                if not broke and b'"unloaded"' in message.get("body", b""):
+                    broke.append(message["body"])
+                    raise RuntimeError("stand-in words-q4, which the log never shows")
+                await send(message)
+
+            await status(scope, receive, tap)
+
+        first = asyncio.create_task(call(breaks_once, "GET", "/v1/front/events", uid=FRONT_UID))
+        await core.front.opened()
+        assert core.front.send({"op": "unloaded", "model": WHISPER})
+        ended = await first
+        assert broke and [op for op in (line["op"] for line in ended.lines()) if op != "ping"] == ["hello", "state"]
+        assert core.front.connected is False
+        errors = [r.getMessage() for r in caplog.records if r.name in LOGS and r.levelno >= logging.ERROR]
+        assert len(errors) == 1 and errors[0].startswith("the gate's GET /v1/front/events broke: RuntimeError at ")
+        assert "words-q4" not in caplog.text
+        caplog.clear()
+        seen: list[dict] = []  # the next call's lines, as it sends them
+
+        async def watched(scope, receive, send):
+            async def tap(message):
+                seen.extend(json.loads(line) for line in message.get("body", b"").splitlines())
+                await send(message)
+
+            await status(scope, receive, tap)
+
+        again = asyncio.create_task(call(watched, "GET", "/v1/front/events", uid=FRONT_UID))
+        try:
+            with anyio.fail_after(2):
+                while not any(line.get("op") == "unloaded" for line in seen):
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            pytest.fail(f"the `unloaded` whose line broke never came on the next call, which sent {seen}")
+        status.state.stopping.set()
+        await again
+        assert [line for line in seen if line.get("op") not in ("hello", "state", "ping")] == [
+            {"op": "unloaded", "model": WHISPER}]
         await core.stop()
 
 

@@ -140,7 +140,9 @@ class FrontChannel:
     The events route takes its queue from `open`, with the core's `hello` and `state` at its head, streams what comes
     onto it, and calls `close` with it once the call has ended. Only one call is open at a time: a new one drops the
     last. A drop answers every drain still waiting with `dropped`, and the words that end a drain still in the queue,
-    unsent, go into `undelivered`, which the drainer owes the front (Drainer.send_owed)."""
+    unsent, go into `undelivered`, which the drainer owes the front (Drainer.send_owed); so does one the call took off
+    the queue and never wrote (its send broke, or the call ended while it waited), ahead of them, where it was (since
+    2026-10-14)."""
 
     def __init__(self) -> None:
         self.snapshot: InflightSnapshot | None = None
@@ -165,12 +167,15 @@ class FrontChannel:
         self._opened.set()
         return queue
 
-    def close(self, queue: asyncio.Queue[dict]) -> None:
-        """That call ended. Nothing if it isn't the one open (a newer one replaced it)."""
+    def close(self, queue: asyncio.Queue[dict], unsent: Iterable[dict] = ()) -> None:
+        """That call ended. Nothing if it isn't the one open (a newer one replaced it). `unsent` is what the call took
+        off the queue and never wrote: it is owed as if still at the queue's head, so the order holds."""
         if queue is not self._queue:
             return
+        left = list(unsent)
         while not queue.empty():
-            event = queue.get_nowait()
+            left.append(queue.get_nowait())
+        for event in left:
             if event.get("op") in FINAL_WORDS:
                 self.undelivered.append(event)
         self._queue = None
