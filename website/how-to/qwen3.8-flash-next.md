@@ -96,6 +96,12 @@ free -g
 This stops every model: Open WebUI, pi, opencode and `agent`'s models get no answers until
 [the restore](#restore-the-stack). Available should be back near 117.
 
+*(Added 2026-10-15, Phase 2a's Task 35: from Phase 2a's cutover, stopping llama-swap by hand isn't
+enough, since any start of the front starts it again, through the front's `Wants=`: a crash's
+restart, or a connection to 9100. Hold it down instead, and end the hold-down at the restore, as
+[Deploy the stack](deploy.md#keeping-llama-swap-stopped) says; never stop the front's socket. Until
+the cutover, this step is unchanged.)*
+
 The download left the files in the page cache, and on GB10 reclaiming a full page cache during a
 load has stalled other Sparks for minutes (the plan's open risk *Page cache and the launch check*).
 Clear it before the load, and note `buff/cache` before and after. **On the Spark:**

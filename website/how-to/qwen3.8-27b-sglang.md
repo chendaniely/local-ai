@@ -129,6 +129,13 @@ the page cache the downloads left (the plan's open risk *Page cache and the laun
 Available should be back near 117. The brake keeps running: if available falls under 20 GiB it
 writes its hold, which blocks the stack's loads until you release it.
 
+*(Added 2026-10-15, Phase 2a's Task 35: from Phase 2a's cutover, stopping llama-swap by hand isn't
+enough, since any start of the front starts it again, through the front's `Wants=`: a crash's
+restart, or a connection to 9100. Hold it down instead, and end the hold-down where
+[Stop it](#stop-it) starts the stack again, as [Deploy the
+stack](deploy.md#keeping-llama-swap-stopped) says; never stop the front's socket. Until the
+cutover, this step is unchanged.)*
+
 **Later runs: beside the always-loaded models**, once the first run's numbers are in:
 
 1. Load the always-loaded models first (a question in Open WebUI loads Gemma), so SGLang's start

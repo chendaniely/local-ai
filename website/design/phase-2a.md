@@ -8355,10 +8355,23 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
   llama-swap.** The front's unit has `Wants=local-ai-llama-swap.service` (Task 25), so any start
   of the front starts llama-swap too: its restart after a crash, and a connection to 9100 after Dan
   has stopped `local-ai-front.service`, since PID 1 still holds the port. The upgrade-day runbook
-  (`updates.md`), and any step in `deploy.md` that keeps llama-swap stopped, say so. To keep it
+  (`updates.md`), and any step in `deploy.md` that keeps llama-swap stopped, say so. ~~To keep it
   stopped, they stop the front's socket too, **on the Spark**, with sudo, since the polkit rule
   doesn't cover sockets (`sudo systemctl stop local-ai-front.socket local-ai-front.service`), and
-  start the socket again at the end.
+  start the socket again at the end.~~ *(Corrected 2026-10-15, at Task 35's review, the
+  controller's ruling: stopping the front's socket frees 9100, and any account, `agent` included,
+  could bind it and receive Dan's clients' requests and keys, so no runbook stops it to keep
+  llama-swap down. Nor does `systemctl mask --runtime`: it writes to `/run/systemd/system`, and
+  root's copy of the unit in `/etc/systemd/system` comes first (systemd.unit(5)'s load path;
+  systemd 255's `unit_file_build_name_map`). They hold llama-swap down with a drop-in,
+  `/run/systemd/system/local-ai-llama-swap.service.d/held-down.conf`, holding `[Unit]` and
+  `ConditionPathExists=/dev/null/held-down`, a path that can never exist: written, then `sudo
+  systemctl daemon-reload`, then `sudo systemctl stop local-ai-llama-swap`; undone by removing it,
+  `daemon-reload` and `sudo systemctl start local-ai-llama-swap`; and gone at a reboot, `/run`
+  being a tmpfs. A condition that isn't met skips every start, the front's `Wants=` included, and
+  fails nothing, so the front keeps 9100. deploy.md has the blocks, under Keeping llama-swap
+  stopped, run only on stand-ins, and updates.md's upgrade day and the three model-test runbooks
+  use it.)*
 - *(Added 2026-10-14, at Task 27's review, the reviewer's M8:)* **deploy.md's two `open-webui.env`
   blocks move off Phase 1's rule.** The block after *If the page refuses even the first signup*,
   which appends the admin's email and password, and the one that removes them still write with `umask
@@ -8590,7 +8603,13 @@ d=$(mktemp -d) && git worktree add "$d/main" main && (cd "$d/main" && uv run --f
   an `ExecStart` ending `-listen 127.0.0.1:9100`.
 
   The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: for the
-  first line, and again at `make install-units`, after `sudo -k`):
+  first line, and again at `make install-units`, after `sudo -k`). *(Added 2026-10-15, at Task 35's
+  review, the controller's ruling: run it a line at a time, never pasted whole, or the next line is
+  read as sudo's password or as `make install-units`' answer. If `git worktree add` fails, a
+  `../local-ai-rollback` left from an earlier try among the causes, stop there: `cd` can still land
+  in that old folder, or fail and leave the shell in the `phase-2a` clone, and the three `make`
+  lines must run only in a fresh `main` worktree. The first case was seen on stand-ins at Task 35;
+  deploy.md says so.)*
 
 ```bash
 sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
@@ -8630,7 +8649,8 @@ make apply
   Phase 1's app deployed under the new units root now holds: stop here, and run Step 1's rollback,
   which restarts Phase 1's llama-swap.
 - [ ] **Step 5 [Dan]: the cutover, its start**, only after Step 4 exited 0. **On the Spark** (Dan;
-  sudo asks once):
+  sudo asks once). *(Added 2026-10-15, at Task 35's review, the controller's ruling: a line at a
+  time, never pasted whole, or the next line is read as sudo's password.)*
 
 ```bash
 sudo systemctl start local-ai-front.socket local-ai-gate-status.socket local-ai-gate-control.socket
@@ -8663,8 +8683,11 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   (`make status` shows the residents' states, which the gate reads there, and `make logs s=gate`
   holds no 401 from llama-swap). *(Added the same day, at Task 24's review, the controller's
   ruling:)* The brake's key is checked too: its start check, which asks llama-swap's `/running`
-  once with its own key, passed, as `make status`'s brake line (*llama-swap took its key at …*) and
-  `make doctor`'s *stack units* line show. Above the warn line the brake calls llama-swap for
+  once with its own key, passed, as `make status`'s ~~brake line (*llama-swap took its key at …*)~~
+  *health* row (`brake ok (key checked …)`) and `make doctor`'s *stack units* line (`… llama-swap
+  took the brake's key at …`) show. *(Corrected 2026-10-15, at Task 35's review, the controller's
+  ruling: 2a's `spark status` shows the brake in its health row, in those words, since Task 29;
+  the words this gave are doctor's.)* Above the warn line the brake calls llama-swap for
   nothing else, so a wrong key would otherwise stay silent until the brake has to act. If any of the
   three keys fails its check, the cutover stops there (Step 8). *(Added 2026-10-14, at Task 25's
   review, the controller's ruling:)* the units' accounts, sockets and sandboxes, checked here first

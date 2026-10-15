@@ -216,30 +216,39 @@ git status --short -- Makefile stack/host
 Stop your own GPU jobs first, and `agent`'s as `agent` (`sudo -iu agent`, or its own session):
 `make upgrade-gpu` stops only llama-swap and the brake.
 
-*From Phase 2a's cutover,* stop the front first too, and its socket with it. *(Added 2026-10-15,
-Phase 2a's Task 35, from the controller's ruling at its Task 25's review.)* The front's unit starts
-a stopped llama-swap whenever the front starts (its `Wants=`): its restart after a crash, and a
-connection to 9100 once only its service is stopped, since PID 1 still holds the port. llama-swap
-would then start mid-upgrade, with the GPU set moving, and the gate could load models onto it. The
-polkit rule doesn't cover sockets, so this takes sudo. **On the Spark**, a line at a time, since
-pasted whole, the next line would be read as sudo's password:
+*From Phase 2a's cutover,* hold llama-swap down first, rather than only stopping it. *(Added
+2026-10-15, Phase 2a's Task 35, from the controller's rulings at its Task 25's review and at Task
+35's.)* The front's unit starts a stopped llama-swap whenever the front starts (its `Wants=`): its
+restart after a crash, and a connection to 9100 once only its service is stopped, since PID 1 still
+holds the port. llama-swap would then start mid-upgrade, with the GPU set moving, and the gate
+could load models onto it. A drop-in in `/run` whose condition is never met skips every start of
+llama-swap, while the front keeps 9100 and answers; [Deploy the
+stack](deploy.md#keeping-llama-swap-stopped)'s *Keeping llama-swap stopped* says why it works, and
+how to check that it holds. **On the Spark**, a line at a time, since pasted whole, the next line
+would be read as sudo's password:
 
 ```bash
-sudo systemctl stop local-ai-front.socket local-ai-front.service
+printf '[Unit]\nConditionPathExists=/dev/null/held-down\n' | sudo install -D -m 0644 /dev/stdin /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+sudo systemctl daemon-reload
+sudo systemctl stop local-ai-llama-swap
 sudo -k
 ```
 
-Until the socket starts again, nothing answers on 9100, so pi and the web UI get no model, and 9100
-is free for any account to take, as in the cutover's one window: keep it to upgrade day's own
-steps. The reboot, step 6, starts the socket and the front again. If you don't reboot, start them
-yourself at the end, after what `make upgrade-gpu` says to start. **On the Spark**, a line at a
-time too:
+The reboot, step 6, ends the hold-down: `/run` is a tmpfs, so the drop-in is gone and llama-swap
+starts as at any boot. If you don't reboot, end it yourself at the end, after what `make
+upgrade-gpu` says to start. **On the Spark**, a line at a time too:
 
 ```bash
-sudo systemctl start local-ai-front.socket
+sudo rm /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+sudo systemctl daemon-reload
+sudo systemctl start local-ai-llama-swap
 sudo -k
-systemctl start local-ai-front.service
 ```
+
+*(Corrected 2026-10-15, at Phase 2a's Task 35, the controller's ruling: this said to stop the
+front's socket and service instead, with sudo, and start them again at the end. That frees 9100,
+and any account, `agent` included, could take it and receive your clients' requests and their
+keys. Never stop the front's socket to keep llama-swap down.)*
 
 Then, **on the Spark**, run it, or do the numbered steps below by hand:
 
@@ -248,8 +257,9 @@ make upgrade-gpu
 ```
 
 1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts
-   them again), your own GPU jobs, and `agent`'s as `agent`. From Phase 2a's cutover, stop the
-   front's socket and service first, as above, or the front can start llama-swap again.
+   them again), your own GPU jobs, and `agent`'s as `agent`. From Phase 2a's cutover, hold
+   llama-swap down first, as above, or the front can start it again. *(Corrected 2026-10-15, at
+   Phase 2a's Task 35: this said to stop the front's socket and service first.)*
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
    the Claude session working on the repo (the Spark's, by default) to work out why.

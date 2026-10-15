@@ -10,6 +10,12 @@ llama-swap stopped, **on the Spark** `systemctl stop local-ai-llama-swap`, which
 model. The brake can't unload a scratch model: if memory falls below its line, it holds the
 stack's loads until `make brake-release`, and earlyoom stays the only net.)*
 
+*(Added 2026-10-15, Phase 2a's Task 35: from Phase 2a's cutover, stopping llama-swap by hand isn't
+enough, since any start of the front starts it again, through the front's `Wants=`: a crash's
+restart, or a connection to 9100. Hold it down instead, and end the hold-down when you're done, as
+[Deploy the stack](deploy.md#keeping-llama-swap-stopped) says; never stop the front's socket. Until
+the cutover, this step is unchanged.)*
+
 This is **not the stack**. It is a model you run by hand to tinker with while Phase 1 is being
 built. It lives in `~/scratch`, runs as you, and needs no sudo and no new packages. Delete it when
 Phase 1 serves models ([Clean up](#clean-up)).

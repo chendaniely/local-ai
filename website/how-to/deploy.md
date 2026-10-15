@@ -341,9 +341,9 @@ which restarts Phase 1's llama-swap.
 
 Nothing starts llama-swap again before Step 5. The front's unit starts a stopped llama-swap
 whenever the front starts (its `Wants=`), but neither the front nor its socket runs yet. From the
-cutover on, a step that keeps llama-swap stopped stops the front's socket too, as
-[Updates](updates.md)' upgrade day does: with only the front's service stopped, a connection to
-9100 starts it again, since PID 1 still holds the port, and llama-swap with it.
+cutover on, a step that keeps llama-swap stopped holds it down, as *Keeping llama-swap stopped*
+says. *(Corrected 2026-10-15, at Phase 2a's Task 35, the controller's ruling: this said such a step
+stops the front's socket too, which would free 9100 for any account to take.)*
 
 **5. The cutover, its start**, only after Step 4 exited 0. **On the Spark** (Dan; sudo asks once;
 a line at a time, since pasted whole, the next line would be read as the password):
@@ -457,18 +457,21 @@ best run in tmux. After 15 minutes without a quiet minute, apply asks:
 they are. If the front stops reporting its counts to the gate, both waits say so, with `make logs
 s=front`. Anything else changes nothing, and `make apply` waits again when it's run again.
 
-From the quiet moment, or from that `y`, the front holds every new request until the restarts are
-done, and apply waits until nothing is in flight. *(Corrected 2026-10-15, at Phase 2a's Task 32
-review: the front holds only once the gate's hold reaches it, and not at all while its call to the
-gate is down.)* apply goes on only when the front itself reports that it holds new requests, its
+From the quiet moment, or from that `y`, apply syncs the app, then the front holds every new
+request until the restarts are done, and apply waits until nothing is in flight. *(Corrected
+2026-10-15, the controller's ruling, from Phase 2a's Task 32 fix of that day: the sync now comes
+before the hold, below.)* *(Corrected 2026-10-15, at Phase 2a's Task 32 review: the front holds
+only once the gate's hold reaches it, and not at all while its call to the gate is down.)* apply goes on only when the front itself reports that it holds new requests, its
 call to the gate open, with nothing in flight, in counts made since the hold began. It reads them
 again just before restarting the front or llama-swap. Until then it waits and says what for. If it
 got there by a quiet minute, it asks at the 15-minute deadline whether to keep holding new requests,
 once the front has had a few seconds to report. After your `y` to drain now, it doesn't ask again.
 *(Corrected 2026-10-15, at Phase 2a's Task 32 re-review: this said it asks as the quiet wait does,
 which isn't so after a `y`.)* A request held past its key's wait gets
-`restarting`'s words, never `llama_swap_down`'s. Only then does apply sync the app and write the
-files. Then it restarts what the change needs, in order. Just before each restart of the gate, the
+`restarting`'s words, never `llama_swap_down`'s. Only then does apply write the files; the app's
+sync came just before the hold. *(Corrected 2026-10-15, the controller's ruling, from Phase 2a's
+Task 32 fix of that day: this said "Only then does apply sync the app and write the files".)* Then
+it restarts what the change needs, in order. Just before each restart of the gate, the
 front or llama-swap, apply checks with the gate that it still holds new requests. If the hold has
 ended, or the gate doesn't confirm it, apply restarts nothing more, says what to run, and exits 1.
 The brake comes first, then the gate, after which apply waits up to 30 s for the gate to answer
@@ -478,7 +481,7 @@ answer again. The gate then releases the held requests and reloads the always-lo
 time, and apply ends `apply: done: …`. The compose unit, when it has to restart, restarts after
 that, on its own.
 
-So the app's sync runs under the hold: every new request waits at the front while it runs. It
+~~So the app's sync runs under the hold: every new request waits at the front while it runs. It
 usually takes seconds, and as long as its downloads when the lock changed. *(Added 2026-10-15, at
 Phase 2a's Task 35, seen with uv 0.12.18 on a copy of the deployed app.)* uv also waits, saying
 nothing, for two locks of its own: the deployed venv's, `/opt/local-ai/app/.venv/.lock`, and the
@@ -487,8 +490,14 @@ needs only read access, so any process on the box, `agent`'s included, can make 
 to five minutes for each lock, after which uv syncs without it. So if apply's last line has said
 that new requests are held until the restarts are done for over a minute, with nothing from uv
 after it, press Ctrl-C: apply ends the hold at once, and the next `make apply` syncs the app
-again. A change that restarts neither llama-swap nor the front syncs with
+again.~~ A change that restarts neither llama-swap nor the front syncs with
 no hold, and a wait there only delays apply.
+
+*(Corrected 2026-10-15, the controller's ruling: the app's sync now runs before apply holds any
+request: after the quiet minute, after your `y` to drain now, or after `make apply-now`'s question.
+uv still waits, silently, if another process holds one of its two locks. But apply stops it after 3
+minutes and says `apply: the app's sync waited on a lock: <path>, …`, then exits 1, with nothing
+restarted and no request held. Once that process lets go, `make apply` syncs it again.)*
 
 `make apply-now` skips the wait. If the gate lists requests in flight, it asks first, naming whose
 they are:
@@ -579,6 +588,59 @@ change to:
 | ntfy's three header files, `/etc/local-ai/values.env` | the gate and the brake (`LoadCredential=`, `EnvironmentFile=`) | `systemctl restart local-ai-gate.service local-ai-brake.service`, as [ntfy](ntfy.md) §8 says. The failure notifier reads its own at each run, so it needs nothing |
 
 The polkit rule lets you restart each of these services without sudo.
+
+### Keeping llama-swap stopped
+
+*(Added 2026-10-15, Phase 2a's Task 35, the controller's ruling.)* From the cutover,
+`systemctl stop local-ai-llama-swap` alone doesn't keep it stopped. The front's unit has
+`Wants=local-ai-llama-swap.service`, so any start of the front starts a stopped llama-swap too:
+the front's restart after a crash, or a connection to 9100 once its service alone is stopped, since
+PID 1 still holds the port. Never stop the front's socket to prevent it: that frees 9100, and any
+account, `agent` included, could take it and receive your clients' requests and their keys.
+
+Hold llama-swap down instead, with a drop-in in `/run` whose condition is never met:
+`ConditionPathExists=/dev/null/held-down`, a path that can't exist, since nothing can be made under
+`/dev/null`. A condition in a drop-in joins the unit's own, and one that isn't met skips every
+start of the unit, the front's `Wants=` included, without failing anything (systemd.unit(5)). So
+the front still starts and keeps 9100, and a request waits its key's wait, then gets
+`llama_swap_down`. A drop-in applies wherever the unit's file is (systemd.unit(5)). `systemctl
+mask --runtime` wouldn't do: it writes to `/run/systemd/system`, and root's copy of the unit, in
+`/etc/systemd/system`, comes before it.
+
+**On the Spark**, hold it down, a line at a time, since pasted whole, the next line would be read
+as sudo's password:
+
+```bash
+printf '[Unit]\nConditionPathExists=/dev/null/held-down\n' | sudo install -D -m 0644 /dev/stdin /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+sudo systemctl daemon-reload
+sudo systemctl stop local-ai-llama-swap
+sudo -k
+```
+
+**On the Spark**, see that it holds, without sudo:
+
+```bash
+systemctl show -p DropInPaths,ActiveState,ConditionResult,ConditionTimestamp local-ai-llama-swap
+```
+
+`DropInPaths` names `held-down.conf`, and `ActiveState` reads `inactive`. Once anything has tried
+to start it, `ConditionResult` reads `no`, with that try's time in `ConditionTimestamp`, and `make
+logs s=llama-swap` holds systemd's line that it `was skipped because of an unmet condition check
+(ConditionPathExists=/dev/null/held-down)`. Before any try, `ConditionResult` still reads `yes`,
+from its last real start. (From systemd 255's man pages and source; not yet seen on this box.)
+
+**On the Spark**, when you're done, a line at a time:
+
+```bash
+sudo rm /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+sudo systemctl daemon-reload
+sudo systemctl start local-ai-llama-swap
+sudo -k
+```
+
+A reboot ends the hold-down too: `/run` is a tmpfs, so the drop-in is gone, and the units start as
+at any boot. Until the cutover no front runs, so `systemctl stop local-ai-llama-swap` keeps it
+stopped until you start it again or the box reboots.
 
 ## An urgent fix during a phase's build
 
