@@ -2049,7 +2049,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | control | `POST /v1/pin` · `DELETE /v1/pin/{model}` | admin | `{model, until}` (`until` null for no end); a pin that loads first is held up to `LOAD_CALL_TIMEOUT_S` |
   | control | `POST /v1/make-room/plan` · `POST /v1/make-room` | admin | `{size_gib}` or `{all: true}` → `{plan_id, plan}`, `plan` Task 5's `RoomPlan`; `{plan_id, for_s}` → `{unloaded, free_gib, hold_gib, until}`, unbounded, since it drains each model it unloads |
   | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only *(2026-10-15, the controller's ruling at Task 30's review: either flag may be left out, as false, and a release asking neither is refused; Task 19's note)* → `{room: {unused_gib, total_gib, next_label} \| null, brake: bool, reloading: [labels]}`, what each ended, with the fields its confirmation needs |
-  | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) |
+  | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) *(and, added 2026-10-15 at Task 32's review: `front_connected`, `holding`, `snapshot_at`; Task 18's note)* |
   | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 13), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by any of the ends the next rows name, each doing the same work |
   | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again *(corrected 2026-10-08, the controller's ruling, at Task 13's re-review: never starts again a hold that has ended; a renewal of a hold the gate doesn't know at all, as after a start fresh from a damaged state file, re-creates it: Task 18)*; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
   | control | `POST /v1/apply/begin` · `POST /v1/apply/end` | admin | `{restarting: [units]}`, persisted with the hold, before the first restart; *end*, posted once llama-swap answers again, ends the hold. Every end — *end*, `undrain-all`, the gate seeing llama-swap answer again after a restart `begin` named, and a hold not renewed for `APPLY_LAPSE_S` (60 s), before `begin` as after — takes one path, once: it re-reads the registry, releases the hold (`release_all`), then queues the residents' reload ahead of anything else, in one step of the gate's loop, so no held request takes the load slot first, and sends `apply_restarted` when llama-swap did restart; a second end does nothing. So a `make apply` that died holds new requests for at most `APPLY_LAPSE_S` past its last renewal |
@@ -4638,7 +4638,13 @@ rulings at Task 17 add to the Files list.
   meets a leftover ticket is refused `ticket_expired`; `tickets.started` raising `OSError` is caught
   and reported under `health`, and the check counts no record as ticketed meanwhile.
 - `quiet() -> dict` — `/v1/quiet`'s answer, each request's `key_label` from the front's snapshot's
-  `requests` (Task 10).
+  `requests` (Task 10). *(Added 2026-10-15, at Task 32's review (C1), the controller's ruling:* and
+  `front_connected`, whether the front's events call is open; `holding`, the last snapshot's
+  `holding`, never true while that call is down; and `snapshot_at`, the snapshot's `at`. `drain_all`
+  answers `{since, at}`, `at` the gate's clock as it takes it. `apply_renew` answers `{ok: true,
+  recreated: true}` when it re-created a hold the gate didn't know (M7). Tests:
+  `test_quiet_passes_on_whether_the_front_holds_and_is_connected`, and the renewal's in
+  `test_a_renewal_of_an_unknown_apply_hold_recreates_it`.)*
 - *(Added 2026-10-08, the controller's rulings, at Task 13:)* at start, after `restore`:
   - The core resumes each drain `gate.state.resumable_drains(state)` names, through Task 16's
     drainer under its saved id: one left `draining` (its unload requested, the model still
@@ -5126,7 +5132,11 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     still going on: `app.STILL_FINISHING`, *The gate is still finishing that: `spark status` on the
     Spark shows when it's done.*, which pi's retry list matches nothing in. Its tests:
     `test_a_bounded_route_past_its_bound_says_its_still_finishing` and
-    `test_apply_end_and_undrain_all_are_bounded_past_their_running_read`.
+    `test_apply_end_and_undrain_all_are_bounded_past_their_running_read`. *(Added 2026-10-15, at
+    Task 32's review (C1):* `/v1/front/inflight`'s check takes the snapshot's `holding` (true or
+    false) and `at` (a time), each optional, so a front of before still reports; one without them
+    reads as not holding. `/v1/quiet` answers Task 18's added fields. Test: the route's in
+    `test_an_inflight_report_from_any_uid_but_spark_fronts_is_refused`.)*
   - **The gate's stop.** `build_apps` gives both apps one `asyncio.Event`, `app.state.stopping`,
     which `spark gate` sets as its stop begins (`run_servers`' `stopping`). The events stream then
     ends; a held `/v1/admit` leaves the queue and is answered 503, `app.GATE_STOPPING`, with
@@ -5680,7 +5690,15 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
   (Task 20); `gate_up` turns false only once that call has dropped and a new one hasn't
   been answered within `GATE_DOWN_AFTER_S`; `async admit(model, key, deadline, request_id) -> dict`
   (the call dropped when the client goes); posts a whole `/v1/front/inflight` snapshot on every
-  change and at least every second; `drained(model, drain_id)`.
+  change and at least every second; `drained(model, drain_id)`. *(Added 2026-10-15, at Task 32's
+  review (C1), the controller's ruling:* each snapshot carries `holding`, whether apply's hold
+  stands at the front as it is made, and `at`, when it is made. A change of the hold is posted at
+  once: `hold_all`, a `hello` with `applying`, `release_all`, and the hold dropped after the gate
+  has been gone too long. The front holds in one step and counts each request in the step that
+  clears it, so a snapshot made while it holds has every request it let through before. `holding`
+  changes nothing it counts, and nothing in how it treats a drain. Tests:
+  `test_the_front_reports_holding_at_once_on_hold_all_and_stops_on_release_all` and
+  `test_a_front_holding_from_hello_reports_it`.)*
 - What's loaded: the gate's `state` events while it's up; llama-swap's `/running`, cached for a
   second, while it's down.
 - A request's way: loaded → forwarded; not loaded → `admit`, with `deadline = received_at + the
@@ -7833,9 +7851,19 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
     alone may come from a read before the restart. `apply/end` follows, a second end that does
     nothing.
   - **The quiet path waits under the hold too.** After `drain-all` it waits for nothing in flight,
-    so a request that arrived between the quiet reading and the hold isn't cut off. "Nothing in
+    ~~so a request that arrived between the quiet reading and the hold isn't cut off~~. "Nothing in
     flight" needs the front's counts: a reading with `quiet_for_s` 0 and nothing listed counts as
-    not knowing.
+    not knowing. *(Corrected 2026-10-15, at Task 32's review (C1), the controller's ruling: a
+    reading taken just after `drain-all` could predate the front's hold, and miss a request let
+    through before it; and a front whose call was down got no `hold_all` at all.)* What holds
+    instead:
+    - The front's snapshot carries `holding` and `at` (Task 22's note).
+    - `/v1/quiet` passes on `holding`, `front_connected` and `snapshot_at`; `drain-all` answers
+      the gate's `at` (Task 18's and Task 19's notes).
+    - apply counts nothing in flight only from an idle reading with `holding` true and the front
+      connected, made at or after `drain-all`'s `at` (`drained`). It reads it again just before the
+      front's and llama-swap's restarts, and without `--now` restarts neither until it holds.
+    - The quiet minute itself needs the front connected too.
   - **`--now` takes the hold too.** With the gate answering it asks only when requests are in
     flight. It then posts `drain-all`, `begin` and `end`, and doesn't wait for the requests in
     flight, which the restart cuts off. With the gate down it restarts without the hold, can't
@@ -7888,6 +7916,32 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
       drain now. Nothing is cut.
     - **Concern 1 — CLAUDE.md** stays as it is until the cutover. Task 38's record step already
       updates its *Never reload llama-swap* gotcha, with README §Conventions.
+  - *(Added 2026-10-15, the controller's rulings on Task 32's review:)*
+    - **C1, drained only under the front's own hold.** See *The quiet path* above. The front sets
+      `holding` in every snapshot and posts one at once when its hold starts or ends. The gate's
+      `/v1/quiet` never reports `holding` for a front whose call is down. `holding` changes nothing
+      the front counts, and nothing in how it treats a drain (the sent-unload rule): it is only
+      reported. Without the front's hold, apply restarts nothing without Dan's say. It waits with
+      words saying why, and at the 15-minute deadline asks, as before.
+    - **I1, a dropped SSH session ends the hold.** apply's cleanup posts `undrain-all` first, in a
+      `finally`, then writes its line. Every line goes through `_say`, which survives `OSError`
+      (EIO on a hung-up terminal) by pointing stdout and stderr at `/dev/null`, so nothing later,
+      not even the exit's flush, fails on the terminal.
+    - **M3.** A `drain-all` that never reached the gate (GateUnavailable's `sent` false) made no
+      hold, so no `undrain-all` follows. One whose answer was lost gets `undrain-all`, and words
+      for a hold that may exist.
+    - **M4.** llama-swap's third failure reads *the gate, which sees llama-swap answer, didn't
+      confirm its new start … apply counts llama-swap as back only once …*.
+    - **M5.** On the quiet path, the wait for nothing in flight under the hold keeps the quiet
+      wait's 15-minute deadline and asks Task 7's question. A no ends the hold, and nothing was
+      changed.
+    - **M6.** With the front's call down, the drain wait never says *Holding new requests*, and the
+      deadline's question counts nothing from a stale snapshot.
+    - **M7.** `apply/renew` answers `recreated: true` when it re-created a hold the gate had lost.
+      apply treats that as a hold not confirmed, and restarts nothing more.
+    - **M1 and M2.** The help of `make apply-now` (it asks only when the gate lists requests in
+      flight, and with the gate down cuts them off without asking) and of `make restart-front` (it
+      waits for a quiet minute).
   - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
     seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
     is a sixteenth `make doctor` line now; Task 33 adds the rest.

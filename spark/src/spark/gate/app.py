@@ -770,6 +770,11 @@ def _snapshot(body: dict) -> dict:
     draining = body.get("draining")
     if not isinstance(draining, list) or not all(isinstance(name, str) for name in draining):
         raise _Bad(_bad("draining", "a list of model names"))
+    # Task 32's review (C1): each optional, so a front of before still reports; one without them holds nothing.
+    if "holding" in body and not isinstance(body["holding"], bool):
+        raise _Bad(_bad("holding", "true or false"))
+    if "at" in body:
+        _number(body, "at")
     return body
 
 

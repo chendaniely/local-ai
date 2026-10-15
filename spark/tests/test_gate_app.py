@@ -242,6 +242,13 @@ async def test_an_inflight_report_from_any_uid_but_spark_fronts_is_refused(tmp_p
         taken = await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=report)
         assert taken.status == 200
         assert core.front.snapshot == report
+        # Task 32's review (C1): `holding` and `at`, when given, are a flag and a time.
+        for bad in ({"holding": "yes"}, {"holding": None}, {"at": "now"}, {"at": float("inf")}):
+            refused = await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=report | bad)
+            assert refused.status == 400, bad
+        held = report | {"holding": True, "at": gate.clock.now}
+        assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=held)).status == 200
+        assert core.front.snapshot == held
         await core.stop()
 
 

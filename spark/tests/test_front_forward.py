@@ -558,7 +558,7 @@ async def test_the_snapshot_names_each_requests_key(tmp_path):
                 async with r.stream(key="k2") as agents:
                     kept.append(await first_chunk(agents))
                     snapshot = r.app.inflight.snapshot(models=NAMES)
-        assert set(snapshot) == {"seq", "front_started_at", "models", "draining"}
+        assert set(snapshot) == {"seq", "front_started_at", "models", "draining", "holding", "at"}  # Task 32's review
         assert snapshot["front_started_at"] == T and snapshot["draining"] == []
         assert snapshot["models"][CODER]["requests"] == [{"key": "dan-mac", "started_at": T},
                                                          {"key": "agent", "started_at": T + 5}]

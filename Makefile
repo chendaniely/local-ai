@@ -53,10 +53,10 @@ apply: ## On the Spark: render, validate, deploy; restarts llama-swap and the fr
 apply-dry-run: ## On the Spark: show what apply would change
 	$(SPARK) apply --dry-run
 
-apply-now: ## On the Spark: apply, restarting llama-swap and the front now; asks first when it would cut off requests in flight
+apply-now: ## On the Spark: apply, restarting llama-swap and the front now; asks first when the gate lists requests in flight (with the gate down it can't see them, and cuts them off without asking)
 	$(SPARK) apply --now
 
-restart-front: ## On the Spark: apply, restarting the front (and the gate) after the key digests or the key list change
+restart-front: ## On the Spark: apply, restarting the front (and the gate) after the key digests or the key list change, once nothing is in flight (a quiet minute, or drain now)
 	$(SPARK) apply --restart local-ai-front.service
 
 install-units-dry-run: ## On the Spark: show what make install-units would install as root; changes nothing

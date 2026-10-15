@@ -60,7 +60,10 @@ logged by its type, and tried again RETRY_S later.
 
 **What it tells the gate**, each post bounded by REQUEST_TIMEOUT_S, a failure logged once until one goes through: a
 whole `/v1/front/inflight` snapshot, every model with its count and the models held draining, on every change and at
-least every SNAPSHOT_EVERY_S while the gate's call is open, and at once as it opens; `drained` and `busy`; and each
+least every SNAPSHOT_EVERY_S while the gate's call is open, and at once as it opens; with whether apply's hold stands as
+it is made, and when it is made, a change of the hold posted at once (Task 32's review, C1: the front holds in one step
+and counts each request in the step that clears it, so a snapshot made while it holds has every request it let through
+before, and `make apply` counts nothing in flight only from one); `drained` and `busy`; and each
 refusal of the front's own (`refused`, gateproto.FRONT_REFUSAL_CODES) while the gate's call is open, none while it
 isn't, cut to what the gate keeps.
 
@@ -396,6 +399,7 @@ class GateLink:
             return False
         if not self.connected and self.clock() - self._dropped_at > hold.lapse_s:
             self._hold = None
+            self._dirty.set()
             _log.warning("the gate has been gone longer than apply's hold allows (%s s): the front holds no more "
                          "requests, and serves what's loaded", hold.lapse_s)
             self._poke()
@@ -581,6 +585,7 @@ class GateLink:
     def _hold_all(self, lapse_s: float) -> None:
         if self._hold is None:
             self._hold = _Hold(lapse_s)
+            self._dirty.set()  # the gate hears at once that the front holds, with its counts as they stand
             _log.info("the front holds every new request: apply's restart")
         else:
             self._hold.lapse_s = lapse_s
@@ -589,6 +594,7 @@ class GateLink:
         if self._hold is not None:
             self._hold.released = True
             self._hold = None
+            self._dirty.set()
             _log.info("the front's hold for apply's restart ended")
 
     # The drains and the counts.
@@ -648,7 +654,8 @@ class GateLink:
             try:
                 if self.connected:
                     await self._post("/v1/front/inflight", self.inflight.snapshot(
-                        models=[entry["name"] for entry in self.models], draining=list(self._drains)))
+                        models=[entry["name"] for entry in self.models], draining=list(self._drains),
+                        holding=self._holding()))
                     self._drained_again()
             except Exception as err:
                 _log.error("the front's in-flight report to the gate broke: %s; it reports again", type(err).__name__)

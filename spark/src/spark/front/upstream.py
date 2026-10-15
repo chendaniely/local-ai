@@ -261,11 +261,13 @@ class InFlight:
     def count(self, model: str) -> int:
         return len(self._open.get(model, ()))
 
-    def snapshot(self, *, models: Iterable[str] = (), draining: Iterable[str] = ()) -> InflightSnapshot:
+    def snapshot(self, *, models: Iterable[str] = (), draining: Iterable[str] = (),
+                 holding: bool = False) -> InflightSnapshot:
         """The whole count, never a delta, in `/v1/front/inflight`'s shape (gateproto.InflightSnapshot): every model
         in `models` and every model a request has been forwarded to since the front started, each with its count, its
-        oldest request's start, its last end and each request's key and start; and `draining`, the models the front
-        holds as draining (Task 22's GateLink gives them). Each snapshot takes the next `seq`."""
+        oldest request's start, its last end and each request's key and start; `draining`, the models the front holds
+        as draining (Task 22's GateLink gives them); `holding`, whether apply's hold stands at the front as it is
+        made; and `at`, when it is made (Task 32's review, C1). Each snapshot takes the next `seq`."""
         self._seq += 1
         names = dict.fromkeys([*models, *self._open, *self._last_end])
         counts: dict[str, ModelInflight] = {}
@@ -275,7 +277,8 @@ class InFlight:
                             "oldest_started_at": min((each.started_at for each in open_), default=None),
                             "last_end_at": self._last_end.get(name),
                             "requests": [{"key": each.key, "started_at": each.started_at} for each in open_]}
-        return {"seq": self._seq, "front_started_at": self.started_at, "models": counts, "draining": list(draining)}
+        return {"seq": self._seq, "front_started_at": self.started_at, "models": counts, "draining": list(draining),
+                "holding": bool(holding), "at": self.clock()}
 
 
 # A stream's end.

@@ -61,17 +61,25 @@ the box.)* `make apply` asks the gate what is in flight, never llama-swap, and s
 on each time that changes. It adds two lines of its own: one when the gate restarted and doesn't
 have the front's counts yet, and one when no request has come since the front started. Ctrl-C, or
 a dropped SSH session, changes nothing while it waits. "Drain now" holds new requests and waits,
-however long, for the requests in flight, naming whose they are. Even after a quiet minute, apply
-waits for a request that arrived just before the hold, rather than cut it off. From then until
-the restarts are done, every new request is held. Then apply syncs the app, writes the files and
-restarts the services, in the order above. Just before each restart of the gate, the front or
-llama-swap, it checks with the gate that the hold still stands. If it doesn't, apply restarts
-nothing more. It waits up to 30 s for the gate to answer after its
-own restart, and stops there if it doesn't. It waits up to 30 s more for the gate to see llama-swap
-answer again. Then the gate releases the held requests.
+however long, for the requests in flight, naming whose they are. ~~Even after a quiet minute, apply
+waits for a request that arrived just before the hold, rather than cut it off.~~ *(Corrected
+2026-10-15, at Task 32's review: apply trusted a reading that could predate the front's hold, and
+miss a request let through just before it.)* Even after a quiet minute, apply waits until the
+front itself reports that it holds new requests, its call to the gate open, with nothing in flight,
+in counts it made since the hold began. It reads them again just before restarting the front or
+llama-swap. A front that isn't connected holds nothing, so apply waits for it, and says so. From
+then until the restarts are done, every new request is held. Then apply syncs the app, writes the
+files and restarts the services, in the order above. Just before each restart of the gate, the
+front or llama-swap, it checks with the gate that the hold still stands, and wasn't lost and
+re-created meanwhile. If it doesn't, apply restarts nothing more. After a quiet minute too, the
+wait for the requests in flight asks at the 15-minute deadline. It waits up to 30 s for the gate
+to answer after its own restart, and stops there if it doesn't. It waits up to 30 s more for the
+gate to see llama-swap answer again. Then the gate releases the held requests.
 
-`make apply-now` asks only when it would cut a request off, and holds new requests through the
-restart all the same. While the gate isn't answering and llama-swap runs, `make apply` changes
+`make apply-now` asks only when the gate lists a request it would cut off, and holds new requests
+through the restart all the same. *(Corrected 2026-10-15, at Task 32's review: with the gate down
+it can't see what's in flight, so it neither asks nor holds, and cuts off any request in
+flight.)* While the gate isn't answering and llama-swap runs, `make apply` changes
 nothing, since it can't see what's in flight; `make apply-now` restarts anyway. `make
 restart-front` waits in the same way.
 Its words never offer `make apply-now`, which wouldn't restart the front. For the drill, `spark

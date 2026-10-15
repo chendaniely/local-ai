@@ -285,7 +285,12 @@ they are. If the front stops reporting its counts to the gate, both waits say so
 s=front`. Anything else changes nothing, and `make apply` waits again when it's run again.
 
 From the quiet moment, or from that `y`, the front holds every new request until the restarts are
-done, and apply waits until nothing is in flight. A request held past its key's wait gets
+done, and apply waits until nothing is in flight. *(Corrected 2026-10-15, at Phase 2a's Task 32
+review: the front holds only once the gate's hold reaches it, and not at all while its call to the
+gate is down.)* apply goes on only when the front itself reports that it holds new requests, its
+call to the gate open, with nothing in flight, in counts made since the hold began. It reads them
+again just before restarting the front or llama-swap. Until then it waits and says what for, and at
+the 15-minute deadline it asks, as the quiet wait does. A request held past its key's wait gets
 `restarting`'s words, never `llama_swap_down`'s. Only then does apply sync the app and write the
 files. Then it restarts what the change needs, in order. Just before each restart of the gate, the
 front or llama-swap, apply checks with the gate that it still holds new requests. If the hold has
@@ -297,7 +302,8 @@ answer again. The gate then releases the held requests and reloads the always-lo
 time, and apply ends `apply: done: …`. The compose unit, when it has to restart, restarts after
 that, on its own.
 
-`make apply-now` skips the wait. If requests are in flight, it asks first, naming whose they are:
+`make apply-now` skips the wait. If the gate lists requests in flight, it asks first, naming whose
+they are:
 
 > This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent).
 > Continue? [y/N]
@@ -309,13 +315,15 @@ list.
 
 If the gate isn't answering, apply can't see what's in flight. It refuses a restart of llama-swap or
 the front, changes nothing, and says that `make apply-now` restarts anyway. `make apply-now` then
-restarts without holding new requests. When it restarts llama-swap it can't confirm that llama-swap
+restarts without holding new requests, and without asking: it can't see what's in flight, so any
+request in flight is cut off. When it restarts llama-swap it can't confirm that llama-swap
 answers again, so it says so and exits 1. With llama-swap stopped, as at the cutover, apply deploys
 without the gate. A gate that doesn't answer within 30 s of its own restart stops apply there: exit
 1, the gate named, nothing more restarted. apply still asks the gate to end the hold on new
 requests; if the gate doesn't answer that either, the hold ends by itself a minute after its last
-renewal. After any other failure once requests are held, Ctrl-C included, apply ends the hold at
-once and says what it left. The next `make apply` restarts each unit still running older files.
+renewal. After any other failure once requests are held, Ctrl-C or a dropped SSH session included,
+apply ends the hold at once, then says what it left. The next `make apply` restarts each unit
+still running older files.
 
 *Until the cutover, Phase 1's apply:* if llama-swap would restart, for its config or for its unit,
 while models are loaded, or while apply can't tell whether they are, apply changes nothing and says

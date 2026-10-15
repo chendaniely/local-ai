@@ -436,10 +436,34 @@ async def test_quiet_reports_whats_in_flight_and_who_asked(tmp_path):
         front = Front(core)
         front.report(**{CODER: {"count": 1, "oldest_started_at": T - 20,
                                 "requests": [{"key": "agent", "started_at": T - 20}]}})
+        # Task 32's review (C1): and whether the front holds, its call is open, and when its snapshot was made.
+        fresh = {"front_connected": True, "holding": False, "snapshot_at": None}
         assert core.quiet() == {"quiet_for_s": 0.0, "last_label": None, "inflight": [
-            {"model": CODER, "model_label": "the coder", "key_label": "agent", "age_s": 20.0}]}
+            {"model": CODER, "model_label": "the coder", "key_label": "agent", "age_s": 20.0}]} | fresh
         front.report(**{CODER: {"last_end_at": T - 45}, GEMMA: {"last_end_at": T - 300}})
-        assert core.quiet() == {"quiet_for_s": 45.0, "last_label": "the coder", "inflight": []}
+        assert core.quiet() == {"quiet_for_s": 45.0, "last_label": "the coder", "inflight": []} | fresh
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_quiet_passes_on_whether_the_front_holds_and_is_connected(tmp_path):
+    # Task 32's review (C1): make apply counts "drained" only from a reading the front made while holding new
+    # requests, its call to the gate open, and made after apply's drain-all.
+    gate = Gate(tmp_path, state=loaded(GEMMA), shown={GEMMA: "ready"})
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        assert core.quiet() | {"quiet_for_s": 0.0} == {"quiet_for_s": 0.0, "last_label": None, "inflight": [],
+                                                      "front_connected": False, "holding": False, "snapshot_at": None}
+        front = Front(core)
+        core.inflight(snapshot(**{GEMMA: {"last_end_at": T - 10}}) | {"holding": True, "at": T - 1})
+        reading = core.quiet()
+        assert (reading["front_connected"], reading["holding"], reading["snapshot_at"]) == (True, True, T - 1)
+        core.inflight(snapshot(**{GEMMA: {"last_end_at": T - 10}}) | {"holding": False, "at": T})
+        assert core.quiet()["holding"] is False
+        core.inflight(snapshot(**{GEMMA: {"last_end_at": T - 10}}) | {"holding": True, "at": T})
+        core.front.close(front.queue)  # the front's call drops: its last snapshot stays, and holds nothing
+        reading = core.quiet()
+        assert (reading["front_connected"], reading["holding"], reading["snapshot_at"]) == (False, False, T)
         await core.stop()
 
 
@@ -452,7 +476,7 @@ async def test_apply_begin_and_end_reread_the_registry_and_reload_the_residents(
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
         front = Front(core)
-        assert core.drain_all(DAN) == {"since": T}
+        assert core.drain_all(DAN) == {"since": T, "at": T}  # Task 32's review: and when the gate took it
         assert core.apply_begin(["llama-swap"]) == {"ok": True}
         await settle()
         assert core.hello()["applying"] is True and front.ops("hold_all") == [{"op": "hold_all", "lapse_s": 60}]
@@ -664,7 +688,10 @@ async def test_a_renewal_of_an_unknown_apply_hold_recreates_it(tmp_path):
         core = await gate.started()
         front = Front(core)
         assert core.state.applying is None
-        assert core.apply_renew(T - 30, DAN) == {"ok": True}
+        # Task 32's review (M7): the answer says the hold was re-created, so apply can tell it from one that stood: this
+        # gate's hello released the front's held requests meanwhile.
+        assert core.apply_renew(T - 30, DAN) == {"ok": True, "recreated": True}
+        assert core.apply_renew(T - 30, DAN) == {"ok": True}  # the next renewal, of the hold it now knows
         assert core.state.applying == ApplyHold(since=T - 30, by_uid=DAN, renewed_at=T, begun_at=None, restarting=[],
                                                 ended=False)
         assert gate.saved().applying == core.state.applying and core.hello()["applying"] is True

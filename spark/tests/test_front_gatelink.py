@@ -809,6 +809,40 @@ async def test_hold_all_holds_every_new_request_until_release_all():
 
 
 @pytest.mark.anyio
+async def test_the_front_reports_holding_at_once_on_hold_all_and_stops_on_release_all():
+    # Task 32's review (C1): make apply counts "drained" only from a snapshot made while the front holds. The front
+    # holds in one step, and counts each request in the step that clears it, so a snapshot made while it holds has
+    # every request it let through before. The floor's tick a minute away, so each snapshot here is a change's own.
+    async with rig(ready=[CODER], snapshot_every_s=60) as r:
+        r.swap.hold = asyncio.Event()
+        with anyio.fail_after(BOUND_S):
+            await until(lambda: len(r.gate.snapshots) == 1)
+            assert r.gate.snapshots[0]["holding"] is False and r.gate.snapshots[0]["at"] == T
+            asked = r.ask()  # let through before the hold, still in flight
+            await until(lambda: r.gate.snapshots[-1]["models"][CODER]["count"] == 1)
+            r.now[0] = T + 1
+            r.gate.send({"op": "hold_all", "lapse_s": 60})
+            await until(lambda: r.gate.snapshots[-1]["holding"] is True)
+            holding = r.gate.snapshots[-1]
+            assert holding["models"][CODER]["count"] == 1 and holding["at"] == T + 1
+            r.swap.hold.set()
+            answer = await asked  # the hold changes nothing for a request already in flight
+            assert answer.status_code == 200
+            await until(lambda: r.gate.snapshots[-1]["models"][CODER]["count"] == 0)
+            assert r.gate.snapshots[-1]["holding"] is True and r.link.inflight.count(CODER) == 0
+            r.gate.send({"op": "release_all"})
+            await until(lambda: r.gate.snapshots[-1]["holding"] is False)
+
+
+@pytest.mark.anyio
+async def test_a_front_holding_from_hello_reports_it():
+    async with rig(ready=[GEMMA], applying=True, snapshot_every_s=60) as r:
+        with anyio.fail_after(BOUND_S):
+            await until(lambda: len(r.gate.snapshots) >= 1)
+            assert r.gate.snapshots[-1]["holding"] is True
+
+
+@pytest.mark.anyio
 async def test_a_restarted_front_holds_again_from_hello():
     async with rig(ready=[GEMMA], applying=True) as r:
         with anyio.fail_after(BOUND_S):

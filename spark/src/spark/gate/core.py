@@ -806,13 +806,15 @@ class GateCore:
         self._apply_loaded.setdefault(hold.since, list(self.state.models))
         self.admitter.set_restarting(True)
         self.front.send({"op": "hold_all", "lapse_s": APPLY_LAPSE_S})
-        return {"since": hold.since}
+        # `at`: when the gate took it, so apply counts nothing in flight only from a snapshot made since (Task 32's
+        # review, C1).
+        return {"since": hold.since, "at": now}
 
     def apply_renew(self, since: float, uid: int) -> dict:
         """`apply/renew`: `{ok: true}` while the hold stands, its renewal moved to now; `{ended: true}` once it has
         ended, so a renewal never starts a hold again. A renewal of a hold the gate doesn't know at all, as after a
         start fresh from a damaged state file, re-creates it, `since` the renewal's, so the restart stays held (the
-        controller's ruling at Task 13's re-review)."""
+        controller's ruling at Task 13's re-review), and says so (`recreated`, Task 32's review)."""
         hold = self.state.applying
         now = self._clock()
         if hold is None:
@@ -823,7 +825,9 @@ class GateCore:
             self._save_quietly()
             self.admitter.set_restarting(True)
             self.front.send({"op": "hold_all", "lapse_s": APPLY_LAPSE_S})
-            return {"ok": True}
+            # Said, so apply can tell it from a hold that stood: this gate's hello released the front's held requests
+            # meanwhile (Task 32's review, M7).
+            return {"ok": True, "recreated": True}
         if hold.ended:
             return {"ended": True}
         if hold.since != since:
@@ -1277,11 +1281,14 @@ class GateCore:
 
     def quiet(self) -> dict:
         """`/v1/quiet`: how long nothing has been in flight, by the front's counts (0 while anything is), the model
-        that answered last, and each request in flight with who asked, its key by its label."""
+        that answered last, and each request in flight with who asked, its key by its label; and whether the front's
+        call is open, whether its last snapshot was made while it held new requests, and when (Task 32's review)."""
         now = self._clock()
         snapshot = self.front.snapshot
+        connected = self.front.connected
         if snapshot is None:  # what is in flight isn't known: never quiet
-            return {"quiet_for_s": 0.0, "last_label": None, "inflight": []}
+            return {"quiet_for_s": 0.0, "last_label": None, "inflight": [], "front_connected": connected,
+                    "holding": False, "snapshot_at": None}
         inflight, busy = [], False
         last_end, last_model = None, None
         for name, counts in (snapshot.get("models") or {}).items():
@@ -1300,8 +1307,14 @@ class GateCore:
             since = last_end if last_end is not None else snapshot.get("front_started_at")
             quiet = max(0.0, now - float(since)) if _finite(since) else 0.0
         inflight.sort(key=lambda row: -row["age_s"])
+        # Task 32's review (C1): a snapshot the front made while holding new requests has every request it let through
+        # before; apply counts nothing in flight only from one made after its drain-all, the front's call open. One
+        # whose call is down holds nothing: the gate's hold_all and release_all don't reach it.
+        made = snapshot.get("at")
         return {"quiet_for_s": quiet, "last_label": self._label(last_model) if last_model else None,
-                "inflight": inflight}
+                "inflight": inflight, "front_connected": connected,
+                "holding": connected and snapshot.get("holding") is True,
+                "snapshot_at": float(made) if _finite(made) else None}
 
     def _label(self, name: str) -> str:
         known = self.registry.models.get(name)
