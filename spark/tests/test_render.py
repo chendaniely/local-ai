@@ -3,6 +3,8 @@ import json
 import os
 import re
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -234,8 +236,9 @@ def test_alias_is_render_owned_in_every_spelling(tmp_path, flag):
 
 
 def test_gemmas_slots_are_chosen_by_prompt_only_when_half_of_it_matches():
-    # The controller's ruling, 2026-10-14, at Task 24: at b11146's default, 0.10, a short new prompt takes a long chat's
-    # slot, and with a 1 GiB prompt cache a chat with checkpoints can't be saved, so it re-reads whole.
+    # The controller's ruling, 2026-10-14, at Task 24: at b11146's default, 0.10, a short new prompt can take a long
+    # chat's slot, and a chat with two checkpoints is too big for the 1 GiB prompt cache, so it re-reads whole. What 0.5
+    # costs in its turn is in plan.md's dated note, in the Phase 2a line.
     assert ("-sps", "--slot-prompt-similarity") in spark.render.ALLOWED["llama.cpp"]
     cfg = yaml.safe_load(real()["llama-swap.yaml"])
     assert values(shlex.split(cfg["models"]["gemma-4-26b-a4b"]["cmd"]), "--slot-prompt-similarity") == ["0.5"]
@@ -258,10 +261,29 @@ SANDBOX = {
 
 
 def test_llama_swap_is_sandboxed_without_private_devices_or_mdwe():
-    # Dan's decision, 2026-10-07; CUDA needs the GPU's device nodes and memory it can write and run.
+    # Dan's decision, 2026-10-07; CUDA needs the GPU's device nodes and memory it can write and run. A device policy or
+    # allow-list would block /dev/nvidia* as surely as PrivateDevices=.
     service = llama_swap_unit()
     assert {name: service.get(name) for name in SANDBOX} == {name: [value] for name, value in SANDBOX.items()}
-    assert "PrivateDevices" not in service and "MemoryDenyWriteExecute" not in service
+    assert not {"PrivateDevices", "MemoryDenyWriteExecute", "DevicePolicy", "DeviceAllow"} & set(service)
+
+
+LLAMASWAP_URL_DEFAULT = """
+from spark import paths, render
+print(paths.LLAMASWAP_URL, f"http://{render.LLAMASWAP_LISTEN}")
+"""
+
+
+def test_llama_swaps_callers_reach_it_where_render_binds_it(tmp_path):
+    # The front, the gate, the brake, `spark apply`, `spark status` and `spark doctor` reach llama-swap at
+    # paths.LLAMASWAP_URL's default; render binds it at LLAMASWAP_LISTEN. paths stays light (the front and launch import
+    # it), so a test ties the two.
+    env = {name: value for name, value in os.environ.items() if name != "SPARK_LLAMASWAP_URL"}
+    result = subprocess.run([sys.executable, "-c", LLAMASWAP_URL_DEFAULT], cwd=tmp_path, env=env, capture_output=True,
+                            text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    used, bound = result.stdout.split()
+    assert used == bound == "http://127.0.0.1:900"
 
 
 def test_llama_swap_restarts_always_and_alerts_on_failure():

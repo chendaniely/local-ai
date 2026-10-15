@@ -7465,6 +7465,11 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
 - `front` — 9100's `/health` answers 200; a request without a key gets 401; `GET /unload`, `POST
   /api/models/unload/x` and `GET /logs` get 404 `route_not_served`.
 - `llama-swap` — its unit active; `SPARK_API_KEY` refused at `http://127.0.0.1:900/running` (401).
+  *(Added 2026-10-14, at Task 24's review:)* `doctor.py`'s refusal of a `SPARK_LLAMASWAP_URL` that
+  isn't an http(s) URL still offers `http://127.0.0.1:9100` as its example, the front's port from
+  the cutover: it names llama-swap's `http://127.0.0.1:900`, or no address, and the string
+  `test_doctor.py` pins moves with it (the deferred notes, *doctor's example address is the front's
+  from the cutover*).
 - `gate` — `GET /v1/status` on the control socket answers; its `health` shows the four services.
 - `brake` — its start check passed (Phase 1's, folded into `stack units`).
 - `ntfy` — the gate's `health.ntfy`: ok, or *notifications failing since HH:MM: `make logs
@@ -7893,7 +7898,12 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   front with a client key is answered, not a 401 (the front forwards it with its own internal key:
   pi's and the web UI's answers below are such calls), and the gate's own key reaches `/running`
   (`make status` shows the residents' states, which the gate reads there, and `make logs s=gate`
-  holds no 401 from llama-swap). If either gets a 401, the cutover stops there (Step 8). Then
+  holds no 401 from llama-swap). *(Added the same day, at Task 24's review, the controller's
+  ruling:)* The brake's key is checked too: its start check, which asks llama-swap's `/running`
+  once with its own key, passed, as `make status`'s brake line (*llama-swap took its key at …*) and
+  `make doctor`'s *stack units* line show. Above the warn line the brake calls llama-swap for
+  nothing else, so a wrong key would otherwise stay silent until the brake has to act. If any of the
+  three keys fails its check, the cutover stops there (Step 8). Then
   the listening ports, numbers only. **On the Spark:**
 
 ```bash
@@ -8411,14 +8421,21 @@ line), `changelog.md`, `README.md`
   0.5; reworded the same day at Task 24's review, the controller's ruling:)* the soak checks it too.
   Through Step 1's use of the web UI, Gemma's log (`spark logs gemma-4-26b-a4b`) shows each choice
   of slot by similarity as `selected slot by LCP similarity`, with its `f_sim_best` and `f_keep`
-  (b11146's `tools/server/server-context.cpp:1600`). Record each one's `f_keep`, and how many tokens
+  (b11146's `tools/server/server-context.cpp:1601`). Record each one's `f_keep`, and how many tokens
   were then re-read: the next turn of the chat whose slot it took shows them, as its reply's
   `timings.prompt_n` or the engine's `prompt eval time = … / N tokens` line. A pick counts as wrong
   only when it cost a long chat its cache, that chat's next turn re-reading most of a long prompt;
   an `f_keep` under 0.5 alone isn't one, since the slot may have held only a short task call. Count
   the wrong picks, out of all Gemma's requests, and record them in plan.md, in the ruling's dated
   note in the Phase 2a line; if they are common, the value is weighed again, the controller's
-  ruling (*Values the box decides*).
+  ruling (*Values the box decides*). *(Added 2026-10-14, at Task 24's review, the controller's
+  ruling:)* the soak counts the costly least-recently-used picks too, `selected slot by LRU`
+  (`server-context.cpp:1630`): at 0.5 every prompt that matches no slot goes there, a big paste or a
+  task call, and can take an idle long chat's slot. For each eviction of a long chat's cache, by
+  either kind of pick, record the pick's kind and the displaced chat's re-read on its next turn. A
+  cache that couldn't be saved shows as the engine's `prompt state size … exceeds cache size limit
+  …, skipping` warning (`server-task.cpp:1732`) just after the pick's line. plan.md's dated
+  correction to the ruling names the levers if the count shows harm.
 - [ ] **Step 3:** the registry's footprints become the measured ones; render passes; **[Dan]**
   decides whether the reserve moves. **If render refuses the measured set** (a footprint over what
   the set leaves it), **stop and ask Dan**, as Task 44 does: Task 42's way back, or his

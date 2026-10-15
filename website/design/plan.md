@@ -1803,10 +1803,23 @@ council, with Dan's fourteen decisions (Revisions).*
   0.10, a short prompt that shares only the template's first tokens takes a long chat's slot (Phase
   1 saw a 26-token one do it), and a chat with two of Gemma's context checkpoints is too big for its
   1 GiB prompt cache, so its next turn re-reads it whole. At 0.5 such a prompt takes the empty or
-  older slot, and a miss costs at most re-reading half a prompt. No value helps where the chat's own
-  slot is the least recently used one, as when Open WebUI's task calls, which go to Gemma, run back
-  to back after a turn; nor against a system prompt shared between chats, which counts in the shared
-  start. The soak, Task 45, counts the wrong picks in Gemma's log)*; a test
+  older slot~~, and a miss costs at most re-reading half a prompt~~. No value helps where the chat's
+  own slot is the least recently used one, as when Open WebUI's task calls, which go to Gemma, run
+  back to back after a turn; nor against a system prompt shared between chats, which counts in the
+  shared start. The soak, Task 45, counts the wrong picks in Gemma's log)* *(Corrected 2026-10-14,
+  at Task 24's review, the controller's ruling, which keeps 0.5: the struck clause understated what
+  0.5 costs. A prompt that matches no slot, such as a turn adding as many tokens as its chat already
+  holds, or more, or a task call, takes the least recently used slot, and can evict an idle long
+  chat there: the chat that missed re-reads what it had cached, at most half its prompt, but the one
+  evicted, too big with two checkpoints for the 1 GiB prompt cache, re-reads whole on its next turn.
+  At 0.10 the big-paste turn would have kept its own slot, unless it added nine times what its chat
+  held or more, so 0.5 trades one harm for another. It stays 0.5: Open WebUI sends two or three task
+  calls with every new chat, and at 0.5 a task call that shares only the template's start matches no
+  slot, so the first goes to the least recently used one, away from the chat just answered, the case
+  Phase 1 saw go wrong; the paste case costs an idle second chat only when that chat's slot is the
+  least recently used. If the soak shows harm, the levers are Gemma's `--cache-ram`, raised so that
+  a chat with checkpoints can be saved, and Open WebUI's task model, moved off Gemma, which is the
+  clients phase's call.)*; a test
   that ties the code's version assumptions — the front's and the gate's on llama-swap v257 among
   them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own user,
   `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's sandboxing.
@@ -3789,6 +3802,13 @@ Each item gets its own design pass when its turn comes.
   item from Phase 1's close, with the two cases no value fixes: a chat's own slot taken by task calls
   back to back when it is the least recently used, and a system prompt shared between chats. The
   registry's Gemma gains it, with a comment saying why; the soak (Task 45) counts the wrong picks.
+- **2026-10-14** — Phase 2a's Task 24 review, the controller's ruling: the record of Gemma's
+  `--slot-prompt-similarity` gains the cost 0.5 adds. A prompt that matches no slot, a big paste or
+  a task call, takes the least recently used slot, and can cost an idle long chat its cache there;
+  at 0.10 the big paste would have kept its own slot. The value stays 0.5, for Open WebUI's task
+  calls with every new chat, and the levers if the soak shows harm are Gemma's `--cache-ram` and
+  Open WebUI's task model, moved off Gemma (the clients phase's call). A dated correction is in the
+  Phase 2a line's item; Task 45 counts the costly least-recently-used picks too.
 
 ## Sources
 

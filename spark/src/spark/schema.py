@@ -162,9 +162,31 @@ def _ref(root: dict, ref: str) -> Any:
     return node
 
 
-def _check(value: Any, schema: Any, at: str, root: dict, strict: bool) -> list[str]:
+def _follow(value: Any, ref: str, at: str, root: dict, strict: bool, refs: frozenset[str]) -> list[str]:
+    """`value`'s problems against the schema a `$ref` names. `refs` holds the refs already followed for this same value,
+    so a ref that leads back to one of them without reading further in the config is a problem, never an endless
+    descent: each ref is followed at most once per place in the config."""
+    where = at or "/"
+    if not ref.startswith("#"):
+        return [f"{where}: $ref {ref!r} isn't in this schema, and only its own are followed"]
+    if ref in refs:
+        return [f"{where}: $ref {ref!r} leads back to itself without reading further in the config"]
+    try:
+        target = _ref(root, ref)
+    except KeyError:
+        return [f"{where}: $ref {ref!r} finds nothing"]
+    if not isinstance(target, (dict, bool)):
+        kind = _kind(target)
+        return [f"{where}: $ref {ref!r} finds {_TYPES.get(kind, kind)}, not a schema"]
+    unknown = list(_unknown_keywords(target, ref))  # a ref can reach a place the first walk didn't read
+    if unknown:
+        return unknown
+    return _check(value, target, at, root, strict, refs | {ref})
+
+
+def _check(value: Any, schema: Any, at: str, root: dict, strict: bool, refs: frozenset[str] = frozenset()) -> list[str]:
     """`value`'s problems against `schema`; `strict`, the module's two stricter readings, holds unless a `not`, an `if`
-    or a `oneOf` is above."""
+    or a `oneOf` is above; `refs`, the `$ref`s already followed for this same value (_follow)."""
     where = at or "/"
     if schema is True:
         return []
@@ -172,14 +194,7 @@ def _check(value: Any, schema: Any, at: str, root: dict, strict: bool) -> list[s
         return [f"{where}: the schema allows nothing here"]
     problems: list[str] = []
     if "$ref" in schema:
-        ref = schema["$ref"]
-        if not ref.startswith("#"):
-            problems.append(f"{where}: $ref {ref!r} isn't in this schema, and only its own are followed")
-        else:
-            try:
-                problems += _check(value, _ref(root, ref), at, root, strict)
-            except KeyError:
-                problems.append(f"{where}: $ref {ref!r} finds nothing")
+        problems += _follow(value, schema["$ref"], at, root, strict, refs)
         if not strict:  # JSON Schema draft-07's letter: $ref's siblings are ignored
             return problems
     if "type" in schema:
@@ -205,17 +220,17 @@ def _check(value: Any, schema: Any, at: str, root: dict, strict: bool) -> list[s
     if isinstance(value, (list, tuple)):
         problems += _check_array(value, schema, at, root, strict)
     if isinstance(value, dict):
-        problems += _check_object(value, schema, at, root, strict)
+        problems += _check_object(value, schema, at, root, strict, refs)
     for sub in schema.get("allOf", []):
-        problems += _check(value, sub, at, root, strict)
+        problems += _check(value, sub, at, root, strict, refs)
     if "oneOf" in schema:
-        matched = sum(not _check(value, sub, at, root, strict=False) for sub in schema["oneOf"])
+        matched = sum(not _check(value, sub, at, root, False, refs) for sub in schema["oneOf"])
         if matched != 1:
             problems.append(f"{where}: matches {matched} of oneOf's {len(schema['oneOf'])} schemas, not exactly one")
-    if "not" in schema and not _check(value, schema["not"], at, root, strict=False):
+    if "not" in schema and not _check(value, schema["not"], at, root, False, refs):
         problems.append(f"{where}: matches what the schema forbids")
-    if "if" in schema and "then" in schema and not _check(value, schema["if"], at, root, strict=False):
-        problems += _check(value, schema["then"], at, root, strict)
+    if "if" in schema and "then" in schema and not _check(value, schema["if"], at, root, False, refs):
+        problems += _check(value, schema["then"], at, root, strict, refs)
     return problems
 
 
@@ -237,7 +252,7 @@ def _check_array(value: list | tuple, schema: dict, at: str, root: dict, strict:
     return problems
 
 
-def _check_object(value: dict, schema: dict, at: str, root: dict, strict: bool) -> list[str]:
+def _check_object(value: dict, schema: dict, at: str, root: dict, strict: bool, refs: frozenset[str]) -> list[str]:
     where = at or "/"
     problems: list[str] = []
     for key in schema.get("required", []):
@@ -267,7 +282,7 @@ def _check_object(value: dict, schema: dict, at: str, root: dict, strict: bool) 
         if isinstance(needs, list):
             problems += [f"{where}: {key!r} needs {need!r} beside it" for need in needs if need not in value]
         else:
-            problems += _check(value, needs, at, root, strict)
+            problems += _check(value, needs, at, root, strict, refs)
     return problems
 
 

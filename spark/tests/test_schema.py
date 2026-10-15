@@ -14,8 +14,9 @@ from spark.versions import load_versions
 ROOT = Path(__file__).resolve().parents[2]
 FIX = Path(__file__).parent / "fixtures"
 SCHEMA_FILE = ROOT / "stack/llama-swap/config-schema.v257.json"
-# llama-swap v257's own config-schema.json, https://raw.githubusercontent.com/mostlygeek/llama-swap/v257/config-schema.json:
-# its SHA-256 as read on 2026-10-07, and again on the Spark on 2026-10-14, when Task 24 vendored it.
+# llama-swap v257's own config-schema.json, as its tag serves it:
+# https://raw.githubusercontent.com/mostlygeek/llama-swap/v257/config-schema.json
+# Its SHA-256 as read on 2026-10-07, and again on the Spark on 2026-10-14, when Task 24 vendored it.
 V257_SHA256 = "d75ebf1e18806194ce674ebd59cb70b6f8bf93cb6ec65c2392e0e17fc9d0b076"
 V257 = json.loads(SCHEMA_FILE.read_text())
 
@@ -117,7 +118,8 @@ EACH = [  # (a change to GOOD, a problem it must cause): each keyword, seen to r
     pytest.param({"either": 1}, "/either: matches 0 of oneOf's 2 schemas, not exactly one", id="oneOf"),
     pytest.param({"extra": 1}, "/extra: 'extra' isn't a key the schema allows here", id="additionalProperties: false"),
     pytest.param({"map": {"x": "1"}}, "/map/x: '1' is a string, not integer", id="additionalProperties: a schema"),
-    pytest.param({"map": {"PORT": 1}}, "/map: the key 'PORT': matches what the schema forbids", id="propertyNames, not"),
+    pytest.param({"map": {"PORT": 1}}, "/map: the key 'PORT': matches what the schema forbids",
+                 id="propertyNames, not"),
     pytest.param({"port": REMOVE}, "/: 'url' needs 'port' beside it", id="dependencies: an array"),
     pytest.param({"tags": REMOVE}, "/: needs 'tags'", id="allOf, if and then"),
     pytest.param({"name": REMOVE}, "/: needs 'name'", id="required"),
@@ -166,6 +168,37 @@ def test_a_ref_reaches_only_this_schema():
     assert schema.check(1, {"$ref": "https://example.org/other.json"}) == [
         "/: $ref 'https://example.org/other.json' isn't in this schema, and only its own are followed"]
     assert schema.check(1, {"$ref": "#/definitions/missing"}) == ["/: $ref '#/definitions/missing' finds nothing"]
+
+
+def test_a_ref_loop_or_a_ref_to_no_schema_is_a_problem_not_a_crash():
+    # Each is a problem line, so render refuses with a RenderError naming the schema, never a traceback.
+    assert schema.check({}, {"$ref": "#"}) == ["/: $ref '#' leads back to itself without reading further in the config"]
+    loop = {"definitions": {"a": {"$ref": "#/definitions/b"}, "b": {"$ref": "#/definitions/a"}},
+            "$ref": "#/definitions/a"}
+    assert schema.check({}, loop) == [
+        "/: $ref '#/definitions/a' leads back to itself without reading further in the config"]
+    assert schema.check("a", {"enum": ["a"], "$ref": "#/enum/0"}) == ["/: $ref '#/enum/0' finds a string, not a schema"]
+    # A ref into a place the keyword check didn't walk is walked when it's followed.
+    assert schema.check({}, {"default": {"x": {"contains": {}}}, "$ref": "#/default/x"}) == [
+        "schema #/default/x: uses 'contains', a keyword this check doesn't know, so it refuses the config rather than "
+        "skip what that keyword asks"]
+
+
+def test_a_ref_that_reads_further_in_the_config_may_recur():
+    tree = {"definitions": {"node": {"type": "object", "properties": {"child": {"$ref": "#/definitions/node"}}}},
+            "$ref": "#/definitions/node"}
+    assert schema.check({"child": {"child": {}}}, tree) == []
+    assert schema.check({"child": {"child": 1}}, tree) == ["/child/child: 1 is a number, not object"]
+
+
+def test_render_refuses_a_schema_whose_ref_loops(tmp_path):
+    shutil.copytree(ROOT / "stack/templates", tmp_path / "stack/templates")
+    (tmp_path / "stack/llama-swap").mkdir()
+    (tmp_path / "stack/llama-swap" / SCHEMA_FILE.name).write_text(json.dumps({"$ref": "#"}))
+    with pytest.raises(RenderError, match=r"(?s)^llama-swap's config doesn't pass its v257 schema .*\n  /: \$ref '#' "
+                                          "leads back to itself"):
+        render(load_registry(FIX / "models.yaml"), load_versions(FIX / "versions.yaml"),
+               (FIX / "models.yaml").read_text(), templates=tmp_path / "stack/templates")
 
 
 def _keywords(node, found: set[str]) -> set[str]:
