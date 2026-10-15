@@ -381,7 +381,9 @@ its recipe. Read at commit `3849269` (2026-10-13). It installs its own engines, 
 units and sudoers rules, so this stack reads it for its config rather than running it: the
 [by-hand page](website/how-to/qwen3.8-27b-sglang.md) and plan.md's Phase 4a take its checkpoint,
 drafter and memory evidence, and its Phase 4 notes record what it adds and corrects. Its numbers
-are its own, not measured here.
+are its own, not measured here. *(2026-10-14: the first run here, by hand, with its image by the
+same digest, gave 41.7 tok/s on one prompt whose 1,024 tokens were all thinking, against 23.8 for
+the llama.cpp coder, in about 45 GiB: [Speed tests](website/reference/speed-tests.md).)*
 
 **[github.com/bidual/awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark)** — a curated
 list of community projects for the DGX Spark and other GB10 machines. The site's
