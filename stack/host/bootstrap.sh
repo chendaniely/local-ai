@@ -816,7 +816,9 @@ notifier() {
 #   - cron, the one other way agent could start a job, is closed to agent (cron_deny).
 # Tests point these at stand-ins.
 AGENT_HOOK="/usr/local/libexec/local-ai-agent-oom"
-PAM_LINE="session optional pam_exec.so $AGENT_HOOK"
+# type=open_session, before the command (pam_exec reads its options up to the first word that isn't one): pam_exec
+# then returns PAM_IGNORE at close without forking anything (Task 28's review, C1). See pam_sshd_hook, below.
+PAM_LINE="session optional pam_exec.so type=open_session $AGENT_HOOK"
 PAM_SSHD="${BOOTSTRAP_PAM_SSHD:-/etc/pam.d/sshd}"
 PAM_BACKUPS="${BOOTSTRAP_PAM_BACKUPS:-/var/backups}"
 # Where Linux-PAM keeps its modules, as globs (brightroar's pam_exec.so is in /usr/lib/aarch64-linux-gnu/security).
@@ -860,11 +862,16 @@ agent_drop_in() {
   run systemctl daemon-reload
 }
 
-# The hook's line goes before sshd's first session line (the controller's ruling, Task 28), never at the end. pam_exec
-# hands the script the PAM environment, and sshd's stack has `session required pam_env.so user_readenv=1`, which
-# reads the user's ~/.pam_environment: after that line, agent would choose the environment root's /bin/sh starts
-# with (LD_PRELOAD, for one, runs agent's code before the script's first line). Before sshd's first session line
-# only the auth and account modules have run, and on Ubuntu none of them reads a user's file.
+# The hook's line goes before sshd's first session line (the controller's ruling, Task 28), never at the end, and
+# runs at open_session only. pam_exec hands the script the PAM environment, and sshd's stack has
+# `session required pam_env.so user_readenv=1`, which adds the user's ~/.pam_environment to it. A root shell started
+# in that environment runs agent's code (LD_PRELOAD, for one) before the script's first line. Two things keep agent's
+# environment away from root's /bin/sh:
+#   - at open, the position: before sshd's first session line only the auth and account modules have run, and on
+#     Ubuntu none of them reads a user's file;
+#   - at close, type=open_session: sshd closes the session on the same PAM handle, whose environment by then holds
+#     what pam_env read, and pam_exec returns before it forks (the review's C1, seen with the box's own libpam; a
+#     test drives libpam to check it).
 #
 # So the step refuses, changing nothing, and names each reason:
 #   - while sshd's file, or its folder, isn't root's own regular file and folder;
@@ -873,7 +880,9 @@ agent_drop_in() {
 #     line there includes;
 #   - while a line names the hook but isn't PAM_LINE exactly (a `required` one would make a failing script block
 #     every login), or PAM_LINE stands anywhere but before sshd's other session lines;
+#   - while the line before that point ends in a backslash, which libpam would join the hook's line onto;
 #   - while sshd's file has no session line at all.
+# libpam reads a line's type without regard to case, so `Session` counts as a session line here too.
 # Otherwise, if the line is in place, it changes nothing. If not, it backs the file up to /var/backups with the time
 # in its name, writes the new file with mktemp in /etc/pam.d, checks it is the old one with only the line added, and
 # swaps it in with mv, root:root 0644. /etc/pam.d is root's, so root writes through no path spark or agent controls.
@@ -889,32 +898,49 @@ pam_shown() { printable "${1//$'\t'/ }"; }
 # Whether a line, comments taken out, names a setting that reads a user's environment file.
 reads_user_env() { [[ "$(pam_text "$1")" =~ (^|[[:space:]])user_(readenv|envfile)= ]]; }
 
+# A word in lower case, as libpam compares a line's type (bash 3.2's way: a dry run may run on the Mac).
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Whether libpam joins the next line onto this one: it ends in a backslash, spaces after it allowed, and has no #,
+# where libpam stops a line.
+continues() {
+  local stripped="${1%"${1##*[![:space:]]}"}"
+  [[ "$1" != *"#"* && "$stripped" == *"\\" ]]
+}
+
 # Reads PAM_SSHD into PAM_POINT (the line number of sshd's first session line, the hook's own counted; 0 for none),
 # PAM_FIRST (that line), PAM_IN_PLACE (1 when that line is PAM_LINE), and adds to PAM_REASONS why the line can't go
 # in now, one reason a line.
 pam_plan() {
-  local n=0 raw text first second third inc incn incraw dir="${PAM_SSHD%/*}"
+  local n=0 raw text first second third kind control inc incn incraw dir="${PAM_SSHD%/*}" joins=0 joins_n=0
+  local joins_raw=""
   local -a includes=()
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     n=$((n + 1))
     text="$(pam_text "$raw")"
     first="" second="" third=""
     read -r first second third _ <<<"$text" || true
+    # A blank or comment line: libpam skips it, and a backslash before it still joins across it.
     [[ -n "$first" ]] || continue
+    kind="$(lower "$first")" control="$(lower "$second")"
     if (( PAM_POINT == 0 )); then
-      if [[ "$first" == session || "$first" == -session || ( "$first" == @include && "$second" == common-session* ) ]]; then
+      if [[ "$kind" == session || "$kind" == -session || ( "$kind" == @include && "$second" == common-session* ) ]]; then
         PAM_POINT=$n
         PAM_FIRST="$raw"
         if [[ "$raw" == "$PAM_LINE" ]]; then PAM_IN_PLACE=1; fi
+        if (( joins )); then
+          PAM_REASONS+="$PAM_SSHD:$joins_n ends in a backslash, so libpam would read the next line, where the hook's line goes, as part of it: $(pam_shown "$joins_raw")"$'\n'
+        fi
       else
         if reads_user_env "$raw"; then
           PAM_REASONS+="$PAM_SSHD:$n reads a user's environment file before sshd's first session line, where the hook's line goes: $(pam_shown "$raw")"$'\n'
         fi
-        if [[ "$first" == @include ]]; then includes+=("$n|$second")
-        elif [[ "$second" == include || "$second" == substack ]]; then includes+=("$n|$third")
+        if [[ "$kind" == @include ]]; then includes+=("$n|$second")
+        elif [[ "$control" == include || "$control" == substack ]]; then includes+=("$n|$third")
         fi
       fi
     fi
+    if continues "$raw"; then joins=1 joins_n=$n joins_raw="$raw"; else joins=0; fi
     if [[ "$raw" == "$PAM_LINE" ]]; then
       if (( n != PAM_POINT )); then
         PAM_REASONS+="$PAM_SSHD:$n has the hook's line after sshd's first session line, line $PAM_POINT: take it out by hand (the backup bootstrap made, if any, is in $PAM_BACKUPS), then run this again: $(pam_shown "$raw")"$'\n'
@@ -926,6 +952,8 @@ pam_plan() {
   if (( PAM_POINT == 0 )); then
     PAM_REASONS+="$PAM_SSHD has no session line, so there's no place for the hook's line before sshd's session modules"$'\n'
   fi
+  # bash 3.2 takes an empty array's "${includes[@]}" as unbound under set -u: a file with no include skips the loop.
+  if (( ${#includes[@]} == 0 )); then return 0; fi
   for inc in "${includes[@]}"; do
     incn="${inc%%|*}" inc="${inc#*|}"
     [[ "$inc" == /* ]] || inc="$dir/$inc"
@@ -1025,6 +1053,8 @@ pam_sshd_hook() {
     echo "bootstrap: the new $PAM_SSHD came out other than the old one with the hook's line added, so nothing was changed (the old file is backed up as $backup)" >&2
     exit 1
   fi
+  # On disk before the rename, whatever the filesystem's mount options (the review's M4).
+  sync -- "$PAM_WORK"
   mv -f -- "$PAM_WORK" "$PAM_SSHD"
   PAM_WORK=""
   trap - EXIT

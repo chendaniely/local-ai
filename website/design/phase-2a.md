@@ -6984,7 +6984,10 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
 **Interfaces:**
 
 - `/usr/local/libexec/local-ai-agent-oom` (`0755 root:root`), run by a root-owned line, `session
-  optional pam_exec.so /usr/local/libexec/local-ai-agent-oom`, that bootstrap ~~appends to~~
+  optional pam_exec.so /usr/local/libexec/local-ai-agent-oom` *(corrected 2026-10-14, at Task 28's
+  review, the controller's ruling: `session optional pam_exec.so type=open_session
+  /usr/local/libexec/local-ai-agent-oom`, so pam_exec never starts the script at close, when the PAM
+  environment holds agent's `~/.pam_environment`: below)*, that bootstrap ~~appends to~~
   *inserts before the first session line of (corrected 2026-10-14, at Task 28: below)*
   `/etc/pam.d/sshd` once; for `PAM_USER=agent` and `PAM_TYPE=open_session` only, it writes
   `AGENT_OOM_SCORE_ADJ` to the session process's `oom_score_adj` as root, which also sets the floor
@@ -7014,15 +7017,30 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
     `session required pam_env.so user_readenv=1` further down, which reads `~/.pam_environment`, and
     `pam_exec` hands the script the PAM environment. Appended, the hook would run as root in an
     environment `agent` chose: `LD_PRELOAD` would run `agent`'s code before the script's first line.
+    *(Corrected 2026-10-14, at Task 28's review, the reviewer's C1 and the controller's ruling: the
+    position keeps that environment out at open only. sshd closes the session on the same PAM
+    handle, whose environment by then holds what `pam_env` read. A `session` line's module runs at
+    close too, so the line as first built started the script as root at every close of `agent`'s
+    session, in that environment. The reviewer showed it with the box's own libpam: a scratch
+    `LD_PRELOAD` ran before the script, with `PAM_TYPE=close_session`. The line is now `session
+    optional pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom`, and pam_exec
+    returns at close before it forks. The script's own `PAM_TYPE` check stays as a second line.
+    `test_libpam_reads_the_written_line_and_runs_the_hook_at_open_only` drives the host's libpam
+    with the written line: it parses, the script runs at open and not at close, and a misspelled
+    control word fails the stack. It is skipped where libpam has no `pam_start_confdir`.)*
   - **The refusals.** Bootstrap refuses, changing nothing and naming the line, while:
     - a line before that point names `user_readenv` or `user_envfile`, in sshd's file or a file it
       includes there;
     - a line names the hook but isn't the line exactly;
     - the line stands after sshd's first session line;
-    - the file, its folder or `/var/backups` isn't root's own, or `pam_exec.so` is missing.
+    - the file, its folder or `/var/backups` isn't root's own, or `pam_exec.so` is missing;
+    - *(added 2026-10-14, at Task 28's review, M3)* the last line with words before that point ends
+      in a backslash, which libpam would join the hook's line onto. A `session` line counts in any
+      case, since libpam reads a line's type without regard to case.
   - **The swap.** Bootstrap backs the file up to `/var/backups/pam.d-sshd.<time>`, writes the new one
     with `mktemp` in `/etc/pam.d`, checks it is the old one with only the line added, and swaps it in
-    with `mv`, `root:root 0644`, then reads it again. A re-run changes nothing.
+    with `mv`, `root:root 0644`, then reads it again. A re-run changes nothing. *(Since the review,
+    M4: `sync` writes the new file to disk before the `mv`.)*
   - **The script.** It runs builtins only, with `PATH` fixed and `IFS` reset, and reads no variable
     but `PAM_USER`, `PAM_TYPE` and the shell's `PPID`. It writes only `/proc/$PPID/oom_score_adj`,
     once `$PPID` is past 1 and its comm is `sshd` or `sshd-session`. It exits 0 for anyone else and
@@ -7049,12 +7067,17 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
   `/etc/cron.deny`'s run the same way. The hook's are split by case.)*
 - `test_the_hook_acts_only_for_agent` — the script run with a stand-in `/proc`: `PAM_USER=chendaniely`
   → writes nothing and exits 0 at once; `agent` and `open_session` → writes the value; `agent` and
-  `close_session` → nothing; and the line bootstrap appends is `session optional`, so a failure of
-  the script never stops a login.
+  `close_session` → nothing; and the line bootstrap ~~appends~~ *inserts (2026-10-14, as built)* is
+  `session optional`, so a failure of the script never stops a login. *(2026-10-14, at Task 28's
+  review: pam_exec never starts the script at close any more, since the line carries
+  `type=open_session`. So the script's `close_session` case is its second line of defence, and the
+  libpam test checks the first.)*
 - `test_the_hook_and_drop_in_are_root_owned_and_not_agents` — the dry run's owners and modes.
 - `test_the_values_put_a_large_agent_job_first` — from `launch`'s values, earlyoom's `--prefer`
   bonus and `AGENT_OOM_SCORE_ADJ`: an `agent` process holding 10% of memory scores above every
-  engine holding 2%.
+  engine holding 2%. *(2026-10-14, the controller's ruling at Task 28: `earlyoom.default` has no
+  `--prefer`, so the test reads the bonus from the file, now none, and asserts the flag is gone. With
+  the bonus, no `agent` score could pass an engine's.)*
 
 **Steps:**
 
@@ -7952,6 +7975,10 @@ private but not secret); and **[Dan]** the vault's entry note gains it.
   `/proc/self/oom_score_adj`. bootstrap.md's step 4 has both, and how to put
   `/etc/pam.d/sshd` back from the copy the run made in `/var/backups`. Its step 6 checks the hook,
   the drop-in, the line's place, `/etc/cron.deny` and earlyoom's arguments without `--prefer`.)*
+  *(Added 2026-10-14, at Task 28's review, M7: from this bootstrap on, earlyoom runs without
+  `--prefer`. `main`'s `earlyoom.default` still has it until 2a merges. So any `make doctor` run from
+  a `main` worktree fails its *earlyoom* check as well, as expected: an urgent fix deployed from `main`
+  before the merge (*Deploys during 2a*), and Task 38's rollback. Nothing else differs because of it.)*
 - [ ] **Step 2 [Spark]: Check it.** **On the Spark:**
 
 ```bash

@@ -2,18 +2,24 @@
 # local-ai-agent-oom: agent's processes get an OOM score that root sets and agent can't lower (Phase 2a, Task 28).
 # Bootstrap installs it as /usr/local/libexec/local-ai-agent-oom, root's 0755, and puts this line before the first
 # session line of /etc/pam.d/sshd:
-#   session optional pam_exec.so /usr/local/libexec/local-ai-agent-oom
-# pam_exec runs it as root at every sshd session's open and close. For agent's open_session only, it writes
-# AGENT_OOM_SCORE_ADJ to its parent's oom_score_adj. Its parent is sshd's privileged process for that login, which
-# forks agent's shell afterwards. A write by root sets the floor too (the kernel's oom_score_adj_min), which every
-# process forked from it inherits and can't go under: agent's shell, tmux and every job. For anyone else, and for any
-# other PAM_TYPE, it exits 0 at once. agent's user manager gets the same value from its drop-in, agent-oom.conf.
+#   session optional pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom
+# pam_exec runs it as root at each sshd session's open, and never at its close: type=open_session makes pam_exec
+# return before it forks anything for any other PAM_TYPE (Task 28's review, C1). For agent's open_session only, it
+# writes AGENT_OOM_SCORE_ADJ to its parent's oom_score_adj. Its parent is sshd's privileged process for that login,
+# which forks agent's shell afterwards. A write by root sets the floor too (the kernel's oom_score_adj_min), which
+# every process forked from it inherits and can't go under: agent's shell, tmux and every job. For anyone else it
+# exits 0 at once, and it checks PAM_TYPE again itself. agent's user manager gets the same value from its drop-in,
+# agent-oom.conf.
 #
 # It runs as root, in an environment it doesn't choose. pam_exec hands it the PAM environment, and a user can fill
-# that: sshd's own stack has `pam_env.so user_readenv=1`, which reads the user's ~/.pam_environment. So:
-#   - The line comes before sshd's first session line, where nothing a user supplies is in that environment yet.
-#     Bootstrap refuses to put it after any pam_env line that reads a user's file. A shell started with a user's
-#     LD_PRELOAD would run that user's code before this file's first line.
+# that: sshd's own stack has `pam_env.so user_readenv=1`, which adds the user's ~/.pam_environment to it. A shell
+# started with a user's LD_PRELOAD would run that user's code before this file's first line, so no check in here
+# could help. Two things keep that environment away:
+#   - At open, the line's place: it comes before sshd's first session line, where nothing a user supplies is in the
+#     environment yet. Bootstrap refuses to put it after any pam_env line that reads a user's file.
+#   - At close, type=open_session. sshd closes the session on the same PAM handle, and by then the environment holds
+#     what pam_env read, line 47 of Ubuntu's file. Without type=, pam_exec would start this file as root in it.
+# And in here:
 #   - It runs shell builtins only, with PATH fixed and IFS reset.
 #   - It reads no variable but PAM_USER, PAM_TYPE and the shell's own PPID, and sets every other name it uses.
 #   - It reads no input: nothing on stdin, and no file but its parent's comm and the score it wrote.

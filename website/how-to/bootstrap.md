@@ -135,12 +135,18 @@ Phase 2a's bootstrap (its Task 27; Dan runs it in Task 36, before the cutover) a
   - every engine still goes before any process of yours.
 
   Task 40 tests it as `agent`. The script's comment has the arithmetic.
-- **The hook's line in `/etc/pam.d/sshd`:** `session optional pam_exec.so
-  /usr/local/libexec/local-ai-agent-oom`. It goes in **before the file's first session line**
-  (line 19 of Ubuntu's file), never at the end. Further down, sshd's stack reads each user's
-  `~/.pam_environment` (`pam_env.so user_readenv=1`), and the script, which runs as root, would then
-  start with an environment `agent` chose. `optional` means a failing or missing script never stops a
-  login: the failure only shows in the journal and at that login.
+- **The hook's line in `/etc/pam.d/sshd`:** `session optional pam_exec.so type=open_session
+  /usr/local/libexec/local-ai-agent-oom`. Further down, sshd's stack reads each user's
+  `~/.pam_environment` (`pam_env.so user_readenv=1`) into the environment the script, run as root,
+  starts with. Two things keep an environment `agent` chose away from it:
+  - **At open**, the line goes in **before the file's first session line** (line 19 of Ubuntu's
+    file), never at the end, so that environment isn't filled yet when it runs.
+  - **At close**, `type=open_session` means pam_exec never starts the script at all. sshd closes the
+    session with the environment already filled. *(Added 2026-10-14, at Task 28's review: the line
+    first had no `type=`, and the script ran at close too.)*
+
+  `optional` means a failing or missing script never stops a login: the failure only shows in the
+  journal and at that login.
   - The run backs the file up first, to `/var/backups/pam.d-sshd.<time>`, writes the new file beside
     it and swaps it in whole, `root:root 0644`.
   - It refuses, changing nothing and naming the line, while a line before that point reads a user's
@@ -233,8 +239,10 @@ has been pulled since.
    Expected: `your login: works`, then `1000` from `agent`'s login: the hook ran. Close the second
    session only once both work.
 
-   If a login fails, use the session still open. **On the Spark**, put back the copy the run made
-   (the run's output names it, `/var/backups/pam.d-sshd.<time>`):
+   If a login fails, use the session still open. If that session is lost too, a login at the box's
+   own console still works: it goes through `/etc/pam.d/login`, which this run doesn't change.
+   **On the Spark**, put back the copy the run made (the run's output names it,
+   `/var/backups/pam.d-sshd.<time>`):
 
    ```bash
    sudo cp -p /var/backups/pam.d-sshd.<time> /etc/pam.d/sshd && sudo -k
@@ -276,8 +284,8 @@ has been pulled since.
    2750 /var/lib/local-ai/hf`; `spark:spark 750` for the gate's, launch's and whisper's folders;
    `spark-pull:spark-pull 750` for the pull's cache; `notifier: installed`. Then, for `agent`'s OOM
    score: `root:root 755` for the hook and `root:root 644` for the drop-in;
-   `19:session optional pam_exec.so /usr/local/libexec/local-ai-agent-oom`, sshd's first session
-   line now; `OOMScoreAdjust=1000`; `agent`; and `0`, earlyoom's arguments without `--prefer`. (Its
+   `19:session optional pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom`,
+   sshd's first session line now; `OOMScoreAdjust=1000`; `agent`; and `0`, earlyoom's arguments without `--prefer`. (Its
    comments still name `--prefer`, to say why it's gone.)
 
    Then, with sudo, what your account can't see: launch's own folders, `hf/tmp` and the model

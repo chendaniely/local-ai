@@ -1862,7 +1862,12 @@ council, with Dan's fourteen decisions (Revisions).*
     drop-in sets for its user manager.*
   - *The hook's line goes before sshd's first session line, not at the end. Further down, sshd's
     stack reads each user's `~/.pam_environment` (`pam_env.so user_readenv=1`), which would hand
-    the hook, run as root, an environment `agent` chose.*
+    the hook, run as root, an environment `agent` chose.* *(Corrected 2026-10-14, at Task 28's
+    review, the controller's ruling: that position keeps `agent`'s environment out at open only.
+    sshd closes the session on the same PAM handle, with the environment already filled, and the
+    line as first built ran the hook as root at that close too. The line is `session optional
+    pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom`: pam_exec then never
+    starts the hook at close. A test drives the host's libpam to check it.)*
   - *The engines' values stay 1000 and 900, and earlyoom loses `--prefer`, which put every engine
     above anything at 1000.*
   - *`/etc/cron.deny` names `agent`, since a crontab's jobs would start outside both.)*
@@ -3889,12 +3894,20 @@ Each item gets its own design pass when its turn comes.
     launch's 900 and 1000 stay.
   - **The hook's line.** It goes before sshd's first session line, not at the end as first planned.
     sshd's stack has `pam_env.so user_readenv=1` further down, and `pam_exec` hands the hook, run as
-    root, the PAM environment, which `agent` could then fill (`LD_PRELOAD` among it).
+    root, the PAM environment, which `agent` could then fill (`LD_PRELOAD` among it). *(Corrected
+    2026-10-14, at Task 28's review, the controller's ruling. The position keeps `agent`'s environment
+    out at open only. sshd calls `pam_close_session` on the same handle, whose environment by then
+    holds what `pam_env` read, and a `session` line's module runs at close too. So the line as first
+    built ran the hook as root at every close of `agent`'s session, in that environment. The reviewer
+    showed this with the box's own libpam. The line is now `session optional pam_exec.so
+    type=open_session /usr/local/libexec/local-ai-agent-oom`, and pam_exec returns at close without
+    forking.)*
   - **cron.** `/etc/cron.deny` names `agent`: a crontab's jobs start outside both the hook and the
     user manager.
 
   The *Host* row and the Phase 2a line's item gain dated notes. Task 38's rollback expects Phase 1's
-  doctor to fail its *earlyoom* check as well.
+  doctor to fail its *earlyoom* check as well, and so does any doctor run from a `main` worktree
+  after Task 36, such as an urgent fix's (added at the review, M7).
 
 ## Sources
 

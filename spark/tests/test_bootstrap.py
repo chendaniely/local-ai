@@ -2740,7 +2740,7 @@ def test_a_second_name_or_an_acl_made_during_the_chown_stops_the_move_before_any
 HOOK = "/usr/local/libexec/local-ai-agent-oom"
 HOOK_SRC = ROOT / "stack/host/local-ai-agent-oom"
 DROP_IN_SRC = ROOT / "stack/host/agent-oom.conf"
-PAM_LINE = f"session optional pam_exec.so {HOOK}"
+PAM_LINE = f"session optional pam_exec.so type=open_session {HOOK}"
 DROP_IN_FOLDER = "/etc/systemd/system/user@<agent's uid>.service.d"
 FIRST_SESSION = 19  # the line of STOCK_SSHD the hook's line goes before: sshd's first session line
 LINUX_PAM_DIRS = ("/usr/lib/*/security", "/lib/*/security", "/usr/lib/security", "/lib/security")
@@ -2866,7 +2866,7 @@ def test_the_hook_acts_only_for_agent(tmp_path, shell):
         assert adj.read_text() == "0\n", (user, pam_type)
     # The line bootstrap writes is `optional`, so a failure of the script never stops a login.
     assert PAM_LINE.split()[:2] == ["session", "optional"]
-    assert f'PAM_LINE="session optional pam_exec.so $AGENT_HOOK"' in SCRIPT.read_text()
+    assert f'PAM_LINE="session optional pam_exec.so type=open_session $AGENT_HOOK"' in SCRIPT.read_text()
     assert f'AGENT_HOOK="{HOOK}"' in SCRIPT.read_text()
 
 
@@ -3026,12 +3026,12 @@ def test_earlyoom_still_avoids_the_stacks_own_services_and_what_keeps_the_box_re
 
 def pam_env(tmp_path: Path, sshd: str = STOCK_SSHD, **settings: str) -> dict[str, str]:
     """Stand-ins for the PAM step: /etc/pam.d with Ubuntu's stock sshd (or `sshd`), PAM's modules, /var/backups, and
-    chown and chmod that log to tmp_path/calls and change only tmp_path's files; whoever runs the tests stands in for
-    root. `settings` go in the environment as they are."""
+    chown, chmod and sync that log to tmp_path/calls, then run the real tool on tmp_path's files; whoever runs the
+    tests stands in for root. `settings` go in the environment as they are."""
     stand_in_pam(tmp_path, sshd)
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name in ("chown", "chmod"):
+    for name in ("chown", "chmod", "sync"):
         (bindir / name).write_text(FAKE_REAL_LOGGED)
         (bindir / name).chmod(0o755)
     return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"),
@@ -3069,7 +3069,8 @@ def test_the_hook_line_goes_before_sshds_first_session_line(tmp_path):
     assert mode(sshd) == 0o644
     [work] = {line.split()[-1] for line in calls(tmp_path)}
     assert Path(work).parent == sshd.parent and Path(work).name.startswith(".sshd.local-ai.")
-    assert calls(tmp_path) == [f"chown root:root {work}", f"chmod 0644 {work}"]
+    # Flushed to disk before the rename (the review's M4).
+    assert calls(tmp_path) == [f"chown root:root {work}", f"chmod 0644 {work}", f"sync -- {work}"]
     assert sorted(path.name for path in sshd.parent.iterdir()) == ["common-account", "common-auth", "sshd"]
     # The old file, backed up first with a time in its name, as it was.
     [backup] = backups(tmp_path)
@@ -3205,6 +3206,48 @@ def test_a_pam_file_with_no_session_line_is_refused(tmp_path):
             "session modules") in result.stderr.splitlines()
 
 
+def test_a_session_line_in_any_case_counts_as_the_first(tmp_path):
+    # libpam reads a line's type without regard to case (the review's M3): `Session` at line 19 is still sshd's first
+    # session line, and the hook's line goes before it.
+    close = "session [success=ok ignore=ignore module_unknown=ignore default=bad]        pam_selinux.so close"
+    assert STOCK_SSHD.count(close) == 1
+    text = STOCK_SSHD.replace(close, "Session" + close.removeprefix("session"))
+    env = pam_env(tmp_path, text)
+    result = pam_step(env)
+    assert result.returncode == 0, result.stderr
+    new = (tmp_path / "pam.d/sshd").read_text().splitlines()
+    assert new[FIRST_SESSION - 1] == PAM_LINE and new[FIRST_SESSION].startswith("Session [success=ok")
+
+
+@pytest.mark.parametrize("at, ending", [(14, " \\"), (18, " \\"), (18, " \\  ")], ids=["comments-between", "just-before",
+                                                                                        "spaces-after"])
+def test_a_line_libpam_would_join_the_hook_onto_is_refused(tmp_path, at, ending):
+    # libpam joins a line ending in \ (spaces after it allowed) to the next line that isn't blank or a comment (the
+    # review's M3): the hook's line would become part of it. Line 14 is @include common-account, the last line with
+    # words before line 19, and 15 to 18 are a blank line and comments; line 18 is the comment just before.
+    lines = STOCK_SSHD.splitlines(keepends=True)
+    joined = "account    required     pam_permit.so" + ending
+    lines[at - 1] = joined + "\n"
+    text = "".join(lines)
+    env = pam_env(tmp_path, text)
+    result = pam_step(env)
+    unchanged(tmp_path, result, text)
+    assert (f"  {tmp_path}/pam.d/sshd:{at} ends in a backslash, so libpam would read the next line, where the hook's "
+            f"line goes, as part of it: {joined}") in result.stderr.splitlines()
+
+
+@pytest.mark.parametrize("line", ["# a comment ending in a backslash \\", "account    required     pam_permit.so # a "
+                                  "comment \\"], ids=["comment", "after-a-comment"])
+def test_a_backslash_libpam_doesnt_join_on_is_no_refusal(tmp_path, line):
+    # libpam stops a line at its #, so a backslash in a comment joins nothing.
+    lines = STOCK_SSHD.splitlines(keepends=True)
+    lines[17] = line + "\n"
+    env = pam_env(tmp_path, "".join(lines))
+    result = pam_step(env)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "pam.d/sshd").read_text().splitlines()[FIRST_SESSION - 1] == PAM_LINE
+
+
 @pytest.mark.parametrize("planted", ["open", "missing", "link"])
 def test_a_backups_folder_that_isnt_roots_own_is_refused(tmp_path, planted):
     env = pam_env(tmp_path)
@@ -3260,9 +3303,11 @@ def test_the_line_bootstrap_writes_parses(tmp_path):
     written = (tmp_path / "pam.d/sshd").read_text().splitlines()[FIRST_SESSION - 1]
     assert written == PAM_LINE
     fields = written.split()
-    assert len(fields) == 4, fields  # type, control, module, its one argument
-    kind, control, module, argument = fields
-    assert (kind, control, module, argument) == ("session", "optional", "pam_exec.so", HOOK)
+    # type, control, module, then its two arguments: type=open_session before the command, as pam_exec reads its
+    # options up to the first word that isn't one (the review's C1: the script never runs at close).
+    assert len(fields) == 5, fields
+    kind, control, module, only, argument = fields
+    assert (kind, control, module, only, argument) == ("session", "optional", "pam_exec.so", "type=open_session", HOOK)
     assert "#" not in written and not written.endswith("\\") and written.isascii() and written.isprintable()
     # The argument is where bootstrap installs the script.
     [install] = [line for line in dry_run() if line.startswith("+ install ") and line.endswith(f" {argument}")]
@@ -3278,6 +3323,107 @@ def test_the_module_the_line_names_exists_where_bootstrap_looks():
     assert default.split() == list(LINUX_PAM_DIRS)
     found = [path for d in LINUX_PAM_DIRS for path in Path("/").glob(d.lstrip("/") + "/pam_exec.so")]
     assert found, "no pam_exec.so in any Linux-PAM module folder"
+
+
+# The written line through the host's own libpam (Task 28's review, I1 and C1): a real PAM transaction, as whoever runs
+# the tests, from a stack in a temporary folder (pam_start_confdir, Linux-PAM 1.4 on; brightroar's libpam.so.0 has it at
+# LIBPAM_1.4, and so does Ubuntu 24.04's on GitHub's runner). No root, nothing under /etc. Where libpam has no
+# pam_start_confdir, as the Mac's OpenPAM, or Linux-PAM's modules aren't there, the test is skipped.
+
+
+def _libpam():
+    import ctypes
+    import ctypes.util
+
+    name = ctypes.util.find_library("pam")
+    if name is None:
+        return None
+    try:
+        lib = ctypes.CDLL(name)
+    except OSError:
+        return None
+    if not hasattr(lib, "pam_start_confdir"):
+        return None
+    return lib
+
+
+LIBPAM = _libpam()
+PAM_MODULES_HERE = all(any(Path("/").glob(d.lstrip("/") + f"/{module}") for d in LINUX_PAM_DIRS)
+                       for module in ("pam_exec.so", "pam_permit.so"))
+PAM_CONV_ERR = 19  # libpam's: the conversation can't answer, which nothing in these stacks asks it to
+
+
+def pam_transaction(confdir: Path, service: str) -> tuple[int, int]:
+    """pam_open_session, then pam_close_session, on one handle libpam starts from `confdir`/`service`, for whoever
+    runs the tests, as sshd does for a login on one handle; their return codes (0 is PAM_SUCCESS)."""
+    import ctypes
+
+    class Message(ctypes.Structure):
+        _fields_ = [("msg_style", ctypes.c_int), ("msg", ctypes.c_char_p)]
+
+    class Response(ctypes.Structure):
+        _fields_ = [("resp", ctypes.c_char_p), ("resp_retcode", ctypes.c_int)]
+
+    conv_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.POINTER(Message)),
+                                 ctypes.POINTER(ctypes.POINTER(Response)), ctypes.c_void_p)
+
+    class Conv(ctypes.Structure):
+        _fields_ = [("conv", conv_type), ("appdata_ptr", ctypes.c_void_p)]
+
+    answer = conv_type(lambda count, messages, responses, data: PAM_CONV_ERR)
+    conv = Conv(answer, None)
+    handle = ctypes.c_void_p()
+    LIBPAM.pam_start_confdir.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(Conv), ctypes.c_char_p,
+                                         ctypes.POINTER(ctypes.c_void_p)]
+    for name in ("pam_open_session", "pam_close_session", "pam_end"):
+        getattr(LIBPAM, name).argtypes = [ctypes.c_void_p, ctypes.c_int]
+    started = LIBPAM.pam_start_confdir(service.encode(), STAND_IN_USER.encode(), ctypes.byref(conv),
+                                       str(confdir).encode(), ctypes.byref(handle))
+    assert started == 0, started
+    try:
+        opened = LIBPAM.pam_open_session(handle, 0)
+        closed = LIBPAM.pam_close_session(handle, 0)
+    finally:
+        LIBPAM.pam_end(handle, 0)
+    return opened, closed
+
+
+@pytest.mark.skipif(LIBPAM is None or not PAM_MODULES_HERE,
+                    reason="no Linux-PAM with pam_start_confdir and its modules here (the Mac's OpenPAM)")
+def test_libpam_reads_the_written_line_and_runs_the_hook_at_open_only(tmp_path):
+    # The line, as the PAM step writes it into a stand-in of Ubuntu's sshd file, pointed at a stand-in hook in the
+    # temporary folder that records each PAM_TYPE it runs for, never the real path; then sshd's way with a login:
+    # open, then close, on one handle. A pam_permit line after it, as sshd's file has required lines after it.
+    box = tmp_path / "box"
+    box.mkdir()
+    assert pam_step(pam_env(box)).returncode == 0
+    written = (box / "pam.d/sshd").read_text().splitlines()[FIRST_SESSION - 1]
+    assert written == PAM_LINE
+    ran = tmp_path / "ran"
+    stand_in = tmp_path / "stand-in-hook"
+    stand_in.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$PAM_TYPE" >> {ran}\n')
+    stand_in.chmod(0o755)
+    line = written.replace(HOOK, str(stand_in))
+    assert line != written and HOOK not in line
+
+    def transaction(first: str, name: str) -> tuple[int, int]:
+        confdir = tmp_path / name
+        confdir.mkdir()
+        (confdir / "local-ai-test").write_text(f"{first}\nsession required pam_permit.so\n")
+        return pam_transaction(confdir, "local-ai-test")
+
+    # libpam parses it: open and close both succeed. The hook runs at open, and never at close, when sshd's PAM
+    # environment holds what pam_env read from the user's ~/.pam_environment (the review's C1).
+    assert transaction(line, "as-written") == (0, 0)
+    assert ran.read_text() == "open_session\n"
+    # The harness sees the difference: the brief's first line, without type=open_session, runs it at close too.
+    ran.unlink()
+    assert transaction(line.replace(" type=open_session ", " "), "without-type") == (0, 0)
+    assert ran.read_text() == "open_session\nclose_session\n"
+    # A control word libpam doesn't know fails the whole stack, however the line's own module does: the lockout this
+    # test exists to catch, seen failing.
+    opened, _ = transaction(line.replace(" optional ", " optionl "), "misspelt")
+    assert opened != 0
 
 
 # agent's user manager: the drop-in, for real, against stand-ins.
