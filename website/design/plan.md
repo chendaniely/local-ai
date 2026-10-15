@@ -1865,7 +1865,8 @@ council, with Dan's fourteen decisions (Revisions).*
     the hook, run as root, an environment `agent` chose.* *(Corrected 2026-10-14, at Task 28's
     review, the controller's ruling: that position keeps `agent`'s environment out at open only.
     sshd closes the session on the same PAM handle, with the environment already filled, and the
-    line as first built ran the hook as root at that close too. The line is `session optional
+    line as first built would have run the hook as root at that close too (it was never
+    deployed). The line is `session optional
     pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom`: pam_exec then never
     starts the hook at close. A test drives the host's libpam to check it.)*
   - *The engines' values stay 1000 and 900, and earlyoom loses `--prefer`, which put every engine
@@ -3898,7 +3899,8 @@ Each item gets its own design pass when its turn comes.
     2026-10-14, at Task 28's review, the controller's ruling. The position keeps `agent`'s environment
     out at open only. sshd calls `pam_close_session` on the same handle, whose environment by then
     holds what `pam_env` read, and a `session` line's module runs at close too. So the line as first
-    built ran the hook as root at every close of `agent`'s session, in that environment. The reviewer
+    built would have run the hook as root at every close of `agent`'s session, in that
+    environment (it was never deployed). The reviewer
     showed this with the box's own libpam. The line is now `session optional pam_exec.so
     type=open_session /usr/local/libexec/local-ai-agent-oom`, and pam_exec returns at close without
     forking.)*

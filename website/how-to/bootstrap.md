@@ -143,7 +143,7 @@ Phase 2a's bootstrap (its Task 27; Dan runs it in Task 36, before the cutover) a
     file), never at the end, so that environment isn't filled yet when it runs.
   - **At close**, `type=open_session` means pam_exec never starts the script at all. sshd closes the
     session with the environment already filled. *(Added 2026-10-14, at Task 28's review: the line
-    first had no `type=`, and the script ran at close too.)*
+    first had no `type=`, and the script would have run at close too; it was never deployed.)*
 
   `optional` means a failing or missing script never stops a login: the failure only shows in the
   journal and at that login.

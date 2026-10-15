@@ -7037,8 +7037,8 @@ git commit -m "feat(host): 🤖 bootstrap for 2a: spark-front and spark-pull, ro
     *(Corrected 2026-10-14, at Task 28's review, the reviewer's C1 and the controller's ruling: the
     position keeps that environment out at open only. sshd closes the session on the same PAM
     handle, whose environment by then holds what `pam_env` read. A `session` line's module runs at
-    close too, so the line as first built started the script as root at every close of `agent`'s
-    session, in that environment. The reviewer showed it with the box's own libpam: a scratch
+    close too, so the line as first built would have started the script as root at every close of
+    `agent`'s session, in that environment (it was never deployed). The reviewer showed it with the box's own libpam: a scratch
     `LD_PRELOAD` ran before the script, with `PAM_TYPE=close_session`. The line is now `session
     optional pam_exec.so type=open_session /usr/local/libexec/local-ai-agent-oom`, and pam_exec
     returns at close before it forks. The script's own `PAM_TYPE` check stays as a second line.
