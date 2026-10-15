@@ -1,243 +1,458 @@
-"""`spark status` — what's loaded, how much memory is left before the brake, the brake's hold, and whether llama-swap
-took the brake's own key when the brake started.
+"""`spark status` (Phase 2a; plan.md, *What you see in Phase 2a*): the gate's StatusView, in plain words, in the order
+Dan asks: how much room, what's loaded, what is waiting, what is paused or held, what happened, and whether everything
+is up. `--json` prints the view as the gate gave it, for 2b's menu bar.
 
-It reports problems, it doesn't fail on them: what it can't read, it says so, shows the rest, and exits 0. What it says
-must be true for whoever runs it. The brake's state folder is 2770 spark:spark-admin, so an account outside spark-admin
-(agent) is told the hold is unknown to it, never that there is one or that there's none. Launch's folder, which holds
-the refusals since Phase 2a, is 0750 spark:spark and each record in it 0600, so only spark reads them: any other
-account, Dan's included, is told the last refusal is unknown to it (outside the spark group) or can't be read (inside
-it), until Task 29 asks the gate instead.
-"""
+It asks the gate only, never llama-swap, and needs no key: a login in spark-admin (by its groups now, os.getgroups())
+reads `GET /v1/status` on the control socket, any other the status socket, which gives that caller its own refusals
+and events and the system's, each refusal in its own key's words (agent's name none of Dan's processes). Its next steps
+are Dan's for spark-admin's members and root, and name Dan for anyone else, who is never told to run a command only Dan
+can run (Task 6). With the gate not answering it shows memory from /proc/meminfo, the brake's line from the deployed
+registry, and says what is unknown until the gate is back.
+
+It reports problems, it doesn't fail on them: what it can't read, it says so, and it exits 0 whatever it finds. Every
+line it prints must be true and plain (Dan's rule), so a number it can't show truthfully it doesn't show: free for a
+load below 1 is *none*, never a negative number, and a breakdown always adds up to the figure it explains."""
 
 from __future__ import annotations
 
 import argparse
+import grp
 import json
-import math
 import os
-import stat
+import socket
+import time
 from collections.abc import Mapping
-from dataclasses import asdict
-from decimal import ROUND_FLOOR, Decimal
-from pathlib import Path
+from datetime import datetime, timedelta, tzinfo
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from typing import Any
 
 import yaml
 
-from spark import paths
-from spark.brake import FALLBACK, KeyCheck, read_key_check
-from spark.hold import UNREADABLE_SINCE, Hold, read_hold
-from spark.launch import REFUSALS, newest_refusal
-from spark.llamaswap import LlamaSwap, LlamaSwapError, Running, key_from_env
-from spark.memory import MemInfo, read_meminfo
-from spark.registry import Registry, load_registry
+from spark import gateclient, gateproto, messages, paths
+from spark.brake import FALLBACK
+from spark.gateclient import GateClient, GateError, GateUnavailable
+from spark.memory import read_meminfo
+from spark.registry import load_registry
 
-# Nearer the brake line than this, memory shows in tenths of a GiB: a whole number there could hide which side of the
-# line the box is on.
+TIMEOUT_S = 3.0  # each call to the gate: the connection, and the whole answer
+# Nearer the brake line than this, the header shows tenths of a GiB: a whole number there could hide which side of the
+# line the box is on (Phase 1's rule).
 NEAR_GIB = 10
-TENTH = Decimal("0.1")
-# What can go wrong, in the order of the lines it bears on: problems are listed in this order.
-PARTS = ("registry", "memory", "llama-swap", "loaded", "state", "key check", "refusal")
+COLUMN = 12  # the width of a row's name: `not loaded` and two spaces
+_STEP = {"dan": "make doctor", "agent": "make doctor shows Dan what's wrong"}  # the gate not answering
 
 
-def _down(value: Decimal) -> float:
-    """Rounded down to a tenth, as admission rounds what's available: what's available never shows as more than there
-    is, and a box past the brake line never reads as on it, or as -0.0 (round(-0.04, 1) is -0.0; this gives -0.1)."""
-    return float(value.quantize(TENTH, ROUND_FLOOR))
+def local_zone() -> tzinfo | None:
+    """The box's own zone, the one Dan reads his clock in."""
+    return datetime.now().astimezone().tzinfo
 
 
-def gather(mem: MemInfo | None, registry: Registry | None, running: list[Running] | None, hold: Hold | None,
-           refusal: dict | None = None, *, problems: Mapping[str, str] | None = None,
-           can_release: bool = True, key_check: KeyCheck | None = None) -> dict:
-    """What `spark status` shows, as data. A `mem`, `registry` or `running` of None couldn't be read, and `problems`
-    says why, by part (PARTS): with no registry, headroom is measured to the plan's brake line, and `running` None
-    with no "llama-swap" problem reads as llama-swap unreachable. A `hold`, `refusal` (the newest of launch's
-    refusal records) or `key_check` (the brake's start check) of None is none. A "state" problem means the brake's
-    state folder is closed to this account: the hold and the start check are then unknown, not absent. A "refusal"
-    problem means the last refusal is unknown: its folder is closed to this account, or its record isn't one."""
-    problems = dict(problems or {})
-    if mem is not None and not (math.isfinite(mem.total_gib) and math.isfinite(mem.available_gib)):
-        problems.setdefault("memory", f"memory reads that aren't numbers: {mem}")
-        mem = None
-    if mem is None:
-        problems.setdefault("memory", "can't read memory")
-    if running is None:
-        problems.setdefault("llama-swap", "llama-swap unreachable")
-    brake_gib = FALLBACK.brake_gib if registry is None else registry.brake.brake_gib
-    memory = None
-    if mem is not None:
-        available = Decimal(repr(mem.available_gib))
-        memory = {
-            "total_gib": round(mem.total_gib, 1),
-            "available_gib": _down(available),
-            "headroom_before_brake_gib": _down(available - Decimal(repr(brake_gib))),
-            "brake_gib": brake_gib,
-        }
-    loaded = None
-    if running is not None:
-        loaded, unlisted = [], []
-        for r in running:
-            model = None if registry is None else registry.models.get(r.model)
-            if registry is not None and model is None:
-                unlisted.append(f"{r.model} is loaded but isn't in the registry")
-            loaded.append({
-                "model": r.model,
-                "state": r.state,
-                "resident": model.resident if model else None,
-                "footprint_gib": model.footprint_gib if model else None,
-            })
-        if unlisted:
-            problems.setdefault("loaded", "; ".join(unlisted))
-    if "state" in problems:
-        brake = {"state": "unknown", "since": None, "reason": None, "unloaded": None, "can_release": False}
-    elif hold is None:
-        brake = {"state": "no hold", "since": None, "reason": None, "unloaded": None, "can_release": False}
-    else:
-        stand_in = hold.since == UNREADABLE_SINCE  # read_hold's stand-in for a file it couldn't read: it still holds
-        brake = {"state": "holding", "since": None if stand_in else hold.since, "reason": hold.reason,
-                 "unloaded": None if stand_in else list(hold.unloaded), "can_release": can_release}
-    brake["key_check"] = None if key_check is None or "state" in problems else asdict(key_check)
-    return {
-        "memory": memory,
-        "registry_loaded": registry is not None,
-        "loaded": loaded,
-        "brake": brake,
-        "last_refusal": refusal,
-        "problems": [problems[part] for part in PARTS if part in problems]
-                    + [text for part, text in problems.items() if part not in PARTS],
-    }
+# Numbers, as the plan shows them: sizes in whole GiB, times on a 24-hour clock.
+
+def _d(value: float) -> Decimal:
+    return Decimal(repr(value))
 
 
-def _memory(m: dict | None, registry_loaded: bool) -> str:
-    if m is None:
-        return "unknown"
-    line = f"{m['brake_gib']:g} GiB" if registry_loaded else f"{m['brake_gib']:g} GiB, the plan's default"
-    available, headroom = m["available_gib"], m["headroom_before_brake_gib"]
-    if headroom >= NEAR_GIB:
-        return (f"{math.floor(available)} GiB available of {m['total_gib']:.0f} GiB · "
-                f"{math.floor(headroom)} GiB before the brake ({line})")
-    where = (f"{headroom:.1f} GiB before the brake" if headroom >= 0
-             else f"past the brake line by {-headroom:.1f} GiB")
-    return f"{available:.1f} GiB available of {m['total_gib']:.0f} GiB · {where} ({line})"
+def _floor(value: Decimal, places: int = 0) -> Decimal:
+    return value.quantize(Decimal((0, (1,), -places)), ROUND_FLOOR)
 
 
-def _loaded(entries: list[dict] | None, registry_loaded: bool) -> str:
-    if entries is None:
-        return "unknown"
-    if not entries:
-        return "nothing"
-    parts = []
-    for x in entries:
-        if x["footprint_gib"] is not None:
-            kind = "resident" if x["resident"] else "on demand"
-            parts.append(f"{x['model']} ({kind}, ~{x['footprint_gib']:g} GiB, {x['state']})")
-        elif registry_loaded:
-            parts.append(f"{x['model']} (not in the registry, {x['state']})")
-        else:  # the registry that would say didn't load
-            parts.append(f"{x['model']} ({x['state']})")
-    return " · ".join(parts)
+def _up(value: float) -> int:
+    return int(_d(value).to_integral_value(ROUND_CEILING))
 
 
-def _key_check(check: dict | None) -> str:
-    """What the brake line says of the brake's start check: whether llama-swap took its key when it started."""
-    if check is None:
-        return "no start check recorded (`make logs s=brake`)"
-    if check["ok"] is None:
-        return f"its start check is waiting for llama-swap (since {check['at']})"
-    if check["ok"]:
-        return f"llama-swap took its key at {check['at']}"
-    return f"its start check FAILED at {check['at']}: {check['detail']} — `make logs s=brake`"
+def _near(value: float) -> int:
+    return int(_d(value).to_integral_value(ROUND_HALF_UP))
 
 
-def _brake(b: dict) -> str:
-    if b["state"] == "unknown":
-        return "unknown"  # the hold and the start check alike
-    if b["state"] != "holding":
-        return f"no hold · {_key_check(b['key_check'])}"
-    since = UNREADABLE_SINCE if b["since"] is None else b["since"]
-    unloaded = "unknown" if b["unloaded"] is None else (", ".join(b["unloaded"]) or "nothing yet")
-    release = "`make brake-release` to clear" if b["can_release"] else "spark-admin can release it"
-    return f"HOLDING since {since} ({b['reason']}); unloaded: {unloaded} — {release} · {_key_check(b['key_check'])}"
+def _plain(value: Decimal) -> str:
+    """A Decimal as written: 48, 48.9, never 4.8E+1."""
+    return f"{value.normalize():f}"
+
+
+def _when(at: float, now: float, tz: tzinfo | None) -> str:
+    """A moment on the 24-hour clock in `tz`: 18:00 within a day of `now`, else with its day, *Fri 16 Oct, 18:00*, as
+    messages' times read (messages._until)."""
+    moment = datetime.fromtimestamp(at, tz)
+    if abs(moment - datetime.fromtimestamp(now, tz)) < timedelta(days=1):
+        return f"{moment:%H:%M}"
+    return f"{moment:%a} {moment.day} {moment:%b}, {moment:%H:%M}"
 
 
 def _shown(line: str) -> str:
     """The line with every character a terminal would act on written out instead (ESC as \\x1b, a newline as \\n):
-    reasons, names and states come from files, and from whatever answers on llama-swap's port."""
+    labels, session labels and *recent*'s texts come from the registry, the key list and callers."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in line)
 
 
-def format_text(status: dict) -> str:
-    lines = [
-        f"memory   {_memory(status['memory'], status['registry_loaded'])}",
-        f"loaded   {_loaded(status['loaded'], status['registry_loaded'])}",
-        f"brake    {_brake(status['brake'])}",
-    ]
-    r = status["last_refusal"]
-    if r:
-        lines.append(f"refused  {r['model']} at {r['at']}: {r['reason']}")
-    lines += [f"problem  {text}" for text in status["problems"]]
+def _row(name: str, text: str) -> str:
+    return f"{name:<{COLUMN}}{text}"
+
+
+def _under(text: str) -> str:
+    return " " * COLUMN + text
+
+
+# The rows.
+
+def _header(host: str, total: float, available: float, brake: float) -> str:
+    """`<host> · 48 GiB available of 121 · 28 above the brake's 20 GiB line`: what's available and the total rounded
+    down, as `free -g` shows them, and in tenths near the line, so a box past it never reads as on it."""
+    places = 1 if _d(available) - _d(brake) < NEAR_GIB else 0
+    above = _floor(_d(available) - _d(brake), places)  # -0.04 is -0.1: past the line, never on it
+    side = f"{abs(above):f} above" if above >= 0 else f"{abs(above):f} below"
+    return (f"{host} · {_floor(_d(available), places):f} GiB available of {_floor(_d(total)):f} · {side} the brake's "
+            f"{_plain(_d(brake))} GiB line")
+
+
+def _adds_up(start: float, items: list[tuple[float, str]], free_shown: int | None) -> tuple[str, list[str]] | None:
+    """The breakdown's terms as shown, when they add up to the figure shown (`free_shown`, None for *none*): whole GiB
+    when the whole terms do, else one decimal, else two (messages._breakdown's rule, Task 6's fix round 3). The start
+    rounds down, as *available* does, the rest to the nearest. None when no showing adds up."""
+    for places in (0, 1, 2):
+        step = Decimal((0, (1,), -places))
+        first = _d(start).quantize(step, ROUND_FLOOR)
+        terms = [(_d(value).quantize(step, ROUND_HALF_UP), words) for value, words in items]
+        total = int((first - sum((value for value, _ in terms), Decimal(0))).to_integral_value(ROUND_FLOOR))
+        if (total if total >= 1 else None) == free_shown:
+            return _plain(first), [words.format(f"{_plain(value)} GiB") for value, words in terms if value]
+    return None
+
+
+def _free(memory: Mapping[str, Any]) -> str:
+    """`free for a load: 18 GiB (48 available, less the 24 GiB reserve and 6 GiB still owed)`: the gate's own figure for
+    this caller (rule 9), and the memory terms that give it, the make-room hold among them where the figure counts it
+    (agent's view, since Dan's group loads into the hold). Where the GPU's ceiling or a load starting gave the figure,
+    the memory terms don't reach it, and it says so rather than show a sum that doesn't add up."""
+    free = _d(memory["free_for_a_load_gib"])
+    shown = int(free.to_integral_value(ROUND_FLOOR))
+    figure = f"{shown} GiB" if shown >= 1 else "none"
+    items = [(memory["reserve_gib"], "the {} reserve"), (memory["owed_gib"], "{} still owed")]
+    tries = [items]
+    if memory["held_gib"] > 0:
+        tries.append([*items, (memory["held_gib"], "the {} make-room holds for Dan")])
+    for terms in tries:
+        found = _adds_up(memory["available_gib"], terms, shown if shown >= 1 else None)
+        if found is not None:
+            start, less = found
+            return f"free for a load: {figure} ({start} available, less {messages._and(less)})"
+    start = _plain(_floor(_d(memory["available_gib"])))
+    less = [words.format(f"{_near(value)} GiB") for value, words in items if _near(value)]
+    return (f"free for a load: {figure} (the GPU's ceiling or a load still starting holds it below {start} available, "
+            f"less {messages._and(less)})")
+
+
+def _unaccounted(memory: Mapping[str, Any]) -> list[str]:
+    """`used by other processes: 26 GiB`, only above 0: idle MemAvailable, less what's available and the loaded models'
+    footprints. Cold residents hold less than their footprints, so at idle the figure goes below 0: no line then."""
+    value = memory["unaccounted_gib"]
+    if not value > 0:
+        return []
+    near = _near(value)
+    return [f"used by other processes: {near} GiB" if near >= 1 else "used by other processes: less than 1 GiB"]
+
+
+def _doing(m: Mapping[str, Any]) -> str:
+    """A loaded model's last column: what it is doing, and its requests in flight, with the oldest's age from a minute
+    on, so a count that leaked would show (Review Focus 1)."""
+    parts = {"starting": ["loading"], "draining": ["unloading"], "stopping": ["stopping"]}.get(m["state"], [])
+    if m["inflight"]:
+        oldest = m["oldest_request_s"]
+        age = f" (oldest {int(oldest // 60)} min)" if oldest is not None and oldest >= 60 else ""
+        parts.append(f"answering {m['inflight']}{age}")
+    return ", ".join(parts)
+
+
+def _models(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> list[str]:
+    models = view["models"]
+    names = [m["label"] if m["label"] == m["name"] else f"{m['label']} ({m['name']})" for m in models]
+    sizes = [f"up to {_up(m['footprint_gib'])} GiB" for m in models]
+    kinds = ["always loaded" if m["resident"] else "loads when asked" for m in models]
+    widths = [max((len(each) for each in column), default=0) + 2 for column in (names, sizes, kinds)]
+    lines = []
+    for loaded, row_name in ((True, "loaded"), (False, "not loaded")):
+        group = [i for i, m in enumerate(models) if (m["state"] != "not_loaded") == loaded]
+        if not group and loaded:
+            lines.append(_row(row_name, "nothing"))
+        for n, i in enumerate(group):
+            cells = (names[i].ljust(widths[0]) + sizes[i].ljust(widths[1]) + kinds[i].ljust(widths[2])
+                     + (_doing(models[i]) if loaded else ""))
+            lines.append(_row(row_name if n == 0 else "", cells.rstrip()))
+            mark = models[i]["brake_mark"]
+            if mark is not None:
+                seen = mark["seen_gib"]
+                seen_text = f"seen using {_near(seen)} GiB" if seen is not None else "seen using: not known"
+                lines.append(_under(f"marked: it was loading when the brake fired at {_when(mark['at'], now, tz)} "
+                                    f"({seen_text});"))
+                lines.append(_under("only you can load it again" if words == "dan" else "only Dan can load it again"))
+    return lines
+
+
+def _waited(waited_s: float, wait_s: float) -> str:
+    """`2 min of 10`, `12 s of 30`, `40 s of 10 min`: the unit once where both share it."""
+    if waited_s >= 60:
+        waited, unit, whole = f"{int(waited_s // 60)} min", 60, wait_s % 60 == 0
+    else:
+        waited, unit, whole = f"{int(waited_s)} s", 1, wait_s < 60 and wait_s == int(wait_s)
+    if whole:
+        return f"{waited} of {int(wait_s // unit)}"
+    if wait_s % 60 == 0:
+        return f"{waited} of {int(wait_s // 60)} min"
+    return f"{waited} of {messages.duration(wait_s)}"
+
+
+def _why(wait: Mapping[str, Any], view: Mapping[str, Any], label: str, words: str,
+         commands: Mapping[str, str]) -> str:
+    """A wait's reason (gateproto.WAITING_WHY), in Task 29's words."""
+    why = wait["why"]
+    if why == "memory":
+        footprints = {m["name"]: m["footprint_gib"] for m in view["models"]}
+        free = int(_d(view["memory"]["free_for_a_load_gib"]).to_integral_value(ROUND_FLOOR))
+        need = f"needs {_up(footprints[wait['model']])} GiB, " if wait["model"] in footprints else ""
+        return f"waiting for memory: {need}{free if free >= 1 else 'none'} free for a load"
+    if why == "slot":
+        loading = [m["label"] for m in view["models"] if m["state"] == "starting"]
+        return f"waiting its turn: {loading[0] if loading else 'another model'} is loading"
+    if why == "dan":
+        command = f"spark load {commands.get(wait['model'], wait['model'])}"
+        return f"waiting for you: {command}" if words == "dan" else f"waiting for Dan: {command}"
+    if why == "draining":
+        return f"waiting while {label} finishes unloading"
+    fixed = {"brake": "waiting for the brake's pause to end", "restart": "waiting for the model service's restart",
+             "llama_swap": "waiting for the model service to answer",
+             "swap_refused": "waiting to try again: llama-swap refused the load",
+             "ticket": "waiting its turn: the gate is settling a load ticket it couldn't withdraw"}
+    return fixed.get(why, f"waiting ({why})")
+
+
+def _waiting(view: Mapping[str, Any], words: str, commands: Mapping[str, str]) -> list[str]:
+    labels = {m["name"]: m["label"] for m in view["models"]}
+    if not view["waiting"]:
+        return [_row("waiting", "nothing")]
+    lines = []
+    for n, wait in enumerate(view["waiting"]):
+        label = labels.get(wait["model"], wait["model"])
+        lines.append(_row("waiting" if n == 0 else "", f"{wait['key_label']} → {label} · "
+                          f"{_waited(wait['waited_s'], wait['wait_s'])} · {_why(wait, view, label, words, commands)}"))
+    return lines
+
+
+def _paused(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> str:
+    """The brake's hold: `no` without one (the view carries no last fire or release then: the controller's ruling at
+    Task 29); with one, when it fired and how low memory ran, and whether it lifts by itself or waits for Dan."""
+    paused = view["paused"]
+    if paused is None:
+        return _row("paused", "no")
+    since = paused["since"]
+    lead = (f"since {_when(since, now, tz)}" if since is not None
+            else "by a brake hold that doesn't record when it fired")
+    if paused["available_gib"] is not None:
+        lead += f" ({messages._reading(paused['available_gib'])} available)"
+    if paused["waits_for_dan"]:
+        then = "waits for you: make brake-release" if words == "dan" else "waits for Dan: make brake-release"
+    else:
+        then = (f"resumes by itself after {gateproto.RELEASE_AFTER_S // 60:g} min above "
+                f"{messages._line(view['memory']['warn_gib'])} available")
+    return _row("paused", f"{lead} · {then}")
+
+
+def _held(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> str:
+    """Apply's hold first, then make-room's (the final check's f-5), the pins and the sessions, each by name."""
+    parts = []
+    applying = view["applying"]
+    if applying is not None:
+        parts.append(f"new requests, for make apply since {_when(applying['since'], now, tz)} · until the model "
+                     "service answers again")
+    held = view["held"]
+    if held is not None:
+        until = f"until {_when(held['until'], now, tz)}" if held["until"] is not None else "until a reboot"
+        size = f"{_near(held['size_gib'])} GiB"
+        parts.append(f"{size} for you {until} · spark make-room --done ends it" if words == "dan"
+                     else f"{size} for Dan {until} · Dan's spark make-room --done ends it")
+    if not parts:
+        parts.append("nothing")
+    pins = [f"{pin['label']} until {_when(pin['until'], now, tz)}" if pin["until"] is not None
+            else f"{pin['label']} with no end set" for pin in view["pins"]]
+    parts.append(f"pins {messages._and(pins)}" if pins else "pins none")
+    sessions = [f"{s['label']}, since {_when(s['started_at'], now, tz)}" for s in view["sessions"]]
+    parts.append(f"sessions: {'; '.join(sessions)}" if sessions else "sessions none")
+    return _row("held", " · ".join(parts))
+
+
+def _recent(view: Mapping[str, Any], now: float, tz: tzinfo | None) -> list[str]:
+    """Newest first, each its whole text, a refusal's after whom it was for (the controller's ruling at Task 29: the
+    truth beats a short line)."""
+    rows = sorted(view["recent"], key=lambda each: each["at"], reverse=True)
+    if not rows:
+        return [_row("recent", "nothing")]
+    lines = []
+    for n, item in enumerate(rows):
+        said = f"for {item['key_label']}: {item['text']}" if item["key_label"] else item["text"]
+        lines.append(_row("recent" if n == 0 else "", f"{_when(item['at'], now, tz)}  {said}"))
+    return lines
+
+
+def _brake(brake: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> str:
+    """Only a brake that is up and whose start check passed reads ok; anything else says what, and where to look (the
+    controller's ruling at Task 29): the brake's journal, which only Dan reads."""
+    if brake["status"] == "ok":
+        checked = brake["key_checked_at"]
+        return f"brake ok (key checked {_when(checked, now, tz)})" if checked is not None else "brake ok (key checked)"
+    look = "make logs s=brake" if words == "dan" else "make logs s=brake shows Dan why"
+    return f"brake {brake['status']} ({look})"
+
+
+def _ntfy(ntfy: Mapping[str, Any], now: float, tz: tzinfo | None) -> str:
+    if ntfy["status"] == "not_set_up":  # 2a's state until Task 2, in Phase 5: there is no ntfy to fail or drop for
+        return "ntfy not set up (Task 2, Phase 5)"
+    if ntfy["status"] == "failing":
+        since = ntfy["failing_since"]
+        said = f"ntfy failing since {_when(since, now, tz)}" if since is not None else "ntfy failing"
+    else:
+        said = f"ntfy {ntfy['status']}"
+    dropped = ntfy["dropped"]
+    if dropped:
+        said += f" · {dropped} notification{'s' if dropped != 1 else ''} dropped"
+    return said
+
+
+def _health(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> list[str]:
+    health = view["health"]
+    parts = [f"front {health['front']}", f"gate {health['gate']}", _brake(health["brake"], now, tz, words)]
+    if health["llama_swap"] != "ok":
+        parts.append(f"the model service {health['llama_swap']}")
+    parts.append(_ntfy(health["ntfy"], now, tz))
+    lines = [_row("health", " · ".join(parts))]
+    if health["damaged_at"] is not None:
+        kept = health["damaged_kept_as"]
+        lines.append(_under(f"state started fresh at {_when(health['damaged_at'], now, tz)}; "
+                            + (f"the damaged file is kept as {kept}" if kept else "the damaged file couldn't be kept")))
+    lines += [_under(problem) for problem in health["read_problems"]]
+    labels = {m["name"]: m["label"] for m in view["models"]}
+    for engine in health["unticketed_engines"]:
+        lines.append(_under(f"{labels.get(engine['model'], engine['model'])} runs on port {engine['port']} (pid "
+                            f"{engine['pid']}) without a ticket from the gate: a load around the gate"))
+    refused = health["no_ticket_refusals"]
+    if refused:
+        lines.append(_under(f"spark launch refused {refused} start{'s' if refused != 1 else ''} without a ticket from "
+                            "the gate this boot"))
+    age = health["activity_age_s"]
+    if age is not None and age > gateproto.ACTIVITY_STALE_S:
+        lines.append(_under(f"the gate's activity record is {int(age)} s old, so the brake goes by Phase 1's order"))
+    return lines
+
+
+def format_status(view: Mapping[str, Any], *, tz: tzinfo | None, words: str = "dan",
+                  commands: Mapping[str, str] | None = None) -> str:
+    """The StatusView as plan.md lays it out, its rows in order: the header, `free for a load` (and `used by other
+    processes` when above 0), `loaded`, `not loaded` (a brake mark under its model), `waiting`, `paused`, `held`,
+    `recent`, `health`, then each of the gate's problems. Times in `tz`; next steps in Dan's words (`words` "dan") or
+    naming Dan ("agent"); `commands` each model's name for `spark load`, its first role (its own name otherwise)."""
+    if view.get("schema") != gateproto.STATUS_SCHEMA:
+        raise _Unreadable(f"its schema is {view.get('schema')}, and this reads {gateproto.STATUS_SCHEMA}")
+    commands = commands or {}
+    now, memory = view["at"], view["memory"]
+    lines = [_header(view["host"], memory["total_gib"], memory["available_gib"], memory["brake_gib"]), _free(memory),
+             *_unaccounted(memory), *_models(view, now, tz, words), *_waiting(view, words, commands),
+             _paused(view, now, tz, words), _held(view, now, tz, words), *_recent(view, now, tz),
+             *_health(view, now, tz, words), *(_row("problem", problem) for problem in view["problems"])]
     return "\n".join(_shown(line) for line in lines)
 
 
+class _Unreadable(ValueError):
+    """An answer of the gate's that isn't a StatusView this spark status can read."""
+
+
+# The gate not answering.
+
+def _down(err: GateError, registry: Any, registry_problem: str | None, words: str) -> tuple[dict, str]:
+    """What `spark status` gives with no view from the gate: `--json`'s shape, `{schema, host, at, memory: {total_gib,
+    available_gib, brake_gib}, gate}`, for 2b's menu bar, and the text: the header from /proc/meminfo, the brake's line
+    from the deployed registry (the plan's when it won't load), then the gate's line and what couldn't be read."""
+    host = socket.gethostname().split(".")[0]
+    brake = FALLBACK.brake_gib if registry is None else registry.brake.brake_gib
+    problems = []
+    try:
+        mem = read_meminfo()
+        total, available = mem.total_gib, mem.available_gib
+        header = _header(host, total, available, brake)
+    except (OSError, ValueError) as error:
+        total = available = None
+        header = f"{host} · memory can't be read"
+        problems.append(f"can't read memory: {error}")
+    if registry_problem is not None:
+        problems.append(f"{registry_problem}; the brake's line is the plan's, {_plain(_d(FALLBACK.brake_gib))} GiB")
+    if isinstance(err, GateUnavailable):
+        gate = "not answering"
+        said = f"not answering: what's loaded, waiting, held or paused is unknown until it's back · {_STEP[words]}"
+    else:
+        gate = said = str(err)
+    shape = {"schema": gateproto.STATUS_SCHEMA, "host": host, "at": time.time(),
+             "memory": {"total_gib": total, "available_gib": available, "brake_gib": brake}, "gate": gate}
+    lines = [header, _row("gate", said), *(_row("problem", problem) for problem in problems)]
+    return shape, "\n".join(_shown(line) for line in lines)
+
+
+# The command.
+
 def register(subparsers) -> None:
-    p = subparsers.add_parser("status", help="what's loaded, memory headroom, the brake")
-    p.add_argument("--json", action="store_true")
-    p.add_argument("--key-env", default="SPARK_API_KEY", help="env var holding a llama-swap key")
+    p = subparsers.add_parser("status", help="room for a load, what's loaded, waiting, paused or held, recent, health")
+    p.add_argument("--json", action="store_true", help="the gate's view as it gave it, for the menu bar")
     p.set_defaults(func=run)
 
 
-def _closed(folder: Path) -> bool:
-    """Whether the folder (the brake's state folder, or launch's) is there but closed to this account. Then what it
-    holds is unknown to it, not absent: `spark launch` and the brake run as spark, which reads them."""
+def _admin_login() -> bool:
+    """Whether this login has spark-admin now (its groups, os.getgroups()), as the control socket checks it."""
     try:
-        mode = os.stat(folder).st_mode
-    except FileNotFoundError:
-        return False  # no folder, so no file in it: launch finds the same
-    except PermissionError:
-        return True  # a folder on the way to it can't be searched
-    except OSError:
-        return False  # the reader says what's wrong, as launch would find it
-    return stat.S_ISDIR(mode) and not os.access(folder, os.X_OK)  # search is what opening a file in it takes
+        gid = grp.getgrnam(gateproto.SOCKET_GROUPS["control"]).gr_gid
+    except KeyError:
+        return False
+    return gid == os.getegid() or gid in os.getgroups()
 
 
-def _one_line(err: BaseException) -> str:
-    return " ".join(str(err).split())  # a YAML error spans lines, with a caret under the fault
+def _registry() -> tuple[Any, str | None]:
+    try:
+        return load_registry(paths.REGISTRY), None
+    except (OSError, ValueError, yaml.YAMLError, RecursionError) as err:  # RecursionError: YAML nested too deep
+        return None, f"the registry {paths.REGISTRY} won't load: {' '.join(str(err).split())}"
+
+
+def _print_json(data: Any) -> bool:
+    try:
+        print(json.dumps(data, indent=2, allow_nan=False))
+    except ValueError:  # a number that isn't one, which the gate never sends
+        return False
+    return True
 
 
 def run(args: argparse.Namespace) -> int:
-    problems: dict[str, str] = {}
+    path = paths.GATE_CONTROL_SOCKET if _admin_login() else paths.GATE_STATUS_SOCKET
+    words = gateclient._words()  # Dan's for spark-admin's members and root, agent's for anyone else
+    registry, registry_problem = _registry()
+    failed: GateError | None = None
     try:
-        registry = load_registry(paths.REGISTRY)
-    except (OSError, ValueError, yaml.YAMLError, RecursionError) as err:  # RecursionError: YAML nested too deep
-        registry = None
-        problems["registry"] = f"the registry {paths.REGISTRY} won't load: {_one_line(err)}"
-    key = key_from_env(args.key_env)
-    try:
-        running = LlamaSwap(paths.LLAMASWAP_URL, key, timeout=3).running()
-    except LlamaSwapError as err:  # its text never holds the key, and says "unreachable" only when nothing answered
-        running = None
-        problems["llama-swap"] = str(err) if key else f"{err} (no key in ${args.key_env})"
-    try:
-        mem = read_meminfo()
-    except (OSError, ValueError) as err:
-        mem = None
-        problems["memory"] = f"can't read memory: {err}"
-    hold = refusal = key_check = None
-    if _closed(paths.STATE):
-        problems["state"] = (f"this account can't read {paths.STATE}, so the brake's hold and its start check are "
-                             "unknown to it; spark-admin can read them")
+        view = GateClient(path, TIMEOUT_S).get("/v1/status")
+    except GateError as err:
+        failed = err
+    if failed is None and args.json:
+        if _print_json(view):
+            return 0
+        failed = GateError("answered with a number that isn't one, which JSON can't carry")
+    if failed is None:
+        commands = {} if registry is None else {
+            name: (model.roles or (name,))[0] for name, model in registry.models.items()}
+        try:
+            print(format_status(view, tz=local_zone(), words=words, commands=commands))
+            return 0
+        except _Unreadable as err:
+            why = str(err)
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as err:
+            why = type(err).__name__
+        failed = GateError(f"answered, but with a status this spark status can't read ({why}); spark status --json "
+                           "shows it as it came")
+    shape, text = _down(failed, registry, registry_problem, words)
+    if args.json:
+        _print_json(shape)
     else:
-        hold = read_hold(paths.STATE)
-        key_check, damaged = read_key_check(paths.STATE)
-        if damaged:
-            problems["key check"] = damaged
-    closed = [folder for folder in (paths.LAUNCH, paths.LAUNCH / REFUSALS) if _closed(folder)]
-    if closed:
-        problems["refusal"] = f"this account can't read {closed[0]}, so the last refusal is unknown to it"
-    else:
-        refusal, damaged = newest_refusal(paths.LAUNCH)
-        if damaged:
-            problems["refusal"] = damaged
-    status = gather(mem, registry, running, hold, refusal, problems=problems,
-                    can_release=os.access(paths.STATE, os.W_OK | os.X_OK), key_check=key_check)
-    print(json.dumps(status, indent=2, allow_nan=False) if args.json else format_text(status))
+        print(text)
     return 0

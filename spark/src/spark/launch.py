@@ -11,7 +11,7 @@ this a user's job could be chosen instead. The engine gets llama-swap's environm
 third-party model files and needs none of them.
 
 A refusal exits 3, says why on stderr, which llama-swap keeps, and leaves the reason in `refusals/<model>.json` under
-launch's folder, for the gate and `spark status`: every refusal but root's, which writes nothing. Launch never sleeps or retries: the gate is where a load waits. It
+launch's folder, for the gate, which `spark status` reads: every refusal but root's, which writes nothing. Launch never sleeps or retries: the gate is where a load waits. It
 runs as spark, never as root: its folder is spark's, and root never writes through a path spark controls.
 """
 
@@ -70,8 +70,8 @@ def _refusal_path(launch: Path, model: str) -> Path:
 
 
 def record_refusal(launch: Path, model: str, code: str, reason: str) -> None:
-    """Leave the reason where the gate and `spark status` find it; the client only sees a failed start. One record per
-    model, swapped in whole, so a reader never sees part of one."""
+    """Leave the reason where the gate finds it; the client only sees a failed start. One record per model, swapped in
+    whole, so a reader never sees part of one."""
     at = datetime.datetime.now().isoformat(timespec="seconds")
     try:
         tickets.write_whole(_refusal_path(launch, model), {"at": at, "model": model, "code": code, "reason": reason})
@@ -94,8 +94,8 @@ def _check(path: Path, model: str) -> tuple[dict | None, str | None]:
 
 
 def check_refusal(launch: Path, model: str) -> tuple[dict | None, str | None]:
-    """The model's last refusal, and what's wrong with the record when it isn't one: `spark status` says so rather
-    than show nothing. (None, None) when there is no record."""
+    """The model's last refusal, and what's wrong with the record when it isn't one: the gate says so, under `spark
+    status`'s health, rather than show nothing. (None, None) when there is no record."""
     try:
         path = _refusal_path(launch, model)
     except ValueError:
@@ -108,35 +108,11 @@ def read_refusal(launch: Path, model: str) -> dict | None:
     return check_refusal(launch, model)[0]
 
 
-def newest_refusal(launch: Path) -> tuple[dict | None, str | None]:
-    """The newest of the models' refusal records, the one written last, as check_refusal gives it: `spark status`'s
-    `refused` line until Task 29 reads the refusals through the gate. (None, None) when there is none; a folder that
-    can't be read is said."""
-    folder = Path(launch) / REFUSALS
-    newest: tuple[int, str] | None = None
-    try:
-        with os.scandir(folder) as entries:
-            for entry in entries:
-                model = entry.name.removesuffix(".json")
-                if entry.name.startswith(".") or model == entry.name:
-                    continue  # a write not yet swapped in, or not a record
-                try:
-                    written = entry.stat(follow_symlinks=False).st_mtime_ns
-                except FileNotFoundError:
-                    continue  # cleared since the listing
-                newest = max(newest, (written, model)) if newest else (written, model)
-    except FileNotFoundError:
-        return None, None
-    except OSError as err:
-        return None, f"the refusal records in {folder} can't be read: {err}"
-    return (None, None) if newest is None else _check(folder / f"{newest[1]}.json", newest[1])
-
-
 def clear_refusal(launch: Path, model: str) -> None:
     try:
         _refusal_path(launch, model).unlink(missing_ok=True)
     except (OSError, ValueError):
-        pass  # a stale reason only misleads the gate and `spark status`; it must never stop the engine's start
+        pass  # a stale reason only misleads the gate; it must never stop the engine's start
 
 
 def _refuse(launch: Path, name: str, code: str, reason: str) -> int:

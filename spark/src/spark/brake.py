@@ -88,7 +88,7 @@ FALLBACK = BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250)
 # The start check (Phase 1's council, 2026-09-28). The brake asks llama-swap nothing while memory is above the warn
 # line, so a key llama-swap refuses would first show in an emergency, as an unload that fails. So at start it asks
 # once, with its key, what runs, logs the answer, and records it here, in its state folder (2770 spark:spark-admin),
-# where `spark status` and `spark doctor` read it.
+# where the gate reads it for `spark status`'s health row (Task 29), and `spark doctor` reads it.
 KEY_CHECK_FILE = "key-check.json"
 # How long the check waits for llama-swap to answer at all: at boot the brake starts as soon as llama-swap's binary
 # runs (both units are Type=exec), before llama-swap listens. Any answer, an error included, ends the wait.

@@ -1477,6 +1477,74 @@ async def test_the_status_view_merges_recent_and_says_what_it_holds(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_a_gate_without_ntfy_reports_not_set_up(tmp_path):
+    # Task 29 (2026-10-14, Dan's decision: ntfy optional until Phase 5): the publisher of a gate without ntfy says it is
+    # that one, so `health.ntfy.status` reads not_set_up, before any notification and after one has failed; a publisher
+    # that fails as ntfy out of reach does reads failing.
+    from spark.gate.main import _NoNtfy
+    from spark.gate.notify import NtfyError
+
+    class Unreached:
+        async def __call__(self, n) -> None:
+            raise NtfyError("ntfy didn't answer", "unreached")
+
+    for publish, then in ((_NoNtfy("NTFY_URL or NTFY_TOPIC_GATE isn't set"), "not_set_up"), (Unreached(), "failing")):
+        (tmp_path / then).mkdir()
+        gate = Gate(tmp_path / then, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+        with anyio.fail_after(BOUND_S):
+            core = await gate.started(publish=publish)
+            assert core.status_view()["health"]["ntfy"]["status"] == ("not_set_up" if then == "not_set_up" else "ok")
+            core.notifier.emit("loaded", "load:t1", label="the coder", seconds=24)
+            await until(lambda: core.state.notify_failing_since is not None)
+            ntfy = core.status_view()["health"]["ntfy"]
+            assert ntfy["status"] == then and ntfy["failing_since"] == T  # carried as it is, for 2b's menu bar
+            await core.stop()
+
+
+def _check_at(when: float) -> str:
+    """A start check's time as the brake records it: local, to the second, with its offset (brake._now)."""
+    return datetime.fromtimestamp(when, ZONE).isoformat(timespec="seconds")
+
+
+@pytest.mark.anyio
+async def test_the_brakes_start_check_reaches_health(tmp_path):
+    # Task 29 (the controller's ruling, 2026-10-14): the brake's check at start that llama-swap takes its key moved into
+    # the gate (plan.md, *Visibility and notifications*). The gate reads the brake's record on each view: a passed check
+    # is `ok` with its time; a failed one, one still waiting, none recorded or one that can't be read says so, never ok.
+    from spark.brake import KEY_CHECK_FILE, KeyCheck, write_key_check
+
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+
+        def brake() -> dict:
+            return core.status_view()["health"]["brake"]
+
+        write_key_check(gate.brake, KeyCheck(_check_at(T - 60), True, "passed", "credential llamaswap-key"))
+        assert brake() == {"status": "unknown", "key_checked_at": T - 60}  # the brake's unit not read yet
+        await core.each_five_s()  # the units read: the brake's is up
+        assert brake() == {"status": "ok", "key_checked_at": T - 60}
+        write_key_check(gate.brake, KeyCheck(_check_at(T), None, "waiting for llama-swap to answer, for 30 s at most",
+                                             "credential llamaswap-key"))
+        assert brake() == {"status": "start check waiting for llama-swap", "key_checked_at": None}
+        write_key_check(gate.brake, KeyCheck(_check_at(T), False, "llama-swap GET /running:\nHTTP 401",
+                                             "credential llamaswap-key"))
+        assert brake() == {"status": "start check failed: llama-swap GET /running: HTTP 401", "key_checked_at": None}
+        (gate.brake / KEY_CHECK_FILE).write_text("{not json")
+        assert brake() == {"status": "start check unreadable", "key_checked_at": None}
+        (gate.brake / KEY_CHECK_FILE).unlink()
+        assert brake() == {"status": "start check not recorded", "key_checked_at": None}
+        # A record from before the brake wrote its offset (Phase 1's) reads as local time.
+        naive = datetime.fromtimestamp(T - 60, ZONE).replace(tzinfo=None).isoformat(timespec="seconds")
+        write_key_check(gate.brake, KeyCheck(naive, True, "passed", "LLAMASWAP_KEY_SPARK"))
+        assert brake() == {"status": "ok", "key_checked_at": T - 60}
+        gate.units.states["brake"] = UnitState(False, 0, T - 3600, None, "exit-code")
+        await core.each_five_s()
+        assert brake() == {"status": "down", "key_checked_at": T - 60}
+        await core.stop()
+
+
+@pytest.mark.anyio
 async def test_the_status_view_carries_the_damage(tmp_path):
     gate = Gate(tmp_path, damaged=True, shown=dict.fromkeys(RESIDENTS, "ready"))
     with anyio.fail_after(BOUND_S):

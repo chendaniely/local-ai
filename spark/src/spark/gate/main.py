@@ -7,7 +7,9 @@ it, `local-ai-gate.service` as `spark`, on the two Unix sockets `local-ai-gate-s
   against the registry's key groups (registry.parse_keys), which refuses a label pi's retry list matches.
 - **ntfy's address and topic**, NTFY_URL and NTFY_TOPIC_GATE, from the environment, which the private values file gives
   (EnvironmentFile=). A gate without them, or without its token, still admits and unloads: it says once that ntfy
-  isn't set up, and every notification then fails as ntfy out of reach does, so `spark status` shows ntfy failing.
+  isn't set up, and every notification then fails as ntfy out of reach does. Its publisher says it is the one for a
+  gate without ntfy, so `spark status` shows ntfy not set up, not failing (2026-10-14, Dan's decision: ntfy optional
+  until Task 2, in Phase 5; Task 29).
 - **Who is who**: spark-front's uid and spark-admin's members, from the user and group databases. The members are
   asked at each request that needs them, and at each read of who holds memory (Dan's processes), from a copy at most
   ADMINS_TTL_S old, so a member added is known without a restart. SPARK_FRONT_UID and SPARK_ADMIN_UIDS
@@ -69,7 +71,10 @@ class GateStartError(Exception):
 
 
 class _NoNtfy:
-    """The publisher of a gate whose ntfy isn't set up: each notification fails as ntfy out of reach does."""
+    """The publisher of a gate whose ntfy isn't set up: each notification fails as ntfy out of reach does. `not_set_up`
+    says it is this one, so the gate's status view reads ntfy `not_set_up`, never `failing` (Task 29)."""
+
+    not_set_up = True
 
     def __init__(self, why: str):
         self._why = why
@@ -89,7 +94,7 @@ def _publisher(env: MutableMapping[str, str]) -> NtfyPublisher | _NoNtfy:
         return NtfyPublisher(url, topic, read_header_credential("ntfy-token", env))
     except (ValueError, CredentialError) as err:  # none of them quotes a value: the address and topic are private
         _log.warning("ntfy isn't set up for the gate (%s): no notification reaches the phone, and `spark status` "
-                     "shows ntfy failing", err)
+                     "shows ntfy not set up", err)
         return _NoNtfy(str(err))
 
 

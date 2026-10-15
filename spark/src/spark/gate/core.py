@@ -67,6 +67,7 @@ from typing import Any
 from spark import hold as holdfile
 from spark import launch as launches
 from spark import memory, messages, procs, render, sdnotify, tickets
+from spark.brake import read_key_check
 from spark.brakeevents import EVENTS_FILE, read_events
 from spark.gate import units as unitwatch
 from spark.gate.admission import Admitted, Admitter
@@ -132,6 +133,16 @@ def _finite(value: Any) -> bool:
 def _names_llama_swap(restarting: Iterable[str]) -> bool:
     """Whether apply's `begin` named llama-swap among the units it restarts, by the watch's name or the unit's."""
     return any(unit in ("llama-swap", unitwatch.UNITS["llama-swap"]) for unit in restarting)
+
+
+def _check_time(at: str) -> float | None:
+    """A start check's time, as the brake records it (brake._now: local, with its offset; Phase 1's had none, and reads
+    as local time), in Unix seconds; None for one that isn't a time."""
+    try:
+        when = datetime.fromisoformat(at)
+    except ValueError:
+        return None
+    return when.timestamp() if when.tzinfo is not None else when.astimezone().timestamp()
 
 
 def _boot_time(proc: Path) -> float | None:
@@ -1300,9 +1311,9 @@ class GateCore:
     def status_view(self, *, sees: Callable[[RefusalRecord | RecentRecord], bool] | None = None,
                     uses_hold: bool | None = None) -> dict:
         """The StatusView (gateproto), from the last readings: nothing slow (nvidia-smi, the /proc scan, systemctl) is
-        read here, only the brake's hold and each engine's RssAnon, as admission reads them. The control socket's in
-        full; `sees` keeps the refusals and events a status-socket caller may see (Task 19), and `uses_hold` is whether
-        its group loads into make-room's hold (Dan's group's by default)."""
+        read here, only the brake's hold and its start check, and each engine's RssAnon, as admission reads them. The
+        control socket's in full; `sees` keeps the refusals and events a status-socket caller may see (Task 19), and
+        `uses_hold` is whether its group loads into make-room's hold (Dan's group's by default)."""
         now = self._clock()
         state, registry = self.state, self.registry
         mem = self._mem
@@ -1410,18 +1421,44 @@ class GateCore:
 
     def _health(self, now: float) -> dict:
         state = self.state
-        brake = self._units.get("brake")
+        if getattr(self._publish, "not_set_up", False) is True:  # gate.main's publisher for a gate without ntfy
+            ntfy = "not_set_up"
+        else:
+            ntfy = "ok" if state.notify_failing_since is None else "failing"
         return {"front": "ok" if self.front.connected else "not connected", "gate": "ok",
-                "brake": {"status": "unknown" if brake is None else "ok" if brake.active else "down",
-                          "key_checked_at": None},
+                "brake": self._brake_health(),
                 "llama_swap": "ok" if self._answering else "not answering",
-                "ntfy": {"status": "ok" if state.notify_failing_since is None else "failing",
-                         "failing_since": state.notify_failing_since, "dropped": self.notifier.dropped},
+                "ntfy": {"status": ntfy, "failing_since": state.notify_failing_since, "dropped": self.notifier.dropped},
                 "activity_age_s": None if self._activity_at is None else max(0.0, now - self._activity_at),
                 "unticketed_engines": [dict(engine) for engine in self._unticketed],
                 "no_ticket_refusals": len(self._backstop),
                 "damaged_at": state.damaged_at, "damaged_kept_as": state.damaged_kept_as,
                 "read_problems": list(self._read_problems.values())}
+
+    def _brake_health(self) -> dict:
+        """The brake's unit, as last read, and its check at start that llama-swap takes its key, read fresh from the
+        brake's record (the controller's ruling at Task 29: the check moved into the gate, plan.md's *Visibility and
+        notifications*). `ok` only for a unit that is up and a check that passed; a check that failed, still waits,
+        was never recorded or can't be read says so, never ok. `key_checked_at` is when a check passed, whatever the
+        unit's state."""
+        unit = self._units.get("brake")
+        check, unreadable = read_key_check(self.brake_dir)
+        checked_at = _check_time(check.at) if check is not None and check.ok is True else None
+        if unit is None:
+            status = "unknown"  # the units aren't read yet
+        elif not unit.active:
+            status = "down"
+        elif unreadable is not None:
+            status = "start check unreadable"
+        elif check is None:
+            status = "start check not recorded"
+        elif check.ok is None:
+            status = "start check waiting for llama-swap"
+        elif not check.ok:
+            status = f"start check failed: {messages._one_line(check.detail)}"
+        else:
+            status = "ok"
+        return {"status": status, "key_checked_at": checked_at}
 
     def _problems(self) -> list[str]:
         problems = []

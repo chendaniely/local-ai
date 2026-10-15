@@ -39,6 +39,7 @@ import uvicorn
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
 from spark import gateproto, messages, protocols, serve
+from spark.brake import KeyCheck, write_key_check
 from spark.gate import app as gate_app
 from spark.gate.admission import AdmitRequest
 from spark.gate.state import BrakeMark, RecentRecord, RefusalRecord, RoomHold, load_state
@@ -47,8 +48,8 @@ from spark.llamaswap_async import AsyncLlamaSwap
 from spark.messages import Holder, Moment
 # anyio_backend and local_zone are test_gate_core's fixtures, imported so they apply here as there.
 from test_gate_core import (AGENT, BOOT, BOUND_S, CODER, DAN, EMBED, FOOTPRINT, GEMMA, KEY, KEYS, RESIDENTS, SPARK,
-                            STACK_REGISTRY, USERS, WHISPER, Front, Gate, anyio_backend, at, loaded, local_zone, record,
-                            settle)
+                            STACK_REGISTRY, USERS, WHISPER, Front, Gate, _check_at, anyio_backend, at, loaded,
+                            local_zone, record, settle)
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
 
@@ -468,6 +469,8 @@ async def test_status_view_at_the_examples_moment(tmp_path):
     gate = Gate(tmp_path, state=state, shown=dict.fromkeys(RESIDENTS, "ready"))
     gate.clock.now = MOMENT
     gate.available = 48.0
+    # The brake's start check passed at 09:00 (Task 29: the gate reads it for `health`).
+    write_key_check(gate.brake, KeyCheck(_check_at(at(9, 0)), True, "passed", "credential llamaswap-key"))
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
         front = Front(core)
@@ -505,7 +508,7 @@ async def test_status_view_at_the_examples_moment(tmp_path):
                  "key_label": "agent"},
                 {"at": at(9, 12), "text": _no_fit_words(dans=True), "code": "no_fit", "model": CODER,
                  "key_label": "pi on the Mac"}],
-            "health": {"front": "ok", "gate": "ok", "brake": {"status": "ok", "key_checked_at": None},
+            "health": {"front": "ok", "gate": "ok", "brake": {"status": "ok", "key_checked_at": at(9, 0)},
                        "llama_swap": "ok", "ntfy": {"status": "ok", "failing_since": None, "dropped": 0},
                        "activity_age_s": 0.0, "unticketed_engines": [], "no_ticket_refusals": 0,
                        "damaged_at": None, "damaged_kept_as": None, "read_problems": []},

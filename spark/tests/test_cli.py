@@ -81,8 +81,8 @@ def test_a_file_that_cant_be_read_says_why_in_one_line(tmp_path, capsys, bad):
 
 def test_a_command_keeps_the_exit_code_it_chose(tmp_path, monkeypatch, capsys):
     # launch turns a registry that won't load (a RegistryError, so a ValueError) into its own refusal: exit 3, with the
-    # reason recorded for `spark status`. The CLI's catch must leave that alone. (status's exit 0 on the same kind of
-    # registry goes through cli.main too: test_a_registry_that_wont_load_is_said_and_the_rest_still_shown.)
+    # reason recorded for the gate. The CLI's catch must leave that alone. (status's exit 0 with the same kind of
+    # registry, the gate down, goes through cli.main too: test_with_the_gate_down_status_says_so_and_shows_memory.)
     registry = tmp_path / "models.yaml"
     registry.write_text("budget: {allocatable_gib: 102}\n")
     monkeypatch.setitem(launch.main_launch.__kwdefaults__, "registry", registry)

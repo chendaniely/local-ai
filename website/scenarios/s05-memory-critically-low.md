@@ -17,7 +17,10 @@ coder first, then the always-loaded models.
 notification from Phase 5, since 2026-10-14: the note at the foot.)*
 *(Added 2026-09-28: that line of `make status` also says whether llama-swap took the brake's own
 key when the brake started, and `make doctor`'s `stack units` line fails if it didn't. A brake
-whose key llama-swap refuses can unload nothing.)*
+whose key llama-swap refuses can unload nothing.)* *(2026-10-14, Phase 2a's Task 29, built, not
+yet deployed: from the cutover the gate reads that check from the brake's record, and `spark
+status`'s `health` row says it, *brake ok (key checked 09:00)*; a check that failed, or none
+recorded, reads as that with `make logs s=brake`, never *brake ok*.)*
 
 *Until Phase 2 (added 2026-09-28, from Phase 1's council):* nothing notifies me. The warning at
 28 GiB is a line in the brake's journal (`make logs s=brake`), and the hold shows on `make status`'s

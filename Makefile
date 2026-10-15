@@ -65,7 +65,7 @@ install-units: ## On the Spark (Dan; sudo): install root's copies of the units a
 pull: ## On the Spark: download the model files at their pinned revisions (as the spark user)
 	t=$$(date '+%Y-%m-%d %H:%M:%S'); systemctl start local-ai-pull.service; s=$$?; journalctl -u local-ai-pull.service --since "$$t" --no-pager; exit $$s
 
-status: ## On the Spark: what's loaded, memory before the brake, the brake, the last refusal
+status: ## On the Spark: room for a load, what's loaded, waiting, paused or held, recent, health (from the gate)
 	$(SPARK) status
 
 brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory is back

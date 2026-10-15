@@ -585,8 +585,8 @@ def test_refusal_records_are_one_per_model(tmp_path):
 
 
 def test_a_refusal_record_is_swapped_in_whole(tmp_path, monkeypatch):
-    # The gate and `spark status` can read it at any moment: they must find the old record or the new one, never part
-    # of one, which they would report as no refusal at all.
+    # The gate can read it at any moment: it must find the old record or the new one, never part of one, which it would
+    # report as no refusal at all.
     renamed = []
     real_replace = os.replace
 
@@ -613,8 +613,8 @@ def test_a_refusal_for_a_name_that_isnt_a_models_writes_nothing(tmp_path, monkey
     assert launch.read_refusal(tmp_path, "../coder") is None and launch.check_refusal(tmp_path, "../x") == (None, None)
 
 
-# Task 5's fix round 1: `spark status` shows the record, so the reader returns only a whole one, and says what's wrong
-# with a record that isn't (I5).
+# Task 5's fix round 1: `spark status` showed the record (the gate reads it since Task 29), so the reader returns only a
+# whole one, and says what's wrong with a record that isn't (I5).
 
 DAMAGED_REFUSALS = {
     "a list": b"[1]",
@@ -644,7 +644,6 @@ def test_a_refusal_record_that_isnt_one_reads_as_none_and_says_why(tmp_path, dam
     assert launch.read_refusal(tmp_path, "coder") is None
     refusal, problem = launch.check_refusal(tmp_path, "coder")
     assert refusal is None and problem.startswith(f"the refusal record {record} ")
-    assert launch.newest_refusal(tmp_path) == (None, problem)
 
 
 def test_a_whole_refusal_record_is_read_as_its_four_fields(tmp_path):
@@ -658,19 +657,5 @@ def test_a_whole_refusal_record_is_read_as_its_four_fields(tmp_path):
 
 def test_no_refusal_record_is_no_refusal_and_no_problem(tmp_path):
     assert launch.check_refusal(tmp_path, "coder") == (None, None)
-    assert launch.newest_refusal(tmp_path) == (None, None)
     (tmp_path / "refusals").mkdir()
-    assert launch.newest_refusal(tmp_path) == (None, None)
-
-
-def test_the_newest_refusal_is_the_one_written_last(tmp_path):
-    # `spark status`'s `refused` line, until Task 29 reads the refusals through the gate.
-    launch.record_refusal(tmp_path, "embed", "no_fit", "embed's")
-    launch.record_refusal(tmp_path, "coder", "no_ticket", "the coder's")
-    os.utime(tmp_path / "refusals" / "embed.json", ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))
-    os.utime(tmp_path / "refusals" / "coder.json", ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
-    (tmp_path / "refusals" / ".coder.json.123.abcd").write_text("{")  # a write not yet swapped in
-    refusal, problem = launch.newest_refusal(tmp_path)
-    assert problem is None and (refusal["model"], refusal["reason"]) == ("embed", "embed's")
-    os.utime(tmp_path / "refusals" / "coder.json", ns=(3_000_000_000_000_000_000, 3_000_000_000_000_000_000))
-    assert launch.newest_refusal(tmp_path)[0]["model"] == "coder"
+    assert launch.check_refusal(tmp_path, "coder") == (None, None)

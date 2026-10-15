@@ -599,11 +599,17 @@ class RecentView(TypedDict):
 
 
 class BrakeHealth(TypedDict):
+    # "ok" (its unit up and its start check passed), "down", "unknown" (its unit not read yet), or what is wrong with
+    # its check at start that llama-swap takes its key, in words: "start check failed: <why>", "start check waiting for
+    # llama-swap", "start check not recorded", "start check unreadable" (Task 29: the gate reads the brake's record).
     status: str
-    key_checked_at: float | None
+    key_checked_at: float | None  # when the start check passed; None while it hasn't
 
 
 class NtfyHealth(TypedDict):
+    # "ok", "failing" (since failing_since), or "not_set_up": the gate runs on gate.main's publisher for a gate without
+    # ntfy, which is 2a's state until Task 2, in Phase 5 (2026-10-14, Dan's decision; Task 29). failing_since and
+    # dropped are carried as they are in every state.
     status: str
     failing_since: float | None
     dropped: int  # notifications the full queue dropped since the gate started (Task 14's review): `spark status`

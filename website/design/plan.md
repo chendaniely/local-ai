@@ -1237,12 +1237,23 @@ not loaded  the coder (qwen3.8-27b)                up to 41 GiB  loads when aske
             marked: it was loading when the brake fired at 03:12 (seen using 26 GiB);
             only you can load it again
 waiting     agent → the coder · 2 min of 10 · waiting for you: spark load coder
-paused      no · the brake last fired at 03:12, released at 03:40
+paused      no
 held        nothing · pins none · sessions: agent's pi, since 08:40
-recent      09:12  refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load
+recent      09:12  for pi on the Mac: The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: python3 (chendaniely) 32 GiB, Gemma 27 GiB. Free space with `spark make-room 41G` on the Spark, then try again.
             03:40  brake released; reloading Gemma and the embeddings
 health      front ok · gate ok · brake ok (key checked 09:00) · ntfy ok
 ```
+
+*(Corrected 2026-10-14, at the implementation plan's Task 29, the controller's rulings: the
+`paused` row read *no · the brake last fired at 03:12, released at 03:40*, but the gate's view
+carries no last-fired or released time when no hold stands, so it reads *no*; the release still
+shows in *recent*, and the coder's mark says when the brake fired. And a refusal in *recent* read
+*refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load*, which nothing the gate
+keeps can give: it keeps each refusal's whole message, in the asker's words, so the row is that
+text after whom it was for, never shortened, since the truth beats a short line. In `agent`'s view
+the same row names *a process of Dan's*. The `health` row's *key checked 09:00* is the brake's
+start check, which the gate reads from the brake's record since Task 29; a check that failed, or
+none recorded, reads as that, with `make logs s=brake`, never *brake ok*.)*
 
 *(Corrected 2026-10-08, at the implementation plan's Task 17, the controller's ruling: the release
 line read *reloaded*, but the gate records it as it releases, with the reloads queued, so it reads
@@ -3836,6 +3847,12 @@ Each item gets its own design pass when its turn comes.
   `spark:spark-users` (*Sockets from systemd*). And Phase 5's ntfy item gains an outbound allowlist
   for the gate, the failure notifier and the brake, localhost and the ntfy host, in drop-ins
   rendered from the private values file; until then their outbound reach stays unrestricted.
+- **2026-10-14** — Phase 2a's Task 29, the controller's rulings. `spark status`'s example (*What
+  you see in Phase 2a*) is corrected where the gate's view can't give it: `paused` reads *no* when
+  no hold stands, since the view carries no last-fired or released time then, and a refusal in
+  *recent* is its whole message, after whom it was for, newest first. And the brake's check at
+  start that llama-swap takes its key reaches status through the gate, which reads the brake's
+  record: *brake ok (key checked 09:00)* only for a check that passed.
 
 ## Sources
 
