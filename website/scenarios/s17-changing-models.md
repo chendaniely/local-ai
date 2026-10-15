@@ -64,7 +64,9 @@ a dropped SSH session, changes nothing while it waits. "Drain now" holds new req
 however long, for the requests in flight, naming whose they are. Even after a quiet minute, apply
 waits for a request that arrived just before the hold, rather than cut it off. From then until
 the restarts are done, every new request is held. Then apply syncs the app, writes the files and
-restarts the services, in the order above. It waits up to 30 s for the gate to answer after its
+restarts the services, in the order above. Just before each restart of the gate, the front or
+llama-swap, it checks with the gate that the hold still stands. If it doesn't, apply restarts
+nothing more. It waits up to 30 s for the gate to answer after its
 own restart, and stops there if it doesn't. It waits up to 30 s more for the gate to see llama-swap
 answer again. Then the gate releases the held requests.
 

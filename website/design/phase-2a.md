@@ -7853,7 +7853,8 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
     each second for up to 30 s. After that, "nothing was changed", exit 1. Any other gate error at
     the first reading, in the wait, at `drain-all` or at `begin` is said, never a traceback.
   - **Words of apply's own**, beside Task 7's:
-    - for a gate without the front's counts, and for no request since the front started;
+    - for a gate without the front's counts, for no request since the front started, and (added
+      the same day, concern 4) for a front that isn't reporting its counts;
     - the drain's *Holding new requests while the 2 requests in flight finish (pi on the Mac,
       agent). Ctrl-C ends the hold and leaves everything as it was.*;
     - the line for a stop by Ctrl-C, SIGHUP or SIGTERM, which says what the run left;
@@ -7868,6 +7869,25 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
     failure. The hold ends before the compose unit's restart. A renewal answering `{ended: true}`
     before `begin`, or before the front's or llama-swap's restart, stops apply there: requests
     flow again, so that restart would cut them off.
+  - *(Added 2026-10-15, the controller's rulings on Task 32's concerns:)*
+    - **Concern 3 — no restart after a hold the gate has ended.** Just before each restart of
+      the gate, the front and llama-swap, apply confirms with the gate that its hold still stands:
+      a synchronous `apply/renew` (`ApplyGate.confirm`), with the client's own 5 s bound. If the
+      gate answers `{ended: true}`, apply restarts nothing more. It does the same if the call fails
+      or the answer can't be read. Each case says so, with what to run, and exits 1: `make apply`
+      again, or, when the gate didn't answer, `make doctor` first. The hold then ends with
+      `undrain-all`. So the renewal thread's 15 s lag no longer leaves a window for a restart.
+    - **Concern 2 — llama-swap counts as back only once the gate ends the hold.** This is a safe
+      false failure, and its words now say which case it is: the gate didn't answer; llama-swap
+      didn't answer the gate; or the gate sees llama-swap answer but hasn't confirmed its new
+      start, in which case llama-swap may well be serving (`make status`).
+    - **Concern 4 — a crashed front.** The gate keeps the front's last report, so apply never
+      sees quiet. Once a wait has lasted 10 s, and every 10 s after, apply reads the gate's
+      `GET /v1/status` `health.front`. While it isn't `ok`, both waits say *the front isn't
+      reporting its counts (`make logs s=front` shows why)*. The 15-minute deadline still offers
+      drain now. Nothing is cut.
+    - **Concern 1 — CLAUDE.md** stays as it is until the cutover. Task 38's record step already
+      updates its *Never reload llama-swap* gotcha, with README §Conventions.
   - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
     seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
     is a sixteenth `make doctor` line now; Task 33 adds the rest.

@@ -17,8 +17,10 @@ APPLY_RENEW_S from a thread of its own. apply waits until nothing is in flight u
 the app and write the files, tell the gate the units it restarts (apply/begin), and restart them: the brake, the gate
 (then its control socket answering within GATE_READY_S, or apply stops there), the front, llama-swap (then the gate
 seeing it answer again within READY_SECONDS), then apply/end, which releases the held requests and reloads the
-residents; the compose unit after it. Any failure after drain-all, or Ctrl-C, SIGHUP or SIGTERM (exit 130, 129, 143),
-ends the hold with undrain-all instead, and writes nothing more.
+residents; the compose unit after it. Just before each restart of the gate, the front and llama-swap, a renewal of
+apply's own confirms that the hold still stands (ApplyGate.confirm); one the gate has ended, or can't confirm, stops
+apply there. Any failure after drain-all, or Ctrl-C, SIGHUP or SIGTERM (exit 130, 129, 143), ends the hold with
+undrain-all instead, and writes nothing more. A wait that lasts says so when the front isn't reporting its counts.
 
 A change that restarts neither applies at once, with no wait and no hold. While the gate doesn't answer, apply refuses a
 restart of a running llama-swap, or of the front, unless --now, since it can't see what is in flight; with llama-swap
@@ -110,6 +112,9 @@ _CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f]")
 READY_SECONDS = 30.0  # how long a restarted llama-swap has for the gate to see it answer again
 GATE_READY_S = 30.0  # how long a restarted gate has to answer on its control socket; and the wait's gate, to be back
 POLL_S = 1.0  # the quiet wait's readings, and the waits after a restart, this far apart
+# A wait that has lasted this long asks the gate's status whether the front reports its counts, and again each time this
+# long has passed (concern 4's ruling at Task 32): a front that crashed leaves its last report standing at the gate.
+FRONT_CHECK_S = 10.0
 # apply/end and undrain-all: the gate bounds each at APPLY_END_TIMEOUT_S, past its /running read, so apply waits longer
 # for them (the controller's ruling at Task 19's review); every other call of apply's waits REQUEST_TIMEOUT_S.
 END_TIMEOUT_S = APPLY_END_TIMEOUT_S + 5.0
@@ -342,13 +347,20 @@ def _reading(answer: dict) -> str:
     return "idle" if answer["quiet_for_s"] > 0 else "unknown"
 
 
-def waiting_words(answer: dict, quiet_s: float = QUIET_S, *, now_step: bool = True) -> str:
+def waiting_words(answer: dict, quiet_s: float = QUIET_S, *, now_step: bool = True,
+                  front_reporting: bool = True) -> str:
     """What the quiet wait says it waits on (Task 7's apply_waiting, for a model in flight or one that answered). A
     model in flight is the oldest request's, never the last to answer: that one may be another. Without the front's
-    counts, or with no request since the front started, it says so. `now_step`: whether `make apply-now` restarts now,
-    which it doesn't for `make restart-front` (Task 31's review: no make target passes --now with --restart)."""
+    counts, with no request since the front started, or with a front that isn't reporting (`front_reporting`, from the
+    gate's status: its last report stands, and what it lists may long be gone), it says so. `now_step`: whether `make
+    apply-now` restarts now, which it doesn't for `make restart-front` (Task 31's review: no make target passes --now
+    with --restart)."""
     kind, quiet = _reading(answer), answer["quiet_for_s"]
-    if kind == "busy":
+    if not front_reporting:
+        text = ("Waiting for a quiet moment: the front isn't reporting its counts (`make logs s=front` shows why), so "
+                f"apply can't tell what's in flight, and it needs {round(quiet_s)} s with nothing in flight. Ctrl-C "
+                "leaves everything as it was; `make apply-now` restarts now.")
+    elif kind == "busy":
         text = messages.apply_waiting(answer["inflight"][0]["model_label"], 0, quiet_s)
     elif answer["last_label"] is not None and kind == "idle":
         # A quiet moment under a second old would read "is answering now": it answered a moment ago.
@@ -362,10 +374,14 @@ def waiting_words(answer: dict, quiet_s: float = QUIET_S, *, now_step: bool = Tr
     return text if now_step or not text.endswith(step) else text.removesuffix(step) + "."
 
 
-def draining_words(answer: dict) -> str:
-    """What the drain wait says, once drain-all holds new requests: whose requests it waits on."""
+def draining_words(answer: dict, *, front_reporting: bool = True) -> str:
+    """What the drain wait says, once drain-all holds new requests: whose requests it waits on, or that the front isn't
+    reporting its counts (`front_reporting`, as waiting_words has it)."""
     inflight = answer["inflight"]
-    if not inflight:
+    if not front_reporting:
+        what = ("Holding new requests; the front isn't reporting its counts (`make logs s=front` shows why), so apply "
+                "can't tell whether the requests it last reported have finished.")
+    elif not inflight:
         what = ("Holding new requests; the gate doesn't have the front's counts yet, so apply waits until it can tell "
                 "that nothing is in flight.")
     elif len(inflight) == 1:
@@ -400,6 +416,29 @@ class _Reader:
         return answer
 
 
+class _FrontWatch:
+    """Whether the front reports its counts, by the gate's status view (health.front, `not connected` while the
+    front's call to the gate is down): asked once a wait has lasted FRONT_CHECK_S, then each FRONT_CHECK_S, so a short
+    wait asks the gate nothing more. A status the gate doesn't give leaves the last answer standing."""
+
+    def __init__(self, gate, clock) -> None:
+        self.gate, self.clock = gate, clock
+        self.due = clock() + FRONT_CHECK_S
+        self.reporting = True
+
+    def check(self) -> bool:
+        now = self.clock()
+        if now >= self.due:
+            self.due = now + FRONT_CHECK_S
+            try:
+                health = self.gate.get("/v1/status").get("health")
+            except GateError:
+                health = None
+            if isinstance(health, dict) and isinstance(health.get("front"), str):
+                self.reporting = health["front"] == "ok"
+        return self.reporting
+
+
 def wait_for_quiet(gate, *, quiet_s: float = QUIET_S, deadline_s: float = APPLY_DEADLINE_S, clock=time.monotonic,
                    say=print, ask, sleep=time.sleep, drain_all=None, first: dict | None = None,
                    now_step: bool = True) -> str:
@@ -410,7 +449,7 @@ def wait_for_quiet(gate, *, quiet_s: float = QUIET_S, deadline_s: float = APPLY_
     starts the hold's renewals) and waits for nothing in flight under the hold (wait_for_drained): "drained"; no, or
     no answer: "declined". `first` is a reading already taken. Ctrl-C, SIGHUP and SIGTERM go to the caller, which has
     changed nothing."""
-    reader = _Reader(gate, clock, sleep, say)
+    reader, front = _Reader(gate, clock, sleep, say), _FrontWatch(gate, clock)
     start, said, last_quiet, period = clock(), None, None, 0
     answer = first
     while True:
@@ -423,10 +462,11 @@ def wait_for_quiet(gate, *, quiet_s: float = QUIET_S, deadline_s: float = APPLY_
             if kind == "idle" and last_quiet is not None and quiet < last_quiet:
                 period += 1  # nothing in flight at either reading, and still a new quiet moment: one came and went
             last_quiet = quiet if kind == "idle" else None
-            key = ((kind, answer["inflight"][0]["model_label"]) if kind == "busy"
+            reporting = front.check()
+            key = (("front",) if not reporting else (kind, answer["inflight"][0]["model_label"]) if kind == "busy"
                    else (kind, answer["last_label"], period) if kind == "idle" else (kind,))
             if key != said:
-                say(waiting_words(answer, quiet_s, now_step=now_step))
+                say(waiting_words(answer, quiet_s, now_step=now_step, front_reporting=reporting))
                 said = key
             if clock() - start >= deadline_s:
                 if not ask(messages.apply_no_quiet(len(answer["inflight"]), deadline_s=deadline_s)):
@@ -442,16 +482,17 @@ def wait_for_drained(gate, *, clock=time.monotonic, sleep=time.sleep, say=print)
     """Under apply's hold, which holds new requests: GET /v1/quiet every second until nothing is in flight, saying whose
     requests it waits on, once per change (draining_words). Nothing in flight needs the front's counts: a reading
     without them, which lists nothing, isn't taken for it. However long a request takes, nothing cuts it off."""
-    reader, said = _Reader(gate, clock, sleep, say), None
+    reader, front, said = _Reader(gate, clock, sleep, say), _FrontWatch(gate, clock), None
     while True:
         answer = reader.read()
         if answer is not None:
             kind = _reading(answer)
             if kind == "idle":
                 return
-            key = (kind, _askers(answer["inflight"]))
+            reporting = front.check()
+            key = ("front",) if not reporting else (kind, _askers(answer["inflight"]))
             if key != said:
-                say(draining_words(answer))
+                say(draining_words(answer, front_reporting=reporting))
                 said = key
         sleep(POLL_S)
 
@@ -518,6 +559,25 @@ class ApplyGate:
         if self._thread is not None:
             self._thread.join(END_TIMEOUT_S)
 
+    def confirm(self) -> str | None:
+        """Just before a restart under the hold (concern 3's ruling at Task 32): apply/renew, bounded by the client's
+        own REQUEST_TIMEOUT_S, so that a hold the gate has ended since the last renewal is never followed by a restart.
+        None while the hold stands; otherwise why not, as apply says it: the hold ended (`ended` is set), or the gate
+        didn't confirm it."""
+        if not self.ended.is_set():
+            try:
+                answer = self.client.post("/v1/apply/renew", {"since": self.since})
+            except GateError as err:
+                return f"the gate didn't confirm that its hold on new requests still stands ({err})"
+            if answer.get("ok") is True and answer.get("ended") is not True:
+                return None
+            if answer.get("ended") is not True:
+                return ("the gate didn't confirm that its hold on new requests still stands (its answer to apply/renew "
+                        "couldn't be read)")
+            self.ended.set()
+        return ("the gate's hold on new requests has ended (it lapsed, or something else ended it), and requests flow "
+                "again, which a restart now would cut off")
+
     def begin(self, units: list[str]) -> bool:
         """POST /v1/apply/begin, before the first restart: the units it restarts, saved with the hold. False when the
         gate says no hold stands, so apply restarts nothing it doesn't hold for."""
@@ -547,18 +607,29 @@ class ApplyGate:
         ended by the gate itself, which it does only once a /running read sent after llama-swap's new start has
         answered (gate/core.py's _check_apply_end), so an `ok` read before the restart never counts. Otherwise, after
         READY_SECONDS, what went wrong, as apply says it."""
-        start, said = self.clock(), False
+        start, said, seen = self.clock(), False, None  # seen: the last health the gate gave
         while True:
             try:
                 status = self.client.get("/v1/status")
             except GateError:
                 status = None
             health = status.get("health") if status is not None else None
-            if isinstance(health, dict) and health.get("llama_swap") == "ok" and status.get("applying") is None:
-                return None
+            if isinstance(health, dict):
+                seen = health
+                if health.get("llama_swap") == "ok" and status.get("applying") is None:
+                    return None
             if self.clock() - start >= READY_SECONDS:
-                return (f"the gate didn't see llama-swap answer within {READY_SECONDS:g} s of its restart: see `make "
-                        "logs s=llama-swap`, and `make status`")
+                if seen is None:
+                    return (f"the gate didn't answer within {READY_SECONDS:g} s of llama-swap's restart, so apply can't "
+                            "confirm llama-swap answers again: `make doctor` shows what's wrong")
+                if seen.get("llama_swap") != "ok":
+                    return (f"llama-swap didn't answer the gate within {READY_SECONDS:g} s of its restart: see `make "
+                            "logs s=llama-swap`")
+                # Concern 2's ruling: a safe false failure, said as one.
+                return (f"the gate sees llama-swap answer, but didn't confirm its new start within {READY_SECONDS:g} s: "
+                        "apply waits for the gate to end the hold itself, once a reading after the restart has "
+                        "answered, so llama-swap may well be serving. `make status` shows it; a gate that can't read "
+                        "llama-swap's unit says so on its health line")
             if not said:
                 self.log(f"apply: waiting up to {READY_SECONDS:g} s for the gate to see llama-swap answer again")
                 said = True
@@ -875,13 +946,19 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
             continue
         if unit == COMPOSE_UNIT and progress.held:
             failed = end_hold() or failed
-        if progress.held and unit in plan.after_quiet and gate.ended.is_set():
-            # A renewal found the hold ended (it lapsed, or ended some other way): requests flow, and this restart
-            # would cut them off. Its files are deployed, so it is owed to the next run, which waits again.
-            log(f"apply: the gate's hold on new requests ended before {unit}'s restart, so apply restarts nothing "
-                f"more; its files are deployed, and the next `{again}` restarts it after a quiet moment")
-            failed = True
-            break
+        if progress.held and unit in (GATE_UNIT, FRONT_UNIT, LLAMA_SWAP_UNIT):
+            # Concern 3's ruling: just before each restart under the hold, the gate confirms the hold still stands. One
+            # it ended since the last renewal (a lapse, or something else) lets requests flow, which this restart
+            # would cut off; one it can't confirm may have. Its files are deployed, so the restart is owed to the next
+            # run, which waits for a quiet moment again.
+            problem = gate.confirm()
+            if problem is not None:
+                step = (f"run `{again}` again" if gate.ended.is_set()
+                        else f"once the gate answers (`make doctor` shows what's wrong), run `{again}` again")
+                log(f"apply: {problem}; so apply restarts nothing more, {unit} included. Its files are deployed: "
+                    f"{step}, and it waits for a quiet moment, then restarts each unit still running older ones")
+                failed = True
+                break
         try:
             run_cmd(["systemctl", "restart", unit])
         except (subprocess.CalledProcessError, OSError):

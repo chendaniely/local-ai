@@ -281,17 +281,21 @@ best run in tmux. After 15 minutes without a quiet minute, apply asks:
 > [y/N]
 
 `y` holds new requests and waits, however long, for the requests in flight to finish, naming whose
-they are. Anything else changes nothing, and `make apply` waits again when it's run again.
+they are. If the front stops reporting its counts to the gate, both waits say so, with `make logs
+s=front`. Anything else changes nothing, and `make apply` waits again when it's run again.
 
 From the quiet moment, or from that `y`, the front holds every new request until the restarts are
 done, and apply waits until nothing is in flight. A request held past its key's wait gets
 `restarting`'s words, never `llama_swap_down`'s. Only then does apply sync the app and write the
-files. Then it restarts what the change needs, in order. The brake comes first, then the gate, after
-which apply waits up to 30 s for the gate to answer again. The front follows, only if its own files
-changed, its key groups changed, or for `make restart-front`. llama-swap goes last, after which apply
-waits up to 30 s for the gate to see it answer again. The gate then releases the held requests and
-reloads the always-loaded models one at a time, and apply ends `apply: done: …`. The compose unit,
-when it has to restart, restarts after that, on its own.
+files. Then it restarts what the change needs, in order. Just before each restart of the gate, the
+front or llama-swap, apply checks with the gate that it still holds new requests. If the hold has
+ended, or the gate doesn't confirm it, apply restarts nothing more, says what to run, and exits 1.
+The brake comes first, then the gate, after which apply waits up to 30 s for the gate to answer
+again. The front follows, only if its own files changed, its key groups changed, or for `make
+restart-front`. llama-swap goes last, after which apply waits up to 30 s for the gate to see it
+answer again. The gate then releases the held requests and reloads the always-loaded models one at a
+time, and apply ends `apply: done: …`. The compose unit, when it has to restart, restarts after
+that, on its own.
 
 `make apply-now` skips the wait. If requests are in flight, it asks first, naming whose they are:
 
