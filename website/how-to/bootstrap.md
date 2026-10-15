@@ -140,22 +140,24 @@ chown, the move refuses, failing the run and changing nothing in the cache, and 
   `spark`, whatever its umask. `getfacl` reads them, as root, and nothing strips one.
 
 The move covers the whole cache except `hf/tmp`, while that stays `spark`'s. For each reason the
-guard names up to five paths, and how many more; for a writable folder it names the owner beside
-each, so the remedy runs as that owner (`sudo -u <owner> chmod go-w <folder>`), never as root.
+guard names up to five paths, and how many more; for a second name or a writable folder it names
+the owner beside each, and a writable folder's remedy runs as that owner
+(`sudo -u <owner> chmod go-w <folder>`), never as root.
 
 After the chown, and before any chmod, it checks again that every path it moved is `spark-pull`'s
 and in `spark`'s group, that no folder is writable by its group or others, and that nothing has a
 second name or an ACL. It stops at the first path it finds, naming that one with its owner, group,
-mode and link count: a process started after the first look can't then swap a path for a link under
-chmod, which follows a link it is handed. Neither check strips a bit.
+mode and link count, or, for an ACL, saying so: a process started after the first look can't then
+swap a path for a link under chmod, which follows a link it is handed. Neither check strips a bit.
 
 Files' write bits are no reason to refuse. `huggingface_hub` makes its lock files `0664`, and Xet's
-`.lock` and `.refs` files `0666`, on purpose; they hold no data, and Phase 1's pulls left some in
-the cache. Once the second check passes, the move clears group and other write on every file it
-covers, beside the setgid pass and as safely: every folder is closed to `spark` by then, so nothing
-chmod is handed can be swapped. A later download makes such lock files again, by design, so the
-check that the cache is already moved doesn't count files' write bits: once it is moved, a re-run
-passes it, whatever runs and whatever has been pulled since.
+`.lock` and `.refs` files `0666`, on purpose; they hold no data, and Phase 1's pulls most likely
+left some in the cache (not yet seen; your account can't look). Once the second check passes, the
+move clears group and other write on every file it covers, beside the setgid pass and as safely:
+every folder is closed to `spark` by then, so nothing chmod is handed can be swapped. A later
+download makes such lock files again, by design, so the check that the cache is already moved
+doesn't count files' write bits: once it is moved, a re-run passes it, whatever runs and whatever
+has been pulled since.
 
 **On the Spark**, as you, from the clone, in an SSH session:
 
