@@ -225,6 +225,15 @@ watch -n 2 free -g
 ssh -N -L 8990:127.0.0.1:990 brightroar
 ```
 
+It may print `setsockopt TCP_NODELAY: Invalid argument`: a harmless warning from macOS's ssh, and
+the tunnel still works (seen 2026-10-14). **On the Mac**, in another terminal, check the tunnel and
+the key together. It prints `200` when both are good, and `401` when the key on the Mac isn't the
+one on the Spark:
+
+```bash
+printf 'Authorization: Bearer %s\n' "$SPARK_SGLANG_KEY" | curl -s -H @- -o /dev/null -w '%{http_code}\n' http://localhost:8990/v1/models
+```
+
 **opencode:** add a provider to `~/.config/opencode/opencode.json`, beside the `spark` one, inside
 `"provider"`. It's the same form `spark clients opencode` writes for the stack, and the key comes
 from your environment:
@@ -237,7 +246,13 @@ from your environment:
     "baseURL": "http://localhost:8990/v1"
   },
   "models": {
-    "qwen3.8-27b-sglang": {}
+    "qwen3.8-27b-sglang": {
+      "variants": {
+        "low": { "reasoningEffort": "low" },
+        "medium": { "reasoningEffort": "medium" },
+        "xhigh": { "reasoningEffort": "xhigh" }
+      }
+    }
   }
 }
 ```
@@ -246,6 +261,19 @@ Then pick `spark-sglang/qwen3.8-27b-sglang` with `/model`. **pi** and other clie
 OpenAI-compatible provider with base URL `http://localhost:8990/v1`, model `qwen3.8-27b-sglang` and
 the key from `SPARK_SGLANG_KEY`. Keep to one session at a time: a request queued behind a long one
 can pass opencode's 300-second wait for a reply and be sent again.
+
+- **The efforts.** opencode's own list for this kind of provider is `low`, `medium` and `high`, and
+  Qwen3.8's template refuses `high`: `Error: Unexpected reasoning effort high. Supported types are
+  xhigh (default), medium, and low` (seen 2026-10-14). The `variants` replace that list with the
+  three it takes. **Default** sends no effort, and the template then uses `xhigh`, the most
+  thinking, so *default* and `xhigh` are the same. (Checked with opencode 2.0.25 against a stand-in
+  server that recorded what each choice sent; `spark clients opencode` gives the stack's models the
+  same list.)
+- **`Error: Unauthorized` while the check above prints `200`:** opencode 2 runs one background
+  service that every opencode window hands its requests to, and it keeps the environment it
+  started with. If it started before you made the key, it sends an empty key, even from a new
+  terminal. **On the Mac**, in a terminal opened after step 2, run `opencode service restart`, then
+  start `opencode` again (seen 2026-10-14).
 
 If tool calls fail in opencode or pi, hasso5703 has a chat template patched for agentic clients;
 it comes in only if the stock one fails.
