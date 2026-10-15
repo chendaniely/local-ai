@@ -525,16 +525,17 @@ directories() {
 # Until the move the cache is spark's, so root works in folders spark controls. Just before the
 # chown, the move refuses, changing nothing, while any process runs as spark or spark-pull, while any
 # unit that runs as either isn't inactive or failed (one activating, deactivating or not answering
-# counts as running), while fs.protected_hardlinks isn't 1, while a file in it has a second name (a
-# hard link: the move would hand that file to spark-pull wherever its other name is), or while
-# anything in it is writable by its group or others. That is one look, and a process started after
-# it (a crontab job) would go unseen, so the chmods wait for a second check, after the chown: every
-# path the move covers is spark-pull's, in spark's group, and writable by neither its group nor
-# others. Only then can nothing of spark's add, remove or rename an entry anywhere in that tree, so
-# no folder that find lists can turn into a link before chmod, which follows a link it is handed,
-# reaches it. hf/tmp, when it stays spark's, is never handed to chmod, and its own entry sits in the
-# top folder, spark-pull's. A check that fails stops the move there; nothing strips a bit instead,
-# since coreutils 9.4's chmod -R can follow a link swapped in during its walk.
+# counts as running), while fs.protected_hardlinks isn't 1, while a file the move covers has a second
+# name (a hard link: the move would hand that file to spark-pull wherever its other name is), or
+# while anything it covers but a link is writable by its group or others. That is one look, and a
+# process started after it (a crontab job) would go unseen, so the chmods wait for a second check,
+# after the chown: every path the move covers is spark-pull's, in spark's group, and writable by
+# neither its group nor others. Only then can nothing of spark's add, remove or rename an entry
+# anywhere in that tree, so no folder that find lists can turn into a link before chmod, which
+# follows a link it is handed, reaches it. hf/tmp, when it stays spark's, is never handed to chmod,
+# and its own entry sits in the top folder, spark-pull's. A check that fails stops the move there;
+# nothing strips a bit instead, since coreutils 9.4's chmod -R can follow a link swapped in during
+# its walk.
 #
 # A cache already moved needs nothing, whatever runs, so a re-run with the stack up passes. hf/tmp,
 # whisper's --tmp-dir in Phase 1's registry, stays spark's while the deployed registry names it, and

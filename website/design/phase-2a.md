@@ -6861,9 +6861,9 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
     deactivating or silent unit as stopped, and came once, before a chown that leaves a folder
     `spark`'s until its walk finishes; and chmod follows a link it is handed. Now, just before the
     chown, the move also refuses while `pgrep -l -u spark,spark-pull` finds any process (named by
-    pid and command name), while a unit isn't `inactive` or `failed`, while a file in the cache has
-    a second name (`-type f -links +1`), or while anything in it but a link is writable by its group
-    or others. After the chown and before any chmod it checks again that every path it moved is
+    pid and command name), while a unit isn't `inactive` or `failed`, while a file the move covers
+    (the cache, `hf/tmp` aside while it stays `spark`'s) has a second name (`-type f -links +1`), or
+    while anything it covers but a link is writable by its group or others. After the chown and before any chmod it checks again that every path it moved is
     `spark-pull:spark` and writable by neither group nor others, and stops there if not; only then
     can nothing of `spark`'s swap a folder `find -P … -type d ! -type l` hands chmod. The done-check
     counts a writable path as not moved. Nothing strips a bit, since Ubuntu's coreutils 9.4 `chmod

@@ -131,10 +131,12 @@ chown, the move refuses, failing the run and changing nothing in the cache, and 
 - any unit that runs as either (llama-swap, the brake, the pull, the gate, the brake's drill)
   isn't `inactive` or `failed`: one activating, deactivating or not answering counts as running;
 - `fs.protected_hardlinks` isn't 1;
-- a file in the cache has a second name, a hard link, which the move would hand to `spark-pull`
-  wherever its other name is;
-- anything in it is writable by its group or by others, which `spark` could still change after
-  the move.
+- a file the move covers has a second name, a hard link, which the move would hand to
+  `spark-pull` wherever its other name is;
+- anything the move covers, a link aside, is writable by its group or by others, which `spark`
+  could still change after the move.
+
+The move covers the whole cache except `hf/tmp`, while that stays `spark`'s.
 
 After the chown, and before any chmod, it checks again that everything it moved is `spark-pull`'s,
 in `spark`'s group, and writable by neither its group nor others, and stops there if not: a process
