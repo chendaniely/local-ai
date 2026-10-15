@@ -444,9 +444,20 @@ echo "dpkg $*" >> "$CALLS"
 """
 
 FAKE_SYSTEMCTL = """#!/usr/bin/env bash
-# Stands in for systemctl: the units in $ACTIVE_UNITS are active, and `stop` is logged.
+# Stands in for systemctl. `is-active [--quiet] UNIT` says the unit's state, as systemd does: active for a unit in
+# $ACTIVE_UNITS, the state $UNIT_STATES gives it (UNIT=STATE words), else inactive. It exits 0 only for active or
+# reloading, and prints nothing with --quiet. A unit whose state is `unanswerable` fails as systemctl does without its
+# bus: an error, no state, exit 1. `stop` is logged.
 case "$1" in
-  is-active) for unit; do :; done; [[ " $ACTIVE_UNITS " == *" $unit "* ]] ;;
+  is-active)
+    for unit; do :; done
+    state=inactive
+    if [[ " ${ACTIVE_UNITS:-} " == *" $unit "* ]]; then state=active; fi
+    for pair in ${UNIT_STATES:-}; do if [[ "${pair%%=*}" == "$unit" ]]; then state="${pair#*=}"; fi; done
+    if [[ "$state" == unanswerable ]]; then echo "Failed to connect to bus: No such file or directory" >&2; exit 1; fi
+    [[ "$2" == --quiet ]] || echo "$state"
+    [[ "$state" == active || "$state" == reloading ]]
+    ;;
   stop) echo "systemctl $*" >> "$CALLS" ;;
   *) echo "fake systemctl: unexpected: $*" >&2; exit 1 ;;
 esac
@@ -1753,6 +1764,9 @@ FAKE_REAL_LOGGED = r"""#!/usr/bin/env bash
 # PATH after the stand-ins' folder, so the files change as they would. Only root can give a file to spark-pull or to
 # root, so an owner (USER:GROUP) becomes $STAND_IN_OWNER, whoever runs the tests: the real chown then changes nothing
 # but each file's change time, which shows the tests every file it reached, a link's own included.
+#
+# $CHOWN_RACE stands in for a process of spark's racing the move: after each chown, if that path doesn't exist, it
+# makes it a folder writable by its group, as such a process could in a folder the chown hasn't reached yet.
 tool="${0##*/}"
 echo "$tool $*" >> "$CALLS"
 args=()
@@ -1760,7 +1774,22 @@ for arg; do
   if [[ "$tool" == chown && "$arg" == *:* && "$arg" != /* ]]; then arg="$STAND_IN_OWNER"; fi
   args+=("$arg")
 done
-PATH="${PATH#*:}" exec "$tool" "${args[@]}"
+PATH="${PATH#*:}" "$tool" "${args[@]}"
+status=$?
+if [[ "$tool" == chown && -n "${CHOWN_RACE:-}" && ! -e "$CHOWN_RACE" ]]; then
+  mkdir "$CHOWN_RACE" && PATH="${PATH#*:}" chmod 0775 "$CHOWN_RACE"
+fi
+exit "$status"
+"""
+
+FAKE_PGREP = r"""#!/usr/bin/env bash
+# Stands in for `pgrep -l -u USERS`: logs its arguments in $CALLS, then prints $RUNNING ("PID NAME" lines) and exits 0
+# when that is set, or exits 1, as pgrep does when nothing matches. With $PGREP_FAILS set, it fails as pgrep does on a
+# user it doesn't know: exit 2.
+echo "pgrep $*" >> "$CALLS"
+if [[ -n "${PGREP_FAILS:-}" ]]; then echo "pgrep: invalid user name: spark-pull" >&2; exit 2; fi
+if [[ -z "${RUNNING:-}" ]]; then exit 1; fi
+printf '%s\n' "$RUNNING"
 """
 
 FAKE_SYSCTL = r"""#!/usr/bin/env bash
@@ -1783,22 +1812,23 @@ SPARKS_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-
 
 
 def cache_env(tmp_path: Path, *, active: str = "", hardlinks: str = "1", pull_user: str = STAND_IN_USER,
-              cache_group: str = STAND_IN_GROUP) -> dict[str, str]:
+              cache_group: str = STAND_IN_GROUP, **settings: str) -> dict[str, str]:
     """Stand-ins for the cache's move: the cache at tmp_path/hf (stand_in_cache makes it), the deployed registry at
-    tmp_path/models.yaml, systemctl reporting the units in `active` active, sysctl reporting `hardlinks`, runuser,
-    and chown and chmod that log to tmp_path/calls and change only tmp_path's files. Whoever runs the tests stands
-    in for spark-pull and spark's group, as for root in install_env, unless `pull_user` or `cache_group` says
-    otherwise. The environment is built (built_env)."""
+    tmp_path/models.yaml, systemctl reporting the units in `active` active, sysctl reporting `hardlinks`, pgrep
+    finding no process, runuser, and chown and chmod that log to tmp_path/calls and change only tmp_path's files.
+    Whoever runs the tests stands in for spark-pull and spark's group, as for root in install_env, unless `pull_user`
+    or `cache_group` says otherwise. `settings` go in the environment as they are: UNIT_STATES for systemctl,
+    RUNNING and PGREP_FAILS for pgrep, CHOWN_RACE for chown. The environment is built (built_env)."""
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     for name, text in (("chown", FAKE_REAL_LOGGED), ("chmod", FAKE_REAL_LOGGED), ("systemctl", FAKE_SYSTEMCTL),
-                       ("sysctl", FAKE_SYSCTL), ("runuser", FAKE_RUNUSER)):
+                       ("sysctl", FAKE_SYSCTL), ("runuser", FAKE_RUNUSER), ("pgrep", FAKE_PGREP)):
         (bindir / name).write_text(text)
         (bindir / name).chmod(0o755)
     return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), ACTIVE_UNITS=active,
                      PROTECTED_HARDLINKS=hardlinks, STAND_IN_OWNER=f"{STAND_IN_USER}:{STAND_IN_GROUP}",
                      BOOTSTRAP_HF_CACHE=str(tmp_path / "hf"), BOOTSTRAP_REGISTRY=str(tmp_path / "models.yaml"),
-                     BOOTSTRAP_PULL_USER=pull_user, BOOTSTRAP_CACHE_GROUP=cache_group, SUDO_USER="alice")
+                     BOOTSTRAP_PULL_USER=pull_user, BOOTSTRAP_CACHE_GROUP=cache_group, SUDO_USER="alice", **settings)
 
 
 def walk(root: Path) -> list[Path]:
@@ -1844,8 +1874,9 @@ def stand_in_cache(tmp_path: Path, *, moved: bool = False) -> Path:
     (outside / "victim").chmod(0o640)
     (hf / "planted").symlink_to(outside / "victim")
     (hf / "planted-folder").symlink_to(outside)
-    for folder in folders(hf):
-        folder.chmod(0o755)
+    for path in walk(hf)[1:]:
+        if not path.is_symlink():
+            path.chmod(0o755 if path.is_dir() else 0o644)  # as Phase 1's pull left them, under umask 022
     hf.chmod(0o750)
     if moved:
         for folder in folders(hf):
@@ -2167,13 +2198,14 @@ def test_the_cache_move_refuses_while_sparks_units_run(tmp_path, unit):
 
 
 def test_every_reason_the_move_cant_go_ahead_is_named(tmp_path):
-    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS[:2]), hardlinks="0")
+    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS[:2]), hardlinks="0", RUNNING="4242 llama-swap")
     stand_in_cache(tmp_path)
     result = cache_step(env)
     assert result.returncode == 1
     lines = result.stderr.splitlines()
     for unit in SPARKS_UNITS[:2]:
         assert f"  {unit} is active: stop it first (systemctl stop {unit})" in lines
+    assert any(line.startswith("  processes run as spark or spark-pull (4242 llama-swap)") for line in lines)
     assert any(line.startswith("  fs.protected_hardlinks is 0, not 1") for line in lines)
     assert lines[-1] == "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
 
@@ -2192,16 +2224,18 @@ def test_a_re_run_after_the_move_changes_nothing(tmp_path):
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
 
-@pytest.mark.parametrize("odd", ["owner", "setgid", "top"])
+@pytest.mark.parametrize("odd", ["owner", "setgid", "top", "writable"])
 def test_anything_not_yet_moved_counts_as_something_to_move(tmp_path, odd):
-    # A move cut off partway, or a folder that lost its setgid bit: the step moves again, and refuses while the stack
-    # runs, rather than calling it done.
+    # A move cut off partway, a folder that lost its setgid bit, or a file spark's group could write (Task 27's review,
+    # M2): the step moves again, and refuses while the stack runs, rather than calling it done.
     env = cache_env(tmp_path, active="local-ai-brake.service", pull_user="nobody" if odd == "owner" else STAND_IN_USER)
     hf = stand_in_cache(tmp_path, moved=True)
     if odd == "setgid":
         (hf / "xet/logs").chmod(0o755)
     elif odd == "top":
         hf.chmod(0o750)
+    elif odd == "writable":
+        (hf / "xet/logs/xet.log").chmod(0o664)
     result = cache_step(env)
     assert result.returncode == 1 and "  local-ai-brake.service is active" in result.stderr
 
@@ -2226,6 +2260,10 @@ def test_hf_tmp_stays_sparks_while_the_registry_names_it(tmp_path):
         hf = stand_in_cache(root)
         if registry is not None:
             (root / "models.yaml").write_text(registry)
+        if case != "not-named":
+            # Kept, hf/tmp is spark's, and writable by spark's group is no matter: no check and no chmod enters it.
+            (hf / "tmp").chmod(0o775)
+            (hf / "tmp/upload.wav").chmod(0o664)
         before = ctimes(hf)
         result = cache_step(env)
         assert result.returncode == 0, (case, result.stderr)
@@ -2241,7 +2279,7 @@ def test_hf_tmp_stays_sparks_while_the_registry_names_it(tmp_path):
         assert chowns[0] == f"chown --no-dereference spark-pull:spark {hf}", case
         assert sorted(word for line in chowns[1:] for word in line.removeprefix(
             "chown -R -P --no-dereference spark-pull:spark ").split()) == rest, case
-        assert mode(hf / "tmp") == 0o755, case
+        assert mode(hf / "tmp") == 0o775 and mode(hf / "tmp/upload.wav") == 0o664, case
         assert after[hf / "tmp"] == before[hf / "tmp"] and after[hf / "tmp/upload.wav"] == before[hf / "tmp/upload.wav"]
         assert all(after[path] != before[path] for path in before if hf / "tmp" not in (path, *path.parents)), case
         assert mode(hf) == 0o2750 and all(mode(f) & 0o2000 for f in folders(hf) if f != hf / "tmp"), case
@@ -2274,16 +2312,21 @@ def test_a_cache_that_isnt_a_folder_is_refused(tmp_path, planted):
     assert changing_calls(tmp_path) == []
 
 
-def test_a_move_that_didnt_take_fails_loudly(tmp_path):
-    # As the hold checks apt-mark's work: here the stand-in chown gives the files to whoever runs the tests, not to
-    # the user the check expects, as a chown that silently failed would leave them.
+def test_a_chown_that_didnt_take_stops_the_move_before_any_chmod(tmp_path):
+    # Task 27's review (I1): the stand-in chown gives the files to whoever runs the tests, not to the user the check
+    # expects, as a chown that silently failed, or a folder spark made where the walk had already been, would leave
+    # them. The move stops before any chmod: chmod follows a link it is handed, and a folder that isn't spark-pull's
+    # could still be swapped for one.
     env = cache_env(tmp_path, pull_user="nobody")
-    stand_in_cache(tmp_path)
+    hf = stand_in_cache(tmp_path)
     (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    modes = {path: mode(path) for path in walk(hf)}
     result = cache_step(env)
     assert result.returncode == 1 and "the run goes on" not in result.stdout
-    assert f"bootstrap: the move didn't take: {tmp_path}/hf isn't spark-pull:spark 2750 with setgid folders yet" in (
-        result.stderr)
+    assert [line for line in calls(tmp_path) if line.startswith("chmod")] == []
+    assert {path: mode(path) for path in walk(hf)} == modes
+    assert result.stderr.startswith(f"bootstrap: after the chown, {hf} isn't spark-pull:spark, or is writable by its "
+                                    "group or others, so no chmod ran and nothing more was changed.")
 
 
 def test_a_dry_run_shows_the_move_and_where_a_real_run_would_stop(tmp_path):
@@ -2307,8 +2350,10 @@ def test_a_dry_run_shows_the_move_and_where_a_real_run_would_stop(tmp_path):
         f"+ chown --no-dereference spark-pull:spark {hf}",
         f"+ find -P {hf} -mindepth 1 -maxdepth 1 ! -path {hf}/tmp -exec chown -R -P --no-dereference spark-pull:spark "
         "{} +",
+        "+ owned_and_closed   (a real run stops here, before any chmod, unless everything it moved is "
+        "spark-pull:spark and writable by neither its group nor others)",
         f"+ chmod 2750 {hf}",
-        f"+ find -P {hf} -mindepth 1 -path {hf}/tmp -prune -o -type d -exec chmod g+s {{}} +",
+        f"+ find -P {hf} -mindepth 1 -path {hf}/tmp -prune -o -type d ! -type l -exec chmod g+s {{}} +",
     ]
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
@@ -2317,3 +2362,133 @@ def test_the_cache_step_comes_after_the_users_and_folders_it_uses():
     says = [line for line in dry_run() if line.startswith("==> ")]
     cache = next(i for i, line in enumerate(says) if line.startswith("==> the Hugging Face cache"))
     assert says.index("==> users and groups") < says.index("==> directories") < cache
+
+
+# Task 27's review (I1, M1, M2): the guard sees every process of spark's and spark-pull's, takes a unit as stopped only
+# when systemd says so, refuses a tree the move would leave spark able to change, and checks again, after the chown
+# and before any chmod, that nothing of spark's can swap a path chmod is handed.
+
+
+def test_any_process_of_sparks_or_spark_pulls_refuses_the_move(tmp_path):
+    # A crontab job or a shell of spark's, outside every unit, could race the move.
+    env = cache_env(tmp_path, RUNNING="4242 bash\n4243 sleep")
+    hf = stand_in_cache(tmp_path)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert ("  processes run as spark or spark-pull (4242 bash, 4243 sleep): stop each first, a unit with systemctl "
+            "stop, anything else where it was started") in result.stderr.splitlines()
+    assert "pgrep -l -u spark,spark-pull" in calls(tmp_path)  # pid and command name, never the arguments
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_a_pgrep_that_cant_tell_refuses_the_move(tmp_path):
+    env = cache_env(tmp_path, PGREP_FAILS="1")
+    hf = stand_in_cache(tmp_path)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1
+    assert ("  pgrep couldn't tell whether anything runs as spark or spark-pull (exit 2): find out why, then run this "
+            "again") in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+@pytest.mark.parametrize("state, refused", [
+    ("deactivating", True), ("activating", True), ("reloading", True), ("unanswerable", True),
+    ("failed", False), ("inactive", False),
+])
+def test_a_unit_counts_as_stopped_only_when_inactive_or_failed(tmp_path, state, refused):
+    # systemctl is-active --quiet succeeds only for active and reloading, so a unit auto-restarting (activating) or
+    # stopping (deactivating), or a systemctl that can't answer, looked stopped before the review.
+    env = cache_env(tmp_path, UNIT_STATES=f"local-ai-brake.service={state}")
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    before = ctimes(hf)
+    result = cache_step(env)
+    if not refused:
+        assert result.returncode == 0, result.stderr
+        return
+    assert result.returncode == 1
+    reason = ("  local-ai-brake.service didn't say whether it runs (systemctl is-active answered nothing): find out "
+              "why, then run this again" if state == "unanswerable" else
+              f"  local-ai-brake.service is {state}, not inactive or failed: stop it, and wait until it is (systemctl "
+              "stop local-ai-brake.service)")
+    assert reason in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+@pytest.mark.parametrize("path, bits", [("xet/logs", 0o775), ("xet/logs", 0o757), ("xet/logs/xet.log", 0o664),
+                                        ("hub/models--org--model/blobs/1234", 0o646)],
+                         ids=["folder-g+w", "folder-o+w", "file-g+w", "file-o+w"])
+def test_anything_writable_by_its_group_or_others_is_refused_before_the_chown(tmp_path, path, bits):
+    # The move keeps every mode, and leaves spark's group on everything: a path writable by its group would stay
+    # writable by spark, and a folder spark can write is one whose entries it can swap for a link under chmod.
+    # Refused, never stripped: coreutils 9.4's chmod -R can follow a link swapped in during its walk.
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    (hf / path).chmod(bits)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert (f"  paths in it writable by their group or others, which spark could still change after the move "
+            f"({hf}/{path}): remove those bits as spark, their owner (sudo -u spark chmod go-w <path>)"
+            ) in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_a_file_with_a_second_name_is_refused(tmp_path):
+    # With fs.protected_hardlinks on, spark can still link a file it owns, or can read and write, into the cache: the
+    # move would hand that file to spark-pull wherever its other name is.
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "sparks-own").write_text("state\n")
+    (tmp_path / "sparks-own").chmod(0o644)
+    os.link(tmp_path / "sparks-own", hf / "xet/logs/linked")
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1
+    assert (f"  files in it with a second name, which the move would hand to spark-pull wherever the other name is "
+            f"({hf}/xet/logs/linked): look at each with sudo ls -li, and remove the name that isn't the cache's"
+            ) in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_a_refusal_names_five_paths_at_most_and_nothing_a_terminal_acts_on(tmp_path):
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    for n in range(7):
+        (hf / f"open-{n}").write_text("")
+        (hf / f"open-{n}").chmod(0o666)
+    (hf / "open-0").rename(hf / ("open-" + chr(27) + "[2K"))
+    result = cache_step(env)
+    [line] = [line for line in result.stderr.splitlines() if line.startswith("  paths in it writable")]
+    assert line.count(f"{hf}/open-") == 5 and ", and 2 more)" in line
+    assert chr(27) not in result.stderr
+
+
+def test_a_folder_made_writable_during_the_chown_stops_the_move_before_any_chmod(tmp_path):
+    # Whatever runs: the first look found nothing, and a process started after it (a crontab job) makes a folder its
+    # group can write while the chown walks. The second check, after the chown, stops the move before any chmod.
+    for case, registry in (("keeps-hf-tmp", REGISTRY_HF_TMP), ("moves-hf-tmp", REGISTRY_WHISPER_TMP)):
+        root = tmp_path / case
+        root.mkdir()
+        env = cache_env(root, CHOWN_RACE=str(root / "hf/hub/raced"))
+        stand_in_cache(root)
+        (root / "models.yaml").write_text(registry)
+        result = cache_step(env)
+        assert result.returncode == 1 and "the run goes on" not in result.stdout, case
+        assert [line for line in calls(root) if line.startswith("chmod")] == [], case
+        assert result.stderr.startswith(f"bootstrap: after the chown, {root}/hf/hub/raced isn't spark-pull:spark, or "
+                                        "is writable by its group or others, so no chmod ran"), case
+
+
+def test_no_chmod_is_handed_a_link(tmp_path):
+    # chmod follows a link named on its command line: every path the setgid pass hands it is a folder.
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    handed = [word for line in calls(tmp_path) if line.startswith("chmod g+s ") for word in line.split()[2:]]
+    assert handed and all(Path(word).is_dir() and not Path(word).is_symlink() for word in handed)
+    assert str(hf / "planted-folder") not in handed

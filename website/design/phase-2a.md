@@ -6856,6 +6856,18 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
     `local-ai-gate.service` and `local-ai-brake-drill.service` beside the three above, since both
     run as `spark` from the cutover, and the move's safety rests on nothing of `spark`'s running.
     At Task 36 neither is installed, so stopping the brake and llama-swap is still enough.
+    *(Revised at Task 27's review, 2026-10-14, the reviewer's I1, M1 and M2. That check missed a
+    process of `spark`'s outside the units (a crontab job, a shell), took an activating,
+    deactivating or silent unit as stopped, and came once, before a chown that leaves a folder
+    `spark`'s until its walk finishes; and chmod follows a link it is handed. Now, just before the
+    chown, the move also refuses while `pgrep -l -u spark,spark-pull` finds any process (named by
+    pid and command name), while a unit isn't `inactive` or `failed`, while a file in the cache has
+    a second name (`-type f -links +1`), or while anything in it but a link is writable by its group
+    or others. After the chown and before any chmod it checks again that every path it moved is
+    `spark-pull:spark` and writable by neither group nor others, and stops there if not; only then
+    can nothing of `spark`'s swap a folder `find -P … -type d ! -type l` hands chmod. The done-check
+    counts a writable path as not moved. Nothing strips a bit, since Ubuntu's coreutils 9.4 `chmod
+    -R` can follow a link swapped in during its walk.)*
   - **launch's `tickets`, `started` and `refusals` are made by `spark`**
     (`runuser -u spark -- install -d -o spark -g spark -m 0750 …`): `launch` is `spark`'s, and root's
     `install -d` there would follow a link `spark` planted (CLAUDE.md's lesson). The folders
@@ -7724,6 +7736,13 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
   stopped, they stop the front's socket too, **on the Spark**, with sudo, since the polkit rule
   doesn't cover sockets (`sudo systemctl stop local-ai-front.socket local-ai-front.service`), and
   start the socket again at the end.
+- *(Added 2026-10-14, at Task 27's review, the reviewer's M8:)* **deploy.md's two `open-webui.env`
+  blocks move off Phase 1's rule.** The block after *If the page refuses even the first signup*,
+  which appends the admin's email and password, and the one that removes them still write with `umask
+  027` and `chgrp spark` (`0640 root:spark`). Since Task 27, bootstrap makes every secret file
+  `0600 root:root` in a folder only root reads, and secret-files.md writes them as root with
+  `umask 077` and no `chgrp`. Both blocks change the same way, run on stand-ins first. Until then
+  they are harmless in a folder only root reads, and the next bootstrap resets the file.
 
 **Steps:**
 
@@ -7764,6 +7783,8 @@ private but not secret); and **[Dan]** the vault's entry note gains it.
   login works afterwards, since bootstrap changes sshd's PAM stack (Task 28; bootstrap.md says so).
   Then start them again: `systemctl start local-ai-llama-swap.service local-ai-brake.service`. The
   stack serves in Phase 1's layout meanwhile, reading the model files through the group.
+  *(Added 2026-10-14, at Task 27's review: the move also refuses while any process runs as `spark`,
+  in a unit or not, so bootstrap.md's step 3 checks `pgrep -l -u spark` before `make bootstrap`.)*
 - [ ] **Step 2 [Spark]: Check it.** **On the Spark:**
 
 ```bash
@@ -7782,7 +7803,11 @@ test -x /usr/local/libexec/local-ai-agent-oom && grep -c 'local-ai-agent-oom' /e
   (left for whisper until the cutover), no file the group can't read, and about 36 GiB. Then `make
   doctor`: its *secrets folder* and *spark's folders* lines pass; the lines that need the cutover
   (the front, the gate, the sockets, the scenarios) fail, as expected until Task 38; the stack
-  serves.
+  serves. *(Corrected 2026-10-14, at Task 27's review, the reviewer's M3 and M4: `hf/tmp` reads
+  `spark:spark` with `750` or `755`, most likely `755`, since Phase 1's pull made it under systemd's
+  default umask, not yet seen; `getent group spark-admin` names Dan alone; and bootstrap.md's step 6
+  also lists anything in the cache writable by its group or others, or that the group can't read or
+  enter, expecting none.)*
 - [ ] **Step 3 [Dan, on the Spark]:** secret-files.md's 2a steps: the three internal keys, each
   written once to its raw file and to `internal-keys.env`; `client-keys.sha256` from the existing
   client keys; each file `0600 root:root`. Its hash checks print only *match*. Then the key list,

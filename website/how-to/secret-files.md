@@ -259,7 +259,7 @@ until Phase 2a closes (its Task 51 removes it). From the cutover nothing reads i
 only, never a value:
 
 ```bash
-sudo bash -c 'd=/etc/local-ai/secrets; stat -c "%a %U:%G %n" "$d" "$d"/*; for f in "$d"/*.env; do echo "$f"; sed -n "s/=.*//p" "$f" | sed "s/^/  /"; n=$(grep -vc = "$f"); [ "$n" -eq 0 ] || echo "  and $n line(s) without =, not shown"; done; for f in "$d"/*.key; do echo "$f: $(wc -l < "$f") line, $(wc -c < "$f") bytes"; done; [ -e "$d/client-keys.sha256" ] && echo "$d/client-keys.sha256: $(grep -c "^[a-z0-9-][a-z0-9-]* [0-9a-f]\{64\}$" "$d/client-keys.sha256") digest line(s), $(grep -vc "^[a-z0-9-][a-z0-9-]* [0-9a-f]\{64\}$" "$d/client-keys.sha256") other(s)"; have="" missing=""; for h in ntfy-gate.header ntfy-notify.header ntfy-brake.header; do if [ -e "$d/$h" ]; then have="$have $h"; else missing="$missing $h"; fi; done; if grep -qs "^NTFY_URL=" /etc/local-ai/values.env; then have="$have NTFY_URL"; else missing="$missing NTFY_URL"; fi; if [ -z "$have" ]; then echo "ntfy not set up (Task 2, Phase 5)"; elif [ -n "$missing" ]; then echo "ntfy half set up (Task 2): missing$missing"; fi'
+sudo bash -c 'd=/etc/local-ai/secrets; stat -c "%a %U:%G %n" "$d" "$d"/*; for f in "$d"/*.env; do echo "$f"; sed -n "s/=.*//p" "$f" | sed "s/^/  /"; n=$(grep -vc = "$f"); [ "$n" -eq 0 ] || echo "  and $n line(s) without =, not shown"; done; for f in "$d"/*.key; do [ -e "$f" ] || continue; echo "$f: $(wc -l < "$f") line, $(wc -c < "$f") bytes"; done; [ -e "$d/client-keys.sha256" ] && echo "$d/client-keys.sha256: $(grep -c "^[a-z0-9-][a-z0-9-]* [0-9a-f]\{64\}$" "$d/client-keys.sha256") digest line(s), $(grep -vc "^[a-z0-9-][a-z0-9-]* [0-9a-f]\{64\}$" "$d/client-keys.sha256") other(s)"; have="" missing=""; for h in ntfy-gate.header ntfy-notify.header ntfy-brake.header; do if [ -e "$d/$h" ]; then have="$have $h"; else missing="$missing $h"; fi; done; if grep -qs "^NTFY_URL=" /etc/local-ai/values.env; then have="$have NTFY_URL"; else missing="$missing NTFY_URL"; fi; if [ -z "$have" ]; then echo "ntfy not set up (Task 2, Phase 5)"; elif [ -n "$missing" ]; then echo "ntfy half set up (Task 2): missing$missing"; fi'
 ```
 
 Expected:
@@ -291,10 +291,11 @@ again, then the duplicate fix above with `f` set to `open-webui.env`.
 
 **18. On the Spark, the key list names every digest, and no other key.** It loads the key list as
 the front and the gate will, against the clone's registry, so a group, a label or a name it would
-refuse fails here too, then compares its names with the digests'. Names only:
+refuse fails here too, then compares its names with the digests'. Names only. `sudo -v` asks for
+your password first, if sudo needs it, so its prompt doesn't run into `diff`'s output:
 
 ```bash
-diff <(uv run --frozen --project spark python -c 'from spark import paths; from spark.registry import load_keys, load_registry; print("\n".join(sorted(load_keys(paths.KEYS, load_registry("stack/models.yaml").key_groups))))') <(sudo awk '!/^#/ && NF {print $1}' /etc/local-ai/secrets/client-keys.sha256 | sort) && echo "the key list names every digest, and no other key"
+sudo -v && diff <(uv run --frozen --project spark python -c 'from spark import paths; from spark.registry import load_keys, load_registry; print("\n".join(sorted(load_keys(paths.KEYS, load_registry("stack/models.yaml").key_groups))))') <(sudo awk '!/^#/ && NF {print $1}' /etc/local-ai/secrets/client-keys.sha256 | sort) && echo "the key list names every digest, and no other key"
 ```
 
 Run it from the clone's root. `diff` shows only the names that differ: `<` for a name only the key

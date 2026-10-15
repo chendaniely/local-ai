@@ -520,14 +520,27 @@ directories() {
 # The Hugging Face cache moves to spark-pull (Phase 2a), which downloads into it, with spark as its
 # group and every folder setgid, so the engines, running as spark, read every model file through
 # the group and can't change one, and every file the pull adds takes spark's group too. Its owners
-# change only once, with chown -R -P --no-dereference, which never follows a link. Until then it is
-# spark's, so root acts through folders spark controls: the move refuses, changing nothing, while
-# any unit that runs as spark or spark-pull is active, so no process of theirs can race it, or while
-# fs.protected_hardlinks is off, so no hard link spark made to someone else's file can be in it. A cache already moved needs nothing,
-# whatever runs, so a re-run with the stack up passes. hf/tmp, whisper's --tmp-dir in Phase 1's
-# registry, stays spark's while the deployed registry names it, and the check never looks at it:
-# the close removes it once nothing does (Phase 2a's Task 51). Tests point these at stand-ins, and
-# PULL_USER and CACHE_GROUP at whoever runs them: the commands always name spark-pull and spark.
+# change only once, with chown -R -P --no-dereference, which never follows a link.
+#
+# Until the move the cache is spark's, so root works in folders spark controls. Just before the
+# chown, the move refuses, changing nothing, while any process runs as spark or spark-pull, while any
+# unit that runs as either isn't inactive or failed (one activating, deactivating or not answering
+# counts as running), while fs.protected_hardlinks isn't 1, while a file in it has a second name (a
+# hard link: the move would hand that file to spark-pull wherever its other name is), or while
+# anything in it is writable by its group or others. That is one look, and a process started after
+# it (a crontab job) would go unseen, so the chmods wait for a second check, after the chown: every
+# path the move covers is spark-pull's, in spark's group, and writable by neither its group nor
+# others. Only then can nothing of spark's add, remove or rename an entry anywhere in that tree, so
+# no folder that find lists can turn into a link before chmod, which follows a link it is handed,
+# reaches it. hf/tmp, when it stays spark's, is never handed to chmod, and its own entry sits in the
+# top folder, spark-pull's. A check that fails stops the move there; nothing strips a bit instead,
+# since coreutils 9.4's chmod -R can follow a link swapped in during its walk.
+#
+# A cache already moved needs nothing, whatever runs, so a re-run with the stack up passes. hf/tmp,
+# whisper's --tmp-dir in Phase 1's registry, stays spark's while the deployed registry names it, and
+# the done-check never looks at it: the close removes it once nothing does (Phase 2a's Task 51).
+# Tests point these at stand-ins, and PULL_USER and CACHE_GROUP at whoever runs them: the commands
+# always name spark-pull and spark.
 HF_CACHE="${BOOTSTRAP_HF_CACHE:-/var/lib/local-ai/hf}"
 DEPLOYED_REGISTRY="${BOOTSTRAP_REGISTRY:-/opt/local-ai/etc/models.yaml}"
 PULL_USER="${BOOTSTRAP_PULL_USER:-spark-pull}"
@@ -538,28 +551,98 @@ CACHE_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-pull.se
 # else naming it (a comment) errs the safe way: hf/tmp stays spark's.
 OLD_WHISPER_TMP='/var/lib/local-ai/hf/tmp([^[:alnum:]_.-]|$)'
 REGISTRY_LIMIT=1048576  # bytes: the registry is about 10 KB
+SHOWN=5                 # paths a refusal names, at most
+KEEP_TMP=0              # 1 while hf/tmp stays out of the move (hf_cache_to_pull sets it)
 
 # 0 when the cache is moved: spark-pull:spark 2750, everything in it spark-pull's and in spark's
-# group, every folder setgid, hf/tmp not looked at. 1 when anything isn't; 2 when it can't be read.
+# group, every folder setgid, nothing but a link writable by its group or others, hf/tmp not looked
+# at. 1 when anything isn't; 2 when it can't be read.
 cache_moved() {
   local top odd
   top="$(stat -c '%U:%G %a' -- "$HF_CACHE" 2>/dev/null)" || return 2
   [[ "$top" == "$PULL_USER:$CACHE_GROUP 2750" ]] || return 1
-  odd="$(find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o \
-    \( ! -user "$PULL_USER" -o ! -group "$CACHE_GROUP" -o -type d ! -perm -2000 \) -print -quit 2>/dev/null)" ||
+  odd="$(find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o \( ! -user "$PULL_USER" \
+    -o ! -group "$CACHE_GROUP" -o -type d ! -perm -2000 -o ! -type l -perm /022 \) -print -quit 2>/dev/null)" ||
     return 2
   [[ -z "$odd" ]]
 }
 
-# Each reason the move can't go ahead now, one a line, with what to do about it.
+# find -P over what the move covers: the cache, hf/tmp left out while KEEP_TMP is 1. The arguments
+# are find's expression, its action included.
+find_moved() {
+  if (( KEEP_TMP )); then
+    find -P "$HF_CACHE" -path "$HF_CACHE/tmp" -prune -o "$@"
+  else
+    find -P "$HF_CACHE" "$@"
+  fi
+}
+
+# Text a terminal can't act on: anything but printable ASCII shown as ?. A path in the cache can be
+# any name spark gave it.
+printable() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' '?'; }
+
+# The paths find_moved finds for an expression, at most SHOWN of them on one line, and how many more.
+shown_paths() {
+  local all path n=0 shown=""
+  all="$(find_moved "$@" -print 2>/dev/null || true)"
+  if [[ -z "$all" ]]; then return 0; fi
+  while IFS= read -r path; do
+    n=$((n + 1))
+    if (( n <= SHOWN )); then shown+="${shown:+, }$path"; fi
+  done <<<"$all"
+  if (( n > SHOWN )); then shown+=", and $((n - SHOWN)) more"; fi
+  printable "$shown"
+}
+
+# Each reason the move can't go ahead now, one a line, with what to do about it. $1 is 1 when this
+# account can look inside the cache (a dry run as you can't).
 move_refusals() {
-  local unit hardlinks
+  local unit state users="spark,spark-pull" procs list="" line rc=0 hardlinks found
   for unit in "${CACHE_UNITS[@]}"; do
-    if systemctl is-active --quiet "$unit"; then echo "$unit is active: stop it first (systemctl stop $unit)"; fi
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    case "$state" in
+      inactive | failed) ;;
+      active) echo "$unit is active: stop it first (systemctl stop $unit)" ;;
+      "") echo "$unit didn't say whether it runs (systemctl is-active answered nothing): find out why, then run this again" ;;
+      *) echo "$unit is $state, not inactive or failed: stop it, and wait until it is (systemctl stop $unit)" ;;
+    esac
   done
+  # Any process of spark's or spark-pull's, in a unit or not (a crontab job, a shell), named by its
+  # pid and command name, never its arguments. A dry run before bootstrap has made spark-pull asks
+  # only about the users that exist; a real run has made both.
+  if (( DRY_RUN )); then
+    users=""
+    for line in spark spark-pull; do
+      if id -u "$line" >/dev/null 2>&1; then users="${users:+$users,}$line"; fi
+    done
+  fi
+  if [[ -n "$users" ]]; then
+    procs="$(pgrep -l -u "$users" 2>/dev/null)" || rc=$?
+    case "$rc" in
+      0)
+        while IFS= read -r line; do list+="${list:+, }$line"; done <<<"$procs"
+        echo "processes run as ${users//,/ or } ($(printable "$list")): stop each first, a unit with systemctl" \
+          "stop, anything else where it was started"
+        ;;
+      1) ;;
+      *) echo "pgrep couldn't tell whether anything runs as ${users//,/ or } (exit $rc): find out why, then run this again" ;;
+    esac
+  fi
   hardlinks="$(sysctl -n fs.protected_hardlinks 2>/dev/null || true)"
   if [[ "$hardlinks" != 1 ]]; then
-    echo "fs.protected_hardlinks is ${hardlinks:-unreadable}, not 1: with it off, a hard link spark made to a file it doesn't own would go to spark-pull with the cache"
+    echo "fs.protected_hardlinks is ${hardlinks:-unreadable}, not 1: with it off, a hard link spark made to a" \
+      "file it doesn't own would go to spark-pull with the cache"
+  fi
+  if (( ! $1 )); then return 0; fi
+  found="$(shown_paths -type f -links +1)"
+  if [[ -n "$found" ]]; then
+    echo "files in it with a second name, which the move would hand to spark-pull wherever the other name is" \
+      "($found): look at each with sudo ls -li, and remove the name that isn't the cache's"
+  fi
+  found="$(shown_paths ! -type l -perm /022)"
+  if [[ -n "$found" ]]; then
+    echo "paths in it writable by their group or others, which spark could still change after the move" \
+      "($found): remove those bits as spark, their owner (sudo -u spark chmod go-w <path>)"
   fi
 }
 
@@ -578,7 +661,8 @@ registry_names_hf_tmp() {
 
 hf_cache_to_pull() {
   say "the Hugging Face cache: spark-pull's, with a setgid group that spark reads the model files through"
-  local state=0 look=1 named=0 keep=0 refusals why="" line short=""
+  local state=0 look=1 named=0 why="" refusals line short="" odd
+  KEEP_TMP=0
   if [[ ! -e "$HF_CACHE" && ! -L "$HF_CACHE" ]]; then
     # A new box: nothing to move. mkdir, not install -d, which would reset a cache that exists.
     run mkdir -m 0750 "$HF_CACHE"
@@ -604,7 +688,17 @@ hf_cache_to_pull() {
     fi
     say "a dry run can't look inside $HF_CACHE as you: it shows what a real run does if anything in it isn't spark-pull's yet"
   fi
-  refusals="$(move_refusals)"
+  if (( ! look )) || [[ -e "$HF_CACHE/tmp" || -L "$HF_CACHE/tmp" ]]; then
+    registry_names_hf_tmp || named=$?
+    case "$named" in
+      0) KEEP_TMP=1; why="the deployed registry still names it as whisper's --tmp-dir" ;;
+      1) KEEP_TMP=0 ;;
+      *) KEEP_TMP=1
+         why="the deployed registry, $DEPLOYED_REGISTRY, couldn't be read as $ADMIN_USER, so it may still be whisper's" ;;
+    esac
+  fi
+  # The guard, just before the first chown.
+  refusals="$(move_refusals "$look")"
   if [[ -n "$refusals" ]]; then
     if (( DRY_RUN )); then
       # Each reason without what to do about it: the part before its colon.
@@ -619,27 +713,44 @@ hf_cache_to_pull() {
     } >&2
     exit 1
   fi
-  if (( ! look )) || [[ -e "$HF_CACHE/tmp" || -L "$HF_CACHE/tmp" ]]; then
-    registry_names_hf_tmp || named=$?
-    case "$named" in
-      0) keep=1; why="the deployed registry still names it as whisper's --tmp-dir" ;;
-      1) keep=0 ;;
-      *) keep=1; why="the deployed registry, $DEPLOYED_REGISTRY, couldn't be read as $ADMIN_USER, so it may still be whisper's" ;;
-    esac
-  fi
-  if (( keep )); then
+  if (( KEEP_TMP )); then
     say "$HF_CACHE/tmp stays as it is, spark's: $why"
+    # The top first, so nothing of spark's can add an entry to it while the rest moves.
     run chown --no-dereference spark-pull:spark "$HF_CACHE"
     run find -P "$HF_CACHE" -mindepth 1 -maxdepth 1 ! -path "$HF_CACHE/tmp" \
       -exec chown -R -P --no-dereference spark-pull:spark {} +
-    run chmod 2750 "$HF_CACHE"
-    run find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o -type d -exec chmod g+s {} +
   else
     run chown -R -P --no-dereference spark-pull:spark "$HF_CACHE"
-    run chmod 2750 "$HF_CACHE"
-    run find -P "$HF_CACHE" -mindepth 1 -type d -exec chmod g+s {} +
   fi
-  (( DRY_RUN )) && return 0
+  # The second check, after the chown and before any chmod (above: why this order closes the swap).
+  if (( DRY_RUN )); then
+    line="a real run stops here, before any chmod, unless everything it moved is spark-pull:spark"
+    printf '+ owned_and_closed   (%s and writable by neither its group nor others)\n' "$line"
+  else
+    if ! odd="$(find_moved \( ! -user "$PULL_USER" -o ! -group "$CACHE_GROUP" -o ! -type l -perm /022 \) \
+      -print -quit 2>/dev/null)"; then
+      odd="${odd:-$HF_CACHE (find could not read all of it)}"
+    fi
+    if [[ -n "$odd" ]]; then
+      {
+        echo "bootstrap: after the chown, $(printable "$odd") isn't spark-pull:spark, or is writable by its" \
+          "group or others, so no chmod ran and nothing more was changed."
+        echo "If it is spark-pull's, remove those bits as spark-pull (sudo -u spark-pull chmod go-w <path>)." \
+          "If it isn't, something wrote in the cache during the move: bring it to the Claude session working on" \
+          "the repo."
+        echo "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
+      } >&2
+      exit 1
+    fi
+  fi
+  run chmod 2750 "$HF_CACHE"
+  # -type d under -P never matches a link; ! -type l says so again.
+  if (( KEEP_TMP )); then
+    run find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o -type d ! -type l -exec chmod g+s {} +
+  else
+    run find -P "$HF_CACHE" -mindepth 1 -type d ! -type l -exec chmod g+s {} +
+  fi
+  if (( DRY_RUN )); then return 0; fi
   # As the hold checks apt-mark's work: the move must have taken.
   if ! cache_moved; then
     echo "bootstrap: the move didn't take: $HF_CACHE isn't spark-pull:spark 2750 with setgid folders yet" >&2
