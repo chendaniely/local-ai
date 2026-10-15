@@ -8148,7 +8148,8 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
     not the scenario's own `no_fit`, which can't be asked for without filling memory.
   - ***version drift*** runs `/opt/local-ai/bin/llama-swap/<version>/llama-swap -version` for
     `versions.yaml`'s version, and the deployed registry's llama-server with `--version`, which
-    prints its line on stderr (about 0.3 s and 330 MB, seen 2026-10-15). It checks that the
+    prints its line on stderr (about 0.3 s and 330 MB, seen 2026-10-15; since the review, only with
+    memory above the warn line, below). It checks that the
     registry's whisper-server is under `v1.9.4`'s folder and is there, and asks the deployed venv's
     Python for uvicorn's version, against `spark/uv.lock`'s.
   - **No example address.** A `SPARK_LLAMASWAP_URL` or `SPARK_FRONT_URL` that isn't an http(s)
@@ -8161,13 +8162,43 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
     the box yet.
   - **The canary** is `doctor-canary-<16 hex digits>`: in a chat message (`max_tokens` 1), and as
     speech-to-text's `prompt` and file name. Two seconds later doctor reads `journalctl
-    --output=verbose --since=@<start>`, then asks `POST /v1/canary`.
+    --output=verbose --since=@<start>` (*`--all` added at the review, below*), then asks `POST
+    /v1/canary`.
   - **What doctor's requests leave behind.** The front writes a journal line for each. The
     refusals it asks for on purpose, the three routes' `route_not_served` and S03's
     `model_not_found`, go into the gate's *recent*, which `spark status` shows. From Phase 5 they
     may send `refused` notifications too: for the controller to rule on.
   - `deploy.md`'s Phase 1 sentence that doctor loads the embeddings (*When something is wrong*)
-    is Task 35's to correct, with that runbook's other doctor lines.
+    is Task 35's to correct, with that runbook's other doctor lines. *(Done 2026-10-15, in Task 35,
+    `45ac806`, with `updates.md`'s account of doctor, which the review found still Phase 1's.)*
+- *(Added 2026-10-15, at Task 33's review, the controller's rulings, as built in its fix round:)*
+  - **A memory guard** (I1). Doctor reads `MemAvailable` from `/proc/meminfo`, which works with
+    the gate down. Under the registry's warn line (28 GiB), or when it can't be read,
+    `llama-server --version`, which starts CUDA, isn't run: the build is read from the registry's
+    folder for it, as whisper-server's is, and the line says so. `--full`'s upload, which
+    llama-swap holds whole in memory, isn't sent either: its line fails, says why, and says to run
+    `--full` again once memory is back above the line.
+  - **The canary reads the journal with `--all`** (I2): `journalctl --no-pager --quiet --all
+    --output=verbose --since=@<start>`, pinned whole in a test. Without `--all`, journalctl shows a
+    field holding a CR, an ESC or a byte that isn't UTF-8 as `[N bytes blob data]`, and the canary
+    in it would never be found.
+  - **The hook's line, read as bootstrap reads it.** `/etc/pam.d/sshd` must be root's own and
+    written only by root. A line before the hook's that ends in a backslash is flagged, since
+    libpam joins the hook's line onto it. A line that's gone is `make bootstrap`'s to put back.
+    One that's misplaced or changed is taken out by hand first, since bootstrap refuses it
+    (`bootstrap.md`, its Phase 2a re-run). A `cron.allow` or `cron.deny` that can't be read says
+    so.
+  - **No check's line names `make doctor`.** The gate's client ends its words with that step,
+    which is doctor itself, so the gate, S02, S17 and canary lines name `make logs s=gate` and
+    doctor's own *stack units* and *sockets* lines instead. Each canary FAIL names a next step, and
+    so does *can't read /etc/pam.d/sshd*.
+  - **S01's line says what it checks:** the gate counts the registry's residents as always
+    loaded. Whether they are loaded now is for the end-to-end check and `make status`.
+  - **A 170 MB upload that gets no answer** reads as such. The front refuses some uploads before
+    reading them, which closes the connection mid-send.
+  - **The front line's `GET /unload`** relies on the front's route filter. Were the filter broken,
+    the front would pass the route on with its own key and unload every model. The module's
+    docstring says so.
 
 **Tests** (`spark/tests/test_doctor.py`, a `Probe` stand-in; one pass and one failure per check,
 and):

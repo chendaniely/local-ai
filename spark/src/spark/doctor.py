@@ -7,7 +7,9 @@ lines. A model is asked something only once the gate's view shows it loaded, so 
 make-room is asked only for its plan, which unloads nothing. What its requests leave behind is what any request
 leaves: the front's journal line for each; the gate's record of the refusals it asks for on purpose (S03's model and
 the routes the front doesn't serve), which `spark status` shows under *recent*; and make-room's plan, which the gate
-keeps in memory among its newest few.
+keeps in memory among its newest few. The front line sends llama-swap's own admin routes, `GET /unload` among them,
+with your key, as the plan's check requires: it relies on the front's route filter to refuse them, so a front whose
+filter were broken would pass `GET /unload` on to llama-swap with its own key, and that would unload every model.
 
 It never prints a key, a token, a topic or an address from the environment, which can carry a password: your key
 goes only in a header, only to the front and to llama-swap's port (which must refuse it), through no proxy and never
@@ -47,9 +49,11 @@ import yaml
 from spark import gateproto, paths, render, schema
 from spark.apply import read_quiet
 from spark.brake import KEY_CHECK_FILE, KeyCheck, read_key_check
+from spark.gateclient import _STEP as GATE_CLIENT_STEPS
 from spark.gateclient import GateClient, GateError
 from spark.gateproto import REQUEST_TIMEOUT_S
 from spark.llamaswap import _KeyStaysHere, _url_ok, key_from_env
+from spark.memory import read_meminfo
 from spark.messages import _and
 from spark.registry import Registry, load_registry, parse_keys
 from spark.status import _when
@@ -128,12 +132,19 @@ NOT_SERVED = (("GET", "/unload"), ("POST", "/api/models/unload/x"), ("GET", "/lo
 MADE_UP_MODEL = "doctor-made-up-model"  # S03: a name no registry has, which pi's retry list doesn't match
 IDLE_MIN = 60  # S01: the plan's idle time for an on-demand model, in minutes
 NO_VIEW = "the gate didn't answer (its own line says why)"
+# What a line says to do when the gate gives no answer: the gate's own client ends its words with `make doctor`, which
+# doctor is (gateclient._STEP), so doctor names the real steps instead.
+GATE_STEP = ("`make logs s=gate` shows why, and the stack units and sockets lines say whether the gate's units and "
+             "sockets are up")
 # --full: the upload, a WAV of silence, 48 kHz stereo, about 15 minutes; within the front's 200 MiB for a body.
 UPLOAD_BYTES = 170_000_000
 UPLOAD_TIMEOUT_S = 900.0
 CANARY_PLACES = {"refusals": "the gate's refusal history", "state": "the gate's state", "launch": "launch's records"}
 JOURNAL_SETTLE_S = 2.0  # the front writes a request's journal line as the request ends: a moment for journald
 JOURNAL_GROUPS = {"adm", "systemd-journal"}  # either reads the system journal
+# --all: without it, journalctl shows a field holding a CR, an ESC or a byte that isn't UTF-8, the kind a line of
+# streamed tokens holds, as `[N bytes blob data]`, and the canary in it would never be found (Task 33's review, I2).
+JOURNAL_ARGS = ("journalctl", "--no-pager", "--quiet", "--all", "--output=verbose")
 ANSWER_MAX = 4 << 20  # an answer's body is read up to this; doctor reads only its status and a few fields
 
 
@@ -283,6 +294,13 @@ class Probe:
     def now(self) -> float:
         return time.time()
 
+    def mem_available_gib(self) -> float | None:
+        """MemAvailable from /proc/meminfo, in GiB, which needs no gate; None when it can't be read."""
+        try:
+            return read_meminfo().available_gib
+        except (OSError, ValueError, KeyError):
+            return None
+
     def pause(self, seconds: float) -> None:
         time.sleep(seconds)
 
@@ -371,6 +389,29 @@ def _printable(text: str) -> str:
     """`text` with every character a terminal would act on written out instead: it comes from a file, a command or a
     service doctor doesn't control."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
+
+
+def _gate_said(err: GateError) -> str:
+    """A GateError's text for a doctor line: the gate's client ends most with `make doctor`, which is doctor itself
+    (gateclient._STEP), so that step gives way to GATE_STEP, the real one."""
+    said = str(err)
+    stepped = any(step in said for step in GATE_CLIENT_STEPS.values())
+    for step in GATE_CLIENT_STEPS.values():
+        said = said.replace(step, "")
+    said = _printable(" ".join(said.split()))
+    return f"{said} {GATE_STEP}" if stepped else said
+
+
+def _low_memory(probe: Probe, registry: Registry) -> str | None:
+    """Why something that takes memory (llama-server's CUDA start, llama-swap's copy of a 170 MB upload) isn't run now,
+    or None: MemAvailable, from /proc/meminfo so that it works with the gate down, under the registry's warn line, or
+    not readable (Task 33's review, I1)."""
+    available, warn = probe.mem_available_gib(), registry.brake.warn_gib
+    if available is None:
+        return "MemAvailable can't be read from /proc/meminfo"
+    if available < warn:
+        return f"{available:.1f} GiB available, under the {warn:g} GiB warn line"
+    return None
 
 
 def _error_code(body: str) -> tuple[str | None, str | None]:
@@ -520,37 +561,79 @@ def earlyoom(probe: Probe) -> Check:
     return Check("earlyoom", True, "active, with the repo's arguments")
 
 
-def first_session_line(text: str) -> str | None:
-    """sshd's first session line, as bootstrap's pam_plan finds it: the first line whose type, comments taken out and
-    read without regard to case as libpam reads it, is `session` or `-session`, or that includes common-session."""
-    for raw in text.splitlines():
+def _session_line(words: list[str]) -> bool:
+    """Whether a PAM line's words, comments taken out, make a session line, as bootstrap's pam_plan reads one: its type,
+    read without regard to case as libpam reads it, `session` or `-session`, or an include of common-session."""
+    kind = words[0].lower()
+    return kind in ("session", "-session") or (kind == "@include" and len(words) > 1
+                                               and words[1].startswith("common-session"))
+
+
+def _continues(raw: str) -> bool:
+    """Whether libpam joins the next line onto this one, as bootstrap's `continues` reads it: it ends in a backslash,
+    spaces after it allowed, and has no #, where libpam stops a line."""
+    return "#" not in raw and raw.rstrip().endswith("\\")
+
+
+def pam_hook_problem(text: str) -> str | None:
+    """What keeps sshd's PAM file from running the hook as bootstrap put it, read as bootstrap's pam_plan reads it, or
+    None: bootstrap's line, exactly, as the first session line, no line before it joined onto it with a backslash (a
+    blank or comment line between them keeps the join), and no other line naming the hook. A line that names the hook
+    anywhere else, or differently, bootstrap refuses to change: it is taken out by hand."""
+    first = joined = None
+    joins = None  # the number of the last line that ends in a backslash, until a line that doesn't
+    hooks = []
+    for n, raw in enumerate(text.splitlines(), 1):
         words = raw.split("#", 1)[0].split()
-        if not words:
+        if raw == PAM_LINE or str(AGENT_HOOK) in raw.split("#", 1)[0]:
+            hooks.append(n)
+        if not words:  # libpam skips a blank or comment line, and a backslash before it still joins across it
             continue
-        kind = words[0].lower()
-        if kind in ("session", "-session") or (kind == "@include" and words[1:2]
-                                               and words[1].startswith("common-session")):
-            return raw
+        if first is None and _session_line(words):
+            first, joined = (n, raw), joins
+        joins = n if _continues(raw) else None
+    if first is None:
+        return (f"{PAM_SSHD} has no session line, so there's no place for the hook's line before sshd's session modules, "
+                "and bootstrap refuses it: website/how-to/bootstrap.md, Phase 2a's re-run")
+    if not hooks:
+        return (f"{PAM_SSHD} doesn't run the hook: its line is gone (an openssh-server upgrade can replace the file), "
+                "and `make bootstrap` puts it back")
+    by_hand = ("bootstrap refuses to change it, so take it out by hand, as website/how-to/bootstrap.md says (its "
+               "Phase 2a re-run), then run `make bootstrap`")
+    if hooks == [first[0]] and first[1] != PAM_LINE:
+        return f"{PAM_SSHD}:{first[0]} names the hook, but isn't bootstrap's line, {PAM_LINE}: {by_hand}"
+    if hooks != [first[0]]:
+        at = _and([str(n) for n in hooks if n != first[0]])
+        where = ("besides bootstrap's line before its first session line" if first[1] == PAM_LINE
+                 else f"but not as bootstrap's line before its first session line, line {first[0]}")
+        return f"{PAM_SSHD} names the hook at line {at}, {where}: {by_hand}"
+    if joined is not None:
+        return (f"line {joined} of {PAM_SSHD} ends in a backslash, so libpam reads the hook's line as part of it and "
+                "never runs the hook: take the backslash out by hand, then run `make bootstrap`")
     return None
 
 
 def agent_oom(probe: Probe) -> Check:
-    """agent's processes get an OOM score root sets (Task 28): sshd's PAM stack runs the hook's line, exactly
-    bootstrap's, before its first session line, where nothing of agent's own environment has been read yet; the hook's
-    script and the drop-in for agent's user manager are the repo's, root's own; and cron.deny names agent, while a
-    cron.allow, which cron would read instead, doesn't."""
+    """agent's processes get an OOM score root sets (Task 28): sshd's PAM file is root's own, and runs the hook's line,
+    exactly bootstrap's, before its first session line, where nothing of agent's own environment has been read yet; the
+    hook's script and the drop-in for agent's user manager are the repo's, root's own; and cron.deny names agent, while
+    a cron.allow, which cron would read instead, doesn't. Each is read as bootstrap reads it (Task 33's review)."""
     name = "agent's OOM score"
     wrong, installs = [], []
+    entry = probe.entry(PAM_SSHD)
     text = probe.read(PAM_SSHD)
-    if text is None:
-        wrong.append(f"can't read {PAM_SSHD}")
-    elif first_session_line(text) != PAM_LINE:
-        wrong.append(f"{PAM_SSHD} doesn't run the hook's line before its first session line (an openssh-server upgrade "
-                     "can replace the file): `make bootstrap` puts it back")
+    if entry is None or text is None:
+        wrong.append(f"can't read {PAM_SSHD}: `ls -l {PAM_SSHD}` shows why")
+    elif entry[3] != "file" or entry[0] != "root" or entry[2] & 0o022:
+        wrong.append(f"{PAM_SSHD} is {entry[0]}:{entry[1]} {entry[2]:o}, a {entry[3]}, not root's own file that only root "
+                     "writes, which bootstrap needs before it changes it: put it back to root:root 644 by hand, then "
+                     "run `make bootstrap`")
+    elif (problem := pam_hook_problem(text)) is not None:
+        wrong.append(problem)
     targets = [(AGENT_HOOK, AGENT_HOOK_REPO, 0o755)]
     uid = probe.uid("agent")
     if uid is None:
-        installs.append("there's no account agent, whose user manager the drop-in is for")
+        wrong.append("there's no account agent, whose user manager gets the drop-in: `make bootstrap` makes it")
     else:
         targets.append((Path(render.UNIT_DIR, f"user@{uid}.service.d", AGENT_DROP_IN), AGENT_DROP_IN_REPO, 0o644))
     for path, repo, mode in targets:
@@ -558,16 +641,28 @@ def agent_oom(probe: Probe) -> Check:
             installs.append(problem)
     if installs:
         wrong.append("; ".join(installs) + f": `make bootstrap` installs {'them' if len(installs) > 1 else 'it'}")
-    deny = probe.read(CRON_DENY)
-    if deny is None or "agent" not in deny.splitlines():
-        wrong.append(f"{CRON_DENY} doesn't name agent: `make bootstrap` adds it")
-    allow = probe.read(CRON_ALLOW)
-    if allow is not None and "agent" in allow.splitlines():
-        wrong.append(f"{CRON_ALLOW} names agent, and cron reads it instead of {CRON_DENY}: take agent out of it")
+    wrong += _cron_problems(probe)
     if wrong:
         return Check(name, False, "; ".join(wrong))
     return Check(name, True, "sshd's PAM stack runs the hook before its first session line; the hook's script and the "
                              "drop-in for agent's user manager are the repo's, root's own; and cron.deny names agent")
+
+
+def _cron_problems(probe: Probe) -> list[str]:
+    """cron closed to agent, as bootstrap leaves it: cron.deny names agent, and a cron.allow, which cron reads instead
+    when it exists, doesn't. A file that is there but can't be read says so, never passes as absent."""
+    wrong = []
+    for path in (CRON_DENY, CRON_ALLOW):
+        text = probe.read(path)
+        there = probe.exists(path) if text is None else True
+        if text is None and there is not False:
+            wrong.append(f"{path} can't be read from your account, so whether it names agent is unknown: "
+                         f"`ls -l {path}` shows why")
+        elif path == CRON_DENY and (text is None or "agent" not in text.splitlines()):
+            wrong.append(f"{CRON_DENY} doesn't name agent: `make bootstrap` adds it")
+        elif path == CRON_ALLOW and text is not None and "agent" in text.splitlines():
+            wrong.append(f"{CRON_ALLOW} names agent, and cron reads it instead of {CRON_DENY}: take agent out of it")
+    return wrong
 
 
 def firewall(probe: Probe) -> Check:
@@ -807,7 +902,10 @@ def llama_swap_binary(version: str) -> Path:
 def version_drift(probe: Probe, registry: Registry | None, problem: str | None) -> Check:
     """The deployed components are the ones the repo pins: llama-swap's binary names its version, llama-server its
     build (b11146 reads as `build 11146`), whisper-server is the binary under its version's folder, as the registry
-    names it, and the deployed app's uvicorn is the lock's. Each mismatch is named."""
+    names it, and the deployed app's uvicorn is the lock's. Each mismatch is named. `llama-server --version` starts
+    CUDA (about 0.3 s and 330 MB, seen 2026-10-15), so with memory under the warn line, or unreadable, it isn't run, and
+    the build is read from the registry's folder for it, as whisper-server's is, and the line says so (Task 33's
+    review, I1)."""
     name = "version drift"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
@@ -824,7 +922,13 @@ def version_drift(probe: Probe, registry: Registry | None, problem: str | None) 
     elif said.group(1) != pins["llama-swap"]:
         wrong.append(f"llama-swap -version names {_printable(said.group(1))}, not {pins['llama-swap']}: {moves}")
     server = registry.engines.get("llama.cpp")
-    if server is not None:
+    by_folder = ""
+    if server is not None and (low := _low_memory(probe, registry)) is not None:
+        by_folder = f" (by its folder: --version not run, {low})"
+        if Path(server).parent.name != pins["llama.cpp"]:
+            wrong.append(f"the registry's llama-server, {server}, isn't under {pins['llama.cpp']}: `make apply` deploys "
+                         f"the repo's registry; --version not run, {low}")
+    elif server is not None:
         code, out, err = probe.run([server, "--version"])
         build = LLAMA_SERVER_SAYS.search(f"{out}\n{err}")
         if code != 0 or build is None:
@@ -847,7 +951,7 @@ def version_drift(probe: Probe, registry: Registry | None, problem: str | None) 
                      "`make apply` syncs it")
     if wrong:
         return Check(name, False, "; ".join(wrong))
-    return Check(name, True, f"llama-swap {pins['llama-swap']}, llama-server {pins['llama.cpp']}, whisper-server under "
+    return Check(name, True, f"llama-swap {pins['llama-swap']}, llama-server {pins['llama.cpp']}{by_folder}, whisper-server under "
                              f"{pins['whisper.cpp']} and uvicorn {pins['uvicorn']}, as stack/versions.yaml and the "
                              "lock pin them")
 
@@ -953,7 +1057,7 @@ def gate_view(probe: Probe) -> tuple[dict | None, str]:
     try:
         view = probe.gate_get("/v1/status")
     except GateError as err:
-        return None, f"GET /v1/status on its control socket got no answer: {_printable(str(err))}"
+        return None, f"GET /v1/status on its control socket got no answer: {_gate_said(err)}"
     if view.get("schema") != gateproto.STATUS_SCHEMA:
         return None, (f"its answer to GET /v1/status has schema {_printable(str(view.get('schema')))}, and this doctor "
                       f"reads {gateproto.STATUS_SCHEMA}: `make apply` deploys the app this clone has")
@@ -1143,8 +1247,11 @@ def s01(registry: Registry | None, problem: str | None, view: dict | None) -> Ch
     if set(counted) != set(residents):
         return Check("S01", False, f"the gate counts as always loaded {named(counted)}, and the registry "
                                    f"{named(residents)}: `make logs s=gate`")
-    return Check("S01", True, f"an on-demand model unloads after {IDLE_MIN} min idle; {named(residents)} are always "
-                              "loaded, as the gate counts them too, and never unload for being idle")
+    # What it checks, not whether they are loaded now: the end-to-end check and `make status` show that (Task 33's
+    # review).
+    return Check("S01", True, f"an on-demand model unloads after {IDLE_MIN} min idle; the gate counts "
+                              f"{named(residents)} as always loaded, as the registry does, and never unloads those for "
+                              "being idle")
 
 
 def s02(probe: Probe) -> Check:
@@ -1154,7 +1261,7 @@ def s02(probe: Probe) -> Check:
         answer = probe.gate_post("/v1/make-room/plan", {"size_gib": 1})
     except GateError as err:
         return Check("S02", False, f"the gate didn't answer POST /v1/make-room/plan, which spark make-room asks first: "
-                                   f"{_printable(str(err))}")
+                                   f"{_gate_said(err)}")
     if not (isinstance(answer.get("plan_id"), str) and isinstance(answer.get("plan"), dict)):
         return Check("S02", False, "the gate's answer to POST /v1/make-room/plan isn't one spark make-room can read: "
                                    "`make logs s=gate`")
@@ -1250,7 +1357,7 @@ def s17(probe: Probe) -> Check:
         answer = probe.gate_get("/v1/quiet")
     except GateError as err:
         return Check("S17", False, f"the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: "
-                                   f"{_printable(str(err))}")
+                                   f"{_gate_said(err)}")
     try:
         read_quiet(SimpleNamespace(get=lambda route: answer))
     except GateError:
@@ -1274,13 +1381,15 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
            key_env: str = KEY_ENV) -> Check:
     """A 170 MB upload to speech-to-text through the front, once the gate shows it loaded. The front spools it and sends
     it on as a chunked form, which v257 passes on still chunked (Task 21): this is the check that whisper-server takes
-    a chunked body (Task 21's note)."""
+    a chunked body (Task 21's note). llama-swap reads a POST body whole into memory, so with memory under the warn
+    line, or unreadable, it isn't sent (Task 33's review, I1)."""
     name = "a 170 MB upload"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     models = [m for m in registry.models.values() if m.capability == "transcription"]
     if not models:
-        return Check(name, False, "the registry has no speech-to-text model: give stack/models.yaml one")
+        return Check(name, False, "the registry has no speech-to-text model: give stack/models.yaml one, then "
+                                  "`make apply`")
     if bad := _front_url():
         return Check(name, False, bad)
     if unusable := _unusable(key, key_env):
@@ -1288,6 +1397,9 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     stt, waits = _ready_one(view, models)
     if waits:
         return Check(name, False, waits)
+    if (low := _low_memory(probe, registry)) is not None:
+        return Check(name, False, f"not sent: {low}, and llama-swap holds a whole upload in memory — run `spark doctor "
+                                  "--full` again once `make status` shows memory back above the warn line")
     size, chunks = wav(UPLOAD_BYTES)
     code, body = probe.upload(f"{paths.FRONT_URL}/v1/audio/transcriptions", key=key,
                               fields={"model": stt.name, "response_format": "json"}, file_name="doctor.wav",
@@ -1304,6 +1416,12 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
         return Check(name, False, f"{stt.label} answered {_redirected(code, 'the front', 'front')}")
     if code == 401:
         return Check(name, False, f"{stt.label} answered 401: {_unknown_key('the front', key_env)}")
+    if code == 0:
+        # The front refuses some uploads before it reads them (a key it doesn't know, too many at once, a body past its
+        # cap) and closes the connection, which reaches doctor, still sending, as a reset: no answer it can read.
+        return Check(name, False, f"no answer came back for the {megabytes} MB upload: the front may have refused it "
+                                  "before reading it, which closes the connection mid-send, or nothing answered — "
+                                  "`make logs s=front` shows the front's line for it, if it had one")
     return Check(name, False, f"{stt.label} answered a {megabytes} MB upload through the front with "
                               f"{_answered(code, body)}: `make logs s=front`")
 
@@ -1325,7 +1443,8 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     chats = [m for m in registry.models.values() if m.capability == "chat"]
     stts = [m for m in registry.models.values() if m.capability == "transcription"]
     if not chats or not stts:
-        return Check(name, False, "the registry needs a chat model and a speech-to-text model to send it through")
+        return Check(name, False, "the registry needs a chat model and a speech-to-text model to send it through: "
+                                  "give stack/models.yaml each, then `make apply`")
     chat, waits = _ready_one(view, chats)
     if waits:
         command = chat.roles[0] if chat.roles else chat.name
@@ -1343,32 +1462,36 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
                                   "messages": [{"role": "user", "content": f"Reply with one word. {needle}"}]})
     if code != 200:
         return Check(name, False, f"the canary couldn't be sent through chat: {chat.label} answered "
-                                  f"{_answered(code, body)}")
+                                  f"{_answered(code, body)} — `make logs s=front`, and `make status` for the model")
     size, chunks = wav(48044, rate=16000, channels=1)  # 1.5 s of silence
     code, body = probe.upload(f"{paths.FRONT_URL}/v1/audio/transcriptions", key=key,
                               fields={"model": stt.name, "prompt": needle, "response_format": "json"},
                               file_name=f"{needle}.wav", size=size, chunks=chunks, timeout=120)
     if code != 200:
         return Check(name, False, f"the canary couldn't be sent through speech-to-text: {stt.label} answered "
-                                  f"{_answered(code, body)}")
+                                  f"{_answered(code, body)} — `make logs s=front`, and `make status` for the model")
     probe.pause(JOURNAL_SETTLE_S)
     found = []
-    code, out, _ = probe.run(["journalctl", "--no-pager", "--quiet", "--output=verbose", f"--since=@{since}"])
+    code, out, _ = probe.run([*JOURNAL_ARGS, f"--since=@{since}"])
     if code != 0:
-        return Check(name, False, "journalctl couldn't read the system journal: is your account in group adm?")
+        return Check(name, False, "journalctl couldn't read the system journal: `journalctl -n 1` shows why")
     if needle in out:
         found.append("the journal")
     try:
         answer = probe.gate_post("/v1/canary", {"needle": needle})
     except GateError as err:
-        return Check(name, False, f"the gate didn't answer POST /v1/canary: {_printable(str(err))}")
+        return Check(name, False, f"the gate didn't answer POST /v1/canary: {_gate_said(err)}")
     places = answer.get("found")
     if not (isinstance(places, list) and all(isinstance(place, str) for place in places)):
         return Check(name, False, "the gate's answer to POST /v1/canary isn't one doctor can read: `make logs s=gate`")
     found += [CANARY_PLACES.get(place, _printable(place)) for place in places]
     if found:
+        steps = [f"`{' '.join(JOURNAL_ARGS)} --since=@{since} | grep -n {needle}` shows where in the journal"
+                 ] if "the journal" in found else []
+        steps += [f"`sudo -u spark grep -rl {needle} {paths.GATE_STATE} {paths.LAUNCH}` shows which of the gate's and "
+                  "launch's files"] if places else []
         return Check(name, False, f"the string sent through chat and speech-to-text turned up in {_and(found)}: find "
-                                  "what wrote it there before sending anything private")
+                                  f"what wrote it there before sending anything private — {'; '.join(steps)}")
     return Check(name, True, "a string sent through chat and speech-to-text is in none of the journal, the gate's "
                              "state, its refusal history or launch's records")
 

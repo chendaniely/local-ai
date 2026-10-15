@@ -153,6 +153,7 @@ class FakeProbe:
             doctor.NOTIFIER: ("root", "root", 0o755, "file"),
             doctor.AGENT_HOOK: ("root", "root", 0o755, "file"),
             DROP_IN: ("root", "root", 0o644, "file"),
+            doctor.PAM_SSHD: ("root", "root", 0o644, "file"),
             Path(REG.engines["whisper.cpp"]): ("chendaniely", "chendaniely", 0o755, "file"),
         }
         self.present = {}  # a path that exists (True) or can't be told about (None); any other doesn't exist
@@ -176,9 +177,12 @@ class FakeProbe:
         self.journal = ""  # what journalctl prints, or a function of this probe that gives it
         self.groups_in = {"chendaniely", "adm", "spark-admin", "spark-users"}
         self.paused = []
+        self.ran = []  # every command run, as its argv
+        self.mem = 100.0  # MemAvailable in GiB, as /proc/meminfo has it; None when it can't be read
 
     def run(self, argv):
         argv = tuple(argv)
+        self.ran.append(argv)
         if argv in self.commands:
             return self.commands[argv]
         if argv[:2] == ("systemctl", "is-active"):
@@ -220,6 +224,9 @@ class FakeProbe:
 
     def now(self):
         return NOW
+
+    def mem_available_gib(self):
+        return self.mem
 
     def pause(self, seconds):
         self.paused.append(seconds)
@@ -375,19 +382,39 @@ def test_agents_oom_hook_must_stand_before_sshds_first_session_line():
     assert detail(FakeProbe(), "agent's OOM score") == (
         True, "sshd's PAM stack runs the hook before its first session line; the hook's script and the drop-in for "
               "agent's user manager are the repo's, root's own; and cron.deny names agent")
-    remedy = ": `make bootstrap` puts it back"
+    # Task 33's review: each FAIL says what's true. A line that's gone, bootstrap puts back; one that names the hook
+    # anywhere else, or differently, bootstrap refuses to change, so it's taken out by hand.
+    gone = (f"{doctor.PAM_SSHD} doesn't run the hook: its line is gone (an openssh-server upgrade can replace the "
+            "file), and `make bootstrap` puts it back")
+    by_hand = ("bootstrap refuses to change it, so take it out by hand, as website/how-to/bootstrap.md says (its "
+               "Phase 2a re-run), then run `make bootstrap`")
     lines = SSHD.splitlines()
-    for sshd, why in (
-            ("".join(f"{line}\n" for line in lines if line != HOOK_LINE), "the hook's line is gone"),
+    for sshd, said in (
+            ("".join(f"{line}\n" for line in lines if line != HOOK_LINE), gone),
+            (SSHD.replace(HOOK_LINE, "# " + HOOK_LINE), gone),
             # After the first session line: by then pam_env may have read agent's own environment file.
-            ("".join(f"{line}\n" for line in [*lines[:3], *lines[4:5], HOOK_LINE, *lines[5:]]), "after it"),
-            (SSHD.replace(HOOK_LINE, HOOK_LINE.replace("optional", "required")), "a required line"),
-            (SSHD.replace(HOOK_LINE, "# " + HOOK_LINE), "commented out")):
+            ("".join(f"{line}\n" for line in [*lines[:3], *lines[4:5], HOOK_LINE, *lines[5:]]),
+             f"{doctor.PAM_SSHD} names the hook at line 5, but not as bootstrap's line before its first session line, "
+             f"line 4: {by_hand}"),
+            (SSHD.replace(HOOK_LINE, HOOK_LINE.replace("optional", "required")),
+             f"{doctor.PAM_SSHD}:4 names the hook, but isn't bootstrap's line, {HOOK_LINE}: {by_hand}"),
+            (SSHD + HOOK_LINE + "\n",
+             f"{doctor.PAM_SSHD} names the hook at line 10, besides bootstrap's line before its first session line: "
+             f"{by_hand}")):
         probe = FakeProbe()
         probe.files[doctor.PAM_SSHD] = sshd
-        assert failures(probe) == {"agent's OOM score": f"{doctor.PAM_SSHD} doesn't run the hook's line before its "
-                                                        "first session line (an openssh-server upgrade can replace "
-                                                        f"the file){remedy}"}, why
+        assert failures(probe) == {"agent's OOM score": said}, said
+    # A backslash at the end of a line before the hook's joins the hook's line onto it, across a comment line too, as
+    # libpam reads it: the hook never runs. One inside a comment joins nothing (bootstrap's `continues`).
+    probe = FakeProbe()
+    probe.files[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
+                                                "@include common-account\naccount optional pam_permit.so \\  \n# x\n")
+    assert failures(probe) == {"agent's OOM score": (
+        f"line 4 of {doctor.PAM_SSHD} ends in a backslash, so libpam reads the hook's line as part of it and never runs "
+        "the hook: take the backslash out by hand, then run `make bootstrap`")}
+    probe.files[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
+                                                "@include common-account\naccount optional pam_permit.so # \\\n")
+    assert failures(probe) == {}
     # A session line is `session` in any case, `-session`, or an @include of common-session, as bootstrap and libpam
     # read them: the hook after any of them is after sshd's first session line.
     for first in ("-session optional pam_systemd.so", "Session required pam_loginuid.so", "@include common-session"):
@@ -397,8 +424,19 @@ def test_agents_oom_hook_must_stand_before_sshds_first_session_line():
         probe.files[doctor.PAM_SSHD] = SSHD.replace(f"{HOOK_LINE}\n", f"{HOOK_LINE}\n{first}\n")
         assert failures(probe) == {}, first
     probe = FakeProbe()
+    probe.files[doctor.PAM_SSHD] = "\n".join(line for line in lines if "session" not in line.lower()) + "\n"
+    assert failures(probe)["agent's OOM score"].startswith(f"{doctor.PAM_SSHD} has no session line")
+    probe = FakeProbe()
     del probe.files[doctor.PAM_SSHD]
-    assert failures(probe) == {"agent's OOM score": f"can't read {doctor.PAM_SSHD}"}
+    assert failures(probe) == {"agent's OOM score": f"can't read {doctor.PAM_SSHD}: `ls -l {doctor.PAM_SSHD}` shows why"}
+    # Root's own file, which only root writes, as bootstrap's pam_check needs it (bootstrap.sh's roots_own).
+    for owner in (("root", "root", 0o664, "file"), ("chendaniely", "root", 0o644, "file"), ("root", "root", 0o777, "link")):
+        probe = FakeProbe()
+        probe.entries[doctor.PAM_SSHD] = owner
+        assert failures(probe) == {"agent's OOM score": (
+            f"{doctor.PAM_SSHD} is {owner[0]}:{owner[1]} {owner[2]:o}, a {owner[3]}, not root's own file that only root "
+            "writes, which bootstrap needs before it changes it: put it back to root:root 644 by hand, then run `make "
+            "bootstrap`")}, owner
 
     probe = FakeProbe()
     del probe.entries[doctor.AGENT_HOOK]
@@ -418,6 +456,20 @@ def test_agents_oom_hook_must_stand_before_sshds_first_session_line():
     probe.files[doctor.CRON_ALLOW] = "agent\n"
     assert failures(probe) == {"agent's OOM score": f"{doctor.CRON_ALLOW} names agent, and cron reads it instead of "
                                                     f"{doctor.CRON_DENY}: take agent out of it"}
+    # Task 33's review: a file that is there but can't be read is never a pass, nor *doesn't name agent*.
+    for path in (doctor.CRON_DENY, doctor.CRON_ALLOW):
+        probe = FakeProbe()
+        probe.files.pop(path, None)
+        probe.present[path] = True
+        assert failures(probe) == {"agent's OOM score": f"{path} can't be read from your account, so whether it names "
+                                                        f"agent is unknown: `ls -l {path}` shows why"}, path
+    probe = FakeProbe()
+    del probe.files[doctor.CRON_DENY]
+    assert failures(probe) == {"agent's OOM score": f"{doctor.CRON_DENY} doesn't name agent: `make bootstrap` adds it"}
+    probe = FakeProbe()
+    probe.uid = lambda name: None
+    assert failures(probe) == {"agent's OOM score": "there's no account agent, whose user manager gets the drop-in: "
+                                                    "`make bootstrap` makes it"}
 
 
 def test_the_hook_check_reads_what_bootstrap_writes():
@@ -912,7 +964,11 @@ def test_the_gate_must_answer_and_its_health_show_the_four_services():
                            "Spark, `make doctor` shows what's wrong.")
     probe.gate["/v1/status"] = down
     failed = failures(probe)
-    assert failed["gate"] == f"GET /v1/status on its control socket got no answer: {down}"
+    # The gate's client ends its words with `make doctor`, which this is: doctor names the real steps instead (Task
+    # 33's review).
+    assert failed["gate"] == ("GET /v1/status on its control socket got no answer: The gate can't be reached: there "
+                              f"is no socket at /run/local-ai/gate-control.sock. {doctor.GATE_STEP}")
+    assert "make doctor" not in report(checks(probe, KEY, REG))
     # Every line that reads the gate's view says it couldn't, and points at the gate's line.
     assert set(failed) == {"gate", "ntfy", "bypass", "a model, end to end", "S01", "S05"}
     assert all(failed[name].startswith("the gate didn't answer (its own line says why)")
@@ -924,11 +980,14 @@ def test_the_gate_must_answer_and_its_health_show_the_four_services():
 
 
 def test_ntfy_prints_a_verdict_never_the_url(monkeypatch, capsys):
-    monkeypatch.setenv("NTFY_URL", "https://ntfy.example.invalid/stand-in-topic")
+    # Doctor reads ntfy's health only from the gate, whose view holds no address, topic or token. Were one there, in
+    # a field of the record it reads, the line would still print only its verdict and time (Task 33's review: an
+    # environment variable here could never reach a line, since doctor reads none).
     probe = FakeProbe()
     assert detail(probe, "ntfy") == (True, "the gate's notifications reach it")
     since = datetime(2026, 10, 15, 8, 52).timestamp()
-    probe.gate["/v1/status"]["health"]["ntfy"] = {"status": "failing", "failing_since": since, "dropped": 2}
+    probe.gate["/v1/status"]["health"]["ntfy"] = {"status": "failing", "failing_since": since, "dropped": 2,
+                                                  "url": "https://ntfy.example.invalid", "topic": "stand-in-topic"}
     assert failures(probe) == {"ntfy": "notifications failing since 08:52: `make logs s=gate`"}
     code, shown = spark_doctor(monkeypatch, capsys, probe)
     assert code == 1 and "FAIL  ntfy: notifications failing since 08:52" in shown
@@ -984,8 +1043,8 @@ def test_no_ticket_refusals_are_a_note_never_a_failure():
 def test_each_2a_scenario_has_its_check():
     probe = FakeProbe()
     assert {name: detail(probe, name) for name in ("S01", "S02", "S03", "S05", "S14")} == {
-        "S01": (True, "an on-demand model unloads after 60 min idle; the vision model, the embeddings and whisper are "
-                      "always loaded, as the gate counts them too, and never unload for being idle"),
+        "S01": (True, "an on-demand model unloads after 60 min idle; the gate counts the vision model, the embeddings "
+                      "and whisper as always loaded, as the registry does, and never unloads those for being idle"),
         "S02": (True, "the gate answers make-room's plan for 1 GiB; doctor asks only for the plan, so nothing unloads"),
         "S03": (True, "a made-up model through the front gets 404 model_not_found, in its words, and loads nothing"),
         "S05": (True, "the brake is active and llama-swap took the brake's key at 2026-10-15T08:00:00, and the gate's "
@@ -1011,6 +1070,12 @@ def test_each_2a_scenario_has_its_check():
                                                                     "{all: true}.", "code": None})
     assert failures(probe) == {"S02": "the gate didn't answer POST /v1/make-room/plan, which spark make-room asks "
                                       "first: make-room's request is {size_gib: <GiB>} or {all: true}."}
+
+    probe.gate["/v1/make-room/plan"] = GateUnavailable("The gate didn't answer on /run/local-ai/gate-control.sock "
+                                                       "within 5 s. On the Spark, `make doctor` shows what's wrong.")
+    assert failures(probe) == {"S02": "the gate didn't answer POST /v1/make-room/plan, which spark make-room asks "
+                                      "first: The gate didn't answer on /run/local-ai/gate-control.sock within 5 s. "
+                                      f"{doctor.GATE_STEP}"}
 
     probe = FakeProbe()
     probe.answers[f"{FRONT}/v1/chat/completions"] = (200, json.dumps({"choices": []}))
@@ -1055,7 +1120,8 @@ def test_doctor_checks_s17():
                            "Spark, `make doctor` shows what's wrong.")
     probe.gate["/v1/quiet"] = down
     assert failures(probe)["S17"] == (
-        f"the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: {down}")
+        "the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: The gate can't be reached: "
+        f"there is no socket at /run/local-ai/gate-control.sock. {doctor.GATE_STEP}")
     probe.gate["/v1/quiet"] = GateRefused(403, {"message": "Only spark-admin's members can ask that.", "code": None})
     assert failures(probe)["S17"] == ("the gate didn't answer GET /v1/quiet, so make apply can't see what's in flight: "
                                       "Only spark-admin's members can ask that.")
@@ -1137,24 +1203,46 @@ def test_full_runs_the_upload_and_the_canary():
             and body["model"] == "vision-chat"]
     assert len(chat) == 1 and needle in chat[0]["messages"][0]["content"]
     assert ("/v1/canary", {"needle": needle}) in probe.posted and probe.paused
+    # Task 33's review (I2): the journal is read with --all, or a field holding a CR, an ESC or a byte that isn't UTF-8
+    # shows as `[N bytes blob data]`, and the canary in it is never found. The whole command, pinned.
+    [journal] = [argv for argv in probe.ran if argv[0] == "journalctl"]
+    assert journal == ("journalctl", "--no-pager", "--quiet", "--all", "--output=verbose", f"--since=@{int(NOW) - 1}")
 
-    # Found in the journal, which your account reads in group adm: named.
+    # Found in the journal, which your account reads in group adm: named, with where to look.
     probe = FakeProbe()
     probe.journal = lambda p: "\n".join(json.dumps(body) for _, body in p.asked)
-    assert failures(probe, full=True) == {"privacy canary": (
+    found = failures(probe, full=True)
+    needle = next(body for url, body in probe.asked if url.endswith("/chat/completions")
+                  and body["model"] == "vision-chat")["messages"][0]["content"].split()[-1]
+    assert found == {"privacy canary": (
         "the string sent through chat and speech-to-text turned up in the journal: find what wrote it there before "
-        "sending anything private")}
-    # Found by the gate, in its refusal history: named.
+        "sending anything private — `journalctl --no-pager --quiet --all --output=verbose "
+        f"--since=@{int(NOW) - 1} | grep -n {needle}` shows where in the journal")}
+    # Found by the gate, in its refusal history: named, with where to look.
     probe = FakeProbe()
     probe.gate["/v1/canary"] = {"found": ["refusals", "launch"]}
+    found = failures(probe, full=True)["privacy canary"]
+    assert found.startswith("the string sent through chat and speech-to-text turned up in the gate's refusal history "
+                            "and launch's records: find what wrote it there before sending anything private — `sudo -u "
+                            "spark grep -rl doctor-canary-")
+    assert found.endswith(" /var/lib/local-ai/gate /var/lib/local-ai/launch` shows which of the gate's and launch's "
+                          "files")
+    # The gate not answering the canary route: the real step, never `make doctor`.
+    probe = FakeProbe()
+    probe.gate["/v1/canary"] = GateUnavailable("The gate didn't answer on /run/local-ai/gate-control.sock within 5 s. "
+                                               "On the Spark, `make doctor` shows what's wrong.")
     assert failures(probe, full=True) == {"privacy canary": (
-        "the string sent through chat and speech-to-text turned up in the gate's refusal history and launch's "
-        "records: find what wrote it there before sending anything private")}
+        "the gate didn't answer POST /v1/canary: The gate didn't answer on /run/local-ai/gate-control.sock within 5 s. "
+        f"{doctor.GATE_STEP}")}
     # Without group adm, the journal can't show it isn't there.
     probe = FakeProbe()
     probe.groups_in = {"chendaniely", "spark-admin"}
     assert failures(probe, full=True) == {"privacy canary": "your account isn't in group adm, so it can't read the "
                                                             "system journal: log in again"}
+    probe = FakeProbe()
+    probe.run = lambda argv, run=probe.run: (1, "", "no") if argv[0] == "journalctl" else run(argv)
+    assert failures(probe, full=True) == {"privacy canary": "journalctl couldn't read the system journal: `journalctl "
+                                                            "-n 1` shows why"}
     # An upload the front or whisper refuses.
     probe = FakeProbe()
     probe.upload_answer = (413, refusal("body_too_large"))
@@ -1162,7 +1250,69 @@ def test_full_runs_the_upload_and_the_canary():
     assert failed["a 170 MB upload"] == ("whisper answered a 170 MB upload through the front with 413 body_too_large: "
                                          "`make logs s=front`")
     assert failed["privacy canary"] == ("the canary couldn't be sent through speech-to-text: whisper answered 413 "
-                                        "body_too_large")
+                                        "body_too_large — `make logs s=front`, and `make status` for the model")
+    # One the front refuses before reading it closes the connection mid-send: no answer, worded so.
+    probe = FakeProbe()
+    probe.upload_answer = (0, "")
+    assert failures(probe, full=True)["a 170 MB upload"] == (
+        "no answer came back for the 170 MB upload: the front may have refused it before reading it, which closes the "
+        "connection mid-send, or nothing answered — `make logs s=front` shows the front's line for it, if it had one")
+    probe = FakeProbe()
+    probe.answers[f"{FRONT}/v1/chat/completions"] = lambda key, body: (
+        (404, NOT_FOUND) if body["model"] == doctor.MADE_UP_MODEL else (409, refusal("loading")))
+    assert failures(probe, full=True) == {"privacy canary": "the canary couldn't be sent through chat: the vision model "
+                                                            "answered 409 loading — `make logs s=front`, and `make "
+                                                            "status` for the model"}
+    registry = dataclasses.replace(REG, models={name: m for name, m in REG.models.items() if m.capability != "chat"})
+    probe = FakeProbe()
+    probe.gate["/v1/status"]["models"] = [m for m in probe.gate["/v1/status"]["models"] if m["name"] in registry.models]
+    assert failures(probe, registry=registry, full=True)["privacy canary"] == (
+        "the registry needs a chat model and a speech-to-text model to send it through: give stack/models.yaml each, "
+        "then `make apply`")
+
+
+def test_with_memory_under_the_warn_line_nothing_heavy_runs():
+    # Task 33's review (I1): doctor is run when something is wrong, memory perhaps among it. MemAvailable from
+    # /proc/meminfo, which needs no gate, under the registry's warn line (or unreadable): llama-server --version, which
+    # starts CUDA, isn't run, and its build is read from the registry's folder, saying so; and the 170 MB upload,
+    # which llama-swap holds whole in memory, isn't sent.
+    for mem, why in ((20.04, "20.0 GiB available, under the 28 GiB warn line"),
+                     (None, "MemAvailable can't be read from /proc/meminfo")):
+        probe = FakeProbe()
+        probe.mem = mem
+        results = {c.name: (c.ok, c.detail) for c in checks(probe, KEY, REG, full=True)}
+        assert LLAMA_SERVER_VERSION not in probe.ran and LLAMA_SWAP_VERSION in probe.ran
+        assert results["version drift"] == (
+            True, f"llama-swap {PINS['llama-swap']}, llama-server {PINS['llama.cpp']} (by its folder: --version not run, "
+                  f"{why}), whisper-server under {PINS['whisper.cpp']} and uvicorn {LOCKED_UVICORN}, as "
+                  "stack/versions.yaml and the lock pin them")
+        assert results["a 170 MB upload"] == (
+            False, f"not sent: {why}, and llama-swap holds a whole upload in memory — run `spark doctor --full` again "
+                   "once `make status` shows memory back above the warn line")
+        assert [size for _, _, _, size in probe.uploads] == [48044]  # the canary's 1.5 s only
+        assert results["privacy canary"][0]
+    registry = dataclasses.replace(REG, engines={**REG.engines,
+                                                 "llama.cpp": "/opt/local-ai/bin/llama.cpp/b11145/llama-server"})
+    probe = FakeProbe()
+    probe.mem = 12.0
+    assert failures(probe, registry=registry) == {"version drift": (
+        f"the registry's llama-server, /opt/local-ai/bin/llama.cpp/b11145/llama-server, isn't under {PINS['llama.cpp']}: "
+        "`make apply` deploys the repo's registry; --version not run, 12.0 GiB available, under the 28 GiB warn line")}
+    probe = FakeProbe()
+    probe.mem = 28.0  # at the line, not under it: run
+    checks(probe, KEY, REG, full=True)
+    assert LLAMA_SERVER_VERSION in probe.ran and probe.uploads[0][3] == 170_000_000
+
+
+def test_the_probe_reads_memavailable(monkeypatch):
+    monkeypatch.setattr(doctor, "read_meminfo", lambda: type("M", (), {"available_gib": 41.5})())
+    assert Probe(ROOT).mem_available_gib() == 41.5
+
+    def unreadable():
+        raise OSError("no /proc")
+
+    monkeypatch.setattr(doctor, "read_meminfo", unreadable)
+    assert Probe(ROOT).mem_available_gib() is None
 
 
 def test_the_upload_is_a_wav_of_the_size_asked():
