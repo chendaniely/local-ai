@@ -1653,7 +1653,9 @@ def test_spark_doctor_reports_on_a_key_a_header_cant_carry_and_never_shows_it(st
 def test_a_request_with_the_key_never_follows_a_redirect(stand_ins, which, path):
     # urllib sends a redirected request on with every header it was given, the key's included, to wherever the
     # redirect points, and a POST as a GET. With the key, the redirect is the answer, and the check names its status.
-    probe = Probe(ROOT)
+    # LiveProbe, not Probe: its HTTP goes to the stand-ins for real, and its `systemctl` answers as the fakes do, so
+    # the test never asks this machine whether its llama-swap is running (a CI runner has none).
+    probe = LiveProbe()
     with serving(StandIn) as elsewhere:
         REDIRECT[path] = f"{elsewhere}/stolen"
         check = {"/running": lambda: doctor.llama_swap(probe, KEY), "/unload": lambda: doctor.front(probe, KEY),
