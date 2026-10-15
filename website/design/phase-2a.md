@@ -7663,6 +7663,34 @@ git commit -m "feat(spark): 🤖 spark load, unload, pin, make-room, release, lo
 - `spark apply --restart local-ai-front.service` (`make restart-front`) — for a change of the key
   digests or the key list, which `apply` doesn't deploy; the front restarts through the same
   wait.
+- *(Added 2026-10-15, at Task 31, as built; each for the controller's ruling:)*
+  - `restart_front` restarts the gate too, in `now`. The gate reads the key list at start as well
+    (`LoadCredential=keys`, `spark.gate.main`) and admits only the keys it knows, so a key added
+    to the list would be refused by the old gate's admission (a 400) once the restarted front
+    knows it.
+  - `registry_old` and `registry_new` compare the registry's key groups. The front reads them
+    only at start, for each key's wait and caps (`spark.front.main`), so a change to them restarts
+    it after the quiet moment. A deployed registry that won't load counts as changed.
+  - The app's environment (`pyproject.toml`, `uv.lock`, `.python-version`) counts as the front's
+    files: it installs uvicorn and httpx, which `uv sync` replaces under the running front. Until a
+    sync finishes, every file of the app counts, as in Phase 1, so the front also restarts after
+    a sync that failed.
+  - `plan_restarts` takes `active`, and `RestartPlan` has a third list, `not_running`: the units a
+    change touches that aren't running, which apply never starts.
+  - `restart_order` puts the compose unit after llama-swap, on its own, never between the second
+    look at llama-swap and its restart, nor inside apply's hold.
+  - After a run cut off part-way, the front counts as outdated by when its own files were last
+    written (`FRONT_APP`), never by the app's sync, which would restart it for every app change.
+    Its restart for the key groups or for `--restart` leaves no file newer than its start, so a run
+    cut off before that restart leaves it to `make restart-front`.
+  - Until Task 32's wait, an `after_quiet` restart goes ahead only while llama-swap has no model
+    loaded (a stopped llama-swap has none), or with `--now`. Apply asks llama-swap again just before
+    each one, and a model found loaded holds back the rest of them.
+  - The diff escapes control characters, as `make install-units` refuses them. At the staging stop
+    it shows only root's pending files. The app's changed files are named one to a line, and
+    render's warnings print before the diff (the controller's note at Task 5).
+  - `app_changes` holds paths in the `spark/` project, as `app_diff` gives them
+    (`src/spark/gate/admission.py`), not repo paths.
 
 **Tests** (`spark/tests/test_apply.py`):
 

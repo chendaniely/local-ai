@@ -4,7 +4,7 @@
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now install-units install-units-dry-run pull status brake-release logs tunnel clients doctor
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients doctor
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -55,6 +55,9 @@ apply-dry-run: ## On the Spark: show what apply would change
 
 apply-now: ## On the Spark: apply even if restarting llama-swap stops loaded models
 	$(SPARK) apply --now
+
+restart-front: ## On the Spark: apply, restarting the front (and the gate) after the key digests or the key list change
+	$(SPARK) apply --restart local-ai-front.service
 
 install-units-dry-run: ## On the Spark: show what make install-units would install as root; changes nothing
 	bash stack/host/bootstrap.sh --install-units --dry-run

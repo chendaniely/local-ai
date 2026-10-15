@@ -12,7 +12,8 @@ routes to llama-swap with an internal key of its own, counts the requests in fli
 This module imports nothing, so `spark apply` reads FRONT_MODULES from it without importing uvicorn (Task 31)."""
 
 # Exactly the spark modules the front imports at start, every one before it serves (spark.front.main imports them):
-# `make apply` restarts the front when one of them changes, and for no change elsewhere in the app (Task 31).
+# `make apply` restarts the front when one of them changes, or the app's environment (apply.ENVIRONMENT: what installs
+# uvicorn and httpx), and for no other change to the app (Task 31).
 # test_front_forward.py checks the set against what importing spark.front.main loads.
 FRONT_MODULES: frozenset[str] = frozenset({
     "spark", "spark.paths", "spark.registry", "spark.credentials", "spark.sockets", "spark.protocols",
