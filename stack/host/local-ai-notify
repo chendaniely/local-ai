@@ -1,0 +1,204 @@
+#!/bin/sh
+# local-ai-notify: the failure notifier's script (Phase 2a, Task 26). local-ai-notify@.service runs it when the front,
+# the gate, the brake or llama-swap fails (their OnFailure=), its one argument the failed unit (%i), as a user of its
+# own (DynamicUser=yes). Bootstrap installs it as /usr/local/libexec/local-ai-notify (Task 27). POSIX sh: Ubuntu runs
+# it with dash.
+#
+# It sends Task 7's *_down words: the unit, its result in words and the time, never a journal line. It sends at most
+# one alert per unit per NOTIFIER_EVERY_S, kept as a stamp in $STATE_DIRECTORY that only a sent alert writes, and
+# nothing for a priority of off. Ubuntu's curl sends it, outside the app's venv, as the brake's own alert does (Task
+# 23's review, M9 and M10):
+#   - -q first, so curl reads no .curlrc;
+#   - an empty environment (env -i), so curl gets nothing of the unit's;
+#   - its config on stdin, so neither ntfy's address, the topic nor the text is on a command line;
+#   - the token's header read by curl itself from its credential's file (header = "@file"), so the token never
+#     passes through this script;
+#   - data-raw, which takes a leading @ as itself, never as a file to read.
+# curl's output and its errors go nowhere: an error can name ntfy's host, which is private, and the gate's and the
+# brake's logs never hold it. Its exit code is said in words instead.
+#
+# Until ntfy is set up (Task 2, Phase 5): with NTFY_URL or NTFY_TOPIC_NOTIFY unset, or the ntfy-token credential
+# missing or Task 25's placeholder, it runs no curl, writes one line naming what is missing (never a value), writes
+# no stamp, so the first alert after Task 2 isn't held back, and exits 0. Every line it writes goes to stderr, which
+# the journal keeps.
+#
+# Exit status: 0 sent, held back, off or ntfy not set up; 1 curl failed (the notifier's unit then shows as failed);
+# 2 a unit it doesn't alert for. CURL is for the tests; the unit never sets it.
+
+set -u
+LC_ALL=C
+export LC_ALL
+
+NOTIFIER_EVERY_S=300 # at most one alert per unit in this long: gateproto.NOTIFIER_EVERY_S, the 5 minutes of the words
+CURL=${CURL:-/usr/bin/curl}
+TOKEN_NAME=ntfy-token # the credential: one `Authorization: Bearer …` line, which curl reads with header = "@file"
+# One `Name: value` header line in printable ASCII, as the brake's credential check takes it
+# (credentials.read_header_credential), with header names narrowed to letters, digits and -.
+HEADER_LINE='[A-Za-z0-9-][A-Za-z0-9-]*: *[!-~][ -~]*'
+PLACEHOLDER=not-set-up # Task 25's SetCredential= default, until Task 2 writes the header file
+NL='
+'
+TAB=$(printf '\t')
+CR=$(printf '\r')
+VT=$(printf '\v')
+
+say() {
+    printf '%s\n' "$*" >&2
+}
+
+# $1 in curl's config quoting, as the brake's _curl_quoted: within double quotes, a backslash and a quote each escaped
+# with a backslash, and a line break, tab, carriage return or vertical tab as curl's own escape, so nothing a value
+# holds can end its line or start another.
+curl_quoted() {
+    rest=$1
+    out=
+    while [ -n "$rest" ]; do
+        tail=${rest#?}
+        char=${rest%"$tail"}
+        rest=$tail
+        case $char in
+            \\) out="$out\\\\" ;;
+            \") out="$out\\\"" ;;
+            "$NL") out="$out\\n" ;;
+            "$TAB") out="$out\\t" ;;
+            "$CR") out="$out\\r" ;;
+            "$VT") out="$out\\v" ;;
+            *) out="$out$char" ;;
+        esac
+    done
+    printf '"%s"' "$out"
+}
+
+# The failed unit: its name in the words, what its stop means, how soon it restarts, and its priority's variable
+# (Task 7's *_down types, word for word; Task 25's unit sets each from the registry).
+unit=${1:-}
+within=
+case $unit in
+    local-ai-gate.service)
+        name="The gate" effect="Loaded models still answer; new loads are refused until it's back."
+        var=NOTIFY_GATE priority=${NOTIFY_GATE:-} ;;
+    local-ai-front.service)
+        name="The front" effect="Requests wait for it, and any in flight were cut off."
+        var=NOTIFY_FRONT priority=${NOTIFY_FRONT:-} ;;
+    local-ai-llama-swap.service)
+        name="The model service" effect="No model answers until it's back; requests wait, then are refused."
+        var=NOTIFY_LLAMA_SWAP priority=${NOTIFY_LLAMA_SWAP:-} ;;
+    local-ai-brake.service)
+        name="The memory brake" effect="earlyoom stays the backstop." within=" within 2 s"
+        var=NOTIFY_BRAKE priority=${NOTIFY_BRAKE:-} ;;
+    *)
+        say "$unit isn't a unit the failure notifier alerts for (the front, the gate, the brake or llama-swap), so no" \
+            "alert was sent."
+        exit 2 ;;
+esac
+
+# Its result in words, from what systemd sets for an OnFailure= unit; never the value itself.
+case ${MONITOR_SERVICE_RESULT:-} in
+    exit-code | signal | core-dump) result="it crashed" ;;
+    watchdog) result="it stopped answering" ;;
+    oom-kill) result="it ran out of memory" ;;
+    timeout) result="it timed out" ;;
+    *) result="it failed" ;;
+esac
+
+clock=$(date +%H:%M)
+host=$(uname -n)
+host=${host%%.*} # the box's short name, as messages._host gives it
+text="$name on $host stopped at $clock ($result; it is restarting$within). $effect"
+text="$text On the Spark, \`make doctor\` shows what's wrong."
+failed="$unit failed at $clock ($result)"
+
+[ "$priority" = off ] && exit 0 # the registry has this type off: nothing to send, nothing to say
+
+# Is ntfy set up? Each thing missing, by its variable's or credential's name, never its value. The token is checked
+# by grep, which prints nothing of it here, so it is never read into this script.
+why=
+missing() {
+    why="${why:+$why; }$1"
+}
+case ${NTFY_URL:-} in
+    '') missing "NTFY_URL isn't set" ;;
+    http://[!/]* | https://[!/]*) ;;
+    *) missing "NTFY_URL isn't an http(s) URL with a host" ;;
+esac
+[ -n "${NTFY_TOPIC_NOTIFY:-}" ] || missing "NTFY_TOPIC_NOTIFY isn't set"
+token=${CREDENTIALS_DIRECTORY:-}/$TOKEN_NAME
+if [ -z "${CREDENTIALS_DIRECTORY:-}" ]; then
+    missing "CREDENTIALS_DIRECTORY isn't set, so the credential $TOKEN_NAME can't be read"
+elif [ ! -e "$token" ]; then
+    missing "the credential $TOKEN_NAME is missing"
+elif [ ! -f "$token" ] || [ ! -r "$token" ]; then
+    missing "the credential $TOKEN_NAME can't be read"
+elif [ ! -s "$token" ]; then
+    missing "the credential $TOKEN_NAME is empty"
+elif grep -qx "$PLACEHOLDER" "$token"; then
+    missing "the credential $TOKEN_NAME is Task 25's placeholder"
+elif [ "$(grep -c '' "$token")" != 1 ] || ! grep -qx "$HEADER_LINE" "$token"; then
+    missing "the credential $TOKEN_NAME isn't one 'Name: value' header line"
+fi
+if [ -n "$why" ]; then
+    say "ntfy isn't set up (Task 2, Phase 5), so no alert was sent: $failed. Why: $why."
+    exit 0
+fi
+
+case $priority in
+    high | default | low) ;;
+    *)
+        say "$var isn't high, default, low or off, so the alert goes at high."
+        priority=high ;;
+esac
+
+# At most one alert per unit per NOTIFIER_EVERY_S, from the last one sent. A stamp that can't be read, or one from
+# a clock since put back, holds nothing back.
+now=$(date +%s)
+stamp=
+if [ -n "${STATE_DIRECTORY:-}" ] && [ -d "$STATE_DIRECTORY" ]; then
+    stamp=$STATE_DIRECTORY/$unit.last-alert
+else
+    say "STATE_DIRECTORY isn't a folder, so the limit of one alert per unit per 5 minutes can't hold; this one goes."
+fi
+case $now in
+    '' | *[!0-9]*) now= ;;
+esac
+if [ -n "$stamp" ] && [ -n "$now" ] && [ -f "$stamp" ]; then
+    last=
+    read -r last 2>/dev/null <"$stamp" || :
+    case $last in
+        '' | *[!0-9]*) last= ;;
+    esac
+    if [ -n "$last" ] && [ "$now" -ge "$last" ] && [ $((now - last)) -lt "$NOTIFIER_EVERY_S" ]; then
+        say "No alert was sent: $failed, and its last alert went $((now - last)) s ago (at most one per unit per 5" \
+            "minutes)."
+        exit 0
+    fi
+fi
+
+url=$NTFY_URL
+while :; do
+    case $url in
+        */) url=${url%/} ;;
+        *) break ;;
+    esac
+done
+config="url = $(curl_quoted "$url/$NTFY_TOPIC_NOTIFY")
+header = $(curl_quoted "@$token")
+header = $(curl_quoted "Priority: $priority")
+data-raw = $(curl_quoted "$text")"
+printf '%s\n' "$config" | env -i "$CURL" -q --fail --silent --max-time 10 --config - >/dev/null 2>&1
+code=$?
+
+case $code in
+    0)
+        if [ -n "$stamp" ] && [ -n "$now" ] && ! printf '%s\n' "$now" 2>/dev/null >"$stamp"; then
+            say "Its stamp couldn't be written in STATE_DIRECTORY, so the next failure's alert isn't held back."
+        fi
+        say "Sent the alert: $failed."
+        exit 0 ;;
+    22) reason="ntfy answered with an error" ;;
+    28) reason="ntfy didn't answer within 10 s" ;;
+    6 | 7) reason="it couldn't reach ntfy" ;;
+    126 | 127) reason="$CURL couldn't be run" ;;
+    *) reason="curl failed" ;;
+esac
+say "No alert was sent: $failed, and $reason (curl's exit $code)."
+exit 1

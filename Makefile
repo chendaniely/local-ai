@@ -20,7 +20,7 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks 8.19+ and y
 	@echo "leak-check hooks on for this clone"
 
 lint: ## Shellcheck the hooks and host scripts
-	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh
+	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh stack/host/local-ai-notify
 
 docs: ## Regenerate the Stack and Notifications pages, check scenario pages, render the site (Quarto: on the Mac)
 	$(SPARK) docs stack --write

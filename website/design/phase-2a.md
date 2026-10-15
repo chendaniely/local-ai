@@ -6715,7 +6715,7 @@ git commit -m "feat(stack): 🤖 units for the front, the gate, the failure noti
   stopped answering*; `oom-kill` → *it ran out of memory*; `timeout` → *it timed out*; anything
   else → *it failed*); the time, `date +%H:%M`; nothing sent for a priority of `off`; at most one
   alert per unit per `NOTIFIER_EVERY_S` (300), kept as a stamp file in `$STATE_DIRECTORY`; then
-  `"${CURL:-/usr/bin/curl}" --fail --silent --show-error --max-time 10 --config -`, its config on
+  `"${CURL:-/usr/bin/curl}" --fail --silent` ~~`--show-error`~~ `--max-time 10 --config -`, its config on
   stdin: the `url` (`$NTFY_URL/$NTFY_TOPIC_NOTIFY`), `header = "@$CREDENTIALS_DIRECTORY/ntfy-token"`,
   `header = "Priority: <p>"` and `data-binary`, each value in curl's config quoting with `"` and
   `\` escaped, so neither the address, the topic nor the text is on a command line; never a
@@ -6723,6 +6723,23 @@ git commit -m "feat(stack): 🤖 units for the front, the gate, the failure noti
   the brake's curl hardening, Task 23's review M9 and M10, holds here too: `-q` as curl's first
   argument, so no `.curlrc` is read; `data-raw` in place of `data-binary`, so a leading `@` is
   never a file to read; and a minimal environment for curl, with nothing of the unit's.)*
+  *(Added 2026-10-14, at Task 26, as built:)*
+  - **No `--show-error`, and curl's output and errors go nowhere** (`>/dev/null 2>&1`), as the
+    brake's do. curl's error names ntfy's host (*Could not resolve host: …*, *Failed to connect to
+    … port …*, seen with Ubuntu's curl 8.5.0), and the gate's and the brake's logs never hold it.
+    The script says curl's exit code in words instead, as `brake.CURL_FAILURES` does. It exits 1,
+    so the notifier's unit shows as failed.
+  - **Only a sent alert writes the stamp**, so a failed send holds nothing back.
+  - **Each outcome has its journal line:** a sent alert, one held back and a failed send, as well
+    as ntfy not set up. A priority of `off` writes none.
+  - **A unit that isn't one of the four** exits 2, with no alert and a line that says so.
+  - **A priority that isn't** `high`, `default`, `low` or `off` sends at `high`, with a line of
+    its own naming its variable.
+  - **The credential counts as set up** only when it is one `Name: value` header line, as the
+    brake's check takes it (`credentials.read_header_credential`, with header names narrowed to
+    letters, digits and `-`). Each value goes in curl's config quoting as the brake's
+    `_curl_quoted` does it: a line break, tab, carriage return or vertical tab as curl's own
+    escape too.
 - *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5.)* **Without ntfy set up, it does nothing, successfully.** With `NTFY_URL` or
   `NTFY_TOPIC_NOTIFY` unset, or the `ntfy-token` credential Task 25's placeholder (`not-set-up`) or
