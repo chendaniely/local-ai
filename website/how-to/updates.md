@@ -223,9 +223,9 @@ restart after a crash, and a connection to 9100 once only its service is stopped
 holds the port. llama-swap would then start mid-upgrade, with the GPU set moving, and the gate
 could load models onto it. A drop-in in `/run` whose condition is never met skips every start of
 llama-swap, while the front keeps 9100 and answers; [Deploy the
-stack](deploy.md#keeping-llama-swap-stopped)'s *Keeping llama-swap stopped* says why it works, and
-how to check that it holds. **On the Spark**, a line at a time, since pasted whole, the next line
-would be read as sudo's password:
+stack](deploy.md#keeping-llama-swap-stopped)'s *Keeping llama-swap stopped* says why it works. The
+stop stops every model and cuts off every request in flight, so look at `make status` first. **On
+the Spark**, a line at a time, since pasted whole, the next line would be read as sudo's password:
 
 ```bash
 printf '[Unit]\nConditionPathExists=/dev/null/held-down\n' | sudo install -D -m 0644 /dev/stdin /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
@@ -234,9 +234,30 @@ sudo systemctl stop local-ai-llama-swap
 sudo -k
 ```
 
+**On the Spark**, before `make upgrade-gpu` moves anything, prove that it holds: look at the unit
+with its drop-in, try to start it, and look again. No sudo: the polkit rule lets you start it, and
+while the hold-down stands the start is skipped.
+
+```bash
+systemctl cat local-ai-llama-swap
+systemctl start local-ai-llama-swap
+systemctl show -p DropInPaths,ActiveState,ConditionResult,ConditionTimestamp local-ai-llama-swap
+```
+
+Expected: `systemctl cat` ends with the drop-in and its two lines; `systemctl show` names
+`held-down.conf` in `DropInPaths`, and reads `ActiveState=inactive` and `ConditionResult=no`.
+[Deploy the stack](deploy.md#keeping-llama-swap-stopped) has the rest. If `ActiveState` reads
+`active` or `activating`, the hold-down didn't take. **On the Spark**, stop llama-swap at once, and
+don't go on to `make upgrade-gpu`:
+
+```bash
+systemctl stop local-ai-llama-swap
+```
+
 The reboot, step 6, ends the hold-down: `/run` is a tmpfs, so the drop-in is gone and llama-swap
-starts as at any boot. If you don't reboot, end it yourself at the end, after what `make
-upgrade-gpu` says to start. **On the Spark**, a line at a time too:
+starts as at any boot. If you don't reboot, end it yourself at the end, **before** you start what
+`make upgrade-gpu` says to start: the brake's start check asks llama-swap, and fails if it isn't
+running. **On the Spark**, a line at a time too:
 
 ```bash
 sudo rm /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
@@ -248,7 +269,10 @@ sudo -k
 *(Corrected 2026-10-15, at Phase 2a's Task 35, the controller's ruling: this said to stop the
 front's socket and service instead, with sudo, and start them again at the end. That frees 9100,
 and any account, `agent` included, could take it and receive your clients' requests and their
-keys. Never stop the front's socket to keep llama-swap down.)*
+keys. Never stop the front's socket to keep llama-swap down.)* *(Changed again 2026-10-15, at Task
+35's review: the try that proves the hold-down, and the undo's place, before the brake starts; it
+said after what `make upgrade-gpu` says to start, and a brake started first fails its start check
+after 30 s, with an alert.)*
 
 Then, **on the Spark**, run it, or do the numbered steps below by hand:
 

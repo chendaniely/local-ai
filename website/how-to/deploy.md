@@ -281,29 +281,59 @@ d=$(mktemp -d) && git worktree add "$d/main" main && (cd "$d/main" && uv run --f
 Expected: `render: 8 files → …`, then `EnvironmentFile=/etc/local-ai/secrets/llama-swap.env` and
 an `ExecStart` ending `-listen 127.0.0.1:9100`.
 
-The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: for the
-first line, and again at `make install-units`, after `sudo -k`). Run it a line at a time: pasted
-whole, the next line would be read as sudo's password, or as `make install-units`' answer. If
-`git worktree add` fails, a `../local-ai-rollback` left from an earlier try among the causes, stop
-there: the three `make` lines must run in that worktree, never in the `phase-2a` clone.
+The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: at `make
+install-units`, and again at the `disable` line, since `make install-units` ends with `sudo -k`).
+Run it a line at a time: pasted whole, the next line would be read as sudo's password, or as `make
+install-units`' answer. If `git worktree add` fails, a `../local-ai-rollback` left from an earlier
+try among the causes, stop there: the `make` lines must run in that worktree, never in the
+`phase-2a` clone. `main`'s units are installed before 2a's front lets go of 9100, so run the
+`disable` line and `make apply-now` straight after each other: from the `disable` line until
+llama-swap takes 9100 again, nothing holds the port, and any account could take it. That is
+seconds, the time `make apply-now` takes to deploy and restart llama-swap, if nothing pauses in
+between.
 
 ```bash
-sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
-sudo -k
 git worktree add ../local-ai-rollback main
 cd ../local-ai-rollback
 make apply
 make install-units
+sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
 make apply-now
 ```
+
+Then, at once, **on the Spark**, start llama-swap and the brake. `main`'s `make apply-now` restarts
+only what runs, and starts nothing. After a rollback from Step 4, which stopped both, it leaves them
+stopped, and 9100 free since that stop. After a rollback from later, both run already, and this
+does nothing:
+
+```bash
+systemctl start local-ai-llama-swap.service local-ai-brake.service
+```
+
+*(Changed 2026-10-15, at Phase 2a's Task 35's review, the controller's ruling, in Task 38's block
+too. The block disabled 2a's front, gate and sockets first, then made the worktree and ran `main`'s
+`make apply` and `make install-units`, so 9100 stayed free for minutes, through the review `make
+install-units` asks for. And it had no start line, so after a failed Step 4 it left llama-swap and
+the brake stopped, and 9100 free, while this said it restarts Phase 1's llama-swap.)*
 
 Then `make doctor` from that worktree passes every one of Phase 1's fifteen checks but *secrets
 folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 36), and is expected; and
 *earlyoom*, since Phase 2a's bootstrap runs earlyoom without `--prefer` and `main`'s
-`earlyoom.default` still has it (Task 28). None of the rollback's steps touches earlyoom. Phase 1's
-pull, which runs as `spark`, can't write the model cache either, since 2a's bootstrap gave it to
+`earlyoom.default` still has it (Task 28). None of the rollback's steps touches earlyoom. *(Corrected
+2026-10-15, at Task 35's review: it passes them only once llama-swap and the brake run. Without the
+start line, after a failed Step 4, its units, llama-swap and end-to-end checks failed too.)* Phase
+1's pull, which runs as `spark`, can't write the model cache either, since 2a's bootstrap gave it to
 `spark-pull` and leaves `spark` reading it through its group (not tried): no `make pull` from that
 worktree.
+
+The rollback puts back Phase 1's units, config and app, and nothing else: 2a's bootstrap and secret
+files stay. Left in place are the accounts `spark-front` and `spark-pull`; the PAM hook that gives
+`agent` its OOM score, its drop-in for `agent`'s user manager, and `agent`'s line in
+`/etc/cron.deny`; earlyoom without `--prefer`; the polkit rule, which names 2a's seven services; 2a's
+units, disabled, in `/etc/systemd/system`; the internal keys, the client keys' digests and the key
+list; the root-only secrets folder; and the model cache, `spark-pull`'s. *(Added 2026-10-15, at
+Task 35's review.)*
 
 **2. Stage root's copies.** **On the Spark:**
 
@@ -337,7 +367,9 @@ Stopping llama-swap stops every model and frees 9100; `make apply` then deploys 
 registry and the app with nothing to wait for (Task 32). Expected: it deploys, and exits 0.
 Anything else — render or validation refusing, `uv sync` failing, the network dropping — leaves
 Phase 1's app deployed under the new units root now holds: stop here, and run Step 1's rollback,
-which restarts Phase 1's llama-swap.
+which restarts Phase 1's llama-swap. *(Corrected 2026-10-15, at Phase 2a's Task 35's review: it
+starts llama-swap and the brake only with its start line, added that day, since `main`'s `make
+apply-now` starts nothing. Run it at once: 9100 is free from this step's stop.)*
 
 Nothing starts llama-swap again before Step 5. The front's unit starts a stopped llama-swap
 whenever the front starts (its `Wants=`), but neither the front nor its socket runs yet. From the
@@ -360,10 +392,13 @@ before anything else runs, so the clone's own code never runs with sudo's creden
 (*Lessons from Phase 0*). 9100 is free from Step 4's stop until the socket starts, the cutover's
 one window.
 
-**6. Check it.** `make doctor` passes every line but `ntfy`, which reads `WARN  ntfy: not set up
-(Task 2, Phase 5)` and fails nothing, until ntfy is set up in Phase 5. `make status` reads as the
-plan's layout, its *health* row with `ntfy not set up (Task 2, Phase 5)`. `make logs s=gate` shows
-the residents loading one after another, and its one line that ntfy isn't set up.
+**6. Check it.** `make status` reads as the plan's layout, its *health* row with `ntfy not set up
+(Task 2, Phase 5)`. `make logs s=gate` shows the residents loading one after another, and its one
+line that ntfy isn't set up. Once `make status` shows the always-loaded models loaded, `make doctor`
+passes every line but `ntfy`, which reads `WARN  ntfy: not set up (Task 2, Phase 5)` and fails
+nothing, until ntfy is set up in Phase 5. *(Corrected 2026-10-15, at Phase 2a's Task 35's review:
+doctor came first here. Run straight after Step 5, its end-to-end line fails, the embeddings model
+still loading, since doctor loads nothing and asks a model only once the gate shows it loaded.)*
 
 The three internal keys: a call through the front with a client key is answered, not a 401 (pi's
 and the web UI's answers below are such calls); the gate's own key reaches `/running`, so `make
@@ -499,6 +534,23 @@ uv still waits, silently, if another process holds one of its two locks. But app
 minutes and says `apply: the app's sync waited on a lock: <path>, …`, then exits 1, with nothing
 restarted and no request held. Once that process lets go, `make apply` syncs it again.)*
 
+apply says `apply: syncing the app (uv sync, up to 3 minutes)` as the sync starts. It stops any sync
+that hasn't finished within 3 minutes, a slow download's included, not only one waiting on a lock:
+that one says `apply: the app's sync didn't finish within 3 minutes, …`. Either way the app's
+environment may be part-way synced, and the next `make apply` syncs it again. Any
+account can hold the venv's lock, so a sync can be refused this way again and again. To find what
+holds the lock apply named, without sudo, **on the Spark**, set `p` to the path it named. The block
+lists each process that holds or waits for that lock, by its account, pid and command, from
+`/proc/locks`, where every lock on the box shows with its holder's pid and its file's inode:
+
+```bash
+p=/opt/local-ai/app/.venv/.lock
+i=$(stat -c %i "$p") && awk -v i="$i" '{for (f = 2; f <= NF; f++) if ($f ~ ":" i "$") print $(f - 1)}' /proc/locks | sort -u | xargs -r ps -o user,pid,cmd -p
+```
+
+*(Added 2026-10-15, at Phase 2a's Task 35's review. The block ran against a scratch lock held by
+`flock`, listing the holder and a waiter.)*
+
 `make apply-now` skips the wait. If the gate lists requests in flight, it asks first, naming whose
 they are:
 
@@ -607,8 +659,9 @@ the front still starts and keeps 9100, and a request waits its key's wait, then 
 mask --runtime` wouldn't do: it writes to `/run/systemd/system`, and root's copy of the unit, in
 `/etc/systemd/system`, comes before it.
 
-**On the Spark**, hold it down, a line at a time, since pasted whole, the next line would be read
-as sudo's password:
+The stop stops every model and cuts off every request in flight, so look at `make status` first,
+and hold it down when nothing you need is running. **On the Spark**, hold it down, a line at a
+time, since pasted whole, the next line would be read as sudo's password:
 
 ```bash
 printf '[Unit]\nConditionPathExists=/dev/null/held-down\n' | sudo install -D -m 0644 /dev/stdin /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
@@ -617,17 +670,32 @@ sudo systemctl stop local-ai-llama-swap
 sudo -k
 ```
 
-**On the Spark**, see that it holds, without sudo:
+**On the Spark**, prove that it holds: look at the unit with its drop-in, try to start it, and look
+again. No sudo: the polkit rule lets you start it, and while the hold-down stands the start is
+skipped.
 
 ```bash
+systemctl cat local-ai-llama-swap
+systemctl start local-ai-llama-swap
 systemctl show -p DropInPaths,ActiveState,ConditionResult,ConditionTimestamp local-ai-llama-swap
 ```
 
-`DropInPaths` names `held-down.conf`, and `ActiveState` reads `inactive`. Once anything has tried
-to start it, `ConditionResult` reads `no`, with that try's time in `ConditionTimestamp`, and `make
-logs s=llama-swap` holds systemd's line that it `was skipped because of an unmet condition check
-(ConditionPathExists=/dev/null/held-down)`. Before any try, `ConditionResult` still reads `yes`,
-from its last real start. (From systemd 255's man pages and source; not yet seen on this box.)
+Expected: `systemctl cat` ends with `# /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf`
+and the drop-in's two lines. `systemctl start` exits 0 and starts nothing. `systemctl show` names
+`held-down.conf` in `DropInPaths`, and reads `ActiveState=inactive` and `ConditionResult=no`, with
+the try's time in `ConditionTimestamp`. `make logs s=llama-swap` holds systemd's line that it `was
+skipped because of an unmet condition check (ConditionPathExists=/dev/null/held-down)`. (From
+systemd 255's man pages and source; not yet seen on this box.) If `ActiveState` reads `active` or
+`activating`, the hold-down didn't take and llama-swap is starting. **On the Spark**, stop it at
+once, and go no further:
+
+```bash
+systemctl stop local-ai-llama-swap
+```
+
+*(Changed 2026-10-15, at Phase 2a's Task 35's review: the check only looked, and before any try
+`ConditionResult` reads `yes`, from the last real start, so it couldn't show that a start is
+skipped. It tries one now. The note to look at `make status` first was added the same day.)*
 
 **On the Spark**, when you're done, a line at a time:
 
@@ -666,11 +734,26 @@ in tmux, as *Every later change* says: `make apply`; if it stages a unit or the 
 `make install-units`, then `make apply` again. `make doctor` there is `main`'s. Since Phase 2a's
 bootstrap re-run (its Task 36), two of its lines fail, as expected: *secrets folder*, which reports
 `root:root 700`, and *earlyoom*, since `main`'s `earlyoom.default` still has `--prefer` until 2a
-merges. Then commit the fix there, on `main`, staging its files by path; run
+merges. And no `make pull` from there: since that re-run, `main`'s pull, which runs as `spark`,
+can't write the model cache, which is `spark-pull`'s (not tried; added 2026-10-15, at Task 35's
+review). Then commit the fix there, on `main`, staging its files by path; run
 [the scan before every push](leak-guards.md#before-every-push) with `main` as `<branch>`; and, with
 Dan's OK, `git push origin main`.
 
-**On the Spark**, back in the phase's clone, merge it in, and remove the worktree:
+**On the Spark**, back in the phase's clone, see first whether `main` brings in a change to the
+workflows:
+
+```bash
+git diff --stat HEAD...main -- .github/workflows
+```
+
+If it lists anything, the merge is made on the Mac, not here. The Spark's GitHub token can't push a
+branch that brings in a `.github/workflows/` change (`CLAUDE.md`, *Building it*). `main` is pushed
+already: remove the worktree, still **on the Spark**, with `git worktree remove ../local-ai-main`,
+and make the merge on the Mac, which takes the phase's branch as at any switch between the
+machines. *(Added 2026-10-15, at Phase 2a's Task 35's review:
+`origin/main` has changed `publish-website.yml` since 2a branched, so this holds for Task 37's
+merge.)* If it lists nothing, **on the Spark**, merge it in, and remove the worktree:
 
 ```bash
 git merge --no-ff main -m "chore(repo): merge main's urgent fix into phase-2a"

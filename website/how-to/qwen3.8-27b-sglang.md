@@ -329,6 +329,11 @@ free -g
   is on `phase-2a`, whose `make status` misreads today's box.)
 - If you stopped the stack for the first run, start it again, **on the Spark**:
   `systemctl start local-ai-llama-swap`. Today's stack loads each model on its first request.
+  *(Added 2026-10-15, Phase 2a's Task 35's review: from Phase 2a's cutover, end the hold-down
+  instead, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says, and do it before you
+  release the brake. While the drop-in stands, `systemctl start local-ai-llama-swap` exits 0 and
+  starts nothing; the hold-down's undo starts llama-swap itself. Until the cutover, this step is
+  unchanged.)*
 
 **On the Mac:** Ctrl-C where the tunnel runs.
 

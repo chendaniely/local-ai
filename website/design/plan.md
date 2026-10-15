@@ -1464,7 +1464,9 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
     finding: the app's `uv sync` takes two locks any account on the box can hold, the venv's and
     one in `/tmp`, each made `0666` by uv, and waits on a held one silently. So the app's sync now
     comes before the drain, after the quiet minute or the yes to drain now, with no request held,
-    and stops after 3 minutes when it waits on a lock, naming it. The registry and llama-swap's
+    and ~~stops after 3 minutes when it waits on a lock, naming it~~ apply stops any sync that
+    hasn't finished within 3 minutes, a slow download's included, naming the lock when it waited on
+    one (corrected at Task 35's review, the same day). The registry and llama-swap's
     config still go out after the drain. Ctrl-C during the quiet wait still leaves nothing
     changed; after the sync, apply says the app is synced.)*
   - **The coder swap's order:** `make apply`, whose restart stops every engine, the old coder

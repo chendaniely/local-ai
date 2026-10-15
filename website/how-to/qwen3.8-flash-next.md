@@ -251,6 +251,12 @@ systemctl start local-ai-llama-swap
 Nothing loads yet: today's stack loads each model on its first request, so `free -g` stays near
 117 until something asks.
 
+*(Added 2026-10-15, Phase 2a's Task 35's review: from Phase 2a's cutover, end the hold-down here
+instead, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says, and do it before you
+release the brake. While the drop-in stands, `systemctl start local-ai-llama-swap` exits 0 and
+starts nothing; the hold-down's undo starts llama-swap itself. Until the cutover, this step is
+unchanged.)*
+
 ## Clean up
 
 Keep the files if Phase 4a is close and the disk has room; otherwise:

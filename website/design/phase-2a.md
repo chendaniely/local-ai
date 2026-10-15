@@ -7998,25 +7998,43 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
       and the stamps are still written after the drain. Nothing else apply does under the hold can
       wait on another account's lock: the files are written by atomic rename, the restarts go
       through systemctl, and the gate's calls are bounded.
-    - Bound: `SYNC_TIMEOUT_S`, 180 s, on `uv sync -v`, with `UV_LOCK_TIMEOUT` set to 240 s, past
-      it. When it hits, uv is stopped. apply names the lock from uv's own *Waiting to acquire …
-      lock … at `<path>`* line, *the app's sync waited on a lock: <path>, which another process
-      holds, so apply stopped it after 3 minutes; …*, and exits 1, with no hold taken and nothing
-      restarted. A sync that is slow without a lock reads *didn't finish within 3 minutes*.
-    - uv's own lines are shown, its DEBUG, TRACE and INFO lines (from `-v`) never.
+    - Bound: `SYNC_TIMEOUT_S`, 180 s, on ~~`uv sync -v`~~ `uv --color never sync -v` (no colour,
+      so `FORCE_COLOR` can't hide the DEBUG prefix from the filter), with `UV_LOCK_TIMEOUT` set to
+      240 s, past it. When it hits, uv is stopped. apply names the lock ~~from uv's own~~ only when
+      uv was still waiting on it as it was stopped: its last line uv's own *Waiting to acquire …
+      lock … at `<path>`* line, with nothing after it (uv says more once it has a lock it waited
+      on), *the app's sync waited on a lock: <path>, which another process holds, so apply stopped
+      it after 3 minutes; …*, and exits 1, with no hold taken and nothing restarted. A sync that is
+      slow without a lock reads *didn't finish within 3 minutes*. Both lines, the lock's and
+      "didn't finish within 3 minutes", say the environment may be part-way synced.
+    - uv's own lines are shown, each control character escaped as the diff's are, its DEBUG, TRACE
+      and INFO lines (from `-v`) never; and before the sync, `apply: syncing the app (uv sync, up
+      to 3 minutes)`. *(This item and the one above changed 2026-10-15, at Task 35's review, as
+      built in Task 32's `3f8fa2c`: the reviewer's M2, M3 and M5.)*
     - A stop after the sync is worded for it. A decline at the deadline, or a gate error, reads
       *the app is synced, but nothing else was deployed or restarted*. Ctrl-C reads *stopped by
       Ctrl-C after syncing the app; … the next `make apply` restarts each unit still running older
       files*.
     - What this costs: during the sync no request is held, so a load in that window runs `spark
       launch` from a part-synced app. That was already so for a change that restarts only the
-      brake and the gate (no hold), and in Phase 1.
+      brake and the gate (no hold), and in Phase 1. *(Added 2026-10-15, at Task 35's review, the
+      reviewer's M7:)* And the venv now changes under the running brake, gate and front for the
+      whole drain wait, up to the 15-minute deadline and however long drain now takes, where it
+      used to change seconds before their restarts. A module imported for the first time in that
+      span loads the new files into the old code. The app's own imports are eager, so that is
+      unlikely from `spark`; the case to name is a third-party lazy import, as a uvicorn or
+      Starlette bump could bring.
     - Tests: `test_the_sync_runs_before_drain_all` (the quiet path, drain now, `--now`),
       `test_a_sync_that_waits_on_a_lock_takes_no_hold_and_restarts_nothing`,
       `test_a_sync_shows_uvs_own_lines_and_never_its_debug_ones` and
       `test_a_stop_after_the_sync_says_the_app_is_synced`. The brief's
       `test_the_quiet_path_holds_new_requests_too` and
       `test_nothing_is_written_until_the_drain_is_done` now pin the sync before `drain-all`.
+      *(Added 2026-10-15, at Task 35's review, with Task 32's `3f8fa2c`:)*
+      `test_a_sync_that_got_its_lock_and_then_ran_slow_isnt_said_to_wait_on_a_lock`,
+      `test_a_sync_that_waits_on_a_lock_takes_no_hold_on_drain_now_or_with_now`,
+      `test_a_failed_syncs_own_lines_are_shown_escaped` and
+      `test_uvs_debug_lines_are_never_shown_under_force_color`.
   - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
     seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
     is a sixteenth `make doctor` line now; Task 33 adds the rest.
@@ -8548,7 +8566,14 @@ git commit -m "feat(stack): 🤖 the web containers drop every capability they d
 ```
 
   Then *Before every push* with `main` as `<branch>`, and **Dan OKs** `git push origin main`. Back
-  in the `phase-2a` clone, **on the Spark**:
+  in the `phase-2a` clone, **on the Spark**: *(Added 2026-10-15, at Task 35's review, the
+  controller's ruling: first `git diff --stat HEAD...main -- .github/workflows`. If it lists
+  anything, the merge is made on the Mac, since the Spark's token can't push a branch that brings
+  in a `.github/workflows/` change (`CLAUDE.md`'s Building it): `main` is pushed from the Spark
+  with Dan's OK as above, the worktree removed, and the merge made on the Mac, which takes
+  `phase-2a` as at any switch. It applies today: `origin/main` has changed `publish-website.yml`
+  since 2a branched. deploy.md's urgent-fix section says the same. Today's merge of `origin/main`,
+  tried in a scratch clone at Task 35, also conflicted in twelve files, not only the four below.)*
 
 ```bash
 git merge --no-ff main -m "chore(repo): 🤖 merge main's cap_drop into phase-2a" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -8602,24 +8627,43 @@ d=$(mktemp -d) && git worktree add "$d/main" main && (cd "$d/main" && uv run --f
   Expected: `render: 8 files → …`, then `EnvironmentFile=/etc/local-ai/secrets/llama-swap.env` and
   an `ExecStart` ending `-listen 127.0.0.1:9100`.
 
-  The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: for the
-  first line, and again at `make install-units`, after `sudo -k`). *(Added 2026-10-15, at Task 35's
-  review, the controller's ruling: run it a line at a time, never pasted whole, or the next line is
-  read as sudo's password or as `make install-units`' answer. If `git worktree add` fails, a
-  `../local-ai-rollback` left from an earlier try among the causes, stop there: `cd` can still land
-  in that old folder, or fail and leave the shell in the `phase-2a` clone, and the three `make`
-  lines must run only in a fresh `main` worktree. The first case was seen on stand-ins at Task 35;
-  deploy.md says so.)*
+  The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: ~~for the
+  first line, and again at `make install-units`, after `sudo -k`~~ at `make install-units`, and
+  again at the `disable` line, since `make install-units` ends with `sudo -k`). *(Added 2026-10-15,
+  at Task 35's review, the controller's ruling: run it a line at a time, never pasted whole, or the
+  next line is read as sudo's password or as `make install-units`' answer. If `git worktree add`
+  fails, a `../local-ai-rollback` left from an earlier try among the causes, stop there: `cd` can
+  still land in that old folder, or fail and leave the shell in the `phase-2a` clone, and the ~~three~~
+  `make` lines must run only in a fresh `main` worktree. The first case was seen on stand-ins at
+  Task 35; deploy.md says so.)*
 
 ```bash
-sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
-sudo -k
 git worktree add ../local-ai-rollback main
 cd ../local-ai-rollback
 make apply
 make install-units
+sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
 make apply-now
 ```
+
+  Then, at once, **on the Spark**, start llama-swap and the brake, which `main`'s `make apply-now`
+  doesn't: it restarts only what runs. After a rollback from Step 4 both are stopped, and 9100 has
+  been free since that stop; after one from later they run, and this does nothing:
+
+```bash
+systemctl start local-ai-llama-swap.service local-ai-brake.service
+```
+
+  *(Changed 2026-10-15, at Task 35's review, the controller's ruling. The block's `disable` line came
+  first, before the worktree, `main`'s `make apply` and `make install-units`, so 9100 stayed free
+  for minutes, through `make install-units`' review: any account could have taken it, and Open WebUI
+  sends its key there. `main`'s units now go in first, and the `disable` line and `make apply-now`
+  follow each other, so the port is free for the seconds `make apply-now` takes to restart
+  llama-swap. The block had no start line either: `main`'s `make apply-now` restarts only active
+  units (its apply.py, "apply starts nothing"), so after a failed Step 4 it left llama-swap and the
+  brake stopped, and 9100 free. The reordered block and the start line ran on stand-ins that log
+  their calls; deploy.md's copies are byte-identical.)*
 
   Then `make doctor` from that worktree passes every one of Phase 1's fifteen checks but *secrets
   folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 36), and is expected
@@ -8627,6 +8671,12 @@ make apply-now
   differs from the running arguments); a plan revision says what failed. *(It did, 2026-10-14:
   Task 28 took `--prefer` out of `earlyoom.default`, so the rollback's doctor fails *earlyoom* as
   well, as expected: none of the rollback's steps touches earlyoom, which keeps 2a's arguments.)*
+  *(Corrected 2026-10-15, at Task 35's review: it passes them only once llama-swap and the brake
+  run. Without the start line, after a failed Step 4, its units, llama-swap and end-to-end checks
+  failed too. The rollback leaves 2a's bootstrap and secret files in place: the two accounts, the
+  PAM hook, `agent`'s drop-in and cron line, earlyoom without `--prefer`, the polkit rule, 2a's
+  units disabled, the internal keys, the digests and the key list, and the cache, `spark-pull`'s,
+  so no `make pull` from `main`; deploy.md lists them.)*
 
 - [ ] **Step 2:** `make apply`. Expected: it lists root's ten new or changed unit files (the
   compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 32),
@@ -8647,7 +8697,9 @@ make apply
   registry and the app with nothing to wait for (Task 32). Expected: it deploys, and exits 0.
   Anything else — render or validation refusing, `uv sync` failing, the network dropping — leaves
   Phase 1's app deployed under the new units root now holds: stop here, and run Step 1's rollback,
-  which restarts Phase 1's llama-swap.
+  which restarts Phase 1's llama-swap. *(Corrected 2026-10-15, at Task 35's review: it starts
+  llama-swap and the brake only with its start line, added that day, since `main`'s `make
+  apply-now` starts nothing. Run it at once: 9100 is free from this step's stop.)*
 - [ ] **Step 5 [Dan]: the cutover, its start**, only after Step 4 exited 0. **On the Spark** (Dan;
   sudo asks once). *(Added 2026-10-15, at Task 35's review, the controller's ruling: a line at a
   time, never pasted whole, or the next line is read as sudo's password.)*
@@ -8664,7 +8716,10 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   (*Lessons from Phase 0*). 9100 is free from Step 4's stop until the socket starts, the cutover's
   one window.
 - [ ] **Step 6 [Spark]: Check it.** `make doctor` passes every line. `make status` reads as the
-  plan's layout. `make logs s=gate` shows the residents loading one after another.
+  plan's layout. `make logs s=gate` shows the residents loading one after another. *(Added
+  2026-10-15, at Task 35's review: run `make doctor` once `make status` shows the residents loaded.
+  Straight after Step 5 its end-to-end line fails while the embeddings model is still loading,
+  since doctor loads nothing, Task 33.)*
   *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5. Unless Task 2 has run, which it won't have in 2a: `make doctor` passes every
   line but `ntfy`, which reads `WARN  ntfy: not set up (Task 2, Phase 5)` and fails nothing (Task
