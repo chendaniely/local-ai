@@ -26,9 +26,9 @@ date: 2026-10-07
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
 > same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
-> 1.**~~ **Done (2026-10-07 to 14):** Tasks 1 and 3–29, each reviewed. ~~**Task 2 [Dan]** runs side by
+> 1.**~~ **Done (2026-10-07 to 14):** Tasks 1 and 3–31, each reviewed. ~~**Task 2 [Dan]** runs side by
 > side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
-> before Task 27 starts.~~ **Next: Task 30 (in review), then Task 31.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> before Task 27 starts.~~ **Next: Task 32.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`.
 >
 > **ntfy is optional, and Task 2 leaves 2a** *(2026-10-14, Dan's decision: ntfy optional, moving
