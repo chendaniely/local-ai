@@ -7525,8 +7525,11 @@ git commit -m "docs(readme): 🤖 record the Mac's coreutils, which the install-
   on the Mac; until now it ran only on the Spark and in ubuntu:24.04. Four things there have never
   run on a Mac. Every test runs in an environment it builds (`spark/tests/conftest.py`): the
   shell's `PATH`, its `LANG` if it has one, and a new, empty `HOME`, so no `TMPDIR`, and a
-  temporary folder can land under `/tmp`, which macOS links to `/private/tmp`. The tests that run
-  git and uv do so with that empty `HOME`, and the Mac's `/usr/bin/git` is Xcode's shim. The tests
+  temporary folder can land under `/tmp`, which macOS links to `/private/tmp`. *(Since 2026-10-14,
+  from Phase 2a's CI: its `TZ` too, if it has one. Without it, a run given a zone fell back to the
+  system's partway through, and `TZ=UTC make test` on the Spark passed brake tests that failed in
+  CI.)* The tests that run git and uv do so with that empty `HOME`, and the Mac's `/usr/bin/git`
+  is Xcode's shim. The tests
   that run `make hooks` and bootstrap passed on the Mac in Phase 0, but now run in that
   environment, on bash 3.2 and GNU make 3.81. And `write_hold` flushes its folder after the rename
   (`os.fsync` on the folder), which is unverified on APFS. *(Added 2026-09-26, from Tasks 9 and

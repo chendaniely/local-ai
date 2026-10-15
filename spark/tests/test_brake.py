@@ -820,6 +820,10 @@ REG2A = replace(REG, models={**REG.models,
 LABELS = {name: model.label for name, model in REG2A.models.items()}
 ENGINE_PID = 4242
 FIRED_AT = datetime.fromtimestamp(T0).astimezone().isoformat(timespec="seconds")  # the hold's `since` at T0
+# The brake's alerts tell the time on the box's own clock, so the tests read T0 in the runner's zone, as FIRED_AT does:
+# never a time written out, which holds in one zone only (CI runs in UTC). T0 falls on the minute, and no run here
+# lasts one.
+AT_T0 = f"{datetime.fromtimestamp(T0):%H:%M}"
 # -q first, so curl reads no .curlrc: the brake runs as spark, the engines' account, which could plant one (the review's
 # M10).
 CURL_ARGS = ["/usr/bin/curl", "-q", "--fail", "--silent", "--max-time", "10", "--config", "-"]
@@ -2268,7 +2272,7 @@ def test_a_hold_written_later_ends_the_unwritten_episode_as_a_standing_hold(box_
     assert [e.kind for e in events(box_folders)].count("fired") == 1
 
 
-LATE_BY_BRAKE = ("Brake, 01:00: its pause now stands: new loads are paused until the gate is back and memory has "
+LATE_BY_BRAKE = (f"Brake, {AT_T0}: its pause now stands: new loads are paused until the gate is back and memory has "
                  "stayed above 28 GiB available for 5 min.")
 
 
@@ -2360,7 +2364,7 @@ def test_with_the_gate_gone_after_the_fire_the_brakes_first_word_is_the_first_al
     assert all(kind == "unload" and by_brake for kind, _, by_brake in steps[k + 2:]) and later
     sent = [curl_config(child.stdin.data)["data-raw"][0] for child in curl.started]
     assert sent == [first_alert(unloaded=[(model, None) for model in unloaded], hold_written=writable)] + [
-        f"Brake, 01:00: also unloaded {model}." for model in later]
+        f"Brake, {AT_T0}: also unloaded {model}." for model in later]
 
 
 def test_a_hold_written_late_with_the_gate_gone_since_the_fire_is_the_first_alert(box_folders, tmp_path,
@@ -2426,7 +2430,7 @@ def test_a_poll_whose_retry_writes_the_hold_unloads_before_the_rest(box_folders,
     alert.alert_without_gate = lambda text, priority: (order.append(f"alert: {text}"), real_alert(text, priority))[1]
     run_2a(box, alerter=alert)
     polls = "|".join(order).split("|next poll|")
-    assert polls[4].split("|") == ["hold try", "unload stand-in-5", "hold try", "alert: Brake, 01:00: also unloaded "
+    assert polls[4].split("|") == ["hold try", "unload stand-in-5", "hold try", f"alert: Brake, {AT_T0}: also unloaded "
                                    "stand-in-5.", "gate's saved state", f"alert: {LATE_BY_BRAKE}"]
 
 

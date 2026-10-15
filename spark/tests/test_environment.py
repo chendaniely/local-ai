@@ -7,9 +7,10 @@ import pwd
 def test_every_test_runs_in_an_environment_it_built():
     # Dan's shell can hold secrets, and a failing test prints what the code under test was given: an assertion's
     # diff, a traceback's arguments. So nothing of the shell's environment is left but PATH and LANG, which find the
-    # tools tests run and keep how they read text, and HOME is a new, empty folder. (Names and the home folder are
-    # taken first: pytest prints the arguments of a call in a failing assert, and os.environ would be one.)
+    # tools tests run and keep how they read text, and TZ when the run sets one, which keeps one zone for the whole run;
+    # and HOME is a new, empty folder. (Names and the home folder are taken first: pytest prints the arguments of a
+    # call in a failing assert, and os.environ would be one.)
     names = set(os.environ) - {"PYTEST_CURRENT_TEST"}
     home, own = os.environ["HOME"], pwd.getpwuid(os.getuid()).pw_dir
-    assert names <= {"PATH", "HOME", "LANG"}
+    assert names <= {"PATH", "HOME", "LANG", "TZ"}
     assert home != own and os.listdir(home) == []

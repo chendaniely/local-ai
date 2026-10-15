@@ -904,14 +904,14 @@ def test_a_file_apply_cant_load_is_named_not_a_traceback(box, what, text):
 
 def test_uv_sync_is_given_the_tests_own_environment_and_uvs_settings_only(box):
     # Task 7's fix round 2: apply hands uv sync its environment, and the fake it reaches raises when uv fails, so a
-    # traceback would print it. It's the test's own (conftest.py's fake_environment). Names only, taken first: pytest
-    # prints the arguments of a call in a failing assert.
+    # traceback would print it. It's the test's own (conftest.py's fake_environment, which keeps TZ when the run sets
+    # one). Names only, taken first: pytest prints the arguments of a call in a failing assert.
     box.deployed()
     box.answers = [[]]
     put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
     box.apply()
     names = set(box.uv_env) - {"PYTEST_CURRENT_TEST"}
-    assert names <= {"PATH", "HOME", "LANG", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE"}
+    assert names <= {"PATH", "HOME", "LANG", "TZ", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE"}
 
 
 def test_validate_is_run_with_path_and_placeholder_keys_only(box, monkeypatch):
