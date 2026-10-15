@@ -103,24 +103,46 @@ gitleaks has no snap (checked 2026-09-24), which is why it is a direct install.
 make doctor
 ```
 
-It checks Phase 0's guardrails: the leak hooks, the GPU set held (the running kernel's modules
-package included), the driver's kernel module agreeing with `nvidia-smi`, earlyoom running with the
-repo's arguments, ufw on, the secrets folder closed to you, and spark's folders as bootstrap sets
-them (`/var/lib/local-ai` root's, the brake's folder spark's, shared with `spark-admin`). It checks
-the stack too: root's own copies of the units and the Compose project (each root's regular file or
-folder, not a link, and not writable by group or others), needrestart's override installed as the
-repo has it, no folder that llama-server could read a `config.ini` from (`/etc/llama.cpp` or
-`/var/lib/local-ai/.config`), its three units active, llama-swap answering and refusing a call
-without a key, Open WebUI and SearXNG answering, and the embeddings model answering through
-llama-swap, loaded first if it wasn't. Each line is `ok` or `FAIL`, and a `FAIL` says what to do. It
-changes nothing but this: it loads the embeddings model if it isn't loaded, which also clears the
-last refusal record that `make status` shows. It needs no sudo, and uses your `SPARK_API_KEY`,
-which [Deploy the stack](deploy.md#before-the-first-deploy) puts in the Spark's `~/.secrets`.
+*Phase 2a's doctor* (its Task 33, built 2026-10-15; its stack's lines pass from the cutover, its
+Task 38). It checks Phase 0's guardrails: the leak hooks, the GPU set held (the running kernel's
+modules package included), the driver's kernel module agreeing with `nvidia-smi`, earlyoom running
+with the repo's arguments, `agent`'s OOM score, ufw on, the secrets folder closed to you, and
+spark's folders as bootstrap sets them. It checks the stack too: root's own copies of the units and
+the Compose project, needrestart's override, no folder that llama-server could read a `config.ini`
+from, the five services and three sockets active and the sockets' owners and modes, the key list,
+the deployed versions against their pins, llama-swap's config against its schema, llama-swap
+answering on its own port and refusing a call without a key or with yours, the front, the gate,
+ntfy, no engine started around the gate, Open WebUI and SearXNG answering, one model answering
+through the front, and one check for each of Phase 2a's scenarios. Each line is `ok`, `FAIL` or `WARN`, and a
+`FAIL` says what to do. A `WARN` passes and fails nothing: until ntfy is set up, in Phase 5, its
+`ntfy` line reads `WARN  ntfy: not set up (Task 2, Phase 5)`, as expected. It loads no model: it
+asks the embeddings model something only once the gate shows it loaded, and otherwise its line
+fails, naming the `spark load` to run. It restarts nothing, and needs no sudo. It sends your
+`SPARK_API_KEY`, which [Deploy the stack](deploy.md#before-the-first-deploy) puts in the Spark's
+`~/.secrets`. `spark doctor --full`, run from the clone's root, adds two heavy checks: a 170 MB
+upload to speech-to-text through the front, and the privacy canary.
+
+*Phase 1's doctor*, which runs from a `main` worktree until 2a merges (until 2026-10-15, this
+paragraph was the page's only account of doctor; Phase 2a's Task 35 put 2a's above it): it checks
+Phase 0's guardrails: the leak hooks, the GPU set held
+(the running kernel's modules package included), the driver's kernel module agreeing with
+`nvidia-smi`, earlyoom running with the repo's arguments, ufw on, the secrets folder closed to you,
+and spark's folders as bootstrap sets them (`/var/lib/local-ai` root's, the brake's folder spark's,
+shared with `spark-admin`). It checks the stack too: root's own copies of the units and the Compose
+project (each root's regular file or folder, not a link, and not writable by group or others),
+needrestart's override installed as the repo has it, no folder that llama-server could read a
+`config.ini` from (`/etc/llama.cpp` or `/var/lib/local-ai/.config`), its three units active,
+llama-swap answering and refusing a call without a key, Open WebUI and SearXNG answering, and the
+embeddings model answering through llama-swap, loaded first if it wasn't. Each line is `ok` or
+`FAIL`, and a `FAIL` says what to do. It changes nothing but this: it loads the embeddings model if
+it isn't loaded, which also clears the last refusal record that `make status` shows. It needs no
+sudo, and uses your `SPARK_API_KEY`.
 
 What brings the stack back by itself:
 
 - the units are enabled, so a reboot starts them;
-- llama-swap and the brake restart if they crash;
+- llama-swap and the brake restart if they crash, and from Phase 2a's cutover the front and the
+  gate too, while PID 1 holds their sockets;
 - needrestart leaves the units alone.
 
 A Docker upgrade may not. The web services' unit requires Docker, so a restart of Docker restarts
@@ -130,7 +152,10 @@ and nothing starts the unit again until `systemctl start local-ai-compose`. Whic
 Docker upgrade does is not yet tried on this box. `make doctor` shows which: its `stack units` line
 names the web services' unit when it is stopped, with the command that starts it.
 
-llama-swap preloads nothing, so after a reboot each model loads on its first request.
+llama-swap preloads nothing, so after a reboot each model loads on its first request. *(From Phase
+2a's cutover, the gate loads each always-loaded model that isn't loaded, one at a time, when it
+starts, a reboot's start included; the others load on their first request. Added 2026-10-15, Phase
+2a's Task 35.)*
 
 ## Upgrade day: the GPU set
 
@@ -189,15 +214,42 @@ git status --short -- Makefile stack/host
 ```
 
 Stop your own GPU jobs first, and `agent`'s as `agent` (`sudo -iu agent`, or its own session):
-`make upgrade-gpu` stops only llama-swap and the brake. Then, **on the Spark**, run it, or do the
-numbered steps below by hand:
+`make upgrade-gpu` stops only llama-swap and the brake.
+
+*From Phase 2a's cutover,* stop the front first too, and its socket with it. *(Added 2026-10-15,
+Phase 2a's Task 35, from the controller's ruling at its Task 25's review.)* The front's unit starts
+a stopped llama-swap whenever the front starts (its `Wants=`): its restart after a crash, and a
+connection to 9100 once only its service is stopped, since PID 1 still holds the port. llama-swap
+would then start mid-upgrade, with the GPU set moving, and the gate could load models onto it. The
+polkit rule doesn't cover sockets, so this takes sudo. **On the Spark**, a line at a time, since
+pasted whole, the next line would be read as sudo's password:
+
+```bash
+sudo systemctl stop local-ai-front.socket local-ai-front.service
+sudo -k
+```
+
+Until the socket starts again, nothing answers on 9100, so pi and the web UI get no model, and 9100
+is free for any account to take, as in the cutover's one window: keep it to upgrade day's own
+steps. The reboot, step 6, starts the socket and the front again. If you don't reboot, start them
+yourself at the end, after what `make upgrade-gpu` says to start. **On the Spark**, a line at a
+time too:
+
+```bash
+sudo systemctl start local-ai-front.socket
+sudo -k
+systemctl start local-ai-front.service
+```
+
+Then, **on the Spark**, run it, or do the numbered steps below by hand:
 
 ```bash
 make upgrade-gpu
 ```
 
 1. Stop what uses the GPU: `systemctl stop local-ai-llama-swap local-ai-brake` (the reboot starts
-   them again), your own GPU jobs, and `agent`'s as `agent`.
+   them again), your own GPU jobs, and `agent`'s as `agent`. From Phase 2a's cutover, stop the
+   front's socket and service first, as above, or the front can start llama-swap again.
 2. First run step 5's GRUB check, so the GRUB question is settled before anything moves. If it
    doesn't pass, stop here, with the set still held and nothing moved, and bring what it printed to
    the Claude session working on the repo (the Spark's, by default) to work out why.
@@ -325,7 +377,9 @@ make upgrade-gpu
 
    Expected: `all libraries found`. A `not found` line means rebuild it the way
    [Phase 1's plan](../design/phase-1.md), Task 11 Step 4, built it, into the same folder. Then
-   `make doctor`: every line `ok`.
+   `make doctor`: every line `ok`, but for a `WARN`, which passes. *(Corrected 2026-10-15, Phase
+   2a's Task 35: Phase 2a's doctor can warn, and until ntfy is set up, in Phase 5, its `ntfy` line
+   reads `WARN  ntfy: not set up (Task 2, Phase 5)`, as expected.)*
 8. Record the new kernel, driver and CUDA versions in `changelog.md`, and bring the GPU set's line
    in `README.md` §Current state up to date.
 
@@ -386,7 +440,16 @@ modules), the previous kernel won't help.
 ## Upgrade day: the automated PRs
 
 Dependabot opens its PRs on Fridays, against `main`: up to three each for the GitHub Actions pins
-and for `spark/`'s Python dependencies. On upgrade day, for each one:
+and for `spark/`'s Python dependencies.
+
+**While a phase is being built,** its `spark/` PRs wait unmerged until the phase merges: the
+phase's branch can change the lock's package list, as Phase 2a's Task 3 pinned it. A security fix
+that can't wait goes to `main` as an urgent fix, as [Deploy the stack](deploy.md)'s *An urgent fix
+during a phase's build* says. (Added 2026-10-15, Phase 2a's Task 35, from Dan's decision of
+2026-10-07: *Dependabot during 2a* in [Phase 2a's plan](../design/phase-2a.md), which held
+`huggingface-hub` 2.0.0 among them.)
+
+On upgrade day, for each one:
 
 1. **On github.com**, read what it bumps and its release notes, and let CI finish green. A PR that
    moves uvicorn's pin, or adds a package to the lock or drops one, fails
@@ -494,6 +557,16 @@ rest after them:
 uv run --frozen --project spark pytest spark/tests/test_protocols.py spark/tests/test_sockets.py
 make test
 ```
+
+A Starlette bump runs the same two tests first, then the rest, as above: it moves within its range,
+so it needs no companion change, but the gate serves through Starlette, on that same uvicorn.
+*(Added 2026-10-15, Phase 2a's Task 35.)*
+
+Once a uvicorn or Starlette bump is merged and pulled on the Spark, `make apply` deploys it. A
+change to the lock is a change to the app's environment, so apply restarts the brake and the gate,
+and the front too, which serves through uvicorn: all three after the quiet minute, in Task 31's
+order, the brake, then the gate, then the front ([Deploy the stack](deploy.md)'s *Every later
+change*). llama-swap doesn't restart for it.
 
 ## Upgrade day: gitleaks
 

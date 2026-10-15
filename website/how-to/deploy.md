@@ -1,12 +1,16 @@
 ---
 title: "Deploy the stack"
-description: "The first deploy on the Spark, the web UI over tailscale serve, and every later change."
+description: "The first deploy on the Spark, moving a Phase 1 box to Phase 2a and back, the web UI over tailscale serve, every later change, an urgent fix during a phase's build, and reading an engine's log."
 ---
 
 Everything here runs **on the Spark**, from your clone of this repo, except in two places **on the
 Mac**: sending your llama-swap key, in *Before the first deploy*, and the tunnel and the browser, in
 *The web UI's first account*. In *The web UI*, you log in from a browser on the Mac or the
 phone.
+
+A new box takes *First deploy*. A box already running Phase 1's stack, llama-swap on 9100, moves to
+Phase 2a's once, by *Moving a Phase 1 box to Phase 2a*, which also holds the way back. *(Added
+2026-10-15, Phase 2a's Task 35.)*
 
 ## Before the first deploy
 
@@ -55,6 +59,21 @@ nothing: both are as committed. It stops a running desktop and restarts earlyoom
 with nothing open on the desktop. Like `make install-units`, it ends with `sudo -k`, so sudo's
 cached credential doesn't outlast it.
 
+**Phase 2a's files.** Before the first deploy of Phase 2a's stack, on a new box or on one moving
+from Phase 1's, bootstrap has run with Phase 2a's part
+([Bootstrap the Spark](bootstrap.md#phase-2as-re-run)), and [Secret files](secret-files.md)'
+*Phase 2a's files* are done: the three internal keys, the
+client keys' digests and the private key list (its steps 11 to 13), each checked (its steps 16 to
+18). The units read them only when they start: *What `make apply` never restarts* says what to
+restart when one changes. *(Added 2026-10-15, Phase 2a's Task 35.)*
+
+ntfy's files are optional: the values file, `/etc/local-ai/values.env`, and the three header files,
+which [ntfy on the Synology](ntfy.md) §8 installs once ntfy is set up (Dan's decision, 2026-10-14:
+ntfy moves with the NAS phase, now Phase 5). Nothing in the first deploy needs them. Without them
+the stack deploys and serves: `make status`'s *health* row reads `ntfy not set up (Task 2, Phase
+5)`, and `make doctor`'s `ntfy` line reads `WARN` and fails nothing. Once they're installed, §8
+restarts the gate and the brake, which read them only when they start.
+
 ## First deploy
 
 Root runs its own copies of the units and the Compose project, never the files `make apply` writes.
@@ -66,8 +85,9 @@ So the first deploy applies twice, with root's copies installed in between.
 make apply
 ```
 
-On the first deploy it stops there. It stages the four units and the Compose project in
-`/opt/local-ai/etc`, says root has no copy of them yet, and deploys nothing else.
+On the first deploy it stops there. It stages the units, eleven from Phase 2a (Phase 1 had four),
+and the Compose project in `/opt/local-ai/etc`, says root has no copy of them yet, and deploys
+nothing else.
 
 `make install-units` installs root's copies. What it shows you is every staged file root would
 install, and nothing else, but it isn't all that root runs: sudo also runs this clone's own
@@ -88,8 +108,9 @@ make install-units
 
 It shows each file it would install as root, in full the first time. Read what it shows before you
 answer. Answer `y` (or `yes`), and it installs root's copies in `/etc/systemd/system` and
-`/etc/local-ai/compose`, then enables llama-swap, the brake and the web services; any other answer
-installs nothing. `make install-units-dry-run` shows the same and changes nothing.
+`/etc/local-ai/compose`, then enables llama-swap, the brake and the web services, and from Phase 2a
+the front, the gate and their three sockets too; any other answer installs nothing. It starts
+nothing. `make install-units-dry-run` shows the same and changes nothing.
 
 It refuses, installing nothing, a staged file holding a control character, one of ASCII's other
 than tab and newline or a C1 control in UTF-8, which could hide a line of what it shows. It refuses
@@ -106,7 +127,8 @@ make apply
 This time it syncs the app into `/opt/local-ai/app` and deploys llama-swap's config and the
 registry. Nothing runs yet, so it restarts nothing.
 
-**On the Spark**, download the model files. The `spark` user downloads them:
+**On the Spark**, download the model files. The `spark-pull` user downloads them, from Phase 2a
+(Phase 1's pull ran as `spark`):
 
 ```bash
 make pull
@@ -122,13 +144,24 @@ journalctl -fu local-ai-pull
 
 No sudo: bootstrap put you in `adm`, which reads every journal.
 
-**On the Spark**, start the stack, then look at it. No sudo: the polkit rule lets you start, stop
-and restart the four units, and nothing more.
+**On the Spark**, start the stack, then look at it, the sockets before the services. The polkit rule
+lets you start, stop and restart the stack's services without sudo, and nothing more: no socket,
+since stopping the front's would free 9100 for any account to take. So sudo starts the three
+sockets and asks for your password once, and `sudo -k` drops it before anything else runs, so the
+clone's own code never runs with sudo's credential cached. Run it a line at a time: pasted whole,
+the next line would be read as the password.
 
 ```bash
-systemctl start local-ai-llama-swap local-ai-brake local-ai-compose
+sudo systemctl start local-ai-front.socket local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
+systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front.service local-ai-brake.service local-ai-compose.service
 make status
 ```
+
+The front's socket takes 9100, and the gate loads the always-loaded models one at a time, which
+`make status` shows. *(Changed 2026-10-15, Phase 2a's Task 35. Phase 1's stack had no sockets, and
+its first start was `systemctl start local-ai-llama-swap local-ai-brake local-ai-compose`, with no
+sudo.)*
 
 ## The web UI's first account, straight after the first start
 
@@ -166,7 +199,7 @@ services.
 then the admin's email and password, and pasted whole, the next line would be read as the answer:
 
 ```bash
-sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 027; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env; chgrp spark /etc/local-ai/secrets/open-webui.env'
+sudo bash -c 'IFS= read -rp "admin email: " e; IFS= read -rsp "admin password: " p; echo; q=$(printf "\047"); case "$e$p" in *"$q"*|*\\*) echo "no single quote or backslash in either, please: the env file quotes each value with single quotes" >&2; exit 1 ;; esac; umask 077; printf "WEBUI_ADMIN_EMAIL=%s%s%s\nWEBUI_ADMIN_PASSWORD=%s%s%s\n" "$q" "$e" "$q" "$q" "$p" "$q" >> /etc/local-ai/secrets/open-webui.env'
 systemctl restart local-ai-compose
 ```
 
@@ -175,9 +208,15 @@ both lines, and restart once more so the container no longer holds them. Run thi
 too: sudo may ask for your password, and pasted whole, the next line would be read as the answer.
 
 ```bash
-sudo bash -c 'umask 027 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && chgrp spark "$f.new" && mv "$f.new" "$f"'
+sudo bash -c 'umask 077 && f=/etc/local-ai/secrets/open-webui.env && grep -v -e "^WEBUI_ADMIN_EMAIL=" -e "^WEBUI_ADMIN_PASSWORD=" "$f" > "$f.new" && mv "$f.new" "$f"'
 systemctl restart local-ai-compose
 ```
+
+Both write as root with `umask 077` and no `chgrp`, so the file stays `0600 root:root`, as every
+secret file is from Phase 2a's bootstrap re-run ([Secret files](secret-files.md#where-secrets-live)).
+*(Changed 2026-10-15, Phase 2a's Task 35: both blocks wrote with `umask 027` and `chgrp spark`,
+leaving the file `0640 root:spark`, Phase 1's rule. Harmless in a folder only root reads, and the
+next bootstrap resets it, but no longer the rule.)*
 
 ## The web UI
 
@@ -220,6 +259,140 @@ uses its status socket, open to `spark-users`.
 The link serves a login's shell only. A command run as `ssh brightroar <command>` gets a shell that
 never reads `~/.profile`, so it doesn't find `~/.local/bin`: there, call
 `/opt/local-ai/app/.venv/bin/spark` by its full path.
+
+## Moving a Phase 1 box to Phase 2a
+
+*(Added 2026-10-15, Phase 2a's Task 35: its Task 38's sequence, word for word. Not yet performed.)*
+
+Once, on a box running Phase 1's stack: llama-swap on 9100, with the client keys. It comes after
+*Before the first deploy*'s Phase 2a files (Phase 2a's Task 36) and after the web containers'
+`cap_drop`, deployed from `main` (its Task 37); until it, nothing deploys from `phase-2a` (*An
+urgent fix during a phase's build*). `local-ai-front.socket` owns 9100 from its start, so
+llama-swap has to leave 9100 first.
+
+**1. The way back, before anything moves.** If the cutover can't be fixed in place, the way back is
+Phase 1's layout, llama-swap on 9100 with `llama-swap.env`'s client keys and Phase 1's brake key,
+both still on the box (Task 36). Check that `main` renders it. **On the Spark:**
+
+```bash
+d=$(mktemp -d) && git worktree add "$d/main" main && (cd "$d/main" && uv run --frozen --quiet --project spark spark render --out "$d/out") && grep -h -e '-listen' -e 'EnvironmentFile' "$d/out/systemd/local-ai-llama-swap.service"; git worktree remove --force "$d/main"
+```
+
+Expected: `render: 8 files → …`, then `EnvironmentFile=/etc/local-ai/secrets/llama-swap.env` and
+an `ExecStart` ending `-listen 127.0.0.1:9100`.
+
+The rollback itself, only if it comes to that. **On the Spark** (Dan; sudo asks twice: for the
+first line, and again at `make install-units`, after `sudo -k`). Run it a line at a time: pasted
+whole, the next line would be read as sudo's password, or as `make install-units`' answer. If
+`git worktree add` fails, a `../local-ai-rollback` left from an earlier try among the causes, stop
+there: the three `make` lines must run in that worktree, never in the `phase-2a` clone.
+
+```bash
+sudo systemctl disable --now local-ai-front.service local-ai-front.socket local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
+git worktree add ../local-ai-rollback main
+cd ../local-ai-rollback
+make apply
+make install-units
+make apply-now
+```
+
+Then `make doctor` from that worktree passes every one of Phase 1's fifteen checks but *secrets
+folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 36), and is expected; and
+*earlyoom*, since Phase 2a's bootstrap runs earlyoom without `--prefer` and `main`'s
+`earlyoom.default` still has it (Task 28). None of the rollback's steps touches earlyoom. Phase 1's
+pull, which runs as `spark`, can't write the model cache either, since 2a's bootstrap gave it to
+`spark-pull` and leaves `spark` reading it through its group (not tried): no `make pull` from that
+worktree.
+
+**2. Stage root's copies.** **On the Spark:**
+
+```bash
+make apply
+```
+
+Expected: it lists root's ten new or changed unit files (the compose unit is unchanged), stages
+them, and stops, before it asks the gate anything (Task 32), since no gate runs yet.
+
+**3. Install them** (Dan). **On the Spark**, check that `git status --short -- Makefile
+stack/host` prints nothing, as *First deploy* says, then:
+
+```bash
+make install-units
+```
+
+Read every file it shows: they are what root will run. It installs root's copies and enables the
+sockets and the services, and starts nothing new. Step 4 follows at once, with no reboot between: a
+boot now would start the front and the gate against Phase 1's app, the front's socket and Phase 1's
+llama-swap both wanting 9100.
+
+**4. The cutover, its deploy** (Dan). **On the Spark:**
+
+```bash
+systemctl stop local-ai-brake.service local-ai-llama-swap.service
+make apply
+```
+
+Stopping llama-swap stops every model and frees 9100; `make apply` then deploys the config, the
+registry and the app with nothing to wait for (Task 32). Expected: it deploys, and exits 0.
+Anything else — render or validation refusing, `uv sync` failing, the network dropping — leaves
+Phase 1's app deployed under the new units root now holds: stop here, and run Step 1's rollback,
+which restarts Phase 1's llama-swap.
+
+Nothing starts llama-swap again before Step 5. The front's unit starts a stopped llama-swap
+whenever the front starts (its `Wants=`), but neither the front nor its socket runs yet. From the
+cutover on, a step that keeps llama-swap stopped stops the front's socket too, as
+[Updates](updates.md)' upgrade day does: with only the front's service stopped, a connection to
+9100 starts it again, since PID 1 still holds the port, and llama-swap with it.
+
+**5. The cutover, its start**, only after Step 4 exited 0. **On the Spark** (Dan; sudo asks once;
+a line at a time, since pasted whole, the next line would be read as the password):
+
+```bash
+sudo systemctl start local-ai-front.socket local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
+systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front.service local-ai-brake.service
+```
+
+The front's socket takes 9100, and the gate loads the residents one at a time. The polkit rule lets
+you stop and start the services without sudo; only the sockets need it, and `sudo -k` drops it
+before anything else runs, so the clone's own code never runs with sudo's credential cached
+(*Lessons from Phase 0*). 9100 is free from Step 4's stop until the socket starts, the cutover's
+one window.
+
+**6. Check it.** `make doctor` passes every line but `ntfy`, which reads `WARN  ntfy: not set up
+(Task 2, Phase 5)` and fails nothing, until ntfy is set up in Phase 5. `make status` reads as the
+plan's layout, its *health* row with `ntfy not set up (Task 2, Phase 5)`. `make logs s=gate` shows
+the residents loading one after another, and its one line that ntfy isn't set up.
+
+The three internal keys: a call through the front with a client key is answered, not a 401 (pi's
+and the web UI's answers below are such calls); the gate's own key reaches `/running`, so `make
+status` shows the residents' states and `make logs s=gate` holds no 401 from llama-swap; and the
+brake's start check passed, which `make status`'s *health* row shows as `brake ok (key checked …)`
+and `make doctor`'s *stack units* line as `llama-swap took the brake's key at …`.
+
+Then the listening ports, numbers only. **On the Spark:**
+
+```bash
+ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | tr '\n' ' '; echo
+```
+
+Expected among them: 800, 801, 803, 900 and 9100, and no 5800: llama-swap gives ports by the
+models' sorted names, so Gemma has 800, the embeddings 801 and whisper 803, and 802 is the coder's
+once it loads. `make logs s=front` holds no key, header or body. A request for a made-up model,
+with your key on curl's stdin. **On the Spark:**
+
+```bash
+curl -s -H @- -H 'Content-Type: application/json' -d '{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}' http://127.0.0.1:9100/v1/chat/completions <<<"Authorization: Bearer $SPARK_API_KEY"; echo
+```
+
+Expected: a 404 body with `model_not_found`'s words, listing the models. **On the Mac**, through
+`make tunnel`, pi answers. On the phone, the web UI chats, searches and transcribes. Then link bare
+`spark` into your `PATH`, as *`spark` on your PATH* says. [Phase 2a's
+plan](../design/phase-2a.md), Task 38, Steps 6 and 7, lists the rest: the units' accounts, sockets,
+IP lists and sandboxes, and what `agent` can't do.
+
+If any check fails, stop: whether it is fixed in place or the rollback (Step 1) runs is Dan's call.
 
 ## Every later change
 
@@ -305,6 +478,18 @@ answer again. The gate then releases the held requests and reloads the always-lo
 time, and apply ends `apply: done: …`. The compose unit, when it has to restart, restarts after
 that, on its own.
 
+So the app's sync runs under the hold: every new request waits at the front while it runs. It
+usually takes seconds, and as long as its downloads when the lock changed. *(Added 2026-10-15, at
+Phase 2a's Task 35, seen with uv 0.12.18 on a copy of the deployed app.)* uv also waits, saying
+nothing, for two locks of its own: the deployed venv's, `/opt/local-ai/app/.venv/.lock`, and the
+one it keeps in `/tmp` for the project, `uv-<hash>.lock`. uv makes both `0666`, and holding a lock
+needs only read access, so any process on the box, `agent`'s included, can make the sync wait, up
+to five minutes for each lock, after which uv syncs without it. So if apply's last line has said
+that new requests are held until the restarts are done for over a minute, with nothing from uv
+after it, press Ctrl-C: apply ends the hold at once, and the next `make apply` syncs the app
+again. A change that restarts neither llama-swap nor the front syncs with
+no hold, and a wait there only delays apply.
+
 `make apply-now` skips the wait. If the gate lists requests in flight, it asks first, naming whose
 they are:
 
@@ -348,6 +533,93 @@ Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass:
 make doctor
 ```
 
+### What `make apply` never restarts
+
+*(Added 2026-10-15, Phase 2a's Task 35, from its Task 31's review.)* apply restarts a service for
+the files it deploys itself, and for root's copy of its unit, once `make install-units` has
+installed a newer one. Two kinds of change it never restarts anything for.
+
+**A socket unit:** `local-ai-front.socket`, `local-ai-gate-status.socket` or
+`local-ai-gate-control.socket`. `make install-units` installs a changed one, and says so, but apply
+restarts no socket, so it keeps its old definition until it starts again: at the next boot, or now,
+with sudo, since the polkit rule leaves sockets out. The service it serves stops first and starts
+after it, so it takes the new socket. For the front's, run it when `make status` shows nothing in
+flight: the front's stop cuts off every request it holds, and 9100 is free until the socket starts
+again. **On the Spark** (sudo asks once; a line at a time, since pasted whole, the next line would
+be read as the password):
+
+```bash
+sudo systemctl stop local-ai-front.service local-ai-front.socket
+sudo systemctl start local-ai-front.socket
+sudo -k
+systemctl start local-ai-front.service
+```
+
+For either of the gate's two. While the gate is down, models already loaded still answer, and a
+request that needs a load gets `gate_down`, which pi retries. **On the Spark** (sudo asks once, a
+line at a time, as above):
+
+```bash
+sudo systemctl stop local-ai-gate.service local-ai-gate-status.socket local-ai-gate-control.socket
+sudo systemctl start local-ai-gate-status.socket local-ai-gate-control.socket
+sudo -k
+systemctl start local-ai-gate.service
+```
+
+**A secret, or a file, read only at start,** which apply never sees. **On the Spark**, after a
+change to:
+
+| What changed | Read by | Then, on the Spark |
+|---|---|---|
+| `internal-keys.env` | llama-swap (`EnvironmentFile=`) | `systemctl restart local-ai-llama-swap.service`. It stops every model and cuts off every request in flight, so check `make status` first; the gate then reloads the always-loaded models. A changed internal key changes its caller's `.key` file too: restart that caller after llama-swap, as the rows below say |
+| `front.key` | the front (`LoadCredential=`) | `make restart-front`, which restarts the gate and then the front, once nothing has been in flight for a minute |
+| `gate.key` | the gate (`LoadCredential=`) | `systemctl restart local-ai-gate.service` |
+| `brake.key` | the brake (`LoadCredential=`) | `systemctl restart local-ai-brake.service` |
+| `client-keys.sha256`, `/etc/local-ai/keys.yaml` | the front, and the key list the gate too (`LoadCredential=`) | `make restart-front` ([Secret files](secret-files.md)' *A new client key, after 2a*) |
+| ntfy's three header files, `/etc/local-ai/values.env` | the gate and the brake (`LoadCredential=`, `EnvironmentFile=`) | `systemctl restart local-ai-gate.service local-ai-brake.service`, as [ntfy](ntfy.md) §8 says. The failure notifier reads its own at each run, so it needs nothing |
+
+The polkit rule lets you restart each of these services without sudo.
+
+## An urgent fix during a phase's build
+
+(Added 2026-10-15, Phase 2a's Task 35, from Dan's decision of 2026-10-07: *Deploys during 2a* in
+[Phase 2a's plan](../design/phase-2a.md).) While a phase is built on its own branch, nothing
+deploys from that branch before its cutover. From `phase-2a`, nothing runs `make apply`, `make
+apply-now` or `make install-units` before its Task 38: its brake would restart onto llama-swap's
+new port, where nothing listens yet, and its `spark launch` would start no model without a ticket.
+An urgent fix is made on `main` instead, deployed from a `main` worktree, pushed with Dan's OK, and
+merged into the phase's branch. Phase 2a's Task 37, the web containers' `cap_drop`, goes this way.
+This holds only until the cutover: from then on the box runs the phase's stack, and `main`'s
+`make apply` would deploy the older one over it, as the rollback in *Moving a Phase 1 box to Phase
+2a* does on purpose.
+
+**On the Spark**, from the phase's clone, make the worktree:
+
+```bash
+git worktree add ../local-ai-main main && git -C ../local-ai-main pull --ff-only
+```
+
+In `../local-ai-main`, make the fix and its tests, and run `make test lint`. Deploy it from there,
+in tmux, as *Every later change* says: `make apply`; if it stages a unit or the Compose project,
+`make install-units`, then `make apply` again. `make doctor` there is `main`'s. Since Phase 2a's
+bootstrap re-run (its Task 36), two of its lines fail, as expected: *secrets folder*, which reports
+`root:root 700`, and *earlyoom*, since `main`'s `earlyoom.default` still has `--prefer` until 2a
+merges. Then commit the fix there, on `main`, staging its files by path; run
+[the scan before every push](leak-guards.md#before-every-push) with `main` as `<branch>`; and, with
+Dan's OK, `git push origin main`.
+
+**On the Spark**, back in the phase's clone, merge it in, and remove the worktree:
+
+```bash
+git merge --no-ff main -m "chore(repo): merge main's urgent fix into phase-2a"
+git worktree remove ../local-ai-main
+```
+
+A Claude session's merge message carries the 🤖 and the trailer its phase plan gives, as Task 37's
+does. If the merge stops on a conflict, resolve each file so that what each side changed stays,
+stage them by name, finish it with `git commit --no-edit`, and run `make test lint`. Phase 2a's
+Task 37 shows how, for the four files its own merge was expected to conflict in.
+
 ## When something is wrong
 
 **On the Spark**, look at the state first, then at the logs of whatever looks wrong:
@@ -358,21 +630,41 @@ make logs s=llama-swap
 ```
 
 `s=` also takes `brake`, `pull`, `compose`, `open-webui` and `searxng`, and `front`, `gate` and
-`notify`, the failure notifier's runs, whose units arrive with Phase 2a's cutover. A refused load
-appears in `make status` as a `refused` line with its reason, for an account in `spark-admin`; any
-other account is told the brake's state is unknown to it.
+`notify`, the failure notifier's runs, whose units arrive with Phase 2a's cutover. *Phase 1's `make
+status`:* a refused load appears as a `refused` line with its reason, for an account in
+`spark-admin`; any other account is told the brake's state is unknown to it.
 
-`make status` shows only the last refusal, and the next load that starts clears it. llama-swap's
-journal has only its own line for one, `starting <model> failed: upstream command exited
-prematurely`: the engines' output, `spark launch`'s `spark: not starting <model>: <reason>` line
-and an engine's crash included, stays in llama-swap's in-memory buffer, which every restart of
-llama-swap wipes (Dan's decision, 2026-09-28: whisper-server logs each upload's file name and its
-metadata, which the journal would keep). To read the refusals the buffer still holds,
-**on the Spark**:
+*From the cutover (Phase 2a's Task 29),* `make status` asks the gate. A refusal, of a load or of a
+request, appears under *recent* with its reason, the newest ten (`spark status --json` lists every
+one the gate sends), and a load that starts no longer clears it. An account outside `spark-admin`
+sees its own refusals and the system's events.
+
+*Phase 1's, until the cutover:* `make status` shows only the last refusal, and the next load that
+starts clears it. llama-swap's journal has only its own line for one, `starting <model> failed:
+upstream command exited prematurely`: the engines' output, `spark launch`'s `spark: not starting
+<model>: <reason>` line and an engine's crash included, stays in llama-swap's in-memory buffer,
+which every restart of llama-swap wipes (Dan's decision, 2026-09-28: whisper-server logs each
+upload's file name and its metadata, which the journal would keep). To read the refusals the buffer
+still holds, **on the Spark**:
 
 ```bash
 curl -s -m 4 -H @- http://127.0.0.1:9100/logs/stream/upstream <<<"Authorization: Bearer $SPARK_API_KEY" | grep -a 'not starting'
 ```
+
+*From the cutover (Phase 2a's Tasks 20 and 30),* the front refuses that `curl` with
+`route_not_served`, as it refuses every route outside the model API, and the refusals reach `make
+status` from the gate. An engine's own lines, its crash and `spark launch`'s `spark: not starting
+<model>: <reason>` included, still stay only in llama-swap's buffer, which every restart of
+llama-swap wipes. `spark logs` reads a model's lines through the gate, for an account in
+`spark-admin`, with no key: its last 20, or as many as `-n` asks, up to 1000. It takes the model's
+name or one of its roles. **On the Spark**, the coder's, keeping only its refusals:
+
+```bash
+spark logs coder -n 1000 | grep 'not starting'
+```
+
+Without the `grep`, it prints every line it read. A bare `spark` is the deployed one, linked as
+*`spark` on your PATH* says.
 
 While the brake holds new loads, `make status` says so on its `brake` line. Once memory is back,
 `make brake-release` lifts the hold; it needs an account in `spark-admin`.
@@ -389,6 +681,13 @@ right, or llama-swap answers, **on the Spark**, restart the brake, and it checks
 systemctl restart local-ai-brake
 ```
 
+*From the cutover (Phase 2a's Tasks 23 and 29),* `make status`'s *health* row says it: `brake ok
+(key checked …)` once the check passed, and `brake <state> (make logs s=brake)` otherwise. The
+brake's key is then `brake.key`, and llama-swap knows it from `internal-keys.env`, both written by
+[Secret files](secret-files.md) step 11; its step 17 compares the two, printing only `match` or
+`MISMATCH`. After a fix, restart llama-swap if `internal-keys.env` changed, then the brake, as
+*What `make apply` never restarts* says.
+
 A `problem` line in `make status` that ends in `HTTP 401 (no key in $SPARK_API_KEY)` means this
 shell has no key: set it up as *Before the first deploy* says, then log in afresh. `HTTP 401`
 without that means llama-swap doesn't know the key this shell has. It should be the Mac's, which
@@ -398,15 +697,32 @@ would restart it only to fail the check that follows, which asks llama-swap with
 *(Phase 1's apply. From the cutover apply asks the gate, never llama-swap, and needs no key: Phase
 2a's Task 32, 2026-10-15.)*
 
+*From the cutover,* `make status` and `make apply` send no key. Only `make doctor` sends yours: to
+the front, which must take it, and to llama-swap's port, which must refuse it. When doctor says the
+front doesn't know the key in `SPARK_API_KEY`, its digest isn't in `client-keys.sha256`, or the
+front hasn't restarted since it was added. [Secret files](secret-files.md)' step 17 checks the
+digests, its step 18 the key list, and its *A new client key, after 2a* adds one; then `make
+restart-front`.
+
 Then, **on the Spark**, check Phase 0's guardrails and the stack in one pass. Each `FAIL` says what
-to do. Its `root's copies` line fails when something root runs isn't root's own file, and says to
-run `make install-units`. It comes after `make status`, not before, because it does more than look:
-its end-to-end check loads the embeddings model if it isn't loaded. A load that starts clears the
-last refusal record, the `refused` line `make status` shows, and a load that's refused replaces it.
+to do. A `WARN` passes and fails nothing: until ntfy is set up, in Phase 5, its `ntfy` line reads
+`WARN  ntfy: not set up (Task 2, Phase 5)`. Its `root's copies` line fails when something root
+runs isn't root's own file, and says to run `make install-units`. It comes after `make status`,
+not before, because its requests leave a trace there: the refusals it asks for on purpose,
+`route_not_served` for routes the front doesn't serve and S03's `model_not_found`, go into the
+gate's *recent*. It loads no model. It asks a model something only once the gate shows it loaded,
+so its request never starts a load, and otherwise its line fails, naming the `spark load` to run.
+*(Corrected 2026-10-15, Phase 2a's Task 35: this said its end-to-end check loads the embeddings
+model if it isn't loaded, so that a load that starts clears the last refusal record. That is
+Phase 1's doctor; from Phase 2a's Task 33, doctor loads nothing.)*
 
 ```bash
 make doctor
 ```
+
+`spark doctor --full`, run from the clone's root, adds two heavy checks: a 170 MB upload to
+speech-to-text through the front, and the privacy canary, a string sent through chat and
+speech-to-text, then looked for where nothing should keep it.
 
 `make pull` ends with this run's lines from the pull's journal, failed or not, and a `FAILED` line's
 reason says which cause it is. A repo, file name or revision that doesn't exist is fixed in

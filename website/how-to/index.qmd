@@ -46,6 +46,12 @@ sudo apt install tmux gh
 **After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
 IPv6 check, which need the tailnet name.
 
+**A box already running Phase 1's stack** moves to Phase 2a's once, in this order: [Bootstrap the
+Spark](bootstrap.md#phase-2as-re-run)'s Phase 2a re-run, [Secret files](secret-files.md#phase-2as-files)'
+Phase 2a steps, then [Deploy the stack](deploy.md#moving-a-phase-1-box-to-phase-2a)'s *Moving a
+Phase 1 box to Phase 2a*, which also holds the way back. ntfy can wait for Phase 5, as step 7 says.
+*(Added 2026-10-15, Phase 2a's Task 35.)*
+
 Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
 
 On the Mac, if you use it: [Orca on the Mac](orca.md) — your Claude Code and pi in Orca's panes.

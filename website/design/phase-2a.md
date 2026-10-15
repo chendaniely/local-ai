@@ -9777,7 +9777,20 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
 - **A world-writable lock in the deployed tree** (the box reviewer's M-7):
   `/opt/local-ai/python/.lock` is `0666`, uv's. If `uv sync --frozen` takes it, `agent` could stall
   `make apply`'s sync while apply's hold is renewed; Task 35 checks whether it does, and if so
-  bootstrap makes it `0664`.
+  bootstrap makes it `0664`. *(Checked 2026-10-15, at Task 35, with uv 0.12.18 on a copy of the
+  deployed app and its Python, with `UV_PYTHON_INSTALL_DIR` and `UV_LINK_MODE=copy` as apply sets
+  them, and `strace`: the sync runs under the hold whenever llama-swap or the front restarts
+  (apply.py, after the drain). It never opened `/opt/local-ai/python/.lock` while the Python that
+  `.python-version` names was installed: a sync with nothing to do, after a changed file, and with
+  no venv. That lock guards installing a Python, which wasn't tried. Every sync took two others: the
+  venv's, `/opt/local-ai/app/.venv/.lock`, and the project's in `/tmp`, `uv-<hash>.lock`, both made
+  `0666` by uv itself, whatever the umask. A process holding the venv's made the sync wait,
+  silently at uv's default verbosity, 300 s (uv's `UV_LOCK_TIMEOUT` default), after which uv synced
+  without the lock and exited 0; the project's held the sync the same way, until it was let go, or
+  until `UV_LOCK_TIMEOUT=2` ran out, when uv went on without it. `flock` takes an exclusive lock on
+  a read-only file descriptor, so `0664` wouldn't stop `agent`: only a mode closed to others, or a
+  lock out of its reach, would. deploy.md says what Dan sees, under Every later change, and that
+  Ctrl-C ends the hold; the remedy is the controller's to rule on.)*
 - **`agent`'s two curls in Task 38 Step 7 are prose** (the execution reviewer's m-9): written as a
   block there, run on stand-ins, when Task 38's runbook is.
 
