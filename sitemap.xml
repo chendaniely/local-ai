@@ -2,182 +2,182 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://chendaniely.github.io/local-ai/reference/stack.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/design/phase-1.html</loc>
-    <lastmod>2026-10-14T17:44:17.212Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.111Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/design/plan.html</loc>
-    <lastmod>2026-10-14T17:44:17.213Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.112Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/secret-files.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/tailscale.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/spark-session.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/ssh.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/orca.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/index.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/leak-guards.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/index.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s02-big-job.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s08-batch-vs-interactive.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s13-freeze-away.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s22-another-tailnet.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s11-new-model.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s09-phone-away.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s06-agent-gpu-step.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/index.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s18-rebuild.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s01-morning-start.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s23-upgrade-day.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s14-gate-down.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s15-nas-down.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s17-changing-models.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s03-doesnt-fit-interactive.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s10-homelab-3am.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s20-web-search.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s04-doesnt-fit-unattended.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s21-pixeltable.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s07-lecture-transcript.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s12-long-agent-run.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s16-postgres-down.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s05-memory-critically-low.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/scenarios/s19-claude-code-pipeline.html</loc>
-    <lastmod>2026-10-14T17:44:17.215Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.114Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/architecture.html</loc>
-    <lastmod>2026-10-14T17:44:17.210Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.109Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/opencode-hermes.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/updates.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/bootstrap.html</loc>
-    <lastmod>2026-10-14T17:44:17.213Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.112Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/scratch-model.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/pi.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/how-to/deploy.html</loc>
-    <lastmod>2026-10-14T17:44:17.214Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.113Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/design/phase-0-retro.html</loc>
-    <lastmod>2026-10-14T17:44:17.210Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.109Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/design/phase-0.html</loc>
-    <lastmod>2026-10-14T17:44:17.210Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.109Z</lastmod>
   </url>
   <url>
     <loc>https://chendaniely.github.io/local-ai/design/phase-1-retro.html</loc>
-    <lastmod>2026-10-14T17:44:17.210Z</lastmod>
+    <lastmod>2026-10-15T00:56:28.110Z</lastmod>
   </url>
 </urlset>
