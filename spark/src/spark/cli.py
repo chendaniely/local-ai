@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     from spark import doctor
 
     doctor.register(subparsers)
+    from spark import commands
+
+    commands.register(subparsers)
     gate = subparsers.add_parser("gate", help="run the gate on the two sockets systemd holds (local-ai-gate.service)")
     gate.set_defaults(func=_gate)
     front = subparsers.add_parser("front", help="run the front on 127.0.0.1:9100, the socket systemd holds "

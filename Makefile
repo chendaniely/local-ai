@@ -68,13 +68,13 @@ pull: ## On the Spark: download the model files at their pinned revisions (as th
 status: ## On the Spark: room for a load, what's loaded, waiting, paused or held, recent, health (from the gate)
 	$(SPARK) status
 
-brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory is back
+brake-release: ## On the Spark (spark-admin): lift the brake's hold through the gate, which reloads the always-loaded models it unloaded; directly if the gate isn't answering
 	$(SPARK) brake --release
 
-logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|searxng
-	@case "$(s)" in "") echo "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng" >&2; exit 2 ;; open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
+logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|searxng|front|gate|notify
+	@case "$(s)" in "") echo "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng|front|gate|notify" >&2; exit 2 ;; open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; notify) journalctl -u 'local-ai-notify@*' -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
 
-tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 (Ctrl-C closes it)
+tunnel: ## On the Mac: forward the Spark's model API, 127.0.0.1:9100 (Ctrl-C closes it)
 	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
 
 clients: ## Add the Spark provider to pi on this machine

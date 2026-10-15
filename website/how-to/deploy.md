@@ -195,6 +195,25 @@ On the Mac, the web UI can run as an app of its own: open the address in Safari,
 to Dock**. The web app keeps a login of its own, apart from Safari's, so log in once inside it.
 Chrome's **Install page as app** works too.
 
+## `spark` on your PATH
+
+The Makefile runs `spark` from your clone, through uv. A bare `spark` command in these docs, such
+as `spark status` and, from Phase 2a's cutover, `spark load`, `unload`, `pin`, `unpin`,
+`make-room`, `logs` and `session`, is the deployed one instead: the copy `make apply` syncs into
+`/opt/local-ai/app`, the same code the services run. **On the Spark**, once, after a `make apply`
+has synced the app, link it into `~/.local/bin`:
+
+```bash
+mkdir -p ~/.local/bin && ln -sf /opt/local-ai/app/.venv/bin/spark ~/.local/bin/spark && command -v spark
+```
+
+It prints the link's full path, `/home/<you>/.local/bin/spark`. If it prints nothing,
+`~/.local/bin` didn't exist when this login began, so Ubuntu's `~/.profile` didn't put it on your
+`PATH`: log in again. The link points at the deployed app's own entry point, so each later
+`make apply` changes what it runs, and it never needs making again. None of these commands needs a
+key: the gate's control socket, which only `spark-admin` can use, says who may, and `spark session`
+uses its status socket, open to `spark-users`.
+
 ## Every later change
 
 **On the Spark**, from the clone, get the change:
@@ -258,9 +277,10 @@ make status
 make logs s=llama-swap
 ```
 
-`s=` also takes `brake`, `pull`, `compose`, `open-webui` and `searxng`. A refused load appears in
-`make status` as a `refused` line with its reason, for an account in `spark-admin`; any other
-account is told the brake's state is unknown to it.
+`s=` also takes `brake`, `pull`, `compose`, `open-webui` and `searxng`, and `front`, `gate` and
+`notify`, the failure notifier's runs, whose units arrive with Phase 2a's cutover. A refused load
+appears in `make status` as a `refused` line with its reason, for an account in `spark-admin`; any
+other account is told the brake's state is unknown to it.
 
 `make status` shows only the last refusal, and the next load that starts clears it. llama-swap's
 journal has only its own line for one, `starting <model> failed: upstream command exited

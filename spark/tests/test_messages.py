@@ -1794,6 +1794,23 @@ CONFIRMATIONS = [
     ("make apply-now", "apply_now_confirm", (["pi on the Mac", "agent"],), {},
      "This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent). Continue? "
      "[y/N]"),
+    # Task 30's lines, as plan.md's command table and phase-2a.md's Task 30 give them: a queued load says what it waits
+    # for, a load says it has started, and a model that stays stopping says so.
+    ("spark load, waiting its turn", "command_waiting", ("the coder", "slot"), {"loading_label": "Gemma"},
+     "The coder is waiting its turn to load: Gemma is loading, and one model loads at a time…"),
+    ("spark load, waiting for memory", "command_waiting", ("the coder", "memory"), {"needed_gib": 41, "free_gib": 18},
+     "The coder is waiting for memory: it needs 41 GiB, and 18 GiB is free for a load…"),
+    ("spark load, waiting while it unloads", "command_waiting", ("the coder", "draining"), {},
+     "Waiting while the gate unloads the coder…"),
+    ("spark load, llama-swap refused", "command_waiting", ("the coder", "swap_refused"), {},
+     "Waiting to try again: llama-swap refused to load the coder, and the gate asks again within your wait."),
+    ("spark load, a ticket", "command_waiting", ("the coder", "ticket"), {},
+     "The coder is waiting its turn: the gate is settling a load ticket it couldn't withdraw…"),
+    ("spark load, loading", "load_started", ("the coder", 24), {}, "Loading the coder (24 s last time)…"),
+    ("spark unload, still stopping", "still_stopping", ("the coder",), {},
+     "Still stopping the coder: llama-swap hasn't finished its unload…"),
+    ("spark unload, the gate stopped partway", "stopped_partway", ("unloading the coder",), {},
+     "The gate stopped partway through unloading the coder; on the Spark, `make doctor` shows what's wrong."),
 ]
 
 
@@ -1801,6 +1818,30 @@ CONFIRMATIONS = [
                          [pytest.param(f, a, k, t, id=i) for i, f, a, k, t in CONFIRMATIONS])
 def test_each_confirmation_reads_word_for_word(function, args, kwargs, text):
     assert getattr(messages, function)(*args, **kwargs) == text
+
+
+def test_a_commands_wait_has_words_for_every_reason_the_gate_gives():
+    # gateproto.WAITING_WHY, read, so a reason added later fails here until `spark load` words it (Task 30), and none
+    # of its words makes pi retry, or says "free" alone.
+    from spark.gateproto import WAITING_WHY
+
+    given = {"needed_gib": 41, "free_gib": 18, "loading_label": "Gemma", "release_waits_for_dan": False,
+             "release_after_s": 300}
+    for why in WAITING_WHY:
+        words = messages.command_waiting("the coder", why, **given)
+        assert words != messages.command_waiting("the coder", None), why
+        assert pi_retries(words) is False, (why, words)
+        assert not re.search(FREE_WORD, FREE_ALLOWED.sub("", words)), (why, words)
+    with pytest.raises(ValueError, match="'later'"):
+        messages.command_waiting("the coder", "later")
+    with pytest.raises(ValueError, match="needed_gib and free_gib"):
+        messages.command_waiting("the coder", "memory", needed_gib=41)
+    with pytest.raises(ValueError, match="release_after_s"):
+        messages.command_waiting("the coder", "brake", release_waits_for_dan=False)
+    with pytest.raises(ValueError, match="a pin or a session"):
+        messages.room_ended_words([])
+    with pytest.raises(ValueError, match="'later'"):
+        messages.stopped_waiting("later", None)
 
 
 def test_make_brake_release_says_so_when_the_gate_isnt_answering():
@@ -1840,6 +1881,52 @@ COMPOSED_CONFIRMATIONS = [
     ("apply_now_confirm", (["agent"],), {},
      "This restarts the model service now and cuts off the 1 request in flight (agent). Continue? [y/N]"),
     ("apply_now_confirm", ([],), {}, "This restarts the model service now; nothing is in flight. Continue? [y/N]"),
+    # Task 30's: the brake's reason in held_by_brake's words for Dan, and the reasons the plan gives no example for.
+    ("command_waiting", ("the coder", "brake"), {"release_waits_for_dan": True},
+     "The coder is waiting while new loads are paused. They stay paused until you release them: on the Spark, "
+     "`make brake-release`."),
+    ("command_waiting", ("the coder", "brake"), {"release_waits_for_dan": False, "release_after_s": 300,
+                                                 "warn_gib": 28},
+     "The coder is waiting while new loads are paused. They resume by themselves after 5 minutes above 28 GiB "
+     "available, if what would reload fits; on the Spark, `make brake-release` resumes them now."),
+    ("command_waiting", ("the coder", "memory"), {"needed_gib": 40.2, "free_gib": 0.4},
+     "The coder is waiting for memory: it needs 41 GiB, and nothing is free for a load…"),
+    ("command_waiting", ("the embeddings", "slot"), {"loading_label": None},
+     "The embeddings is waiting its turn to load: another model is loading, and one model loads at a time…"),
+    ("command_waiting", ("the coder", "restart"), {}, "The coder is waiting while the model service restarts…"),
+    ("command_waiting", ("the coder", "llama_swap"), {}, "The coder is waiting for the model service to answer…"),
+    ("command_waiting", ("the coder", "dan"), {},
+     "The coder is waiting: it was loading when the brake fired, and the registry doesn't let your commands load it "
+     "again (the `dan` key group's `reloads_marked`)…"),
+    ("command_waiting", ("the coder", None), {}, "The coder is waiting…"),
+    ("load_started", ("the coder", None), {}, "Loading the coder…"),
+    ("stopped_partway", ("make-room", "agent"), {},
+     "The gate stopped partway through make-room; `make doctor` on the Spark shows Dan what's wrong."),
+    ("room_ended_words", (["your pin on the coder", "the session agent's pi"],), {},
+     "Your pin on the coder ended, and the session agent's pi lost its model."),
+    ("room_ended_words", (["the session agent's pi", "the session pi in Orca"],), {},
+     "The session agent's pi and the session pi in Orca lost their models."),
+    ("room_ended_words", (["your pin on the coder", "your pin on Gemma"],), {},
+     "Your pin on the coder and your pin on Gemma ended."),
+    ("room_no_hold", (), {}, "There's no make-room hold, so there's nothing to end."),
+    ("room_declined", (), {}, "Nothing unloaded, and nothing held."),
+    ("room_needs_a_terminal", (), {},
+     "spark make-room asks before it unloads or holds anything, and there's no terminal here to ask on: run it in a "
+     "terminal, or add `--yes`, which answers yes."),
+    ("stopped_waiting", ("load", "the coder"), {},
+     "Stopped waiting. If the coder's load had started, it goes on; if not, the gate drops the request. On the Spark, "
+     "`spark status` shows which."),
+    ("stopped_waiting", ("pin", "the coder"), {},
+     "Stopped waiting. A pin that was waiting for the coder to load isn't set; if its load had started, the load goes "
+     "on. On the Spark, `spark status` shows what's loaded and pinned."),
+    ("stopped_waiting", ("unload", "the coder"), {},
+     "Stopped waiting; the gate goes on unloading the coder. On the Spark, `spark status` shows when it's done."),
+    ("stopped_waiting", ("make-room", None), {},
+     "Stopped waiting; an unload make-room had begun goes on, and nothing more unloads. On the Spark, `spark status` "
+     "shows what is unloaded and held."),
+    ("stopped_waiting", ("asked", None), {},
+     "Stopped before the gate answered. On the Spark, `spark status` shows whether it acted."),
+    ("stopped_waiting", ("read", None), {}, "Stopped."),
 ]
 
 

@@ -1,10 +1,13 @@
 """Version assumptions in the code, tied to stack/versions.yaml and the lock (Phase 2a, Task 3)."""
 
 import importlib
+import os
 import pkgutil
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import tomllib
 import types
@@ -89,22 +92,90 @@ def test_the_lock_adds_only_uvicorn_and_starlette():
 
 CLI_PATH = textwrap.dedent(
     """
+    import contextlib
+    import io
     import sys
-    from spark import cli, gateclient
+    from spark import cli, commands, gateclient
+    heavy = ("uvicorn", "starlette", "httpx")
+
+
+    def loaded():
+        return sorted(name for name in sys.modules if name.split(".")[0] in heavy)
+
+
     p = cli.build_parser()
     p.parse_args(["launch", "m", "--", "/bin/x"])
     p.parse_args(["status", "--json"])
-    heavy = ("uvicorn", "starlette", "httpx")
-    print(sorted(name for name in sys.modules if name.split(".")[0] in heavy))
+    for argv in COMMANDS:
+        p.parse_args(argv)
+    print(loaded())
+    # Each handler too, against the stand-in gate (Task 3's review, Minor 4: a lazy import inside a handler would
+    # pass the parse alone), its output kept out of this one.
+    codes = []
+    for argv in [["status", "--json"], ["status"], ["launch", "qwen3.8-27b", "--", "/bin/true"], *COMMANDS]:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            codes.append(cli.main(argv))
+    print(codes)
+    print(loaded())
     """
 )
+# Each of Task 30's commands, as the handler check runs it: make-room with --yes, since nothing here is a terminal.
+COMMANDS = [["load", "coder"], ["unload", "coder"], ["pin", "coder", "8h"], ["unpin", "coder"],
+            ["make-room", "40G", "--yes"], ["make-room", "--all", "--yes"], ["make-room", "--done"],
+            ["logs", "coder", "-n", "5"], ["session", "start", "--model", "coder", "--pid", "1", "--label", "x"],
+            ["session", "renew", "s-1"], ["session", "end", "s-1"],
+            ["session", "hold", "--model", "coder", "--label", "x"]]
 
 
 def test_the_cli_status_and_launch_import_neither_uvicorn_nor_httpx(tmp_path):
     # Every spark command runs build_parser(), which imports every command's module: so each registers with its heavy
     # imports inside its handler (Tasks 19, 21 and 30), and `spark launch` and `spark status --json` stay light. The
-    # commands that ask the gate do it through gateclient (Task 10), so it stays light too.
-    result = subprocess.run([sys.executable, "-c", CLI_PATH], cwd=tmp_path, capture_output=True, text=True,
-                            timeout=60, check=False)
+    # commands that ask the gate do it through gateclient (Task 10), so they stay light too, handlers and all: each
+    # runs here against Task 30's stand-in gate, every path in a folder of the test's (never the box's sockets).
+    from test_commands import (CODER, NOW, answer, candidates, loaded, loading, plan_answer, progress,
+                               registry_text, room_result, serving, stream)
+    from decimal import Decimal
+    from spark.budget import ALL
+
+    folder = Path(tempfile.mkdtemp(prefix="ta", dir="/tmp"))
+    try:
+        registry = folder / "models.yaml"
+        registry.write_text(registry_text())
+        (folder / "launch").mkdir()
+        with serving(folder) as gate:
+            gate.script.update({
+                ("GET", "/v1/status"): answer({"schema": 0}),
+                ("POST", "/v1/load"): stream(loading(), loaded()),
+                ("POST", "/v1/unload"): stream({"kind": "unloading", "inflight": 0}, {"unloaded": True}),
+                ("POST", "/v1/pin"): stream(loading(), {"label": "the coder", "until": NOW, "loaded_s": 24,
+                                                        "command": "coder"}),
+                ("DELETE", "/v1/pin/{model}"): answer({"label": "the coder", "idle_min": 60, "command": "coder"}),
+                ("POST", "/v1/make-room/plan"): lambda handler, seen: handler.answer(200, plan_answer(
+                    ALL if seen.body.get("all") else Decimal(40), 9, candidates())),
+                ("POST", "/v1/make-room"): stream(progress(CODER, "the coder"),
+                                                  room_result(["the coder"], 50.0, 40.0)),
+                ("POST", "/v1/release"): answer({"room": None, "brake": False, "reloading": []}),
+                ("GET", "/v1/logs/{model}"): answer({"lines": ["a line"]}),
+                ("POST", "/v1/sessions"): answer({"id": "s-1", "expires_at": NOW}),
+                ("POST", "/v1/sessions/{id}/renew"): answer({"id": "s-1", "expires_at": NOW}),
+                ("DELETE", "/v1/sessions/{id}"): answer({}),
+            })
+            env = {"PATH": os.environ["PATH"], "HOME": str(folder), "SPARK_REGISTRY": str(registry),
+                   "SPARK_GATE_CONTROL": str(folder / "control.sock"), "SPARK_GATE_STATUS": str(folder / "status.sock"),
+                   "SPARK_LAUNCH": str(folder / "launch"), "SPARK_STATE": str(folder / "brake")}
+            script = f"COMMANDS = {COMMANDS!r}\n" + CLI_PATH
+            result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, capture_output=True, text=True,
+                                    timeout=60, check=False, env=env, stdin=subprocess.DEVNULL)
+            seen = gate.calls()
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "[]\n"
+    parsed, codes, ran = result.stdout.splitlines()
+    assert (parsed, ran) == ("[]", "[]")
+    # The handlers ran to their answers: status and launch say what they found; every command of Task 30's succeeded.
+    assert codes == repr([0, 0, 3, *[0] * len(COMMANDS)])
+    # Status asks whichever socket this login may (the control socket for spark-admin's members); the rest asked
+    # theirs: ten calls on the control socket, and the sessions' five on the status socket.
+    asked = [call for call in seen if call[2] != "/v1/status"]
+    assert len(seen) - len(asked) == 2
+    assert [call[0] for call in asked].count("control") == 10 and [call[0] for call in asked].count("status") == 5

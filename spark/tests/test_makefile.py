@@ -82,7 +82,8 @@ def test_make_logs_without_a_service_says_how_to_ask(tmp_path):
     env = fakes(tmp_path, journalctl="")
     result = make("logs", env=env)
     assert result.returncode == 2 and calls(tmp_path) == []
-    assert "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng" in result.stderr
+    assert ("usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng|front|gate|notify"
+            in result.stderr)
 
 
 @pytest.mark.parametrize(("service", "asked"), [
@@ -92,3 +93,26 @@ def test_make_logs_without_a_service_says_how_to_ask(tmp_path):
 def test_make_logs_reads_a_units_journal_or_a_containers(tmp_path, service, asked):
     env = fakes(tmp_path, journalctl="")
     assert make("logs", f"s={service}", env=env).returncode == 0 and calls(tmp_path) == [asked]
+
+
+@pytest.mark.parametrize(("service", "asked"), [
+    ("front", "journalctl -u local-ai-front.service -n 100 --no-pager"),
+    ("gate", "journalctl -u local-ai-gate.service -n 100 --no-pager"),
+    # The failure notifier is a template unit, one instance per unit that failed: every instance's journal, the
+    # pattern passed to journalctl as it is, never expanded by the shell.
+    ("notify", "journalctl -u local-ai-notify@* -n 100 --no-pager"),
+])
+def test_make_logs_takes_front_gate_and_notify(tmp_path, service, asked):
+    env = fakes(tmp_path, journalctl="")
+    result = make("logs", f"s={service}", env=env)
+    assert result.returncode == 0, result.stderr
+    assert calls(tmp_path) == [asked]
+
+
+def test_help_says_what_tunnel_and_brake_release_reach():
+    # From Phase 2a the tunnel carries the model API, 127.0.0.1:9100, which is the front's from the cutover, and
+    # make brake-release goes through the gate, Phase 1's direct release its fallback (Task 23).
+    lines = {line.split()[0]: line for line in make("help").stdout.splitlines()}
+    assert "forward the Spark's model API, 127.0.0.1:9100" in lines["tunnel"]
+    assert "llama-swap" not in lines["tunnel"]
+    assert "through the gate" in lines["brake-release"] and "directly" in lines["brake-release"]

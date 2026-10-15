@@ -1430,9 +1430,7 @@ def _apply_restarted(registry: Registry, f: dict[str, Any]) -> str:
 
 def _load_started(registry: Registry, f: dict[str, Any]) -> str:
     _needs("load_started", f, "label")
-    asker = f" for {f['key_label']}" if f["key_label"] else ""  # a resident's reload, or Dan's own command, has none
-    last = f" ({_brief(f['last_s'])} last time)" if f["last_s"] is not None else ""
-    return f"Loading {f['label']}{asker}{last}…"
+    return load_started(f["label"], f["last_s"], f["key_label"])
 
 
 def _loaded(registry: Registry, f: dict[str, Any]) -> str:
@@ -1593,6 +1591,74 @@ def loaded(label: str, seconds: float | None, idle_min: float | None, command: s
     if idle_min is None:
         return f"{done} It stays loaded, since it's always loaded."
     return f"{done} It unloads after {_minutes(idle_min)} idle; `spark pin {command}` keeps it."
+
+
+def load_started(label: str, last_s: float | None, key_label: str | None = None) -> str:
+    """The line as a load starts: `spark load`'s, and a `spark pin`'s that loads, for its gateproto.LoadProgress,
+    *Loading the coder (24 s last time)…* (the controller's ruling at Task 10's re-review); and the load_started
+    notification's, which adds whom it is for. A resident's reload, or Dan's own command, has no key_label."""
+    asker = f" for {key_label}" if key_label else ""
+    last = f" ({_brief(last_s)} last time)" if last_s is not None else ""
+    return f"Loading {label}{asker}{last}…"
+
+
+def command_waiting(label: str, why: str | None, *, needed_gib: float | Decimal | None = None,
+                    free_gib: float | Decimal | None = None, loading_label: str | None = None,
+                    release_waits_for_dan: bool | None = None, release_after_s: float | None = None,
+                    warn_gib: float = 28) -> str:
+    """`spark load`'s line for each gateproto.WaitProgress, and a loading `spark pin`'s: its reason in `waiting`'s
+    words, as Dan's own command words them, with no key and no wait to give (the controller's rulings at Task 10's
+    second re-review and at Task 15's reviews), the brake's in held_by_brake's words for Dan, so a queued load is never
+    silent. `warn_gib` is the registry's brake.warn_gib, which the brake's words name. `why` None, for a line whose
+    reason can't be read, says only that it waits; a reason it doesn't know, or one missing what its words use, is a
+    ValueError."""
+    who = _start(label)
+    if why is None:
+        return f"{who} is waiting…"
+    if why == "memory":
+        if needed_gib is None or free_gib is None:
+            raise ValueError("command_waiting's memory words need needed_gib and free_gib")
+        return f"{who} is waiting for memory: it needs {_size(_up(needed_gib))}, and {_room_words(free_gib)}…"
+    if why == "slot":
+        return (f"{who} is waiting its turn to load: {loading_label or 'another model'} is loading, and one model "
+                "loads at a time…")
+    if why == "brake":
+        if release_waits_for_dan:
+            return (f"{who} is waiting while new loads are paused. They stay paused until you release them: on the "
+                    "Spark, `make brake-release`.")
+        if release_after_s is None:
+            raise ValueError("command_waiting's brake words need release_after_s, unless the pause waits for Dan")
+        return (f"{who} is waiting while new loads are paused. They resume by themselves after "
+                f"{duration(release_after_s)} above {_line(warn_gib)} available, if what would reload fits; on the "
+                "Spark, `make brake-release` resumes them now.")
+    if why == "dan":  # only with the dan group's reloads_marked off: then even Dan's own load can't take it
+        return (f"{who} is waiting: it was loading when the brake fired, and the registry doesn't let your commands "
+                "load it again (the `dan` key group's `reloads_marked`)…")
+    if why == "restart":
+        return f"{who} is waiting while the model service restarts…"
+    if why == "llama_swap":
+        return f"{who} is waiting for the model service to answer…"
+    if why == "draining":  # the controller's ruling at Task 15's re-review: the model isn't waiting on itself
+        return f"Waiting while the gate unloads {label}…"
+    if why == "swap_refused":  # at Task 15's review
+        return f"Waiting to try again: llama-swap refused to load {label}, and the gate asks again within your wait."
+    if why == "ticket":  # at Task 15's re-review
+        return f"{who} is waiting its turn: the gate is settling a load ticket it couldn't withdraw…"
+    raise ValueError(f"{why!r} isn't a reason a load waits for")
+
+
+def still_stopping(label: str) -> str:
+    """The line of `spark unload` and make-room for each gateproto.StoppingProgress, every STOPPING_EVERY_S while
+    llama-swap hasn't finished an unload it took (the controller's ruling at Task 12's re-review)."""
+    return f"Still stopping {label}: llama-swap hasn't finished its unload…"
+
+
+def stopped_partway(doing: str, words: Literal["dan", "agent"] = "dan") -> str:
+    """A command's stream that the gate ended cleanly but without its result line, as it does at its stop: never a
+    silent success (the controller's ruling at Task 10's re-review). `doing` is what was under way, *unloading the
+    coder*; the step is the gate-down refusals' (_ALERT), in Dan's words or naming Dan."""
+    step = _ALERT[words]
+    return f"The gate stopped partway through {doing}; {step[:1].lower()}{step[1:]}"
 
 
 def unloading(label: str, inflight: int) -> str:
@@ -1840,6 +1906,59 @@ def room_all() -> str:
     """`spark make-room --all`, done."""
     return ("Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own "
             "requests can load into it.")
+
+
+def room_ended_words(ended: list[str]) -> str:
+    """make-room's line after room_held's or room_all's sentence: what its unloads ended, from its result's `ended`,
+    room_ended_parts' phrases (*your pin on the coder*, *the session agent's pi*): a pin ended, and a session lost its
+    model, as rule 4 says (the controller's ruling at Task 17). A phrase of another form is said to have ended."""
+    sessions = [phrase for phrase in ended if phrase.startswith("the session ")]
+    pins = [phrase for phrase in ended if phrase not in sessions]
+    parts = [f"{_and(pins)} ended"] if pins else []
+    if sessions:
+        parts.append(f"{_and(sessions)} lost {'its model' if len(sessions) == 1 else 'their models'}")
+    if not parts:
+        raise ValueError("room_ended_words is for a make-room that ended a pin or a session")
+    text = ", and ".join(parts)
+    return f"{text[:1].upper()}{text[1:]}."
+
+
+def room_no_hold() -> str:
+    """`spark make-room --done` with no make-room hold standing."""
+    return "There's no make-room hold, so there's nothing to end."
+
+
+def room_declined() -> str:
+    """make-room's question answered anything but yes: nothing was sent, so nothing changed."""
+    return "Nothing unloaded, and nothing held."
+
+
+def room_needs_a_terminal() -> str:
+    """make-room's question with no terminal to ask it on (exit 2)."""
+    return ("spark make-room asks before it unloads or holds anything, and there's no terminal here to ask on: run it "
+            "in a terminal, or add `--yes`, which answers yes.")
+
+
+# Ctrl-C ends a command's wait, never the work the gate has begun (gate.app: a caller that goes ends its stream, never
+# the work): what goes on, by what was asked (Task 30).
+_STOPPED = {
+    "load": "Stopped waiting. If {label}'s load had started, it goes on; if not, the gate drops the request. On the "
+            "Spark, `spark status` shows which.",
+    "pin": "Stopped waiting. A pin that was waiting for {label} to load isn't set; if its load had started, the load "
+           "goes on. On the Spark, `spark status` shows what's loaded and pinned.",
+    "unload": "Stopped waiting; the gate goes on unloading {label}. On the Spark, `spark status` shows when it's done.",
+    "make-room": "Stopped waiting; an unload make-room had begun goes on, and nothing more unloads. On the Spark, "
+                 "`spark status` shows what is unloaded and held.",
+    "asked": "Stopped before the gate answered. On the Spark, `spark status` shows whether it acted.",
+    "read": "Stopped.",
+}
+
+
+def stopped_waiting(asked: str, label: str | None) -> str:
+    """A command ended with Ctrl-C (exit 130): what the gate goes on with, by what was `asked` (load, pin, unload,
+    make-room; `asked`, a bounded call that may have acted; `read`, one that changes nothing)."""
+    _one_of("stopped_waiting", "asked", asked, _STOPPED)
+    return _STOPPED[asked].format(label=label)
 
 
 def room_too_much(target_gib: float | Decimal, most_gib: float | Decimal) -> str:
