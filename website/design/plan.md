@@ -306,6 +306,11 @@ Four services, three sockets that systemd holds, and a notifier:
   service has hit its start limit. So the three socket units set `TriggerLimitIntervalSec=0`, and
   the front, the gate and the brake set `StartLimitIntervalSec=0` with `RestartSec=2`: a crash
   loop restarts every 2 s, for as long as it lasts, and never gives up. 2a checks it as `agent`.)*
+  *(Added 2026-10-14, at the review of 2a's Task 25, the controller's ruling: the control socket is
+  `root:spark-admin`, and the status socket `spark:spark-users`, each `0660`. With `spark` as the
+  control socket's owner, anything running as `spark`, every engine included, could connect to it,
+  and only the gate's uid check turned it away; as `root`'s, only `spark-admin`'s members connect.
+  The gate needs no access to the path, since systemd passes it the socket.)*
   Each service
   takes its sockets from `LISTEN_FDS` as `socket.socket(fileno=…)` and hands them to uvicorn's
   `Server.run(sockets=…)`; never `--uds`, which leaves a socket file at mode 0666, or `--fd`,
@@ -2193,11 +2198,15 @@ Dan settles what is running)*
     Task 1 built — the NAS on the tailnet and its grant, the phone, a publish-only token per
     publisher, and the private values file. The gate, the brake and the failure notifier, built in
     2a and running without ntfy, then send to the phone with no code change, once the gate and the
-    brake restart to read the new files. *(2026-10-14, Dan's decision: once ntfy is set up, the
-    `gate_down` and `llama_swap_down` refusals get back their phone clause, "Your phone has the
-    alert", which they leave out until then, as the refusal table in What you see in Phase 2a
-    shows; that is a code change, to `messages._ALERT` and its tests, and the notifications page's
-    opening, from `docs.py`, then says they reach the phone.)*
+    brake restart to read the new files. *(Added 2026-10-14, at the review of 2a's Task 25, the
+    controller's ruling: when ntfy lands, the gate, the failure notifier and the brake each get an
+    outbound allowlist of localhost and the ntfy host. It comes in a drop-in for each unit,
+    rendered from the private values file, since the NAS's address can't be in the repo. Until
+    then their outbound reach is unrestricted, as 2a builds them.)* *(2026-10-14, Dan's decision:
+    once ntfy is set up, the `gate_down` and `llama_swap_down` refusals get back their phone
+    clause, "Your phone has the alert", which they leave out until then, as the refusal table in
+    What you see in Phase 2a shows; that is a code change, to `messages._ALERT` and its tests, and
+    the notifications page's opening, from `docs.py`, then says they reach the phone.)*
   - The 2a drills' notification checks (that plan's Tasks 48–50): each alert S01, S02, S03, S05, S14
     and S17 name, on the phone, word for word, at its priority; quiet hours; one failure alert per
     unit per 5 minutes through a crash loop; and ntfy's rate limit against the gate's queue.
@@ -3821,6 +3830,12 @@ Each item gets its own design pass when its turn comes.
   calls with every new chat, and the levers if the soak shows harm are Gemma's `--cache-ram` and
   Open WebUI's task model, moved off Gemma (the clients phase's call). A dated correction is in the
   Phase 2a line's item; Task 45 counts the costly least-recently-used picks too.
+- **2026-10-14** — Phase 2a's Task 25 review, the controller's rulings. The gate's control socket
+  becomes `root:spark-admin`, so nothing running as `spark` (llama-swap, the engines, the brake)
+  can connect to it; the gate's uid check stays as the second line, and the status socket stays
+  `spark:spark-users` (*Sockets from systemd*). And Phase 5's ntfy item gains an outbound allowlist
+  for the gate, the failure notifier and the brake, localhost and the ntfy host, in drop-ins
+  rendered from the private values file; until then their outbound reach stays unrestricted.
 
 ## Sources
 

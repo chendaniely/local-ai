@@ -118,11 +118,13 @@ def test_the_front_gate_and_brake_never_give_up_restarting(units):
         assert not {"StartLimitBurst", "StartLimitAction"} & (set(unit) | set(service)), name
 
 
-def test_the_gates_sockets_are_0660_spark_with_their_groups(units):
-    for unit, path, name in ((STATUS_SOCKET, "/run/local-ai/gate-status.sock", sockets.STATUS),
-                             (CONTROL_SOCKET, "/run/local-ai/gate-control.sock", sockets.CONTROL)):
+def test_the_gates_sockets_are_0660_with_their_owners_and_groups(units):
+    # The control socket is root's, so only spark-admin's members connect, never anything running as spark (the
+    # controller's ruling, 2026-10-14, at Task 25); the status socket stays spark's.
+    for unit, path, name, owner in ((STATUS_SOCKET, "/run/local-ai/gate-status.sock", sockets.STATUS, "spark"),
+                                    (CONTROL_SOCKET, "/run/local-ai/gate-control.sock", sockets.CONTROL, "root")):
         assert settings(units[unit], "Socket") == {
-            "ListenStream": [path], "SocketUser": ["spark"], "SocketGroup": [gateproto.SOCKET_GROUPS[name]],
+            "ListenStream": [path], "SocketUser": [owner], "SocketGroup": [gateproto.SOCKET_GROUPS[name]],
             "SocketMode": ["0660"], "FileDescriptorName": [name], "TriggerLimitIntervalSec": ["0"],
             "Service": [GATE]}, unit
         assert settings(units[unit], "Install") == {"WantedBy": ["sockets.target"]}, unit

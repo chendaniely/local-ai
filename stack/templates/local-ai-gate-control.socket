@@ -3,9 +3,12 @@
 Description=local-ai: the gate's control socket, for spark-admin
 
 [Socket]
-# Dan's commands connect here: loads, unloads, pins, make-room, apply's hold, the brake's release.
+# Dan's commands connect here: loads, unloads, pins, make-room, apply's hold, the brake's release. root's, not spark's,
+# so only spark-admin's members connect: nothing running as spark, the engines included, can (the controller's ruling,
+# 2026-10-14, at Task 25). The gate needs no access to the path, since systemd passes it the socket, and its check of
+# each caller's uid stays as the second line.
 ListenStream=/run/local-ai/gate-control.sock
-SocketUser=spark
+SocketUser=root
 SocketGroup=spark-admin
 SocketMode=0660
 FileDescriptorName=control

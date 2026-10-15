@@ -6510,7 +6510,14 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `SocketGroup=spark-users`, `SocketMode=0660`, `FileDescriptorName=status`,
   `TriggerLimitIntervalSec=0`, `Service=local-ai-gate.service`; `local-ai-gate-control.socket` the
   same with `…/gate-control.sock`, `SocketGroup=spark-admin`, `FileDescriptorName=control`; each
-  `WantedBy=sockets.target`.
+  `WantedBy=sockets.target`. *(Changed 2026-10-14, at Task 25's review, the controller's ruling:
+  the control socket's `SocketUser=` is `root`, not `spark`, as this said. With `spark` as its
+  owner, anything running as `spark`, llama-swap and every engine included, could connect, and
+  only the gate's uid check turned it away. With `root`, only `spark-admin`'s members connect, and
+  on this box that is Dan alone. The gate needs no access to the path, since systemd passes it the
+  socket, and its uid check stays as the second line. Nothing running as `spark` calls the
+  control socket: its callers are Dan's `spark` commands and `make brake-release`, which runs as
+  Dan. The status socket stays `spark`'s.)*
 - `local-ai-gate.service` — `Type=notify`, `WatchdogSec=30`, `User=spark`, `Group=spark`,
   `ExecStart=… spark gate`, `Sockets=` both, `LoadCredential=llamaswap-key:…/gate.key`,
   `LoadCredential=ntfy-token:…/ntfy-gate.header` (with `SetCredential=ntfy-token:not-set-up`
@@ -6598,7 +6605,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
 - `test_9100_is_held_by_a_socket_unit_that_never_gives_up` — the front's socket as above.
 - `test_the_front_gate_and_brake_never_give_up_restarting` — each: `Restart=always`, `RestartSec=2`,
   `StartLimitIntervalSec=0`.
-- `test_the_gates_sockets_are_0660_spark_with_their_groups` — both sockets as above.
+- `test_the_gates_sockets_are_0660_spark_with_their_groups` — both sockets as above. *(Renamed
+  2026-10-14, at Task 25's review: `test_the_gates_sockets_are_0660_with_their_owners_and_groups`,
+  since the control socket is now `root`'s.)*
 - `test_the_front_only_wants_llama_swap_never_requires_it` — `Wants=` and `After=` name it; no
   `Requires=`, `BindsTo=` or `PartOf=` does.
 - `test_the_front_and_the_gate_are_notify_units_with_watchdogs` — `Type=notify`, `WatchdogSec=30`.
@@ -7492,7 +7501,9 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
   the summary line adds how many warned (`doctor: <n> of <n> checks pass, 1 warning`). Only this
   check warns, for now.
 - `sockets` — each socket file (`/run/local-ai/gate-status.sock`, `gate-control.sock`) a socket,
-  `spark`'s, `0660`, its group.
+  `spark`'s, `0660`, its group. *(Corrected 2026-10-14, at Task 25's review, the controller's
+  ruling: the status socket is `spark:spark-users`, and the control socket `root:spark-admin`,
+  each `0660`.)*
 - `stack units` — the five services that keep running (llama-swap, the brake, compose, the front,
   the gate) and the three sockets active; the pull and the drill's unit are oneshots that run only
   when asked, and aren't checked.
@@ -7915,7 +7926,29 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   once with its own key, passed, as `make status`'s brake line (*llama-swap took its key at …*) and
   `make doctor`'s *stack units* line show. Above the warn line the brake calls llama-swap for
   nothing else, so a wrong key would otherwise stay silent until the brake has to act. If any of the
-  three keys fails its check, the cutover stops there (Step 8). Then
+  three keys fails its check, the cutover stops there (Step 8). *(Added 2026-10-14, at Task 25's
+  review, the controller's ruling:)* the units' accounts, sockets and sandboxes, checked here first
+  as system units. A user unit on this box couldn't apply them: `ProtectSystem=` and `PrivateTmp=`
+  were accepted there but not applied, and `PrivateDevices=`, an empty `CapabilityBoundingSet=`,
+  `DynamicUser=` and `User=` were refused (Task 25's report). **On the Spark**, read each against
+  its unit file:
+  - `systemctl show -p User,Group,SupplementaryGroups` for each service: `spark-front`,
+    `spark-front` and `spark-users` for the front; `spark` and `spark`, with no supplementary group
+    set, for the gate, the brake, llama-swap and the drill; `spark-pull` and `spark-pull`, none set,
+    for the pull. For the notifier,
+    `systemctl show -p DynamicUser local-ai-notify@local-ai-gate.service.service` reads `yes`: an
+    instance's name, since systemd 255 refuses `systemctl show` for a template's.
+  - `stat -c '%U:%G %a'` for each socket: `spark:spark-users 660` for
+    `/run/local-ai/gate-status.sock`, and `root:spark-admin 660` for
+    `/run/local-ai/gate-control.sock`.
+  - `systemctl show -p IPAddressDeny,IPAddressAllow` for the front's socket and service: each
+    reads `IPAddressAllow=127.0.0.0/8 ::1/128` and `IPAddressDeny=0.0.0.0/0 ::/0`, which is how
+    systemd 255 shows `localhost` and `any` (read on this box, from a transient user unit).
+  - `systemd-analyze security` for the front and the gate, its overall exposure recorded here.
+    Read from the rendered files at Task 25 (`systemd-analyze security --offline=true`, this box's
+    systemd 255), they gave 4.7 (OK) for the front and 8.3 (EXPOSED) for the gate.
+
+  If any of these differs from the unit file, the cutover stops there (Step 8). Then
   the listening ports, numbers only. **On the Spark:**
 
 ```bash
