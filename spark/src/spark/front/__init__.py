@@ -11,13 +11,16 @@ routes to llama-swap with an internal key of its own, counts the requests in fli
 
 This module imports nothing, so `spark apply` reads FRONT_MODULES from it without importing uvicorn (Task 31)."""
 
-# Exactly the spark modules the front imports at start, every one before it serves (spark.front.main imports them):
-# `make apply` restarts the front when one of them changes, or the app's environment (apply.ENVIRONMENT: what installs
-# uvicorn and httpx), and for no other change to the app (Task 31).
-# test_front_forward.py checks the set against what importing spark.front.main loads.
+# Exactly the spark modules of the front's start, each imported before it serves. The unit runs `spark front`, so the
+# front starts in spark.cli (its main and _front: the front's start and its exit), with what spark.cli imports at module
+# level (spark.gateclient); _front imports spark.front.main, which imports the rest. spark.cli's build_parser also
+# imports each other command's module, only to add its subcommand; those aren't the front's: none of their code runs
+# once it serves (Task 31's review). `make apply` restarts the front when one of these changes, or the app's
+# environment (apply.ENVIRONMENT: what installs uvicorn and httpx), and for no other change to the app (Task 31).
+# test_front_forward.py checks the set against what importing spark.front.main and spark.cli loads.
 FRONT_MODULES: frozenset[str] = frozenset({
     "spark", "spark.paths", "spark.registry", "spark.credentials", "spark.sockets", "spark.protocols",
     "spark.sdnotify", "spark.serve", "spark.gateproto", "spark.messages",
     "spark.front", "spark.front.parse", "spark.front.app", "spark.front.upstream", "spark.front.gatelink",
-    "spark.front.main",
+    "spark.front.main", "spark.cli", "spark.gateclient",
 })

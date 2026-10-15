@@ -380,11 +380,14 @@ def test_a_llama_swap_whose_unit_is_stopped_is_never_refused_for(tmp_path):
 
 def test_each_file_apply_deploys_belongs_to_the_units_that_run_on_it():
     # Task 31: the gate reads the registry and imports the app, as the brake does; the front's own files are its own.
+    # Task 31's review (I2): apply's stamps, for the front's restart for the key groups, and for `--restart`'s.
     rels = ("llama-swap.yaml", "models.yaml", spark_apply.APP, spark_apply.FRONT_APP, "compose/searxng/settings.yml",
             "systemd/local-ai-brake.service", "systemd/local-ai-front.service", "systemd/local-ai-gate.service",
-            "systemd/local-ai-pull.service", "systemd/local-ai-front.socket", "systemd/local-ai-notify@.service")
+            "systemd/local-ai-pull.service", "systemd/local-ai-front.socket", "systemd/local-ai-notify@.service",
+            spark_apply.KEY_GROUPS_STAMP, spark_apply.RESTART_FRONT_STAMP)
     assert [spark_apply.units_of(rel) for rel in rels] == [(LLAMA,), (BRAKE, GATE), (BRAKE, GATE), (FRONT,),
-                                                          (COMPOSE,), (BRAKE,), (FRONT,), (GATE,), (), (), ()]
+                                                          (COMPOSE,), (BRAKE,), (FRONT,), (GATE,), (), (), (),
+                                                          (FRONT,), (GATE, FRONT)]
 
 
 def test_a_running_unit_that_started_before_apply_wrote_its_files_is_outdated():
@@ -402,6 +405,9 @@ def test_deployed_times_are_when_apply_wrote_its_files_and_last_synced_the_app(t
     put(app / spark_apply.SYNC_STAMP, "", 300.0)
     put(etc / "compose/compose.yaml", "x", 400.0)  # staged for root: root's copy says when it was installed
     assert spark_apply.deployed_times(etc, app) == {"llama-swap.yaml": 100.0, spark_apply.APP: 300.0}
+    put(etc / spark_apply.RESTART_FRONT_STAMP, "", 500.0)  # Task 31's review (I2): apply's stamps are dated too
+    assert spark_apply.deployed_times(etc, app) == {"llama-swap.yaml": 100.0, spark_apply.APP: 300.0,
+                                                    spark_apply.RESTART_FRONT_STAMP: 500.0}
 
 
 def test_app_diff_counts_every_file_until_a_sync_finishes_and_files_removed_from_spark(tmp_path):
@@ -512,7 +518,7 @@ OLD = time.time() - 3600  # when a finished apply wrote its files, and `make ins
 T0 = OLD + 600  # when the running units started
 # The registry a finished apply deployed before this change: one that loads, with the fixture's key groups, so its
 # change restarts the brake and the gate and never the front (Task 31). One that won't load is
-# test_an_unreadable_deployed_registry_restarts_the_front_too's.
+# test_run_restarts_the_front_for_the_deployed_registrys_key_groups's.
 OLDER_REGISTRY = (FIX / "models.yaml").read_text() + "# the registry before this change\n"
 
 
@@ -542,7 +548,9 @@ class Box:
         shutil.copy(FIX / "models.yaml", self.repo / "stack/models.yaml")
         pinned = (FIX / "versions.yaml").read_text().replace("pin: null", "pin: sha256:" + "0" * 64)
         (self.repo / "stack/versions.yaml").write_text(pinned)
-        for rel, text in {"pyproject.toml": "p", "uv.lock": "l", "src/spark/cli.py": "v1"}.items():
+        # The app's file that changes stands for a change elsewhere in the app, one that never restarts the front: since
+        # Task 31's review spark.cli is the front's (FRONT_MODULES), so it is brake.py.
+        for rel, text in {"pyproject.toml": "p", "uv.lock": "l", "src/spark/brake.py": "v1"}.items():
             put(self.repo / "spark" / rel, text, OLD)
         put(self.opt / "bin/llama-swap/v257/llama-swap", "", OLD)
         self.units = dict.fromkeys(RUNNING_UNITS)
@@ -695,7 +703,7 @@ def test_run_restarts_llama_swap_over_loaded_models_only_with_now(box):
 def test_run_starts_no_unit_that_isnt_running(box):
     # I4's second slip, `active=lambda unit: True`, started units that weren't running.
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY}, running=False)
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     code, lines, events = box.apply()
     assert (code, events) == (0, ["-validate", "GET /running", "uv sync", "write llama-swap.yaml", "write models.yaml"])
     assert lines[-3:] == [f"apply: {BRAKE} isn't running; it starts with the new config",
@@ -707,13 +715,13 @@ def test_run_passes_dry_run_on_and_a_dry_run_changes_nothing(box):
     # Task 7's fix round 2 (M1): `make apply-dry-run` goes through run(). It writes, syncs and restarts nothing, and
     # exits as the real run would: 0 when idle, 1 when the real run would refuse.
     box.deployed(old={"llama-swap.yaml": "old config", "models.yaml": OLDER_REGISTRY})
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.answers = [[]]
     code, lines, events = box.apply("--dry-run")
     assert (code, events) == (0, ["-validate", "GET /running"])
     assert lines[-1] == f"apply: dry run — would restart {BRAKE}, {GATE}, {LLAMA}"
     assert (box.etc / "llama-swap.yaml").read_text() == "old config"
-    assert (box.app / "src/spark/cli.py").read_text() == "v1" and box.units == dict.fromkeys(RUNNING_UNITS, T0)
+    assert (box.app / "src/spark/brake.py").read_text() == "v1" and box.units == dict.fromkeys(RUNNING_UNITS, T0)
     box.answers = [[Running("coder", "ready")]]
     code, lines, events = box.apply("--dry-run")
     assert (code, events) == (1, ["-validate", "GET /running"])
@@ -788,7 +796,7 @@ def test_a_failed_sync_is_said_and_tried_again_until_it_succeeds(box):
 def test_a_failed_sync_on_a_running_stack_restarts_the_brake_once_it_succeeds(box):
     box.deployed()
     box.answers = [[]]
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.uv_fails = True
     code, _, events = box.apply()
     assert (code, events) == (1, ["-validate", "GET /running", "uv sync"])
@@ -804,7 +812,7 @@ def test_a_failed_sync_on_a_running_stack_restarts_the_brake_once_it_succeeds(bo
 def test_a_copy_that_fails_is_said_and_tried_again(box):
     box.deployed()
     box.answers = [[]]
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     (box.app / "src/spark").chmod(0o555)
     try:
         code, lines, events = box.apply()
@@ -838,7 +846,7 @@ def test_apply_says_when_the_brake_it_restarted_doesnt_stay_up(box):
     # Phase 1's council (reliability I1): the app fails once it runs, so the restart passes and the unit loops.
     box.deployed()
     box.answers = [[]]
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.brake_shows = [UP, "ActiveState=activating\nSubState=auto-restart\nNRestarts=1\n"]
     code, lines, events = box.apply()
     assert (code, events) == (1, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}"])
@@ -850,7 +858,7 @@ def test_a_brake_that_started_before_the_apps_last_sync_is_restarted(box):
     # I2, for the app: the sync finished, and the run was cut off before the brake's restart.
     box.deployed()
     box.answers = [[]]
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.interrupted = {BRAKE}
     with pytest.raises(KeyboardInterrupt):
         box.apply()
@@ -949,7 +957,7 @@ def test_uv_sync_is_given_the_tests_own_environment_and_uvs_settings_only(box):
     # one). Names only, taken first: pytest prints the arguments of a call in a failing assert.
     box.deployed()
     box.answers = [[]]
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.apply()
     names = set(box.uv_env) - {"PYTEST_CURRENT_TEST"}
     assert names <= {"PATH", "HOME", "LANG", "TZ", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE"}
@@ -974,12 +982,13 @@ def test_the_app_is_replaced_file_by_file_and_loses_what_spark_no_longer_has(box
     box.deployed()
     box.answers = [[]]
     put(box.app / "src/spark/retired/old.py", "gone from spark/", OLD)
-    put(box.repo / "spark/src/spark/cli.py", "v2", time.time())
-    before = (box.app / "src/spark/cli.py").stat().st_ino
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    before = (box.app / "src/spark/brake.py").stat().st_ino
     code, _, events = box.apply()
     assert (code, events) == (0, ["-validate", "GET /running", "uv sync", f"restart {BRAKE}", f"restart {GATE}"])
     assert not (box.app / "src/spark/retired").exists()
-    assert (box.app / "src/spark/cli.py").read_text() == "v2" and (box.app / "src/spark/cli.py").stat().st_ino != before
+    brake = box.app / "src/spark/brake.py"
+    assert brake.read_text() == "v2" and brake.stat().st_ino != before
     assert (box.app / ".venv/bin/spark").exists() and (box.app / spark_apply.SYNC_STAMP).exists()
 
 
@@ -1069,6 +1078,13 @@ def test_every_front_module_is_a_file_whose_change_restarts_the_front():
     files = [path.relative_to(ROOT / "spark").as_posix() for path in (ROOT / "spark/src").rglob("*.py")]
     fronts = [rel for rel in files if spark_apply.front_file(rel)]
     assert sorted(spark_apply.module_of(rel) for rel in fronts) == sorted(FRONT_MODULES)
+
+
+@pytest.mark.parametrize("rel", ["src/spark/cli.py", "src/spark/gateclient.py"])
+def test_a_change_to_the_fronts_start_path_restarts_it(rel):
+    # Task 31's review: the unit runs `spark front`, spark.cli's main and _front, the front's start and its exit; and
+    # spark.cli imports spark.gateclient at module level.
+    assert plan(app=[rel]) == RestartPlan(now=[BRAKE, GATE], after_quiet=[FRONT])
 
 
 @pytest.mark.parametrize("edit", [
@@ -1247,3 +1263,87 @@ def test_restart_front_stages_roots_files_first_and_says_to_run_it_again(tmp_pat
     code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"systemd/local-ai-llama-swap.service": "u2"},
                                    restart_front=True)
     assert code == 0 and ran == [] and logs[-1].endswith("then run `make restart-front` again")
+
+
+def test_restart_fronts_refusal_gives_a_step_dan_can_run(tmp_path):
+    # Task 31's review: no make target passes --now with --restart. Until Task 32's wait, the step is to unload what's
+    # loaded, then run it again.
+    for running, what in ((["coder"], "models are loaded (coder)"), (None, "can't tell which models are loaded")):
+        code, ran, logs, _ = run_apply(seeded(tmp_path), FILES, restart_front=True, running=running)
+        assert (code, ran) == (1, [])
+        assert logs[-1] == (f"apply: {what}, and restarting the front cuts off every request in flight; unload "
+                            "what's loaded (`spark unload <model>`), then run `make restart-front` again (nothing was "
+                            "changed)")
+    # `make apply`'s refusal still points at --now, which `make apply-now` passes.
+    code, _, logs, _ = run_apply(seeded(tmp_path), FILES, app_changes=["src/spark/front/app.py"], running=["coder"])
+    assert code == 1 and logs[-1].endswith("re-run when idle, or with --now (nothing was changed)")
+
+
+def test_restart_fronts_failed_sync_says_to_run_it_again(box):
+    # Task 31's review: `make apply` would sync the app and never restart the front for the key list.
+    box.deployed()
+    box.answers = [[]]
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    box.uv_fails = True
+    code, lines, _ = box.apply("--restart", FRONT)
+    assert code == 1 and lines[-1].endswith("once it's fixed, `make restart-front` syncs it again")
+
+
+# Task 31's review (I2): the front's restart for the registry's key groups, and the gate's and the front's for
+# `--restart`, are recorded by a stamp apply touches just before it writes, so a run cut off before them leaves them
+# owed to the next, as each file's time does.
+
+KEY_GROUPS_CHANGED = OLDER_REGISTRY.replace("wait_s: 600", "wait_s: 900")
+
+
+def stamps(box):
+    return sorted(stamp for stamp in (spark_apply.KEY_GROUPS_STAMP, spark_apply.RESTART_FRONT_STAMP)
+                  if (box.etc / stamp).exists())
+
+
+def test_a_run_cut_off_before_the_fronts_restart_for_the_key_groups_leaves_it_owed(box):
+    box.deployed(old={"models.yaml": KEY_GROUPS_CHANGED})
+    box.answers = [[]]
+    box.interrupted = {FRONT}
+    with pytest.raises(KeyboardInterrupt):
+        box.apply()
+    assert box.events == ["-validate", "GET /running", "write models.yaml", f"restart {BRAKE}", f"restart {GATE}",
+                          "GET /running", f"restart {FRONT}"]
+    assert box.units[FRONT] == T0  # cut off before systemd took the job
+    box.interrupted = set()
+    code, lines, events = box.apply()  # the registry is deployed now: only the stamp records the front's restart
+    assert (code, events) == (0, ["-validate", "GET /running", "GET /running", f"restart {FRONT}"])
+    assert f"apply: {FRONT} started before its latest files were in place, so it still runs older ones" in lines
+    assert box.apply()[1] == ["apply: nothing to change"]
+
+
+def test_a_run_cut_off_before_restart_fronts_restarts_leaves_the_gate_and_the_front_owed(box):
+    box.deployed()
+    box.answers = [[]]
+    box.interrupted = {GATE}
+    with pytest.raises(KeyboardInterrupt):
+        box.apply("--restart", FRONT)
+    assert box.events == ["-validate", "GET /running", f"restart {GATE}"]
+    box.interrupted = set()
+    code, _, events = box.apply()  # `make apply`, not `make restart-front`
+    assert (code, events) == (0, ["-validate", "GET /running", f"restart {GATE}", "GET /running", f"restart {FRONT}"])
+    assert box.apply()[1] == ["apply: nothing to change"]
+
+
+def test_a_dry_run_a_refusal_and_the_staging_stop_leave_no_stamp(box):
+    box.deployed(old={"models.yaml": KEY_GROUPS_CHANGED})
+    box.answers = [[]]
+    for flags in ((), ("--restart", FRONT)):
+        assert box.apply("--dry-run", *flags)[0] == 0 and stamps(box) == []
+    box.answers = [[Running("coder", "ready")]]
+    for flags in ((), ("--restart", FRONT)):
+        assert box.apply(*flags)[0] == 1 and stamps(box) == []
+    unit = Path(installed_path("systemd/local-ai-front.service"))
+    unit.write_text(unit.read_text() + "# an older copy\n")  # root's copy differs: apply stages and stops
+    for flags in ((), ("--restart", FRONT)):
+        code, lines, _ = box.apply(*flags)
+        assert code == 0 and "make install-units" in lines[-1] and stamps(box) == []
+    unit.write_text(unit.read_text().removesuffix("# an older copy\n"))
+    box.answers = [[]]
+    box.apply("--restart", FRONT)  # a run that writes touches both
+    assert stamps(box) == sorted([spark_apply.KEY_GROUPS_STAMP, spark_apply.RESTART_FRONT_STAMP])

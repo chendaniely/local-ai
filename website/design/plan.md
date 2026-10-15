@@ -1423,14 +1423,22 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
   council; S17:*
   - **What waits for the quiet moment:** a llama-swap restart, and a restart of the front, which
     would cut off every request in flight. The front is restarted only when its own modules change,
-    not for every change to the app, and imports all it uses at start. It reads the ~~registry's
+    not for every change to the app, and imports all it uses at start. *(Added 2026-10-15, at Task
+    31's review, the controller's rulings:* its own modules include `spark.cli`, where `spark front`
+    starts it. The front also restarts, through the same wait, for the app's environment
+    (`pyproject.toml`, `uv.lock`, `.python-version`), which installs uvicorn and httpx; for a change
+    to the registry's key groups, which it reads only at start; and for `make restart-front`. This
+    holds wherever this section says it restarts only for its own files.) It reads the ~~registry's
     model names and roles, and the~~ key digests through `LoadCredential=`, at start too, so a
     change to ~~either~~ them restarts it, through the same wait (added after the re-review; since
     Dan's decision of 2026-10-07, after the implementation plan's forward-and-back council, the
     front takes the model names and roles from the gate's events, so a registry change no longer
-    restarts it, while the key digests and the private key list still do). A change to the gate's or
-    the brake's code restarts them ~~at once~~ (at once when nothing waits for the quiet moment; in
-    the fixed order below when something does): a gate restart keeps loaded models serving and
+    restarts it, while the key digests and the private key list still do). *(Added 2026-10-15, at
+    Task 31's review, the controller's ruling:* for those, `make restart-front` restarts the gate and
+    then the front. The gate reads the key list at start too, and refuses a key it doesn't know.)
+    A change to the gate's or the brake's code restarts them ~~at once~~ (at once when nothing waits
+    for the quiet moment; in the fixed order below when something does): a gate restart keeps
+    loaded models serving and
     rebuilds its state, the front asks again for the requests it was holding, with their original
     deadlines, and the brake is back within 2 s. *(Clarified 2026-10-07, after the implementation
     plan's re-check, the controller's ruling:* when a llama-swap or front restart waits for the
@@ -1443,7 +1451,8 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
     minute at most; every end does the same work, the residents' reload queued ahead of anything
     else; and the front drops the hold once the gate has been gone a minute, so rule 8 holds. A
     front restart inside the apply, which comes only when its own files change, cuts the requests it
-    holds, as any front restart does.))
+    holds, as any front restart does. *(Added 2026-10-15, at Task 31's review:* or for the other
+    reasons the note above gives.)))
   - **The wait has a deadline:** up to 15 minutes for ~60 s with no request in flight, then apply
     offers "drain now", which holds new requests and lets those in flight finish, through the
     front's drain, and then `make apply-now` (the session's ruling). A request that arrives during
@@ -3918,6 +3927,18 @@ Each item gets its own design pass when its turn comes.
   sleeping Mac is noticed only after about 2 h 11 min, from TCP keepalive's defaults, since sshd on
   the box sets no `ClientAlive*`; shortening that with `ClientAliveInterval` is Dan's decision, for
   2b.
+- **2026-10-15** — Phase 2a's Task 31 review, the controller's rulings (*Deploy workflow*, which
+  gains dated notes, as do S17 and `secret-files.md`). `make apply` restarts the front, through the
+  quiet wait, for its own modules, `spark.cli` among them, where `spark front` starts it; for the
+  app's environment (`pyproject.toml`, `uv.lock`, `.python-version`), which installs uvicorn and
+  httpx; and for a change to the registry's key groups, which it reads only at start. Never for the
+  registry's names, roles or footprints. `make restart-front`, for a change to the key digests or
+  the key list, restarts the gate and then the front, through the same wait, since the gate reads
+  the key list at start too and refuses a key it doesn't know. A run cut off before the
+  front's restart for the key groups, or before the gate's and the front's for `make
+  restart-front`, leaves those restarts owed to the next `make apply`, through a stamp apply
+  touches just before it writes. Apply restarts no socket, and nothing for a secret read at start; Task 35's
+  runbook gives the restart for each.
 
 ## Sources
 

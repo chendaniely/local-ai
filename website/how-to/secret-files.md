@@ -305,10 +305,12 @@ list has, `>` for one only the digests have.
 
 From the cutover the front checks the client keys, so a new client gets a key by its digest. This
 changes both files, `client-keys.sha256` and the key list, and the front reads them only when it
-starts: then restart it with `make restart-front`, which waits for a quiet minute as `make apply`
-does. *(That target comes with Phase 2a's deploy work, its Task 31. Before the cutover no front
-runs, and a new client key goes into `llama-swap.env`, as in steps 1 and 9.)* The name is yours,
-lowercase letters, digits and `-`, and goes in both files.
+starts. The gate reads the key list only when it starts too, and refuses a key it doesn't know. So
+then run `make restart-front`: it restarts the gate and then the front, and waits for a quiet
+minute as `make apply` does. *(Corrected 2026-10-15, at Task 31's review: this said the target
+restarts the front alone.)* *(That target comes with Phase 2a's deploy work, its Task 31. Before
+the cutover no front runs, and a new client key goes into `llama-swap.env`, as in steps 1 and 9.)*
+The name is yours, lowercase letters, digits and `-`, and goes in both files.
 
 **19. Generate it, and give it to its client.** Set `name` in the command to the new key's name, in
 place of `example-new-key`.
@@ -342,9 +344,10 @@ cp /etc/local-ai/keys.yaml ~/keys.yaml
 sudo install -o root -g spark-admin -m 0640 ~/keys.yaml /etc/local-ai/keys.yaml && rm ~/keys.yaml
 ```
 
-Run steps 17 and 18 again, then `make restart-front`.
+Run steps 17 and 18 again, then `make restart-front`, which restarts the gate and the front.
 
-To retire a key, delete its digest line and its entry in the key list, then `make restart-front`.
+To retire a key, delete its digest line and its entry in the key list, then `make restart-front`,
+which restarts the gate and the front.
 To replace one, retire it, then make the new one with the same name. **On the Spark**, with the
 key's name in place of `example-new-key`:
 

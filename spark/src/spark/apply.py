@@ -18,11 +18,11 @@ and restarts nothing else until root has them.
 A run cut off part-way leaves the next run to finish it: each file is replaced whole, the app counts
 as changed until a sync of it finishes, and a running unit that started before its files were
 written or synced is restarted, as one that started before root's copy was installed is; the front
-by when its own files were last written. There are two exceptions. A unit whose start time apply
-can't read: it can't tell whether that unit is behind, so it names the unit and the command to
-restart it by hand. And the front's restart for the registry's key groups or for `--restart`,
-which no file's time records: a run cut off before it leaves the front as it was, and `make
-restart-front` restarts it."""
+by when its own files were last written. A restart that no file's time records, the front's for the
+registry's key groups and the gate's and the front's for `--restart`, is recorded by a stamp apply
+touches just before it writes (KEY_GROUPS_STAMP, RESTART_FRONT_STAMP), so the next run owes it
+too. The one exception is a unit whose start time apply can't read: it can't tell whether that
+unit is behind, so it names the unit and the command to restart it by hand."""
 
 from __future__ import annotations
 
@@ -73,12 +73,18 @@ FRONT_APP = "app: the front's files"  # the front's files of the app: when the l
 # The app's environment: the front runs what these install (uvicorn, httpx and the rest), so a change to one changes
 # the front's code as a change to one of its modules does, and `uv sync` replaces them under it.
 ENVIRONMENT = ("pyproject.toml", "uv.lock", ".python-version")
+# apply's stamps in its etc folder, each touched just before apply writes, for a restart no file's time records
+# (Task 31's review): the front's for the registry's key groups, since the registry's own time would restart it for
+# every change to the registry, which reaches it through the gate's events; and the gate's and the front's for
+# `--restart`, after a change to the key digests or the key list, which apply doesn't deploy. A run cut off before
+# that restart leaves the stamp newer than the unit's start, so the next run owes it (outdated_units).
+KEY_GROUPS_STAMP = ".spark-apply-key-groups"
+RESTART_FRONT_STAMP = ".spark-apply-restart-front"
 # The files apply deploys itself, and the long-running units that run on each: llama-swap on its config; the brake
-# and the gate on the registry and the app; the front on its own files (front_file). The front reads the registry's
-# key groups at start too, but its restart for them is plan_restarts', never a file's time: a registry's time would
-# restart it for every change to the registry, which reaches it through the gate's events.
+# and the gate on the registry and the app; the front on its own files (front_file). And apply's stamps.
 DEPLOYED = {"llama-swap.yaml": (LLAMA_SWAP_UNIT,), "models.yaml": (BRAKE_UNIT, GATE_UNIT),
-            APP: (BRAKE_UNIT, GATE_UNIT), FRONT_APP: (FRONT_UNIT,)}
+            APP: (BRAKE_UNIT, GATE_UNIT), FRONT_APP: (FRONT_UNIT,), KEY_GROUPS_STAMP: (FRONT_UNIT,),
+            RESTART_FRONT_STAMP: (GATE_UNIT, FRONT_UNIT)}
 # Shown escaped in a diff: every control character but tab, as `make install-units` refuses one, so no line can hide
 # another on the terminal.
 _CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f]")
@@ -172,8 +178,8 @@ def module_of(rel: str) -> str | None:
 
 
 def front_file(rel: str) -> bool:
-    """Whether a file of the app (by its path in the spark/ project) is the front's: one of the modules it imports at
-    start (spark.front.FRONT_MODULES, which spark.front reads without importing uvicorn), or the app's environment
+    """Whether a file of the app (by its path in the spark/ project) is the front's: one of the modules of its start
+    (spark.front.FRONT_MODULES, which spark.front reads without importing uvicorn), or the app's environment
     (ENVIRONMENT)."""
     return rel in ENVIRONMENT or module_of(rel) in FRONT_MODULES
 
@@ -224,6 +230,12 @@ def restart_order(units: list[str]) -> list[str]:
     return sorted(set(units), key=RESTART_ORDER.index)
 
 
+def key_groups_changed(changed: list[str], registry_old: Registry | None, registry_new: Registry) -> bool:
+    """Whether the registry apply deploys changes its key groups, which the front reads only at start: its text
+    changes (`changed`, diff_tree), and the deployed one won't load (None) or has other key groups."""
+    return "models.yaml" in changed and (registry_old is None or registry_old.key_groups != registry_new.key_groups)
+
+
 def plan_restarts(changed: list[str], app_changes: list[str], registry_old: Registry | None, registry_new: Registry,
                   outdated: list[str], *, restart_front: bool, active: Callable[[str], bool]) -> RestartPlan:
     """What a change restarts (Task 31; plan.md, *Deploy workflow*). `changed`: the files that change of those apply
@@ -245,9 +257,8 @@ def plan_restarts(changed: list[str], app_changes: list[str], registry_old: Regi
         touched.add(LLAMA_SWAP_UNIT)
     if app_changes or "models.yaml" in changed:
         touched |= {BRAKE_UNIT, GATE_UNIT}
-    key_groups_changed = "models.yaml" in changed and (registry_old is None
-                                                        or registry_old.key_groups != registry_new.key_groups)
-    if restart_front or key_groups_changed or any(front_file(rel) for rel in app_changes):
+    if (restart_front or key_groups_changed(changed, registry_old, registry_new)
+            or any(front_file(rel) for rel in app_changes)):
         touched.add(FRONT_UNIT)
     if restart_front:
         touched.add(GATE_UNIT)
@@ -359,8 +370,10 @@ def deployed_registry(path: Path) -> Registry | None:
 _COSTS = {FRONT_UNIT: "restarting the front cuts off every request in flight",
           LLAMA_SWAP_UNIT: "restarting llama-swap stops every model"}
 # A restart that waits for the quiet moment, held back because a model loaded meanwhile: what it costs, and how it gets
-# made. llama-swap's config or unit is deployed, so it's outdated, and the next apply restarts it; the front's restart
-# for the registry's key groups or `--restart` leaves no file newer than its start, so `make restart-front` makes it.
+# made. llama-swap's config or unit is deployed, so it's outdated, and the next apply restarts it. The front's is
+# owed to the next apply too, by its files or apply's stamps, unless the run wrote none of them: after a sync that
+# failed, every file of the app counts, the front's among them, though none of them may have changed. `make
+# restart-front` makes it whatever it was for.
 _HELD_BACK = {FRONT_UNIT: "restarting it cuts off every request in flight; once no model is loaded, `make "
                           "restart-front` restarts it",
               LLAMA_SWAP_UNIT: "restarting it stops every model; its new files are deployed, so re-run when idle, or "
@@ -388,6 +401,7 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
     if not (changed or app_changes or pending or restarts or plan.not_running):
         log("apply: nothing to change")
         return 0
+    again = "make restart-front" if restart_front else "make apply"  # what to run again: the same restarts
     if pending:
         # Root's files first: until root has them, deploy and restart nothing else, and list nothing else.
         for rel in pending:
@@ -404,7 +418,6 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
             log(f"apply: dry run — would stage them in {etc} and stop until `make install-units` installs them")
             return 0
         write_tree({rel: files[rel] for rel in changed if installed_path(rel) is not None}, etc)
-        again = "make restart-front" if restart_front else "make apply"
         log(f"apply: staged in {etc}; nothing else is deployed or restarted until `make install-units` (sudo) "
             f"installs root's copies — then run `{again}` again")
         return 0
@@ -430,14 +443,25 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
         log("apply: dry run — would restart " + (", ".join(restarts) or "nothing"))
         return 0
     if refusal:
-        log(f"apply: {refusal}; re-run when idle, or with --now (nothing was changed)")
+        if restart_front:  # no make target passes --now with --restart; until Task 32's wait, this is the step
+            log(f"apply: {refusal}; unload what's loaded (`spark unload <model>`), then run `make restart-front` "
+                "again (nothing was changed)")
+        else:
+            log(f"apply: {refusal}; re-run when idle, or with --now (nothing was changed)")
         return 1
     if app_changes:
         try:
             sync_app()
         except SyncError as err:
-            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `make apply` syncs it again")
+            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `{again}` syncs it again")
             return 1
+    # Just before the files, a stamp for each restart no file's time records, so a run cut off before it leaves it owed
+    # to the next (KEY_GROUPS_STAMP, RESTART_FRONT_STAMP). A dry run, a refusal, the staging stop and a failed sync
+    # have returned, so they touch none.
+    stamps = [stamp for stamp, owed in ((KEY_GROUPS_STAMP, key_groups_changed(changed, registry_old, registry_new)),
+                                        (RESTART_FRONT_STAMP, restart_front)) if owed]
+    for stamp in stamps:
+        write_atomic(Path(etc) / stamp, "spark apply: a restart is owed to each unit that started before this file\n")
     write_tree({rel: files[rel] for rel in changed}, etc)
     failed = False
     held_back = None  # what a look found loaded: it holds back every restart that waits for the quiet moment

@@ -30,7 +30,10 @@ restarts at once, after asking. Nothing is written until then, so Ctrl-C leaves 
 change that needs no llama-swap restart applies at once.
 
 The restarts then run in a fixed order: the brake, the gate, the front only if its own code
-changed, and llama-swap last. A renamed or added model reaches the front through the gate, without
+changed, and llama-swap last. *(Added 2026-10-15, at Task 31's review: the front restarts too
+when the app's dependencies or its Python version change, when the registry's key groups
+change, since it reads them only when it starts, and for `make restart-front`, after a client
+key is added or retired.)* A renamed or added model reaches the front through the gate, without
 restarting it. New requests meanwhile are held, through the gate's own restart too, and go through
 once llama-swap answers again, or are refused with `restarting` when their key's wait runs out. The
 gate then reloads the always-loaded models one at a time, and on-demand ones reload on their next

@@ -7,8 +7,9 @@ name, `front` (sockets.listen_fds).
   private key list, and `client-keys`, the client keys' digests, each read whole and checked against the other
   (app.read_keys), and `llamaswap-key`, the front's own key for llama-swap. llama-swap's address is
   paths.LLAMASWAP_URL.
-- **Its modules** are spark.front.FRONT_MODULES, every one imported here, before it serves, so the code it runs is the
-  code it started with, and `spark apply` knows which changes restart it (Task 31).
+- **Its modules** are spark.front.FRONT_MODULES, every one imported before it serves, so the code it runs is the code
+  it started with, and `spark apply` knows which changes restart it (Task 31): spark.cli, which `spark front` starts it
+  from, with spark.gateclient, which spark.cli imports (Task 31's review), and the rest imported here.
 - **The gate** (Task 22's GateLink), on the gate's status socket, paths.GATE_STATUS_SOCKET: started in the serving
   loop before the front serves (run_servers' `startup`), which returns at once, so the front serves whether the gate
   answers or not; its model list replaces the registry's from the gate's first `hello`; while the gate is down, what's

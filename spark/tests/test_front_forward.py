@@ -1265,7 +1265,9 @@ def _loaded(module: str) -> list[str]:
 def test_the_front_imports_only_its_listed_modules():
     assert isinstance(spark.front.FRONT_MODULES, frozenset)
     assert "spark.front.gatelink" in spark.front.FRONT_MODULES  # Task 22's link to the gate
-    loaded = _loaded("spark.front.main")
+    # Task 31's review: the unit runs `spark front`, so the front starts in spark.cli, and what spark.cli imports at
+    # module level is the front's too. build_parser's other commands' modules aren't: see FRONT_MODULES.
+    loaded = _loaded("spark.front.main") + _loaded("spark.cli")
     assert {name for name in loaded if name == "spark" or name.startswith("spark.")} == spark.front.FRONT_MODULES
     # spark.front alone loads no third-party module, so `spark apply` reads FRONT_MODULES without uvicorn.
     assert _loaded("spark.front") == ["spark", "spark.front"]

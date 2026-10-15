@@ -330,7 +330,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   and then `make apply-now`"; "**Nothing is written until the drain is done**"; the front restarts
   "only when its own modules change", ~~or the registry's model names and roles,~~ or the key
   digests (or, since Dan's decision of 2026-10-07, the key list; the registry's names and roles
-  reach it through the gate).
+  reach it through the gate). *(Added 2026-10-15, at Task 31's review: and for the app's
+  environment and the registry's key groups; Task 31's notes.)*
 - **Apply's hold** (the controller's rulings, 2026-10-07, after this plan's final check): from
   `drain-all` to its end, `make apply` renews the hold every **15 s** (`APPLY_RENEW_S`), and the
   gate ends a hold not renewed for **60 s** (`APPLY_LAPSE_S`), before `begin` as after. Every end
@@ -5527,7 +5528,10 @@ git commit -m "feat(spark): 🤖 the front: only the inference routes, client ke
   start, all of them before it serves: `spark`, `spark.paths`, `spark.registry`,
   `spark.credentials`, `spark.sockets`, `spark.protocols`, `spark.sdnotify`, `spark.serve`,
   `spark.gateproto`, `spark.messages`, and `spark.front` with `parse`, `app`, `upstream` and `main`
-  (Task 22 adds `gatelink`). `spark front` — `listen_fds()["front"]`; the deployed registry's key
+  (Task 22 adds `gatelink`). *(Added 2026-10-15, at Task 31's review, the controller's ruling:* the
+  front starts in `spark.cli`, which the unit's `spark front` runs, so the set gains `spark.cli` and
+  `spark.gateclient`, which `spark.cli` imports at module level; Task 31's note has why the other
+  commands' modules stay out.) `spark front` — `listen_fds()["front"]`; the deployed registry's key
   groups and its names and roles (the first `ModelList`), and the credentials `client-keys`, `keys`
   and `llamaswap-key`, read once at start; `run_servers` with `make_protocol(peer_cred=False,
   header_timeout_s=10)`, `graceful_s=gateproto.GRACEFUL_S`. `TESTED_AGAINST = {"llama-swap":
@@ -5637,7 +5641,8 @@ stand-in):
   traceback, is on the process's stderr.
 - `test_the_front_imports_only_its_listed_modules` — a subprocess importing `spark.front.main`: its
   `spark` modules in `sys.modules` are exactly `FRONT_MODULES`; one importing only `spark.front`
-  loads no third-party module.
+  loads no third-party module. *(Changed 2026-10-15, at Task 31's review: with those of a second
+  subprocess importing `spark.cli`, the modules are exactly `FRONT_MODULES`.)*
 
 **Steps:**
 
@@ -7681,8 +7686,14 @@ git commit -m "feat(spark): 🤖 spark load, unload, pin, make-room, release, lo
     look at llama-swap and its restart, nor inside apply's hold.
   - After a run cut off part-way, the front counts as outdated by when its own files were last
     written (`FRONT_APP`), never by the app's sync, which would restart it for every app change.
-    Its restart for the key groups or for `--restart` leaves no file newer than its start, so a run
-    cut off before that restart leaves it to `make restart-front`.
+    ~~Its restart for the key groups or for `--restart` leaves no file newer than its start, so a run
+    cut off before that restart leaves it to `make restart-front`.~~ *(Corrected 2026-10-15, at the
+    review, the controller's ruling (I2):* just before it writes, apply touches a stamp in its `etc`
+    folder for each restart no file's time records: `KEY_GROUPS_STAMP`, mapped in `DEPLOYED` to the
+    front, for the key groups, and `RESTART_FRONT_STAMP`, to the gate and the front, for
+    `--restart`. A run cut off before that restart leaves the stamp newer than the unit's start, so
+    the next `make apply` owes it. A refusal, a dry run, the staging stop and a failed sync return
+    before the write, and touch none.)
   - Until Task 32's wait, an `after_quiet` restart goes ahead only while llama-swap has no model
     loaded (a stopped llama-swap has none), or with `--now`. Apply asks llama-swap again just before
     each one, and a model found loaded holds back the rest of them.
@@ -7691,6 +7702,20 @@ git commit -m "feat(spark): 🤖 spark load, unload, pin, make-room, release, lo
     render's warnings print before the diff (the controller's note at Task 5).
   - `app_changes` holds paths in the `spark/` project, as `app_diff` gives them
     (`src/spark/gate/admission.py`), not repo paths.
+- *(Added 2026-10-15, at Task 31's review, the controller's rulings, as built in its fix round:)*
+  - `FRONT_MODULES` gains `spark.cli` and `spark.gateclient`. The unit runs `spark front`, so the
+    front starts in `spark.cli`'s `main` and `_front`, and `spark.cli` imports `spark.gateclient`
+    at module level. `build_parser`'s other commands' modules are left out: they are imported only
+    to add their subcommands, and none of their code runs once the front serves.
+    `test_the_front_imports_only_its_listed_modules` checks the set against what importing
+    `spark.front.main` and `spark.cli` loads.
+  - Under `make restart-front`, apply's refusal while models are loaded says to unload what's loaded
+    (`spark unload <model>`), then run `make restart-front` again, since no make target passes
+    `--now` with `--restart`; Task 32 replaces that step. A failed sync says to run `make
+    restart-front` again, not `make apply`, which wouldn't restart the front for the key list.
+  - `make install-units`' closing line says that apply restarts the front, as it does llama-swap,
+    only while no model is loaded, and restarts no socket.
+  - `secret-files.md`, plan.md's *Deploy workflow* and S17 gain dated notes, with a Revisions line.
 
 **Tests** (`spark/tests/test_apply.py`):
 
@@ -7768,7 +7793,9 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
   answers `restarting`, never `llama_swap_down`, and nothing unloads; only then the app's sync and
   the files written; `POST /v1/apply/begin` (the units it restarts, saved with the hold); the
   restarts in Task 31's order — the brake, then the gate, then its control socket answering within
-  30 s, then the front, only if its own files changed, then llama-swap last; the gate's
+  30 s, then the front, only if its own files changed (*or, 2026-10-15, as `plan_restarts` plans
+  it: also for the app's environment, the key groups and `--restart`, Task 31's notes*), then
+  llama-swap last; the gate's
   `health.llama_swap` `ok` within 30 s, llama-swap answering again; `POST /v1/apply/end` (the hold
   released, the held requests through admission, the registry re-read, the residents reloaded,
   `apply_restarted` sent); on any failure after `drain-all`, Ctrl-C included, `POST
@@ -8050,6 +8077,18 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
   `0600 root:root` in a folder only root reads, and secret-files.md writes them as root with
   `umask 077` and no `chgrp`. Both blocks change the same way, run on stand-ins first. Until then
   they are harmless in a folder only root reads, and the next bootstrap resets the file.
+- *(Added 2026-10-15, at Task 31's review, the controller's ruling:)* **what `make apply` never
+  restarts.** The runbook gives the restart for each:
+  - **A socket unit**, `local-ai-front.socket`, `local-ai-gate-status.socket` or
+    `local-ai-gate-control.socket`. `make install-units` installs a changed one, but apply restarts
+    no socket, so it takes its new definition only once it is started again, which needs sudo,
+    since the polkit rule excludes sockets, or at the next boot.
+  - **A secret read at start**, which apply never sees: `internal-keys.env` (llama-swap's
+    `EnvironmentFile=`), `front.key`, `gate.key` and `brake.key` (each unit's `LoadCredential=`),
+    the ntfy headers (the gate's, the brake's and the failure notifier's) and `values.env` (the
+    gate's, the brake's and the notifier's `EnvironmentFile=`). The notifier runs only when started,
+    so it reads its own at each start. The key digests and the key list are `make restart-front`'s
+    (Task 31).
 
 **Steps:**
 
@@ -9189,7 +9228,8 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   nothing; the deadline, shortened for the drill with `spark apply --deadline-s 60` (Task 32),
   offers "drain now"; `make apply-now` asks, naming the requests. Then the
   restarts, in their order (the brake, the gate, then llama-swap; the front only when its own
-  files changed), read from `make logs s=gate` and the units' start times; a request sent during
+  files changed, *or, 2026-10-15, its key groups: Task 31's notes*), read from `make logs s=gate`
+  and the units' start times; a request sent during
   them, through the gate's own restart, is held, and goes through once llama-swap answers again,
   or reads `restarting`'s words at its deadline, never `llama_swap_down`'s; the phone gets
   `apply_restarted` and no `llama_swap_down`.
@@ -9417,7 +9457,9 @@ are all fixed above, or in plan.md and the pages it names, but the Minors listed
   so Task 47's new ones re-check them; if one then fails, the pace changes with the constants, in
   the same commit.
 - **A front restart inside apply cuts the requests it holds** (the final check's f-2). They are
-  open connections, so when the front itself restarts (only when its own files change), its held
+  open connections, so when the front itself restarts (only when its own files change; *since
+  2026-10-15, Task 31's review, also for the app's environment, the registry's key groups and
+  `make restart-front`*), its held
   requests are cut, not answered `restarting`: pi retries a connection error, and the web UI shows
   one. plan.md says so; nothing more is planned for it.
 - **Apply's hold beside a make-room hold** (f-5). Task 29 doesn't word a `held` row when both stand;
