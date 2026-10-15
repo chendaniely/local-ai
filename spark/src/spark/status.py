@@ -30,7 +30,7 @@ import yaml
 
 from spark import gateclient, gateproto, messages, paths
 from spark.brake import FALLBACK
-from spark.gateclient import GateClient, GateError, GateUnavailable
+from spark.gateclient import GateClient, GateError, GateRefused, GateUnavailable
 from spark.memory import read_meminfo
 from spark.registry import load_registry
 
@@ -46,8 +46,10 @@ _STEP = {"dan": "make doctor", "agent": "make doctor shows Dan what's wrong"}  #
 
 
 def local_zone() -> tzinfo | None:
-    """The box's own zone, the one Dan reads his clock in."""
-    return datetime.now().astimezone().tzinfo
+    """The box's own zone, the one Dan reads his clock in: None, so each time reads with its own offset, as
+    datetime.fromtimestamp gives it, never the offset of now, which a clock change within the day would put an hour
+    off (Task 29's review, Minor 1)."""
+    return None
 
 
 # Numbers, as the plan shows them: sizes in whole GiB, times on a 24-hour clock.
@@ -66,6 +68,12 @@ def _up(value: float) -> int:
 
 def _near(value: float) -> int:
     return int(_d(value).to_integral_value(ROUND_HALF_UP))
+
+
+def _size(value: float) -> str:
+    """A size in whole GiB, to the nearest; one there but under a GiB reads *less than 1 GiB*, never *0 GiB*."""
+    near = _near(value)
+    return f"{near} GiB" if near >= 1 or value <= 0 else "less than 1 GiB"
 
 
 def _plain(value: Decimal) -> str:
@@ -124,35 +132,42 @@ def _adds_up(start: float, items: list[tuple[float, str]], free_shown: int | Non
 
 def _free(memory: Mapping[str, Any]) -> str:
     """`free for a load: 18 GiB (48 available, less the 24 GiB reserve and 6 GiB still owed)`: the gate's own figure for
-    this caller (rule 9), and the memory terms that give it, the make-room hold among them where the figure counts it
-    (agent's view, since Dan's group loads into the hold). Where the GPU's ceiling or a load starting gave the figure,
-    the memory terms don't reach it, and it says so rather than show a sum that doesn't add up."""
-    free = _d(memory["free_for_a_load_gib"])
-    shown = int(free.to_integral_value(ROUND_FLOOR))
+    this caller (rule 9), and the terms of the one reading it came from, by the term that gave it: the memory term, or,
+    where the view says the GPU's ceiling binds, *the 102 GiB the GPU can allocate, less …*, as a refusal's breakdown
+    words it; then a model still starting, and make-room's hold where the figure counts it (agent's view, since Dan's
+    group loads into the hold). When no showing adds up, the figure stands alone: no cause is guessed (Task 29's review,
+    I2). With no reading of memory, it says so."""
+    free = memory["free_for_a_load_gib"]
+    if free is None or memory["available_gib"] is None:
+        return "free for a load: not known: memory can't be read"
+    shown = int(_d(free).to_integral_value(ROUND_FLOOR))
     figure = f"{shown} GiB" if shown >= 1 else "none"
-    items = [(memory["reserve_gib"], "the {} reserve"), (memory["owed_gib"], "{} still owed")]
+    if memory["ceiling_binds"]:
+        start, opening = memory["ceiling_gib"], "the {} GiB the GPU can allocate"
+        items = [(memory["committed_gib"], "the {} the loaded models may grow to")]
+    else:
+        start, opening = memory["available_gib"], "{} available"
+        items = [(memory["reserve_gib"], "the {} reserve"), (memory["owed_gib"], "{} still owed")]
+    items.append((memory["starting_gib"], "the {} the model still starting may take"))
     tries = [items]
     if memory["held_gib"] > 0:
         tries.append([*items, (memory["held_gib"], "the {} make-room holds for Dan")])
     for terms in tries:
-        found = _adds_up(memory["available_gib"], terms, shown if shown >= 1 else None)
+        found = _adds_up(start, terms, shown if shown >= 1 else None)
         if found is not None:
-            start, less = found
-            return f"free for a load: {figure} ({start} available, less {messages._and(less)})"
-    start = _plain(_floor(_d(memory["available_gib"])))
-    less = [words.format(f"{_near(value)} GiB") for value, words in items if _near(value)]
-    return (f"free for a load: {figure} (the GPU's ceiling or a load still starting holds it below {start} available, "
-            f"less {messages._and(less)})")
+            first, less = found
+            taken = f", less {messages._and(less)}" if less else ""
+            return f"free for a load: {figure} ({opening.format(first)}{taken})"
+    return f"free for a load: {figure}"
 
 
 def _unaccounted(memory: Mapping[str, Any]) -> list[str]:
     """`used by other processes: 26 GiB`, only above 0: idle MemAvailable, less what's available and the loaded models'
     footprints. Cold residents hold less than their footprints, so at idle the figure goes below 0: no line then."""
     value = memory["unaccounted_gib"]
-    if not value > 0:
+    if value is None or not value > 0:
         return []
-    near = _near(value)
-    return [f"used by other processes: {near} GiB" if near >= 1 else "used by other processes: less than 1 GiB"]
+    return [f"used by other processes: {_size(value)}"]
 
 
 def _doing(m: Mapping[str, Any]) -> str:
@@ -184,7 +199,7 @@ def _models(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) 
             mark = models[i]["brake_mark"]
             if mark is not None:
                 seen = mark["seen_gib"]
-                seen_text = f"seen using {_near(seen)} GiB" if seen is not None else "seen using: not known"
+                seen_text = f"seen using {_size(seen)}" if seen is not None else "seen using: not known"
                 lines.append(_under(f"marked: it was loading when the brake fired at {_when(mark['at'], now, tz)} "
                                     f"({seen_text});"))
                 lines.append(_under("only you can load it again" if words == "dan" else "only Dan can load it again"))
@@ -192,7 +207,9 @@ def _models(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) 
 
 
 def _waited(waited_s: float, wait_s: float) -> str:
-    """`2 min of 10`, `12 s of 30`, `40 s of 10 min`: the unit once where both share it."""
+    """`2 min of 10`, `12 s of 30`, `40 s of 10 min`: the unit once where both share it. Never below 0 (Task 29's
+    review, Minor 8)."""
+    waited_s = max(0.0, waited_s)
     if waited_s >= 60:
         waited, unit, whole = f"{int(waited_s // 60)} min", 60, wait_s % 60 == 0
     else:
@@ -208,11 +225,13 @@ def _why(wait: Mapping[str, Any], view: Mapping[str, Any], label: str, words: st
          commands: Mapping[str, str]) -> str:
     """A wait's reason (gateproto.WAITING_WHY), in Task 29's words."""
     why = wait["why"]
-    if why == "memory":
+    if why == "memory":  # the waiter's own group's figure, never the viewer's (Task 29's review, I1)
         footprints = {m["name"]: m["footprint_gib"] for m in view["models"]}
-        free = int(_d(view["memory"]["free_for_a_load_gib"]).to_integral_value(ROUND_FLOOR))
-        need = f"needs {_up(footprints[wait['model']])} GiB, " if wait["model"] in footprints else ""
-        return f"waiting for memory: {need}{free if free >= 1 else 'none'} free for a load"
+        parts = [f"needs {_up(footprints[wait['model']])} GiB"] if wait["model"] in footprints else []
+        if wait["free_gib"] is not None:
+            free = int(_d(wait["free_gib"]).to_integral_value(ROUND_FLOOR))
+            parts.append(f"{free if free >= 1 else 'none'} free for a load")
+        return f"waiting for memory: {', '.join(parts)}" if parts else "waiting for memory"
     if why == "slot":
         loading = [m["label"] for m in view["models"] if m["state"] == "starting"]
         return f"waiting its turn: {loading[0] if loading else 'another model'} is loading"
@@ -240,15 +259,20 @@ def _waiting(view: Mapping[str, Any], words: str, commands: Mapping[str, str]) -
     return lines
 
 
-def _paused(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> str:
+def _paused(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> list[str]:
     """The brake's hold: `no` without one (the view carries no last fire or release then: the controller's ruling at
-    Task 29); with one, when it fired and how low memory ran, and whether it lifts by itself or waits for Dan."""
+    Task 29); with one, when it fired and how low memory ran, and whether it lifts by itself or waits for Dan; for one
+    whose file can't be read, the gate's reason under it."""
     paused = view["paused"]
     if paused is None:
-        return _row("paused", "no")
+        return [_row("paused", "no")]
     since = paused["since"]
-    lead = (f"since {_when(since, now, tz)}" if since is not None
-            else "by a brake hold that doesn't record when it fired")
+    if paused["problem"] is not None:  # it still holds: fail closed (Task 29's review, Minor 2)
+        lead = "by a brake hold whose file can't be read"
+    elif since is not None:
+        lead = f"since {_when(since, now, tz)}"
+    else:
+        lead = "by a brake hold that doesn't record when it fired"
     if paused["available_gib"] is not None:
         lead += f" ({messages._reading(paused['available_gib'])} available)"
     if paused["waits_for_dan"]:
@@ -256,7 +280,7 @@ def _paused(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) 
     else:
         then = (f"resumes by itself after {gateproto.RELEASE_AFTER_S // 60:g} min above "
                 f"{messages._line(view['memory']['warn_gib'])} available")
-    return _row("paused", f"{lead} · {then}")
+    return [_row("paused", f"{lead} · {then}"), *([_under(paused["problem"])] if paused["problem"] else [])]
 
 
 def _held(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) -> str:
@@ -269,7 +293,7 @@ def _held(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) ->
     held = view["held"]
     if held is not None:
         until = f"until {_when(held['until'], now, tz)}" if held["until"] is not None else "until a reboot"
-        size = f"{_near(held['size_gib'])} GiB"
+        size = _size(held["size_gib"])
         parts.append(f"{size} for you {until} · spark make-room --done ends it" if words == "dan"
                      else f"{size} for Dan {until} · Dan's spark make-room --done ends it")
     if not parts:
@@ -358,9 +382,13 @@ def format_status(view: Mapping[str, Any], *, tz: tzinfo | None, words: str = "d
         raise _Unreadable(f"its schema is {view.get('schema')}, and this reads {gateproto.STATUS_SCHEMA}")
     commands = commands or {}
     now, memory = view["at"], view["memory"]
-    lines = [_header(view["host"], memory["total_gib"], memory["available_gib"], memory["brake_gib"]), _free(memory),
+    if memory["available_gib"] is None or memory["total_gib"] is None:
+        header = f"{view['host']} · memory can't be read"
+    else:
+        header = _header(view["host"], memory["total_gib"], memory["available_gib"], memory["brake_gib"])
+    lines = [header, _free(memory),
              *_unaccounted(memory), *_models(view, now, tz, words), *_waiting(view, words, commands),
-             _paused(view, now, tz, words), _held(view, now, tz, words), *_recent(view, now, tz),
+             *_paused(view, now, tz, words), _held(view, now, tz, words), *_recent(view, now, tz),
              *_health(view, now, tz, words), *(_row("problem", problem) for problem in view["problems"])]
     return "\n".join(_shown(line) for line in lines)
 
@@ -391,6 +419,11 @@ def _down(err: GateError, registry: Any, registry_problem: str | None, words: st
     if isinstance(err, GateUnavailable):
         gate = "not answering"
         said = f"not answering: what's loaded, waiting, held or paused is unknown until it's back · {_STEP[words]}"
+    elif isinstance(err, GateRefused) and err.status >= 500 and words == "agent":
+        # The gate's own words for an error of its own name Dan's command (`make logs s=gate`): agent is told it's
+        # Dan's (Task 29's review, Minor 5).
+        gate = said = (f"The gate couldn't answer this request (HTTP {err.status}); Dan can see why with `make logs "
+                       "s=gate` on the Spark.")
     else:
         gate = said = str(err)
     shape = {"schema": gateproto.STATUS_SCHEMA, "host": host, "at": time.time(),
@@ -452,8 +485,8 @@ def run(args: argparse.Namespace) -> int:
             return 0
         except _Unreadable as err:
             why = str(err)
-        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as err:
-            why = type(err).__name__
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError, ArithmeticError, OSError) as err:
+            why = type(err).__name__  # a field missing, or a number past any reading: a size, a time (Minor 4)
         failed = GateError(f"answered, but with a status this spark status can't read ({why}); spark status --json "
                            "shows it as it came")
     shape, text = _down(failed, registry, registry_problem, words)

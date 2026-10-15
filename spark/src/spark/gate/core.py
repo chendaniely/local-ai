@@ -67,7 +67,7 @@ from typing import Any
 from spark import hold as holdfile
 from spark import launch as launches
 from spark import memory, messages, procs, render, sdnotify, tickets
-from spark.brake import read_key_check
+from spark.brake import KEY_CHECK_FILE, read_key_check
 from spark.brakeevents import EVENTS_FILE, read_events
 from spark.gate import units as unitwatch
 from spark.gate.admission import Admitted, Admitter
@@ -137,12 +137,13 @@ def _names_llama_swap(restarting: Iterable[str]) -> bool:
 
 def _check_time(at: str) -> float | None:
     """A start check's time, as the brake records it (brake._now: local, with its offset; Phase 1's had none, and reads
-    as local time), in Unix seconds; None for one that isn't a time."""
+    as local time), in Unix seconds; None for one that isn't a time, the whole conversion guarded, as room.fired_at's
+    is: a naive time at the calendar's edge fails in astimezone (Task 29's review, I3)."""
     try:
         when = datetime.fromisoformat(at)
-    except ValueError:
+        return when.timestamp() if when.tzinfo is not None else when.astimezone().timestamp()
+    except (ValueError, OverflowError, OSError):
         return None
-    return when.timestamp() if when.tzinfo is not None else when.astimezone().timestamp()
 
 
 def _boot_time(proc: Path) -> float | None:
@@ -1321,32 +1322,41 @@ class GateCore:
             try:
                 mem = self._read_meminfo()
             except (OSError, ValueError):
-                mem = MemInfo(0.0, 0.0)
+                mem = None  # memory can't be read: the view says so, never a figure of 0
         if uses_hold is None:
             group = registry.key_groups.get("dan")
             uses_hold = True if group is None else group.uses_hold
-        try:
-            free = float(self.admitter.free_for_a_load(uses_hold=uses_hold))
-        except (OSError, ValueError):
-            free = 0.0
+        # One reading for the figure and every term of it (Task 29's review, I2): the free for a load each row shows,
+        # the owed and the ceiling's terms all come from `mem`, so the breakdown `spark status` shows adds up.
+        figures = None if mem is None else self.admitter._figures(mem.available_gib)
         footprints = sum(record.footprint_gib for record in state.models.values())
-        memory_view = {"total_gib": mem.total_gib, "available_gib": mem.available_gib,
+        committed = (figures.committed if figures is not None
+                     else sum(r.footprint_gib for r in state.models.values() if r.state != "starting"))
+        memory_view = {"total_gib": None if mem is None else mem.total_gib,
+                       "available_gib": None if mem is None else mem.available_gib,
                        "brake_gib": registry.brake.brake_gib, "warn_gib": registry.brake.warn_gib,
-                       "above_brake_gib": mem.available_gib - registry.brake.brake_gib,
-                       "reserve_gib": registry.budget.reserve_gib, "owed_gib": float(self.admitter.owed()),
+                       "above_brake_gib": None if mem is None else mem.available_gib - registry.brake.brake_gib,
+                       "reserve_gib": registry.budget.reserve_gib,
+                       "owed_gib": float(figures.owed if figures is not None else self.admitter.owed()),
                        "held_gib": state.room_hold.size_gib if state.room_hold is not None else 0.0,
-                       "free_for_a_load_gib": free,
-                       "unaccounted_gib": registry.budget.idle_available_gib - mem.available_gib - footprints}
+                       "free_for_a_load_gib": None if figures is None else float(figures.free(uses_hold)),
+                       "unaccounted_gib": (None if mem is None
+                                           else registry.budget.idle_available_gib - mem.available_gib - footprints),
+                       "ceiling_gib": float(registry.budget.allocatable_gib), "committed_gib": float(committed),
+                       "starting_gib": float(self.admitter.starting_gib()),
+                       "ceiling_binds": None if figures is None else figures.ceiling_binds}
+        brake, key_problem = self._brake_health()
         hold = self.state.applying
         return {"schema": STATUS_SCHEMA, "host": self._host, "at": now, "memory": memory_view,
-                "models": self._model_views(now), "waiting": self.admitter.waiting(), "paused": self._paused(now),
+                "models": self._model_views(now), "waiting": self.admitter.waiting(figures),
+                "paused": self._paused(now, self._read_hold()),
                 "held": None if state.room_hold is None else {"size_gib": state.room_hold.size_gib,
                                                               "until": state.room_hold.until},
                 "pins": [{"model": pin.model, "label": self._label(pin.model), "until": pin.until}
                          for pin in state.pins.values() if pin.until is None or pin.until > now],
                 "sessions": [{"id": s.id, "model": s.model, "label": s.label, "started_at": s.started_at,
                               "expires_at": s.renewed_at + SESSION_TTL_S} for s in state.sessions.values()],
-                "recent": self._recent(sees), "health": self._health(now),
+                "recent": self._recent(sees), "health": self._health(now, brake, key_problem),
                 "applying": None if hold is None or hold.ended else {"since": hold.since,
                                                                      "restarting": list(hold.restarting)},
                 "problems": self._problems()}
@@ -1385,11 +1395,11 @@ class GateCore:
         except Exception:  # noqa: BLE001 (a session that can't be checked counts as live, as an idle unload takes it)
             return True
 
-    def _paused(self, now: float) -> dict | None:
-        """The brake's hold, read fresh: when it fired, what was available then, when it lifts by itself if memory
-        stays above the warn line and nothing else holds it (None while it waits for Dan or memory is under the
-        line), and the last automatic release (none while it is only assumed, after damage)."""
-        hold = self._read_hold()
+    def _paused(self, now: float, hold: holdfile.Hold | None) -> dict | None:
+        """The brake's hold, as the view read it: when it fired, what was available then, when it lifts by itself if
+        memory stays above the warn line and nothing else holds it (None while it waits for Dan or memory is under the
+        line), the last automatic release (none while it is only assumed, after damage), and, for a hold file that
+        can't be read, which still holds, why (Task 29's review)."""
         if hold is None:
             return None
         fired = fired_at(hold)
@@ -1402,7 +1412,8 @@ class GateCore:
             releases_at = max(since, min(seen, now) if seen is not None else now) + RELEASE_AFTER_S
         return {"since": fired, "available_gib": hold.available_gib, "releases_at": releases_at,
                 "waits_for_dan": waits, "last_fired": fired,
-                "last_released": None if self.state.release_assumed else self.state.last_auto_release_at}
+                "last_released": None if self.state.release_assumed else self.state.last_auto_release_at,
+                "problem": hold.reason if hold.since == holdfile.UNREADABLE_SINCE else None}
 
     def _recent(self, sees: Callable[[Any], bool] | None) -> list[dict]:
         """The refusals and the gate's other events, all in one list by time, each its words (Task 29)."""
@@ -1419,36 +1430,43 @@ class GateCore:
                 rows.append({"at": item.at, "text": item.text, "code": None, "model": item.model, "key_label": None})
         return rows
 
-    def _health(self, now: float) -> dict:
+    def _health(self, now: float, brake: dict, key_problem: str | None) -> dict:
         state = self.state
         if getattr(self._publish, "not_set_up", False) is True:  # gate.main's publisher for a gate without ntfy
             ntfy = "not_set_up"
         else:
             ntfy = "ok" if state.notify_failing_since is None else "failing"
         return {"front": "ok" if self.front.connected else "not connected", "gate": "ok",
-                "brake": self._brake_health(),
+                "brake": brake,
                 "llama_swap": "ok" if self._answering else "not answering",
                 "ntfy": {"status": ntfy, "failing_since": state.notify_failing_since, "dropped": self.notifier.dropped},
                 "activity_age_s": None if self._activity_at is None else max(0.0, now - self._activity_at),
                 "unticketed_engines": [dict(engine) for engine in self._unticketed],
                 "no_ticket_refusals": len(self._backstop),
                 "damaged_at": state.damaged_at, "damaged_kept_as": state.damaged_kept_as,
-                "read_problems": list(self._read_problems.values())}
+                # The view's own reads' too, the brake's start check (Task 29's review), kept nowhere: the view changes
+                # nothing.
+                "read_problems": [*self._read_problems.values(), *([key_problem] if key_problem else [])]}
 
-    def _brake_health(self) -> dict:
+    def _brake_health(self) -> tuple[dict, str | None]:
         """The brake's unit, as last read, and its check at start that llama-swap takes its key, read fresh from the
         brake's record (the controller's ruling at Task 29: the check moved into the gate, plan.md's *Visibility and
-        notifications*). `ok` only for a unit that is up and a check that passed; a check that failed, still waits,
-        was never recorded or can't be read says so, never ok. `key_checked_at` is when a check passed, whatever the
-        unit's state."""
+        notifications*), and why that record can't be read, for `health.read_problems`. `ok` only for a unit that is
+        up and a check that passed; a check that failed, still waits, was never recorded or can't be read says so,
+        never ok. The record is read as every record of the brake's is, never following a link, never waiting, and only
+        up to a cap (brake.read_key_check, Task 29's review, I3), and a passed check whose time isn't one can't be
+        read. `key_checked_at` is when a check passed, whatever the unit's state."""
         unit = self._units.get("brake")
-        check, unreadable = read_key_check(self.brake_dir)
+        check, problem = read_key_check(self.brake_dir)
         checked_at = _check_time(check.at) if check is not None and check.ok is True else None
+        if check is not None and check.ok is True and checked_at is None:
+            problem = (f"the brake's start check {self.brake_dir / KEY_CHECK_FILE} records a time that isn't one: "
+                       f"{messages._one_line(check.at)[:40]!r}")
         if unit is None:
             status = "unknown"  # the units aren't read yet
         elif not unit.active:
             status = "down"
-        elif unreadable is not None:
+        elif problem is not None:
             status = "start check unreadable"
         elif check is None:
             status = "start check not recorded"
@@ -1458,7 +1476,7 @@ class GateCore:
             status = f"start check failed: {messages._one_line(check.detail)}"
         else:
             status = "ok"
-        return {"status": status, "key_checked_at": checked_at}
+        return {"status": status, "key_checked_at": checked_at}, problem
 
     def _problems(self) -> list[str]:
         problems = []

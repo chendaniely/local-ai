@@ -2241,7 +2241,8 @@ async def test_waiting_rows_show_each_queued_request(tmp_path):
         gate.ask(AGENT, CODER)
         await gate.at(T + 120)
         assert gate.admitter.waiting() == [
-            {"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "memory"}]
+            {"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "memory",
+             "free_gib": None}]  # no reading given (the status view passes its own: Task 29's review, I1)
 
 
 def test_privileges_are_the_groups_and_dans_commands_get_dans():

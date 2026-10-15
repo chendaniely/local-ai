@@ -2128,6 +2128,11 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   and `damaged_kept_as` (Task 13's, while the damage is news) and `read_problems`. That is each
   reading the gate couldn't take at its last try, in words: `/proc`, nvidia-smi, a unit's `systemctl
   show`, launch's records, its own state's save. A failed read shows there; it never ends a loop.
+  *(Added 2026-10-14, the controller's rulings, at Task 29's review:)* `memory` gains
+  `ceiling_gib`, `committed_gib`, `starting_gib` and `ceiling_binds`, all from the view's one
+  reading, and its readings are null while the gate has none; each `waiting` row gains `free_gib`,
+  its own group's figure; `paused` gains `problem`, why a hold file that still holds can't be read;
+  and `read_problems` also takes the view's own read of the brake's start check.
 - `gateclient.GateClient(path: Path, timeout_s: float)`: `get(route) -> dict`, `post(route, body:
   dict) -> dict`, `delete(route) -> dict`, `stream(route, body: dict | None = None) ->
   Iterator[dict]` (a `POST` when a body is given, for `/v1/unload`). `GateUnavailable` —
@@ -4217,7 +4222,8 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
   `spark status`'s *recent* that aren't refusals, the newest `RECENT_HISTORY` (50), each dropped
   once `RECENT_KEEP_S` (a day) old on every save, a field it doesn't know kept as Task 13's rules
   keep one. Room records a pin make-room ended and the sessions that lost the model (kind
-  `make-room`, *make-room unloaded the coder: your pin on it ended, and agent's pi lost it.*, `uids`
+  `make-room`, *make-room unloaded the coder: ~~your pin~~ Dan's pin on it ended, and agent's pi lost
+  it.* *(corrected 2026-10-14, the controller's ruling, at Task 29's review: *your pin* read untrue in `agent`'s view, which shows the event when `agent`'s session lost the model; pins are Dan's alone, so the words are now true for every caller who sees them; `messages.room_ended`)*, `uids`
   the caller's, the pin's and each session's), and each release of the brake's hold (kind
   `brake_released`, *brake released; reloading Gemma and the embeddings*, as plan.md's `spark
   status` example has it; Dan's *brake released with `make brake-release`; …*, ~~`uids` his~~
@@ -4321,7 +4327,8 @@ git commit -m "feat(spark): 🤖 the gate drains before it unloads, and idle-unl
   second re-review, and at Task 17's re-review before it: worded from the stamp, as the second
   re-review's block below has it)*). Boot and `make apply`'s restart reload as normal.
 - **`spark unload` of a pinned model** ends the pin (and its sessions lose the model), recorded in
-  *recent* (kind `unload`, *`spark unload` unloaded the coder: your pin on it ended.*), and its
+  *recent* (kind `unload`, *`spark unload` unloaded the coder: ~~your pin~~ Dan's pin on it ended.*,
+  corrected 2026-10-14 at Task 29's review, as Q5's line above), and its
   answer, `UnloadDone`, gains `pin_ended`, which Task 30 words *Unloaded the coder; the pin on it
   ended.* (`messages.unloaded(label, pin_ended=True)`).
 - **The smaller ones:** `brake_released` is sent when MemAvailable can't be read, *Brake released at
@@ -5640,7 +5647,11 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
 **Interfaces:**
 
 - `GateLink(status_socket: Path, clock)` — httpx over the Unix socket
-  (`httpx.AsyncHTTPTransport(uds=…)`, `trust_env=False`): keeps `GET /v1/front/events` open and
+  (`httpx.AsyncHTTPTransport(uds=…)`, `trust_env=False`) *(2026-10-14, 240e4cf: the front's gate
+  client now runs on `_GateTransport`, httpx's transport with its pool on `_GateNetwork`, which uses
+  asyncio's own streams. anyio 4.15's UNIX stream set a cancelled read's result when a cancel and the
+  gate's bytes shared a turn of the loop. The pool now honours the intended limits: no cap at once,
+  8 kept. Before this, httpx's defaults of 100 and 20 held unread.)*: keeps `GET /v1/front/events` open and
   follows its events, the `models` of each `hello` and `state` replacing the front's `ModelList`
   (Task 20); `gate_up` turns false only once that call has dropped and a new one hasn't
   been answered within `GATE_DOWN_AFTER_S`; `async admit(model, key, deadline, request_id) -> dict`
@@ -7113,7 +7124,8 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
 - *(Added 2026-10-08, the controller's ruling, at Task 17:)* the `recent` rows take, beside the
   refusals, `GateState.recent` (Task 17), the gate's events that aren't refusals, all in one list
   by time, each its `text`: a pin make-room ended and the sessions that lost the model (*make-room
-  unloaded the coder: your pin on it ended, and agent's pi lost it.*), and each release of the
+  unloaded the coder: ~~your pin~~ Dan's pin on it ended, and agent's pi lost it.*, corrected
+  2026-10-14 at Task 29's review: words true for every caller, Task 17's Q5), and each release of the
   brake's hold, as plan.md's example has it, *brake released; reloading Gemma and the embeddings*
   (*reloading*, since the line is recorded as the reloads are queued; plan.md's example is corrected
   with it). Through the status socket, an event shows when its `uids` holds the caller's ~~.~~, or
@@ -7167,6 +7179,40 @@ git commit -m "feat(host): 🤖 agent's processes get an OOM score that root set
     - D14: `launch.newest_refusal` deleted.
     - D15: the Makefile's help, *room for a load, what's loaded, waiting, paused or held, recent,
       health (from the gate)*.
+- *(Added 2026-10-14, the controller's rulings, at Task 29's review, fix round 1:)*
+  - **I1:** each `waiting` row carries its own group's figure, `WaitingView.free_gib`, from the
+    view's one reading (`Admitter.waiting(figures)`): `agent`'s, and the gate's own reloads',
+    count make-room's hold. Status prints that, never the viewer's figure.
+  - **I2:** `status_view` takes *free for a load*, *owed* and the ceiling's terms from one
+    `admitter._figures(mem.available_gib)`, with `mem` the gate's last memory reading.
+    `MemoryView` gains `ceiling_gib`, `committed_gib`, `starting_gib` and `ceiling_binds`, so status
+    names the term that gave the figure (the memory term, *the 102 GiB the GPU can allocate, less
+    …*, and *the 27 GiB the model still starting may take*). When no breakdown adds up, it shows the
+    figure alone and names no cause. With no reading of memory at all, the view's readings are
+    null, never 0, and status says *memory can't be read*.
+  - **I3:** the gate's reads of the brake's records never follow a link, never wait and read at
+    most `tickets.RECORD_MAX_BYTES`. `brake.read_key_check` and `hold.read_hold` (and
+    `release_hold`'s read of what it moved aside) read through `tickets.read_record(path,
+    own=False)`. `_check_time` guards the whole conversion, as `room.fired_at` does, and a passed
+    check whose time isn't one reads *start check unreadable*. A hold file that isn't a plain small
+    file still holds, so the brake still fires and writes a true hold in its place.
+  - **I4:** the gate's events read true for every caller: *Dan's pin on it ended* (Task 17's Q5,
+    corrected there).
+  - **Minors:**
+    - each time reads with its own offset (`status.local_zone()` returns None);
+    - an unreadable hold reads *paused by a brake hold whose file can't be read*, with the gate's
+      reason under it (`PausedView.problem`);
+    - plan.md's note is corrected;
+    - status exits 0 on any size or time past a reading;
+    - the gate's 500 tells `agent` that `make logs s=gate` is Dan's;
+    - sizes under a GiB read *less than 1 GiB*;
+    - the start check's unread reason shows under `health` (computed in the view, which changes
+      nothing);
+    - a wait never reads below 0, clamped in `Admitter.waiting` and in status.
+    - Minors 9 to 11 go to the phase-end list.
+  - **Files also:** `gate/admission.py`, `hold.py`, `messages.py` (`room_ended`), and the tests
+    `test_gate_admission.py`, `test_gate_state.py`, `test_brake.py`, `test_gate_room.py` and
+    `test_messages.py`.
 
 **Tests** (`spark/tests/test_status.py`; a gate stand-in on a short Unix socket):
 

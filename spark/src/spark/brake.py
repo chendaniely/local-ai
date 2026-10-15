@@ -160,7 +160,10 @@ class KeyCheck:
 
 def parse_key_check(text: str) -> KeyCheck:
     """A start check as the brake records it; ValueError for anything else."""
-    data = json.loads(text)
+    return _key_check(json.loads(text))
+
+
+def _key_check(data: Any) -> KeyCheck:
     if not isinstance(data, dict):
         raise ValueError("not a start check: expected a JSON object")
     at, ok, detail, key_env = (data.get(name) for name in ("at", "ok", "detail", "key_env"))
@@ -171,13 +174,15 @@ def parse_key_check(text: str) -> KeyCheck:
 
 
 def read_key_check(state_dir: Path) -> tuple[KeyCheck | None, str | None]:
-    """The brake's last start check, or None when it recorded none; and, for a record that can't be read, why."""
+    """The brake's last start check, or None when it recorded none; and, for a record that can't be read, why. Read as
+    every record in these folders is (tickets.read_record): never following a link, never waiting on a FIFO, and only
+    up to its cap, since the gate reads it on its event loop for any caller of the status socket (Task 29's review)."""
     path = Path(state_dir) / KEY_CHECK_FILE
     try:
-        return parse_key_check(path.read_text()), None
+        return _key_check(tickets.read_record(path, own=False)), None
     except FileNotFoundError:
         return None, None
-    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+    except (OSError, ValueError) as err:  # read_record's: a link, a FIFO, too large, not JSON, nested too deep
         return None, f"the brake's start check {path} can't be read: {err}"
 
 

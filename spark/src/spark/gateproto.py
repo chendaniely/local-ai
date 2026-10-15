@@ -522,16 +522,23 @@ WAITING_WHY: tuple[str, ...] = get_args(WaitingWhy)
 
 
 class MemoryView(TypedDict):
-    total_gib: float
-    available_gib: float  # MemAvailable
+    # One reading's (Task 29's review, I2): available, the figure and its terms all come from the same MemAvailable, so
+    # the breakdown `spark status` shows adds up. Each reading's field is None while the gate has no reading of memory
+    # at all, which `spark status` says, never a figure of 0.
+    total_gib: float | None
+    available_gib: float | None  # MemAvailable
     brake_gib: float
     warn_gib: float
-    above_brake_gib: float
+    above_brake_gib: float | None
     reserve_gib: float
     owed_gib: float
     held_gib: float
-    free_for_a_load_gib: float  # rule 9's figure, for the caller
-    unaccounted_gib: float  # idle MemAvailable, less available, less the loaded models' footprints
+    free_for_a_load_gib: float | None  # rule 9's figure, for the caller
+    unaccounted_gib: float | None  # idle MemAvailable, less available, less the loaded models' footprints
+    ceiling_gib: float  # rule 9's CUDA-allocatable ceiling
+    committed_gib: float  # the loaded models' footprints, which the ceiling term takes
+    starting_gib: float  # the footprints of the models still starting
+    ceiling_binds: bool | None  # ceiling − committed is the smaller term, so it gave the figure; None with no reading
 
 
 class BrakeMarkView(TypedDict):
@@ -557,18 +564,22 @@ class ModelView(TypedDict):
 class WaitingView(TypedDict):
     key_label: str
     model: str
-    waited_s: float
+    waited_s: float  # never below 0
     wait_s: float
     why: WaitingWhy
+    # The waiter's own group's free for a load, from the view's one reading: a group that doesn't load into make-room's
+    # hold, the gate's own reloads among them, counts the hold (Task 29's review, I1). None with no reading of memory.
+    free_gib: float | None
 
 
 class PausedView(TypedDict):
-    since: float
-    available_gib: float
+    since: float | None  # when it fired; None for a hold that doesn't say, or can't be read
+    available_gib: float | None
     releases_at: float | None
     waits_for_dan: bool
     last_fired: float | None
     last_released: float | None
+    problem: str | None  # why the hold file can't be read, which still holds (Task 29's review); None when it reads
 
 
 class HeldView(TypedDict):
@@ -639,7 +650,8 @@ class HealthView(TypedDict):
     damaged_at: float | None
     damaged_kept_as: str | None
     # Each reading the gate couldn't take at its last try, in words: /proc, nvidia-smi, a unit's `systemctl show`,
-    # launch's records, its own state's save. A failed read never ends a loop; it shows here instead (Task 18).
+    # launch's records, its own state's save. A failed read never ends a loop; it shows here instead (Task 18). And the
+    # view's own: the brake's start check, when its record can't be read (Task 29's review).
     read_problems: list[str]
 
 

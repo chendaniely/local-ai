@@ -746,6 +746,43 @@ def test_a_hold_with_a_damaged_new_field_still_holds(tmp_path, field, value):
     assert release_waits_for_dan(damaged, boot_id=BOOT, last_auto_release_at=None, now=T)
 
 
+def _in_a_subprocess(code: str, *args: str) -> str:
+    """`code` run by this Python in a process of its own, bounded at 20 s, so a read that waits fails the test rather
+    than hanging it: its stdout."""
+    import subprocess
+    import sys
+
+    return subprocess.run([sys.executable, "-c", code, *args], capture_output=True, text=True, timeout=20,
+                          check=True).stdout
+
+
+@pytest.mark.parametrize("kind", ["a FIFO", "a link to a hold", "past the cap"])
+def test_a_hold_file_that_isnt_a_plain_small_file_holds_and_never_hangs(tmp_path, kind):
+    # Task 29's review, I3: the gate reads the hold on its event loop (status, admission) and the brake as it fires,
+    # so the read never waits (opening a FIFO waits for a writer), never follows a link and never reads past a cap. Such
+    # a file still holds: fail closed, with a reason that names it.
+    path = tmp_path / hold.FILE
+    if kind == "a FIFO":
+        os.mkfifo(path)
+    elif kind == "a link to a hold":
+        (tmp_path / "elsewhere").mkdir()
+        write_hold(tmp_path / "elsewhere", Hold(local(T), "19.6 GiB available", ()))
+        path.symlink_to(tmp_path / "elsewhere" / hold.FILE)
+    else:
+        path.write_text(json.dumps({"since": local(T), "reason": "x" * 70_000, "unloaded": []}))
+    out = _in_a_subprocess(
+        "import sys, json\nfrom pathlib import Path\nfrom spark.hold import read_hold\n"
+        "h = read_hold(Path(sys.argv[1]))\nprint(json.dumps([h.since, h.reason]))", str(tmp_path))
+    since, reason = json.loads(out)
+    assert since == hold.UNREADABLE_SINCE and reason.startswith(f"hold file {path} can't be read: ")
+    # The gate's release reads what it moved aside the same way: one that isn't a hold is put back, never released.
+    out = _in_a_subprocess(
+        "import sys\nfrom pathlib import Path\nfrom spark.hold import Hold, release_hold\n"
+        "print(release_hold(Path(sys.argv[1]), Hold(sys.argv[2], '19.6 GiB available', ())))", str(tmp_path), local(T))
+    assert out.strip() == "False" and os.path.lexists(path)
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(hold.FILE)) == [hold.FILE]
+
+
 def test_release_hold_with_the_hold_it_judged_lifts_only_that_hold(tmp_path):
     # The gate's automatic release removes only the hold it judged: a newer brake's hold, written between its reading
     # and its removal, stands (the controller's ruling at Task 17). Dan's release lifts whatever stands.

@@ -13,6 +13,7 @@ import socket
 import socketserver
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
@@ -25,6 +26,8 @@ from spark import cli, gateclient, gateproto, messages, paths, status
 from spark.memory import MemInfo
 from spark.messages import Holder, Moment
 from spark.status import format_status
+
+REAL_LOCAL_ZONE = status.local_zone
 
 UTC = timezone.utc
 FIXTURE = Path(__file__).parent / "fixtures" / "models.yaml"
@@ -66,12 +69,14 @@ def example_view() -> dict:
         "schema": 1, "host": "brightroar", "at": MOMENT,
         "memory": {"total_gib": 121.6, "available_gib": 48.0, "brake_gib": 20, "warn_gib": 28, "above_brake_gib": 28.0,
                    "reserve_gib": 24, "owed_gib": 6.0, "held_gib": 0.0, "free_for_a_load_gib": 18.0,
-                   "unaccounted_gib": 26.0},
+                   "unaccounted_gib": 26.0, "ceiling_gib": 102.0, "committed_gib": 43.0, "starting_gib": 0.0,
+                   "ceiling_binds": False},
         "models": [model(GEMMA, "Gemma", 32, True, inflight=1, oldest_request_s=20.0),
                    model(EMBED, "the embeddings", 8, True), model(WHISPER, "whisper", 3, True),
                    model(CODER, "the coder", 41, False, state="not_loaded", last_use=None,
                          brake_mark={"at": at(3, 12), "seen_gib": 26.0})],
-        "waiting": [{"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "dan"}],
+        "waiting": [{"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "dan",
+                     "free_gib": 18.0}],
         "paused": None, "held": None, "pins": [],
         "sessions": [{"id": "s-1", "model": CODER, "label": "agent's pi", "started_at": at(8, 40),
                       "expires_at": at(20, 40)}],
@@ -146,7 +151,7 @@ class _Gate(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.seen.append((self.command, self.path, {k.lower(): v for k, v in self.headers.items()}))
         data = json.dumps(self.server.view).encode()
-        self.send_response(200)
+        self.send_response(self.server.status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -154,10 +159,10 @@ class _Gate(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def serving(path: Path, view: dict):
+def serving(path: Path, view: dict, status: int = 200):
     server = socketserver.ThreadingUnixStreamServer(str(path), _Gate)
     server.daemon_threads = True
-    server.view, server.seen = view, []
+    server.view, server.seen, server.status = view, [], status
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     try:
@@ -231,7 +236,9 @@ def test_agents_status_shows_only_its_refusals_and_no_dans_processes(box):
     # Dan's refusal left out, and Dan's process unnamed in agent's words. Dan's steps are named as Dan's (Task 6).
     view = example_view()
     view["recent"] = [view["recent"][0], {"at": at(8, 50), "text": no_fit(dans=False), "code": "no_fit",
-                                          "model": CODER, "key_label": "agent"}]
+                                          "model": CODER, "key_label": "agent"},
+                      {"at": at(8, 55), "code": None, "model": CODER, "key_label": None,  # Task 29's review, I4
+                       "text": messages.room_ended("the coder", pinned=True, sessions=["agent's pi"])}]
     with serving(box.folder / "status.sock", view) as gate:
         code, out = box(admin=False)
     assert code == 0 and gate.seen and not (box.folder / "control.sock").exists()
@@ -239,8 +246,9 @@ def test_agents_status_shows_only_its_refusals_and_no_dans_processes(box):
     assert lines[7:10] == ["            marked: it was loading when the brake fired at 03:12 (seen using 26 GiB);",
                            "            only Dan can load it again",
                            "waiting     agent → the coder · 2 min of 10 · waiting for Dan: spark load coder"]
-    assert lines[12:14] == [
-        "recent      08:50  for agent: The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB "
+    assert lines[12:15] == [
+        "recent      08:55  make-room unloaded the coder: Dan's pin on it ended, and agent's pi lost it.",
+        "            08:50  for agent: The coder didn't load: it needs 41 GiB, and 18 GiB is free for a load (48 GiB "
         "available, less the 24 GiB reserve and the 6 GiB the loaded models may still grow into). Using memory now: a "
         "process of Dan's, 32 GiB, Gemma 27 GiB. Only Dan can free memory for it, on the Spark; try again after that.",
         "            03:40  brake released; reloading Gemma and the embeddings"]
@@ -250,17 +258,22 @@ def test_agents_status_shows_only_its_refusals_and_no_dans_processes(box):
 def test_status_shows_paused_and_held_when_they_stand():
     view = example_view()
     view["paused"] = {"since": at(3, 12), "available_gib": 19.6, "releases_at": None, "waits_for_dan": False,
-                      "last_fired": at(3, 12), "last_released": None}
+                      "last_fired": at(3, 12), "last_released": None, "problem": None}
     assert row(view, "paused") == [
         "paused      since 03:12 (19.6 GiB available) · resumes by itself after 5 min above 28 GiB available"]
     view["paused"]["waits_for_dan"] = True
     assert row(view, "paused") == ["paused      since 03:12 (19.6 GiB available) · waits for you: make brake-release"]
     assert row(view, "paused", words="agent") == [
         "paused      since 03:12 (19.6 GiB available) · waits for Dan: make brake-release"]
-    # A hold that doesn't record when it fired or how low memory ran (Phase 1's, or one that can't be read).
+    # A hold that reads but doesn't record when it fired or how low memory ran.
     view["paused"] |= {"since": None, "available_gib": None, "last_fired": None}
     assert row(view, "paused") == [
         "paused      by a brake hold that doesn't record when it fired · waits for you: make brake-release"]
+    # One whose file can't be read at all (Task 29's review, Minor 2): it still holds, and the gate's reason shows.
+    view["paused"]["problem"] = "hold file /var/lib/local-ai/brake/hold.json can't be read: not a regular file"
+    assert row(view, "paused") == [
+        "paused      by a brake hold whose file can't be read · waits for you: make brake-release",
+        "            hold file /var/lib/local-ai/brake/hold.json can't be read: not a regular file"]
 
     view = example_view()
     view["sessions"] = []
@@ -550,11 +563,48 @@ def test_free_for_a_loads_terms_add_up_as_shown():
     view["memory"]["free_for_a_load_gib"] = 40.0
     assert text(view).splitlines()[1] == ("free for a load: 40 GiB (70 available, less the 24 GiB reserve and 6 GiB "
                                           "still owed)")
-    # The GPU's ceiling or a load starting gave a figure the memory terms don't reach: never a sum that doesn't add up.
-    view["memory"] |= {"held_gib": 0.0, "free_for_a_load_gib": 10.0}
-    assert text(view).splitlines()[1] == (
-        "free for a load: 10 GiB (the GPU's ceiling or a load still starting holds it below 70 available, less the 24 "
-        "GiB reserve and 6 GiB still owed)")
+
+
+def test_free_for_a_load_names_the_term_that_gave_it_and_never_guesses():
+    # Task 29's review, I2: the gate's figure and its terms are one reading's, and the view says which term of rule 9
+    # gave it, so status names the real cause, in plan.md's words for a refusal's breakdown, and none when nothing adds
+    # up.
+    view = example_view()
+    view["memory"] |= {"available_gib": 98.0, "owed_gib": 0.0, "committed_gib": 92.0, "ceiling_binds": True,
+                       "free_for_a_load_gib": 10.0}
+    assert text(view).splitlines()[1] == ("free for a load: 10 GiB (the 102 GiB the GPU can allocate, less the 92 GiB "
+                                          "the loaded models may grow to)")
+    view["memory"] |= {"available_gib": 48.0, "owed_gib": 6.0, "committed_gib": 43.0, "ceiling_binds": False,
+                       "starting_gib": 27.0, "free_for_a_load_gib": -9.0}
+    assert text(view).splitlines()[1] == ("free for a load: none (48 available, less the 24 GiB reserve, 6 GiB still "
+                                          "owed and the 27 GiB the model still starting may take)")
+    view["memory"] |= {"starting_gib": 0.0, "free_for_a_load_gib": 10.0}  # no term the view carries gives 10
+    assert text(view).splitlines()[1] == "free for a load: 10 GiB"
+
+
+def test_memory_that_cant_be_read_is_said_never_a_figure():
+    # Task 29's review, I2: a gate with no memory reading says so; status never prints a figure of 0 for it.
+    view = example_view()
+    view["memory"] |= {"total_gib": None, "available_gib": None, "above_brake_gib": None, "free_for_a_load_gib": None,
+                       "unaccounted_gib": None, "ceiling_binds": None}
+    view["waiting"][0] |= {"why": "memory", "free_gib": None}
+    lines = text(view).splitlines()
+    assert lines[:2] == ["brightroar · memory can't be read", "free for a load: not known: memory can't be read"]
+    assert lines[2].startswith("loaded      Gemma (gemma-4-26b-a4b)  ")  # no `used by other processes` line
+    assert row(view, "waiting") == ["waiting     agent → the coder · 2 min of 10 · waiting for memory: needs 41 GiB"]
+
+
+def test_a_memory_wait_shows_the_waiters_figure_not_the_viewers():
+    # Task 29's review, I1: Dan's view while make-room holds 40 GiB for him and agent's request for the coder waits:
+    # Dan's figure counts no hold (74), agent's counts it (34), and agent's row says 34.
+    view = example_view()
+    view["memory"] |= {"available_gib": 98.0, "above_brake_gib": 78.0, "owed_gib": 0.0, "held_gib": 40.0,
+                       "free_for_a_load_gib": 74.0, "unaccounted_gib": 0.0}
+    view["held"] = {"size_gib": 40.0, "until": None}
+    view["waiting"][0] |= {"why": "memory", "waited_s": 60.0, "free_gib": 34.0}
+    assert text(view).splitlines()[1] == "free for a load: 74 GiB (98 available, less the 24 GiB reserve)"
+    assert row(view, "waiting") == [
+        "waiting     agent → the coder · 1 min of 10 · waiting for memory: needs 41 GiB, 34 free for a load"]
 
 
 @pytest.mark.parametrize("available, header", [
@@ -683,3 +733,77 @@ def test_make_status_says_what_it_shows():
     makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
     assert ("status: ## On the Spark: room for a load, what's loaded, waiting, paused or held, recent, health (from "
             "the gate)\n\t$(SPARK) status\n") in makefile
+
+
+def test_times_keep_their_own_offset_across_a_clock_change(box, monkeypatch):
+    # Task 29's review, Minor 1: each time reads with its own offset, as the box's clock shows it, never the offset
+    # of now. A zone that leaves summer time at 02:00 on the first Sunday of November, 1 Nov 2026, written as a POSIX
+    # rule so no tz database decides it (this box's has British Columbia keep -7 from that day): 09:00 that morning is
+    # 17:00 UTC, and 16:00 the day before is 23:00 UTC.
+    monkeypatch.setenv("TZ", "PST8PDT,M3.2.0,M11.1.0")
+    time.tzset()
+    monkeypatch.setattr(status, "local_zone", REAL_LOCAL_ZONE)
+    try:
+        view = example_view()
+        later = datetime(2026, 11, 1, 20, 0, tzinfo=UTC).timestamp()  # 12:00 PST
+        view["at"] = later
+        view["recent"] = [{"at": datetime(2026, 11, 1, 17, 0, tzinfo=UTC).timestamp(), "text": "after the change",
+                           "code": None, "model": None, "key_label": None},
+                          {"at": datetime(2026, 10, 31, 23, 0, tzinfo=UTC).timestamp(), "text": "before it",
+                           "code": None, "model": None, "key_label": None}]
+        with serving(box.folder / "control.sock", view):
+            code, out = box()
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+    assert code == 0 and [line for line in out.splitlines() if "change" in line or "before it" in line] == [
+        "recent      09:00  after the change", "            16:00  before it"]
+
+
+def test_an_answer_with_numbers_past_any_reading_is_said_not_a_crash(box):
+    # Task 29's review, Minor 4: status exits 0 whatever it finds, a size or a time no clock or Decimal can show too.
+    for change, why in [(lambda v: v["memory"].update(total_gib=1e30), "InvalidOperation"),
+                        (lambda v: v["pins"].append({"model": CODER, "label": "the coder", "until": 1e20}),
+                         "OverflowError")]:
+        view = example_view()
+        change(view)
+        with serving(box.folder / "control.sock", view):
+            code, out = box()
+        assert code == 0 and out.splitlines()[1].startswith("gate        answered, but with a status this spark "
+                                                            "status can't read (")
+        assert "Traceback" not in out
+
+
+def test_a_gate_error_of_its_own_names_dans_step_as_dans_for_agent(box):
+    # Task 29's review, Minor 5: the gate's 500 says `make logs s=gate`, Dan's command; agent is told it is Dan's.
+    broke = {"message": "The gate couldn't answer: it hit an error of its own. On the Spark, `make logs s=gate` shows "
+                        "why.", "code": None}
+    with serving(box.folder / "status.sock", broke, status=500):
+        code, out = box(admin=False)
+    assert code == 0 and out.splitlines()[1] == ("gate        The gate couldn't answer this request (HTTP 500); Dan "
+                                                 "can see why with `make logs s=gate` on the Spark.")
+    with serving(box.folder / "control.sock", broke, status=500):
+        code, out = box()
+    assert code == 0 and out.splitlines()[1] == f"gate        {broke['message']}"
+
+
+def test_sizes_under_a_gib_read_as_less_than_one():
+    # Task 29's review, Minor 6: never *0 GiB* for something there.
+    view = example_view()
+    view["models"][3]["brake_mark"]["seen_gib"] = 0.3
+    view["held"] = {"size_gib": 0.3, "until": None}
+    assert text(view).splitlines()[7].endswith("(seen using less than 1 GiB);")
+    assert row(view, "held")[0].startswith("held        less than 1 GiB for you until a reboot · ")
+
+
+def test_a_negative_wait_reads_as_none_waited_yet():
+    # Task 29's review, Minor 8: a key's wait shrunk by a registry reload while its request waits.
+    view = example_view()
+    view["waiting"][0] |= {"waited_s": -569.0, "wait_s": 30}
+    assert row(view, "waiting")[0].startswith("waiting     agent → the coder · 0 s of 30 · ")
+
+
+def test_a_passed_check_without_a_time_still_reads_ok():
+    view = example_view()  # Task 29's review, Minor 10
+    view["health"]["brake"]["key_checked_at"] = None
+    assert row(view, "health")[0].startswith("health      front ok · gate ok · brake ok (key checked) · ")

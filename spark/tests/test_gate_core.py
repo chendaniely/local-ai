@@ -1545,6 +1545,108 @@ async def test_the_brakes_start_check_reaches_health(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_a_waiting_rows_figure_is_its_own_groups(tmp_path):
+    # Task 29's review, I1: each waiting row carries its own group's free for a load, never the viewer's. make-room's
+    # hold of 35 GiB is Dan's to load into, so his view reads 37; agent's request and the gate's own reload of whisper
+    # (its start's, whisper being a resident not loaded) can't load into it, so each reads 37 − 35 = 2.
+    hold = RoomHold(size_gib=35.0, until=None, boot_id=BOOT, created_at=T - 60, unloaded=[], total_gib=35.0)
+    gate = Gate(tmp_path, state=loaded(GEMMA, EMBED, room_hold=hold), shown={GEMMA: "ready", EMBED: "ready"})
+    gate.available = 61.0
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        core.read_memory()
+        asked = admit(core, "r-agent", CODER, T + 600, key="agent")
+        await settle()
+        view = core.status_view()
+        assert view["memory"]["free_for_a_load_gib"] == 37.0
+        assert [(row["key_label"], row["model"], row["why"], row["free_gib"]) for row in view["waiting"]] == [
+            ("the gate", WHISPER, "memory", 2.0), ("agent", CODER, "memory", 2.0)]
+        asked.cancel()
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_free_for_a_load_and_owed_come_from_one_reading(tmp_path):
+    # Task 29's review, I2: the figure, *owed* and *available* are one reading's, so the breakdown status shows adds
+    # up; a fresh read in between (here 0.008 GiB lower, then failing) changes nothing in the view. With no reading at
+    # all, the view says memory can't be read, never a figure of 0.
+    reads = []
+
+    def meminfo() -> MemInfo:
+        reads.append(len(reads))
+        if len(reads) == 1:
+            return MemInfo(121.6, 48.004)
+        if len(reads) == 2:
+            return MemInfo(121.6, 47.996)
+        raise OSError(5, "Input/output error")
+
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(read_meminfo=meminfo)
+        reads.clear()
+        core.read_memory()  # 48.004, the reading the view keeps
+        memory = core.status_view()["memory"]
+        assert memory["available_gib"] == 48.004
+        assert memory["free_for_a_load_gib"] == pytest.approx(48.004 - 24 - memory["owed_gib"])
+        assert (memory["ceiling_binds"], memory["starting_gib"], memory["ceiling_gib"], memory["committed_gib"]) == (
+            False, 0.0, 102.0, 43.0)
+        await core.stop()
+
+    def unreadable() -> MemInfo:
+        raise OSError(5, "Input/output error")
+
+    (tmp_path / "unread").mkdir()
+    gate = Gate(tmp_path / "unread", state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(read_meminfo=unreadable)
+        view = core.status_view()
+        memory = view["memory"]
+        assert (memory["available_gib"], memory["total_gib"], memory["free_for_a_load_gib"],
+                memory["above_brake_gib"], memory["unaccounted_gib"], memory["ceiling_binds"]) == (None,) * 6
+        assert all(row["free_gib"] is None for row in view["waiting"])
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_the_brakes_records_are_read_without_following_a_link_or_waiting(tmp_path):
+    # Task 29's review, I3: the gate reads the brake's start check and its hold on its event loop, for any caller of
+    # the status socket and in admission, so neither read follows a link, reads past a cap or waits; and a time at the
+    # calendar's edge is a record that can't be read, never a view that fails. The reason shows under health.
+    from spark.brake import KEY_CHECK_FILE, KeyCheck, write_key_check
+
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    write_key_check(elsewhere, KeyCheck(_check_at(T - 60), True, "passed", "credential llamaswap-key"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        await core.each_five_s()
+        record = gate.brake / KEY_CHECK_FILE
+        record.symlink_to(elsewhere / KEY_CHECK_FILE)  # a passed check, through a link: not read
+        health = core.status_view()["health"]
+        assert health["brake"] == {"status": "start check unreadable", "key_checked_at": None}
+        assert [p for p in health["read_problems"] if p.startswith(f"the brake's start check {record} can't be read")]
+        record.unlink()
+        passed = (elsewhere / KEY_CHECK_FILE).read_text()
+        record.write_text(passed[:-1] + ", \"pad\": \"" + "x" * 70_000 + "\"}")  # past the cap
+        assert core.status_view()["health"]["brake"]["status"] == "start check unreadable"
+        for edge in ("0001-01-01T00:00:00", "9999-12-31T23:59:59"):  # Phase 1's naive form, at the calendar's edges
+            record.unlink()
+            write_key_check(gate.brake, KeyCheck(edge, True, "passed", "LLAMASWAP_KEY_SPARK"))
+            health = core.status_view()["health"]
+            assert health["brake"] == {"status": "start check unreadable", "key_checked_at": None}
+            assert any("time" in p and KEY_CHECK_FILE in p for p in health["read_problems"])
+        # The brake's hold, the same: a link to a hold isn't followed, and the view says the file can't be read.
+        write_hold(elsewhere, Hold(_check_at(T - 60), "19.6 GiB available", (), boot_id=BOOT, episode=1,
+                                   available_gib=19.6))
+        (gate.brake / HOLD_FILE).symlink_to(elsewhere / HOLD_FILE)
+        paused = core.status_view()["paused"]
+        assert paused["since"] is None and paused["available_gib"] is None
+        assert paused["problem"].startswith(f"hold file {gate.brake / HOLD_FILE} can't be read: ")
+        await core.stop()
+
+
+@pytest.mark.anyio
 async def test_the_status_view_carries_the_damage(tmp_path):
     gate = Gate(tmp_path, damaged=True, shown=dict.fromkeys(RESIDENTS, "ready"))
     with anyio.fail_after(BOUND_S):

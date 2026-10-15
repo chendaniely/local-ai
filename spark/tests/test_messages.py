@@ -1488,9 +1488,9 @@ def test_make_rooms_own_words_for_a_run_refused_part_way_and_its_other_refusals(
     assert messages.no_such_model("a\nb" + "x" * 100, "load").count("x") <= 64
     # In *recent* (GateState.recent): a pin make-room ended, and a session that lost its model, named.
     assert messages.room_ended("the coder", pinned=True, sessions=["agent's pi"]) == (
-        "make-room unloaded the coder: your pin on it ended, and agent's pi lost it.")
+        "make-room unloaded the coder: Dan's pin on it ended, and agent's pi lost it.")
     assert messages.room_ended("the coder", pinned=True, sessions=[]) == (
-        "make-room unloaded the coder: your pin on it ended.")
+        "make-room unloaded the coder: Dan's pin on it ended.")
     assert messages.room_ended("Gemma", pinned=False, sessions=["agent's pi", "Orca's pi"]) == (
         "make-room unloaded Gemma: agent's pi and Orca's pi lost it.")
     assert messages.recent_brake_released(["Gemma", "the embeddings"], by_dan=False) == (
@@ -1568,7 +1568,7 @@ def test_fix_round_1s_words_at_task_17s_review():
     # `spark unload` of a pinned model ends the pin, and says so.
     assert messages.unloaded("the coder", pin_ended=True) == "Unloaded the coder; the pin on it ended."
     assert messages.room_ended("the coder", pinned=True, sessions=["agent's pi"], by="unload") == (
-        "`spark unload` unloaded the coder: your pin on it ended, and agent's pi lost it.")
+        "`spark unload` unloaded the coder: Dan's pin on it ended, and agent's pi lost it.")
     # Two unplanned restarts within the hour: one notification, naming each `spark load`.
     restart = {"after": "restart", "again": True, "labels": ["Gemma"], "commands": ["small"]}
     # Worded from the stamp, a reload queued, never one done (Task 17's second re-review).

@@ -1250,12 +1250,20 @@ carries no last-fired or released time when no hold stands, so it reads *no*; th
 shows in *recent*, and the coder's mark says when the brake fired. And a refusal in *recent* read
 *refused the coder for pi on the Mac: needs 41 GiB, 18 free for a load*, which nothing the gate
 keeps can give: it keeps each refusal's whole message, in the asker's words, so the row is that
-text after whom it was for, never shortened, since the truth beats a short line. In `agent`'s view
-the same row names *a process of Dan's*. The `health` row's *key checked 09:00* is the brake's
+text after whom it was for, never shortened, since the truth beats a short line. ~~In `agent`'s view
+the same row names *a process of Dan's*.~~ *(Corrected the same day, at Task 29's review: `agent`'s
+view never has this row, a refusal for Dan's key; `agent`'s own refusals, in its words, name *a
+process of Dan's*.)* The gate's other events in *recent* read true for everyone who sees them:
+*make-room unloaded the coder: Dan's pin on it ended, and agent's pi lost it.*, never *your pin*.
+The `health` row's *key checked 09:00* is the brake's
 start check, which the gate reads from the brake's record since Task 29; a check that failed, or
 none recorded, reads as that, with `make logs s=brake`, never *brake ok*. *Recent* shows the newest
 10 rows, then, when there are more, *… and N older: spark status --json shows them all*; `--json`
-keeps every row.)*
+keeps every row. *Free for a load* and its terms come from one reading of memory, so its breakdown
+adds up, and it names the term that gave the figure: the memory term as here, or *the 102 GiB the
+GPU can allocate, less …* where the ceiling binds, and *the 27 GiB the model still starting may
+take* while one starts; a breakdown that doesn't add up isn't shown. A `waiting` row's *free for a
+load* is the waiter's own: `agent`'s, and the gate's own reloads', count make-room's hold.)*
 
 *(Corrected 2026-10-08, at the implementation plan's Task 17, the controller's ruling: the release
 line read *reloaded*, but the gate records it as it releases, with the reloads queued, so it reads
@@ -3855,6 +3863,12 @@ Each item gets its own design pass when its turn comes.
   *recent* is its whole message, after whom it was for, newest first. And the brake's check at
   start that llama-swap takes its key reaches status through the gate, which reads the brake's
   record: *brake ok (key checked 09:00)* only for a check that passed.
+- **2026-10-14** — Phase 2a's Task 29 review, the controller's rulings. *Free for a load* and its
+  terms come from one reading, naming the term that gave the figure, and a `waiting` row shows the
+  waiter's own figure. The gate reads the brake's records, its hold and its start check, never
+  following a link, never waiting and only up to a cap, so neither can stall the gate or the brake.
+  And the gate's events in *recent* read true for every caller: *Dan's pin on it ended*, not *your
+  pin*.
 
 ## Sources
 

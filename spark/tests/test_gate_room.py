@@ -513,7 +513,7 @@ async def test_unloading_a_pinned_model_ends_its_pin_and_status_says_whose(tmp_p
         assert lines[-1]["ended"] == ["your pin on the coder", "the session agent's pi"]
         [recent] = world.state.recent
         assert (recent.at, recent.kind, recent.model, recent.uids) == (T, "make-room", CODER, [DAN, AGENT])
-        assert recent.text == "make-room unloaded the coder: your pin on it ended, and agent's pi lost it."
+        assert recent.text == "make-room unloaded the coder: Dan's pin on it ended, and agent's pi lost it."
 
 
 @pytest.mark.anyio
@@ -1711,7 +1711,7 @@ async def test_unloading_a_pinned_model_ends_its_pin_and_says_so(tmp_path):
         assert world.state.pins == {}
         [event] = world.state.recent
         assert (event.kind, event.model, event.text, event.uids) == (
-            "unload", CODER, "`spark unload` unloaded the coder: your pin on it ended.", [DAN])
+            "unload", CODER, "`spark unload` unloaded the coder: Dan's pin on it ended.", [DAN])
         assert messages.unloaded("the coder", pin_ended=True) == "Unloaded the coder; the pin on it ended."
         assert messages.unloaded("the coder") == "Unloaded the coder."
 

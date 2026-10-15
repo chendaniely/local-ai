@@ -1717,8 +1717,10 @@ def no_such_model(name: str, verb: str) -> str:
 
 def room_ended(label: str, *, pinned: bool, sessions: list[str], by: str = "make-room") -> str:
     """*recent*'s line for a model make-room, or Dan's `spark unload` (`by: "unload"`, Task 17's review), unloaded that
-    a pin or a session kept (rule 4: `spark status` says whose they were)."""
-    parts = (["your pin on it ended"] if pinned else []) + ([f"{_and(sessions)} lost it"] if sessions else [])
+    a pin or a session kept (rule 4: `spark status` says whose they were). In words true for every caller who sees it,
+    the pin's owner and each session's: pins are Dan's alone, so *Dan's pin*, never *your pin*, which read untrue for
+    agent (Task 29's review, I4)."""
+    parts = (["Dan's pin on it ended"] if pinned else []) + ([f"{_and(sessions)} lost it"] if sessions else [])
     if not parts:
         raise ValueError("room_ended is for a model a pin or a session kept")
     _one_of("room_ended", "by", by, {"make-room": None, "unload": None})

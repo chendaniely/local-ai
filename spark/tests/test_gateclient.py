@@ -723,23 +723,27 @@ def test_the_status_view_carries_the_plans_fields():
     assert gateproto.StatusView.__required_keys__ == {
         "schema", "host", "at", "memory", "models", "waiting", "paused", "held", "pins", "sessions", "recent",
         "health", "applying", "problems"}
+    # One reading's figure and the terms that gave it (Task 29's review, I2).
     assert gateproto.MemoryView.__required_keys__ == {
         "total_gib", "available_gib", "brake_gib", "warn_gib", "above_brake_gib", "reserve_gib", "owed_gib",
-        "held_gib", "free_for_a_load_gib", "unaccounted_gib"}
+        "held_gib", "free_for_a_load_gib", "unaccounted_gib", "ceiling_gib", "committed_gib", "starting_gib",
+        "ceiling_binds"}
     assert gateproto.ModelView.__required_keys__ == {
         "name", "label", "resident", "footprint_gib", "state", "inflight", "oldest_request_s", "last_use",
         "pinned", "pinned_until", "sessions", "brake_mark"}
     # stopping: an unload sent, the model not yet gone from /running (the controller's ruling at Task 12's second
     # re-review), so status shows a stop that hangs.
     assert gateproto.MODEL_STATES == ("ready", "starting", "draining", "stopping", "not_loaded")
-    assert gateproto.WaitingView.__required_keys__ == {"key_label", "model", "waited_s", "wait_s", "why"}
+    # free_gib: the waiter's own group's figure (Task 29's review, I1).
+    assert gateproto.WaitingView.__required_keys__ == {"key_label", "model", "waited_s", "wait_s", "why", "free_gib"}
     # draining: a request waiting on a model being unloaded (the controller's ruling at Task 15); swap_refused: one
     # waiting to try again after llama-swap refused its load (the controller's ruling at Task 15's review).
     # ticket: waiting while the gate settles a load ticket it couldn't withdraw (Task 15's re-review).
     assert gateproto.WAITING_WHY == ("memory", "brake", "slot", "dan", "restart", "llama_swap", "draining",
                                      "swap_refused", "ticket")
+    # problem: why a hold file that still holds can't be read (Task 29's review).
     assert gateproto.PausedView.__required_keys__ == {
-        "since", "available_gib", "releases_at", "waits_for_dan", "last_fired", "last_released"}
+        "since", "available_gib", "releases_at", "waits_for_dan", "last_fired", "last_released", "problem"}
     assert gateproto.HeldView.__required_keys__ == {"size_gib", "until"}
     assert gateproto.RecentView.__required_keys__ == {"at", "text", "code", "model", "key_label"}
     # The damage while it is news (Task 13's damaged_at and damaged_kept_as), and each read the gate couldn't take, in

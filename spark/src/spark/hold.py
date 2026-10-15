@@ -3,7 +3,12 @@ lifts it within rule 5's bounds (Task 17).
 
 From Phase 2a the hold also carries the boot it was written on, its brake episode, the model that was starting when the
 brake fired, and what was available then (Task 13), which the brake writes (Task 23) and the gate reads (Task 17). A
-hold written by Phase 1's brake has none of the four, and reads with each None."""
+hold written by Phase 1's brake has none of the four, and reads with each None.
+
+The hold is read as every record in these folders is (tickets.read_record): never following a link, never waiting
+(opening a FIFO waits for a writer) and only from a regular file of at most RECORD_MAX_BYTES, since the gate reads it
+on its event loop, for any caller of the status socket and in admission, and the brake as it fires (Task 29's review,
+I3). A file that isn't one still holds."""
 
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spark import tickets
 from spark.gateproto import AUTO_RELEASE_EVERY_S
 
 FILE = "hold.json"
@@ -49,8 +55,12 @@ def _finite(value: Any) -> bool:
         return False
 
 
-def _parse(text: str) -> Hold:
-    data = json.loads(text)
+def _read(path: Path) -> Hold:
+    """The hold in `path`, read as the module's docstring says: OSError, or ValueError for a file that isn't a hold."""
+    return _parse(tickets.read_record(path, own=False))
+
+
+def _parse(data: Any) -> Hold:
     if not isinstance(data, dict):
         raise ValueError("not a hold: expected a JSON object")
     since, reason, unloaded = data.get("since"), data.get("reason"), data.get("unloaded", [])
@@ -76,10 +86,10 @@ def read_hold(state_dir: Path) -> Hold | None:
     with a reason that names the file."""
     path = Path(state_dir) / FILE
     try:
-        return _parse(path.read_text())
+        return _read(path)
     except FileNotFoundError:
         return None
-    except (OSError, ValueError, RecursionError) as err:  # RecursionError: JSON nested too deep
+    except (OSError, ValueError) as err:  # read_record's: a link, a FIFO, too large, not JSON, nested too deep
         return Hold(UNREADABLE_SINCE, f"hold file {path} can't be read: {err}", ())
 
 
@@ -127,8 +137,8 @@ def release_hold(state_dir: Path, expected: Hold | None = None) -> bool:
     except FileNotFoundError:
         return False
     try:
-        found = _parse(aside.read_text())
-    except (OSError, ValueError, RecursionError):
+        found = _read(aside)
+    except (OSError, ValueError):
         found = None
     released = found is not None and found == expected
     if released:

@@ -421,8 +421,10 @@ class Admitter:
         record = self.state.models.get(name)
         return None if record is None else self._held_now(record)
 
-    def waiting(self) -> list[dict]:
-        """StatusView's waiting rows, in the queue's order: who, for what, how long of how long, and why."""
+    def waiting(self, figures: _Figures | None = None) -> list[dict]:
+        """StatusView's waiting rows, in the queue's order: who, for what, how long of how long (never below 0: a
+        key's wait shortened by a registry reload can put its start after now), why, and its own group's free for a
+        load at `figures`, the view's one reading (None without one; Task 29's review, I1)."""
         now = self._clock()
         rows = []
         for waiter in self._ordered():
@@ -430,8 +432,9 @@ class Admitter:
             received = waiter.req.deadline - wait_s if key is not None else waiter.entered_at
             label = key.label if key is not None else "Dan" if waiter.req.kind == "command" else "the gate"
             why = waiter.why or "slot"
-            rows.append({"key_label": label, "model": waiter.req.model, "waited_s": now - received, "wait_s": wait_s,
-                         "why": why})
+            free = None if figures is None else float(figures.free(waiter.priv.uses_hold))
+            rows.append({"key_label": label, "model": waiter.req.model, "waited_s": max(0.0, now - received),
+                         "wait_s": wait_s, "why": why, "free_gib": free})
         return rows
 
     # The queue.

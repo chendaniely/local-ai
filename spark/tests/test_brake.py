@@ -1,5 +1,6 @@
 import argparse
 import http.server
+import json
 import os
 import re
 import subprocess
@@ -717,6 +718,48 @@ def test_a_llama_swap_that_never_answers_fails_the_start_check_after_its_wait(tm
     assert logs == [f"brake: ALERT — its start check failed: {why}. Until llama-swap answers it with its key, the "
                     "brake can hold new loads but can't unload a model"]
     assert brake.read_key_check(tmp_path)[0] == brake.KeyCheck("T", False, why, KEY_ENV)
+
+
+@pytest.mark.parametrize("kind", ["a FIFO", "a link to a record", "past the cap"])
+def test_a_start_check_record_that_isnt_a_plain_small_file_is_unread_never_waited_on(tmp_path, kind):
+    # Task 29's review, I3: the gate reads this record on its event loop, for any caller of the status socket, so the
+    # read never waits on a FIFO, never follows a link and never reads past a cap; what it found is said.
+    path = tmp_path / brake.KEY_CHECK_FILE
+    if kind == "a FIFO":
+        os.mkfifo(path)
+    elif kind == "a link to a record":
+        (tmp_path / "elsewhere").mkdir()
+        brake.write_key_check(tmp_path / "elsewhere", brake.KeyCheck("T", True, "passed", KEY_ENV))
+        path.symlink_to(tmp_path / "elsewhere" / brake.KEY_CHECK_FILE)
+    else:
+        path.write_text(json.dumps({"at": "T", "ok": True, "detail": "x" * 70_000, "key_env": KEY_ENV}))
+    out = subprocess.run([sys.executable, "-c", "import sys, json\nfrom pathlib import Path\nfrom spark import brake\n"
+                          "check, problem = brake.read_key_check(Path(sys.argv[1]))\nprint(json.dumps([check is None, "
+                          "problem]))", str(tmp_path)], capture_output=True, text=True, timeout=20, check=True).stdout
+    unread, problem = json.loads(out)
+    assert unread and problem.startswith(f"the brake's start check {path} can't be read: ")
+
+
+def test_the_brake_fires_over_a_hold_file_that_is_a_fifo(tmp_path):
+    # Task 29's review, I3: a FIFO planted as hold.json must never stall the brake as it fires. It reads as a damaged
+    # hold, which still holds, and the brake unloads and writes a true hold in its place.
+    os.mkfifo(tmp_path / "hold.json")
+    done = threading.Event()
+
+    def fire():
+        brake_loop(Box(18, ALL), tmp_path, once=True)
+        done.set()
+
+    threading.Thread(target=fire, daemon=True).start()
+    try:
+        assert done.wait(10), "the brake waited on a FIFO"
+    finally:
+        if not done.is_set():  # free the reader, so the thread ends
+            fd = os.open(tmp_path / "hold.json", os.O_WRONLY | os.O_NONBLOCK)
+            os.close(fd)
+    hold = read_hold(tmp_path)
+    assert (hold.since, hold.unloaded) == ("T", ("coder",)) and (tmp_path / "hold.json").is_file()
+    assert hold.reason.startswith("18.0 GiB available; the hold file before this one was damaged")
 
 
 def test_the_last_starts_record_is_replaced_at_once(tmp_path):
