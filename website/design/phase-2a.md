@@ -8527,6 +8527,17 @@ deploys from `phase-2a` before then (*Deploys during 2a*), it is made in a `main
 deployed from there as an urgent fix is, pushed with Dan's OK, and merged into `phase-2a`. It
 changes only the Compose file and SearXNG's settings, which Phase 1's stack already renders.
 
+*(Added 2026-10-15, Dan's decision: `main`'s full-context apply for the coder is skipped, since
+the cutover replaces the box's config. The box keeps running `qwen3.8-27b` at 163,840 tokens until
+the cutover.)* This task's merge of `main` into `phase-2a` is what carries the coder: `main`'s
+registry names `qwen3.8-27b` at 262,144 tokens, while `phase-2a`'s still names
+`qwen3.6-35b-a3b`. A trial merge on 2026-10-15 conflicts in `stack/models.yaml` exactly on that
+entry, among 12 files. Resolve it to `main`'s `qwen3.8-27b`, keeping `phase-2a`'s own changes
+around it: whisper's `--tmp-dir` and Gemma's `--slot-prompt-similarity`. A resolution that keeps
+`phase-2a`'s side makes the cutover put the box back on `qwen3.6-35b-a3b`, whose files are still
+on disk. Task 38 checks the coder's name in the rendered config before it deploys. Task 42's coder
+swap then finds the registry already swapped, and keeps only its measurements and its pull.
+
 **Files** (in the `main` worktree, then merged):
 
 - Modify: `stack/templates/compose.yaml`, `stack/templates/searxng-settings.yml`,
