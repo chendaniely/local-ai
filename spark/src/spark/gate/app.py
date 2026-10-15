@@ -584,11 +584,16 @@ class _Routes:
         return 200, core.status_view(sees=sees, uses_hold=uses_hold)
 
     async def session_begin(self, uid: int, body: dict, params: dict, query: dict) -> tuple[int, Any]:
+        """A session's model is resolved as every control route resolves one, the name first, then a role, so 2b's
+        hooks name `coder` and keep working across a coder swap (the controller's ruling at Task 30's review); the
+        session keeps the registry's name. A name that is neither is refused in Sessions' words, quoting it as
+        given."""
         pid = body.get("pid")
         if isinstance(pid, bool) or not isinstance(pid, int):
             raise _Bad(_bad("pid", "a process id"))
         label = _text(body, "label", line=False, most=TEXT_MAX)  # Sessions puts it on one line
-        result = self.core.sessions.register(uid, pid, _text(body, "model"), label)
+        model = _resolve(self.core.registry, _text(body, "model"))
+        result = self.core.sessions.register(uid, pid, model, label)
         if isinstance(result, Refusal):
             return _answer_of(result)
         return 200, {"id": result.id, "expires_at": result.renewed_at + SESSION_TTL_S}

@@ -241,9 +241,12 @@ def _clock() -> datetime:
 # load, unload, pin, unpin.
 
 def _load(args: argparse.Namespace) -> int:
-    registry = _registry()
-    label = _label(registry, args.model)
+    # The name as given, until the registry gives its label. Everything after it is inside the try, the registry's
+    # read too, so a Ctrl-C anywhere prints its line, never a traceback (Task 30's review, Minor 7).
+    label = args.model
     try:
+        registry = _registry()
+        label = _label(registry, args.model)
         lines = _control().stream("/v1/load", {"model": args.model}, then_s=LOAD_THEN_S)
         result = _result(lines, label, f"loading {label}", _warn_gib(registry))
         _say(messages.loaded(_field(result, "label", str), _field(result, "seconds", _NUMBER, none=True),
@@ -254,9 +257,10 @@ def _load(args: argparse.Namespace) -> int:
 
 
 def _unload(args: argparse.Namespace) -> int:
-    registry = _registry()
-    label = _label(registry, args.model)
+    label = args.model
     try:
+        registry = _registry()
+        label = _label(registry, args.model)
         lines = _control().stream("/v1/unload", {"model": args.model}, then_s=None)
         result = _result(lines, label, f"unloading {label}", _warn_gib(registry))
         if result.get("unloaded") is not True:
@@ -268,10 +272,11 @@ def _unload(args: argparse.Namespace) -> int:
 
 
 def _pin(args: argparse.Namespace) -> int:
-    registry = _registry()
-    label = _label(registry, args.model)
-    until = None if args.duration is None else _now() + args.duration
+    label = args.model
     try:
+        registry = _registry()
+        label = _label(registry, args.model)
+        until = None if args.duration is None else _now() + args.duration
         lines = _control().stream("/v1/pin", {"model": args.model, "until": until}, then_s=LOAD_THEN_S)
         result = _result(lines, label, f"pinning {label}", _warn_gib(registry))
         _say(messages.pinned(_field(result, "label", str), _field(result, "until", _NUMBER, none=True),
@@ -341,10 +346,10 @@ def _make_room(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     client = _control()
     if args.done:
         return _room_done(client)
-    registry = _registry()
     target = None if args.all else args.size
     phase = "plan"  # then "question", then "run": what a Ctrl-C ends
     try:
+        registry = _registry()
         plan_id, candidates, unload, free_after, enough, most = _plan(
             client.post("/v1/make-room/plan", {"all": True} if args.all else {"size_gib": float(args.size)}))
         # Free for a load now, the gate's own figure, from its plan: what unloading every candidate frees, less them.
@@ -393,16 +398,16 @@ def _room_done(client: GateClient) -> int:
     """`spark make-room --done`: the gate's release of make-room's hold alone, never the brake's pause."""
     try:
         answer = client.post("/v1/release", {"room": True, "brake": False})
+        room = answer.get("room")
+        if room is None:
+            _say(messages.room_no_hold())
+            return 0
+        if not isinstance(room, dict):
+            raise _unreadable("its room isn't an object")
+        _say(messages.room_done(_field(room, "unused_gib", _NUMBER), _field(room, "total_gib", _NUMBER),
+                                _strings(answer, "reloading"), _field(room, "next_label", str, none=True)))
     except KeyboardInterrupt:
         return _interrupted("asked", None)
-    room = answer.get("room")
-    if room is None:
-        _say(messages.room_no_hold())
-        return 0
-    if not isinstance(room, dict):
-        raise _unreadable("its room isn't an object")
-    _say(messages.room_done(_field(room, "unused_gib", _NUMBER), _field(room, "total_gib", _NUMBER),
-                            _strings(answer, "reloading"), _field(room, "next_label", str, none=True)))
     return 0
 
 
@@ -411,10 +416,10 @@ def _room_done(client: GateClient) -> int:
 def _logs(args: argparse.Namespace) -> int:
     try:
         answer = _control().get(f"/v1/logs/{quote(args.model, safe='')}?n={args.n}")
+        for line in _strings(answer, "lines"):
+            print(_shown(line), flush=True)
     except KeyboardInterrupt:
         return _interrupted("read", None)
-    for line in _strings(answer, "lines"):
-        print(_shown(line), flush=True)
     return 0
 
 
@@ -423,9 +428,9 @@ def _logs(args: argparse.Namespace) -> int:
 def _session_start(args: argparse.Namespace) -> int:
     try:
         granted = _status().post("/v1/sessions", {"model": args.model, "pid": args.pid, "label": args.label})
+        _say(_field(granted, "id", str))
     except KeyboardInterrupt:
         return _interrupted("asked", None)
-    _say(_field(granted, "id", str))
     return 0
 
 
@@ -449,21 +454,28 @@ class _Ended(Exception):
     """SIGTERM or SIGHUP, to `spark session hold`: its session ends."""
 
 
+def _not_renewed(err: GateError) -> str:
+    return (f"The session wasn't renewed this time: {err} It tries again in "
+            f"{messages.duration(SESSION_HOLD_RENEW_S)}.")
+
+
 def _session_hold(args: argparse.Namespace) -> int:
     """A session for a process that isn't on the Spark, such as Orca's pi on the Mac (Dan's decision, 2026-10-07): it
     registers its own pid, renews every SESSION_HOLD_RENEW_S, and ends the session when its stdin closes, or on
-    SIGTERM, SIGHUP or Ctrl-C, exit 0. A renewal the gate refuses means the session has ended already: said, exit 1.
-    One that doesn't reach the gate is said, and tried again at the next renewal: the gate keeps a session for
-    SESSION_TTL_S without one."""
+    SIGTERM, SIGHUP or Ctrl-C, exit 0. A renewal the gate refuses with 404 or 403 means the session has ended already,
+    or isn't this account's: said, exit 1, and nothing to end. Any other renewal that doesn't take, the gate out of
+    reach or answering with an error of its own (a 5xx), is said, and tried again at the next renewal: the gate keeps
+    a session for SESSION_TTL_S without one (Task 30's review). The renewal's time is checked on every pass, so data
+    waiting on stdin never holds it back."""
     import select
     import signal
 
     client = _status()
     try:
         granted = client.post("/v1/sessions", {"model": args.model, "pid": os.getpid(), "label": args.label})
+        route = f"/v1/sessions/{quote(_field(granted, 'id', str), safe='')}"
     except KeyboardInterrupt:  # a session begun all the same ends with this process, which the gate checks
         return _interrupted("asked", None)
-    route = f"/v1/sessions/{quote(_field(granted, 'id', str), safe='')}"
 
     def ended(signum, frame):
         raise _Ended
@@ -476,21 +488,21 @@ def _session_hold(args: argparse.Namespace) -> int:
         stdin = sys.stdin.fileno() if sys.stdin is not None else None
         due = time.monotonic() + SESSION_HOLD_RENEW_S
         while stdin is not None:  # no stdin at all is one already closed
+            if time.monotonic() >= due:
+                due = time.monotonic() + SESSION_HOLD_RENEW_S
+                try:
+                    client.post(f"{route}/renew", {})
+                except GateRefused as err:
+                    if err.status in (403, 404):  # ended already, or not this account's: nothing left to hold
+                        _say(str(err), err=True)
+                        code, gone = 1, True
+                        break
+                    _say(_not_renewed(err), err=True)
+                except GateError as err:
+                    _say(_not_renewed(err), err=True)
             readable, _, _ = select.select([stdin], [], [], max(0.0, due - time.monotonic()))
-            if readable:
-                if not os.read(stdin, 65536):
-                    break  # stdin closed: the process it stands for is gone
-                continue
-            due = time.monotonic() + SESSION_HOLD_RENEW_S
-            try:
-                client.post(f"{route}/renew", {})
-            except GateRefused as err:
-                _say(str(err), err=True)
-                code, gone = 1, True
-                break
-            except GateError as err:
-                _say(f"The session wasn't renewed this time: {err} It tries again in "
-                     f"{messages.duration(SESSION_HOLD_RENEW_S)}.", err=True)
+            if readable and not os.read(stdin, 65536):
+                break  # stdin closed: the process it stands for is gone
     except (_Ended, KeyboardInterrupt):
         pass
     finally:

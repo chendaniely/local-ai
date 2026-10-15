@@ -380,6 +380,31 @@ async def test_a_session_is_its_owners_and_dan_may_end_any(tmp_path, monkeypatch
         await core.stop()
 
 
+@pytest.mark.anyio
+async def test_a_session_takes_a_role_as_every_control_route_does(tmp_path, monkeypatch):
+    # The controller's ruling at Task 30's review (I1): `/v1/sessions` resolves its model as `spark load` does, the
+    # name first, then a role, so 2b's hooks name `coder` and survive a coder swap (Task 42). A name that is neither
+    # is refused in words that quote it as given.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        monkeypatch.setattr(core.sessions, "_owner", lambda pid: (AGENT, 77) if pid == 4321 else None)
+        monkeypatch.setattr(core.sessions, "_process_live", lambda session: True)
+        begun = await call(status, "POST", "/v1/sessions", uid=AGENT,
+                           body={"model": "coder", "pid": 4321, "label": "pi in Orca"})
+        assert begun.status == 200
+        assert core.state.sessions[begun.json()["id"]].model == CODER  # the registry's name, kept
+        by_name = await call(status, "POST", "/v1/sessions", uid=AGENT,
+                             body={"model": GEMMA, "pid": 4321, "label": "agent's pi"})
+        assert by_name.status == 200 and core.state.sessions[by_name.json()["id"]].model == GEMMA
+        unknown = await call(status, "POST", "/v1/sessions", uid=AGENT,
+                             body={"model": "nope", "pid": 4321, "label": "x"})
+        assert (unknown.status, unknown.json()) == (409, {
+            "message": "There's no model 'nope' in the registry, so no session can keep it loaded.", "code": None})
+        await core.stop()
+
+
 # What the status socket shows a caller: its own refusals and events, and the system's.
 
 def _no_fit_words(*, dans: bool) -> str:

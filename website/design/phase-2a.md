@@ -2041,7 +2041,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | status | `POST /v1/front/busy` | front | `{model, drain_id}` — the front's answer to an idle drain that finds a request in flight; the gate unloads nothing |
   | status | `POST /v1/front/refused` | front | `{at, code, model, key, message}` — a refusal of the front's own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`), for *recent* and `refused` |
   | status | `GET /v1/status` | users | `StatusView`, filtered for the caller |
-  | status | `POST /v1/sessions` · `POST /v1/sessions/{id}/renew` · `DELETE /v1/sessions/{id}` | owner | `{model, pid, label}` → `{id, expires_at}`; `spark-admin` may end any |
+  | status | `POST /v1/sessions` · `POST /v1/sessions/{id}/renew` · `DELETE /v1/sessions/{id}` | owner | `{model, pid, label}` → `{id, expires_at}`; `spark-admin` may end any *(2026-10-15, the controller's ruling at Task 30's review: `model` is a name or a role, resolved as `/v1/load` resolves it; Task 19's note)* |
   | control | `GET /v1/status` | admin | the full `StatusView` |
   | control | `POST /v1/load` | admin | `{model}` → the confirmation's fields (`label`, `seconds`, `idle_min`, `command`), or a refusal; held up to `LOAD_CALL_TIMEOUT_S`, not `REQUEST_TIMEOUT_S` |
   | control | `POST /v1/unload` | admin | `{model}` → NDJSON in two steps: `{inflight: n}` at once, then `{unloaded: true}` once the drain is done and the model gone, or a refusal; unbounded, since a drain waits for the requests in flight |
@@ -5101,7 +5101,14 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
     with `peer_cred`. `POST /v1/sessions` also refuses `spark-front`'s uid and any uid
     `Sessions.may_hold` refuses (`spark`), before the body, in Sessions' own words
     (`policy.HOLDS_NO_SESSION`). A session's renewal and end are Sessions' to decide, by the id in
-    the path: its owner's, or, to end it, an admin's.
+    the path: its owner's, or, to end it, an admin's. *(Added 2026-10-15, the controller's ruling,
+    at Task 30's review, I1:)* `POST /v1/sessions` resolves its `model` as every control route
+    does, the name first, then a role (`app._resolve`), and the session keeps the registry's name.
+    As built here it passed the name as given, so `spark session hold --model coder`, plan.md's own
+    example, was refused *There's no model 'coder' in the registry …*, a false sentence for a role
+    the registry has. Roles are what let 2b's hooks name `coder` and keep working across a coder swap
+    (Task 42). A name that is neither is still refused in Sessions' words, quoting it as given. Its
+    test: `test_a_session_takes_a_role_as_every_control_route_does`.
   - **The body.** A `Content-Length` over `MAX_REQUEST_BYTES` is answered 413 before any of it is
     read; a body that grows past it as it is read, chunked say, the same. An empty body reads as
     `{}`; a non-empty one that isn't a JSON object is a 400. An answer sent before the body was
@@ -7377,7 +7384,9 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
   council) — a session for a process that isn't on the Spark, such as Orca's pi on the Mac: it
   registers its own pid, renews every 60 s, and ends the session when its stdin closes, or on
   SIGTERM or SIGHUP; a Mac hook runs `ssh brightroar spark session hold …` in the background, and
-  the session ends when pi exits or the Mac sleeps.
+  the session ends when pi exits or the Mac sleeps. *(Added 2026-10-15, at Task 30's review: the
+  hook calls the deployed `spark` by its full path and holds ssh's stdin open, and a sleeping Mac is
+  noticed only after about 2 h 11 min. Task 30's notes below say why.)*
 - Each command's client timeout: `GateClient`'s 5 s for `make-room`'s plan, `--done`, `logs`, ~~the
   pins without a load~~ `unpin` *(corrected 2026-10-08, at Task 10's second re-review: every
   `spark pin` now reads `/v1/pin` as a stream, since the CLI can't tell beforehand whether it loads)*
@@ -7491,12 +7500,36 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
     `--done` is a usage error (exit 2).
   - **Sessions:** `spark session start` prints the id alone, for 2b's hooks; `renew` and `end`
     print nothing when they succeed. `spark session hold` prints nothing while it runs. A renewal
-    the gate refuses means the session has ended: the gate's sentence, exit 1, and no `DELETE`. One
-    that doesn't reach the gate is said on stderr and tried again at the next renewal.
+    the gate refuses ~~means the session has ended~~ with 404 or 403 means the session has ended,
+    or isn't this account's: the gate's sentence, exit 1, and no `DELETE`. Any other renewal that
+    doesn't take, the gate out of reach or its own error (a 5xx), is said on stderr, *The session
+    wasn't renewed this time: …*, and tried again at the next renewal. The renewal's time is checked
+    on every pass, so data waiting on stdin never holds it back. *(Corrected 2026-10-15, at Task
+    30's review, Minors 1–3: a 5xx ended the hold too, and stdin could starve the renewal; each path
+    now has its test.)* `--model` takes a role, which the gate resolves (Task 19's note, the same
+    day).
+  - **`spark session hold` over SSH, for 2b's hook** *(added 2026-10-15, the controller's rulings,
+    at Task 30's review, I2; plan.md's command table row and Revisions with it)*. Checked read-only
+    on brightroar:
+    - **The full path.** `ssh brightroar <cmd>` runs a non-interactive shell, which reads
+      `~/.bashrc` (it returns at once for a non-interactive shell) and never `~/.profile`, the only
+      place `~/.local/bin` joins the `PATH`. So the hook calls `/opt/local-ai/app/.venv/bin/spark`
+      by its full path; deploy.md's bare `spark` is for logins.
+    - **A stdin it holds open.** The hold ends when its stdin closes, so the hook feeds ssh's stdin
+      from a pipe it keeps open for pi's life. Never `ssh -n`, `-f` (which implies `-n`), or a bare
+      `&` in a non-interactive shell, which gives stdin from `/dev/null`: each ends the session at
+      once.
+    - **A sleeping Mac.** sshd on the box sets no `ClientAlive*`, and TCP keepalive starts after
+      7200 s and sends nine probes 75 s apart. So a Mac that sleeps is noticed about 2 h 11 min
+      later, not at once, and the session keeps the coder loaded until then. Renewals don't bear on
+      it: the gate's pid check ends the session once sshd ends the command. A `ClientAliveInterval`
+      on the box would shorten that; that is Dan's decision, for 2b.
   - **Ctrl-C** ends the wait and the command, exit 130, with a line of `messages.stopped_waiting`
     on stderr saying what the gate goes on with: a load that had started, an unload, an unload
     make-room had begun. At make-room's question it is a no (*Nothing unloaded, and nothing
-    held.*). Never a traceback.
+    held.*). Never a traceback: everything a command waits on, its read of the registry included,
+    runs inside the catch *(corrected 2026-10-15, at Task 30's review, Minor 7: the registry's read
+    came before it)*.
   - **New words in `messages.py`, in Task 7's voice, each with its test:** `load_started` (made
     public; the `load_started` notification's words go through it), `command_waiting` (the nine
     `WAITING_WHY` reasons as Dan's own command words them, and *The coder is waiting…* for a line

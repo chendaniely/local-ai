@@ -34,6 +34,7 @@ from spark import cli, commands, gateclient, gateproto, messages, paths
 from spark.budget import Candidate, make_room_plan
 from spark.gate import app as gate_app
 from spark.gateclient import GateClient
+from spark.registry import load_registry
 
 ROOT = Path(__file__).resolve().parents[2]
 STACK = ROOT / "stack" / "models.yaml"
@@ -95,8 +96,9 @@ def _problem(route: gateproto.Route, body: Any, query: str) -> str | None:
             gate_app._text(body, "plan_id")
             gate_app._number(body, "for_s", none=True)
         elif key == ("control", "POST", "/v1/release"):
-            gate_app._flag(body, "room")
-            gate_app._flag(body, "brake")
+            # A flag left out is false, and one of them must be true (Task 30's review).
+            if not (gate_app._flag(body, "room", absent=False) | gate_app._flag(body, "brake", absent=False)):
+                raise gate_app._Bad(gate_app.NOTHING_TO_RELEASE)
         elif key == ("status", "POST", "/v1/sessions"):
             if isinstance(body.get("pid"), bool) or not isinstance(body.get("pid"), int):
                 raise gate_app._Bad(gate_app._bad("pid", "a process id"))
@@ -138,6 +140,13 @@ class _Handler(BaseHTTPRequestHandler):
         if problem is not None:
             gate.bad.append((route.path, problem))
             return self.answer(400, {"message": problem, "code": None})
+        if (route.socket, route.path) == ("status", "/v1/sessions") and gate.registry is not None:
+            # The gate's model check (gate.app's session_begin, Sessions.register): the name first, then a role.
+            model = gate_app._resolve(gate.registry, body["model"])
+            if model not in gate.registry.models:
+                words = f"There's no model {body['model']!r} in the registry, so no session can keep it loaded."
+                return self.answer(409, {"message": words, "code": None})
+            gate.session_models.append(model)
         script = gate.script.get((self.command, route.path))
         if script is None:
             return self.answer(500, {"message": f"The test gave no answer for {self.command} {route.path}.",
@@ -198,12 +207,15 @@ class _Server(socketserver.ThreadingUnixStreamServer):
 
 class GateStandIn:
     """Both of the gate's sockets in `folder`: `script[(method, route)]` answers a route, `seen` keeps every request,
-    `bad` every body the gate would have refused, `errors` what broke in the stand-in's own handlers."""
+    `bad` every body the gate would have refused, `errors` what broke in the stand-in's own handlers. With `registry`,
+    a session's model is checked against it as the gate checks it, and `session_models` keeps each, resolved."""
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, registry: Path | None = None):
         self.seen: list[Seen] = []
         self.bad: list[tuple[str, str]] = []
         self.errors: list[BaseException] = []
+        self.registry = None if registry is None else load_registry(registry)  # for the sessions' model check
+        self.session_models: list[str] = []  # each session's model, as the gate resolved it
         self.script: dict[tuple[str, str], Any] = {}
         self.servers = []
         for name in ("control", "status"):
@@ -229,8 +241,8 @@ class GateStandIn:
 
 
 @contextmanager
-def serving(folder: Path):
-    gate = GateStandIn(folder)
+def serving(folder: Path, registry: Path | None = None):
+    gate = GateStandIn(folder, registry)
     try:
         yield gate
     finally:
@@ -274,7 +286,7 @@ def box(monkeypatch, capsys):
             return super().stream(route, body, then_s=then_s)
 
     monkeypatch.setattr(commands, "GateClient", Client)
-    gate = GateStandIn(folder)
+    gate = GateStandIn(folder, registry)
 
     def run(*argv, stdin: Any = "", tty: bool = False):
         monkeypatch.setattr(sys, "stdin", _Stdin(stdin, tty) if isinstance(stdin, str) else stdin)
@@ -703,6 +715,7 @@ def test_session_commands_use_the_status_socket(box):
     box.gate.script[("DELETE", "/v1/sessions/{id}")] = answer({})
     assert box("session", "start", "--model", "coder", "--pid", "4242", "--label", "agent's pi") == (0, "s-1\n", "")
     assert box.gate.bodies("/v1/sessions") == [{"model": "coder", "pid": 4242, "label": "agent's pi"}]
+    assert box.gate.session_models == [CODER]  # the role, resolved as the gate resolves it (Task 30's review, I1)
     assert box("session", "renew", "s-1") == (0, "", "")
     assert box("session", "end", "s-1") == (0, "", "")
     assert box.gate.calls() == [("status", "POST", "/v1/sessions"), ("status", "POST", "/v1/sessions/s-1/renew"),
@@ -713,6 +726,9 @@ def test_session_commands_use_the_status_socket(box):
          "code": None}, 404)
     assert box("session", "renew", "s-9") == (
         1, "", "spark session: Session s-9 has ended: its process has exited, or it went 12 hours without a renewal.\n")
+    # A name that is neither a model's nor a role: the gate's words, quoting it as given.
+    assert box("session", "start", "--model", "nope", "--pid", "4242", "--label", "x") == (
+        1, "", "spark session: There's no model 'nope' in the registry, so no session can keep it loaded.\n")
     assert box.gate.bad == []
 
 
@@ -774,6 +790,90 @@ def test_session_hold_lives_as_long_as_its_stdin(box, end):
     assert (out, err) == (b"", b"")
     assert box.gate.calls()[-1] == ("status", "DELETE", "/v1/sessions/s-7")
     assert all(call[0] == "status" for call in box.gate.calls())
+
+
+def _hold(box, renew_s: str = "0.3", stdin: Any = subprocess.PIPE) -> subprocess.Popen:
+    """`spark session hold --model coder` in a subprocess, its renewal every `renew_s`, its stdin a pipe we hold."""
+    return subprocess.Popen([sys.executable, "-c", HOLD, renew_s, "session", "hold", "--model", "coder", "--label",
+                             "pi in Orca"], stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=_cli_env(box.folder, box.registry))
+
+
+def _ended(proc: subprocess.Popen) -> tuple[bytes, bytes]:
+    try:
+        proc.wait(timeout=15)
+        return proc.stdout.read(), proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(5)
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                pipe.close()
+
+
+@pytest.mark.parametrize("status", [404, 403])
+def test_session_hold_ends_when_the_gate_says_its_session_is_gone(box, status):
+    # A renewal refused 404 (the session has ended) or 403 (not this account's): the gate's sentence, exit 1, and no
+    # DELETE, since there is nothing of this account's to end (Task 30's review, Minors 1 and 2).
+    words = {404: "Session s-7 has ended: its process has exited, or it went 12 hours without a renewal.",
+             403: "Only the account that began session s-7 can renew it."}[status]
+    box.gate.script[("POST", "/v1/sessions")] = answer({"id": "s-7", "expires_at": NOW + 43200})
+    box.gate.script[("POST", "/v1/sessions/{id}/renew")] = answer({"message": words, "code": None}, status)
+    box.gate.script[("DELETE", "/v1/sessions/{id}")] = answer({})
+    proc = _hold(box)
+    out, err = _ended(proc)
+    assert (proc.returncode, out, err) == (1, b"", f"{words}\n".encode())
+    assert [call[2] for call in box.gate.calls()] == ["/v1/sessions", "/v1/sessions/s-7/renew"]
+
+
+def test_session_hold_goes_on_when_a_renewal_doesnt_take(box):
+    # The gate out of reach (the connection closed with no answer), then its own error (a 503): each said, and the
+    # hold goes on, renewing again; only its stdin's close ends it (Task 30's review, Minors 1 and 2).
+    tries = []
+
+    def renew(handler, seen):
+        tries.append(seen)
+        if len(tries) == 1:
+            handler.close_connection = True  # no answer at all
+        elif len(tries) == 2:
+            handler.answer(503, {"message": gate_app.STILL_FINISHING, "code": None})
+        else:
+            handler.answer(200, {"id": "s-7", "expires_at": NOW + 43200})
+
+    box.gate.script[("POST", "/v1/sessions")] = answer({"id": "s-7", "expires_at": NOW + 43200})
+    box.gate.script[("POST", "/v1/sessions/{id}/renew")] = renew
+    box.gate.script[("DELETE", "/v1/sessions/{id}")] = answer({})
+    proc = _hold(box)
+    assert _until(lambda: len(tries) >= 3)
+    assert proc.poll() is None
+    proc.stdin.close()
+    out, err = _ended(proc)
+    assert (proc.returncode, out) == (0, b"")
+    lines = err.decode().splitlines()
+    assert len(lines) == 2, lines
+    assert all(line.startswith("The session wasn't renewed this time: ") for line in lines), lines
+    assert gate_app.STILL_FINISHING in lines[1]
+    assert box.gate.calls()[-1] == ("status", "DELETE", "/v1/sessions/s-7")
+
+
+def test_session_hold_renews_while_its_stdin_keeps_sending(box):
+    # Data always waiting on stdin never holds a renewal back: its time is checked on every pass (Task 30's review,
+    # Minor 3). /dev/zero is always readable and never ends, so a hold that renewed only when stdin was quiet would
+    # never renew; SIGTERM ends it.
+    box.gate.script[("POST", "/v1/sessions")] = answer({"id": "s-7", "expires_at": NOW + 43200})
+    box.gate.script[("POST", "/v1/sessions/{id}/renew")] = answer({"id": "s-7", "expires_at": NOW + 43200})
+    box.gate.script[("DELETE", "/v1/sessions/{id}")] = answer({})
+    with open("/dev/zero", "rb") as zeros:
+        proc = _hold(box, "0.2", stdin=zeros)
+    try:
+        assert _until(lambda: len(box.gate.bodies("/v1/sessions/s-7/renew")) >= 3, within_s=10)
+        assert proc.poll() is None
+        proc.send_signal(signal.SIGTERM)
+    finally:
+        out, err = _ended(proc)
+    assert (proc.returncode, out, err) == (0, b"", b"")
+    assert box.gate.calls()[-1] == ("status", "DELETE", "/v1/sessions/s-7")
 
 
 def test_each_command_waits_as_long_as_its_route(box, monkeypatch):

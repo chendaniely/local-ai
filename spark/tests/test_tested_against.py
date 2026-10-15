@@ -142,7 +142,7 @@ def test_the_cli_status_and_launch_import_neither_uvicorn_nor_httpx(tmp_path):
         registry = folder / "models.yaml"
         registry.write_text(registry_text())
         (folder / "launch").mkdir()
-        with serving(folder) as gate:
+        with serving(folder, registry) as gate:
             gate.script.update({
                 ("GET", "/v1/status"): answer({"schema": 0}),
                 ("POST", "/v1/load"): stream(loading(), loaded()),

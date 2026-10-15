@@ -214,6 +214,10 @@ It prints the link's full path, `/home/<you>/.local/bin/spark`. If it prints not
 key: the gate's control socket, which only `spark-admin` can use, says who may, and `spark session`
 uses its status socket, open to `spark-users`.
 
+The link serves a login's shell only. A command run as `ssh brightroar <command>` gets a shell that
+never reads `~/.profile`, so it doesn't find `~/.local/bin`: there, call
+`/opt/local-ai/app/.venv/bin/spark` by its full path.
+
 ## Every later change
 
 **On the Spark**, from the clone, get the change:

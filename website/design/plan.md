@@ -1298,7 +1298,7 @@ account.
 | `spark make-room --all` | the full list, one confirmation, then an *Unloading …* line as each model's drain begins, as above (added 2026-10-08, at the implementation plan's Task 10 second re-review, the controller's ruling), and its *Still stopping …* lines as above, then *Unloaded everything. The whole box is held for you until `spark make-room --done` or a reboot; your own requests can load into it.* | `spark make-room --done` |
 | `spark make-room --done` | *Hold ended, all 40 GiB of it unused. Nothing to reload: the coder loads on its next request.* When it had unloaded always-loaded models: *… Reloading Gemma.* | `spark make-room` again |
 | `make brake-release` | *New loads resume. Reloading Gemma, then the embeddings…* When the gate isn't answering: *The gate isn't answering, so the hold file was removed directly; nothing reloads until the gate is back.* | none needed: the brake fires again if memory falls |
-| `spark session hold --model coder --label "pi in Orca"` | nothing while it runs: the session keeps the coder loaded, and ends when the command's stdin closes, or on SIGTERM or SIGHUP, as when pi exits or the Mac sleeps (2b's Mac hooks run it over SSH; Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council) | end the command |
+| `spark session hold --model coder --label "pi in Orca"` | nothing while it runs: the session keeps the coder loaded, and ends when the command's stdin closes, or on SIGTERM or SIGHUP, as when pi exits or the Mac sleeps (2b's Mac hooks run it over SSH; Dan's decision, 2026-10-07, after the implementation plan's forward-and-back council). *(Added 2026-10-15, at the implementation plan's Task 30 review, the controller's rulings, for 2b's hook. `--model` takes a role, `coder`, which the gate resolves, so the hook survives a coder swap. Over `ssh brightroar …` the hook calls the deployed `spark` by its full path, `/opt/local-ai/app/.venv/bin/spark`: a command run that way gets a non-interactive shell, which never reads `~/.profile`, where `~/.local/bin` joins the `PATH`. It feeds ssh's stdin from a pipe it holds open for pi's life, never `ssh -n`, `-f` or a bare `&` with stdin from `/dev/null`, each of which ends the session at once. And "when the Mac sleeps" means about 2 h 11 min later, not at once: sshd on the box sets no `ClientAlive*`, so a sleeping Mac is noticed only by TCP keepalive, after 7200 s and nine probes 75 s apart, and the session keeps the coder loaded until then. A `ClientAliveInterval` on the box would shorten that; that is Dan's decision, for 2b.)* | end the command |
 | `make apply` | the diff, then *Waiting for a quiet moment: the coder answered 20 s ago, and it needs 60 s with nothing in flight. Ctrl-C leaves everything as it was; `make apply-now` restarts now.* After 15 minutes: *No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight finish? [y/N]* | revert the change, and `make apply` again |
 | `make apply-now` | *This restarts the model service now and cuts off the 2 requests in flight (pi on the Mac, agent). Continue? [y/N]* | as above |
 
@@ -3910,6 +3910,14 @@ Each item gets its own design pass when its turn comes.
   The *Host* row and the Phase 2a line's item gain dated notes. Task 38's rollback expects Phase 1's
   doctor to fail its *earlyoom* check as well, and so does any doctor run from a `main` worktree
   after Task 36, such as an urgent fix's (added at the review, M7).
+- **2026-10-15** — Phase 2a's Task 30 review, the controller's rulings, for 2b's `spark session hold`
+  (the command table's row gains a dated note). A session's model takes a role, which the gate
+  resolves as it does for `spark load`, so 2b's hooks name `coder` and survive a coder swap. Over
+  SSH the hook calls the deployed `spark` by its full path, since a non-interactive shell never reads
+  `~/.profile`, and feeds ssh's stdin from a pipe it holds open, never `-n`, `-f` or a bare `&`. A
+  sleeping Mac is noticed only after about 2 h 11 min, from TCP keepalive's defaults, since sshd on
+  the box sets no `ClientAlive*`; shortening that with `ClientAliveInterval` is Dan's decision, for
+  2b.
 
 ## Sources
 

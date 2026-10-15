@@ -60,7 +60,8 @@ pin standing, idle at least the registry's idle_unload_min; never a resident. Th
 through admission as one of his commands, its progress streamed as `/v1/load`'s is. **Sessions** (Sessions) are each
 uid's own, tied to one of its live processes (procs.owner_uid), SESSIONS_PER_UID at most, each ending with its process
 or SESSION_TTL_S after its last renewal; `spark` and `spark-front` hold none; a session names a model the registry has,
-by its name, and its label is one line of at most LABEL_MAX characters. A pin's or a session's end counts as its
+kept by its name (the route resolves a role to it first, as every control route does: the controller's ruling at Task
+30's review), and its label is one line of at most LABEL_MAX characters. A pin's or a session's end counts as its
 model's last use, so the model unloads idle_unload_min after it, as `pin_ended` and `unpinned` say (both accepted, the
 controller's ruling at Task 16)."""
 
@@ -1151,10 +1152,10 @@ class Sessions:
         self._on_change = on_change or (lambda: None)
 
     def register(self, uid: int, pid: int, model: str, label: str) -> Session | Refusal:
-        """A new session for `uid` on `model`, a model the registry has by its name, held by its process `pid`: one
-        that is running, and the caller's by its real uid (its `/proc` `Uid:`, procs.owner_uid). At most
-        SESSIONS_PER_UID per uid, counted once the uid's ended ones are gone. The label goes on one line of at most
-        LABEL_MAX characters, since Dan's terminal shows it."""
+        """A new session for `uid` on `model`, a model the registry has by its name (`/v1/sessions` resolves a role to
+        it first, Task 30's review), held by its process `pid`: one that is running, and the caller's by its real uid
+        (its `/proc` `Uid:`, procs.owner_uid). At most SESSIONS_PER_UID per uid, counted once the uid's ended ones are
+        gone. The label goes on one line of at most LABEL_MAX characters, since Dan's terminal shows it."""
         now = self._clock()
         if not self._may_hold(uid):
             return Refusal(403, HOLDS_NO_SESSION)
