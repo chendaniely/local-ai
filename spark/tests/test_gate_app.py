@@ -937,15 +937,28 @@ async def test_the_front_events_stream_its_channel_and_end_when_the_gate_stops(t
         core = await gate.started()
         status, _ = apps(core)
         status.state.ping_every_s = 0.05
-        events = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
+        seen: list[str] = []  # each line's op, as the stream sends it
+
+        async def watched(scope, receive, send):
+            async def tap(message):
+                seen.extend(json.loads(line)["op"] for line in message.get("body", b"").splitlines())
+                await send(message)
+
+            await status(scope, receive, tap)
+
+        events = asyncio.create_task(call(watched, "GET", "/v1/front/events", uid=FRONT_UID))
         held = asyncio.create_task(call(status, "POST", "/v1/admit", uid=FRONT_UID,
                                         body=admit_body(CODER, gate.clock.now + 30)))
         for _ in range(100):
             if core.front.connected and core.admitter.waiting():
                 break
             await asyncio.sleep(0.01)
-        core.front.send({"op": "unloaded", "model": WHISPER})
-        await asyncio.sleep(0.2)
+        assert core.front.send({"op": "unloaded", "model": WHISPER})  # onto the open call's stream
+        # The stop waits for a ping after `unloaded`, never a fixed time: a sleep of 0.2 s, four pings' worth, saw none
+        # whenever the process stalled 0.15 s just after `unloaded` went out, as a busy runner can stall it. The sleep
+        # then ended before the stream's next ping was due (forced on the Spark, 2026-10-14).
+        while "unloaded" not in seen or "ping" not in seen[seen.index("unloaded"):]:
+            await asyncio.sleep(0.01)
         status.state.stopping.set()
         streamed, answered = await events, await held
         ops = [line["op"] for line in streamed.lines()]
