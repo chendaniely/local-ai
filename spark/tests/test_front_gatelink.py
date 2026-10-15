@@ -268,6 +268,49 @@ async def test_an_admit_ends_at_its_deadline_while_the_gates_call_stays_open():
         assert r.link.connected
 
 
+# A call of the gate link's cancelled in the turn of the loop whose select found the gate's bytes on its socket, before
+# that turn's read callback ran. The front's connections to the gate once ran on anyio's UNIX socket stream, whose read
+# callback is its wait's own set_result: it set the cancelled wait's result, and the loop's exception handler got
+# InvalidStateError, which anyio's test runner raises after the test (seen once in a full run, in a test whose only such
+# cancels are its rigs' closes). Each test lands the gate's bytes and the cancel in that one turn.
+
+@pytest.mark.anyio
+async def test_an_admit_whose_bound_ends_as_the_gates_answer_lands_is_refused_and_nothing_breaks():
+    async with rig() as r:
+        r.gate.hold = asyncio.Event()
+        bound = r.link._down_by
+
+        async def bound_then_the_answer(deadline):
+            await bound(deadline)
+            # The gate's answer on the socket in the next turn, as admit() hears the bound's end: admit() cancels its
+            # call in the turn after, before that turn's read callback.
+            asyncio.get_running_loop().call_soon(r.gate.answer_now)
+
+        r.link._down_by = bound_then_the_answer
+        with anyio.fail_after(BOUND_S):
+            asked = r.ask()
+            await until(lambda: len(r.gate.admits) == 1)
+            await asyncio.sleep(0.05)  # its call waits for the answer
+            r.now[0] = T + DAN_WAIT + gatelink.LATE_ANSWER_S
+            answer = await asked
+        assert (answer.status_code, answer.json()) == (503, r.app.refusal("gate_down", "dan-mac").body())
+        # The bound won: nothing counted, nothing forwarded, the gate's answer given, and the link still open.
+        assert r.count() == 0 and r.swap.seen == [] and len(r.gate.admits) == 1 and r.gate.closed_admits == []
+        assert r.link.connected
+
+
+@pytest.mark.anyio
+async def test_the_link_closed_as_an_event_lands_breaks_nothing():
+    async with rig() as r:
+        with anyio.fail_after(BOUND_S):
+            read = r.link.events_read
+            await until(lambda: r.link.events_read > read)  # a ping read: the events call waits for the next
+            r.gate.send_now({"op": "ping", "at": T})
+            # aclose()'s first step in the next turn, before that turn's read callback: it cancels the events call.
+            await asyncio.ensure_future(r.link.aclose())
+        assert not r.link.connected
+
+
 @pytest.mark.anyio
 async def test_a_drained_post_the_gate_didnt_take_is_sent_again():
     async with rig(ready=[CODER], snapshot_every_s=0.1) as r:

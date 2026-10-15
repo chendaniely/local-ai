@@ -1,7 +1,7 @@
 """The front's link to the gate (Phase 2a; plan.md, *The front and the gate*, *Draining a model*, and rules 4 and 8):
 GateLink asks the gate for each load, follows the gate's events, holds what the gate drains or holds, and reports the
 front's counts. It speaks gateproto's routes for the front over the gate's status socket, with httpx over the Unix
-socket and nothing from the environment.
+socket and nothing from the environment, its connections on asyncio's own streams (_GateNetwork says why).
 
 **What it follows.** `GET /v1/front/events`, kept open, called again whenever it ends: the model list of each `hello`
 and `state` replaces the front's (parse.ModelList), so a model the gate's registry gains is served without a restart,
@@ -76,12 +76,14 @@ import contextlib
 import json
 import logging
 import math
+import select
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+import httpcore
 import httpx
 
 from spark.front.upstream import InFlight
@@ -219,10 +221,8 @@ class GateLink:
         """Following the gate's events and reporting the counts, in tasks of their own; returns at once, so the front
         serves whether the gate answers or not."""
         if self._client is None:
-            self._client = httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=str(self.status_socket)),
-                                             base_url=GATE, trust_env=False, follow_redirects=False,
-                                             timeout=POST_TIMEOUT,
-                                             limits=httpx.Limits(max_connections=None, max_keepalive_connections=8))
+            self._client = httpx.AsyncClient(transport=_GateTransport(self.status_socket), base_url=GATE,
+                                             trust_env=False, follow_redirects=False, timeout=POST_TIMEOUT)
         if not self._loops:
             self._loops = [asyncio.create_task(self._follow()), asyncio.create_task(self._snapshots())]
 
@@ -653,6 +653,98 @@ class GateLink:
             except Exception as err:
                 _log.error("the front's in-flight report to the gate broke: %s; it reports again", type(err).__name__)
                 await asyncio.sleep(self.retry_s)
+
+
+# The gate's socket.
+
+class _GateTransport(httpx.AsyncHTTPTransport):
+    """httpx's transport to the gate's socket at `path`, its connections _GateNetwork's: as many at once as there are
+    calls, since an admit holds its own for its key's wait, and 8 kept open. An httpx client given a transport never
+    reads its own `limits`, so they are set here (until 2026-10-14 they were the client's, unread, and httpx's defaults
+    held: 100 at once, 20 kept)."""
+
+    def __init__(self, path: Path):
+        super().__init__(uds=str(path), trust_env=False)
+        if not isinstance(getattr(self, "_pool", None), httpcore.AsyncConnectionPool):
+            raise RuntimeError("httpx's transport no longer keeps the pool the gate link replaces")
+        self._pool = httpcore.AsyncConnectionPool(uds=str(path), network_backend=_GateNetwork(), max_connections=None,
+                                                  max_keepalive_connections=8, keepalive_expiry=5.0)
+
+
+class _GateNetwork(httpcore.AsyncNetworkBackend):
+    """httpcore's network for the gate link: each connection to the gate's socket on asyncio's own streams. httpx's
+    default for a socket, httpcore's AnyIOBackend, uses anyio's UNIX socket stream (4.15), which waits for its socket
+    to be readable on a future whose own `set_result` is the loop's read callback. A call cancelled in the turn of the
+    loop whose select found its socket readable, before that turn's read callback ran, had that callback set the
+    cancelled future's result, and the loop logged InvalidStateError with its traceback: the gate's answer landing as
+    an admit's bound ended its call, or as its client went, or an event or a post's answer as aclose() ended it.
+    asyncio's streams wake a wait only if it isn't cancelled, and what comes after a cancel stays in the stream's
+    buffer, so a cancel at any turn ends the call and nothing else."""
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None,
+                                  socket_options: Iterable[Any] | None = None) -> httpcore.AsyncNetworkStream:
+        """A connection to the socket at `path`; `socket_options`, which _GateTransport's pool never gives, unused."""
+        try:
+            async with asyncio.timeout(timeout):
+                reader, writer = await asyncio.open_unix_connection(path)
+        except TimeoutError:
+            raise httpcore.ConnectTimeout("the gate's socket didn't answer in time") from None
+        except OSError as err:
+            raise httpcore.ConnectError(err) from err
+        return _GateStream(reader, writer)
+
+    async def sleep(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+
+
+class _GateStream(httpcore.AsyncNetworkStream):
+    """One connection to the gate's socket, as httpcore's AnyIOStream maps its ends: a timeout to httpcore's, a
+    socket's error to its ReadError or WriteError, the gate's close to b""."""
+
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        self._reader, self._writer = reader, writer
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        try:
+            async with asyncio.timeout(timeout):
+                return await self._reader.read(max_bytes)
+        except TimeoutError:
+            raise httpcore.ReadTimeout("the gate didn't answer in time") from None
+        except OSError as err:
+            raise httpcore.ReadError(err) from err
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        if not buffer:
+            return
+        try:
+            async with asyncio.timeout(timeout):
+                self._writer.write(buffer)
+                await self._writer.drain()
+        except TimeoutError:
+            raise httpcore.WriteTimeout("the gate didn't take the front's call in time") from None
+        except OSError as err:
+            raise httpcore.WriteError(err) from err
+
+    async def aclose(self) -> None:
+        # At once, as anyio's stream closes its socket: what's left unsent waits for no gate that has stopped reading.
+        self._writer.transport.abort()
+
+    def get_extra_info(self, info: str) -> Any:
+        if info == "is_readable":  # an idle connection's end, the gate's close or a break, read by the loop or not yet
+            reader = self._reader
+            return reader.at_eof() or reader.exception() is not None or _readable(self._writer.get_extra_info("socket"))
+        if info == "socket":
+            return self._writer.get_extra_info("socket")
+        return None
+
+
+def _readable(sock: Any) -> bool:
+    """Whether `sock` has something to read now, or is closed, as httpcore's own check reads it."""
+    if sock is None or sock.fileno() < 0:
+        return True
+    poll = select.poll()
+    poll.register(sock.fileno(), select.POLLIN)
+    return bool(poll.poll(0))
 
 
 def _admit_answer(response: httpx.Response) -> dict:

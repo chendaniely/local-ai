@@ -4,11 +4,13 @@ asyncio's streams, not uvicorn, so a test can break a connection mid-call, as a 
 
 - `GET /v1/front/events`: `hello`, then `state`, as the test set them when the call came, then each event the test
   `send`s, and a `{"op": "ping"}` whenever nothing else has gone for `ping_every_s`, as the gate's own stream does
-  (gate.app's _send_events); `drop()` ends every stream with its last chunk, and the front calls again.
+  (gate.app's _send_events); `drop()` ends every stream with its last chunk, and the front calls again. `send_now`
+  writes an event on every stream in the caller's own step, so a test can land it in a chosen turn of the loop.
 - `POST /v1/admit`: kept in `admits`; held while `hold` is set and not yet released; then answered with `answer` (a
   dict, or a function of the request's body), `{"ok": true}` by default. One whose call closes while it is held is
   kept in `closed_admits`, by its request id. While `admit_breaks` is true, each admit's connection is broken once it
-  is kept, as a gate whose new connections fail.
+  is kept, as a gate whose new connections fail. `answer_now()` answers each held admit in the caller's own step,
+  with `connection: close`, and the stand-in reads nothing more from that connection.
 - `POST /v1/front/inflight`, `/v1/front/drained`, `/v1/front/busy`, `/v1/front/refused`: kept in `snapshots`,
   `drained`, `busy` and `refused`, each answered 200; but the first `fail_posts[path]` posts to a path are answered
   500 and kept in `failed_posts` instead.
@@ -96,6 +98,8 @@ class GateStandIn:
         self.pings = 0
         self.events_calls = 0
         self._streams: set[asyncio.Queue] = set()
+        self._event_writers: set[asyncio.StreamWriter] = set()  # each events stream's, until its last chunk
+        self._held: dict[asyncio.StreamWriter, dict] = {}  # each held admit's connection, and its body
         self._writers: set[asyncio.StreamWriter] = set()
         self._stopping = asyncio.Event()
         self._server: asyncio.Server | None = None
@@ -146,6 +150,20 @@ class GateStandIn:
         """Every events stream ends, with its last chunk, while the stand-in goes on serving."""
         for queue in self._streams:
             queue.put_nowait(_END)
+
+    def send_now(self, event: dict) -> None:
+        """`event` written on every events stream open now, in this step: its bytes are on the front's socket before
+        the step ends, where `send` queues it for the stream's own task."""
+        data = json.dumps(event).encode() + b"\n"
+        for writer in self._event_writers:
+            writer.write(b"%x\r\n%s\r\n" % (len(data), data))
+
+    def answer_now(self) -> None:
+        """Each held admit answered in this step, as `answer` gives it, its bytes on the front's socket before the step
+        ends. Answered with `connection: close`: the stand-in reads nothing more from that connection."""
+        for writer, body in list(self._held.items()):
+            del self._held[writer]
+            writer.write(_response(200, self._answer(body), close=True))
 
     # The socket.
 
@@ -211,6 +229,7 @@ class GateStandIn:
         self._streams.add(queue)
         try:
             writer.write(b"HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ntransfer-encoding: chunked\r\n\r\n")
+            self._event_writers.add(writer)
             while True:
                 event = await _first(self._next_event(queue), stopping)
                 if event is None or event is _END:
@@ -218,10 +237,12 @@ class GateStandIn:
                 data = json.dumps(event).encode() + b"\n"
                 writer.write(b"%x\r\n%s\r\n" % (len(data), data))
                 await writer.drain()
+            self._event_writers.discard(writer)  # before its last chunk: nothing written after it
             writer.write(b"0\r\n\r\n")
             await writer.drain()
             return False  # its connection closes once the stream has ended, as the gate's does
         finally:
+            self._event_writers.discard(writer)
             self._streams.discard(queue)
 
     async def _next_event(self, queue: asyncio.Queue) -> Any:
@@ -238,6 +259,7 @@ class GateStandIn:
         if self.admit_breaks:
             writer.transport.abort()
             return False
+        self._held[writer] = body
         closed = asyncio.ensure_future(reader.read(1))  # b"": the front closed its call
         waits = [closed, asyncio.ensure_future(stopping.wait()),
                  asyncio.ensure_future(self.hold.wait() if self.hold is not None else asyncio.sleep(0))]
@@ -245,6 +267,10 @@ class GateStandIn:
         for task in pending:
             task.cancel()
         await asyncio.wait(waits)
+        if self._held.pop(writer, None) is None:  # answer_now answered it, with connection: close
+            if not closed.cancelled():
+                closed.exception()  # a reset, taken as the close it is
+            return False
         if closed in done:
             closed.exception()  # a reset, taken as the close it is
             self.closed_admits.append(body["request_id"])
@@ -252,9 +278,12 @@ class GateStandIn:
         if stopping.is_set():
             await _respond(writer, 503, {"message": GATE_STOPPING, "code": None}, close=True)
             return False
-        answer = self.answer(body) if callable(self.answer) else self.answer
-        await _respond(writer, 200, answer if answer is not None else {"ok": True, "model": body["model"]})
+        await _respond(writer, 200, self._answer(body))
         return True
+
+    def _answer(self, body: dict) -> dict:
+        answer = self.answer(body) if callable(self.answer) else self.answer
+        return answer if answer is not None else {"ok": True, "model": body["model"]}
 
 
 async def _first(work, stopping: asyncio.Event):
@@ -270,9 +299,13 @@ async def _first(work, stopping: asyncio.Event):
     return None
 
 
-async def _respond(writer: asyncio.StreamWriter, status: int, payload: dict, *, close: bool = False) -> None:
+def _response(status: int, payload: dict, *, close: bool = False) -> bytes:
     data = json.dumps(payload).encode()
     head = (f"HTTP/1.1 {status} {_REASONS.get(status, 'Error')}\r\ncontent-type: application/json\r\n"
             f"content-length: {len(data)}\r\n" + ("connection: close\r\n" if close else "") + "\r\n")
-    writer.write(head.encode() + data)
+    return head.encode() + data
+
+
+async def _respond(writer: asyncio.StreamWriter, status: int, payload: dict, *, close: bool = False) -> None:
+    writer.write(_response(status, payload, close=close))
     await writer.drain()
