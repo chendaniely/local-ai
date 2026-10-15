@@ -1849,6 +1849,26 @@ council, with Dan's fourteen decisions (Revisions).*
   trial merge of `phase-2a` at `45cecf2` with `main` at `9009e6a` conflicts in 18 places in 10
   files, `plan.md` 5 and `test_render.py` 4. With 2a's side taken in each, the clients, registry
   and render tests pass, and the rest fail on the Mac only where 2a alone does.)*
+  *(Added the same day: `main` now also has the home page's overview, `website/_overview.qmd`
+  (PR #20, `2fdd800`), which `index.qmd` and the Architecture page include and nothing copies;
+  click-to-zoom for every diagram (`website/_diagram-zoom.html`, added to each page by
+  `_quarto.yml`); and CLAUDE.md's rule naming the overview as the one diagram outside the
+  Architecture page. A trial merge of `phase-2a` at `1a43f2a` with `main` at `2fdd800` conflicts
+  in 20 places in the same 10 files. The overview adds one of them, the Architecture page's
+  opening paragraph, where both sides stay: main's opening, then 2a's sentence on a built part
+  that a later phase changes, then main's *The overview* section with its include. `index.qmd`,
+  `_quarto.yml`, CLAUDE.md's rule and README's line merge cleanly, and the include on the home page
+  stays above 2a's Notifications and Community bullets. The overview's labels follow main's phase
+  numbers from before 2a renumbered them, so the same merge commit brings `_overview.qmd` up to
+  date with 2a's *Where everything sits* and this plan, keeping to parts by role, with no ports,
+  accounts or model names: the front and the gate become Phase 2a, solid if built by then, with
+  requests going through the front; the Synology's alerts and backups both become Phase 5, the
+  gate's alerts going to ntfy there; "vLLM or SGLang · Phase 5" becomes vLLM, Phase 4, beside
+  the fast coder on SGLang and Flash-Next, Phase 4a; LiteLLM stays Phase 3, its edge as 2a's
+  diagram has it, ahead of the front, in its place, or not at all. On the Mac, before the push,
+  `make docs` passes, `check-scenarios` included; the overview on the home page and on the
+  Architecture page matches 2a; and a click on *Where everything sits* opens it full-screen,
+  where Fit, 100%, + and dragging work.)*
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -3836,6 +3856,10 @@ Each item gets its own design pass when its turn comes.
   Reference page, [Speed tests](../reference/speed-tests.md), keeps the setup, the commands and the
   caveats, for later runs to be compared with. The by-hand page gains the server query that gives
   the cache sizes, since `--log-level warning` keeps them out of the log.
+- **2026-10-14** — Phase 2a's close: the closing merge brings in `main`'s overview diagram (PR #20),
+  its click-to-zoom and CLAUDE.md's rule for it, and the same merge commit brings the overview's
+  labels up to date with 2a's phases. A dated note in Phase 2a's close says how, with the
+  Architecture page's one new conflict and a trial merge's count: 20 conflicts in 10 files.
 
 ## Sources
 
