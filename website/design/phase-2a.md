@@ -6851,6 +6851,34 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
   secret folder report them as *ntfy not set up (Task 2, Phase 5)* while no header is there and the
   values file, if any, has no `NTFY_URL` line, never a failure. Some of them there and some not is
   a Task 2 left half done: that check names each one missing, by name only.
+- *(Added 2026-10-14, at Task 27, as built; for the controller to accept:)*
+  - **The cache's move refuses while any unit that runs as `spark` or `spark-pull` is active**:
+    `local-ai-gate.service` and `local-ai-brake-drill.service` beside the three above, since both
+    run as `spark` from the cutover, and the move's safety rests on nothing of `spark`'s running.
+    At Task 36 neither is installed, so stopping the brake and llama-swap is still enough.
+  - **launch's `tickets`, `started` and `refusals` are made by `spark`**
+    (`runuser -u spark -- install -d -o spark -g spark -m 0750 …`): `launch` is `spark`'s, and root's
+    `install -d` there would follow a link `spark` planted (CLAUDE.md's lesson). The folders
+    directly under `/var/lib/local-ai`, root's, root makes.
+  - **The move's done-check never looks at `hf/tmp`**, so a re-run after the cutover (Tasks 39 and
+    47), with the stack up and the registry naming `whisper-tmp`, passes while `hf/tmp` is still
+    `spark`'s for the close to remove (Task 51). `hf/tmp` moves with the rest only in a move that
+    finds the registry not naming it.
+  - **The deployed registry is read as the admin who ran sudo**, as `install_units` reads what
+    apply staged, within 10 s and 1 MiB; one that can't be read leaves `hf/tmp` out of the move
+    and says so. The check is a match of `/var/lib/local-ai/hf/tmp` as a whole path, so a comment
+    naming it errs the same safe way.
+  - **A new box, with no cache, gets an empty one**, `spark-pull:spark 2750` (`mkdir`, `chown`,
+    `chmod`, never `install -d`); nothing refuses, since nothing moves.
+  - **The move checks itself afterwards**, as the hold checks `apt-mark`, and fails loudly if the
+    cache isn't `spark-pull:spark 2750` with setgid folders.
+  - **The secrets step changes only regular files** in the folder, and names anything else, which
+    it leaves as it is.
+  - **doctor's *spark's folders* also checks the pull's cache**, `spark-pull:spark-pull 750`.
+    launch's own folders are inside one of `spark`'s, out of Dan's reach, so doctor doesn't read
+    them; Task 36 Step 2 reads them with sudo.
+  - **`secret-files.md`'s Phase 1 steps now write with `umask 077` and no `chgrp`**, so a step run
+    after 2a's bootstrap keeps its file `0600 root:root`, with a dated note on Phase 1's rule.
 
 **Tests** (`spark/tests/test_bootstrap.py`, on dry runs and stand-ins as Phase 1's, unless named):
 

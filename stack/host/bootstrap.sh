@@ -62,12 +62,11 @@ ensure_group() {
   getent group "$1" >/dev/null || groupadd --system "$1"
 }
 
-ensure_service_user() {
-  if (( DRY_RUN )); then
-    printf '+ useradd --system --gid spark --home-dir /var/lib/local-ai --no-create-home --shell /usr/sbin/nologin spark   (if missing)\n'
-    return
-  fi
-  id -u spark >/dev/null 2>&1 || useradd --system --gid spark --home-dir /var/lib/local-ai --no-create-home --shell /usr/sbin/nologin spark
+# A system user that can't log in, in its own group of the same name, made before it: ensure_system_user NAME HOME.
+ensure_system_user() {
+  local -a cmd=(useradd --system --gid "$1" --home-dir "$2" --no-create-home --shell /usr/sbin/nologin "$1")
+  if (( DRY_RUN )); then printf '+ %s   (if missing)\n' "${cmd[*]}"; return; fi
+  id -u "$1" >/dev/null 2>&1 || "${cmd[@]}"
 }
 
 ensure_agent_user() {
@@ -434,15 +433,53 @@ users_and_groups() {
   ensure_group spark
   ensure_group spark-users
   ensure_group spark-admin
-  ensure_service_user
+  # Phase 2a: the front and the model pull run as users of their own, so neither the engines nor the
+  # pull's downloader reaches the front, and the engines can't change the model files.
+  ensure_group spark-front
+  ensure_group spark-pull
+  ensure_system_user spark /var/lib/local-ai
+  # The front has no home: it keeps nothing but its uploads, in its unit's private /tmp.
+  ensure_system_user spark-front /nonexistent
+  # The pull shares spark's home, which is root's: its caches are folders of its own under it,
+  # pull-cache (XDG_CACHE_HOME in its unit) and the Hugging Face cache.
+  ensure_system_user spark-pull /var/lib/local-ai
   ensure_agent_user
   # spark is deliberately NOT in the docker group: docker is root-equivalent, and model engines run
   # as spark. Containers are started by root-owned units instead (Phase 1).
   run usermod -aG video,render,spark-users spark
   run usermod -aG video,render,spark-users agent
-  # adm: read every service's journal, so `make logs` works without sudo.
+  # The front reaches the gate's status socket, which is group spark-users'. It is in no other
+  # group: not spark, which reads the model files, and not spark-admin. spark-pull is in its own
+  # group alone.
+  run usermod -aG spark-users spark-front
+  # adm: read every service's journal, so `make logs` works without sudo. The admin is the only
+  # account bootstrap puts in spark-admin, the gate's control socket's group (Phase 2a).
   run usermod -aG spark-admin,spark-users,adm "$ADMIN_USER"
   run chmod 0700 "/home/$ADMIN_USER" /home/agent
+}
+
+# The secret files, root's alone from Phase 2a (Dan's decision, 2026-10-07): PID 1 reads them, for a
+# unit's EnvironmentFile= or LoadCredential=, and so does root's Compose, so nothing reads them as
+# spark. Only root has ever been able to write in this folder (Phase 1 left it root:spark 0750), so
+# root changing a file in it acts through no path anyone else controls. Each regular file becomes
+# root:root 0600; anything else in it is left as it is, and named. A dry run never lists the folder.
+SECRETS="${BOOTSTRAP_SECRETS:-/etc/local-ai/secrets}"
+secrets_folder() {
+  local file
+  run install -d -o root -g root -m 0700 "$SECRETS"
+  if (( DRY_RUN )); then
+    printf '+ chown root:root %s/<each file>\n+ chmod 0600 %s/<each file>\n' "$SECRETS" "$SECRETS"
+    return 0
+  fi
+  for file in "$SECRETS"/* "$SECRETS"/.[!.]* "$SECRETS"/..?*; do
+    [[ -e "$file" || -L "$file" ]] || continue
+    if [[ -L "$file" || ! -f "$file" ]]; then
+      say "left as it is: $file, not a regular file"
+      continue
+    fi
+    chown root:root "$file"
+    chmod 0600 "$file"
+  done
 }
 
 directories() {
@@ -452,17 +489,171 @@ directories() {
   # `make install-units` installs root's own copies of them.
   run install -d -o root -g spark-admin -m 2775 /opt/local-ai /opt/local-ai/app /opt/local-ai/bin /opt/local-ai/etc /opt/local-ai/python
   run install -d -o root -g spark-admin -m 0750 /etc/local-ai
-  run install -d -o root -g spark -m 0750 /etc/local-ai/secrets
+  secrets_folder
   # State. The parent is root's and spark writes only inside its children: `install -d` follows a
   # symlink, so a spark-owned parent would let spark swap a child for a link that the next re-run
-  # hands to it. It is also spark's home, so a cache under $HOME needs a spark-owned child here
-  # and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
+  # hands to it. It is also spark's home, and spark-pull's, so a cache under $HOME needs a child
+  # of its own here and its variable (XDG_CACHE_HOME, CUDA_CACHE_PATH) set in the unit.
   run install -d -o root -g root -m 0755 /var/lib/local-ai
-  run install -d -o spark -g spark -m 0750 /var/lib/local-ai/hf /var/lib/local-ai/open-webui /var/lib/local-ai/searxng \
-    /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache
+  # The Hugging Face cache isn't here: install -d sets the owner and mode of a folder that exists,
+  # so every re-run would hand it back. Its own step, hf_cache_to_pull, gives it to spark-pull.
+  # gate and launch: the gate's state, and the admission tickets and launch's records; whisper-tmp:
+  # whisper's --tmp-dir, outside the cache (Phase 2a).
+  run install -d -o spark -g spark -m 0750 /var/lib/local-ai/open-webui /var/lib/local-ai/searxng \
+    /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache /var/lib/local-ai/gate /var/lib/local-ai/launch \
+    /var/lib/local-ai/whisper-tmp
+  # launch's own folders are inside a folder spark owns, so spark makes them: root's install -d
+  # there would follow a link spark planted, and hand whatever it points at to spark.
+  run runuser -u spark -- install -d -o spark -g spark -m 0750 /var/lib/local-ai/launch/tickets \
+    /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals
   run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
+  # The pull's own cache (XDG_CACHE_HOME in its unit): hf_xet and huggingface_hub keep more than
+  # the model files.
+  run install -d -o spark-pull -g spark-pull -m 0750 /var/lib/local-ai/pull-cache
+  # Where the failure notifier's script goes (notifier, below), made before anything is installed
+  # in it: /usr/local/libexec isn't on this box (checked 2026-10-14), and install doesn't make folders.
+  run install -d -o root -g root -m 0755 /usr/local/libexec
   # Nothing inside agent's home: agent controls it, so root never writes there. agent makes its
   # own ~/work.
+}
+
+# The Hugging Face cache moves to spark-pull (Phase 2a), which downloads into it, with spark as its
+# group and every folder setgid, so the engines, running as spark, read every model file through
+# the group and can't change one, and every file the pull adds takes spark's group too. Its owners
+# change only once, with chown -R -P --no-dereference, which never follows a link. Until then it is
+# spark's, so root acts through folders spark controls: the move refuses, changing nothing, while
+# any unit that runs as spark or spark-pull is active, so no process of theirs can race it, or while
+# fs.protected_hardlinks is off, so no hard link spark made to someone else's file can be in it. A cache already moved needs nothing,
+# whatever runs, so a re-run with the stack up passes. hf/tmp, whisper's --tmp-dir in Phase 1's
+# registry, stays spark's while the deployed registry names it, and the check never looks at it:
+# the close removes it once nothing does (Phase 2a's Task 51). Tests point these at stand-ins, and
+# PULL_USER and CACHE_GROUP at whoever runs them: the commands always name spark-pull and spark.
+HF_CACHE="${BOOTSTRAP_HF_CACHE:-/var/lib/local-ai/hf}"
+DEPLOYED_REGISTRY="${BOOTSTRAP_REGISTRY:-/opt/local-ai/etc/models.yaml}"
+PULL_USER="${BOOTSTRAP_PULL_USER:-spark-pull}"
+CACHE_GROUP="${BOOTSTRAP_CACHE_GROUP:-spark}"
+CACHE_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-pull.service local-ai-gate.service
+  local-ai-brake-drill.service)
+# Phase 1's registry names it in whisper's args, `--tmp-dir, /var/lib/local-ai/hf/tmp,`. Anything
+# else naming it (a comment) errs the safe way: hf/tmp stays spark's.
+OLD_WHISPER_TMP='/var/lib/local-ai/hf/tmp([^[:alnum:]_.-]|$)'
+REGISTRY_LIMIT=1048576  # bytes: the registry is about 10 KB
+
+# 0 when the cache is moved: spark-pull:spark 2750, everything in it spark-pull's and in spark's
+# group, every folder setgid, hf/tmp not looked at. 1 when anything isn't; 2 when it can't be read.
+cache_moved() {
+  local top odd
+  top="$(stat -c '%U:%G %a' -- "$HF_CACHE" 2>/dev/null)" || return 2
+  [[ "$top" == "$PULL_USER:$CACHE_GROUP 2750" ]] || return 1
+  odd="$(find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o \
+    \( ! -user "$PULL_USER" -o ! -group "$CACHE_GROUP" -o -type d ! -perm -2000 \) -print -quit 2>/dev/null)" ||
+    return 2
+  [[ -z "$odd" ]]
+}
+
+# Each reason the move can't go ahead now, one a line, with what to do about it.
+move_refusals() {
+  local unit hardlinks
+  for unit in "${CACHE_UNITS[@]}"; do
+    if systemctl is-active --quiet "$unit"; then echo "$unit is active: stop it first (systemctl stop $unit)"; fi
+  done
+  hardlinks="$(sysctl -n fs.protected_hardlinks 2>/dev/null || true)"
+  if [[ "$hardlinks" != 1 ]]; then
+    echo "fs.protected_hardlinks is ${hardlinks:-unreadable}, not 1: with it off, a hard link spark made to a file it doesn't own would go to spark-pull with the cache"
+  fi
+}
+
+# 0 when the deployed registry names hf/tmp, 1 when it doesn't, 2 when it can't be read. A real run
+# reads it as the admin who ran sudo, as install_units reads what make apply staged, within a time
+# limit and a size cap.
+registry_names_hf_tmp() {
+  local text
+  local -a read_cmd=(timeout "$READ_TIMEOUT" head -c "$((REGISTRY_LIMIT + 1))" -- "$DEPLOYED_REGISTRY")
+  if (( ! DRY_RUN || EUID == 0 )); then read_cmd=(runuser -u "$ADMIN_USER" -- "${read_cmd[@]}"); fi
+  text="$("${read_cmd[@]}" 2>/dev/null)" || return 2
+  if (( $(printf '%s' "$text" | wc -c) > REGISTRY_LIMIT )); then return 2; fi
+  if grep -qE -- "$OLD_WHISPER_TMP" <<<"$text"; then return 0; fi
+  return 1
+}
+
+hf_cache_to_pull() {
+  say "the Hugging Face cache: spark-pull's, with a setgid group that spark reads the model files through"
+  local state=0 look=1 named=0 keep=0 refusals why="" line short=""
+  if [[ ! -e "$HF_CACHE" && ! -L "$HF_CACHE" ]]; then
+    # A new box: nothing to move. mkdir, not install -d, which would reset a cache that exists.
+    run mkdir -m 0750 "$HF_CACHE"
+    run chown spark-pull:spark "$HF_CACHE"
+    run chmod 2750 "$HF_CACHE"
+    say "made $HF_CACHE, empty: spark-pull:spark 2750"
+    return 0
+  fi
+  if [[ -L "$HF_CACHE" || ! -d "$HF_CACHE" ]]; then
+    echo "bootstrap: $HF_CACHE is a link or not a folder, so nothing was changed: look at it with sudo ls -ld $HF_CACHE" >&2
+    exit 1
+  fi
+  cache_moved || state=$?
+  if (( state == 0 )); then
+    say "$HF_CACHE is already spark-pull:spark 2750, its folders setgid: nothing to move"
+    return 0
+  fi
+  [[ -r "$HF_CACHE" && -x "$HF_CACHE" ]] || look=0
+  if (( state == 2 || ! look )); then
+    if (( ! DRY_RUN )); then
+      echo "bootstrap: can't read $HF_CACHE to check whether it is spark-pull's yet, so nothing in it was changed" >&2
+      exit 1
+    fi
+    say "a dry run can't look inside $HF_CACHE as you: it shows what a real run does if anything in it isn't spark-pull's yet"
+  fi
+  refusals="$(move_refusals)"
+  if [[ -n "$refusals" ]]; then
+    if (( DRY_RUN )); then
+      # Each reason without what to do about it: the part before its colon.
+      while IFS= read -r line; do short+="${short:+; }${line%%:*}"; done <<<"$refusals"
+      printf '+ chown -R -P --no-dereference spark-pull:spark %s   (a real run stops here: %s)\n' "$HF_CACHE" "$short"
+      return 0
+    fi
+    {
+      echo "bootstrap: the Hugging Face cache isn't spark-pull's yet, and it can't move now, so nothing in it was changed:"
+      while IFS= read -r line; do printf '  %s\n' "$line"; done <<<"$refusals"
+      echo "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
+    } >&2
+    exit 1
+  fi
+  if (( ! look )) || [[ -e "$HF_CACHE/tmp" || -L "$HF_CACHE/tmp" ]]; then
+    registry_names_hf_tmp || named=$?
+    case "$named" in
+      0) keep=1; why="the deployed registry still names it as whisper's --tmp-dir" ;;
+      1) keep=0 ;;
+      *) keep=1; why="the deployed registry, $DEPLOYED_REGISTRY, couldn't be read as $ADMIN_USER, so it may still be whisper's" ;;
+    esac
+  fi
+  if (( keep )); then
+    say "$HF_CACHE/tmp stays as it is, spark's: $why"
+    run chown --no-dereference spark-pull:spark "$HF_CACHE"
+    run find -P "$HF_CACHE" -mindepth 1 -maxdepth 1 ! -path "$HF_CACHE/tmp" \
+      -exec chown -R -P --no-dereference spark-pull:spark {} +
+    run chmod 2750 "$HF_CACHE"
+    run find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o -type d -exec chmod g+s {} +
+  else
+    run chown -R -P --no-dereference spark-pull:spark "$HF_CACHE"
+    run chmod 2750 "$HF_CACHE"
+    run find -P "$HF_CACHE" -mindepth 1 -type d -exec chmod g+s {} +
+  fi
+  (( DRY_RUN )) && return 0
+  # As the hold checks apt-mark's work: the move must have taken.
+  if ! cache_moved; then
+    echo "bootstrap: the move didn't take: $HF_CACHE isn't spark-pull:spark 2750 with setgid folders yet" >&2
+    exit 1
+  fi
+  say "moved: $HF_CACHE is spark-pull:spark 2750, its folders setgid"
+}
+
+# The failure notifier's script (Phase 2a), which local-ai-notify@.service runs on a unit's
+# failure: root's own regular file, in a folder only root writes (directories makes it).
+NOTIFIER="/usr/local/libexec/local-ai-notify"
+notifier() {
+  say "the failure notifier's script, which local-ai-notify@.service runs: root's own"
+  run install -o root -g root -m 0755 "$HERE/local-ai-notify" "$NOTIFIER"
 }
 
 headless() {
@@ -661,6 +852,8 @@ main() {
   hold_gpu_stack
   users_and_groups
   directories
+  hf_cache_to_pull
+  notifier
   headless
   earlyoom_config
   needrestart_config

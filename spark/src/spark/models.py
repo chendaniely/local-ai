@@ -71,7 +71,8 @@ class _Sanitised(logging.Filter):
 
 
 def pull(registry: Registry, *, download, hf_home: str = HF_HOME, log=print, redact: str | None = None) -> int:
-    Path(hf_home, "tmp").mkdir(parents=True, exist_ok=True)  # whisper-server's --tmp-dir
+    # Whisper's --tmp-dir isn't the pull's to make since Phase 2a (Task 27): it is /var/lib/local-ai/whisper-tmp,
+    # spark's, which bootstrap makes, outside this cache, which is spark-pull's.
     failed = 0
     for model in registry.models.values():
         for file in filter(None, (model.source.file, model.source.mmproj)):

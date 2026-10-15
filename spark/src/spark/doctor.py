@@ -40,10 +40,16 @@ EARLYOOM_DEFAULT = Path("stack/host/earlyoom.default")
 # needrestart's override, which bootstrap installs from the repo's copy.
 NEEDRESTART_CONF = Path("/etc/needrestart/conf.d/local-ai.conf")
 NEEDRESTART_REPO = Path("stack/host/needrestart.conf")
-# spark's home, which is root's (Phase 0's review), and the brake's folder, spark's and shared with spark-admin:
-# each with the owner, group and mode bootstrap gives it.
+# spark's home, which is root's (Phase 0's review), and the brake's folder, spark's and shared with spark-admin; from
+# Phase 2a (Task 27), the gate's, launch's and whisper's folders, spark's, the Hugging Face cache, spark-pull's with
+# spark's group setgid, and the pull's own cache: each with the owner, group and mode bootstrap gives it. Each is in
+# /var/lib/local-ai, root's 755, so your account reads its owner without being in its group.
 STATE_HOME = Path("/var/lib/local-ai")
-SPARK_FOLDERS = ((STATE_HOME, ("root", "root", 0o755)), (paths.STATE, ("spark", "spark-admin", 0o2770)))
+PULL_CACHE = STATE_HOME / "pull-cache"  # the pull's XDG_CACHE_HOME (its unit)
+SPARK_FOLDERS = ((STATE_HOME, ("root", "root", 0o755)), (paths.STATE, ("spark", "spark-admin", 0o2770)),
+                 (paths.GATE_STATE, ("spark", "spark", 0o750)), (paths.LAUNCH, ("spark", "spark", 0o750)),
+                 (paths.WHISPER_TMP, ("spark", "spark", 0o750)), (Path(render.HF_HOME), ("spark-pull", "spark", 0o2750)),
+                 (PULL_CACHE, ("spark-pull", "spark-pull", 0o750)))
 # Where llama-server looks for a config.ini, which it reads before its command line (llama.cpp b11146, as Task 10's
 # pre-dispatch scan read it): /etc/llama.cpp/, then $XDG_CONFIG_HOME/llama.cpp/ or $HOME/.config/llama.cpp/. The
 # engines run with HOME=/var/lib/local-ai, spark's, and no XDG_CONFIG_HOME. Options added there would come around
@@ -266,20 +272,25 @@ def secrets_folder(probe: Probe) -> Check:
         # into it, so the folder may well be there.
         return Check("secrets folder", False, f"{SECRETS} is missing, or out of your account's reach (log in "
                                               "again): `make bootstrap` creates it")
+    # Root's alone from Phase 2a (Dan's decision, 2026-10-07; bootstrap since Task 27): PID 1 and root's Compose read
+    # the secret files, and nothing reads them as spark. Phase 1's root:spark 750 fails here until 2a's bootstrap.
     user, group, mode = owner
-    if (user, group, mode) != ("root", "spark", 0o750):
-        return Check("secrets folder", False, f"{SECRETS} is {user}:{group} {mode:o}, not root:spark 750: "
+    if (user, group, mode) != ("root", "root", 0o700):
+        return Check("secrets folder", False, f"{SECRETS} is {user}:{group} {mode:o}, not root:root 700: "
                                               "`make bootstrap` sets it")
-    if probe.listable(SECRETS):  # root:spark 750, so this account is root, or in spark
+    if probe.listable(SECRETS):  # root:root 700, so this account is root
         return Check("secrets folder", False, f"your account can list {SECRETS}; it must not: run doctor as "
-                                              "yourself, not with sudo, and check that `id -nG` doesn't list spark")
-    return Check("secrets folder", True, "root:spark 750, and closed to you")
+                                              "yourself, not with sudo")
+    return Check("secrets folder", True, "root:root 700, and closed to you")
 
 
 def spark_folders(probe: Probe) -> Check:
     """spark's home is root's, so spark can't swap a folder that root creates in it for a link, and the brake's
-    folder is spark's, shared with spark-admin: each a folder, read without following a link, as bootstrap sets it.
-    On brightroar this fails until Phase 1's Task 12 Step 1 re-runs bootstrap: its first run left the home spark's."""
+    folder is spark's, shared with spark-admin; the gate's, launch's and whisper's folders are spark's, the Hugging
+    Face cache spark-pull's, read by spark through its setgid group, and the pull's own cache spark-pull's: each a
+    folder, read without following a link, as bootstrap sets it (SPARK_FOLDERS). launch's own folders are inside one
+    of spark's, out of your account's reach, so they aren't read. On brightroar this fails until Phase 2a's bootstrap
+    re-run (its Task 36) makes the 2a folders and moves the cache."""
     wrong = []
     for path, (user, group, mode) in SPARK_FOLDERS:
         entry = probe.entry(path)
@@ -292,8 +303,10 @@ def spark_folders(probe: Probe) -> Check:
     if wrong:
         them = "them" if len(wrong) > 1 else "it"
         return Check("spark's folders", False, "; ".join(wrong) + f": `make bootstrap` sets {them}")
-    return Check("spark's folders", True, f"{STATE_HOME} is root's, and the brake's folder spark's, shared with "
-                                          "spark-admin")
+    return Check("spark's folders", True, f"{STATE_HOME} is root's; the brake's folder spark's, shared with "
+                                          "spark-admin; the gate's, launch's and whisper's spark's; the Hugging Face "
+                                          "cache spark-pull's, read by spark through its group; the pull's own cache "
+                                          "spark-pull's")
 
 
 # The stack

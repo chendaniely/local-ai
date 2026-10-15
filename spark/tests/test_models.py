@@ -40,7 +40,18 @@ def test_pull_fetches_every_file_at_its_pinned_revision(tmp_path):
     assert pull(REG, download=fake, hf_home=str(tmp_path), log=lambda m: None) == 0
     hub = f"{tmp_path}/hub"
     assert calls == [{"repo_id": repo, "filename": file, "revision": rev, "cache_dir": hub} for _, repo, file, rev in FIVE]
-    assert (tmp_path / "tmp").is_dir()  # whisper-server's --tmp-dir
+
+
+def test_the_pull_no_longer_makes_whispers_tmp_dir(tmp_path):
+    # Phase 2a (Task 27): whisper's --tmp-dir is /var/lib/local-ai/whisper-tmp, spark's, which bootstrap makes, and the
+    # cache is spark-pull's, so the pull makes nothing for whisper in it. hf/tmp, which Phase 1's pull made and the
+    # deployed registry may still name, is left as it is.
+    assert pull(REG, download=lambda **kw: "/cache/x", hf_home=str(tmp_path / "new"), log=lambda m: None) == 0
+    assert not (tmp_path / "new" / "tmp").exists()
+    (tmp_path / "old" / "tmp").mkdir(parents=True)
+    (tmp_path / "old" / "tmp" / "upload.wav").write_text("audio\n")
+    assert pull(REG, download=lambda **kw: "/cache/x", hf_home=str(tmp_path / "old"), log=lambda m: None) == 0
+    assert [p.name for p in (tmp_path / "old" / "tmp").iterdir()] == ["upload.wav"]
 
 
 def test_a_failed_file_is_reported_and_the_rest_still_download(tmp_path):
@@ -155,7 +166,7 @@ def test_spark_models_pull_downloads_every_file_through_the_cli(hub, capsys):
     cache = f"{hub.home}/hub"
     assert hub.calls == [{"repo_id": r, "filename": f, "revision": v, "cache_dir": cache} for _, r, f, v in FIVE]
     assert capsys.readouterr().out.splitlines() == [f"pull: {m}: {f} → /cache/{f}" for m, _, f, _ in FIVE]
-    assert (hub.home / "tmp").is_dir()
+    assert not (hub.home / "tmp").exists()  # whisper's tmp-dir is bootstrap's since 2a (Task 27)
 
 
 @pytest.mark.parametrize("kind", BAD_TOKENS)

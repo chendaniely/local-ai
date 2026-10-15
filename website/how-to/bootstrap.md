@@ -1,6 +1,6 @@
 ---
 title: "Bootstrap the Spark"
-description: "Bounce the wired NIC, run make bootstrap, check the results, and set up agent's SSH and Claude Code login."
+description: "Bounce the wired NIC, run make bootstrap, check the results, set up agent's SSH and Claude Code login, and run Phase 2a's re-run."
 ---
 
 Everything here runs **on the Spark**, as you, in an SSH session from the Mac, except where a step
@@ -97,3 +97,86 @@ Bootstrap doesn't, since it runs as root.
 ## Re-run once
 
 `make bootstrap` again → finishes with no errors, and no new users, groups or config lines.
+
+## Phase 2a's re-run
+
+Phase 2a's bootstrap (its Task 27; Dan runs it in Task 36, before the cutover) adds:
+
+- **Two system users**, neither of which can log in (`/usr/sbin/nologin`): `spark-front`, which
+  runs the front, in its own group and `spark-users`, with no home; and `spark-pull`, which runs the
+  model pull, in its own group alone, sharing `spark`'s home, `/var/lib/local-ai`, which is root's.
+  `spark-admin` still holds only you.
+- **The secrets folder root's alone:** `root:root 0700`, and every regular file in it
+  `0600 root:root`, at each run. PID 1 and root's Compose read them; nothing reads them as `spark`.
+  [Secret files](secret-files.md) has the files 2a adds.
+- **The folders 2a's units write:** the gate's, `/var/lib/local-ai/gate`, launch's,
+  `/var/lib/local-ai/launch` with its `tickets`, `started` and `refusals`, and whisper's
+  `--tmp-dir`, `/var/lib/local-ai/whisper-tmp`, each `spark:spark 0750`; and the pull's own cache,
+  `/var/lib/local-ai/pull-cache`, `spark-pull:spark-pull 0750`. launch's own folders are made by
+  `spark`, since root never makes a folder inside one `spark` controls.
+- **The Hugging Face cache moves to `spark-pull`:** `/var/lib/local-ai/hf` becomes
+  `spark-pull:spark 2750`, every folder in it setgid, so the engines, running as `spark`, read
+  every model file through the group and can't change one. Its owners change once, with
+  `chown -R -P --no-dereference`, which never follows a link. `hf/tmp`, whisper's `--tmp-dir` in
+  Phase 1's registry, stays `spark`'s while the deployed registry names it; the close removes it
+  (Phase 2a's Task 51).
+- **The failure notifier's script**, `/usr/local/libexec/local-ai-notify`, root's `0755`, which
+  `local-ai-notify@.service` runs when the front, the gate, the brake or llama-swap fails.
+
+The cache's move refuses, failing the run and changing nothing in the cache, while any unit that
+runs as `spark` or `spark-pull` is active (llama-swap, the brake, the pull, the gate or the brake's
+drill), since root changes owners in folders `spark` controls until then, or while
+`fs.protected_hardlinks` isn't 1. Once the cache is moved, a re-run passes it, whatever runs.
+
+**On the Spark**, as you, from the clone, in an SSH session:
+
+1. `make bootstrap-dry-run`, and read it. While the stack runs, its cache step ends
+   `(a real run stops here: local-ai-llama-swap.service is active; local-ai-brake.service is
+   active)`.
+2. Open a second SSH session to the box, and leave it open until a fresh login works after the
+   run. *(Phase 2a's Task 28 makes bootstrap change sshd's PAM stack, for `agent`'s OOM score, and a
+   broken PAM stack would lock new logins out. Until Task 28 is built, this run doesn't touch PAM,
+   and the second session is only a precaution.)*
+3. Stop the brake and llama-swap, which stops every model. The polkit rule allows it without
+   sudo. **On the Spark:**
+
+   ```bash
+   systemctl stop local-ai-brake.service local-ai-llama-swap.service
+   ```
+
+   The pull mustn't be running either: `systemctl is-active local-ai-pull.service` →
+   `inactive`.
+4. `make bootstrap`.
+5. Start them again. The stack serves in Phase 1's layout until the cutover, reading the model
+   files through the group. Until then `make pull` can't add a file to the cache: root's copy of
+   the pull's unit still runs as `spark`, which now only reads it, and the cutover installs the
+   unit that runs as `spark-pull`. **On the Spark:**
+
+   ```bash
+   systemctl start local-ai-llama-swap.service local-ai-brake.service
+   ```
+
+6. Check it. **On the Spark:**
+
+   ```bash
+   getent passwd spark-front spark-pull | cut -d: -f1,7
+   id -nG spark-front
+   stat -c '%U:%G %a %n' /var/lib/local-ai/hf /var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/whisper-tmp /var/lib/local-ai/pull-cache
+   test -x /usr/local/libexec/local-ai-notify && echo "notifier: installed" || echo "notifier: missing"
+   ```
+
+   Expected: both users with `/usr/sbin/nologin`; `spark-front spark-users`; `spark-pull:spark
+   2750 /var/lib/local-ai/hf`; `spark:spark 750` for the gate's, launch's and whisper's folders;
+   `spark-pull:spark-pull 750` for the pull's cache; `notifier: installed`.
+
+   Then, with sudo, what your account can't see: launch's own folders, `hf/tmp` and the model
+   files. **On the Spark:**
+
+   ```bash
+   sudo stat -c '%U:%G %a %n' /var/lib/local-ai/launch/tickets /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals /var/lib/local-ai/hf/tmp; sudo find /var/lib/local-ai/hf -type f ! -perm -g=r | head -3; sudo -k
+   ```
+
+   Expected: `spark:spark 750` for each, `hf/tmp` included, left for whisper until the cutover; and
+   no file listed after them, since every model file must be one the group can read. If one is
+   listed, the engines can't load it: bring it to the Claude session working on the repo.
+7. `make doctor`: its *secrets folder* and *spark's folders* lines pass.

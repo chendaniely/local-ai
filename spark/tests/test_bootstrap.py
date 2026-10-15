@@ -1,3 +1,4 @@
+import grp
 import os
 import pwd
 import re
@@ -5,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -205,9 +207,12 @@ def gpu_env(tmp_path: Path, installed: dict[str, str]) -> dict[str, str]:
 
 # A host where dpkg-query finds no packages at all, as on the Mac. The default dry run uses it, so the
 # hold step reads the same everywhere: not the Spark's held GPU set, not whatever CI's runner
-# carries, and never a package state on the host that happens to stop the hold.
+# carries, and never a package state on the host that happens to stop the hold. Its Hugging Face
+# cache is a stand-in that doesn't exist, as on a new box (Task 27), so the cache's step never reads
+# the Spark's own cache, its units or its deployed registry either.
 _NO_PACKAGES_DIR = tempfile.TemporaryDirectory(prefix="test-bootstrap-")
-NO_PACKAGES = gpu_env(Path(_NO_PACKAGES_DIR.name), {})
+NO_PACKAGES = {**gpu_env(Path(_NO_PACKAGES_DIR.name), {}),
+               "BOOTSTRAP_HF_CACHE": str(Path(_NO_PACKAGES_DIR.name) / "no-hf-cache")}
 
 
 def held(tmp_path: Path) -> set[str]:
@@ -1005,13 +1010,28 @@ def test_doctor_reads_the_holds_dry_run_as_it_is_printed(tmp_path):
         assert check.ok is ok and words in check.detail, (name, check)
 
 
-def test_doctor_expects_what_bootstrap_sets():
+def test_doctor_expects_what_bootstrap_sets(tmp_path):
     # `make doctor` checks spark's folders and needrestart's override against what bootstrap sets them to (Task 10's
-    # rulings R10 and R14), so the two agree.
+    # rulings R10 and R14), so the two agree. The Hugging Face cache isn't one of `directories`' (Task 27): the
+    # cache's own step gives it to spark-pull, and its owner and mode are the ones that step sets and checks.
     from spark import doctor
 
+    cache = Path(doctor.render.HF_HOME)
     for path, (user, group, mode) in doctor.SPARK_FOLDERS:
+        if path == cache:
+            continue
         assert f"-o {user} -g {group} -m {mode:04o}" in install_d_line(str(path)), path
+    [(user, group, mode)] = [owner for path, owner in doctor.SPARK_FOLDERS if path == cache]
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    result = cache_step(cache_env(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert f"chown -R -P --no-dereference {user}:{group} {hf}" in calls(tmp_path)
+    assert f"chmod {mode:04o} {hf}" in calls(tmp_path)
+    script_text = SCRIPT.read_text()
+    assert f'HF_CACHE="${{BOOTSTRAP_HF_CACHE:-{cache}}}"' in script_text
+    assert f'PULL_USER="${{BOOTSTRAP_PULL_USER:-{user}}}"' in script_text
+    assert f'CACHE_GROUP="${{BOOTSTRAP_CACHE_GROUP:-{group}}}"' in script_text
     line = next(line for line in dry_run() if "/etc/needrestart/conf.d/" in line)
     assert line.split()[-2:] == [str(ROOT / doctor.NEEDRESTART_REPO), str(doctor.NEEDRESTART_CONF)]
 
@@ -1024,7 +1044,10 @@ def test_the_scripts_environment_is_built_not_copied(tmp_path):
     env = gpu_env(tmp_path, {})
     names, import_names = sorted(env), sorted(NO_PACKAGES)
     home, test_home, import_home = env["HOME"], os.environ["HOME"], NO_PACKAGES["HOME"]
-    assert names == import_names == ["APT_MARK_HELD", "DPKG_FIXTURE", "HOME", "PATH"]
+    assert names == ["APT_MARK_HELD", "DPKG_FIXTURE", "HOME", "PATH"]
+    # Task 27: and the default dry run's stand-in for the Hugging Face cache, a path that doesn't exist.
+    assert import_names == ["APT_MARK_HELD", "BOOTSTRAP_HF_CACHE", "DPKG_FIXTURE", "HOME", "PATH"]
+    assert not Path(NO_PACKAGES["BOOTSTRAP_HF_CACHE"]).exists()
     assert home != test_home and home != import_home
 
 
@@ -1104,7 +1127,8 @@ def test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in
     # root, and `install -d` follows a symlink. If spark owned the parent, it could swap a child for
     # a link to /etc/systemd/system and have root hand that directory to it.
     assert "-o root -g root -m 0755" in install_d_line("/var/lib/local-ai")
-    assert "-o spark -g spark -m 0750" in install_d_line("/var/lib/local-ai/hf")
+    # The Hugging Face cache was spark's here until Task 27, which gives it to spark-pull in a step of its own.
+    assert "-o spark -g spark -m 0750" in install_d_line("/var/lib/local-ai/open-webui")
     assert "-o spark -g spark-admin -m 2770" in install_d_line("/var/lib/local-ai/brake")
 
 
@@ -1714,3 +1738,582 @@ def test_the_apt_mark_stand_in_logs_only_when_asked_and_releases_as_apt_mark_doe
                             capture_output=True, text=True, env=env)
     assert (result.returncode, result.stderr) == (0, "")
     assert "ii\tnvidia-driver-580-open\t1.0\n" in (tmp_path / "installed.tsv").read_text()
+
+
+# Task 27: bootstrap for Phase 2a. The users spark-front and spark-pull, the secrets folder root's alone, the gate's,
+# launch's, whisper's and the pull's folders, the Hugging Face cache moved to spark-pull, and the failure notifier's
+# script. The real steps run against stand-ins, as real_hold's do; only a dry run touches nothing at all.
+
+STAND_IN_USER = pwd.getpwuid(os.getuid()).pw_name
+STAND_IN_GROUP = grp.getgrgid(os.getgid()).gr_name
+NOTIFIER = "/usr/local/libexec/local-ai-notify"
+
+FAKE_REAL_LOGGED = r"""#!/usr/bin/env bash
+# Stands in for chown or chmod, whichever name it runs as: logs the call in $CALLS, then runs the real tool, found on
+# PATH after the stand-ins' folder, so the files change as they would. Only root can give a file to spark-pull or to
+# root, so an owner (USER:GROUP) becomes $STAND_IN_OWNER, whoever runs the tests: the real chown then changes nothing
+# but each file's change time, which shows the tests every file it reached, a link's own included.
+tool="${0##*/}"
+echo "$tool $*" >> "$CALLS"
+args=()
+for arg; do
+  if [[ "$tool" == chown && "$arg" == *:* && "$arg" != /* ]]; then arg="$STAND_IN_OWNER"; fi
+  args+=("$arg")
+done
+PATH="${PATH#*:}" exec "$tool" "${args[@]}"
+"""
+
+FAKE_SYSCTL = r"""#!/usr/bin/env bash
+# Stands in for `sysctl -n fs.protected_hardlinks`: prints $PROTECTED_HARDLINKS, or fails as sysctl does when it can't
+# read the setting, if that is empty.
+[[ "$*" == "-n fs.protected_hardlinks" ]] || { echo "fake sysctl: unexpected: $*" >&2; exit 1; }
+[[ -n "${PROTECTED_HARDLINKS:-}" ]] || { echo "sysctl: cannot stat /proc/sys/fs/protected_hardlinks" >&2; exit 255; }
+echo "$PROTECTED_HARDLINKS"
+"""
+
+# Phase 1's deployed registry names whisper's --tmp-dir inside the Hugging Face cache; 2a's names a folder of its own
+# (Task 24). Only the line the check reads, as `spark render`'s registry writes it.
+REGISTRY_HF_TMP = ('models:\n  stt:\n'
+                   '    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/hf/tmp, --threads, "8"]\n')
+REGISTRY_WHISPER_TMP = REGISTRY_HF_TMP.replace("/var/lib/local-ai/hf/tmp", "/var/lib/local-ai/whisper-tmp")
+# The units whose processes write as spark or spark-pull: the three running at the 2a re-run (llama-swap, its
+# engines and the brake; the pull), and the gate and the brake's drill, which run as spark from the cutover.
+SPARKS_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-pull.service",
+                "local-ai-gate.service", "local-ai-brake-drill.service"]
+
+
+def cache_env(tmp_path: Path, *, active: str = "", hardlinks: str = "1", pull_user: str = STAND_IN_USER,
+              cache_group: str = STAND_IN_GROUP) -> dict[str, str]:
+    """Stand-ins for the cache's move: the cache at tmp_path/hf (stand_in_cache makes it), the deployed registry at
+    tmp_path/models.yaml, systemctl reporting the units in `active` active, sysctl reporting `hardlinks`, runuser,
+    and chown and chmod that log to tmp_path/calls and change only tmp_path's files. Whoever runs the tests stands
+    in for spark-pull and spark's group, as for root in install_env, unless `pull_user` or `cache_group` says
+    otherwise. The environment is built (built_env)."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    for name, text in (("chown", FAKE_REAL_LOGGED), ("chmod", FAKE_REAL_LOGGED), ("systemctl", FAKE_SYSTEMCTL),
+                       ("sysctl", FAKE_SYSCTL), ("runuser", FAKE_RUNUSER)):
+        (bindir / name).write_text(text)
+        (bindir / name).chmod(0o755)
+    return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), ACTIVE_UNITS=active,
+                     PROTECTED_HARDLINKS=hardlinks, STAND_IN_OWNER=f"{STAND_IN_USER}:{STAND_IN_GROUP}",
+                     BOOTSTRAP_HF_CACHE=str(tmp_path / "hf"), BOOTSTRAP_REGISTRY=str(tmp_path / "models.yaml"),
+                     BOOTSTRAP_PULL_USER=pull_user, BOOTSTRAP_CACHE_GROUP=cache_group, SUDO_USER="alice")
+
+
+def walk(root: Path) -> list[Path]:
+    """root and everything under it, a link as itself, never followed."""
+    found = [root]
+    for top, dirs, files in os.walk(root):
+        found += [Path(top, name) for name in dirs + files]
+    return found
+
+
+def folders(root: Path) -> list[Path]:
+    """Every folder under root, not root itself and not a link to a folder."""
+    return [path for path in walk(root)[1:] if path.is_dir() and not path.is_symlink()]
+
+
+def ctimes(root: Path) -> dict[Path, int]:
+    """Each path's change time, read without following a link: a chown or chmod moves it, even one that changes
+    nothing else."""
+    return {path: os.lstat(path).st_ctime_ns for path in walk(root)}
+
+
+def stand_in_cache(tmp_path: Path, *, moved: bool = False) -> Path:
+    """A Hugging Face cache as Phase 1's pull left it, spark's (whoever runs the tests stands in): a model's blob and
+    the snapshot that links to it, as the hub writes them, hf_xet's logs, whisper's tmp-dir with a file in it, and
+    two links out of the cache to a file and a folder outside it, as spark could have planted. `moved`: as the move
+    leaves it, the top 2750 and every folder setgid, but hf/tmp, which the 2a re-run left spark's. The outside file
+    and folder are returned through tmp_path/outside."""
+    hf = tmp_path / "hf"
+    snapshot = hf / "hub/models--org--model/snapshots/abc"
+    snapshot.mkdir(parents=True)
+    blobs = hf / "hub/models--org--model/blobs"
+    blobs.mkdir()
+    (blobs / "1234").write_text("weights\n")
+    (snapshot / "model.gguf").symlink_to("../../blobs/1234")
+    (hf / "xet/logs").mkdir(parents=True)
+    (hf / "xet/logs/xet.log").write_text("a log line\n")
+    (hf / "tmp").mkdir()
+    (hf / "tmp/upload.wav").write_text("audio\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o755)
+    (outside / "victim").write_text("not the cache's\n")
+    (outside / "victim").chmod(0o640)
+    (hf / "planted").symlink_to(outside / "victim")
+    (hf / "planted-folder").symlink_to(outside)
+    for folder in folders(hf):
+        folder.chmod(0o755)
+    hf.chmod(0o750)
+    if moved:
+        for folder in folders(hf):
+            if hf / "tmp" not in (folder, *folder.parents):
+                folder.chmod(0o2755)
+        hf.chmod(0o2750)
+    time.sleep(0.05)  # so a change time the step sets differs from the one making the stand-in set
+    return hf
+
+
+def mode(path: Path) -> int:
+    return os.lstat(path).st_mode & 0o7777
+
+
+def cache_step(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The cache's step for real, not its dry run, against cache_env's stand-ins (see real_hold); then the line the
+    run goes on with, if the step let it."""
+    return subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && hf_cache_to_pull && echo "the run goes on"', "bash",
+         str(SCRIPT)],
+        capture_output=True, text=True, env=env)
+
+
+def changing_calls(tmp_path: Path) -> list[str]:
+    return [line for line in calls(tmp_path) if line.split()[0] in ("chown", "chmod", "install", "mkdir")]
+
+
+def test_bootstrap_adds_spark_front_in_spark_users_and_spark_pull():
+    lines = dry_run()
+    for user in ("spark-front", "spark-pull"):
+        assert f"+ groupadd --system {user}   (if missing)" in lines
+    assert ("+ useradd --system --gid spark-front --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin "
+            "spark-front   (if missing)") in lines
+    assert ("+ useradd --system --gid spark-pull --home-dir /var/lib/local-ai --no-create-home --shell "
+            "/usr/sbin/nologin spark-pull   (if missing)") in lines
+    assert usermod_lines("spark-front") == ["+ usermod -aG spark-users spark-front"]
+    # spark-pull is in its own group only, and the front in neither spark (the cache's group) nor spark-admin.
+    assert usermod_lines("spark-pull") == []
+    # Each user comes after its group, and both before anything is given to them.
+    index = {line: i for i, line in enumerate(lines)}
+    assert index["+ groupadd --system spark-pull   (if missing)"] < min(
+        i for line, i in index.items() if line.startswith("+ useradd") and line.endswith("spark-pull   (if missing)"))
+    assert max(i for line, i in index.items() if line.startswith("+ useradd")) < min(
+        i for line, i in index.items() if "spark-pull" in line and ("install -d" in line or "chown" in line))
+
+
+def test_spark_admin_holds_only_the_admin():
+    # The control socket is root's, group spark-admin (Task 25's ruling): only spark-admin's members reach it, and on
+    # this box that must be Dan alone.
+    adding = [line for line in dry_run()
+              if line.startswith("+ usermod") and "spark-admin" in line.split()[3].split(",")]
+    me = pwd.getpwuid(os.getuid()).pw_name
+    assert adding == [f"+ usermod -aG spark-admin,spark-users,adm {me}"]
+
+
+FAKE_ACCOUNTS = r"""#!/usr/bin/env bash
+# Stands in for getent, id, groupadd, useradd, usermod and chmod, whichever name it runs as. The first five work over
+# $ACCOUNTS/passwd (name:group:home:shell) and $ACCOUNTS/group (name:members) as the real ones work over /etc/passwd
+# and /etc/group: groupadd and useradd refuse a name that exists (exit 9), useradd a --gid that doesn't (6), usermod
+# a user or a group that doesn't (6), and useradd without --gid makes the user's own group, as Ubuntu's does. Each
+# call that changes something is logged in $CALLS; chmod is only logged, since the paths it names are this machine's.
+tool="${0##*/}"
+passwd="$ACCOUNTS/passwd" group="$ACCOUNTS/group"
+has() { grep -q "^$2:" "$1"; }
+case "$tool" in
+  getent)
+    [[ "$1" == group && $# == 2 ]] || { echo "fake getent: unexpected: $*" >&2; exit 1; }
+    grep "^$2:" "$group" || exit 2 ;;
+  id)
+    [[ "$1" == -u && $# == 2 ]] || { echo "fake id: unexpected: $*" >&2; exit 1; }
+    grep -n "^$2:" "$passwd" | cut -d: -f1 | grep . || { echo "id: '$2': no such user" >&2; exit 1; } ;;
+  groupadd)
+    echo "groupadd $*" >> "$CALLS"
+    for name; do :; done
+    if has "$group" "$name"; then echo "groupadd: group '$name' already exists" >&2; exit 9; fi
+    echo "$name:" >> "$group" ;;
+  useradd)
+    echo "useradd $*" >> "$CALLS"
+    gid="" home="/home/${*: -1}" shell=""
+    while [[ $# -gt 1 ]]; do
+      case "$1" in
+        --gid) gid="$2"; shift 2 ;;
+        --home-dir) home="$2"; shift 2 ;;
+        --shell) shell="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    name="$1"
+    if has "$passwd" "$name"; then echo "useradd: user '$name' already exists" >&2; exit 9; fi
+    if [[ -n "$gid" ]] && ! has "$group" "$gid"; then echo "useradd: group '$gid' does not exist" >&2; exit 6; fi
+    if [[ -z "$gid" ]]; then gid="$name"; has "$group" "$name" || echo "$name:" >> "$group"; fi
+    echo "$name:$gid:$home:$shell" >> "$passwd" ;;
+  usermod)
+    echo "usermod $*" >> "$CALLS"
+    [[ "$1" == -aG && $# == 3 ]] || { echo "fake usermod: unexpected: $*" >&2; exit 1; }
+    has "$passwd" "$3" || { echo "usermod: user '$3' does not exist" >&2; exit 6; }
+    IFS=, read -ra wanted <<<"$2"
+    for g in "${wanted[@]}"; do has "$group" "$g" || { echo "usermod: group '$g' does not exist" >&2; exit 6; }; done
+    for g in "${wanted[@]}"; do
+      awk -F: -v g="$g" -v u="$3" 'BEGIN {OFS = ":"}
+        $1 == g {n = split($2, m, ","); seen = 0; for (i = 1; i <= n; i++) if (m[i] == u) seen = 1
+                 if (!seen) $2 = ($2 == "" ? u : $2 "," u)}
+        {print}' "$group" > "$group.new"
+      mv "$group.new" "$group"
+    done ;;
+  chmod) echo "chmod $*" >> "$CALLS" ;;
+  *) echo "fake accounts: unexpected tool $tool" >&2; exit 1 ;;
+esac
+"""
+
+# The accounts as Phase 0's bootstrap left brightroar (alice standing in for the admin), and as a new box has them.
+BOX_PASSWD = ["alice:alice:/home/alice:/bin/bash", "spark:spark:/var/lib/local-ai:/usr/sbin/nologin",
+              "agent:agent:/home/agent:/bin/bash"]
+BOX_GROUP = ["alice:", "adm:alice", "video:spark,agent", "render:spark,agent", "docker:", "spark:", "agent:",
+             "spark-users:spark,agent,alice", "spark-admin:alice"]
+NEW_PASSWD = ["alice:alice:/home/alice:/bin/bash"]
+NEW_GROUP = ["alice:", "adm:", "video:", "render:", "docker:"]
+
+
+def accounts_env(tmp_path: Path, passwd: list[str], group: list[str]) -> dict[str, str]:
+    """Stand-ins for the accounts' tools over tmp_path/accounts, which they change as the real ones change /etc;
+    alice is the admin who ran sudo. The environment is built (built_env)."""
+    bindir, accounts = tmp_path / "bin", tmp_path / "accounts"
+    bindir.mkdir()
+    accounts.mkdir()
+    (accounts / "passwd").write_text("".join(f"{line}\n" for line in passwd))
+    (accounts / "group").write_text("".join(f"{line}\n" for line in group))
+    for name in ("getent", "id", "groupadd", "useradd", "usermod", "chmod"):
+        (bindir / name).write_text(FAKE_ACCOUNTS)
+        (bindir / name).chmod(0o755)
+    return built_env(tmp_path, bindir, ACCOUNTS=str(accounts), CALLS=str(tmp_path / "calls"), SUDO_USER="alice")
+
+
+def users_step(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """users_and_groups for real, not its dry run, against accounts_env's stand-ins (see real_hold)."""
+    return subprocess.run(["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && users_and_groups', "bash", str(SCRIPT)],
+                          capture_output=True, text=True, env=env)
+
+
+def accounts(tmp_path: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """The stand-ins' users (name → group, home, shell) and groups (name → members)."""
+    users = {line.split(":")[0]: line.split(":")[1:] for line in (tmp_path / "accounts/passwd").read_text().split()}
+    groups = {name: [m for m in members.split(",") if m]
+              for name, members in (line.split(":") for line in (tmp_path / "accounts/group").read_text().split())}
+    return users, groups
+
+
+@pytest.mark.parametrize("passwd, group", [(BOX_PASSWD, BOX_GROUP), (NEW_PASSWD, NEW_GROUP)], ids=["brightroar", "new"])
+def test_the_users_and_groups_step_makes_each_account_once(tmp_path, passwd, group):
+    env = accounts_env(tmp_path, passwd, group)
+    first = users_step(env)
+    assert first.returncode == 0, first.stderr
+    users, groups = accounts(tmp_path)
+    assert users["spark-front"] == ["spark-front", "/nonexistent", "/usr/sbin/nologin"]
+    assert users["spark-pull"] == ["spark-pull", "/var/lib/local-ai", "/usr/sbin/nologin"]
+    assert users["spark"] == ["spark", "/var/lib/local-ai", "/usr/sbin/nologin"]
+    assert "spark-front" in groups["spark-users"] and groups["spark-admin"] == ["alice"]
+    assert all(name == "spark-front" or "spark-front" not in members for name, members in groups.items()
+               if name != "spark-users")  # its own group and spark-users, never spark's, the cache's group
+    assert all("spark-pull" not in members for members in groups.values())  # its own group alone
+    if passwd == BOX_PASSWD:  # only what 2a adds
+        assert [line for line in calls(tmp_path) if line.startswith(("groupadd", "useradd"))] == [
+            "groupadd --system spark-front", "groupadd --system spark-pull",
+            "useradd --system --gid spark-front --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin "
+            "spark-front",
+            "useradd --system --gid spark-pull --home-dir /var/lib/local-ai --no-create-home --shell "
+            "/usr/sbin/nologin spark-pull"]
+    before = (tmp_path / "accounts/passwd").read_text(), (tmp_path / "accounts/group").read_text()
+    (tmp_path / "calls").unlink()
+    again = users_step(env)
+    assert again.returncode == 0, again.stderr
+    assert not [line for line in calls(tmp_path) if line.startswith(("groupadd", "useradd"))]
+    assert ((tmp_path / "accounts/passwd").read_text(), (tmp_path / "accounts/group").read_text()) == before
+
+
+FAKE_INSTALL_FOLDERS = FAKE_INSTALL  # install -d makes each folder with its mode, as install_env's does
+
+
+def secrets_env(tmp_path: Path) -> dict[str, str]:
+    """Stand-ins for the secrets folder's step: the folder at tmp_path/secrets, install as install_env's, and chown
+    and chmod that log to tmp_path/calls and change only tmp_path's files."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, text in (("install", FAKE_INSTALL_FOLDERS), ("chown", FAKE_REAL_LOGGED), ("chmod", FAKE_REAL_LOGGED)):
+        (bindir / name).write_text(text)
+        (bindir / name).chmod(0o755)
+    return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), BOOTSTRAP_SECRETS=str(tmp_path / "secrets"),
+                     STAND_IN_OWNER=f"{STAND_IN_USER}:{STAND_IN_GROUP}")
+
+
+def test_the_secrets_folder_becomes_root_only_and_its_files_0600():
+    lines = dry_run()
+    assert "+ install -d -o root -g root -m 0700 /etc/local-ai/secrets" in lines
+    # A dry run never lists the folder: it says what a real run does to each file in it.
+    assert "+ chown root:root /etc/local-ai/secrets/<each file>" in lines
+    assert "+ chmod 0600 /etc/local-ai/secrets/<each file>" in lines
+    assert lines.index("+ install -d -o root -g root -m 0700 /etc/local-ai/secrets") < lines.index(
+        "+ chown root:root /etc/local-ai/secrets/<each file>")
+
+
+def test_each_secret_file_becomes_root_root_0600_in_a_real_run(tmp_path):
+    env = secrets_env(tmp_path)
+    secrets = tmp_path / "secrets"
+    secrets.mkdir(mode=0o750)
+    secrets.chmod(0o750)  # root:spark 750, as Phase 1 left it
+    for name in ("llama-swap.env", "hf.env"):
+        (secrets / name).write_text("NAME=stand-in\n")
+        (secrets / name).chmod(0o640)
+    outside = tmp_path / "outside"
+    outside.write_text("not a secret file\n")
+    outside.chmod(0o644)
+    (secrets / "a-link").symlink_to(outside)
+    before = os.lstat(outside).st_ctime_ns
+    time.sleep(0.05)
+    result = subprocess.run(["bash", "-c", 'source "$1" --dry-run && DRY_RUN=0 && secrets_folder', "bash", str(SCRIPT)],
+                            capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    # install's stand-in sets the folder's mode with chmod, the logged one, right after the script's call.
+    assert calls(tmp_path)[:2] == [f"install -d -o root -g root -m 0700 {secrets}", f"chmod 0700 {secrets}"]
+    assert sorted(calls(tmp_path)[2:]) == sorted(
+        f"{tool} {setting} {secrets / name}" for name in ("hf.env", "llama-swap.env")
+        for tool, setting in (("chown", "root:root"), ("chmod", "0600")))
+    for name in ("hf.env", "llama-swap.env"):
+        assert calls(tmp_path).index(f"chown root:root {secrets / name}") < calls(tmp_path).index(
+            f"chmod 0600 {secrets / name}")
+        assert mode(secrets / name) == 0o600
+    assert mode(secrets) == 0o700
+    # Root acts on regular files only: a link in the folder, which no step makes, is left and named.
+    assert mode(outside) == 0o644 and os.lstat(outside).st_ctime_ns == before
+    assert f"left as it is: {secrets}/a-link, not a regular file" in result.stdout
+
+
+def test_the_gate_launch_and_whisper_tmp_folders_are_sparks():
+    for path in ("/var/lib/local-ai/gate", "/var/lib/local-ai/launch", "/var/lib/local-ai/whisper-tmp"):
+        line = install_d_line(path)
+        assert line.startswith("+ install -d -o spark -g spark -m 0750 "), line  # root's, in root's /var/lib/local-ai
+    for path in ("tickets", "started", "refusals"):
+        line = install_d_line(f"/var/lib/local-ai/launch/{path}")
+        # launch is spark's, so spark makes these: root never makes a folder through one spark controls, where a
+        # link spark planted would turn root's install -d into a chown of whatever it points at.
+        assert line.startswith("+ runuser -u spark -- install -d -o spark -g spark -m 0750 "), line
+    assert install_d_line("/var/lib/local-ai/pull-cache").startswith(
+        "+ install -d -o spark-pull -g spark-pull -m 0750 ")
+    lines = dry_run()
+    assert lines.index(install_d_line("/var/lib/local-ai/launch")) < lines.index(
+        install_d_line("/var/lib/local-ai/launch/tickets"))
+
+
+def test_directories_never_name_the_cache():
+    # install -d sets the owner and mode of a folder that exists, so a line naming the cache would hand it back to
+    # whoever the line names, and drop its setgid bit, at every re-run.
+    for line in dry_run({**NO_PACKAGES, "BOOTSTRAP_HF_CACHE": "/var/lib/local-ai/hf"}):
+        if "install -d" in line:
+            assert not [word for word in line.split() if word.rstrip("/") == "/var/lib/local-ai/hf"], line
+
+
+def test_the_folders_installs_need_are_made_first():
+    lines = dry_run()
+    folder = lines.index("+ install -d -o root -g root -m 0755 /usr/local/libexec")
+    [notifier] = [i for i, line in enumerate(lines) if line.startswith("+ install ") and line.endswith(NOTIFIER)]
+    assert folder < notifier
+
+
+def test_the_notifier_script_is_installed_root_owned():
+    [line] = [line for line in dry_run() if line.endswith(f" {NOTIFIER}")]
+    words = line.split()
+    assert words[:7] == ["+", "install", "-o", "root", "-g", "root", "-m"] and words[7] == "0755", line
+    assert words[8].endswith("/stack/host/local-ai-notify") and Path(words[8]).resolve() == (
+        ROOT / "stack/host/local-ai-notify")
+    # Where the failure notifier's unit runs it from (Task 25).
+    unit = (ROOT / "stack/templates/local-ai-notify@.service").read_text()
+    assert f"ExecStart={NOTIFIER} %i" in unit.splitlines()
+
+
+def test_the_dry_run_prints_every_new_step():
+    says = [line for line in dry_run() if line.startswith("==> ")]
+    order = ["==> users and groups", "==> directories",
+             "==> the Hugging Face cache: spark-pull's, with a setgid group that spark reads the model files through",
+             "==> the failure notifier's script, which local-ai-notify@.service runs: root's own",
+             "==> boot to a console; start a desktop on demand with: sudo systemctl start display-manager"]
+    assert [line for line in says if line in order] == order
+
+
+def test_the_cache_moves_to_spark_pull_with_a_setgid_group(tmp_path):
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)  # nothing names hf/tmp: it moves with the rest
+    before, outside = ctimes(hf), ctimes(tmp_path / "outside")
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-2:] == [f"==> moved: {hf} is spark-pull:spark 2750, its folders setgid",
+                                               "the run goes on"]
+    chowns = [line for line in calls(tmp_path) if line.startswith("chown")]
+    assert chowns == [f"chown -R -P --no-dereference spark-pull:spark {hf}"]
+    chmods = [line for line in calls(tmp_path) if line.startswith("chmod")]
+    assert chmods[0] == f"chmod 2750 {hf}"
+    assert all(line.startswith("chmod g+s ") for line in chmods[1:])
+    assert sorted(word for line in chmods[1:] for word in line.split()[2:]) == sorted(map(str, folders(hf)))
+    assert mode(hf) == 0o2750 and all(mode(folder) & 0o2000 for folder in folders(hf))
+    # Every path in the cache was reached, a link's own owner included; nothing outside it was, through a link.
+    after = ctimes(hf)
+    assert [path for path in before if after[path] == before[path]] == []
+    assert ctimes(tmp_path / "outside") == outside
+    assert mode(tmp_path / "outside") == 0o755 and mode(tmp_path / "outside/victim") == 0o640
+
+
+@pytest.mark.parametrize("unit", SPARKS_UNITS)
+def test_the_cache_move_refuses_while_sparks_units_run(tmp_path, unit):
+    env = cache_env(tmp_path, active=unit)
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_HF_TMP)
+    before, modes = ctimes(hf), {path: mode(path) for path in walk(hf)}
+    result = cache_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert "the Hugging Face cache isn't spark-pull's yet, and it can't move now, so nothing in it was changed" in (
+        result.stderr)
+    assert f"  {unit} is active: stop it first (systemctl stop {unit})" in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before and {p: mode(p) for p in walk(hf)} == modes
+
+
+def test_every_reason_the_move_cant_go_ahead_is_named(tmp_path):
+    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS[:2]), hardlinks="0")
+    stand_in_cache(tmp_path)
+    result = cache_step(env)
+    assert result.returncode == 1
+    lines = result.stderr.splitlines()
+    for unit in SPARKS_UNITS[:2]:
+        assert f"  {unit} is active: stop it first (systemctl stop {unit})" in lines
+    assert any(line.startswith("  fs.protected_hardlinks is 0, not 1") for line in lines)
+    assert lines[-1] == "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
+
+
+def test_a_re_run_after_the_move_changes_nothing(tmp_path):
+    # Task 39's or Task 47's re-run, after the cutover: the stack up, and hf/tmp still spark's, as the 2a re-run left
+    # it, though the deployed registry no longer names it (the close removes it, Task 51).
+    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS), hardlinks="0")
+    hf = stand_in_cache(tmp_path, moved=True)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-2:] == [
+        f"==> {hf} is already spark-pull:spark 2750, its folders setgid: nothing to move", "the run goes on"]
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+@pytest.mark.parametrize("odd", ["owner", "setgid", "top"])
+def test_anything_not_yet_moved_counts_as_something_to_move(tmp_path, odd):
+    # A move cut off partway, or a folder that lost its setgid bit: the step moves again, and refuses while the stack
+    # runs, rather than calling it done.
+    env = cache_env(tmp_path, active="local-ai-brake.service", pull_user="nobody" if odd == "owner" else STAND_IN_USER)
+    hf = stand_in_cache(tmp_path, moved=True)
+    if odd == "setgid":
+        (hf / "xet/logs").chmod(0o755)
+    elif odd == "top":
+        hf.chmod(0o750)
+    result = cache_step(env)
+    assert result.returncode == 1 and "  local-ai-brake.service is active" in result.stderr
+
+
+@pytest.mark.parametrize("hardlinks", ["0", "2", ""], ids=["off", "not-1", "unreadable"])
+def test_the_cache_move_refuses_without_protected_hardlinks(tmp_path, hardlinks):
+    env = cache_env(tmp_path, hardlinks=hardlinks)
+    hf = stand_in_cache(tmp_path)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1
+    assert f"  fs.protected_hardlinks is {hardlinks or 'unreadable'}, not 1: with it off, a hard link spark made to " \
+           "a file it doesn't own would go to spark-pull with the cache" in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_hf_tmp_stays_sparks_while_the_registry_names_it(tmp_path):
+    for case, registry in (("named", REGISTRY_HF_TMP), ("not-named", REGISTRY_WHISPER_TMP), ("unread", None)):
+        root = tmp_path / case
+        root.mkdir()
+        env = cache_env(root)
+        hf = stand_in_cache(root)
+        if registry is not None:
+            (root / "models.yaml").write_text(registry)
+        before = ctimes(hf)
+        result = cache_step(env)
+        assert result.returncode == 0, (case, result.stderr)
+        # The registry is read as the admin who ran sudo, never as root (install_units' rule).
+        assert f"runuser -u alice -- timeout 10 head -c 1048577 -- {root}/models.yaml" in calls(root), case
+        chowns = [line for line in calls(root) if line.startswith("chown")]
+        after = ctimes(hf)
+        if case == "not-named":
+            assert chowns == [f"chown -R -P --no-dereference spark-pull:spark {hf}"]
+            assert mode(hf / "tmp") & 0o2000 and after[hf / "tmp/upload.wav"] != before[hf / "tmp/upload.wav"]
+            continue
+        rest = sorted(str(path) for path in hf.iterdir() if path.name != "tmp")
+        assert chowns[0] == f"chown --no-dereference spark-pull:spark {hf}", case
+        assert sorted(word for line in chowns[1:] for word in line.removeprefix(
+            "chown -R -P --no-dereference spark-pull:spark ").split()) == rest, case
+        assert mode(hf / "tmp") == 0o755, case
+        assert after[hf / "tmp"] == before[hf / "tmp"] and after[hf / "tmp/upload.wav"] == before[hf / "tmp/upload.wav"]
+        assert all(after[path] != before[path] for path in before if hf / "tmp" not in (path, *path.parents)), case
+        assert mode(hf) == 0o2750 and all(mode(f) & 0o2000 for f in folders(hf) if f != hf / "tmp"), case
+        why = ("the deployed registry still names it as whisper's --tmp-dir" if case == "named" else
+               f"the deployed registry, {root}/models.yaml, couldn't be read as alice, so it may still be whisper's")
+        assert f"==> {hf}/tmp stays as it is, spark's: {why}" in result.stdout.splitlines(), case
+
+
+def test_a_new_box_gets_an_empty_cache_that_spark_pull_owns(tmp_path):
+    # Nothing to move, so nothing refuses, whatever runs.
+    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS), hardlinks="0")
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    hf = tmp_path / "hf"
+    assert calls(tmp_path) == [f"chown spark-pull:spark {hf}", f"chmod 2750 {hf}"]
+    assert hf.is_dir() and mode(hf) == 0o2750
+    assert f"==> made {hf}, empty: spark-pull:spark 2750" in result.stdout
+
+
+@pytest.mark.parametrize("planted", ["link", "file"])
+def test_a_cache_that_isnt_a_folder_is_refused(tmp_path, planted):
+    env = cache_env(tmp_path)
+    (tmp_path / "elsewhere").mkdir()
+    if planted == "link":
+        (tmp_path / "hf").symlink_to(tmp_path / "elsewhere")
+    else:
+        (tmp_path / "hf").write_text("")
+    result = cache_step(env)
+    assert result.returncode == 1 and f"{tmp_path}/hf is a link or not a folder" in result.stderr
+    assert changing_calls(tmp_path) == []
+
+
+def test_a_move_that_didnt_take_fails_loudly(tmp_path):
+    # As the hold checks apt-mark's work: here the stand-in chown gives the files to whoever runs the tests, not to
+    # the user the check expects, as a chown that silently failed would leave them.
+    env = cache_env(tmp_path, pull_user="nobody")
+    stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    result = cache_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert f"bootstrap: the move didn't take: {tmp_path}/hf isn't spark-pull:spark 2750 with setgid folders yet" in (
+        result.stderr)
+
+
+def test_a_dry_run_shows_the_move_and_where_a_real_run_would_stop(tmp_path):
+    env = cache_env(tmp_path, active="local-ai-llama-swap.service")
+    hf = stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_HF_TMP)
+    before = ctimes(hf)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=1 && hf_cache_to_pull', "bash", str(SCRIPT)],
+        capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    assert (f"+ chown -R -P --no-dereference spark-pull:spark {hf}   (a real run stops here: "
+            "local-ai-llama-swap.service is active)") in result.stdout.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+    # With nothing in its way, it prints the move, leaving hf/tmp out while the registry names it.
+    (tmp_path / "calls").unlink(missing_ok=True)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --dry-run && DRY_RUN=1 && hf_cache_to_pull', "bash", str(SCRIPT)],
+        capture_output=True, text=True, env={**env, "ACTIVE_UNITS": ""})
+    assert [line for line in result.stdout.splitlines() if line.startswith("+ ")] == [
+        f"+ chown --no-dereference spark-pull:spark {hf}",
+        f"+ find -P {hf} -mindepth 1 -maxdepth 1 ! -path {hf}/tmp -exec chown -R -P --no-dereference spark-pull:spark "
+        "{} +",
+        f"+ chmod 2750 {hf}",
+        f"+ find -P {hf} -mindepth 1 -path {hf}/tmp -prune -o -type d -exec chmod g+s {{}} +",
+    ]
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_the_cache_step_comes_after_the_users_and_folders_it_uses():
+    says = [line for line in dry_run() if line.startswith("==> ")]
+    cache = next(i for i, line in enumerate(says) if line.startswith("==> the Hugging Face cache"))
+    assert says.index("==> users and groups") < says.index("==> directories") < cache

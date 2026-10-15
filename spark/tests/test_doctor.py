@@ -58,7 +58,7 @@ class FakeProbe:
                 {"at": "2026-09-28T19:00:00", "ok": True, "key_env": "LLAMASWAP_KEY_SPARK",
                  "detail": "llama-swap answers GET /running with the key in $LLAMASWAP_KEY_SPARK"}),
         }
-        self.owners = {SECRETS: ("root", "spark", 0o750)}
+        self.owners = {SECRETS: ("root", "root", 0o700)}  # root's alone since 2a's bootstrap (Task 27)
         # Root's own copies of the units and the Compose project, as `make install-units` leaves them.
         self.entries = {path: ("root", "root", 0o755, "folder") for path in doctor.ROOT_FOLDERS}
         self.entries |= {path: ("root", "root", 0o644, "file") for path in doctor.ROOT_FILES}
@@ -173,14 +173,21 @@ def test_the_firewall_must_be_on_and_an_unreadable_conf_says_how_to_check():
     assert "sudo ufw status" in failures(probe)["firewall"]
 
 
-def test_the_secrets_folder_must_stay_closed_to_you():
+def test_secrets_folder_must_be_root_root_700_and_closed():
+    # Phase 2a (Dan's decision, 2026-10-07; Task 27): the secret files are root's alone, in a folder only root reads,
+    # since PID 1 and root's Compose read them and nothing reads them as spark. Phase 1's root:spark 750 now fails.
+    assert {c.name: (c.ok, c.detail) for c in checks(FakeProbe(), KEY, REG)}["secrets folder"] == (
+        True, "root:root 700, and closed to you")
     probe = FakeProbe()
-    probe.open_folders.add(SECRETS)
+    probe.owners[SECRETS] = ("root", "spark", 0o750)
     assert failures(probe)["secrets folder"] == (
-        f"your account can list {SECRETS}; it must not: run doctor as yourself, not with sudo, and check that "
-        "`id -nG` doesn't list spark")
-    probe.owners[SECRETS] = ("root", "spark", 0o755)
-    assert failures(probe)["secrets folder"].endswith("root:spark 755, not root:spark 750: `make bootstrap` sets it")
+        f"{SECRETS} is root:spark 750, not root:root 700: `make bootstrap` sets it")
+    probe.owners[SECRETS] = ("root", "root", 0o750)
+    assert failures(probe)["secrets folder"].endswith("root:root 750, not root:root 700: `make bootstrap` sets it")
+    probe = FakeProbe()
+    probe.open_folders.add(SECRETS)  # root:root 700, and still listable: doctor runs as root
+    assert failures(probe)["secrets folder"] == (
+        f"your account can list {SECRETS}; it must not: run doctor as yourself, not with sudo")
 
 
 def test_a_secrets_folder_out_of_reach_may_be_there(tmp_path):
@@ -258,6 +265,32 @@ def test_sparks_folders_must_be_as_bootstrap_sets_them():
     del probe.entries[Path("/var/lib/local-ai/brake")]
     assert failures(probe) == {"spark's folders": "/var/lib/local-ai/brake is missing, or out of your account's "
                                                   "reach: `make bootstrap` sets it"}
+
+
+def test_sparks_folders_include_the_gates_launchs_and_whispers():
+    # Task 27: the folders 2a's units write, as bootstrap makes them, and the Hugging Face cache, spark-pull's since
+    # 2a's bootstrap, with spark's group setgid so the engines read the model files. Each is in /var/lib/local-ai,
+    # root's, so your account reads each one's owner without being in its group. launch's own folders are inside a
+    # folder of spark's, out of your reach, so doctor doesn't name them.
+    assert dict(doctor.SPARK_FOLDERS) == {
+        Path("/var/lib/local-ai"): ("root", "root", 0o755),
+        Path("/var/lib/local-ai/brake"): ("spark", "spark-admin", 0o2770),
+        Path("/var/lib/local-ai/gate"): ("spark", "spark", 0o750),
+        Path("/var/lib/local-ai/launch"): ("spark", "spark", 0o750),
+        Path("/var/lib/local-ai/whisper-tmp"): ("spark", "spark", 0o750),
+        Path("/var/lib/local-ai/hf"): ("spark-pull", "spark", 0o2750),
+        Path("/var/lib/local-ai/pull-cache"): ("spark-pull", "spark-pull", 0o750),
+    }
+    assert {c.name: (c.ok, c.detail) for c in checks(FakeProbe(), KEY, REG)}["spark's folders"] == (
+        True, "/var/lib/local-ai is root's; the brake's folder spark's, shared with spark-admin; the gate's, launch's "
+              "and whisper's spark's; the Hugging Face cache spark-pull's, read by spark through its group; the pull's "
+              "own cache spark-pull's")
+    probe = FakeProbe()
+    probe.entries[Path("/var/lib/local-ai/hf")] = ("spark", "spark", 0o750, "folder")  # as Phase 1 left it
+    del probe.entries[Path("/var/lib/local-ai/gate")]
+    assert failures(probe) == {"spark's folders": (
+        "/var/lib/local-ai/gate is missing, or out of your account's reach; /var/lib/local-ai/hf is spark:spark 750, "
+        "not spark-pull:spark 2750: `make bootstrap` sets them")}
 
 
 def test_llama_server_finds_no_config_file_to_read():
