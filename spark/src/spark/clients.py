@@ -21,6 +21,10 @@ HERMES_PLACEHOLDER = "your-llama-swap-key-here"  # what this command's first ver
 # xhigh is that template's own default, what pi gets by sending none; a template that doesn't read it, Gemma's,
 # ignores it.
 HERMES_REASONING = "xhigh"
+# The efforts OpenCode offers each Spark model. Its own for an OpenAI-compatible model are low, medium and high, and
+# that template refuses high (seen 2026-10-14). A model's variants replace OpenCode's, so these are all it offers, and
+# its default sends no effort, which the template reads as xhigh (checked with OpenCode 2.0.25 and a stand-in server).
+OPENCODE_EFFORTS = ("low", "medium", "xhigh")
 COMPAT = {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": False,
           "supportsUsageInStreaming": True, "supportsStrictMode": False, "maxTokensField": "max_tokens"}
 
@@ -40,12 +44,14 @@ def pi_provider(registry: Registry, base_url: str, key_env: str) -> dict:
 
 def opencode_provider(registry: Registry, base_url: str, key_env: str) -> dict:
     """OpenCode's custom provider: an OpenAI-compatible endpoint through the AI SDK, the key by env reference. Each
-    model's limits let OpenCode tell how much of its context is left, as pi's contextWindow does."""
+    model's limits let OpenCode tell how much of its context is left, as pi's contextWindow does, and its variants are
+    the efforts it can be sent."""
     models = {}
     for m in registry.models.values():
         if m.capability != "chat":
             continue  # embeddings and speech models don't belong in a chat picker
-        models[m.name] = {"name": m.name, "limit": {"context": m.ctx, "output": min(32768, m.ctx // 2)}}
+        models[m.name] = {"name": m.name, "limit": {"context": m.ctx, "output": min(32768, m.ctx // 2)},
+                          "variants": {e: {"reasoningEffort": e} for e in OPENCODE_EFFORTS}}
     return {"npm": "@ai-sdk/openai-compatible", "name": "Spark",
             "options": {"apiKey": "{env:" + key_env + "}", "baseURL": base_url}, "models": models}
 
