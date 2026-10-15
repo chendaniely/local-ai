@@ -4,14 +4,17 @@ Description=local-ai: download the registry's model files at their pinned revisi
 
 [Service]
 Type=oneshot
-User=spark
-Group=spark
+# A user of its own (plan.md, Phase 2a): it owns the Hugging Face cache, which bootstrap moves to it (Task 27), and the
+# cache's setgid group, spark, reads the model files, so the engines can't change them. 0027: its files 0640 and
+# folders 0750.
+User=spark-pull
+Group=spark-pull
+UMask=0027
 # Optional: none of Phase 1's repos is gated. A token only matters for a gated model later.
 EnvironmentFile=-/etc/local-ai/secrets/hf.env
 Environment=HF_HOME=/var/lib/local-ai/hf
-# spark's home, /var/lib/local-ai, is root's: caches go to folders bootstrap gives spark.
-Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache
-Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache
+# spark-pull's home, /var/lib/local-ai, is root's: its cache goes to a folder bootstrap gives it (Task 27).
+Environment=XDG_CACHE_HOME=/var/lib/local-ai/pull-cache
 Environment=HF_HUB_DISABLE_PROGRESS_BARS=1
 # Without it the library also asks the Hub, at most daily, for a list of AI agents to name in its user agent.
 Environment=HF_HUB_DISABLE_TELEMETRY=1

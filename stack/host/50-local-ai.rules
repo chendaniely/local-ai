@@ -1,12 +1,16 @@
 // Installed by stack/host/bootstrap.sh. Lets members of spark-admin start, stop and restart the
-// stack's four units without sudo, and nothing more: no other unit or verb, no daemon-reload, no
-// enabling or linking unit files. What the units run is root's own copy, which only
+// stack's seven services without sudo, and nothing more: no other unit or verb, no daemon-reload,
+// no enabling or linking unit files. What the units run is root's own copy, which only
 // `make install-units` (sudo) installs, so this gives no say over what root runs.
+// The seven are render.POLKIT_UNITS: llama-swap, the brake, compose, the pull, the front, the gate
+// and the S05 drill's brake. The sockets aren't on it, since stopping the front's would free 9100
+// for any account to bind, and nor is the failure notifier, which only OnFailure= starts.
 // systemd (v255, src/core/dbus-unit.c, bus_unit_method_start_generic) passes manage-units the
 // unit's full name as "unit" and the job as "verb". polkit runs this in Duktape: ES5, so var.
 polkit.addRule(function (action, subject) {
   var units = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
-               "local-ai-pull.service"];
+               "local-ai-pull.service", "local-ai-front.service", "local-ai-gate.service",
+               "local-ai-brake-drill.service"];
   var verbs = ["start", "stop", "restart"];
   if (action.id !== "org.freedesktop.systemd1.manage-units" || !subject.isInGroup("spark-admin")) {
     return polkit.Result.NOT_HANDLED;

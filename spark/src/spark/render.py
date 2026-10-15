@@ -39,7 +39,27 @@ ENGINE_START_PORT = 800
 # nothing waits inside cmd any more and it has only a load to cover (plan.md, the session's ruling). The gate's load
 # call waits it plus 20 s (llamaswap_async.load_timeout_for), and a started record counts for twice it (tickets.py).
 HEALTH_CHECK_TIMEOUT_S = 180
-UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service")
+# Every unit render writes, in the order bootstrap installs them (its ROOT_UNITS). 2a's: the front's socket and service,
+# the gate's two sockets and its service, the failure notifier, a template OnFailure= starts, and the S05 drill's
+# oneshot brake.
+UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service", "local-ai-pull.service",
+         "local-ai-front.socket", "local-ai-front.service", "local-ai-gate-status.socket",
+         "local-ai-gate-control.socket", "local-ai-gate.service", "local-ai-notify@.service",
+         "local-ai-brake-drill.service")
+# The services spark-admin starts, stops and restarts without sudo: the polkit rule's list, in
+# stack/host/50-local-ai.rules, which test_polkit.py ties to this. No socket, since stopping the front's would free 9100
+# for any account to bind, and not the notifier, which only OnFailure= starts.
+POLKIT_UNITS = ("local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+                "local-ai-pull.service", "local-ai-front.service", "local-ai-gate.service",
+                "local-ai-brake-drill.service")
+# The failure notifier's priorities, which its unit carries, by the variable its script reads (Task 26): the registry's
+# for the four `*_down` types (docs.NOTIFIER_TYPES), so a change to one takes `make install-units` after `make apply`.
+NOTIFIER_PRIORITIES = {"NOTIFY_FRONT": "front_down", "NOTIFY_GATE": "gate_down", "NOTIFY_BRAKE": "brake_down",
+                       "NOTIFY_LLAMA_SWAP": "llama_swap_down"}
+# The S05 drill's unit is the brake's but for its own lines: every line of the brake's [Service] after this one, to the
+# section's end, render copies into the drill's ({brake_shared}), so the two can't drift.
+BRAKE_UNIT, BRAKE_DRILL_UNIT = "local-ai-brake.service", "local-ai-brake-drill.service"
+BRAKE_SHARED = f"# Shared with the S05 drill's unit, {BRAKE_DRILL_UNIT}: every line below, to this section's end."
 # What root runs is root's own copy, in folders only root can write: `make install-units` (sudo)
 # installs the rendered units and Compose project there, and `spark apply` only stages them.
 UNIT_DIR = "/etc/systemd/system"
@@ -316,6 +336,25 @@ def _image(c: Component) -> str:
     return f"{c.image}:{c.version}@{c.pin}"
 
 
+def brake_shared(brake: str) -> str:
+    """The lines the S05 drill's unit takes from the brake's rendered unit: every line after BRAKE_SHARED, to the end of
+    its [Service] section, trailing blank lines left out."""
+    lines = brake.splitlines()
+    if lines.count(BRAKE_SHARED) != 1:
+        raise RenderError(f"{BRAKE_UNIT} needs the line {BRAKE_SHARED!r} once, above the lines its S05 drill shares")
+    mark = lines.index(BRAKE_SHARED)
+    if [line for line in lines[:mark] if line.startswith("[")][-1:] != ["[Service]"]:
+        raise RenderError(f"{BRAKE_UNIT}: the line {BRAKE_SHARED!r} belongs in its [Service] section")
+    shared = []
+    for line in lines[mark + 1:]:
+        if line.startswith("["):
+            break
+        shared.append(line)
+    while shared and not shared[-1]:
+        shared.pop()
+    return "\n".join(shared)
+
+
 def render(registry: Registry, versions: dict[str, Component], registry_text: str,
            templates: Path = TEMPLATES) -> dict[str, str]:
     check_budget(registry)
@@ -328,7 +367,10 @@ def render(registry: Registry, versions: dict[str, Component], registry_text: st
         "task_model": _only(registry, "model with the 'small' role", lambda m: "small" in m.roles),
         "embedding_model": _only(registry, "embeddings model", lambda m: m.capability == "embeddings"),
         "stt_model": _only(registry, "transcription model", lambda m: m.capability == "transcription"),
+        "notifier_priorities": " ".join(f"{name}={registry.notifications[kind]}"
+                                        for name, kind in NOTIFIER_PRIORITIES.items()),
     }
+    fields["brake_shared"] = brake_shared((templates / BRAKE_UNIT).read_text().format(**fields))
     config = llama_swap_config(registry)
     check_schema(config, templates)
     files = {

@@ -1,0 +1,51 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: the front, on 127.0.0.1:9100
+Requires=local-ai-front.socket
+# Only wants llama-swap, never requires it, and nothing of the gate's: a front whose llama-swap or gate is down still
+# answers, with llama_swap_down or gate_down (plan.md, *The front and the gate*).
+Wants=local-ai-llama-swap.service
+After=local-ai-llama-swap.service local-ai-gate-status.socket
+# Never gives up, and the failure notifier says when it fails.
+StartLimitIntervalSec=0
+OnFailure=local-ai-notify@%n.service
+
+[Service]
+# notify: READY=1 once it serves, and a hang becomes a failure through the watchdog (spark.sdnotify).
+Type=notify
+WatchdogSec=30
+User=spark-front
+Group=spark-front
+# The gate's status socket is spark-users' (local-ai-gate-status.socket).
+SupplementaryGroups=spark-users
+# The client keys only as their digests, its own key for llama-swap, and the private key list: never in the
+# environment (spark.credentials).
+LoadCredential=client-keys:/etc/local-ai/secrets/client-keys.sha256
+LoadCredential=llamaswap-key:/etc/local-ai/secrets/front.key
+LoadCredential=keys:/etc/local-ai/keys.yaml
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
+Environment=SPARK_LLAMASWAP_URL=http://{llamaswap_listen}
+ExecStart=/opt/local-ai/app/.venv/bin/spark front
+Restart=always
+RestartSec=2
+# Above uvicorn's graceful shutdown, gateproto.GRACEFUL_S (20 s).
+TimeoutStopSec=30
+OOMScoreAdjust=-900
+# A form's file parts past 1 MiB spool to files in its PrivateTmp= /tmp, on disk on this box, not in memory
+# (spark.front.parse).
+MemoryMax=512M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+# No capability at all: 9100 is the socket unit's.
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# It reaches only llama-swap on 127.0.0.1; the gate is a Unix socket.
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

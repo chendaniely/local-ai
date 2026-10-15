@@ -326,14 +326,16 @@ def test_health_check_timeout_is_180(files):
     assert tickets.STARTED_EXPIRES_S == 2 * spark.render.HEALTH_CHECK_TIMEOUT_S
 
 
-def test_engines_and_downloads_cache_in_folders_bootstrap_gives_spark():
-    # /var/lib/local-ai is spark's home but root's, so spark can't write a cache under $HOME. The
-    # units that run engines or pull models name the spark-owned folders bootstrap creates.
+def test_engines_and_downloads_cache_in_folders_bootstrap_gives_them():
+    # /var/lib/local-ai is spark's home but root's, so spark can't write a cache under $HOME. The unit that runs the
+    # engines names the spark-owned folders bootstrap creates. The pull, which from 2a runs as spark-pull and runs no
+    # CUDA, names a folder of its own (Task 25), which bootstrap gives spark-pull (Task 27).
     files = rendered()
-    for unit in ("local-ai-llama-swap.service", "local-ai-pull.service"):
-        text = files[f"systemd/{unit}"]
-        assert "Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache" in text, unit
-        assert "Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache" in text, unit
+    text = files["systemd/local-ai-llama-swap.service"]
+    assert "Environment=XDG_CACHE_HOME=/var/lib/local-ai/cache" in text
+    assert "Environment=CUDA_CACHE_PATH=/var/lib/local-ai/cuda-cache" in text
+    text = files["systemd/local-ai-pull.service"]
+    assert "Environment=XDG_CACHE_HOME=/var/lib/local-ai/pull-cache" in text and "CUDA_CACHE_PATH" not in text
 
 
 def test_the_pull_unit_downloads_where_the_engines_read_and_sends_no_telemetry():
@@ -359,6 +361,13 @@ def test_what_root_runs_has_a_root_owned_copy_and_the_rest_has_none():
         "systemd/local-ai-brake.service": "/etc/systemd/system/local-ai-brake.service",
         "systemd/local-ai-compose.service": "/etc/systemd/system/local-ai-compose.service",
         "systemd/local-ai-pull.service": "/etc/systemd/system/local-ai-pull.service",
+        "systemd/local-ai-front.socket": "/etc/systemd/system/local-ai-front.socket",
+        "systemd/local-ai-front.service": "/etc/systemd/system/local-ai-front.service",
+        "systemd/local-ai-gate-status.socket": "/etc/systemd/system/local-ai-gate-status.socket",
+        "systemd/local-ai-gate-control.socket": "/etc/systemd/system/local-ai-gate-control.socket",
+        "systemd/local-ai-gate.service": "/etc/systemd/system/local-ai-gate.service",
+        "systemd/local-ai-notify@.service": "/etc/systemd/system/local-ai-notify@.service",
+        "systemd/local-ai-brake-drill.service": "/etc/systemd/system/local-ai-brake-drill.service",
     }
     assert (UNIT_DIR, COMPOSE_DIR) == ("/etc/systemd/system", "/etc/local-ai/compose")
 
@@ -767,7 +776,8 @@ def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, 
     out = tmp_path / "out"
     files = ["--registry", str(FIX / "models.yaml"), "--versions", str(FIX / "versions.yaml")] if given else []
     assert cli.main(["render", "--out", str(out), *files]) == 0
-    assert capsys.readouterr().out == f"render: 8 files → {out}\n"
+    # The llama-swap config, the registry, the Compose project's two files and the eleven units (Task 25).
+    assert capsys.readouterr().out == f"render: 15 files → {out}\n"
     assert tree(out) == (rendered() if given else real())
 
 
@@ -778,7 +788,7 @@ def test_spark_render_prints_its_warnings(tmp_path, monkeypatch, capsys):
     out, registry = tmp_path / "out", registry_with(tmp_path, lambda d: d["brake"].update(warn_gib=70))
     assert cli.main(["render", "--out", str(out), "--registry", str(registry),
                      "--versions", str(FIX / "versions.yaml")]) == 0
-    assert capsys.readouterr().out == (f"render: 8 files → {out}\n"
+    assert capsys.readouterr().out == (f"render: 15 files → {out}\n"
                                        "render: warning — every model loaded at once would leave 67.0 GiB available, "
                                        "under the brake's warn line, 70.0 GiB\n")
     assert tree(out) == rendered(registry)

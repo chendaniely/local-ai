@@ -82,7 +82,9 @@ APPLY_RENEW_S = 15  # make apply renews its hold this often, from drain-all to t
 APPLY_LAPSE_S = 60
 NOTIFIED_KEEP_S = 86400  # the gate's record of what it has notified drops what is older than this on every save
 SESSION_HOLD_RENEW_S = 60  # `spark session hold` renews its session this often
-GRACEFUL_S = 20  # uvicorn's graceful shutdown in the front and the gate, below their units' TimeoutStopSec=30
+# uvicorn's graceful shutdown in the front and the gate, below their units' TimeoutStopSec=: the front's 30, and the
+# gate's 45, which also covers the work its stop finishes after the grace (Task 25).
+GRACEFUL_S = 20
 LLAMA_SWAP_HUNG_S = 10  # llama_swap_down once llama-swap hasn't answered this long while its unit stays active
 # The brake writes a `fired` event, then its first `unload`, as two appends, an unload call of up to 2 s between them:
 # a `fired` with no unload after it is held back this long, then sent as a brake that unloaded nothing (the

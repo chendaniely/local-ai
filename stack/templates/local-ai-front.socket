@@ -1,0 +1,21 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: 127.0.0.1:9100, held for the front
+
+[Socket]
+# PID 1 holds the port from boot, so no other account can take it while the front restarts or is down; a connection
+# then waits in the backlog until the front takes it (plan.md, *The front and the gate*).
+ListenStream=127.0.0.1:9100
+FileDescriptorName=front
+NoDelay=yes
+# Never gives up: however often it starts the front, a crash loop's included, it never trips the trigger limit,
+# which would leave it no longer listening until restarted (systemd.socket(5)).
+TriggerLimitIntervalSec=0
+Service=local-ai-front.service
+# The front's own list, here too: systemd applies a service's list only to the sockets the service makes itself, never
+# to one passed to it, and advises the same list on both (systemd.resource-control(5)).
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=sockets.target

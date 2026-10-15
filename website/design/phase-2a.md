@@ -6486,7 +6486,11 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   the gate, and the brake's drill.
 - `local-ai-front.socket` — `ListenStream=127.0.0.1:9100`, `FileDescriptorName=front`,
   `NoDelay=yes`, `TriggerLimitIntervalSec=0`, `Service=local-ai-front.service`;
-  `WantedBy=sockets.target`.
+  `WantedBy=sockets.target`. *(Added 2026-10-14, at Task 25: `IPAddressDeny=any` and
+  `IPAddressAllow=localhost` here too. systemd applies a service's list only to the sockets the
+  service makes itself, never to one passed to it, and advises the same list on both
+  (`systemd.resource-control(5)`). The socket listens on 127.0.0.1 only, so this is defense in
+  depth.)*
 - `local-ai-front.service` — `Type=notify`, `WatchdogSec=30`, `User=spark-front`,
   `Group=spark-front`, `SupplementaryGroups=spark-users`, `ExecStart=/opt/local-ai/app/.venv/bin/spark
   front`, `Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml`,
@@ -6545,13 +6549,18 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `Environment=SPARK_REGISTRY=/opt/local-ai/etc/brake-drill.yaml` and
   `ConditionPathExists=/opt/local-ai/etc/brake-drill.yaml`; no `Restart=`, `OnFailure=` or
   `[Install]`. `/opt/local-ai/etc` is `root:spark-admin 2775` (Phase 0), so Dan writes the copy,
-  `spark` reads it, and `agent` can't write it.
+  `spark` reads it, and `agent` can't write it. *(Added 2026-10-14, at Task 25: the brake's
+  template marks a line, `render.BRAKE_SHARED`. render copies every line of the brake's
+  `[Service]` after that line, to the section's end, into the drill's unit. The brake's
+  `OOMScoreAdjust=-900` is among them. The brake has no sandbox in 2a, so neither has the drill.)*
 - The pull's unit — `User=spark-pull`, `Group=spark-pull`, `UMask=0027`,
   `XDG_CACHE_HOME=/var/lib/local-ai/pull-cache`, `CUDA_CACHE_PATH` gone.
 - `bootstrap.sh`: `ROOT_UNITS` is `render.UNITS`; `ENABLED_UNITS` every unit with an `[Install]`;
   `install_units` leaves template names (`…@.service`) out of its `systemctl show
   --property=NeedDaemonReload` call, since systemd 255 refuses one and says nothing for the units
-  after it; its polkit `say` line names the seven services.
+  after it; its polkit `say` line names the seven services. *(Added 2026-10-14, at Task 25: so a
+  run cut off before its reload, having installed only the notifier template's new copy, leaves
+  systemd on the old copy until the next run that installs anything.)*
 - *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5.)* **The gate's, the failure notifier's and the brake's units start without
   ntfy's files**, and so does the drill's, which copies the brake's lines, since Task 2 now runs in

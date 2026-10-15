@@ -1,0 +1,28 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+# OnFailure= starts it for the front, the gate, the brake and llama-swap, the failed unit as its instance; it works
+# without the gate. No [Install]: nothing else starts it.
+Description=local-ai: the failure notifier, for %i
+
+[Service]
+Type=oneshot
+# A user of its own, allocated while it runs; its stamps (at most one alert per unit per 5 minutes) stay under
+# StateDirectory=.
+DynamicUser=yes
+StateDirectory=local-ai-notify
+# Its ntfy token's header, which curl reads with -H @file. Until Task 2 writes the header (Phase 5), ntfy-token is
+# SetCredential='s placeholder, and the notifier sends nothing and says so in the journal (Task 26).
+LoadCredential=ntfy-token:/etc/local-ai/secrets/ntfy-notify.header
+SetCredential=ntfy-token:not-set-up
+# NTFY_URL and NTFY_TOPIC_NOTIFY; the - lets a missing file pass, which is 2a's state until Task 2.
+EnvironmentFile=-/etc/local-ai/values.env
+# The registry's priorities for front_down, gate_down, brake_down and llama_swap_down: a change to one takes
+# `make install-units` after `make apply` (website/reference/notifications.md).
+Environment={notifier_priorities}
+# Task 26's script, which runs Ubuntu's /usr/bin/curl, outside the app's venv; bootstrap installs it (Task 27).
+ExecStart=/usr/local/libexec/local-ai-notify %i
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes

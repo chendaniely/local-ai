@@ -2,20 +2,33 @@
 [Unit]
 Description=local-ai: the memory brake
 After=local-ai-llama-swap.service
+# Never gives up, and the failure notifier says when it fails.
+StartLimitIntervalSec=0
+OnFailure=local-ai-notify@%n.service
 
 [Service]
 # exec: `systemctl restart` waits until the binary is running, so one that can't be run at all (missing, not
 # executable) fails the restart. A brake that stops once it runs, say on an import, passes it and then restarts
 # every 2 s: `spark apply` checks that the brake is still running 3 s after it restarts it.
 Type=exec
-User=spark
-Group=spark
-EnvironmentFile=/etc/local-ai/secrets/llama-swap.env
-Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
-Environment=SPARK_STATE=/var/lib/local-ai/brake
-ExecStart=/opt/local-ai/app/.venv/bin/spark brake --key-env LLAMASWAP_KEY_SPARK
+ExecStart=/opt/local-ai/app/.venv/bin/spark brake --key-credential llamaswap-key
 Restart=always
 RestartSec=2
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/models.yaml
+# Shared with the S05 drill's unit, local-ai-brake-drill.service: every line below, to this section's end.
+User=spark
+Group=spark
+# Its own key for llama-swap, and its ntfy token's header for its own alert while the gate is down: never in the
+# environment. Until Task 2 writes the header (Phase 5), ntfy-token is SetCredential='s placeholder, which isn't a
+# header line, so the brake sends no alert of its own and says so in the journal; with the file there, the file wins.
+LoadCredential=llamaswap-key:/etc/local-ai/secrets/brake.key
+LoadCredential=ntfy-token:/etc/local-ai/secrets/ntfy-brake.header
+SetCredential=ntfy-token:not-set-up
+# NTFY_URL and NTFY_TOPIC_BRAKE; the - lets a missing file pass, which is 2a's state until Task 2.
+EnvironmentFile=-/etc/local-ai/values.env
+Environment=SPARK_STATE=/var/lib/local-ai/brake
+Environment=SPARK_GATE_STATE=/var/lib/local-ai/gate
+Environment=SPARK_LLAMASWAP_URL=http://{llamaswap_listen}
 OOMScoreAdjust=-900
 
 [Install]

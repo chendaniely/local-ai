@@ -1,0 +1,18 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: the gate's control socket, for spark-admin
+
+[Socket]
+# Dan's commands connect here: loads, unloads, pins, make-room, apply's hold, the brake's release.
+ListenStream=/run/local-ai/gate-control.sock
+SocketUser=spark
+SocketGroup=spark-admin
+SocketMode=0660
+FileDescriptorName=control
+# Never gives up: however often it starts the gate, a crash loop's included, it never trips the trigger limit,
+# which would leave it no longer listening until restarted (systemd.socket(5)).
+TriggerLimitIntervalSec=0
+Service=local-ai-gate.service
+
+[Install]
+WantedBy=sockets.target

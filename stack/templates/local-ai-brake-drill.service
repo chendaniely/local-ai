@@ -1,0 +1,17 @@
+# Rendered by `spark render` — edit stack/templates/, not this file.
+[Unit]
+Description=local-ai: the S05 drill's brake, one check on the drill's copy of the registry
+After=local-ai-llama-swap.service
+# Dan writes the copy for each run of the drill, its thresholds just above what is available (Task 48); without it,
+# nothing runs. /opt/local-ai/etc is root:spark-admin 2775, so spark reads the copy and can't write it.
+ConditionPathExists=/opt/local-ai/etc/brake-drill.yaml
+
+[Service]
+# One check, then exit, as Phase 1's drill ran `spark brake --once`; `systemctl start` waits for it. No Restart=,
+# OnFailure= or [Install]: Dan starts it, without sudo (the polkit rule), and nothing else does.
+Type=oneshot
+ExecStart=/opt/local-ai/app/.venv/bin/spark brake --once --key-credential llamaswap-key
+Environment=SPARK_REGISTRY=/opt/local-ai/etc/brake-drill.yaml
+# The rest is the brake's own lines, which render copies from local-ai-brake.service, so the drill's account,
+# credentials, values file, environment and OOM score can't drift from the brake's.
+{brake_shared}

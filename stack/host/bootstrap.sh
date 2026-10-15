@@ -493,7 +493,7 @@ firewall() {
 }
 
 polkit_rule() {
-  say "polkit: spark-admin starts, stops and restarts the four local-ai units without sudo, and nothing more"
+  say "polkit: spark-admin starts, stops and restarts the seven local-ai services without sudo (llama-swap, brake, compose, pull, front, gate, brake-drill), and nothing more"
   run install -m 0644 "$HERE/50-local-ai.rules" /etc/polkit-1/rules.d/50-local-ai.rules
 }
 
@@ -513,8 +513,13 @@ COMPOSE_DIR="${BOOTSTRAP_COMPOSE_DIR:-/etc/local-ai/compose}"
 ROOT_USER="${BOOTSTRAP_ROOT_USER:-root}"
 READ_TIMEOUT="${BOOTSTRAP_READ_TIMEOUT:-10}"  # seconds for each staged file; reading one takes milliseconds
 READ_LIMIT=65536  # bytes: each unit is about 1 KB and compose.yaml about 2 KB, so this leaves room to grow
-ROOT_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service local-ai-pull.service)
-ENABLED_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service)  # pull runs when asked
+# ROOT_UNITS is render.UNITS, and ENABLED_UNITS every one of them with an [Install]: the pull, the
+# failure notifier (a template OnFailure= starts) and the S05 drill run only when started.
+ROOT_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service local-ai-pull.service
+  local-ai-front.socket local-ai-front.service local-ai-gate-status.socket local-ai-gate-control.socket
+  local-ai-gate.service local-ai-notify@.service local-ai-brake-drill.service)
+ENABLED_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service local-ai-front.socket
+  local-ai-front.service local-ai-gate-status.socket local-ai-gate-control.socket local-ai-gate.service)
 COMPOSE_FILES=(compose.yaml searxng/settings.yml)
 STAGED_COPY=""  # install-units: root's private copy of what it read, removed on the way out
 
@@ -533,7 +538,7 @@ roots_own() {
 install_units() {
   say "root's own copies of the units and the Compose project that root runs"
   local reader="" staged installed n=0 folders=0 folder answer from unit entry
-  local -a changed=() enable=() read_cmd=()
+  local -a changed=() enable=() read_cmd=() shown=()
   # A real run is root's, and so is a dry run under sudo: either reads as the admin who ran sudo.
   if (( ! DRY_RUN || EUID == 0 )); then
     if [[ -z "${SUDO_USER:-}" || "$SUDO_USER" == root ]]; then
@@ -615,8 +620,14 @@ install_units() {
     fi
   fi
   # systemd reads a unit file when told to: after this run installs one, or when a run that
-  # installed one was cut off before it told systemd.
-  if (( ${#changed[@]} )) || [[ "$(systemctl show --property=NeedDaemonReload --value "${ROOT_UNITS[@]}" 2>/dev/null || true)" == *yes* ]]; then
+  # installed one was cut off before it told systemd. systemd 255 refuses `systemctl show` for a
+  # template's name (local-ai-notify@.service) and then says nothing for the units after it, so
+  # templates are left out: a template's new copy from a run cut off before its reload is read
+  # at the next run that installs anything.
+  for unit in "${ROOT_UNITS[@]}"; do
+    if [[ "$unit" != *@.service ]]; then shown+=("$unit"); fi
+  done
+  if (( ${#changed[@]} )) || [[ "$(systemctl show --property=NeedDaemonReload --value "${shown[@]}" 2>/dev/null || true)" == *yes* ]]; then
     run systemctl daemon-reload
   fi
   for unit in "${ENABLED_UNITS[@]}"; do

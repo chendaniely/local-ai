@@ -1148,8 +1148,8 @@ def test_shellcheck_is_clean():
     subprocess.run(["shellcheck", str(SCRIPT)], check=True)
 
 
-# make install-units: root's own copies of what `spark apply` stages for root, the four units and
-# the Compose project as `spark render` writes them (Task 6), read as the admin from that folder.
+# make install-units: root's own copies of what `spark apply` stages for root, the units and the
+# Compose project as `spark render` writes them (Task 6), read as the admin from that folder.
 FAKE_RUNUSER = """#!/usr/bin/env bash
 # Stands in for runuser -u USER -- COMMAND...: logs the call in $CALLS, then runs the command as
 # whoever runs the tests, since only root can switch users. $SWAP_ON_READ, "PATH|fifo" or
@@ -1194,16 +1194,26 @@ FAKE_SYSTEMD = """#!/usr/bin/env bash
 # Stands in for systemctl as make install-units uses it. daemon-reload and enable are logged in $CALLS
 # and change $SYSTEMD_STATE: a reload leaves its time there, and enable records each unit, which
 # is-enabled then reads. `show --property=NeedDaemonReload --value UNIT...` says yes for a unit
-# whose file in $BOOTSTRAP_UNIT_DIR is newer than the last reload, as systemd does for a loaded unit.
+# whose file in $BOOTSTRAP_UNIT_DIR is newer than the last reload, as systemd does for a loaded unit,
+# and keeps its arguments in $SYSTEMD_STATE/show. Given a template's name (`…@.service`), it fails
+# as systemd 255 does: an error, exit 1, and nothing for the units after it (seen on the Spark,
+# 2026-10-14).
 state="$SYSTEMD_STATE"
 case "$1" in
   daemon-reload) echo "systemctl $*" >> "$CALLS"; touch "$state/reloaded" ;;
   enable) echo "systemctl $*" >> "$CALLS"; shift; printf '%s\\n' "$@" >> "$state/enabled" ;;
   is-enabled) for unit; do :; done; [[ -f "$state/enabled" ]] && grep -qxF "$unit" "$state/enabled" ;;
   show)
+    echo "systemctl $*" >> "$state/show"
     shift
     for unit; do
-      case "$unit" in --*) continue ;; esac
+      case "$unit" in
+        --*) continue ;;
+        *@.service)
+          echo "Failed to get properties: Unit name $unit is neither a valid invocation ID nor unit name." >&2
+          exit 1
+          ;;
+      esac
       if [[ -f "$state/reloaded" && "$BOOTSTRAP_UNIT_DIR/$unit" -nt "$state/reloaded" ]]; then echo yes; else echo no; fi
     done
     ;;
@@ -1212,13 +1222,20 @@ esac
 """
 
 ROOT_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
-              "local-ai-pull.service"]
+              "local-ai-pull.service", "local-ai-front.socket", "local-ai-front.service",
+              "local-ai-gate-status.socket", "local-ai-gate-control.socket", "local-ai-gate.service",
+              "local-ai-notify@.service", "local-ai-brake-drill.service"]
+# What install-units enables: every unit with an [Install]. The pull, the failure notifier and the
+# S05 drill run only when started.
+ENABLED_UNITS = ["local-ai-llama-swap.service", "local-ai-brake.service", "local-ai-compose.service",
+                 "local-ai-front.socket", "local-ai-front.service", "local-ai-gate-status.socket",
+                 "local-ai-gate-control.socket", "local-ai-gate.service"]
 # The order install-units reads and installs them in: the units, then the Compose project.
 ROOT_FILES = [f"systemd/{unit}" for unit in ROOT_UNITS] + ["compose/compose.yaml", "compose/searxng/settings.yml"]
 
 
 def rendered_roots() -> dict[str, str]:
-    """What `spark apply` stages for root: the four units and the Compose project, as `spark render`
+    """What `spark apply` stages for root: the units and the Compose project, as `spark render`
     writes them (Task 6)."""
     from spark.registry import load_registry
     from spark.render import installed_path, render
@@ -1315,8 +1332,8 @@ def test_install_units_shows_what_root_will_run_then_asks_and_installs_it(tmp_pa
     assert all(line.startswith("install -o root -g root -m 0644 ") for line in copies)
     assert changes(tmp_path)[-2:] == [
         "systemctl daemon-reload",
-        "systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
-    ]  # the pull unit runs only when asked
+        f"systemctl enable {' '.join(ENABLED_UNITS)}",
+    ]  # the pull, the notifier and the drill run only when started
     assert "make apply" in result.stdout.splitlines()[-1]
 
 
@@ -1452,7 +1469,7 @@ def test_install_units_dry_run_shows_the_changes_and_changes_nothing(tmp_path):
         f"+ install -d -o root -g root -m 0755 {tmp_path}/compose {tmp_path}/compose/searxng",
         *(f"+ install -o root -g root -m 0644 {tmp_path}/stage/{rel} {copy_path(tmp_path, rel)}" for rel in ROOT_FILES),
         "+ systemctl daemon-reload",
-        "+ systemctl enable local-ai-llama-swap.service local-ai-brake.service local-ai-compose.service",
+        f"+ systemctl enable {' '.join(ENABLED_UNITS)}",
     ]
     assert calls(tmp_path) == [] and installed(tmp_path) == {}  # a dry run reads as whoever runs it
 
@@ -1477,16 +1494,63 @@ def test_install_units_is_a_mode_of_its_own():
     assert "separate modes" in result.stderr  # not the unknown option it is before this task
 
 
+def bootstrap_lists() -> dict[str, list[str]]:
+    """bootstrap's ROOT_UNITS and ENABLED_UNITS, as its arrays list them, over one line or several."""
+    text = SCRIPT.read_text()
+    return {name: re.search(rf"^{name}=\(([^)]*)\)", text, re.MULTILINE).group(1).split()
+            for name in ("ROOT_UNITS", "ENABLED_UNITS")}
+
+
 def test_install_units_lists_the_units_render_writes():
     # bootstrap names the units by hand; this keeps its lists and render's the same.
     from spark.render import UNITS
 
-    text = SCRIPT.read_text()
-    listed = {name: re.search(rf"^{name}=\((.*)\)", text, re.MULTILINE).group(1).split()
-              for name in ("ROOT_UNITS", "ENABLED_UNITS")}
+    listed = bootstrap_lists()
     assert listed["ROOT_UNITS"] == list(UNITS)
     roots = rendered_roots()
     assert listed["ENABLED_UNITS"] == [unit for unit in UNITS if "\n[Install]\n" in roots[f"systemd/{unit}"]]
+
+
+def test_install_units_installs_and_enables_the_sockets():
+    from spark.render import UNITS
+
+    listed = bootstrap_lists()
+    assert listed["ROOT_UNITS"] == list(UNITS) == ROOT_UNITS
+    assert listed["ENABLED_UNITS"] == ENABLED_UNITS
+    assert {"local-ai-front.socket", "local-ai-gate-status.socket", "local-ai-gate-control.socket",
+            "local-ai-front.service", "local-ai-gate.service"} <= set(listed["ENABLED_UNITS"])
+    assert not {"local-ai-notify@.service", "local-ai-pull.service", "local-ai-brake-drill.service"} & set(
+        listed["ENABLED_UNITS"])
+
+
+def test_install_units_never_asks_systemctl_show_about_a_template(tmp_path):
+    # systemd 255 refuses `systemctl show` for a template's name, and then says nothing for the units after it, so
+    # asking about local-ai-notify@.service would hide that the drill's unit, after it, needs a reload.
+    env = install_env(tmp_path)
+    install_units(env, "y\n")
+    result = script("--install-units", "--dry-run", env=env)  # nothing changed, so it asks systemd
+    assert result.returncode == 0, result.stderr
+    [shown] = (tmp_path / "systemd/show").read_text().splitlines()
+    units = shown.split()[4:]
+    assert shown.split()[:4] == ["systemctl", "show", "--property=NeedDaemonReload", "--value"]
+    assert "local-ai-brake-drill.service" in units and [unit for unit in units if unit.endswith("@.service")] == []
+    assert units == [unit for unit in ROOT_UNITS if not unit.endswith("@.service")]
+    # A run cut off before its reload, the drill's new copy installed: the next run reloads.
+    (tmp_path / "calls").unlink()
+    reloaded = (tmp_path / "systemd/reloaded").stat().st_mtime
+    os.utime(tmp_path / "units/local-ai-brake-drill.service", (reloaded + 5, reloaded + 5))
+    result = install_units(env)
+    assert result.returncode == 0 and "nothing to install" in result.stdout
+    assert changes(tmp_path) == ["systemctl daemon-reload"]
+
+
+def test_the_polkit_step_names_the_seven_services():
+    from spark.render import POLKIT_UNITS
+
+    [line] = [line for line in dry_run() if line.startswith("==> polkit:")]
+    assert "seven" in line and "four" not in line
+    for unit in POLKIT_UNITS:
+        assert unit.removeprefix("local-ai-").removesuffix(".service") in line, unit
 
 
 # A carriage return, an escape sequence and a C1 control such as CSI (U+009B, C2 9B in UTF-8) can
