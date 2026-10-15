@@ -8592,12 +8592,28 @@ git commit -m "feat(stack): 🤖 the web containers drop every capability they d
   Then *Before every push* with `main` as `<branch>`, and **Dan OKs** `git push origin main`. Back
   in the `phase-2a` clone, **on the Spark**: *(Added 2026-10-15, at Task 35's review, the
   controller's ruling: first `git diff --stat HEAD...main -- .github/workflows`. If it lists
-  anything, the merge is made on the Mac, since the Spark's token can't push a branch that brings
-  in a `.github/workflows/` change (`CLAUDE.md`'s Building it): `main` is pushed from the Spark
+  anything, ~~the merge is made on the Mac, since~~ the Spark's token can't push a branch that brings
+  in a `.github/workflows/` change (`CLAUDE.md`'s Building it)~~: `main` is pushed from the Spark
   with Dan's OK as above, the worktree removed, and the merge made on the Mac, which takes
-  `phase-2a` as at any switch. It applies today: `origin/main` has changed `publish-website.yml`
+  `phase-2a` as at any switch~~. It applies today: `origin/main` has changed `publish-website.yml`
   since 2a branched. deploy.md's urgent-fix section says the same. Today's merge of `origin/main`,
   tried in a scratch clone at Task 35, also conflicted in twelve files, not only the four below.)*
+  *(Corrected 2026-10-15, Dan's decision: one route for this merge and the closing one, plan.md's
+  *Closing 2a* route. The Spark session makes the merge here, resolves every conflict and runs 2a's
+  tests, as below, then commits it **without pushing**. **On the Mac**, the merge commit is
+  fetched from the Spark over SSH, the scan before every push runs, and the Mac pushes `phase-2a`.
+  Since this is now the first merge of `main` into `phase-2a`, it also does what *Closing 2a*
+  describes for the closing merge:*
+  - *`website/architecture.qmd`'s opening keeps both sides: `main`'s opening, then 2a's sentence on
+    a built part that a later phase changes, then `main`'s *The overview* section with its include;*
+  - *the same merge commit brings `website/_overview.qmd`'s labels up to 2a's phases, as Closing
+    2a lists them;*
+  - *`stack/models.yaml` is resolved to `main`'s `qwen3.8-27b`, as noted above;*
+  - *on the Mac, before the push, `make docs` passes, `check-scenarios` included, and the overview
+    reads right on the home page and the Architecture page.*
+
+  *The closing merge at 2a's end then brings in only what `main` has gained since, by the same
+  route.)*
 
 ```bash
 git merge --no-ff main -m "chore(repo): 🤖 merge main's cap_drop into phase-2a" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"

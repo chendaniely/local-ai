@@ -1928,6 +1928,13 @@ council, with Dan's fourteen decisions (Revisions).*
   `make docs` passes, `check-scenarios` included; the overview on the home page and on the
   Architecture page matches 2a; and a click on *Where everything sits* opens it full-screen,
   where Fit, 100%, + and dragging work.)*
+  *(Added 2026-10-15, Dan's decision: Task 37's merge of `main` into `phase-2a`, before the
+  cutover, is now the first one. So it does what this note describes for the closing merge: both
+  sides of the Architecture page's opening, `_overview.qmd`'s labels brought up to 2a's phases in
+  the same merge commit, and `make docs` on the Mac before the push. It also resolves
+  `stack/models.yaml` to `main`'s `qwen3.8-27b`. It takes this note's route too: the Spark makes,
+  resolves, tests and commits it without pushing; the Mac fetches it over SSH, scans and pushes.
+  The closing merge then brings in only what `main` has gained since, by the same route.)*
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -3990,6 +3997,14 @@ Each item gets its own design pass when its turn comes.
   is written until the drain is done* gains a dated note, as do Task 32's notes in its plan, S17
   and the box reviewer's M-7 Minor). `make apply`'s app sync, whose locks any account can hold,
   runs before apply's hold, bounded at 3 minutes, and names the lock it waited on.
+- **2026-10-15** — Phase 2a's merges of `main`, Dan's decision: Task 37's merge, before the
+  cutover, is the first, so it does what *Closing 2a* described for the closing merge (the
+  Architecture page's opening, the overview's labels, `make docs` on the Mac) and resolves the
+  coder to `main`'s `qwen3.8-27b`. Both merges take *Closing 2a*'s route: the Spark makes, resolves,
+  tests and commits each without pushing, and the Mac fetches it over SSH, scans and pushes, since
+  `main` changes a workflow. Dated notes are in *Closing 2a*, Task 37 and the deploy runbook's
+  urgent fix. Also: the brake's three events of 2026-10-15 (test runs of the build session, ended
+  by earlyoom) are recorded for Task 47.
 
 ## Sources
 
