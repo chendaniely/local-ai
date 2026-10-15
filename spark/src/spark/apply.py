@@ -602,7 +602,7 @@ class ApplyGate:
                 return True
 
     def _renew(self, due: float) -> None:
-        """The renewals' thread: apply/renew every renew_s, so neither a long wait nor a long sync lets the hold lapse
+        """The renewals' thread: apply/renew every renew_s, so neither a long wait nor a long step lets the hold lapse
         at the gate (APPLY_LAPSE_S); a renewal that doesn't reach the gate is said, and the next tried on time. It
         stops once stopped, or once the gate says the hold has ended."""
         while not self._pause(due, self._stopped):
@@ -818,7 +818,9 @@ class _Progress:
 
     def __init__(self) -> None:
         self.held = False  # from drain-all, or just before it, to the hold's end
-        self.stage = "nothing"  # "syncing" once the app's sync has begun, "written" once the files are
+        # "syncing" once the app's sync has begun, "synced" once it is done (before the hold: Task 35's ruling),
+        # "written" once the files are
+        self.stage = "nothing"
 
 
 def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | None], unreadable: set[str],
@@ -909,8 +911,10 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
             restarts: list[str], active, now_ok: bool, dry_run: bool, sync_app, run_cmd, log,
             registry_old: Registry | None, registry_new: Registry, restart_front: bool, gate: ApplyGate | None, ask,
             quiet_s: float, deadline_s: float, stays_up, again: str, progress: _Progress) -> int:
-    """apply_files' deploy, once root's files are installed: the gate's reading, the wait or --now's question and the
-    hold, then the sync, the files, apply/begin, the restarts and the hold's end (apply_files ends it on a failure)."""
+    """apply_files' deploy, once root's files are installed: the gate's reading, the wait or --now's question, the
+    app's sync and then the hold (the sync first, since it can wait on locks other accounts can hold: the controller's
+    ruling at Task 35), then the files, apply/begin, the restarts and the hold's end (apply_files ends it on a
+    failure)."""
     first, gone = None, None
     if plan.after_quiet:  # what is in flight, by the front's counts: apply's first call to the gate
         try:
@@ -1256,20 +1260,34 @@ def _remove_empty_folders(app: Path) -> None:
             folder.rmdir()
 
 
+def _uv_text(text) -> str:
+    return text.decode(errors="replace") if isinstance(text, bytes) else (text or "")
+
+
 def _uv_output(text) -> list[str]:
-    """uv's own lines, from what `uv sync -v` printed: never its DEBUG, TRACE or INFO lines, which -v adds."""
-    if isinstance(text, bytes):
-        text = text.decode(errors="replace")
-    return [line for line in (text or "").splitlines()
+    """uv's own lines, from what `uv --color never sync -v` printed, each control character escaped as the diff's are:
+    never its DEBUG, TRACE or INFO lines, which -v adds."""
+    return [_CONTROL.sub(lambda char: f"\\x{ord(char.group()):02x}", line) for line in _uv_text(text).splitlines()
             if line.strip() and not line.lstrip().startswith(("DEBUG", "TRACE", "INFO"))]
+
+
+def _still_waiting(text) -> str | None:
+    """The lock uv was still waiting on as it was stopped: its last line its *Waiting to acquire … at `<path>`*, with
+    nothing after it, since uv goes on, and says more, once it has the lock (uv 0.12.18, seen 2026-10-15). None when
+    it wasn't waiting at the end."""
+    lines = [line for line in _uv_text(text).splitlines() if line.strip()]
+    found = _LOCK_WAIT.search(lines[-1]) if lines else None
+    return found.group(1) if found else None
 
 
 def _sync_app(src: Path, app: Path, say=print) -> None:
     """Make the app the repo's spark/ project: each changed file replaced whole (`spark launch` imports the app on
-    every load), each file the project no longer has deleted, then `uv sync`, bounded at SYNC_TIMEOUT_S: one that waits
-    on a lock another process holds is stopped, naming the lock (`-v` makes uv say it). The stamp goes first and comes
-    back only once uv sync succeeded, so a sync cut off anywhere counts as not done. SyncError says how far it got.
-    uv's own lines are said (`say`)."""
+    every load), each file the project no longer has deleted, then `uv sync`, bounded at SYNC_TIMEOUT_S: one still
+    waiting on a lock another process holds when it is stopped names the lock (`-v` makes uv say it). The stamp goes
+    first and comes back only once uv sync succeeded, so a sync cut off anywhere counts as not done. SyncError says how
+    far it got. Its start and uv's own lines are said (`say`); `--color never`, so FORCE_COLOR can't colour the lines
+    the filter reads."""
+    say(f"apply: syncing the app (uv sync, up to {messages.duration(SYNC_TIMEOUT_S)})")
     src, app = Path(src), Path(app)
     try:
         (app / SYNC_STAMP).unlink(missing_ok=True)
@@ -1290,18 +1308,17 @@ def _sync_app(src: Path, app: Path, say=print) -> None:
     env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy",
             "UV_LOCK_TIMEOUT": str(int(SYNC_TIMEOUT_S) + 60)}
     try:
-        done = subprocess.run(["uv", "sync", "--frozen", "--no-dev", "-v", "--project", str(app)], check=True, env=env,
-                              capture_output=True, text=True, timeout=SYNC_TIMEOUT_S)
+        done = subprocess.run(["uv", "--color", "never", "sync", "--frozen", "--no-dev", "-v", "--project", str(app)],
+                              check=True, env=env, capture_output=True, text=True, timeout=SYNC_TIMEOUT_S)
     except subprocess.TimeoutExpired as err:  # uv is stopped, and waited for, by subprocess.run
-        output = err.stderr.decode(errors="replace") if isinstance(err.stderr, bytes) else (err.stderr or "")
-        locks = _LOCK_WAIT.findall(output)
+        lock = _still_waiting(err.stderr)
         took = messages.duration(SYNC_TIMEOUT_S)
-        if locks:
-            raise SyncError(f"the app's sync waited on a lock: {locks[-1]}, which another process holds, so apply "
-                            f"stopped it after {took}; the app's files are copied into {app}, but its environment "
-                            "isn't synced") from None
+        if lock is not None:
+            raise SyncError(f"the app's sync waited on a lock: {lock}, which another process holds, so apply stopped it "
+                            f"after {took}; the app's files are copied into {app}, and its environment may be "
+                            "part-way synced") from None
         raise SyncError(f"the app's sync didn't finish within {took}, so apply stopped it; the app's files are copied "
-                        f"into {app}, but its environment isn't synced") from None
+                        f"into {app}, and its environment may be part-way synced") from None
     except (subprocess.CalledProcessError, OSError) as err:
         for line in _uv_output(getattr(err, "stderr", None)):
             say(line)

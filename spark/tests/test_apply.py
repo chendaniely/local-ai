@@ -860,6 +860,7 @@ class Box:
         put(self.opt / "bin/llama-swap/v257/llama-swap", "", OLD)
         self.units = dict.fromkeys(RUNNING_UNITS)
         self.interrupted, self.failing, self.uv_fails, self.uv_lock = set(), set(), False, None
+        self.uv_slow, self.uv_error = False, "error: the stand-in failed"
         self.validate_code, self.validate_env, self.uv_env = 0, None, None
         self.events, self.replies, self.questions = [], [], []
         self.time = FakeTime(time.time()) if fake_time else None
@@ -912,17 +913,26 @@ class Box:
             self.events.append("-validate")
             self.validate_env = kwargs.get("env")
             return subprocess.CompletedProcess(cmd, self.validate_code)
-        if cmd[:2] == ["uv", "sync"]:
+        if cmd[:1] == ["uv"] and "sync" in cmd:
             self.events.append("uv sync")
             self.uv_env, self.uv_argv, self.uv_timeout = kwargs.get("env"), cmd, kwargs.get("timeout")
+            # uv colours its lines under FORCE_COLOR unless told `--color never` (uv 0.12.18, seen 2026-10-15).
+            never = "--color" in cmd and cmd[cmd.index("--color") + 1] == "never"
+            colour = "FORCE_COLOR" in (kwargs.get("env") or {}) and not never
+            debug = "\x1b[34mDEBUG\x1b[39m" if colour else "DEBUG"
             if self.uv_fails:
-                raise subprocess.CalledProcessError(2, cmd, output="", stderr="error: the stand-in failed\n")
+                raise subprocess.CalledProcessError(2, cmd, output="", stderr=f"{debug} Found project root\n"
+                                                                              f"{self.uv_error}\n")
             if self.uv_lock is not None:  # uv waits on a lock another process holds, until apply's bound
-                said = (f"DEBUG Found project root: `{self.app}`\n"
+                said = (f"{debug} Found project root: `{self.app}`\n"
                         f"INFO Waiting to acquire exclusive lock for `.venv` at `{self.uv_lock}`\n").encode()
                 raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"), output=b"", stderr=said)
+            if self.uv_slow:  # a lock waited on, then got ("Checked …" follows), and the sync slow after it
+                said = (f"INFO Waiting to acquire exclusive lock for `.venv` at `{self.app}/.venv/.lock`\n"
+                        "Checked in 0.00ms\nDownloading uvicorn (1.2MiB)\n").encode()
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"), output=b"", stderr=said)
             put(self.app / ".venv/bin/spark", "", time.time())
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="DEBUG Found project root\nInstalled 1 "
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=f"{debug} Found project root\nInstalled 1 "
                                                                           "package in 3ms\n")
         if cmd[:2] == ["systemctl", "restart"] and len(cmd) == 3:
             self.events.append(f"restart {cmd[2]}")
@@ -2503,11 +2513,12 @@ def test_a_sync_that_waits_on_a_lock_takes_no_hold_and_restarts_nothing(box, mon
     assert code == 1 and events == ["-validate", QUIET_READ, "uv sync"]  # no hold, no file, no restart
     assert not box.gate.routes("/v1/drain-all") and (box.etc / "llama-swap.yaml").read_text() == "old config"
     assert box.uv_timeout == spark_apply.SYNC_TIMEOUT_S == 180 and "-v" in box.uv_argv
+    assert "apply: syncing the app (uv sync, up to 3 minutes)" in lines  # Task 35's review, M5
     assert int(box.uv_env["UV_LOCK_TIMEOUT"]) > spark_apply.SYNC_TIMEOUT_S
     assert lines[-1] == (f"apply: the app's sync waited on a lock: {box.uv_lock}, which another process holds, so "
-                         f"apply stopped it after 3 minutes; the app's files are copied into {box.app}, but its "
-                         "environment isn't synced; nothing else was deployed or restarted — once it's fixed, `make "
-                         "apply` syncs it again")
+                         f"apply stopped it after 3 minutes; the app's files are copied into {box.app}, and its "
+                         "environment may be part-way synced; nothing else was deployed or restarted — once it's "
+                         "fixed, `make apply` syncs it again")
 
 
 def test_a_sync_shows_uvs_own_lines_and_never_its_debug_ones(box):
@@ -2527,3 +2538,54 @@ def test_a_stop_after_the_sync_says_the_app_is_synced(tmp_path):
     assert logs[-2:] == ["apply: the hold on new requests is ended", "apply: stopped by Ctrl-C after syncing the app; "
                          "nothing else was deployed or restarted — the next `make apply` restarts each unit still "
                          "running older files"]
+
+
+
+# Task 35's review of the sync's move (2026-10-15), M2, M3, M5 and M6.
+
+def test_uvs_debug_lines_are_never_shown_under_force_color(box, monkeypatch):
+    # M2: under FORCE_COLOR uv writes `\x1b[34mDEBUG\x1b[39m`, which the filter wouldn't know, unless told no colour.
+    monkeypatch.setenv("FORCE_COLOR", "3")
+    box.deployed()
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    code, lines, _ = box.apply()
+    assert code == 0 and box.uv_argv[:3] == ["uv", "--color", "never"]
+    assert "Installed 1 package in 3ms" in lines and not any("DEBUG" in line for line in lines)
+
+
+def test_a_sync_that_got_its_lock_and_then_ran_slow_isnt_said_to_wait_on_a_lock(box):
+    # M3 and M6: the lock was waited on, then got (uv went on), and the sync didn't finish in time: the "didn't finish"
+    # line, and the environment may be part-way synced.
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    box.uv_slow = True
+    code, lines, events = box.apply()
+    assert code == 1 and events == ["-validate", QUIET_READ, "uv sync"] and not box.gate.routes("/v1/drain-all")
+    assert lines[-1] == (f"apply: the app's sync didn't finish within 3 minutes, so apply stopped it; the app's files are "
+                         f"copied into {box.app}, and its environment may be part-way synced; nothing else was deployed "
+                         "or restarted — once it's fixed, `make apply` syncs it again")
+
+
+@pytest.mark.parametrize("how", ["drain now", "--now"])
+def test_a_sync_that_waits_on_a_lock_takes_no_hold_on_drain_now_or_with_now(box, how):
+    # M6: the sync comes before drain-all on every path that holds; here after Dan's yes.
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    box.uv_lock = box.app / ".venv/.lock"
+    box.gate.quiet = [busy("agent")]
+    box.replies = [True]
+    code, lines, events = box.apply(*(("--deadline-s", "2") if how == "drain now" else ("--now",)))
+    assert code == 1 and events[-1] == "uv sync" and not box.gate.routes("/v1/drain-all")
+    assert len(box.questions) == 1 and not any(event.startswith("restart") for event in events)
+    assert lines[-1].startswith(f"apply: the app's sync waited on a lock: {box.uv_lock}, which another process holds")
+
+
+def test_a_failed_syncs_own_lines_are_shown_escaped(box):
+    # M6: uv's error is shown, its control characters escaped as the diff's are; its DEBUG lines never.
+    box.deployed()
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    box.uv_fails = True
+    box.uv_error = "error: \x1b[31mno wheel\x1b[0m for that platform"
+    code, lines, _ = box.apply()
+    assert code == 1 and "error: \\x1b[31mno wheel\\x1b[0m for that platform" in lines
+    assert not any("DEBUG" in line for line in lines)
