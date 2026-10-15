@@ -525,23 +525,29 @@ directories() {
 # Until the move the cache is spark's, so root works in folders spark controls. Just before the
 # chown, the move refuses, changing nothing, while any process runs as spark or spark-pull, while any
 # unit that runs as either isn't inactive or failed (one activating, deactivating or not answering
-# counts as running), while fs.protected_hardlinks isn't 1, while a file the move covers has a second
-# name (a hard link: the move would hand that file to spark-pull wherever its other name is), or
-# while anything it covers but a link is writable by its group or others. That is one look, and a
-# process started after it (a crontab job) would go unseen, so the chmods wait for a second check,
-# after the chown: every path the move covers is spark-pull's, in spark's group, and writable by
-# neither its group nor others. Only then can nothing of spark's add, remove or rename an entry
-# anywhere in that tree, so no folder that find lists can turn into a link before chmod, which
-# follows a link it is handed, reaches it. hf/tmp, when it stays spark's, is never handed to chmod,
-# and its own entry sits in the top folder, spark-pull's. A check that fails stops the move there;
-# nothing strips a bit instead, since coreutils 9.4's chmod -R can follow a link swapped in during
-# its walk.
+# counts as running), while fs.protected_hardlinks isn't 1, or while, in what the move covers, any
+# path but a folder has a second name (a hard link: the move would hand it to spark-pull wherever its
+# other name is), any folder is writable by its group or others, or any path holds an ACL beyond its
+# mode (a default ACL doesn't show in the mode, and would give spark write on every file the pull
+# adds under it, whatever its umask; chown and chmod keep it). That is one look, and a process
+# started after it (a crontab job) would go unseen, so the chmods wait for a second check, after the
+# chown: every path the move covers is spark-pull's and in spark's group, no folder is writable by
+# its group or others, nothing has a second name and nothing an ACL. Only then can nothing of spark's
+# add, remove or rename an entry anywhere in that tree, so no path that find lists can turn into a
+# link before chmod, which follows a link it is handed, reaches it. hf/tmp, when it stays spark's, is
+# never handed to chmod, and its own entry sits in the top folder, spark-pull's. A check that fails
+# stops the move there, naming what it found; nothing strips a bit or an ACL instead, since coreutils
+# 9.4's chmod -R can follow a link swapped in during its walk.
 #
-# A cache already moved needs nothing, whatever runs, so a re-run with the stack up passes. hf/tmp,
-# whisper's --tmp-dir in Phase 1's registry, stays spark's while the deployed registry names it, and
-# the done-check never looks at it: the close removes it once nothing does (Phase 2a's Task 51).
-# Tests point these at stand-ins, and PULL_USER and CACHE_GROUP at whoever runs them: the commands
-# always name spark-pull and spark.
+# Files' write bits are no refusal: huggingface_hub makes its lock files 0664, and Xet's .lock and
+# .refs files 0666, on purpose; they hold no data. Once the second check passes, the move clears
+# group and other write on files, beside the setgid pass and as safely. A later download makes such
+# files again, by design, so the done-check doesn't count files' write bits: a cache already moved
+# needs nothing, whatever runs, and a re-run with the stack up passes. hf/tmp, whisper's --tmp-dir in
+# Phase 1's registry, stays spark's while the deployed registry names it, and the done-check never
+# looks at it: the close removes it once nothing does (Phase 2a's Task 51). Tests point these at
+# stand-ins, and PULL_USER and CACHE_GROUP at whoever runs them: the commands always name spark-pull
+# and spark.
 HF_CACHE="${BOOTSTRAP_HF_CACHE:-/var/lib/local-ai/hf}"
 DEPLOYED_REGISTRY="${BOOTSTRAP_REGISTRY:-/opt/local-ai/etc/models.yaml}"
 PULL_USER="${BOOTSTRAP_PULL_USER:-spark-pull}"
@@ -552,18 +558,18 @@ CACHE_UNITS=(local-ai-llama-swap.service local-ai-brake.service local-ai-pull.se
 # else naming it (a comment) errs the safe way: hf/tmp stays spark's.
 OLD_WHISPER_TMP='/var/lib/local-ai/hf/tmp([^[:alnum:]_.-]|$)'
 REGISTRY_LIMIT=1048576  # bytes: the registry is about 10 KB
-SHOWN=5                 # paths a refusal names, at most
+SHOWN=5                 # paths a reason in the guard names, at most
 KEEP_TMP=0              # 1 while hf/tmp stays out of the move (hf_cache_to_pull sets it)
 
 # 0 when the cache is moved: spark-pull:spark 2750, everything in it spark-pull's and in spark's
-# group, every folder setgid, nothing but a link writable by its group or others, hf/tmp not looked
-# at. 1 when anything isn't; 2 when it can't be read.
+# group, every folder setgid and none writable by its group or others, hf/tmp not looked at; files'
+# write bits not counted (above). 1 when anything isn't; 2 when it can't be read.
 cache_moved() {
   local top odd
   top="$(stat -c '%U:%G %a' -- "$HF_CACHE" 2>/dev/null)" || return 2
   [[ "$top" == "$PULL_USER:$CACHE_GROUP 2750" ]] || return 1
   odd="$(find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o \( ! -user "$PULL_USER" \
-    -o ! -group "$CACHE_GROUP" -o -type d ! -perm -2000 -o ! -type l -perm /022 \) -print -quit 2>/dev/null)" ||
+    -o ! -group "$CACHE_GROUP" -o -type d ! -perm -2000 -o -type d -perm /022 \) -print -quit 2>/dev/null)" ||
     return 2
   [[ -z "$odd" ]]
 }
@@ -578,19 +584,31 @@ find_moved() {
   fi
 }
 
+# The paths the move covers that hold an ACL beyond their mode, one a line, as getfacl names them:
+# read by root, read-only, never following a link. It fails when getfacl can't read all of the cache.
+acl_paths() {
+  local out line
+  out="$(getfacl -R -P --skip-base -p -- "$HF_CACHE" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "$line" == "# file: "* ]] || continue
+    line="${line#"# file: "}"
+    if (( KEEP_TMP )) && [[ "$line" == "$HF_CACHE/tmp" || "$line" == "$HF_CACHE/tmp/"* ]]; then continue; fi
+    printf '%s\n' "$line"
+  done <<<"$out"
+}
+
 # Text a terminal can't act on: anything but printable ASCII shown as ?. A path in the cache can be
 # any name spark gave it.
 printable() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' '?'; }
 
-# The paths find_moved finds for an expression, at most SHOWN of them on one line, and how many more.
-shown_paths() {
-  local all path n=0 shown=""
-  all="$(find_moved "$@" -print 2>/dev/null || true)"
-  if [[ -z "$all" ]]; then return 0; fi
-  while IFS= read -r path; do
+# Lines of text, at most SHOWN of them on one line, and how many more.
+shown_list() {
+  local item n=0 shown=""
+  if [[ -z "$1" ]]; then return 0; fi
+  while IFS= read -r item; do
     n=$((n + 1))
-    if (( n <= SHOWN )); then shown+="${shown:+, }$path"; fi
-  done <<<"$all"
+    if (( n <= SHOWN )); then shown+="${shown:+, }$item"; fi
+  done <<<"$1"
   if (( n > SHOWN )); then shown+=", and $((n - SHOWN)) more"; fi
   printable "$shown"
 }
@@ -635,15 +653,23 @@ move_refusals() {
       "file it doesn't own would go to spark-pull with the cache"
   fi
   if (( ! $1 )); then return 0; fi
-  found="$(shown_paths -type f -links +1)"
+  found="$(shown_list "$(find_moved ! -type d -links +1 -printf '%p (%u)\n' 2>/dev/null || true)")"
   if [[ -n "$found" ]]; then
-    echo "files in it with a second name, which the move would hand to spark-pull wherever the other name is" \
-      "($found): look at each with sudo ls -li, and remove the name that isn't the cache's"
+    echo "paths in it with a second name, a hard link the move would hand to spark-pull wherever the other" \
+      "name is, their owner beside each ($found): look at each with sudo ls -li, and bring them to the" \
+      "Claude session working on the repo"
   fi
-  found="$(shown_paths ! -type l -perm /022)"
+  found="$(shown_list "$(find_moved -type d -perm /022 -printf '%p (%u)\n' 2>/dev/null || true)")"
   if [[ -n "$found" ]]; then
-    echo "paths in it writable by their group or others, which spark could still change after the move" \
-      "($found): remove those bits as spark, their owner (sudo -u spark chmod go-w <path>)"
+    echo "folders in it writable by their group or others, their owner beside each ($found): remove those" \
+      "bits as that owner (sudo -u <owner> chmod go-w <folder>), but bring one root owns to the Claude" \
+      "session working on the repo"
+  fi
+  if ! found="$(acl_paths)"; then
+    echo "getfacl couldn't read every ACL in it: find out why, then run this again"
+  elif [[ -n "$found" ]]; then
+    echo "paths in it with an ACL beyond their mode ($(shown_list "$found")): look at each with sudo getfacl," \
+      "and bring them to the Claude session working on the repo"
   fi
 }
 
@@ -724,32 +750,46 @@ hf_cache_to_pull() {
     run chown -R -P --no-dereference spark-pull:spark "$HF_CACHE"
   fi
   # The second check, after the chown and before any chmod (above: why this order closes the swap).
+  # It names the first path it finds.
   if (( DRY_RUN )); then
-    line="a real run stops here, before any chmod, unless everything it moved is spark-pull:spark"
-    printf '+ owned_and_closed   (%s and writable by neither its group nor others)\n' "$line"
+    line="a real run stops here, before any chmod, unless every path it moved is spark-pull:spark, no folder"
+    printf '+ owned_and_closed   (%s is writable by its group or others, and nothing has a second name or an ACL)\n' \
+      "$line"
   else
-    if ! odd="$(find_moved \( ! -user "$PULL_USER" -o ! -group "$CACHE_GROUP" -o ! -type l -perm /022 \) \
-      -print -quit 2>/dev/null)"; then
+    if ! odd="$(find_moved \( ! -user "$PULL_USER" -o ! -group "$CACHE_GROUP" -o -type d -perm /022 \
+      -o ! -type d -links +1 \) -printf '%p (%u:%g %m, %n links)' -quit 2>/dev/null)"; then
       odd="${odd:-$HF_CACHE (find could not read all of it)}"
+    fi
+    if [[ -z "$odd" ]]; then
+      if ! odd="$(acl_paths)"; then
+        odd="$HF_CACHE (getfacl could not read all of it)"
+      elif [[ -n "$odd" ]]; then
+        odd="$(head -n 1 <<<"$odd") (an ACL beyond its mode)"
+      fi
     fi
     if [[ -n "$odd" ]]; then
       {
-        echo "bootstrap: after the chown, $(printable "$odd") isn't spark-pull:spark, or is writable by its" \
-          "group or others, so no chmod ran and nothing more was changed."
-        echo "If it is spark-pull's, remove those bits as spark-pull (sudo -u spark-pull chmod go-w <path>)." \
-          "If it isn't, something wrote in the cache during the move: bring it to the Claude session working on" \
-          "the repo."
+        echo "bootstrap: after the chown, $(printable "$odd") isn't as the move must leave it: every path" \
+          "spark-pull:spark, no folder writable by its group or others, nothing with a second name or an ACL." \
+          "So no chmod ran, and nothing more was changed."
+        echo "A folder of spark-pull's that its group or others can write: remove those bits as spark-pull" \
+          "(sudo -u spark-pull chmod go-w <folder>). Anything else (another owner, a second name, an ACL)," \
+          "something did in the cache during the move: bring it to the Claude session working on the repo."
         echo "then run make bootstrap again: website/how-to/bootstrap.md, Phase 2a's re-run"
       } >&2
       exit 1
     fi
   fi
   run chmod 2750 "$HF_CACHE"
-  # -type d under -P never matches a link; ! -type l says so again.
+  # -type d and -type f under -P never match a link; ! -type l says so again. The files' pass clears
+  # group and other write (the lock files above) as safely as the setgid pass: every folder is
+  # spark-pull's and closed to spark by now, so nothing chmod is handed can be swapped.
   if (( KEEP_TMP )); then
     run find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o -type d ! -type l -exec chmod g+s {} +
+    run find -P "$HF_CACHE" -mindepth 1 -path "$HF_CACHE/tmp" -prune -o -type f -perm /022 -exec chmod go-w {} +
   else
     run find -P "$HF_CACHE" -mindepth 1 -type d ! -type l -exec chmod g+s {} +
+    run find -P "$HF_CACHE" -mindepth 1 -type f -perm /022 -exec chmod go-w {} +
   fi
   if (( DRY_RUN )); then return 0; fi
   # As the hold checks apt-mark's work: the move must have taken.

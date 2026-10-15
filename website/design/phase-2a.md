@@ -6863,11 +6863,26 @@ git commit -m "feat(stack): 🤖 the failure notifier's script: unit, result and
     chown, the move also refuses while `pgrep -l -u spark,spark-pull` finds any process (named by
     pid and command name), while a unit isn't `inactive` or `failed`, while a file the move covers
     (the cache, `hf/tmp` aside while it stays `spark`'s) has a second name (`-type f -links +1`), or
-    while anything it covers but a link is writable by its group or others. After the chown and before any chmod it checks again that every path it moved is
-    `spark-pull:spark` and writable by neither group nor others, and stops there if not; only then
-    can nothing of `spark`'s swap a folder `find -P … -type d ! -type l` hands chmod. The done-check
-    counts a writable path as not moved. Nothing strips a bit, since Ubuntu's coreutils 9.4 `chmod
-    -R` can follow a link swapped in during its walk.)*
+    while anything it covers but a link is writable by its group or others. After the chown and
+    before any chmod it checks again that every path it moved is `spark-pull:spark` and writable by
+    neither group nor others, and stops there if not; only then can nothing of `spark`'s swap a
+    folder `find -P … -type d ! -type l` hands chmod. The done-check counts a writable path as not
+    moved. Nothing strips a bit, since Ubuntu's coreutils 9.4 `chmod -R` can follow a link swapped in
+    during its walk.)*
+    *(Revised again at Task 27's re-review, 2026-10-14, the controller's ruling on the reviewer's N1
+    to N4. `huggingface_hub` makes its lock files `0664`, and Xet's `.lock` and `.refs` `0666`, on
+    purpose, so refusing files' write bits would have stopped the move at Task 36 and every re-run
+    after a later download. Now: the guard refuses a folder writable by its group or others (named
+    with its owner, for a remedy run as that owner), anything but a folder with a second name
+    (`! -type d -links +1`, so a hard-linked symlink or FIFO too), and any ACL beyond the mode
+    (`getfacl -R -P --skip-base`, read-only, as root; a default ACL would make the pull's new files
+    writable by `spark` whatever its umask), never a file's write bits. The second check, after the
+    chown and before any chmod, wants every path `spark-pull:spark`, no folder writable by group or
+    others, no second name and no ACL, and names the first path it finds. Once it passes, the move
+    clears group and other write on files (`find -P … -type f -perm /022 -exec chmod go-w {} +`)
+    beside the setgid pass, as safely, since every folder is closed by then. The done-check counts
+    owners, group, setgid and folders' write bits, not files', since a later download makes its lock
+    files writable again by design.)*
   - **launch's `tickets`, `started` and `refusals` are made by `spark`**
     (`runuser -u spark -- install -d -o spark -g spark -m 0750 …`): `launch` is `spark`'s, and root's
     `install -d` there would follow a link `spark` planted (CLAUDE.md's lesson). The folders

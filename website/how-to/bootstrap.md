@@ -131,24 +131,40 @@ chown, the move refuses, failing the run and changing nothing in the cache, and 
 - any unit that runs as either (llama-swap, the brake, the pull, the gate, the brake's drill)
   isn't `inactive` or `failed`: one activating, deactivating or not answering counts as running;
 - `fs.protected_hardlinks` isn't 1;
-- a file the move covers has a second name, a hard link, which the move would hand to
-  `spark-pull` wherever its other name is;
-- anything the move covers, a link aside, is writable by its group or by others, which `spark`
-  could still change after the move.
+- anything the move covers but a folder has a second name, a hard link, which the move would hand
+  to `spark-pull` wherever its other name is (a file, or a symlink or FIFO `spark` linked there);
+- a folder the move covers is writable by its group or by others, which would let `spark` swap an
+  entry in it for a link under chmod;
+- anything the move covers holds an ACL beyond its mode. A default ACL on a folder doesn't show in
+  the mode, chown and chmod keep it, and it would make every file the pull adds there writable by
+  `spark`, whatever its umask. `getfacl` reads them, as root, and nothing strips one.
 
-The move covers the whole cache except `hf/tmp`, while that stays `spark`'s.
+The move covers the whole cache except `hf/tmp`, while that stays `spark`'s. For each reason the
+guard names up to five paths, and how many more; for a writable folder it names the owner beside
+each, so the remedy runs as that owner (`sudo -u <owner> chmod go-w <folder>`), never as root.
 
-After the chown, and before any chmod, it checks again that everything it moved is `spark-pull`'s,
-in `spark`'s group, and writable by neither its group nor others, and stops there if not: a process
-started after the first look can't then swap a folder for a link under chmod, which follows a link
-it is handed. Neither check strips a bit: each names the paths, and what to do. Once the cache is
-moved, a re-run passes it, whatever runs.
+After the chown, and before any chmod, it checks again that every path it moved is `spark-pull`'s
+and in `spark`'s group, that no folder is writable by its group or others, and that nothing has a
+second name or an ACL. It stops at the first path it finds, naming that one with its owner, group,
+mode and link count: a process started after the first look can't then swap a path for a link under
+chmod, which follows a link it is handed. Neither check strips a bit.
+
+Files' write bits are no reason to refuse. `huggingface_hub` makes its lock files `0664`, and Xet's
+`.lock` and `.refs` files `0666`, on purpose; they hold no data, and Phase 1's pulls left some in
+the cache. Once the second check passes, the move clears group and other write on every file it
+covers, beside the setgid pass and as safely: every folder is closed to `spark` by then, so nothing
+chmod is handed can be swapped. A later download makes such lock files again, by design, so the
+check that the cache is already moved doesn't count files' write bits: once it is moved, a re-run
+passes it, whatever runs and whatever has been pulled since.
 
 **On the Spark**, as you, from the clone, in an SSH session:
 
 1. `make bootstrap-dry-run`, and read it. While the stack runs, its cache step ends
    `(a real run stops here: local-ai-llama-swap.service is active; local-ai-brake.service is
-   active)`.
+   active; processes run as spark (<pid> spark, <pid> llama-swap, …))`: each process of `spark`'s by
+   its pid and command name, the brake (`spark`), llama-swap, its engines and the `nvidia-smi` it
+   runs among them. A dry run as you can't look inside the cache, so it says nothing of what is in
+   it; the real run checks.
 2. Open a second SSH session to the box, and leave it open until a fresh login works after the
    run. *(Phase 2a's Task 28 makes bootstrap change sshd's PAM stack, for `agent`'s OOM score, and a
    broken PAM stack would lock new logins out. Until Task 28 is built, this run doesn't touch PAM,
@@ -198,13 +214,14 @@ moved, a re-run passes it, whatever runs.
    files. **On the Spark:**
 
    ```bash
-   sudo stat -c '%U:%G %a %n' /var/lib/local-ai/launch/tickets /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals /var/lib/local-ai/hf/tmp; sudo find /var/lib/local-ai/hf -path /var/lib/local-ai/hf/tmp -prune -o ! -type l \( -perm /022 -o -type f ! -perm -g=r -o -type d ! -perm -g=rx \) -print | head -3; sudo -k
+   sudo stat -c '%U:%G %a %n' /var/lib/local-ai/launch/tickets /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals /var/lib/local-ai/hf/tmp; sudo find /var/lib/local-ai/hf -path /var/lib/local-ai/hf/tmp -prune -o \( -type d -perm /022 -o -type f ! -perm -g=r -o -type d ! -perm -g=rx \) -print | head -3; sudo -k
    ```
 
    Expected: `spark:spark 750` for launch's three folders. `hf/tmp`, left for whisper until the
    cutover, is `spark:spark` with `750` or `755`: Phase 1's pull made it under systemd's default
    umask, so most likely `755` (not yet seen; your account can't look). Then no path listed after
-   them: nothing in the cache writable by its group or others, every file one the group can read,
-   and every folder one it can enter. If one is listed, bring it to the Claude session working on
-   the repo.
+   them: no folder in the cache writable by its group or others, every file one the group can read,
+   and every folder one it can enter. Files' write bits aren't listed: the move cleared them, and a
+   later download makes its lock files `0664` again, by design. If a path is listed, bring it to the
+   Claude session working on the repo.
 7. `make doctor`: its *secrets folder* and *spark's folders* lines pass.

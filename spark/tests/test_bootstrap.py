@@ -1767,6 +1767,7 @@ FAKE_REAL_LOGGED = r"""#!/usr/bin/env bash
 #
 # $CHOWN_RACE stands in for a process of spark's racing the move: after each chown, if that path doesn't exist, it
 # makes it a folder writable by its group, as such a process could in a folder the chown hasn't reached yet.
+# $CHOWN_RACE_LINK ("FILE|NAME") does the same with a second name: a hard link NAME to FILE.
 tool="${0##*/}"
 echo "$tool $*" >> "$CALLS"
 args=()
@@ -1779,6 +1780,9 @@ status=$?
 if [[ "$tool" == chown && -n "${CHOWN_RACE:-}" && ! -e "$CHOWN_RACE" ]]; then
   mkdir "$CHOWN_RACE" && PATH="${PATH#*:}" chmod 0775 "$CHOWN_RACE"
 fi
+if [[ "$tool" == chown && -n "${CHOWN_RACE_LINK:-}" && ! -e "${CHOWN_RACE_LINK#*|}" ]]; then
+  ln "${CHOWN_RACE_LINK%%|*}" "${CHOWN_RACE_LINK#*|}"
+fi
 exit "$status"
 """
 
@@ -1790,6 +1794,23 @@ echo "pgrep $*" >> "$CALLS"
 if [[ -n "${PGREP_FAILS:-}" ]]; then echo "pgrep: invalid user name: spark-pull" >&2; exit 2; fi
 if [[ -z "${RUNNING:-}" ]]; then exit 1; fi
 printf '%s\n' "$RUNNING"
+"""
+
+FAKE_GETFACL = r"""#!/usr/bin/env bash
+# Stands in for `getfacl -R -P --skip-base -p -- DIR`, as root runs it: logs its arguments in $CALLS, then prints a
+# `# file: PATH` block, as getfacl does, for each path in $ACL_PATHS (one a line), and for each in $ACL_LATE once a
+# chown has been logged, standing in for an ACL set during the move. With $GETFACL_FAILS set it fails, as getfacl does
+# on a path it can't read: exit 1.
+echo "getfacl $*" >> "$CALLS"
+[[ "$*" == "-R -P --skip-base -p -- $BOOTSTRAP_HF_CACHE" ]] || { echo "fake getfacl: unexpected: $*" >&2; exit 1; }
+if [[ -n "${GETFACL_FAILS:-}" ]]; then echo "getfacl: $BOOTSTRAP_HF_CACHE/x: Permission denied" >&2; exit 1; fi
+paths="${ACL_PATHS:-}"
+if grep -q '^chown ' "$CALLS"; then paths="$paths"$'\n'"${ACL_LATE:-}"; fi
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  printf '# file: %s\n# owner: spark\n# group: spark\nuser::rwx\ngroup::r-x\nother::r-x\n' "$path"
+  printf 'default:user::rwx\ndefault:user:spark:rwx\ndefault:group::r-x\ndefault:mask::rwx\ndefault:other::r-x\n\n'
+done <<<"$paths"
 """
 
 FAKE_SYSCTL = r"""#!/usr/bin/env bash
@@ -1818,11 +1839,13 @@ def cache_env(tmp_path: Path, *, active: str = "", hardlinks: str = "1", pull_us
     finding no process, runuser, and chown and chmod that log to tmp_path/calls and change only tmp_path's files.
     Whoever runs the tests stands in for spark-pull and spark's group, as for root in install_env, unless `pull_user`
     or `cache_group` says otherwise. `settings` go in the environment as they are: UNIT_STATES for systemctl,
-    RUNNING and PGREP_FAILS for pgrep, CHOWN_RACE for chown. The environment is built (built_env)."""
+    RUNNING and PGREP_FAILS for pgrep, ACL_PATHS, ACL_LATE and GETFACL_FAILS for getfacl, CHOWN_RACE and
+    CHOWN_RACE_LINK for chown. The environment is built (built_env)."""
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     for name, text in (("chown", FAKE_REAL_LOGGED), ("chmod", FAKE_REAL_LOGGED), ("systemctl", FAKE_SYSTEMCTL),
-                       ("sysctl", FAKE_SYSCTL), ("runuser", FAKE_RUNUSER), ("pgrep", FAKE_PGREP)):
+                       ("sysctl", FAKE_SYSCTL), ("runuser", FAKE_RUNUSER), ("pgrep", FAKE_PGREP),
+                       ("getfacl", FAKE_GETFACL)):
         (bindir / name).write_text(text)
         (bindir / name).chmod(0o755)
     return built_env(tmp_path, bindir, CALLS=str(tmp_path / "calls"), ACTIVE_UNITS=active,
@@ -1850,12 +1873,19 @@ def ctimes(root: Path) -> dict[Path, int]:
     return {path: os.lstat(path).st_ctime_ns for path in walk(root)}
 
 
+# What huggingface_hub 1.32's downloads leave beside the model files: WeakFileLock's lock, 0664, and the shared Xet
+# blob store's .lock and .refs, 0666 (the re-review's N1, measured with the repo's venv). They hold no data.
+LOCK_FILES = {"hub/.locks/models--org--model/0a1b2c3d.lock": 0o664, "hub/blobs/ab/abcdef0123.lock": 0o666,
+              "hub/blobs/ab/abcdef0123.refs": 0o666}
+
+
 def stand_in_cache(tmp_path: Path, *, moved: bool = False) -> Path:
     """A Hugging Face cache as Phase 1's pull left it, spark's (whoever runs the tests stands in): a model's blob and
-    the snapshot that links to it, as the hub writes them, hf_xet's logs, whisper's tmp-dir with a file in it, and
-    two links out of the cache to a file and a folder outside it, as spark could have planted. `moved`: as the move
-    leaves it, the top 2750 and every folder setgid, but hf/tmp, which the 2a re-run left spark's. The outside file
-    and folder are returned through tmp_path/outside."""
+    the snapshot that links to it, as the hub writes them; the lock files huggingface_hub and Xet leave, 0664 and
+    0666 on purpose (LOCK_FILES); hf_xet's logs; whisper's tmp-dir with a file in it; and two links out of the cache
+    to a file and a folder outside it, as spark could have planted. `moved`: as the move leaves it, the top 2750 and
+    every folder setgid, but hf/tmp, which the 2a re-run left spark's, and with the lock files writable again, as a
+    later download makes them. The outside file and folder are in tmp_path/outside."""
     hf = tmp_path / "hf"
     snapshot = hf / "hub/models--org--model/snapshots/abc"
     snapshot.mkdir(parents=True)
@@ -1874,9 +1904,14 @@ def stand_in_cache(tmp_path: Path, *, moved: bool = False) -> Path:
     (outside / "victim").chmod(0o640)
     (hf / "planted").symlink_to(outside / "victim")
     (hf / "planted-folder").symlink_to(outside)
+    for rel in LOCK_FILES:
+        (hf / rel).parent.mkdir(parents=True, exist_ok=True)
+        (hf / rel).write_text("")
     for path in walk(hf)[1:]:
         if not path.is_symlink():
             path.chmod(0o755 if path.is_dir() else 0o644)  # as Phase 1's pull left them, under umask 022
+    for rel, bits in LOCK_FILES.items():
+        (hf / rel).chmod(bits)  # whatever the umask: filelock and Xet fchmod them
     hf.chmod(0o750)
     if moved:
         for folder in folders(hf):
@@ -2173,9 +2208,16 @@ def test_the_cache_moves_to_spark_pull_with_a_setgid_group(tmp_path):
     assert chowns == [f"chown -R -P --no-dereference spark-pull:spark {hf}"]
     chmods = [line for line in calls(tmp_path) if line.startswith("chmod")]
     assert chmods[0] == f"chmod 2750 {hf}"
-    assert all(line.startswith("chmod g+s ") for line in chmods[1:])
-    assert sorted(word for line in chmods[1:] for word in line.split()[2:]) == sorted(map(str, folders(hf)))
+    setgid = [word for line in chmods if line.startswith("chmod g+s ") for word in line.split()[2:]]
+    cleared = [word for line in chmods if line.startswith("chmod go-w ") for word in line.split()[2:]]
+    assert len(chmods) == 1 + len([c for c in chmods if c.startswith(("chmod g+s ", "chmod go-w "))])
+    assert sorted(setgid) == sorted(map(str, folders(hf)))
+    assert sorted(cleared) == sorted(str(hf / rel) for rel in LOCK_FILES)  # the lock files, and nothing else
+    # Every chmod comes after every chown, and after the second check.
+    last_chown = max(i for i, line in enumerate(calls(tmp_path)) if line.startswith("chown"))
+    assert min(i for i, line in enumerate(calls(tmp_path)) if line.startswith("chmod")) > last_chown
     assert mode(hf) == 0o2750 and all(mode(folder) & 0o2000 for folder in folders(hf))
+    assert all(mode(hf / rel) == 0o644 for rel in LOCK_FILES)
     # Every path in the cache was reached, a link's own owner included; nothing outside it was, through a link.
     after = ctimes(hf)
     assert [path for path in before if after[path] == before[path]] == []
@@ -2226,8 +2268,8 @@ def test_a_re_run_after_the_move_changes_nothing(tmp_path):
 
 @pytest.mark.parametrize("odd", ["owner", "setgid", "top", "writable"])
 def test_anything_not_yet_moved_counts_as_something_to_move(tmp_path, odd):
-    # A move cut off partway, a folder that lost its setgid bit, or a file spark's group could write (Task 27's review,
-    # M2): the step moves again, and refuses while the stack runs, rather than calling it done.
+    # A move cut off partway, a folder that lost its setgid bit, or a folder spark's group could write (Task 27's
+    # review, M2): the step moves again, and refuses while the stack runs, rather than calling it done.
     env = cache_env(tmp_path, active="local-ai-brake.service", pull_user="nobody" if odd == "owner" else STAND_IN_USER)
     hf = stand_in_cache(tmp_path, moved=True)
     if odd == "setgid":
@@ -2235,7 +2277,7 @@ def test_anything_not_yet_moved_counts_as_something_to_move(tmp_path, odd):
     elif odd == "top":
         hf.chmod(0o750)
     elif odd == "writable":
-        (hf / "xet/logs/xet.log").chmod(0o664)
+        (hf / "xet/logs").chmod(0o2775)
     result = cache_step(env)
     assert result.returncode == 1 and "  local-ai-brake.service is active" in result.stderr
 
@@ -2325,8 +2367,10 @@ def test_a_chown_that_didnt_take_stops_the_move_before_any_chmod(tmp_path):
     assert result.returncode == 1 and "the run goes on" not in result.stdout
     assert [line for line in calls(tmp_path) if line.startswith("chmod")] == []
     assert {path: mode(path) for path in walk(hf)} == modes
-    assert result.stderr.startswith(f"bootstrap: after the chown, {hf} isn't spark-pull:spark, or is writable by its "
-                                    "group or others, so no chmod ran and nothing more was changed.")
+    assert result.stderr.startswith(f"bootstrap: after the chown, {hf} ({STAND_IN_USER}:{STAND_IN_GROUP} 750, ")
+    assert ("links) isn't as the move must leave it: every path spark-pull:spark, no folder writable by its group or "
+            "others, nothing with a second name or an ACL. So no chmod ran, and nothing more was changed."
+            ) in result.stderr
 
 
 def test_a_dry_run_shows_the_move_and_where_a_real_run_would_stop(tmp_path):
@@ -2350,10 +2394,11 @@ def test_a_dry_run_shows_the_move_and_where_a_real_run_would_stop(tmp_path):
         f"+ chown --no-dereference spark-pull:spark {hf}",
         f"+ find -P {hf} -mindepth 1 -maxdepth 1 ! -path {hf}/tmp -exec chown -R -P --no-dereference spark-pull:spark "
         "{} +",
-        "+ owned_and_closed   (a real run stops here, before any chmod, unless everything it moved is "
-        "spark-pull:spark and writable by neither its group nor others)",
+        "+ owned_and_closed   (a real run stops here, before any chmod, unless every path it moved is "
+        "spark-pull:spark, no folder is writable by its group or others, and nothing has a second name or an ACL)",
         f"+ chmod 2750 {hf}",
         f"+ find -P {hf} -mindepth 1 -path {hf}/tmp -prune -o -type d ! -type l -exec chmod g+s {{}} +",
+        f"+ find -P {hf} -mindepth 1 -path {hf}/tmp -prune -o -type f -perm /022 -exec chmod go-w {{}} +",
     ]
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
@@ -2417,39 +2462,77 @@ def test_a_unit_counts_as_stopped_only_when_inactive_or_failed(tmp_path, state, 
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
 
-@pytest.mark.parametrize("path, bits", [("xet/logs", 0o775), ("xet/logs", 0o757), ("xet/logs/xet.log", 0o664),
-                                        ("hub/models--org--model/blobs/1234", 0o646)],
-                         ids=["folder-g+w", "folder-o+w", "file-g+w", "file-o+w"])
-def test_anything_writable_by_its_group_or_others_is_refused_before_the_chown(tmp_path, path, bits):
-    # The move keeps every mode, and leaves spark's group on everything: a path writable by its group would stay
-    # writable by spark, and a folder spark can write is one whose entries it can swap for a link under chmod.
-    # Refused, never stripped: coreutils 9.4's chmod -R can follow a link swapped in during its walk.
+@pytest.mark.parametrize("bits", [0o775, 0o757], ids=["folder-g+w", "folder-o+w"])
+def test_a_folder_writable_by_its_group_or_others_is_refused_before_the_chown(tmp_path, bits):
+    # The move keeps every mode, and leaves spark's group on everything: a folder spark can write is one whose
+    # entries it can swap for a link under chmod. Refused, never stripped: coreutils 9.4's chmod -R can follow a link
+    # swapped in during its walk. Its owner is named beside it, for the remedy (the re-review's N3).
     env = cache_env(tmp_path)
     hf = stand_in_cache(tmp_path)
-    (hf / path).chmod(bits)
+    (hf / "xet/logs").chmod(bits)
     before = ctimes(hf)
     result = cache_step(env)
     assert result.returncode == 1 and "the run goes on" not in result.stdout
-    assert (f"  paths in it writable by their group or others, which spark could still change after the move "
-            f"({hf}/{path}): remove those bits as spark, their owner (sudo -u spark chmod go-w <path>)"
-            ) in result.stderr.splitlines()
+    assert (f"  folders in it writable by their group or others, their owner beside each ({hf}/xet/logs "
+            f"({STAND_IN_USER})): remove those bits as that owner (sudo -u <owner> chmod go-w <folder>), but bring "
+            "one root owns to the Claude session working on the repo") in result.stderr.splitlines()
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
 
-def test_a_file_with_a_second_name_is_refused(tmp_path):
-    # With fs.protected_hardlinks on, spark can still link a file it owns, or can read and write, into the cache: the
-    # move would hand that file to spark-pull wherever its other name is.
+@pytest.mark.parametrize("bits", [0o664, 0o646, 0o666], ids=["file-g+w", "file-o+w", "file-both"])
+def test_files_writable_by_group_or_others_are_cleared_once_the_tree_is_sealed(tmp_path, bits):
+    # The re-review's N1, the controller's ruling: huggingface_hub's lock files are 0664 and Xet's 0666 on purpose,
+    # so a file's write bits are no refusal. Once the second check has sealed every folder, the move clears them,
+    # as safely as the setgid pass: nothing chmod is handed can be swapped.
     env = cache_env(tmp_path)
     hf = stand_in_cache(tmp_path)
-    (tmp_path / "sparks-own").write_text("state\n")
-    (tmp_path / "sparks-own").chmod(0o644)
-    os.link(tmp_path / "sparks-own", hf / "xet/logs/linked")
+    (hf / "hub/models--org--model/blobs/1234").chmod(bits)
+    (tmp_path / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    cleared = [word for line in calls(tmp_path) if line.startswith("chmod go-w ") for word in line.split()[2:]]
+    assert sorted(cleared) == sorted([str(hf / "hub/models--org--model/blobs/1234"),
+                                      *(str(hf / rel) for rel in LOCK_FILES)])
+    assert mode(hf / "hub/models--org--model/blobs/1234") == bits & ~0o022
+    assert all(mode(hf / rel) == 0o644 for rel in LOCK_FILES)
+
+
+def test_a_lock_file_a_later_download_makes_writable_still_counts_as_moved(tmp_path):
+    # After the cutover the pull makes 0664 and 0666 lock files again, by design: the done-check doesn't count files'
+    # write bits, so a re-run with the stack up still passes.
+    env = cache_env(tmp_path, active=" ".join(SPARKS_UNITS))
+    hf = stand_in_cache(tmp_path, moved=True)
+    (hf / "hub/.locks/models--org--model/9f8e7d6c.lock").write_text("")
+    (hf / "hub/.locks/models--org--model/9f8e7d6c.lock").chmod(0o664)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+    assert "is already spark-pull:spark 2750, its folders setgid: nothing to move" in result.stdout
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "fifo"])
+def test_a_path_with_a_second_name_is_refused(tmp_path, kind):
+    # With fs.protected_hardlinks on, spark can still link an inode it owns, or can read and write, into the cache:
+    # the move would hand it to spark-pull wherever its other name is. Any inode but a folder (the re-review's N4):
+    # a hard-linked symlink or FIFO too.
+    env = cache_env(tmp_path)
+    hf = stand_in_cache(tmp_path)
+    own = tmp_path / "sparks-own"
+    if kind == "file":
+        own.write_text("state\n")
+        own.chmod(0o644)
+    elif kind == "symlink":
+        own.symlink_to("anywhere")
+    else:
+        os.mkfifo(own)
+    os.link(own, hf / "xet/logs/linked", follow_symlinks=False)
     before = ctimes(hf)
     result = cache_step(env)
     assert result.returncode == 1
-    assert (f"  files in it with a second name, which the move would hand to spark-pull wherever the other name is "
-            f"({hf}/xet/logs/linked): look at each with sudo ls -li, and remove the name that isn't the cache's"
-            ) in result.stderr.splitlines()
+    assert (f"  paths in it with a second name, a hard link the move would hand to spark-pull wherever the other "
+            f"name is, their owner beside each ({hf}/xet/logs/linked ({STAND_IN_USER})): look at each with sudo ls "
+            "-li, and bring them to the Claude session working on the repo") in result.stderr.splitlines()
     assert changing_calls(tmp_path) == [] and ctimes(hf) == before
 
 
@@ -2457,11 +2540,11 @@ def test_a_refusal_names_five_paths_at_most_and_nothing_a_terminal_acts_on(tmp_p
     env = cache_env(tmp_path)
     hf = stand_in_cache(tmp_path)
     for n in range(7):
-        (hf / f"open-{n}").write_text("")
-        (hf / f"open-{n}").chmod(0o666)
+        (hf / f"open-{n}").mkdir()
+        (hf / f"open-{n}").chmod(0o777)
     (hf / "open-0").rename(hf / ("open-" + chr(27) + "[2K"))
     result = cache_step(env)
-    [line] = [line for line in result.stderr.splitlines() if line.startswith("  paths in it writable")]
+    [line] = [line for line in result.stderr.splitlines() if line.startswith("  folders in it writable")]
     assert line.count(f"{hf}/open-") == 5 and ", and 2 more)" in line
     assert chr(27) not in result.stderr
 
@@ -2478,8 +2561,8 @@ def test_a_folder_made_writable_during_the_chown_stops_the_move_before_any_chmod
         result = cache_step(env)
         assert result.returncode == 1 and "the run goes on" not in result.stdout, case
         assert [line for line in calls(root) if line.startswith("chmod")] == [], case
-        assert result.stderr.startswith(f"bootstrap: after the chown, {root}/hf/hub/raced isn't spark-pull:spark, or "
-                                        "is writable by its group or others, so no chmod ran"), case
+        assert result.stderr.startswith(f"bootstrap: after the chown, {root}/hf/hub/raced ({STAND_IN_USER}:"
+                                        f"{STAND_IN_GROUP} 775, 2 links) isn't as the move must leave it"), case
 
 
 def test_no_chmod_is_handed_a_link(tmp_path):
@@ -2492,3 +2575,61 @@ def test_no_chmod_is_handed_a_link(tmp_path):
     handed = [word for line in calls(tmp_path) if line.startswith("chmod g+s ") for word in line.split()[2:]]
     assert handed and all(Path(word).is_dir() and not Path(word).is_symlink() for word in handed)
     assert str(hf / "planted-folder") not in handed
+    files = [word for line in calls(tmp_path) if line.startswith("chmod go-w ") for word in line.split()[2:]]
+    assert files and all(Path(word).is_file() and not Path(word).is_symlink() for word in files)
+    assert str(hf / "planted") not in files
+
+
+# Task 27's re-review: ACLs, and a second name made during the move.
+
+
+def test_an_acl_in_what_the_move_covers_is_refused_never_stripped(tmp_path):
+    # A default ACL doesn't show in the mode, survives chown and chmod, and would make every file the pull adds under
+    # that folder writable by spark, whatever its umask. Read by root with getfacl, read-only; never stripped.
+    env = cache_env(tmp_path, ACL_PATHS=str(tmp_path / "hf/hub/models--org--model/blobs"))
+    hf = stand_in_cache(tmp_path)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1 and "the run goes on" not in result.stdout
+    assert (f"  paths in it with an ACL beyond their mode ({hf}/hub/models--org--model/blobs): look at each with sudo "
+            "getfacl, and bring them to the Claude session working on the repo") in result.stderr.splitlines()
+    assert f"getfacl -R -P --skip-base -p -- {hf}" in calls(tmp_path)
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_a_getfacl_that_cant_read_refuses_the_move(tmp_path):
+    env = cache_env(tmp_path, GETFACL_FAILS="1")
+    hf = stand_in_cache(tmp_path)
+    before = ctimes(hf)
+    result = cache_step(env)
+    assert result.returncode == 1
+    assert "  getfacl couldn't read every ACL in it: find out why, then run this again" in result.stderr.splitlines()
+    assert changing_calls(tmp_path) == [] and ctimes(hf) == before
+
+
+def test_an_acl_inside_a_kept_hf_tmp_is_no_matter(tmp_path):
+    # hf/tmp stays spark's while the registry names it: nothing the move does reaches inside it.
+    env = cache_env(tmp_path, ACL_PATHS=str(tmp_path / "hf/tmp"))
+    stand_in_cache(tmp_path)
+    (tmp_path / "models.yaml").write_text(REGISTRY_HF_TMP)
+    result = cache_step(env)
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_second_name_or_an_acl_made_during_the_chown_stops_the_move_before_any_chmod(tmp_path):
+    for case in ("link", "acl"):
+        root = tmp_path / case
+        root.mkdir()
+        (root / "sparks-own").write_text("state\n")
+        (root / "sparks-own").chmod(0o644)
+        settings = ({"CHOWN_RACE_LINK": f"{root}/sparks-own|{root}/hf/xet/logs/linked"} if case == "link" else
+                    {"ACL_LATE": f"{root}/hf/xet/logs"})
+        env = cache_env(root, **settings)
+        stand_in_cache(root)
+        (root / "models.yaml").write_text(REGISTRY_WHISPER_TMP)
+        result = cache_step(env)
+        assert result.returncode == 1 and "the run goes on" not in result.stdout, case
+        assert [line for line in calls(root) if line.startswith("chmod")] == [], case
+        named = (f"{root}/hf/xet/logs/linked ({STAND_IN_USER}:{STAND_IN_GROUP} 644, 2 links)" if case == "link" else
+                 f"{root}/hf/xet/logs (an ACL beyond its mode)")
+        assert result.stderr.startswith(f"bootstrap: after the chown, {named} isn't as the move must leave it"), case
