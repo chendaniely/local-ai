@@ -289,8 +289,11 @@ done, and apply waits until nothing is in flight. *(Corrected 2026-10-15, at Pha
 review: the front holds only once the gate's hold reaches it, and not at all while its call to the
 gate is down.)* apply goes on only when the front itself reports that it holds new requests, its
 call to the gate open, with nothing in flight, in counts made since the hold began. It reads them
-again just before restarting the front or llama-swap. Until then it waits and says what for, and at
-the 15-minute deadline it asks, as the quiet wait does. A request held past its key's wait gets
+again just before restarting the front or llama-swap. Until then it waits and says what for. If it
+got there by a quiet minute, it asks at the 15-minute deadline whether to keep holding new requests,
+once the front has had a few seconds to report. After your `y` to drain now, it doesn't ask again.
+*(Corrected 2026-10-15, at Phase 2a's Task 32 re-review: this said it asks as the quiet wait does,
+which isn't so after a `y`.)* A request held past its key's wait gets
 `restarting`'s words, never `llama_swap_down`'s. Only then does apply sync the app and write the
 files. Then it restarts what the change needs, in order. Just before each restart of the gate, the
 front or llama-swap, apply checks with the gate that it still holds new requests. If the hold has

@@ -467,6 +467,35 @@ async def test_quiet_passes_on_whether_the_front_holds_and_is_connected(tmp_path
         await core.stop()
 
 
+@pytest.mark.anyio
+async def test_a_reopened_call_holds_nothing_until_the_front_reports_on_it(tmp_path):
+    # Task 32's re-review (N1): the gate keeps the last snapshot across a dropped call. When the call opens again, that
+    # snapshot, idle and holding, describes the call before: the front may have dropped its hold meanwhile (the gate
+    # gone longer than its lapse) and let requests through that no snapshot here shows. Until the front reports on the
+    # new call, /v1/quiet says it holds nothing, so make apply's `drained` waits.
+    from spark.apply import drained
+
+    gate = Gate(tmp_path, state=loaded(GEMMA), shown={GEMMA: "ready"})
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        front = Front(core)
+        held = snapshot(**{GEMMA: {"last_end_at": T - 10}}) | {"holding": True, "at": T}
+        core.inflight(held)
+        assert core.quiet()["holding"] is True and drained(core.quiet(), after=T)
+        core.front.close(front.queue)
+        again = Front(core)  # the call opens again; the old snapshot is still the gate's latest
+        reading = core.quiet()
+        assert (reading["front_connected"], reading["holding"]) == (True, False)
+        assert not drained(reading, after=T)  # apply's read before the first post on the new call: nothing restarts
+        core.inflight(held | {"seq": 2})  # the front's first post on the new call
+        assert core.quiet()["holding"] is True and drained(core.quiet(), after=T)
+        core.front.close(again.queue)
+        core.inflight(held | {"seq": 3})  # a report with no call open, as one handled after the call dropped
+        Front(core)
+        assert core.quiet()["holding"] is False
+        await core.stop()
+
+
 # Apply's hold: drain-all, begin, renew and its one end.
 
 @pytest.mark.anyio

@@ -7910,10 +7910,14 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
       didn't answer the gate; or the gate sees llama-swap answer but hasn't confirmed its new
       start, in which case llama-swap may well be serving (`make status`).
     - **Concern 4 — a crashed front.** The gate keeps the front's last report, so apply never
-      sees quiet. Once a wait has lasted 10 s, and every 10 s after, apply reads the gate's
+      sees quiet. ~~Once a wait has lasted 10 s, and every 10 s after, apply reads the gate's
       `GET /v1/status` `health.front`. While it isn't `ok`, both waits say *the front isn't
-      reporting its counts (`make logs s=front` shows why)*. The 15-minute deadline still offers
-      drain now. Nothing is cut.
+      reporting its counts (`make logs s=front` shows why)*.~~ *(Corrected 2026-10-15, at Task 32's
+      re-review (N3): the review's C1 removed that 10 s check, `_FrontWatch` and `FRONT_CHECK_S`.
+      apply now knows at once, from each `/v1/quiet` reading's `front_connected`. The quiet wait
+      then says *the front isn't reporting its counts (`make logs s=front` shows why)*, and the
+      drain wait says *The front isn't connected to the gate (`make logs s=front` shows why), so it
+      holds no new requests, …*.)* The 15-minute deadline still offers drain now. Nothing is cut.
     - **Concern 1 — CLAUDE.md** stays as it is until the cutover. Task 38's record step already
       updates its *Never reload llama-swap* gotcha, with README §Conventions.
   - *(Added 2026-10-15, the controller's rulings on Task 32's review:)*
@@ -7942,6 +7946,46 @@ git commit -m "feat(spark): 🤖 spark apply shows the diff, and restarts the fr
     - **M1 and M2.** The help of `make apply-now` (it asks only when the gate lists requests in
       flight, and with the gate down cuts them off without asking) and of `make restart-front` (it
       waits for a quiet minute).
+  - *(Added 2026-10-15, the controller's rulings on Task 32's re-review:)*
+    - **N1 — `holding` only from the call open now.** The gate's FrontChannel numbers each events
+      call as it opens, and notes which call each snapshot came on. `/v1/quiet` gives `holding`
+      only for a snapshot that came on the call open now. Until the
+      front posts on a call that has opened again, it reads as not holding, so apply waits, as for
+      a disconnected front. This uses no clock, so no clock step can loosen it. The front posts
+      only while its call is open, one post at a time. Test:
+      `test_a_reopened_call_holds_nothing_until_the_front_reports_on_it`, which runs apply's
+      `drained` on the gate's own answers.
+    - **The clock behind each comparison** (the re-review's out-of-scope point 4, and M9):
+      - `snapshot_at >= drained_at` compares the front's `time.time()` at the snapshot with the
+        gate's `time.time()` as it took drain-all, on one host. A backward step makes later
+        snapshots look older, so apply waits, and asks at the deadline. A forward step raises the
+        bar. Neither lets an earlier snapshot through.
+      - The quiet minute is `quiet_for_s`, the gate's `time.time()` less the front's last end, on
+        the same host. A step can shorten or lengthen it. It no longer decides a restart: only
+        `drained` under the hold does.
+      - The 15-minute deadline, the waits' second between readings, and `ASK_AFTER_S` use apply's
+        own `time.monotonic()`.
+      - N1's check uses no clock.
+    - **N2.** The drain wait's question at the deadline is its own. A quiet minute was found, or
+      Dan said drain now, and new requests are held, so the question says what is pending.
+      Either *Requests are still in flight after 15 minutes: the 2 requests in flight (…). Keep
+      holding new requests until they finish?*, or *The front hasn't confirmed in 15 minutes that
+      it holds new requests, so apply can't tell what's in flight. Keep waiting?*. Each says what
+      a no does: *nothing is changed*, or, before a restart with the files deployed, *nothing more
+      is restarted*. A drain wait asks only after `ASK_AFTER_S` (10 s) of its own, so the front's
+      post after a gate restart comes first.
+    - **N5.** `--now` with the front's call down asks its own question, *The front isn't
+      reporting its counts, so apply can't tell what's in flight. This restarts the model service
+      now and cuts off any request in flight. Continue? [y/N]*. It never says new requests are
+      held.
+    - **N6.** `gateproto.InflightSnapshot` declares `holding` and `at` as optional keys (a
+      `total=False` subclass), and so does `ApplyRenewed` for `recreated`, so run time agrees.
+    - **N8 and the refused drain-all.** M3's words have tests. A `drain-all` the gate refused
+      (anything but a 503) made no hold, or the gate took it back. So no `undrain-all` follows,
+      and the line says only that nothing was changed.
+    - **N4** (a signal during the cleanup's own `undrain-all` cuts it short, and the hold lapses
+      within a minute, nothing cut) goes to the phase-end list. **N7**, doctor's S17 check against
+      the fields apply now reads, goes to Task 33.
   - **Elsewhere.** A question with no terminal to answer on counts as no. `--deadline-s` takes
     seconds above 0. The dry run reads `/v1/quiet`, and nothing else of the gate. The S17 check
     is a sixteenth `make doctor` line now; Task 33 adds the rest.

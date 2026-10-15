@@ -1309,11 +1309,12 @@ class GateCore:
         inflight.sort(key=lambda row: -row["age_s"])
         # Task 32's review (C1): a snapshot the front made while holding new requests has every request it let through
         # before; apply counts nothing in flight only from one made after its drain-all, the front's call open. One
-        # whose call is down holds nothing: the gate's hold_all and release_all don't reach it.
+        # whose call is down holds nothing: the gate's hold_all and release_all don't reach it. And (N1, at the
+        # re-review) only one that came on the call open now: one from the call before may be stale.
         made = snapshot.get("at")
         return {"quiet_for_s": quiet, "last_label": self._label(last_model) if last_model else None,
                 "inflight": inflight, "front_connected": connected,
-                "holding": connected and snapshot.get("holding") is True,
+                "holding": self.front.reported_on_this_call and snapshot.get("holding") is True,
                 "snapshot_at": float(made) if _finite(made) else None}
 
     def _label(self, name: str) -> str:

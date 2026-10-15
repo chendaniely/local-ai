@@ -14,7 +14,7 @@ The standard library only, and nothing but definitions at import: the CLI import
 
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple, NotRequired, TypedDict, get_args
+from typing import Any, Literal, NamedTuple, TypedDict, get_args
 
 # The gate's constants: the values of website/design/phase-2a.md's Global Constraints, and that plan's own.
 MAX_REQUEST_BYTES = 65536  # a request body above 64 KiB is answered 413, never parsed
@@ -270,16 +270,21 @@ class ModelInflight(TypedDict):
     requests: list[InflightRequest]
 
 
-class InflightSnapshot(TypedDict):
-    """A whole snapshot, never a delta, so /v1/quiet and apply's question can name each request's asker. `holding`:
-    whether apply's hold stood at the front as the snapshot was made; `at`, when it was made (added 2026-10-15, at Task
-    32's review, C1). The gate takes a snapshot without them (as from a front of before) as not holding, made at an
-    unknown time, so `make apply` never counts nothing in flight from it."""
-
+class _InflightCounts(TypedDict):
     seq: int
     front_started_at: float
     models: dict[str, ModelInflight]
     draining: list[str]  # the models the front holds as draining
+
+
+class InflightSnapshot(_InflightCounts, total=False):
+    """A whole snapshot, never a delta, so /v1/quiet and apply's question can name each request's asker. `holding`:
+    whether apply's hold stood at the front as the snapshot was made; `at`, when it was made (added 2026-10-15, at Task
+    32's review, C1; declared, each optional, at its re-review, N6). The gate takes a snapshot without them (as from a
+    front of before) as not holding, made at an unknown time, so `make apply` never counts nothing in flight from it."""
+
+    holding: bool
+    at: float
 
 
 class DrainReport(TypedDict):
@@ -494,11 +499,14 @@ class ApplyRenew(TypedDict):
     since: float  # the hold's own start, so a renewal never starts a hold again
 
 
-class ApplyRenewed(TypedDict):
+class _ApplyRenewedOk(TypedDict):
     ok: Literal[True]
+
+
+class ApplyRenewed(_ApplyRenewedOk, total=False):
     # True when the gate re-created a hold it didn't know (a start fresh from a damaged state file), whose hello had
     # released the front's held requests meanwhile (Task 32's review, M7); absent otherwise.
-    recreated: NotRequired[bool]
+    recreated: bool
 
 
 class ApplyEnded(TypedDict):

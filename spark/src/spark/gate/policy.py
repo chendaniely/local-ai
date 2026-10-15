@@ -148,6 +148,10 @@ class FrontChannel:
     def __init__(self) -> None:
         self.snapshot: InflightSnapshot | None = None
         self.undelivered: list[dict] = []
+        # Which events call the last snapshot came on (Task 32's re-review, N1): each call that opens takes the next
+        # number. No clock, so no clock step can loosen it.
+        self._call = 0
+        self._reported_on: int | None = None
         self._queue: asyncio.Queue[dict] | None = None
         self._dropped: asyncio.Event | None = None
         self._opened = asyncio.Event()
@@ -161,6 +165,7 @@ class FrontChannel:
         """The front's events call opened: a queue of its own, `first` at its head. A call still open is dropped."""
         if self._queue is not None:
             self.close(self._queue)
+        self._call += 1
         queue: asyncio.Queue[dict] = asyncio.Queue()
         for event in first:
             queue.put_nowait(event)
@@ -210,6 +215,16 @@ class FrontChannel:
     def report(self, snapshot: InflightSnapshot) -> None:
         """The front's whole in-flight report, as `/v1/front/inflight` takes it."""
         self.snapshot = snapshot
+        self._reported_on = self._call
+
+    @property
+    def reported_on_this_call(self) -> bool:
+        """Whether the last snapshot came while the events call open now was open (Task 32's re-review, N1): one that
+        came before it opened, on the call before or with none open, isn't. The front posts only while its call is
+        open, one post at a time, so a snapshot that came on the call before describes that call: one made under
+        apply's hold then may be stale now, as when the front dropped its hold while the gate was gone longer than the
+        hold allows, and let requests through that no snapshot here shows."""
+        return self._queue is not None and self._reported_on == self._call
 
     def expect(self, model: str, drain_id: str, *, takes_busy: bool) -> asyncio.Future:
         """The front's answer to the drain `drain_id` of `model`, as a future: `drained`, `busy` (only when it

@@ -123,6 +123,8 @@ class GateScript:
         self.renew_status = 200
         self.end_hold_at = self.down_at = self.lose_hold_at = None
         self.drain_down: Down | None = None
+        self.drain_status = 200  # drain-all's status: 200, or an error the gate answers with
+        self.end_down = False  # apply/end and undrain-all go unanswered
         self.hold = None  # {"since", "ended", "restarting"}
         self._gate_down = 0
         self._llama_wait = None
@@ -193,6 +195,8 @@ class GateScript:
         if route == "/v1/drain-all":
             if self.drain_down is not None:
                 raise self.drain_down
+            if self.drain_status != 200:
+                return self.drain_status, {"message": "The gate failed on that request.", "code": None}
             if not self.held():
                 self.hold = {"since": self.clock(), "ended": False, "restarting": []}
             return 200, {"since": self.hold["since"], "at": self.clock()}
@@ -211,8 +215,11 @@ class GateScript:
             self.hold["restarting"] = list(body["restarting"])
             return 200, {"ok": True}
         if route in ("/v1/apply/end", "/v1/undrain-all"):
+            if self.end_down:
+                raise Down
             if self.end_status != 200:
-                return self.end_status, {"message": STILL_FINISHING, "code": None}
+                said = STILL_FINISHING if self.end_status == 503 else "The gate failed on that request."
+                return self.end_status, {"message": said, "code": None}
             if self.hold is not None:
                 self.hold["ended"] = True
             return 200, {}
@@ -2204,7 +2211,8 @@ def test_a_front_that_reports_idle_but_not_holding_is_never_taken_for_drained(tm
                                         answers=[False])
     # M5: on the quiet path too, the drain wait asks at the deadline; a no ends the hold, and nothing was changed.
     assert (code, ran, synced) == (1, [], [])
-    assert run_apply.asked == ["No quiet minute in 15 minutes. Drain now, holding new requests? [y/N]"]
+    # The re-review's N2: a quiet minute was found and new requests are held, so the question is the drain wait's own.
+    assert run_apply.asked == [NOT_CONFIRMED.format(no="nothing is changed")]
     assert script.routes("/v1/undrain-all") and not script.held()
     assert logs[-2:] == ["apply: nothing was changed; `make apply` waits for a quiet minute again, and `make "
                          "apply-now` restarts now", "apply: the hold on new requests is ended"]
@@ -2217,8 +2225,9 @@ def test_the_quiet_paths_drain_wait_asks_at_the_deadline(tmp_path):
     code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, clock=clock,
                                 answers=[True])
     assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
-    assert run_apply.asked == ["No quiet minute in 15 minutes. Drain now, holding new requests while the 2 in flight "
-                               "finish? [y/N]"]
+    assert run_apply.asked == ["Requests are still in flight after 15 minutes: the 2 requests in flight (agent, pi on "
+                               "the Mac). Keep holding new requests until they finish? No ends the hold, and nothing "
+                               "is changed. [y/N]"]
 
 
 def test_just_before_the_fronts_and_llama_swaps_restarts_apply_reads_again_under_the_hold(tmp_path):
@@ -2325,3 +2334,120 @@ def test_a_dropped_ssh_session_still_ends_the_hold(tmp_path):
         shutil.rmtree(folder, ignore_errors=True)
     assert script.routes("/v1/undrain-all") and not script.routes("/v1/apply/begin")
     assert (work / "opt/etc/llama-swap.yaml").read_text() == "old config"
+
+
+# Task 32's re-review (2026-10-15): N1 at apply's end, N2, N5, N8 and the refused drain-all.
+NOT_CONFIRMED = ("The front hasn't confirmed in 15 minutes that it holds new requests, so apply can't tell what's in "
+                 "flight. Keep waiting? No ends the hold, and {no}. [y/N]")
+
+
+def test_a_read_on_a_reopened_call_before_the_fronts_first_post_restarts_nothing(tmp_path):
+    # N1: the front's call drops and opens again just before llama-swap's restart. The gate still holds the old idle,
+    # holding snapshot, made since drain-all, but reports `holding` false until the front posts on the new call
+    # (test_gate_core's test_a_reopened_call_holds_nothing_until_the_front_reports_on_it). apply waits for that post.
+    script, clock, events = GateScript(), FakeTime(), []
+    readings = {"n": 0}
+
+    def reading(n, held):
+        if held and any(event == "gate POST /v1/apply/begin" for event in events):
+            readings["n"] += 1
+            if readings["n"] <= 3:  # the reopened call, before the front's first post on it
+                return idle(130, holding=False)
+        return QUIET
+
+    script.quiet = reading
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script, clock=clock,
+                                events=events)
+    assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
+    begun = events.index("gate POST /v1/apply/begin")
+    # Three before the front's post on the new call, then holding; the hold confirmed again after the wait, and read.
+    assert events[begun:events.index(f"restart {LLAMA}")] == ["gate POST /v1/apply/begin", *["gate GET /v1/quiet"] * 5]
+
+
+def test_the_question_before_a_restart_waits_for_the_fronts_post_and_says_what_a_no_does(tmp_path):
+    # N2: the deadline is long past (the quiet minute came at 14:59), and the gate has just restarted: it has no
+    # snapshot yet, so its readings say nothing in flight is known. The front posts holding a few seconds later, and
+    # apply asks nothing meanwhile.
+    script, clock = GateScript(), FakeTime()
+    seen = {"status": 0}
+
+    def reading(n, held):
+        if not held:
+            return idle(1) if n < 899 else idle(60)  # quiet only at 899 s
+        if seen["status"] and seen["status"] <= 4:
+            seen["status"] += 1
+            return idle(0, holding=False, snapshot_at=None)  # the gate restarted: no snapshot yet
+        return QUIET
+
+    def status_seen(unit):
+        if unit == GATE:
+            seen["status"] = 1
+
+    script.quiet = reading
+    script.restarted = (lambda original: lambda unit: (original(unit), status_seen(unit)))(script.restarted)
+    code, ran, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                app_changes=["src/spark/front/app.py"], script=script, clock=clock)
+    assert code == 0 and [cmd[-1] for cmd in ran] == [BRAKE, GATE, FRONT, LLAMA] and run_apply.asked == []
+    # Never confirmed: after the front's few seconds, the question, worded for files already deployed.
+    script, clock = GateScript(), FakeTime()
+    seen["status"] = 0
+
+    def never(n, held):
+        if not held:
+            return idle(1) if n < 899 else idle(60)
+        return idle(0, holding=False, snapshot_at=None) if seen["status"] else QUIET
+
+    script.quiet = never
+    script.restarted = (lambda original: lambda unit: (original(unit), status_seen(unit)))(script.restarted)
+    code, ran, logs, _ = run_apply(seeded(tmp_path / "never"), FILES | {"llama-swap.yaml": "b", "models.yaml": "m2"},
+                                   app_changes=["src/spark/front/app.py"], script=script, clock=clock)
+    assert code == 1 and [cmd[-1] for cmd in ran] == [BRAKE, GATE]
+    assert run_apply.asked == [NOT_CONFIRMED.format(no="nothing more is restarted")]
+    assert any(line.startswith(f"apply: requests may still be in flight, so apply restarts nothing more, {FRONT}")
+               for line in logs)
+
+
+def test_with_now_and_the_front_not_connected_apply_says_nothing_is_held(tmp_path):
+    # N5: drain-all's hold_all can't reach a front whose call is down, and its last snapshot is stale.
+    script = GateScript()
+    script.front_connected = False
+    script.quiet = [busy("agent", "pi on the Mac")]
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, now_ok=True, script=script,
+                                   answers=[True])
+    assert code == 0 and ran == [["systemctl", "restart", LLAMA]]
+    assert run_apply.asked == ["The front isn't reporting its counts, so apply can't tell what's in flight. This "
+                               "restarts the model service now and cuts off any request in flight. Continue? [y/N]"]
+    assert ("apply: the front isn't connected to the gate, so it holds no new requests; with --now apply restarts "
+            "anyway, and any request in flight is cut off") in logs
+    assert "apply: new requests are held until the restarts are done" not in logs
+
+
+@pytest.mark.parametrize("how", ["unanswered", "refused"])
+def test_an_undrain_after_a_lost_drain_all_answer_says_the_hold_may_exist(tmp_path, how):
+    # M3's words (N8): drain-all's answer was lost, so a hold may exist; then undrain-all goes unanswered, or refused.
+    script = GateScript()
+    script.drain_down = Down(sent=True)
+    if how == "unanswered":
+        script.end_down = True
+    else:
+        script.end_status = 500
+    code, ran, logs, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert (code, ran) == (1, [])
+    if how == "unanswered":
+        assert logs[-1] == ("apply: the gate didn't answer undrain-all either, so if drain-all made a hold on new "
+                            "requests, that hold ends by itself within a minute: the gate lets it lapse, or the front "
+                            "drops it once the gate has been gone that long")
+    else:
+        assert logs[-1] == ("apply: the gate refused undrain-all (The gate failed on that request.), so if drain-all "
+                            "made a hold on new requests, that hold ends by itself within a minute, when the gate lets "
+                            "it lapse")
+
+
+def test_a_drain_all_the_gate_refused_made_no_hold(tmp_path):
+    # Beside M3: a refusal (a save that failed, which the gate takes back) made no hold, so no undrain-all follows,
+    # and no line speaks of one.
+    script = GateScript()
+    script.drain_status = 500
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
+    assert (code, ran, synced) == (1, [], []) and not script.routes("/v1/undrain-all")
+    assert logs[-1] == "apply: nothing was changed: The gate failed on that request."
