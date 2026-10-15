@@ -8111,6 +8111,63 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
   history and launch's records, which only `spark` reads), found in none. The front's spool isn't
   searched: no account but the front sees its private `/tmp`, and Task 20's test pins that each
   upload's file goes when its request ends.
+- *(Added 2026-10-15, at Task 33, as built; each for the controller's ruling:)*
+  - **Doctor loads nothing** (the controller's ruling at the dispatch). Phase 1's end-to-end check
+    loaded the embeddings when they weren't loaded. Now a model is asked only once the gate's view
+    shows it `ready`: the end-to-end check, the upload and the canary. A model not loaded fails its
+    line, which names `spark load <role>`. A resident never unloads for being idle, so this holds
+    on a healthy box. A model unloaded between the view and the request would still be loaded by
+    that request: the window is the time between two calls.
+  - **Thirty lines, thirty-two with `--full`**, in this order: Phase 0's eight with *agent's OOM
+    score* after *earlyoom*, then *root's copies*, *needrestart*, *engine config files*, *stack
+    units*, *sockets*, *key list*, *version drift*, *llama-swap config*, *llama-swap*, *front*,
+    *gate*, *ntfy*, *bypass*, *web services*, *a model, end to end*, S01, S02, S03, S05, S14 and
+    S17; `--full` adds *a 170 MB upload* and *privacy canary*. The brake has no line of its own: its
+    start check stays in *stack units*, and S05 reads it too; the *gate* line reads the gate's own
+    `health.brake` (Task 29).
+  - **The brake's start check is read as the gate reads it** (`brake.read_key_check`, Task 29's
+    review, I3): no link followed, no FIFO waited on, and a cap. Phase 1's doctor read it with a
+    plain `read_text()`. Doctor reads no other file `spark` can write: the activity record's age,
+    the bypass sweep and the canary's places come from the gate.
+  - ***agent's OOM score***, a line the interfaces didn't list (Task 28's concern C5): sshd's PAM
+    file has bootstrap's line, exactly, as its first session line; the hook's script and `agent`'s
+    drop-in are the repo's, root's own; `/etc/cron.deny` names `agent`, and no `/etc/cron.allow`
+    does.
+  - ***stack units*** checks the five services and the three sockets. A socket that is down names
+    `systemctl status` and `sudo systemctl start`, since the polkit rule leaves the sockets out.
+  - **S14 checks the start limit on three units, not four.** The front, the gate and the brake set
+    `StartLimitIntervalSec=0`. llama-swap's unit keeps systemd's own limit, with `RestartSec=5`,
+    which can't reach five starts in 10 s (Task 25's units). `OnFailure=` is checked on all four.
+    `systemctl show` names the setting `StartLimitIntervalUSec`, read here from systemd's D-Bus
+    documentation on this box, and shows none as `0`; no deployed unit has shown it yet, so the
+    cutover's first doctor is the check.
+  - **S17 checks what apply reads** (Task 32's re-review, N7): the answer must pass apply's own
+    `read_quiet`, so `holding`, `front_connected` and `snapshot_at` come with the counts.
+  - **S01** checks the deployed registry's 60 minutes, and that the gate counts the same models as
+    always loaded as the registry. **S03**'s refusal is `model_not_found`, as the interfaces say,
+    not the scenario's own `no_fit`, which can't be asked for without filling memory.
+  - ***version drift*** runs `/opt/local-ai/bin/llama-swap/<version>/llama-swap -version` for
+    `versions.yaml`'s version, and the deployed registry's llama-server with `--version`, which
+    prints its line on stderr (about 0.3 s and 330 MB, seen 2026-10-15). It checks that the
+    registry's whisper-server is under `v1.9.4`'s folder and is there, and asks the deployed venv's
+    Python for uvicorn's version, against `spark/uv.lock`'s.
+  - **No example address.** A `SPARK_LLAMASWAP_URL` or `SPARK_FRONT_URL` that isn't an http(s)
+    URL is named, with *unset it for llama-swap's (or the front's) own address*, and no address. A
+    redirect's line no longer names the address either: one from the environment can carry a
+    password.
+  - **The `--full` upload** is a WAV of silence, 170,000,000 bytes, 48 kHz stereo (about 15
+    minutes), streamed with its Content-Length. The front spools it and sends it on chunked, so
+    this is the check that whisper-server takes a chunked body (Task 21's note). It hasn't run on
+    the box yet.
+  - **The canary** is `doctor-canary-<16 hex digits>`: in a chat message (`max_tokens` 1), and as
+    speech-to-text's `prompt` and file name. Two seconds later doctor reads `journalctl
+    --output=verbose --since=@<start>`, then asks `POST /v1/canary`.
+  - **What doctor's requests leave behind.** The front writes a journal line for each. The
+    refusals it asks for on purpose, the three routes' `route_not_served` and S03's
+    `model_not_found`, go into the gate's *recent*, which `spark status` shows. From Phase 5 they
+    may send `refused` notifications too: for the controller to rule on.
+  - `deploy.md`'s Phase 1 sentence that doctor loads the embeddings (*When something is wrong*)
+    is Task 35's to correct, with that runbook's other doctor lines.
 
 **Tests** (`spark/tests/test_doctor.py`, a `Probe` stand-in; one pass and one failure per check,
 and):

@@ -62,6 +62,10 @@ the notifications above until then: 2a's stack runs without it, and `spark statu
 set up*. What make-room did shows in its own words on the Spark and in `spark status`. 2a's drill
 verifies this page without the phone; Phase 5 checks the phone's part.
 
+*(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
+it.)* `make doctor`'s `S02` line checks that the gate answers make-room's plan, for 1 GiB, on the
+Spark. It asks only for the plan, never for the unload, so nothing unloads.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

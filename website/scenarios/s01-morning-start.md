@@ -44,6 +44,11 @@ set up*. Until then the loading shows in `spark status` on the Spark, and from 2
 After 2a this page stays `planned`, with a dated note recording its gate part, until 2b's menu bar
 completes it.
 
+*(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
+it.)* `make doctor`'s `S01` line checks the gate's part of this morning's setup: the deployed
+registry unloads an on-demand model after 60 minutes idle, and the gate counts the same models as
+always loaded as the registry, which never unload for being idle.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

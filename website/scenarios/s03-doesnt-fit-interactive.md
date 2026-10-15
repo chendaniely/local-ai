@@ -64,6 +64,12 @@ NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my pho
 set up*. The refusal in the client and `spark status`'s history of recent refusals are unchanged.
 2a's drill verifies this page without the phone; Phase 5 checks the phone's part.
 
+*(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
+it.)* A `no_fit` can't be asked for without filling memory, so `make doctor`'s `S03` line checks
+the refusal path with a model that doesn't exist: a made-up model name, sent through the front with
+my key, gets a `404` with `model_not_found`'s words, and nothing loads. That refusal shows in
+`spark status`'s *recent* afterwards.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*

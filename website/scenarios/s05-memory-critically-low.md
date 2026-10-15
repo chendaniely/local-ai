@@ -109,6 +109,12 @@ Until Phase 5 the brake shows as *paused* in `spark status`, with its release in
 the refusals read as above in the client. 2a's drill verifies this page without the phone; Phase 5
 checks the phone's part.
 
+*(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
+it.)* `make doctor`'s `S05` line checks that the brake is active and that llama-swap took its key
+when it started. It also checks that the gate's activity record, the in-flight record whose order
+the brake reads, is under 3 s old; without it the brake would fall back to Phase 1's order. The
+brake's start check is read as the gate reads it, never following a link or waiting on a pipe.
+
 *Rewritten 2026-10-07 as one current account, after the implementation plan's forward-and-back
 council. The notes this page gathered while the design moved, and the questions and answers behind
 them, are in [Phase 2a — questions and answers](../design/phase-2a-qa.md#how-the-scenario-pages-read-before-the-rewrite).*
