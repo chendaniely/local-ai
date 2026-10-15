@@ -150,6 +150,19 @@ def test_opencode_provider_lists_chat_models_with_their_limits_and_an_env_key():
     assert p["models"]["coder"]["limit"] == {"context": 131072, "output": 32768}
 
 
+def test_opencode_offers_only_the_efforts_qwen38s_template_takes():
+    # OpenCode offers low, medium and high for an OpenAI-compatible model, and Qwen3.8's template refuses high:
+    # "Supported types are xhigh (default), medium, and low" (seen 2026-10-14). A model's own variants replace
+    # OpenCode's, so these three are all it offers; its default sends no effort, which that template reads as xhigh.
+    p = opencode_provider(REG, "http://127.0.0.1:9100/v1", "SPARK_API_KEY")
+    for name in ("vision-chat", "coder"):
+        assert p["models"][name]["variants"] == {"low": {"reasoningEffort": "low"},
+                                                 "medium": {"reasoningEffort": "medium"},
+                                                 "xhigh": {"reasoningEffort": "xhigh"}}
+    p["models"]["coder"]["variants"]["low"]["reasoningEffort"] = "changed"  # each model's are its own, not one shared
+    assert p["models"]["vision-chat"]["variants"]["low"] == {"reasoningEffort": "low"}
+
+
 def test_opencode_merge_keeps_other_providers_and_settings_and_backs_up(tmp_path):
     path = tmp_path / "opencode.json"
     old = {"theme": "x", "provider": {"other": {"options": {"apiKey": "a-stand-in"}}, "spark": {"old": True}}}
