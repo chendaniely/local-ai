@@ -3,6 +3,7 @@ its service, the failure notifier, the brake, its S05 drill and the pull. Checke
 machine has systemd, by systemd itself: `systemd-analyze verify` on each, and transient user units that start with each
 ntfy reader's values-file and credential lines, its paths moved under tmp_path, with ntfy's files there and without."""
 
+import ast
 import os
 import re
 import shutil
@@ -34,6 +35,12 @@ DRILL_COPY = "/opt/local-ai/etc/brake-drill.yaml"
 # the NAS phase).
 NTFY_READERS = (GATE, NOTIFY, BRAKE, DRILL)
 NOTIFIER_ON = (LLAMA_SWAP, BRAKE, FRONT, GATE)  # the four services whose failure starts the failure notifier
+# Where this account's systemd user manager listens: XDG_RUNTIME_DIR as the run was given it, read at import, before
+# conftest clears the environment, or else systemd's own default. The Mac has no manager, and GitHub's runners are
+# expected to have none; the tests that need one then skip.
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+# The settings whose command systemd-analyze checks is there to run.
+EXEC = re.compile(r"Exec(Start|StartPre|StartPost|Condition|Reload|Stop|StopPost)")
 CREDENTIALS = {
     FRONT: [f"client-keys:{SECRETS}/client-keys.sha256", f"llamaswap-key:{SECRETS}/front.key", KEY_LIST],
     GATE: [f"llamaswap-key:{SECRETS}/gate.key", f"ntfy-token:{SECRETS}/ntfy-gate.header", KEY_LIST],
@@ -210,9 +217,15 @@ def test_keys_and_tokens_arrive_by_loadcredential_never_the_environment(units):
     # The names the code reads them by.
     assert {c.split(":", 1)[0] for c in CREDENTIALS[FRONT]} == {DIGESTS_CREDENTIAL, LLAMASWAP_KEY_CREDENTIAL,
                                                                KEYS_CREDENTIAL}
-    gate_main = (ROOT / "spark/src/spark/gate/main.py").read_text()
-    for name in ("llamaswap-key", "ntfy-token", "keys"):
-        assert f'"{name}"' in gate_main, name
+    # The gate names its three in its calls: each read is matched as a call, by the reader and the name it passes.
+    readers = {"read_credential", "read_credential_text", "read_header_credential"}
+    reads = {(call.func.id, call.args[0].value)
+             for call in ast.walk(ast.parse((ROOT / "spark/src/spark/gate/main.py").read_text()))
+             if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in readers
+             and call.args and isinstance(call.args[0], ast.Constant)}
+    assert reads == {("read_credential", "llamaswap-key"), ("read_header_credential", "ntfy-token"),
+                     ("read_credential_text", "keys")}
+    assert {name for _, name in reads} == {c.split(":", 1)[0] for c in CREDENTIALS[GATE]}
     assert NTFY_TOKEN == "ntfy-token"
     assert words(settings(units[BRAKE], "Service")["ExecStart"])[-2:] == ["--key-credential", "llamaswap-key"]
 
@@ -253,7 +266,7 @@ def test_onfailure_is_on_the_four_services(units):
 
 
 # What the drill runs differently from the brake; every other line of the brake's [Service] is the drill's too.
-DRILLS_OWN = {"Type", "ExecStart", "Restart", "RestartSec"}
+DRILLS_OWN = {"Type", "ExecStart", "Restart", "RestartSec", "TimeoutStartSec"}
 
 
 def test_the_drill_unit_is_the_brakes_but_once_on_the_drill_copy(units):
@@ -268,6 +281,11 @@ def test_the_drill_unit_is_the_brakes_but_once_on_the_drill_copy(units):
             e for e in shared["Environment"] if not e.startswith("SPARK_REGISTRY="))]}
     assert drill["Type"] == ["oneshot"]
     assert drill["ExecStart"] == [f"{SPARK_BIN} brake --once --key-credential llamaswap-key"]
+    # A oneshot has no start timeout by default (systemd.service(5)): its --once run's alert wait (brake.ALERT_WAIT_S)
+    # and its bounded calls finish well inside one minute.
+    from spark.brake import ALERT_WAIT_S
+
+    assert drill["TimeoutStartSec"] == ["60"] and ALERT_WAIT_S < 60
     assert settings(units[DRILL], "Unit")["ConditionPathExists"] == [DRILL_COPY]
     assert not {"Restart", "RestartSec"} & set(drill)
     assert "OnFailure" not in settings(units[DRILL], "Unit") and "Install" not in sections(units[DRILL])
@@ -315,6 +333,9 @@ def test_the_notifier_runs_ubuntus_curl_as_a_dynamic_user(units):
     assert (service["Type"], service["DynamicUser"], service["StateDirectory"]) == (
         ["oneshot"], ["yes"], ["local-ai-notify"])
     assert service["ExecStart"] == ["/usr/local/libexec/local-ai-notify %i"]
+    # A oneshot has no start timeout by default (systemd.service(5)), and a hung run would take in every later
+    # OnFailure= start for its unit: 30 s, above curl's --max-time 10 (Task 26).
+    assert service["TimeoutStartSec"] == ["30"]
     assert {name: service.get(name) for name in NOTIFIER_SANDBOX} == NOTIFIER_SANDBOX
     assert not {"User", "Group", "SupplementaryGroups"} & set(service)
     assert "Install" not in sections(units[NOTIFY])
@@ -388,17 +409,76 @@ STAND_IN_HEADER = "Authorization: Bearer stand-in-not-a-token\n"
 FILE_SETTINGS = ("EnvironmentFile", "LoadCredential", "SetCredential")
 
 
-def user_manager() -> dict[str, str]:
-    """The environment that reaches this account's systemd user manager; the test skips when none answers (the Mac,
-    CI). Built, not copied: PATH, and the runtime folder systemd-run finds the manager's bus in."""
-    if shutil.which("systemd-run") is None or shutil.which("systemctl") is None:
-        pytest.skip("no systemd-run (the Mac)")
-    env = {"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}"}
-    probe = subprocess.run(["systemctl", "--user", "show", "--property=Version", "--value"], env=env,
-                           capture_output=True, text=True, timeout=30, check=False)
-    if probe.returncode != 0 or not probe.stdout.strip():
-        pytest.skip("no systemd user manager answers here (CI)")
+# Each credential's size, as a transient unit sees it: the user manager's check that it runs units the way the tests
+# need. Never a value.
+CREDENTIAL_PROBE = """#!/bin/sh
+for name in given loaded; do
+  if [ -e "$CREDENTIALS_DIRECTORY/$name" ]; then echo "$name $(wc -c < "$CREDENTIALS_DIRECTORY/$name")"
+  else echo "$name missing"; fi
+done
+"""
+
+
+def first_line(text: str) -> str:
+    return (text.strip().splitlines() or ["no output"])[0][:200]
+
+
+def user_manager(tmp_path: Path) -> dict[str, str]:
+    """The environment that reaches this account's systemd user manager, once a transient unit there runs with a
+    credential of each kind, as on the Spark. Otherwise the test skips, saying why, and never fails: no systemd-run
+    (the Mac), no manager answering at RUNTIME_DIR (expected on GitHub's runners), or a manager that can't run such a
+    unit. Built, not copied: PATH, and the runtime folder systemd finds the manager in."""
+    for tool in ("systemd-run", "systemctl"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"no {tool} on PATH (the Mac): transient user units can't run here")
+    env = {"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": RUNTIME_DIR}
+    try:
+        answer = subprocess.run(["systemctl", "--user", "show", "--property=Version", "--value"], env=env,
+                                capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        pytest.skip(f"systemctl --user couldn't ask a user manager at {RUNTIME_DIR}: {err}")
+    if answer.returncode != 0 or not answer.stdout.strip():
+        pytest.skip(f"no systemd user manager answers at {RUNTIME_DIR}, as expected on GitHub's runners: "
+                    f"{first_line(answer.stderr)}")
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    (probe / "run").write_text(CREDENTIAL_PROBE)
+    (probe / "run").chmod(0o755)
+    (probe / "loaded").write_text("12345\n")
+    try:
+        run = subprocess.run(["systemd-run", "--user", "--wait", "--pipe", "--quiet", "--collect",
+                              "-p", "RuntimeMaxSec=30", "-p", "SetCredential=given:abc",
+                              "-p", f"LoadCredential=loaded:{probe}/loaded", "--", str(probe / "run")],
+                             env=env, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        pytest.skip(f"a transient user unit couldn't run here: {err}")
+    if (run.returncode, run.stdout) != (0, "given 3\nloaded 6\n"):
+        pytest.skip(f"this user manager can't run a transient unit with credentials (exit {run.returncode}): "
+                    f"{first_line(run.stderr or run.stdout)}")
     return env
+
+
+def usable_systemd_analyze(tmp_path: Path) -> list[str]:
+    """`systemd-analyze verify`, as the test runs it, once it passes a unit with nothing wrong. Otherwise the test
+    skips, saying why, and never fails: no systemd-analyze (the Mac), or one that can't verify a unit here, such as in
+    a container without systemd. --recursive-errors=no keeps to the named units: without it, verify also reports the
+    machine's own units they name (its docker.service's warnings, a Requires= target it lacks), which aren't render's
+    (seen on the Spark, 2026-10-14)."""
+    if shutil.which("systemd-analyze") is None:
+        pytest.skip("no systemd-analyze on PATH (the Mac)")
+    verify = ["systemd-analyze", "verify", "--recursive-errors=no"]
+    probe = tmp_path / "probe" / "local-ai-probe.service"
+    probe.parent.mkdir()
+    probe.write_text(f"[Unit]\nDescription=probe\n\n[Service]\nType=oneshot\nExecStart={sys.executable} -c pass\n")
+    try:
+        run = subprocess.run([*verify, str(probe)], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True,
+                             timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        pytest.skip(f"systemd-analyze couldn't run here: {err}")
+    if run.returncode != 0 or (run.stdout + run.stderr).strip():
+        pytest.skip(f"systemd-analyze verify doesn't pass a sound unit here (exit {run.returncode}): "
+                    f"{first_line(run.stderr or run.stdout)}")
+    return verify
 
 
 def moved(value: str, root: Path) -> str:
@@ -439,7 +519,7 @@ def stand_in_credentials(unit_text: str, root: Path, *, ntfy: bool, skip: str | 
 
 @pytest.mark.parametrize("name", NTFY_READERS)
 def test_each_unit_renders_a_form_that_starts_without_ntfys_files(tmp_path, name):
-    env, text = user_manager(), rendered()[name]
+    env, text = user_manager(tmp_path), rendered()[name]
     without, with_files = tmp_path / "without", tmp_path / "with"
     for root, ntfy in ((without, False), (with_files, True)):
         root.mkdir()
@@ -456,21 +536,23 @@ def test_each_unit_renders_a_form_that_starts_without_ntfys_files(tmp_path, name
 def test_a_unit_without_its_key_still_doesnt_start(tmp_path, name):
     # Only ntfy's token has a default: without the key llama-swap takes, the unit fails to start (systemd's 243,
     # CREDENTIALS), as it would without the key list.
-    env, text = user_manager(), rendered()[name]
+    env, text = user_manager(tmp_path), rendered()[name]
     stand_in_credentials(text, tmp_path, ntfy=False, skip="llamaswap-key")
     run = run_transient(env, text, tmp_path)
     assert run.returncode == 243 and run.stdout == "", (run.returncode, run.stdout, run.stderr)
 
 
-@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="no systemd-analyze (the Mac)")
 def test_every_rendered_unit_passes_systemd_analyze_verify(tmp_path, units):
+    verify = usable_systemd_analyze(tmp_path)
     for name, text in units.items():
         (tmp_path / name).write_text(text)
-    run = subprocess.run(["systemd-analyze", "verify", *(str(tmp_path / name) for name in units)],
-                         env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, timeout=120, check=False)
-    # The one complaint allowed: a binary this machine lacks (the deployed app off the Spark, the notifier's script
-    # until Task 27 installs it). systemd 255's verify says nothing of a user or a group that doesn't exist.
-    binaries = {value.split()[0] for text in units.values() for value in settings(text, "Service").get("ExecStart", [])}
+    run = subprocess.run([*verify, *(str(tmp_path / name) for name in units)], env={"PATH": os.environ["PATH"]},
+                         capture_output=True, text=True, timeout=120, check=False)
+    # The one complaint allowed: a binary this machine lacks, in any command a unit runs (the deployed app off the
+    # Spark, the notifier's script until Task 27 installs it, docker where it isn't installed). systemd 255's verify
+    # says nothing of a user or a group that doesn't exist.
+    binaries = {value.lstrip("-@:+!").split()[0] for text in units.values() for section in sections(text).values()
+                for name, value in section if EXEC.fullmatch(name)}
     missing = re.compile(r"^\S+: Command (\S+) is not executable: No such file or directory$")
     complaints = [line for line in (run.stdout + run.stderr).splitlines() if line.strip()]
     for line in complaints:

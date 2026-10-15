@@ -6,6 +6,9 @@ Description=local-ai: the failure notifier, for %i
 
 [Service]
 Type=oneshot
+# A oneshot has no start timeout by default, and while a run hangs, every later OnFailure= start for its unit joins it
+# and sends nothing: 30 s, above curl's --max-time 10 (the controller's ruling, 2026-10-14, at Task 25's review).
+TimeoutStartSec=30
 # A user of its own, allocated while it runs; its stamps (at most one alert per unit per 5 minutes) stay under
 # StateDirectory=.
 DynamicUser=yes

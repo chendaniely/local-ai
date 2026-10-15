@@ -11,6 +11,9 @@ ConditionPathExists=/opt/local-ai/etc/brake-drill.yaml
 # OnFailure= or [Install]: Dan starts it, without sudo (the polkit rule), and nothing else does.
 Type=oneshot
 ExecStart=/opt/local-ai/app/.venv/bin/spark brake --once --key-credential llamaswap-key
+# A oneshot has no start timeout by default: 60 s, above its alert's wait of up to 15 s plus its bounded calls and lock
+# tries (the controller's ruling, 2026-10-14, at Task 25's review).
+TimeoutStartSec=60
 Environment=SPARK_REGISTRY=/opt/local-ai/etc/brake-drill.yaml
 # The rest is the brake's own lines, which render copies from local-ai-brake.service, so the drill's account,
 # credentials, values file, environment and OOM score can't drift from the brake's.

@@ -6541,7 +6541,10 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   notifications page says beside them), `ExecStart=/usr/local/libexec/local-ai-notify %i` (Task
   26's script, which bootstrap installs, Task 27); `NoNewPrivileges=yes`,
   `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`; no
-  `[Install]`.
+  `[Install]`. *(Added 2026-10-14, at Task 25's review, the controller's ruling, a value the box
+  decides: `TimeoutStartSec=30`. A oneshot has no start timeout by default (`systemd.service(5)`),
+  and while a run hangs, every later `OnFailure=` start for its unit joins that run and sends
+  nothing. 30 s is above curl's `--max-time 10`.)*
 - The brake's unit — `LoadCredential=llamaswap-key:…/brake.key`,
   `LoadCredential=ntfy-token:…/ntfy-brake.header` with `SetCredential=ntfy-token:not-set-up`,
   ~~`EnvironmentFile=/etc/local-ai/values.env`~~ `EnvironmentFile=-/etc/local-ai/values.env`
@@ -6560,6 +6563,10 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   template marks a line, `render.BRAKE_SHARED`. render copies every line of the brake's
   `[Service]` after that line, to the section's end, into the drill's unit. The brake's
   `OOMScoreAdjust=-900` is among them. The brake has no sandbox in 2a, so neither has the drill.)*
+  *(Added 2026-10-14, at Task 25's review, the controller's ruling, a value the box decides: the
+  drill's own `TimeoutStartSec=60`, since a oneshot has none by default. Its `--once` run waits up
+  to 15 s for its alert's curl (`brake.ALERT_WAIT_S`), on top of its bounded llama-swap calls and
+  lock tries.)*
 - The pull's unit — `User=spark-pull`, `Group=spark-pull`, `UMask=0027`,
   `XDG_CACHE_HOME=/var/lib/local-ai/pull-cache`, `CUDA_CACHE_PATH` gone.
 - `bootstrap.sh`: `ROOT_UNITS` is `render.UNITS`; `ENABLED_UNITS` every unit with an `[Install]`;
@@ -6605,7 +6612,7 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
 - `test_9100_is_held_by_a_socket_unit_that_never_gives_up` — the front's socket as above.
 - `test_the_front_gate_and_brake_never_give_up_restarting` — each: `Restart=always`, `RestartSec=2`,
   `StartLimitIntervalSec=0`.
-- `test_the_gates_sockets_are_0660_spark_with_their_groups` — both sockets as above. *(Renamed
+- ~~`test_the_gates_sockets_are_0660_spark_with_their_groups`~~ — both sockets as above. *(Renamed
   2026-10-14, at Task 25's review: `test_the_gates_sockets_are_0660_with_their_owners_and_groups`,
   since the control socket is now `root`'s.)*
 - `test_the_front_only_wants_llama_swap_never_requires_it` — `Wants=` and `After=` name it; no
@@ -7501,7 +7508,7 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
   the summary line adds how many warned (`doctor: <n> of <n> checks pass, 1 warning`). Only this
   check warns, for now.
 - `sockets` — each socket file (`/run/local-ai/gate-status.sock`, `gate-control.sock`) a socket,
-  `spark`'s, `0660`, its group. *(Corrected 2026-10-14, at Task 25's review, the controller's
+  ~~`spark`'s~~, `0660`, its group. *(Corrected 2026-10-14, at Task 25's review, the controller's
   ruling: the status socket is `spark:spark-users`, and the control socket `root:spark-admin`,
   each `0660`.)*
 - `stack units` — the five services that keep running (llama-swap, the brake, compose, the front,
@@ -7655,6 +7662,14 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
 - `updates.md`: a uvicorn or Starlette bump runs `test_protocols.py` and `test_sockets.py` first,
   and `make apply` then restarts in Task 31's order; Dependabot's `spark/` bumps wait while a
   phase is being built (*Dependabot during 2a*).
+- *(Added 2026-10-14, at Task 25's review, the controller's ruling:)* **the front starts a stopped
+  llama-swap.** The front's unit has `Wants=local-ai-llama-swap.service` (Task 25), so any start
+  of the front starts llama-swap too: its restart after a crash, and a connection to 9100 after Dan
+  has stopped `local-ai-front.service`, since PID 1 still holds the port. The upgrade-day runbook
+  (`updates.md`), and any step in `deploy.md` that keeps llama-swap stopped, say so. To keep it
+  stopped, they stop the front's socket too, **on the Spark**, with sudo, since the polkit rule
+  doesn't cover sockets (`sudo systemctl stop local-ai-front.socket local-ai-front.service`), and
+  start the socket again at the end.
 
 **Steps:**
 
@@ -7944,11 +7959,15 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   - `systemctl show -p IPAddressDeny,IPAddressAllow` for the front's socket and service: each
     reads `IPAddressAllow=127.0.0.0/8 ::1/128` and `IPAddressDeny=0.0.0.0/0 ::/0`, which is how
     systemd 255 shows `localhost` and `any` (read on this box, from a transient user unit).
-  - `systemd-analyze security` for the front and the gate, its overall exposure recorded here.
-    Read from the rendered files at Task 25 (`systemd-analyze security --offline=true`, this box's
-    systemd 255), they gave 4.7 (OK) for the front and 8.3 (EXPOSED) for the gate.
+  - `systemd-analyze security` for the front and the gate, its live overall exposure recorded
+    here. The offline baseline, read from the rendered files at Task 25 (`systemd-analyze security
+    --offline=true`, this box's systemd 255), is 4.7 (OK) for the front and 8.3 (EXPOSED) for the
+    gate.
 
-  If any of these differs from the unit file, the cutover stops there (Step 8). Then
+  If an account, a socket or an IP list differs from its unit file, or a live exposure is more
+  than 0.5 above its offline baseline, the cutover stops there for review (Step 8). *(The stop
+  condition for the exposure was made explicit 2026-10-14, at Task 25's review, the controller's
+  ruling.)* Then
   the listening ports, numbers only. **On the Spark:**
 
 ```bash
