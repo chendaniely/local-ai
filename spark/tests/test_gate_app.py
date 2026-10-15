@@ -29,6 +29,7 @@ import tempfile
 import textwrap
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import get_type_hints
 
@@ -38,18 +39,19 @@ import pytest
 import uvicorn
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
-from spark import gateproto, messages, protocols, serve
+from spark import brake, gateproto, messages, protocols, serve
 from spark.brake import KeyCheck, write_key_check
 from spark.gate import app as gate_app
 from spark.gate.admission import AdmitRequest
 from spark.gate.state import BrakeMark, RecentRecord, RefusalRecord, RoomHold, load_state
 from spark.gateclient import GateClient
+from spark.hold import Hold, read_hold, write_hold
 from spark.llamaswap_async import AsyncLlamaSwap
 from spark.messages import Holder, Moment
 # anyio_backend and local_zone are test_gate_core's fixtures, imported so they apply here as there.
 from test_gate_core import (AGENT, BOOT, BOUND_S, CODER, DAN, EMBED, FOOTPRINT, GEMMA, KEY, KEYS, RESIDENTS, SPARK,
                             STACK_REGISTRY, USERS, WHISPER, Front, Gate, _check_at, anyio_backend, at, loaded,
-                            local_zone, record, settle)
+                            local_zone, record, settle, this_boots_hold)
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
 
@@ -906,6 +908,86 @@ async def test_make_room_plan_takes_a_size_or_all(tmp_path):
         assert zero.status == 400
         assert zero.json()["message"] == "make-room's size has to be a finite number of GiB above 0."
         await core.stop()
+
+
+def _room_hold(core, now: float) -> None:
+    """make-room's hold of this boot, 40 GiB, nothing unloaded under it."""
+    core.state.room_hold = RoomHold(size_gib=40.0, until=None, boot_id=BOOT, created_at=now, unloaded=[],
+                                    total_gib=40.0)
+
+
+@pytest.mark.anyio
+async def test_release_takes_each_hold_alone_or_both_and_a_flag_left_out_is_false(tmp_path):
+    # The controller's ruling at Task 30's review: `make brake-release` sends {brake: true} alone (Task 23), and
+    # `spark make-room --done` {room: true, brake: false}; a flag left out is false, one that is there is true or
+    # false, and a release that asks neither is refused in words. Before it, {brake: true} alone was a 400 (`room`
+    # wasn't true or false), so make brake-release never reached the gate's release (the reviews missed it).
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        _, control = apps(core)
+        # The brake's alone: its hold lifted, make-room's left standing.
+        this_boots_hold(gate)
+        _room_hold(core, gate.clock.now)
+        lifted = await call(control, "POST", "/v1/release", uid=DAN, body={"brake": True})
+        assert (lifted.status, lifted.json()) == (200, {"room": None, "brake": True, "reloading": []})
+        assert read_hold(gate.brake) is None and core.state.room_hold is not None
+        # make-room's alone: its hold ended, the brake's left standing.
+        this_boots_hold(gate)
+        ended = await call(control, "POST", "/v1/release", uid=DAN, body={"room": True})
+        assert ended.status == 200
+        assert ended.json() == {"room": {"unused_gib": 40.0, "total_gib": 40.0, "next_label": None}, "brake": False,
+                                "reloading": []}
+        assert core.state.room_hold is None and read_hold(gate.brake) is not None
+        # As `spark make-room --done` sends it, with brake false: the same, and nothing to end now.
+        done = await call(control, "POST", "/v1/release", uid=DAN, body={"room": True, "brake": False})
+        assert (done.status, done.json()) == (200, {"room": None, "brake": False, "reloading": []})
+        assert read_hold(gate.brake) is not None
+        # Both at once.
+        _room_hold(core, gate.clock.now)
+        both = await call(control, "POST", "/v1/release", uid=DAN, body={"room": True, "brake": True})
+        assert both.status == 200 and both.json()["brake"] is True and both.json()["room"] is not None
+        assert read_hold(gate.brake) is None and core.state.room_hold is None
+        # Neither: refused in words, nothing changed.
+        this_boots_hold(gate)
+        _room_hold(core, gate.clock.now)
+        for neither in ({}, {"room": False}, {"room": False, "brake": False}):
+            refused = await call(control, "POST", "/v1/release", uid=DAN, body=neither)
+            assert (refused.status, refused.json()) == (400, {"message": gate_app.NOTHING_TO_RELEASE, "code": None})
+        assert gate_app.NOTHING_TO_RELEASE == ("The release asks to end neither hold: `room: true` ends make-room's, "
+                                               "and `brake: true` lifts the brake's.")
+        # A flag that is there and isn't true or false: refused, naming it.
+        for wrong, field in (({"room": "yes"}, "room"), ({"brake": None}, "brake"), ({"brake": 1}, "brake"),
+                             ({"room": True, "brake": "no"}, "brake")):
+            refused = await call(control, "POST", "/v1/release", uid=DAN, body=wrong)
+            assert (refused.status, refused.json()["message"]) == (400, f"The request's {field} isn't true or false.")
+        assert read_hold(gate.brake) is not None and core.state.room_hold is not None
+        await core.stop()
+
+
+@LINUX_ONLY
+@pytest.mark.anyio
+async def test_make_brake_release_lifts_the_hold_through_the_real_gate(tmp_path, capsys):
+    # Task 23's `make brake-release` (brake.release_through_gate, the standard library's client) against the real
+    # gate app on a temp socket: the gate lifts the hold and queues the brake's reloads, and the command says so in
+    # brake_released_by_dan's words, never falling back to removing the file itself.
+    # The brake unloaded the embeddings and its hold stands as the gate starts, so nothing reloads them before the
+    # release does.
+    gate = Gate(tmp_path, state=loaded(GEMMA, WHISPER), shown={GEMMA: "ready", WHISPER: "ready"})
+    fired = datetime.fromtimestamp(gate.clock.now).isoformat(timespec="seconds")
+    write_hold(gate.brake, Hold(fired, "19.6 GiB available", (EMBED,), BOOT, 1, None, 19.6))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        assert EMBED not in core.state.models
+        async with serving(core) as served:
+            code = await asyncio.to_thread(brake.release_through_gate, served.control, gate.brake)
+        await core.stop()
+    out, err = capsys.readouterr()
+    assert (code, err) == (0, "")
+    assert out == messages.brake_released_by_dan(["the embeddings"]) + "\n"
+    assert out == "New loads resume. Reloading the embeddings…\n"
+    assert read_hold(gate.brake) is None
+    assert [r.kind for r in core.state.recent] == ["brake_released"]
 
 
 @pytest.mark.anyio

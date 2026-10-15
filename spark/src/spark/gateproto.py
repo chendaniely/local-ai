@@ -448,7 +448,11 @@ class MakeRoomAnswer(TypedDict):
     ended: list[str]
 
 
-class ReleaseRequest(TypedDict):
+class ReleaseRequest(TypedDict, total=False):
+    """Each flag may be left out, as false; one that is there is true or false, and at least one is true (the
+    controller's ruling at Task 30's review): `spark make-room --done` sends `{room: true, brake: false}`, and `make
+    brake-release` `{brake: true}`."""
+
     room: bool  # `spark make-room --done`
     brake: bool  # `make brake-release`
 

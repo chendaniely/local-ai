@@ -115,6 +115,9 @@ ON_THE_STATUS_SOCKET = "That route is on the gate's status socket."
 # A bounded route past its bound: its work goes on, so the answer says so, never that it failed (the controller's ruling
 # at Task 19's review). pi's retry list matches nothing in it (its test).
 STILL_FINISHING = "The gate is still finishing that: `spark status` on the Spark shows when it's done."
+# A release that asks to end neither hold (the controller's ruling at Task 30's review).
+NOTHING_TO_RELEASE = ("The release asks to end neither hold: `room: true` ends make-room's, and `brake: true` lifts "
+                      "the brake's.")
 
 
 def _slow_body() -> str:
@@ -303,7 +306,11 @@ def _number(body: dict, field: str, *, none: bool = False) -> float | None:
     return float(value)
 
 
-def _flag(body: dict, field: str) -> bool:
+def _flag(body: dict, field: str, *, absent: bool | None = None) -> bool:
+    """`body[field]`, true or false; with `absent` given, a field left out is that, and one that is there still has to
+    be true or false."""
+    if absent is not None and field not in body:
+        return absent
     value = body.get(field)
     if not isinstance(value, bool):
         raise _Bad(_bad(field, "true or false"))
@@ -654,7 +661,14 @@ class _Routes:
         await exchange.stream(self.core.room.execute(plan_id, for_s, uid), self.gate.stopping)
 
     async def release(self, uid: int, body: dict, params: dict, query: dict) -> tuple[int, Any]:
-        result = await self.core.room.release(uid, room=_flag(body, "room"), brake=_flag(body, "brake"))
+        """`spark make-room --done` asks `room` (it sends `{room: true, brake: false}`), `make brake-release` asks
+        `brake` (it sends `{brake: true}`, Task 23), each only what it asks. A flag left out is false, one that is there
+        is true or false, and a release that asks neither is refused (the controller's ruling at Task 30's review:
+        before it, a left-out flag was a 400, so `make brake-release` never reached this route)."""
+        room, brake = _flag(body, "room", absent=False), _flag(body, "brake", absent=False)
+        if not (room or brake):
+            raise _Bad(NOTHING_TO_RELEASE)
+        result = await self.core.room.release(uid, room=room, brake=brake)
         return 200, dataclasses.asdict(result)
 
     async def quiet(self, uid: int, body: dict, params: dict, query: dict) -> tuple[int, Any]:

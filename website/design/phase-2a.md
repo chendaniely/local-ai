@@ -2047,7 +2047,7 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   | control | `POST /v1/unload` | admin | `{model}` → NDJSON in two steps: `{inflight: n}` at once, then `{unloaded: true}` once the drain is done and the model gone, or a refusal; unbounded, since a drain waits for the requests in flight |
   | control | `POST /v1/pin` · `DELETE /v1/pin/{model}` | admin | `{model, until}` (`until` null for no end); a pin that loads first is held up to `LOAD_CALL_TIMEOUT_S` |
   | control | `POST /v1/make-room/plan` · `POST /v1/make-room` | admin | `{size_gib}` or `{all: true}` → `{plan_id, plan}`, `plan` Task 5's `RoomPlan`; `{plan_id, for_s}` → `{unloaded, free_gib, hold_gib, until}`, unbounded, since it drains each model it unloads |
-  | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only → `{room: {unused_gib, total_gib, next_label} \| null, brake: bool, reloading: [labels]}`, what each ended, with the fields its confirmation needs |
+  | control | `POST /v1/release` | admin | `{room: bool, brake: bool}` — `spark make-room --done` sends room only, `make brake-release` brake only *(2026-10-15, the controller's ruling at Task 30's review: either flag may be left out, as false, and a release asking neither is refused; Task 19's note)* → `{room: {unused_gib, total_gib, next_label} \| null, brake: bool, reloading: [labels]}`, what each ended, with the fields its confirmation needs |
   | control | `GET /v1/quiet` | admin | → `{quiet_for_s, last_label, inflight: [{model, model_label, key_label, age_s}]}` (`last_label` the model that answered last) |
   | control | `POST /v1/drain-all` · `POST /v1/undrain-all` | admin | apply's hold, written to the gate's persisted state (`GateState.applying`, Task 13), so it survives the gate's own restart: the front holds every new request (`hold_all`, and `applying` in every `hello`), admission answers `restarting` at their deadlines, never `llama_swap_down`, and nothing unloads; requests in flight finish; ended by any of the ends the next rows name, each doing the same work |
   | control | `POST /v1/apply/renew` | admin | `{since}` → `{ok: true}` while that hold stands, `{ended: true}` once it has ended, so a renewal never starts a hold again *(corrected 2026-10-08, the controller's ruling, at Task 13's re-review: never starts again a hold that has ended; a renewal of a hold the gate doesn't know at all, as after a start fresh from a damaged state file, re-creates it: Task 18)*; `make apply` sends it every `APPLY_RENEW_S` (15 s) from `drain-all` to its end |
@@ -5083,6 +5083,17 @@ git commit -m "feat(spark): 🤖 the gate's core: its loops, the activity record
   `{unloaded: true, pin_ended}`, `pin_ended` true when the unload ended a pin on the model, which
   `room.unload` ends there, recording it in *recent*; a client that goes ends the route's iteration
   of `room.execute` (its task cancelled), and Room settles the run.
+  *(Added 2026-10-15, the controller's ruling, at Task 30's review:)* `/v1/release` takes a flag
+  left out as false. A flag that is there is still true or false, and a release that asks neither,
+  `{}` or both false, is refused 400 in `app.NOTHING_TO_RELEASE`'s words, *The release asks to end
+  neither hold: `room: true` ends make-room's, and `brake: true` lifts the brake's.* As built here,
+  the route read both flags as required, so `make brake-release`'s `{brake: true}` (Task 23) was
+  answered 400, *The request's room isn't true or false.*, and never reached the release. No test
+  called the route, and the reviews of Tasks 19 and 23 didn't catch it; Task 30's report did.
+  `gateproto.ReleaseRequest` is `total=False` with it. Its tests:
+  `test_release_takes_each_hold_alone_or_both_and_a_flag_left_out_is_false` (brake only, room
+  only, both, neither, a flag that isn't true or false) and
+  `test_make_brake_release_lifts_the_hold_through_the_real_gate`.
 
 - *(Added 2026-10-08, at Task 19, as built; for the controller's review:)*
   - **Who may call, on the uid alone, before the first `receive()`.** `front`: `front_uid` only,
@@ -6028,7 +6039,13 @@ git commit -m "feat(spark): 🤖 the front asks the gate for each load, and keep
   the gate is up, it reloads as usual; if not, nothing reloads until it answers.*; after an answer
   broken off, the same with *stopped answering partway*; on `GateForbidden`, its text, and
   exit 1. *(Added 2026-10-07, at Task 7, the controller's ruling: that text is
-  `messages.BRAKE_RELEASED_WITHOUT_GATE`.)*
+  `messages.BRAKE_RELEASED_WITHOUT_GATE`.)* *(Added 2026-10-15, the controller's ruling, at Task
+  30's review:)* until then, the gate as Task 19 built it answered this `{brake: true}` with a 400,
+  *The request's room isn't true or false.*, since its route required both flags. So `make
+  brake-release` said that, kept the hold file and exited 1: it couldn't lift the brake's hold
+  through the gate. The call stays as it is. The gate now takes a flag left out as false (Task 19's
+  note), and `test_make_brake_release_lifts_the_hold_through_the_real_gate` runs this call against
+  the real gate app on a temp socket: the hold is lifted, and it prints `brake_released_by_dan`.
 
 - *(Added 2026-10-08, the controller's ruling, at Task 17's review:)* the brake writes the hold's
   `since` with its UTC offset (`datetime.now().astimezone().isoformat(timespec="seconds")`), so the
@@ -7460,6 +7477,50 @@ git commit -m "feat(spark): 🤖 spark status in plain words: room, loaded, wait
   controller's ruling, at Task 17's review:)* `unload` prints `messages.unloaded(label, pin_ended=…)`
   from `UnloadDone`, *Unloaded the coder; the pin on it ended.* when the gate ended a pin, with its
   test.
+
+- *(Added 2026-10-15, at Task 30, what its code gives beyond the lines above, and the controller's
+  rulings at Task 30's review:)*
+  - **`--done`** sends `{room: true, brake: false}`, `gateproto.ReleaseRequest`'s shape. The gate
+    takes a flag left out as false since Task 30's review (Task 19's note), so `{room: true}` alone
+    would do as well.
+  - **Durations:** `parse_duration` takes a whole number and `s`, `m`, `h` or `d`, from 1 s up to
+    365 days, so a pin's or a hold's end is always a time the clock can show. `parse_size` takes a
+    decimal size too (`40.5G`) and `G` or `GiB` in either case, never 0. Each refusal is argparse's
+    usage error (exit 2), in the parse function's own words, naming what was given.
+  - **`--for` goes only with a size:** `room_all`'s words name no end, so `--for` with `--all` or
+    `--done` is a usage error (exit 2).
+  - **Sessions:** `spark session start` prints the id alone, for 2b's hooks; `renew` and `end`
+    print nothing when they succeed. `spark session hold` prints nothing while it runs. A renewal
+    the gate refuses means the session has ended: the gate's sentence, exit 1, and no `DELETE`. One
+    that doesn't reach the gate is said on stderr and tried again at the next renewal.
+  - **Ctrl-C** ends the wait and the command, exit 130, with a line of `messages.stopped_waiting`
+    on stderr saying what the gate goes on with: a load that had started, an unload, an unload
+    make-room had begun. At make-room's question it is a no (*Nothing unloaded, and nothing
+    held.*). Never a traceback.
+  - **New words in `messages.py`, in Task 7's voice, each with its test:** `load_started` (made
+    public; the `load_started` notification's words go through it), `command_waiting` (the nine
+    `WAITING_WHY` reasons as Dan's own command words them, and *The coder is waiting…* for a line
+    whose reason can't be read), `still_stopping`, `stopped_partway`, `room_ended_words` (*Your pin
+    on the coder ended, and the session agent's pi lost its model.*), `room_no_hold` (`--done` with
+    no hold: *There's no make-room hold, so there's nothing to end.*, exit 0), `room_declined`,
+    `room_needs_a_terminal` and `stopped_waiting`.
+  - **`--yes`** prints the question with its answer, *… [y/N] y*, so a script's log shows what was
+    answered.
+  - **`spark logs`** without `-n` asks for 20, the gate's own default.
+  - **The registry the CLI reads is optional:** a label falls back to the name given, make-room's
+    list to labels alone (no names in brackets, no `used_by`), and the brake's warn line, which a
+    waiting line names, to the plan's 28 GiB.
+  - **Free for a load now,** the figure make-room's list starts from, is the plan's `most_gib`
+    less the candidates' sizes, both the gate's own numbers. Through the answer's JSON floats it can
+    be off by about 1e-14 GiB.
+  - **A progress line of a kind added later** prints nothing, and
+    `test_every_progress_kind_and_waiting_reason_has_words` fails until it is worded.
+  - **Every printed line is escaped** (a control character written out), since labels, session
+    labels and an engine's lines come from outside. Progress is flushed as it comes, so it shows
+    over SSH's pipe too.
+  - **The import check** (Task 3's review, Minor 4) also runs each command's handler, and `spark
+    status`'s and `spark launch`'s, in a subprocess against `test_commands.py`'s stand-in. A lazy
+    heavy import inside a handler then fails it, where parsing alone passed.
 
 **Tests** (`spark/tests/test_commands.py`; a gate stand-in answering each route as Task 10 gives
 it):
