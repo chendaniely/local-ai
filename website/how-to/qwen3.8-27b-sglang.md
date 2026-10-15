@@ -28,7 +28,9 @@ Run everything on the Spark, as you, inside tmux (`tmux new -As coder`), unless 
 - **It's outside the stack's checks.** llama-swap's launch check never sees it, and the brake can't
   stop it: the brake unloads only through llama-swap. You check memory before you start it, and
   you stop it ([The budget](#the-budget)).
-- **It boots slowly.** hasso5703 measured 5–9 minutes from start to the first answer.
+- **It boots slowly.** hasso5703 measured 5–9 minutes from start to the first answer. *(Here,
+  2026-10-14: about 3 minutes from start to ready, by its boot log, with the stack stopped:
+  [Speed tests](../reference/speed-tests.md).)*
 
 ## The budget
 
@@ -287,11 +289,22 @@ it comes in only if the stock one fails.
 
 ## What to record
 
-Keep the boot log. Phase 4a's settings come from these numbers, measured here:
+Keep the boot log. Phase 4a's settings come from these numbers, measured here. *(The first
+run's, 2026-10-14, are on [Speed tests](../reference/speed-tests.md), with the commands.)*
 
 - `free -g` available before the start, once it's up, and after a long answer.
 - From the log: the memory it found at the start, the KV pool's size in tokens, the recurrent state
-  pool, and any warning about the caps.
+  pool, and any warning about the caps. *(Corrected 2026-10-14, at the first run:
+  `--log-level warning` keeps the KV pool's and the recurrent state's lines out of the log, which
+  still shows the memory it found, its free memory at warm-up and any warning. The sizes come
+  from the server instead, **on the Mac**, with the tunnel open. The filter keeps only the size
+  and memory fields and drops any field named like a key, since this route also returns the
+  server's settings:)*
+
+  ```bash
+  printf 'Authorization: Bearer %s\n' "$SPARK_SGLANG_KEY" | curl -s -H @- http://localhost:8990/server_info | jq '[paths(type != "object" and type != "array") as $p | select(any($p[]; tostring | test("max_total|max_running|mamba|mem_fraction|context_len|max_req|memory|capacity|version"))) | select(all($p[]; tostring | test("key|secret|password|auth"; "i") | not)) | {key: ($p | map(tostring) | join(".")), value: getpath($p)}] | from_entries'
+  ```
+
 - How long it took from start to `200`.
 - Tokens a second. **On the Mac**, with the tunnel open, time one answer; the key goes to `curl` on
   its input, not its command line:

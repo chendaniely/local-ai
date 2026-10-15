@@ -1908,6 +1908,26 @@ council, with Dan's fourteen decisions (Revisions).*
   trial merge of `phase-2a` at `45cecf2` with `main` at `9009e6a` conflicts in 18 places in 10
   files, `plan.md` 5 and `test_render.py` 4. With 2a's side taken in each, the clients, registry
   and render tests pass, and the rest fail on the Mac only where 2a alone does.)*
+  *(Added the same day: `main` now also has the home page's overview, `website/_overview.qmd`
+  (PR #20, `2fdd800`), which `index.qmd` and the Architecture page include and nothing copies;
+  click-to-zoom for every diagram (`website/_diagram-zoom.html`, added to each page by
+  `_quarto.yml`); and CLAUDE.md's rule naming the overview as the one diagram outside the
+  Architecture page. A trial merge of `phase-2a` at `1a43f2a` with `main` at `2fdd800` conflicts
+  in 20 places in the same 10 files. The overview adds one of them, the Architecture page's
+  opening paragraph, where both sides stay: main's opening, then 2a's sentence on a built part
+  that a later phase changes, then main's *The overview* section with its include. `index.qmd`,
+  `_quarto.yml`, CLAUDE.md's rule and README's line merge cleanly, and the include on the home page
+  stays above 2a's Notifications and Community bullets. The overview's labels follow main's phase
+  numbers from before 2a renumbered them, so the same merge commit brings `_overview.qmd` up to
+  date with 2a's *Where everything sits* and this plan, keeping to parts by role, with no ports,
+  accounts or model names: the front and the gate become Phase 2a, solid if built by then, with
+  requests going through the front; the Synology's alerts and backups both become Phase 5, the
+  gate's alerts going to ntfy there; "vLLM or SGLang · Phase 5" becomes vLLM, Phase 4, beside
+  the fast coder on SGLang and Flash-Next, Phase 4a; LiteLLM stays Phase 3, its edge as 2a's
+  diagram has it, ahead of the front, in its place, or not at all. On the Mac, before the push,
+  `make docs` passes, `check-scenarios` included; the overview on the home page and on the
+  Architecture page matches 2a; and a click on *Where everything sits* opens it full-screen,
+  where Fit, 100%, + and dragging work.)*
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -2172,6 +2192,12 @@ Phase 4's route D and Qwen3.8-Flash-Next come to the registry ahead of the rest 
 Both are tested by hand first, on today's stack, and those runs measure the footprints and speeds
 this phase starts from: [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md) and
 [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md), merged into `phase-2a` (PR #11).
+*(The fast coder's first by-hand run, 2026-10-14, alone with llama-swap stopped: 41.7 tok/s
+against 23.8 for today's llama.cpp coder, 1.75×, on one prompt at temperature 0 whose 1,024 tokens
+were all thinking; about 45 GiB, as `MemAvailable` went from 117 to 72 GiB; ready in about 3
+minutes; the image's digest is hasso5703's. Not yet measured: code output, long prompts, and the
+fast coder beside the always-loaded models. [Speed tests](../reference/speed-tests.md) has the
+setup, the commands and the caveats. Flash-Next's run is still to come.)*
 
 - **Names** (Dan, 2026-10-13): the fast coder takes over `qwen3.8-27b`, and today's llama.cpp coder
   stays as `qwen3.8-27b-gguf`, the fallback. Both are on demand, and they don't fit together
@@ -2197,7 +2223,9 @@ this phase starts from: [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.m
     so the registry passes `--max-total-tokens` and `--max-mamba-cache-size`, and
     `--mem-fraction-static` only has to let it start. About 43 GiB by arithmetic, beside the
     always-loaded models' room of 50; the by-hand runs measure it, alone and beside them, and the
-    registry takes the larger.
+    registry takes the larger. *(Alone, 2026-10-14: about 45 GiB, within the room of 50. SGLang's
+    own count was 23.3 GB of weights, 8.1 GB of KV cache for 266,240 tokens and 1.2 GB of graphs;
+    the token cap bound it, not the fraction. Beside them is still to measure.)*
   - **One request at a time** (`--max-running-requests 1`) while sglang #36548 and #38009 are open,
     with a drill for queued sub-agents against opencode's 300 s wait for a reply (S25).
   - **Its start route**, the open item under *Since 2a's design* above, is designed at 4a's start,
@@ -2212,7 +2240,8 @@ this phase starts from: [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.m
     - it starts only with the gate's ticket, like any load, and the gate sees it by the unit's main
       pid and the container's cgroup, for its pid scan and the growth owed;
     - the gate waits for its readiness itself, since a cold start, 5–9 minutes for hasso5703,
-      passes the 180 s deadline;
+      passes the 180 s deadline; *(about 3 minutes here, 2026-10-14, by its boot log, which
+      starts after the container does: still at or past the deadline, so this stands)*
     - llama-swap's unload waits longer than the container's stop (`docker stop -t 20`, hasso5703's),
       and the next load waits for the memory to come back (2–5 s there);
     - the brake stops an engine unit llama-swap doesn't list, so a container left behind can't
@@ -3884,6 +3913,16 @@ Each item gets its own design pass when its turn comes.
   calls with every new chat, and the levers if the soak shows harm are Gemma's `--cache-ram` and
   Open WebUI's task model, moved off Gemma (the clients phase's call). A dated correction is in the
   Phase 2a line's item; Task 45 counts the costly least-recently-used picks too.
+- **2026-10-14** — The fast coder's first by-hand run (Dan, from the by-hand page). Dated notes in
+  Phase 4a record it: 41.7 tok/s against 23.8 for the llama.cpp coder on one thinking-only prompt,
+  about 45 GiB alone, about 3 minutes to start, and the image hasso5703's by its digest. A new
+  Reference page, [Speed tests](../reference/speed-tests.md), keeps the setup, the commands and the
+  caveats, for later runs to be compared with. The by-hand page gains the server query that gives
+  the cache sizes, since `--log-level warning` keeps them out of the log.
+- **2026-10-14** — Phase 2a's close: the closing merge brings in `main`'s overview diagram (PR #20),
+  its click-to-zoom and CLAUDE.md's rule for it, and the same merge commit brings the overview's
+  labels up to date with 2a's phases. A dated note in Phase 2a's close says how, with the
+  Architecture page's one new conflict and a trial merge's count: 20 conflicts in 10 files.
 - **2026-10-14** — Phase 2a's Task 25 review, the controller's rulings. The gate's control socket
   becomes `root:spark-admin`, so nothing running as `spark` (llama-swap, the engines, the brake)
   can connect to it; the gate's uid check stays as the second line, and the status socket stays

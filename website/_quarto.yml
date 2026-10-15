@@ -26,6 +26,8 @@ website:
             href: reference/notifications.md
           - text: Community projects
             href: reference/community.md
+          - text: Speed tests
+            href: reference/speed-tests.md
 
 format:
   html:
