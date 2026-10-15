@@ -8,6 +8,24 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-14 — The fast coder, run once by hand
+
+**Added** by Dan, **on the Spark**, following [The fast coder, by hand](website/how-to/qwen3.8-27b-sglang.md)
+(on `phase-2a` until Phase 2a merges): the image `lmsysorg/sglang:v0.5.21`, with `sudo docker pull`,
+whose digest, `sha256:b1259f3e…f469`, is hasso5703's; the model `RadixArk/Qwen3.8-27B-NVFP4` at
+`52d1adc` and the drafter `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal` at `bd7a934`, with
+`hf download` into `~/sglang/hf`, 22 GiB; the engine's key file, `~/sglang/secrets/engine.yaml`,
+written from the Mac and readable by Dan alone; and `~/sglang/scratch`, the container's only
+writable folder, which keeps its boot logs. `df -h /` showed 591 GiB free after.
+
+**Ran** by Dan, once: `systemctl stop local-ai-llama-swap`, then the page's `docker run` (`--rm`,
+one port, 990, on 127.0.0.1 only), used from the Mac through an SSH tunnel and opencode; then
+`sudo docker stop -t 20 qwen38-coder` and `systemctl start local-ai-llama-swap`. Measured: 41.7
+tok/s against 23.8 for the deployed coder, about 45 GiB, and about 3 minutes to start
+([Speed tests](website/reference/speed-tests.md), on `phase-2a` until it merges). Nothing of it is
+left running, and nothing starts it: no unit, no restart policy. The files stay for Phase 4a; the
+page's *Clean up* removes them.
+
 ## 2026-10-14 — DCGM's host engine masked (Dan's decision)
 
 **Found** by Dan, **on the Spark**: NVIDIA's DCGM, `datacenter-gpu-manager` 1:3.3.9, is installed,

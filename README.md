@@ -179,6 +179,13 @@ when that file was retired on 2026-09-23.
   whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. `agent` runs
   llama-server and sees the GPU without docker. Checksums, commits and GPU code in the changelog;
   the pins in `stack/versions.yaml`.
+- **The fast coder's files** (2026-10-14), outside the stack, and nothing runs them: the image
+  `lmsysorg/sglang:v0.5.21`, by hasso5703's digest; Qwen3.8-27B in NVFP4 and its DFlash2 drafter in
+  `~/sglang/hf`, 22 GiB; the engine's key file, `~/sglang/secrets/engine.yaml`, Dan's alone; and
+  `~/sglang/scratch`, with the boot log. Run once by hand, with llama-swap stopped, and measured on
+  [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges). Phase 4a
+  builds it into the stack; until then the by-hand page's *Clean up* removes these. 591 GiB of disk
+  was left after (`df -h /`).
 - **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
   its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
   in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
@@ -283,6 +290,11 @@ when that file was retired on 2026-09-23.
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
   0.85.1, installed with npm; whether that copy is still installed is not recorded.
+- **opencode 2.0.25**, from Homebrew (its version recorded 2026-10-14). It runs one background
+  service that its windows hand their requests to, which keeps the environment it started with:
+  `opencode service restart` after adding a key. `make clients` writes its `spark` provider; the fast
+  coder's `spark-sglang` provider was added by hand from the by-hand page, its key in
+  `SPARK_SGLANG_KEY`, exported by Dan's shell like the others.
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
