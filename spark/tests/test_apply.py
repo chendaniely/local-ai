@@ -859,7 +859,7 @@ class Box:
             put(self.repo / "spark" / rel, text, OLD)
         put(self.opt / "bin/llama-swap/v257/llama-swap", "", OLD)
         self.units = dict.fromkeys(RUNNING_UNITS)
-        self.interrupted, self.failing, self.uv_fails = set(), set(), False
+        self.interrupted, self.failing, self.uv_fails, self.uv_lock = set(), set(), False, None
         self.validate_code, self.validate_env, self.uv_env = 0, None, None
         self.events, self.replies, self.questions = [], [], []
         self.time = FakeTime(time.time()) if fake_time else None
@@ -880,7 +880,8 @@ class Box:
         monkeypatch.setattr(spark_render, "COMPOSE_DIR", str(tmp_path / "root/compose"))
         monkeypatch.setattr(spark_apply, "_show", lambda unit: systemctl_show(self.units[unit]))
         monkeypatch.setattr(spark_apply, "subprocess",
-                            SimpleNamespace(run=self.run, CalledProcessError=subprocess.CalledProcessError))
+                            SimpleNamespace(run=self.run, CalledProcessError=subprocess.CalledProcessError,
+                                            TimeoutExpired=subprocess.TimeoutExpired))
         monkeypatch.setattr(spark_apply, "write_tree", self.write_tree)
         # What systemd says of the brake after its restart, one answer per look, the last repeated: it stays up.
         self.brake_shows = ["ActiveState=active\nSubState=running\nNRestarts=0\n"]
@@ -913,11 +914,16 @@ class Box:
             return subprocess.CompletedProcess(cmd, self.validate_code)
         if cmd[:2] == ["uv", "sync"]:
             self.events.append("uv sync")
-            self.uv_env = kwargs.get("env")
+            self.uv_env, self.uv_argv, self.uv_timeout = kwargs.get("env"), cmd, kwargs.get("timeout")
             if self.uv_fails:
-                raise subprocess.CalledProcessError(2, cmd)
+                raise subprocess.CalledProcessError(2, cmd, output="", stderr="error: the stand-in failed\n")
+            if self.uv_lock is not None:  # uv waits on a lock another process holds, until apply's bound
+                said = (f"DEBUG Found project root: `{self.app}`\n"
+                        f"INFO Waiting to acquire exclusive lock for `.venv` at `{self.uv_lock}`\n").encode()
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"), output=b"", stderr=said)
             put(self.app / ".venv/bin/spark", "", time.time())
-            return subprocess.CompletedProcess(cmd, 0)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="DEBUG Found project root\nInstalled 1 "
+                                                                          "package in 3ms\n")
         if cmd[:2] == ["systemctl", "restart"] and len(cmd) == 3:
             self.events.append(f"restart {cmd[2]}")
             if cmd[2] in self.interrupted:
@@ -983,6 +989,8 @@ QUIET_READ, DRAIN = "gate GET /v1/quiet", "gate POST /v1/drain-all"
 BEGIN, STATUS = "gate POST /v1/apply/begin", "gate GET /v1/status"
 END, UNDRAIN = "gate POST /v1/apply/end", "gate POST /v1/undrain-all"
 HELD = [QUIET_READ, DRAIN, QUIET_READ]  # quiet at the first reading, the hold, and nothing in flight under it
+# With the app to sync: the sync after the quiet reading, before the hold (the controller's ruling at Task 35).
+SYNCED = [QUIET_READ, "uv sync", DRAIN, QUIET_READ]
 
 
 def test_run_stages_roots_files_first_and_says_and_changes_nothing_else(box):
@@ -1126,7 +1134,7 @@ def test_a_failed_sync_on_a_running_stack_restarts_the_brake_once_it_succeeds(bo
     code, _, events = box.apply()
     # Until a sync finishes every file of the app counts, the front's among them (Task 31): one that failed part-way
     # may have changed the environment under it. The front's restart waits for the quiet moment (Task 32).
-    assert (code, events) == (0, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
+    assert (code, events) == (0, ["-validate", *SYNCED, BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
                                   QUIET_READ, f"restart {FRONT}", END])
 
 
@@ -1142,7 +1150,7 @@ def test_a_copy_that_fails_is_said_and_tried_again(box):
     assert (code, events) == (1, ["-validate"])
     assert lines[-1].startswith(f"apply: copying the app into {box.app} failed (")
     code, _, events = box.apply()
-    assert (code, events) == (0, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
+    assert (code, events) == (0, ["-validate", *SYNCED, BEGIN, f"restart {BRAKE}", f"restart {GATE}", STATUS,
                                   QUIET_READ, f"restart {FRONT}", END])  # every file counts until a sync finishes
 
 
@@ -1235,7 +1243,8 @@ def test_uv_sync_is_given_the_tests_own_environment_and_uvs_settings_only(box):
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.apply()
     names = set(box.uv_env) - {"PYTEST_CURRENT_TEST"}
-    assert names <= {"PATH", "HOME", "LANG", "TZ", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE"}
+    # UV_LOCK_TIMEOUT: past apply's own bound, so uv never goes on without a lock before apply stops it (Task 35).
+    assert names <= {"PATH", "HOME", "LANG", "TZ", "UV_PYTHON_INSTALL_DIR", "UV_LINK_MODE", "UV_LOCK_TIMEOUT"}
 
 
 def test_validate_is_run_with_path_and_placeholder_keys_only(box, monkeypatch):
@@ -1428,7 +1437,7 @@ def test_apply_restarts_in_that_order_inside_the_hold_and_compose_after_it(tmp_p
                               outdated=[COMPOSE], app_changes=["src/spark/front/app.py"], events=events)
     # Task 32's review (C1): the front's counts read again under the hold just before each restart that cuts.
     assert code == 0 and events == [
-        "gate GET /v1/quiet", "gate POST /v1/drain-all", "gate GET /v1/quiet", "sync", "gate POST /v1/apply/begin",
+        "gate GET /v1/quiet", "sync", "gate POST /v1/drain-all", "gate GET /v1/quiet", "gate POST /v1/apply/begin",
         f"restart {BRAKE}", f"restart {GATE}", "gate GET /v1/status", "gate GET /v1/quiet", f"restart {FRONT}",
         "gate GET /v1/quiet", f"restart {LLAMA}", "gate GET /v1/status", "gate POST /v1/apply/end",
         f"restart {COMPOSE}"]
@@ -1464,7 +1473,7 @@ def test_run_restarts_the_front_for_its_own_modules_and_a_cut_off_run_leaves_it_
     put(box.repo / "spark/src/spark/front/parse.py", "v2", time.time())
     box.interrupted = {FRONT}
     code, _, events = box.apply()
-    assert (code, events) == (130, ["-validate", *HELD, "uv sync", BEGIN, f"restart {BRAKE}", f"restart {GATE}",
+    assert (code, events) == (130, ["-validate", *SYNCED, BEGIN, f"restart {BRAKE}", f"restart {GATE}",
                                     STATUS, QUIET_READ, f"restart {FRONT}", UNDRAIN])
     box.interrupted = set()
     code, lines, events = box.apply()
@@ -1540,14 +1549,14 @@ def test_restart_front_waits_for_the_quiet_moment_and_its_steps_name_make_restar
 
 
 def test_restart_fronts_failed_sync_says_to_run_it_again(box):
-    # Task 31's review: `make apply` would sync the app and never restart the front for the key list. Since Task 32 the
-    # sync comes inside the hold, which undrain-all ends.
+    # Task 31's review: `make apply` would sync the app and never restart the front for the key list. Since the
+    # controller's ruling at Task 35 the sync comes before the hold, so a failed one takes none.
     box.deployed()
     put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
     box.uv_fails = True
     code, lines, events = box.apply("--restart", FRONT)
-    assert code == 1 and lines[-2].endswith("once it's fixed, `make restart-front` syncs it again")
-    assert events == ["-validate", *HELD, "uv sync", UNDRAIN] and lines[-1] == "apply: the hold on new requests is ended"
+    assert code == 1 and lines[-1].endswith("once it's fixed, `make restart-front` syncs it again")
+    assert events == ["-validate", QUIET_READ, "uv sync"] and not box.gate.routes("/v1/drain-all")
 
 
 # Task 31's review (I2): the front's restart for the registry's key groups, and the gate's and the front's for
@@ -1675,8 +1684,9 @@ def test_after_15_minutes_apply_offers_drain_now(tmp_path):
         drains = script.routes("/v1/drain-all")
         if answer:  # drain-all at once, then on, with nothing in flight
             assert code == 0 and drains[0][3] == 1000.0 + 900
-            assert events[events.index("gate POST /v1/drain-all"):events.index("sync")] == [
-                "gate POST /v1/drain-all", *["gate GET /v1/quiet"] * 3]
+            # The sync just before drain-all (the controller's ruling at Task 35), then the drain's own wait.
+            assert events[events.index("sync"):events.index("gate POST /v1/apply/begin")] == [
+                "sync", "gate POST /v1/drain-all", *["gate GET /v1/quiet"] * 3]
             assert ran == [["systemctl", "restart", unit] for unit in (BRAKE, GATE, LLAMA)]
         else:  # exit 1, nothing changed
             assert (code, ran, synced, drains) == (1, [], [], [])
@@ -1742,22 +1752,25 @@ def test_apply_renews_the_hold_while_it_runs(tmp_path):
     assert not run_apply.gate._thread.is_alive()
 
 
-def test_the_renewals_come_from_a_thread_of_their_own_so_a_long_sync_never_lets_the_hold_lapse(tmp_path, monkeypatch):
-    # With the real clock: a sync that holds apply's own thread for 0.5 s, renewals every 0.05 s meanwhile.
+def test_the_renewals_come_from_a_thread_of_their_own_so_a_long_step_never_lets_the_hold_lapse(tmp_path, monkeypatch):
+    # With the real clock: a restart under the hold that holds apply's own thread for 0.5 s (the brake's here), renewals
+    # every 0.05 s meanwhile. (A long sync was the case until the controller's ruling at Task 35 put the sync before
+    # the hold.)
     script = GateScript()
     gate = ApplyGate(ScriptClient(script), ScriptClient(script), renew_s=0.05, log=lambda line: None)
     renewed_during = []
 
-    def sync():
-        before = len(script.routes("/v1/apply/renew"))
-        time.sleep(0.5)
-        renewed_during.append(len(script.routes("/v1/apply/renew")) - before)
+    def run_cmd(cmd):
+        if cmd[-1] == BRAKE:
+            before = len(script.routes("/v1/apply/renew"))
+            time.sleep(0.5)
+            renewed_during.append(len(script.routes("/v1/apply/renew")) - before)
+        script.restarted(cmd[-1])
 
     code = apply_files(FILES | {"llama-swap.yaml": "b"}, seeded(tmp_path), installed=ROOTS, unreadable=set(),
                        outdated=[], active=lambda unit: True, app_changes=["src/spark/brake.py"], now_ok=False,
-                       dry_run=False, sync_app=sync, run_cmd=lambda cmd: script.restarted(cmd[-1]),
-                       log=lambda line: None, registry_old=REGISTRY, registry_new=REGISTRY, gate=gate,
-                       ask=lambda question: None)
+                       dry_run=False, sync_app=lambda: None, run_cmd=run_cmd, log=lambda line: None,
+                       registry_old=REGISTRY, registry_new=REGISTRY, gate=gate, ask=lambda question: None)
     assert code == 0 and renewed_during[0] >= 4 and not gate._thread.is_alive()
 
 
@@ -1818,7 +1831,9 @@ def test_the_quiet_path_holds_new_requests_too(tmp_path, monkeypatch):
     code, _, _, _ = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, app_changes=["src/spark/brake.py"],
                               events=events)
     assert code == 0
-    assert events[:6] == ["gate GET /v1/quiet", "gate POST /v1/drain-all", "gate GET /v1/quiet", "sync", "write",
+    # drain-all before the files and the restarts. (Corrected 2026-10-15, the controller's ruling at Task 35: and after
+    # the app's sync, which can wait on locks other accounts can hold, so it never runs with every request held.)
+    assert events[:6] == ["gate GET /v1/quiet", "sync", "gate POST /v1/drain-all", "gate GET /v1/quiet", "write",
                           "gate POST /v1/apply/begin"]
     assert events.index("gate POST /v1/drain-all") < events.index(f"restart {BRAKE}")
 
@@ -1846,8 +1861,12 @@ def test_nothing_is_written_until_the_drain_is_done(tmp_path, monkeypatch):
     assert code == 0
     waited = events[:events.index("gate POST /v1/apply/begin")]  # the reads just before the restarts come after
     last_reading = len(waited) - 1 - waited[::-1].index("gate GET /v1/quiet")
-    assert events.index("sync") > last_reading and events.index("write") > last_reading
+    assert events.index("write") > last_reading
     assert events.index("gate POST /v1/drain-all") < last_reading  # the drain's own wait came first
+    # The app's sync after the quiet wait's last reading, and Dan's yes, but before the hold (the controller's ruling
+    # at Task 35): a lock another account holds can then make it wait with no request held.
+    quiet_wait = events[:events.index("gate POST /v1/drain-all")]
+    assert quiet_wait[-1] == "sync" and quiet_wait[-2] == "gate GET /v1/quiet"
 
 
 def test_apply_now_names_the_requests_it_would_cut_off_and_asks(tmp_path):
@@ -2200,7 +2219,8 @@ def test_a_front_whose_call_is_down_is_never_taken_for_quiet_or_drained(tmp_path
             assert (code, ran, synced) == (1, [], [])
         else:  # drain-all, then a wait until the front is back and holding: no restart before
             assert FRONT_GONE in logs and not any(line.startswith("Holding new requests") for line in logs)
-            assert code == 0 and events.index("sync") > events.index("gate POST /v1/drain-all") + 4
+            assert code == 0 and events.index(f"restart {BRAKE}") > events.index("gate POST /v1/drain-all") + 4
+            assert events.index("sync") == events.index("gate POST /v1/drain-all") - 1  # before the hold (Task 35)
 
 
 def test_a_front_that_reports_idle_but_not_holding_is_never_taken_for_drained(tmp_path):
@@ -2209,13 +2229,15 @@ def test_a_front_that_reports_idle_but_not_holding_is_never_taken_for_drained(tm
     code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
                                         app_changes=["src/spark/brake.py"], script=script, clock=clock,
                                         answers=[False])
-    # M5: on the quiet path too, the drain wait asks at the deadline; a no ends the hold, and nothing was changed.
-    assert (code, ran, synced) == (1, [], [])
+    # M5: on the quiet path too, the drain wait asks at the deadline; a no ends the hold. Since the controller's ruling
+    # at Task 35 the app's sync came before the hold, so the line says it is synced, and nothing else changed.
+    assert (code, ran, synced) == (1, [], [True])
     # The re-review's N2: a quiet minute was found and new requests are held, so the question is the drain wait's own.
     assert run_apply.asked == [NOT_CONFIRMED.format(no="nothing is changed")]
     assert script.routes("/v1/undrain-all") and not script.held()
-    assert logs[-2:] == ["apply: nothing was changed; `make apply` waits for a quiet minute again, and `make "
-                         "apply-now` restarts now", "apply: the hold on new requests is ended"]
+    assert logs[-2:] == ["apply: the app is synced, but nothing else was deployed or restarted; `make apply` waits "
+                         "for a quiet minute again, and `make apply-now` restarts now",
+                         "apply: the hold on new requests is ended"]
 
 
 def test_the_quiet_paths_drain_wait_asks_at_the_deadline(tmp_path):
@@ -2451,3 +2473,57 @@ def test_a_drain_all_the_gate_refused_made_no_hold(tmp_path):
     code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"}, script=script)
     assert (code, ran, synced) == (1, [], []) and not script.routes("/v1/undrain-all")
     assert logs[-1] == "apply: nothing was changed: The gate failed on that request."
+
+
+# The controller's ruling at Task 35 (2026-10-15): `uv sync` takes locks that any account can hold (the venv's and one in
+# /tmp, each 0666), so it runs before apply's hold, bounded, and says what it waited on.
+
+def test_the_sync_runs_before_drain_all(tmp_path):
+    # The quiet path, drain now, and --now: in each, the sync before drain-all, and the files after it.
+    def order(**options):
+        events = []
+        code, _, _, _ = run_apply(seeded(tmp_path / str(len(list(tmp_path.iterdir())))), FILES | {"llama-swap.yaml": "b"},
+                                  app_changes=["src/spark/brake.py"], events=events, **options)
+        assert code == 0
+        return events.index("sync") < events.index("gate POST /v1/drain-all")
+
+    assert order()
+    drain_now = GateScript()
+    drain_now.around(before=[busy("agent")], after=[QUIET])
+    assert order(script=drain_now, answers=[True])
+    assert order(now_ok=True)
+
+
+def test_a_sync_that_waits_on_a_lock_takes_no_hold_and_restarts_nothing(box, monkeypatch):
+    monkeypatch.setenv("UV_LOCK_TIMEOUT", "5")  # a shell's own, which would let uv go on without the lock first
+    box.deployed(old={"llama-swap.yaml": "old config"})
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    box.uv_lock = box.app / ".venv/.lock"
+    code, lines, events = box.apply()
+    assert code == 1 and events == ["-validate", QUIET_READ, "uv sync"]  # no hold, no file, no restart
+    assert not box.gate.routes("/v1/drain-all") and (box.etc / "llama-swap.yaml").read_text() == "old config"
+    assert box.uv_timeout == spark_apply.SYNC_TIMEOUT_S == 180 and "-v" in box.uv_argv
+    assert int(box.uv_env["UV_LOCK_TIMEOUT"]) > spark_apply.SYNC_TIMEOUT_S
+    assert lines[-1] == (f"apply: the app's sync waited on a lock: {box.uv_lock}, which another process holds, so "
+                         f"apply stopped it after 3 minutes; the app's files are copied into {box.app}, but its "
+                         "environment isn't synced; nothing else was deployed or restarted — once it's fixed, `make "
+                         "apply` syncs it again")
+
+
+def test_a_sync_shows_uvs_own_lines_and_never_its_debug_ones(box):
+    box.deployed()
+    put(box.repo / "spark/src/spark/brake.py", "v2", time.time())
+    code, lines, _ = box.apply()
+    assert code == 0 and "Installed 1 package in 3ms" in lines and not any(line.startswith("DEBUG") for line in lines)
+
+
+def test_a_stop_after_the_sync_says_the_app_is_synced(tmp_path):
+    # Ctrl-C in the wait under the hold, after the sync that now comes before it: the app is synced, nothing else.
+    script, written = GateScript(), []
+    script.around(before=[QUIET], after=[busy("agent"), KeyboardInterrupt()])
+    code, ran, logs, synced = run_apply(seeded(tmp_path), FILES | {"llama-swap.yaml": "b"},
+                                        app_changes=["src/spark/brake.py"], script=script)
+    assert (code, ran, synced) == (130, [], [True]) and (tmp_path / "llama-swap.yaml").read_text() == "a"
+    assert logs[-2:] == ["apply: the hold on new requests is ended", "apply: stopped by Ctrl-C after syncing the app; "
+                         "nothing else was deployed or restarted — the next `make apply` restarts each unit still "
+                         "running older files"]

@@ -68,8 +68,12 @@ miss a request let through just before it.)* Even after a quiet minute, apply wa
 front itself reports that it holds new requests, its call to the gate open, with nothing in flight,
 in counts it made since the hold began. It reads them again just before restarting the front or
 llama-swap. A front that isn't connected holds nothing, so apply waits for it, and says so. From
-then until the restarts are done, every new request is held. Then apply syncs the app, writes the
-files and restarts the services, in the order above. Just before each restart of the gate, the
+then until the restarts are done, every new request is held. ~~Then apply syncs the app, writes the
+files and restarts the services, in the order above.~~ *(Corrected 2026-10-15, at Task 35's
+finding: the app's sync takes locks any account on the box can hold, so it no longer runs while
+every request is held.)* The app's sync comes first, after the quiet minute or the yes to drain
+now, before any request is held, and stops after 3 minutes if it waits on a lock, naming it. Then
+apply writes the files and restarts the services, in the order above. Just before each restart of the gate, the
 front or llama-swap, it checks with the gate that the hold still stands, and wasn't lost and
 re-created meanwhile. If it doesn't, apply restarts nothing more. After a quiet minute too, the
 wait for the requests in flight asks at the 15-minute deadline. It waits up to 30 s for the gate

@@ -1460,7 +1460,13 @@ yet either: `spark clients pi`, in `spark/src/spark/clients.py`, renders pi's pr
     by then.
   - **Nothing is written until the drain is done:** the registry, llama-swap's config and the app
     go out just before the restart, so Ctrl-C leaves nothing changed, and the gate re-reads its
-    registry at that moment.
+    registry at that moment. *(Corrected 2026-10-15, the controller's ruling on Phase 2a's Task 35
+    finding: the app's `uv sync` takes two locks any account on the box can hold, the venv's and
+    one in `/tmp`, each made `0666` by uv, and waits on a held one silently. So the app's sync now
+    comes before the drain, after the quiet minute or the yes to drain now, with no request held,
+    and stops after 3 minutes when it waits on a lock, naming it. The registry and llama-swap's
+    config still go out after the drain. Ctrl-C during the quiet wait still leaves nothing
+    changed; after the sync, apply says the app is synced.)*
   - **The coder swap's order:** `make apply`, whose restart stops every engine, the old coder
     included, so the new registry never meets a loaded model it doesn't list; then `make pull`,
     since the pull reads the deployed registry; then `make clients`. Until the pull ends, a
@@ -3939,6 +3945,10 @@ Each item gets its own design pass when its turn comes.
   restart-front`, leaves those restarts owed to the next `make apply`, through a stamp apply
   touches just before it writes. Apply restarts no socket, and nothing for a secret read at start; Task 35's
   runbook gives the restart for each.
+- **2026-10-15** — Phase 2a's Task 35 finding, the controller's ruling (*Deploy workflow*'s *Nothing
+  is written until the drain is done* gains a dated note, as do Task 32's notes in its plan, S17
+  and the box reviewer's M-7 Minor). `make apply`'s app sync, whose locks any account can hold,
+  runs before apply's hold, bounded at 3 minutes, and names the lock it waited on.
 
 ## Sources
 

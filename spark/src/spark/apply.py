@@ -17,9 +17,11 @@ nothing unloads, and apply renews the hold every APPLY_RENEW_S from a thread of 
 is in flight under the hold, counted only from a snapshot the front made while holding, its call open, since the gate
 took drain-all (`drained`, Task 32's review: one made before may lack a request the front let through just before it
 held; and the gate counts `holding` only from a snapshot on the front's call open now), asking at the deadline, once the
-front has had ASK_AFTER_S to report, whether to keep holding (keep_holding_question). Only then does it sync the app and
-write the files, tell the gate the units it restarts (apply/begin), and restart them: the brake, the gate (then its
-control socket answering within GATE_READY_S, or apply stops there), the front, llama-swap (then the gate seeing it
+front has had ASK_AFTER_S to report, whether to keep holding (keep_holding_question). The app's sync comes before
+drain-all, wherever a hold is taken, after the quiet wait or Dan's say, and is bounded at SYNC_TIMEOUT_S, naming the
+lock it waited on (the controller's ruling at Task 35: uv's locks are 0666, so any account can make it wait). Only then
+does it write the files, tell the gate the units it restarts (apply/begin), and restart them: the brake, the gate (then
+its control socket answering within GATE_READY_S, or apply stops there), the front, llama-swap (then the gate seeing it
 answer again within READY_SECONDS), then apply/end, which releases the held requests and reloads the residents; the
 compose unit after it. Just before each restart of the gate, the front and llama-swap, a renewal of apply's own confirms
 that the hold still stands and wasn't lost and re-created (ApplyGate.confirm); and, but with --now, just before the
@@ -118,6 +120,11 @@ _CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f]")
 READY_SECONDS = 30.0  # how long a restarted llama-swap has for the gate to see it answer again
 GATE_READY_S = 30.0  # how long a restarted gate has to answer on its control socket; and the wait's gate, to be back
 POLL_S = 1.0  # the quiet wait's readings, and the waits after a restart, this far apart
+# The app's `uv sync`, at most this long (the controller's ruling at Task 35): it takes locks any account can hold, the
+# venv's and the project's in /tmp, each made 0666 by uv, and waits on a held one silently, up to uv's own 300 s, then
+# goes on without it. apply runs it before its hold, so no request waits on it, and stops it here, saying which lock.
+SYNC_TIMEOUT_S = 180.0
+_LOCK_WAIT = re.compile(r"Waiting to acquire .*?lock .*? at `([^`]+)`")  # uv's own line, at -v (uv 0.12.18)
 # A drain wait asks its deadline's question only once it has given the front this long to report that it holds: it
 # posts at least every second while its call is open, and after the gate's restart its call opens again within seconds
 # (Task 32's re-review, N2).
@@ -889,6 +896,9 @@ def apply_files(files: dict[str, str], etc: Path, *, installed: dict[str, str | 
         elif progress.stage == "syncing":
             log(f"apply: stopped by {why} while syncing the app, which may be part-way synced; nothing else was "
                 f"deployed or restarted — `{again}` syncs it again")
+        elif progress.stage == "synced":  # the sync, before the hold, done; the files not yet written
+            log(f"apply: stopped by {why} after syncing the app; nothing else was deployed or restarted — the next "
+                f"`{again}` restarts each unit still running older files")
         else:
             log(f"apply: stopped by {why} after deploying the files; the next `{again}` restarts each unit still "
                 "running older ones")
@@ -937,7 +947,25 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
             log("apply: dry run — would restart " + (", ".join(restarts) or "nothing"))
         return 0
 
+    synced = False
+
+    def sync() -> None:
+        """The app's sync, once: before apply's hold, wherever one is taken, since it can wait on a lock another account
+        holds (the controller's ruling at Task 35); without a hold, where it was."""
+        nonlocal synced
+        if app_changes and not synced:
+            progress.stage = "syncing"
+            sync_app()
+            synced = True
+            progress.stage = "synced"
+
+    def unchanged() -> str:
+        """What a stop before the files says it left: nothing, or, once the sync has run, the app synced."""
+        return ("the app is synced, but nothing else was deployed or restarted" if synced
+                else "nothing was changed")
+
     def drain() -> float:
+        sync()  # whatever can wait on another account's lock comes before drain-all
         progress.held = True  # before the call: one whose answer is lost may have made the hold, which undrain ends
         try:
             return gate.drain_all()
@@ -969,7 +997,10 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
         try:
             drain()
         except GateError as err:
-            log(f"apply: nothing was changed: {err}")
+            log(f"apply: {unchanged()}: {err}")
+            return 1
+        except SyncError as err:  # before the hold: none was taken
+            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `{again}` syncs it again")
             return 1
         log("apply: new requests are held until the restarts are done" if first["front_connected"] else
             "apply: the front isn't connected to the gate, so it holds no new requests; with --now apply restarts "
@@ -991,12 +1022,15 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
                                     sleep=gate.sleep, say=log) == "declined":
                     outcome = "declined"
         except GateError as err:  # the gate gone GATE_READY_S, or an answer it refused or apply can't read
-            log(f"apply: nothing was changed: {err}")
+            log(f"apply: {unchanged()}: {err}")
+            return 1
+        except SyncError as err:  # before the hold: none was taken
+            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `{again}` syncs it again")
             return 1
         if outcome == "declined":
-            log("apply: nothing was changed; " + ("`make restart-front` waits for a quiet minute again" if restart_front
-                                                  else "`make apply` waits for a quiet minute again, and `make "
-                                                       "apply-now` restarts now"))
+            log(f"apply: {unchanged()}; " + ("`make restart-front` waits for a quiet minute again" if restart_front
+                                             else "`make apply` waits for a quiet minute again, and `make "
+                                                  "apply-now` restarts now"))
             return 1
         log("apply: nothing is in flight, and new requests are held until the restarts are done")
     elif plan.after_quiet:  # the gate isn't answering: with --now, or with llama-swap stopped (the cutover's case)
@@ -1008,14 +1042,14 @@ def _deploy(*, files: dict[str, str], etc: Path, changed: list[str], app_changes
             log("apply: llama-swap isn't running, so no model is answering a request: apply deploys without the gate, "
                 "and restarts the front all the same")
 
-    # Nothing is written until the drain is done (plan.md, *Deploy workflow*).
-    if app_changes:
-        progress.stage = "syncing"
-        try:
-            sync_app()
-        except SyncError as err:
-            log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `{again}` syncs it again")
-            return 1
+    # Nothing else is written until the drain is done (plan.md, *Deploy workflow*). The app's sync, which can wait on a
+    # lock another account holds, came before the hold, wherever one was taken (the controller's ruling at Task 35);
+    # without one, it comes here.
+    try:
+        sync()
+    except SyncError as err:
+        log(f"apply: {err}; nothing else was deployed or restarted — once it's fixed, `{again}` syncs it again")
+        return 1
     # Just before the files, a stamp for each restart no file's time records, so a run cut off before it leaves it owed
     # to the next (KEY_GROUPS_STAMP, RESTART_FRONT_STAMP). A dry run, a refusal, the staging stop and a failed sync
     # have returned, so they touch none.
@@ -1222,10 +1256,20 @@ def _remove_empty_folders(app: Path) -> None:
             folder.rmdir()
 
 
-def _sync_app(src: Path, app: Path) -> None:
+def _uv_output(text) -> list[str]:
+    """uv's own lines, from what `uv sync -v` printed: never its DEBUG, TRACE or INFO lines, which -v adds."""
+    if isinstance(text, bytes):
+        text = text.decode(errors="replace")
+    return [line for line in (text or "").splitlines()
+            if line.strip() and not line.lstrip().startswith(("DEBUG", "TRACE", "INFO"))]
+
+
+def _sync_app(src: Path, app: Path, say=print) -> None:
     """Make the app the repo's spark/ project: each changed file replaced whole (`spark launch` imports the app on
-    every load), each file the project no longer has deleted, then `uv sync`. The stamp goes first and comes back
-    only once uv sync succeeded, so a sync cut off anywhere counts as not done. SyncError says how far it got."""
+    every load), each file the project no longer has deleted, then `uv sync`, bounded at SYNC_TIMEOUT_S: one that waits
+    on a lock another process holds is stopped, naming the lock (`-v` makes uv say it). The stamp goes first and comes
+    back only once uv sync succeeded, so a sync cut off anywhere counts as not done. SyncError says how far it got.
+    uv's own lines are said (`say`)."""
     src, app = Path(src), Path(app)
     try:
         (app / SYNC_STAMP).unlink(missing_ok=True)
@@ -1241,14 +1285,31 @@ def _sync_app(src: Path, app: Path) -> None:
     # UV_PYTHON_INSTALL_DIR: a Python that uv downloads lands where the spark user can read it.
     # UV_LINK_MODE=copy: the deployed venv shares no files with Dan's uv cache.
     # VIRTUAL_ENV is dropped: `make apply` runs inside `uv run`, which points it at the repo's venv.
+    # UV_LOCK_TIMEOUT: past apply's own bound, so uv never goes on without a lock before apply stops it.
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-    env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy"}
+    env |= {"UV_PYTHON_INSTALL_DIR": f"{DEPLOY}/python", "UV_LINK_MODE": "copy",
+            "UV_LOCK_TIMEOUT": str(int(SYNC_TIMEOUT_S) + 60)}
     try:
-        subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--project", str(app)], check=True, env=env)
+        done = subprocess.run(["uv", "sync", "--frozen", "--no-dev", "-v", "--project", str(app)], check=True, env=env,
+                              capture_output=True, text=True, timeout=SYNC_TIMEOUT_S)
+    except subprocess.TimeoutExpired as err:  # uv is stopped, and waited for, by subprocess.run
+        output = err.stderr.decode(errors="replace") if isinstance(err.stderr, bytes) else (err.stderr or "")
+        locks = _LOCK_WAIT.findall(output)
+        took = messages.duration(SYNC_TIMEOUT_S)
+        if locks:
+            raise SyncError(f"the app's sync waited on a lock: {locks[-1]}, which another process holds, so apply "
+                            f"stopped it after {took}; the app's files are copied into {app}, but its environment "
+                            "isn't synced") from None
+        raise SyncError(f"the app's sync didn't finish within {took}, so apply stopped it; the app's files are copied "
+                        f"into {app}, but its environment isn't synced") from None
     except (subprocess.CalledProcessError, OSError) as err:
+        for line in _uv_output(getattr(err, "stderr", None)):
+            say(line)
         why = f"exit {err.returncode}" if isinstance(err, subprocess.CalledProcessError) else str(err)
         raise SyncError(f"the app's files are copied into {app}, but `uv sync` failed ({why}), so its environment "
                         "isn't synced") from None
+    for line in _uv_output(done.stderr):
+        say(line)
     try:
         write_atomic(app / SYNC_STAMP, "synced by spark apply\n")
     except OSError as err:
@@ -1372,7 +1433,7 @@ def run(args: argparse.Namespace) -> int:
         return apply_files(files, etc, installed=installed, unreadable=unreadable,
                            outdated=outdated_units(started, changed_at),
                            active=lambda unit: started.get(unit) is not None, app_changes=app_diff(src, app),
-                           now_ok=args.now, dry_run=args.dry_run, sync_app=lambda: _sync_app(src, app),
+                           now_ok=args.now, dry_run=args.dry_run, sync_app=lambda: _sync_app(src, app, say=_say),
                            run_cmd=lambda cmd: subprocess.run(cmd, check=True), log=_say,
                            registry_old=deployed_registry(etc / "models.yaml"), registry_new=registry,
                            restart_front=args.restart == FRONT_UNIT, gate=gate, ask=_ask, deadline_s=args.deadline_s,
