@@ -240,6 +240,11 @@ def test_a_malformed_model_names_the_model_and_the_field(tmp_path, change, messa
             "budget: reserve_gib is required",
             id="budget-key-missing",
         ),
+        pytest.param(
+            lambda d: d["budget"].update(idle_available_gib="117"),
+            "budget: idle_available_gib must be a number",
+            id="idle-available-quoted",
+        ),
         pytest.param(lambda d: d["brake"].update(x=1), "brake: 'x' is not one of", id="brake-key-unknown"),
         pytest.param(
             lambda d: d["budget"].update(allocatable_gib="lots"),

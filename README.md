@@ -30,7 +30,7 @@ this line, was parked on 2026-09-23.)
 | [`cosmicbboy-local-ai.md`](cosmicbboy-local-ai.md) | Notes on Niels Bantilan's stack (below) — GB10 hardware facts, gotchas, and what does and doesn't transfer to a single Spark. |
 | [`Makefile`](Makefile) | The front door: `make help` lists the targets — tests, lint, docs, the leak-guard hooks, bootstrap, the GPU-set hold and upgrade day's move (`upgrade-gpu`), deploying the stack (`apply`, `install-units`, `pull`, `status`, `brake-release`, `logs`, `tunnel`, `clients`), and `doctor`, which checks the guardrails and the stack. |
 | [`.githooks/`](.githooks) | The leak-guard hooks (pre-commit and commit-msg) and gitleaks' config. `make hooks` turns them on in each clone. |
-| [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the manual site publish, and Dependabot's weekly update proposals. |
+| [`.github/`](.github) | CI (tests, leak scans, shellcheck, the site build), the site's publish on every push to `main`, and Dependabot's weekly update proposals. |
 | [`spark/`](spark) | The `spark` CLI, a uv project with its tests: the leak check, the docs tools and the commands that run the stack (`spark --help` lists them). |
 | [`stack/`](stack) | The model registry (`models.yaml`), the private key list's shape with placeholder names (`keys.example.yaml`; the real list is `/etc/local-ai/keys.yaml`, never in the repo), pinned versions (`versions.yaml`), the templates `spark render` fills (`templates/`), the host setup (`host/`: bootstrap, earlyoom's and needrestart's config, the polkit rule) and the Synology's Compose files (`synology/`: ntfy's, with the shape of its private `server.yml`). |
 | [`website/`](website) | The Quarto docs site: the plan, the phase plans and Phase 0's retrospective (`design/`), scenarios, how-to runbooks, the generated Stack and Notifications pages, and the Community projects page. |
@@ -134,11 +134,13 @@ when that file was retired on 2026-09-23.
   `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
   Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before): Open WebUI
   **v0.11.4** and SearXNG **2026.9.23-3cd69d30e**, each at the digest `stack/versions.yaml` pins,
-  which root's Compose file names. *(Re-run 2026-10-15 for Phase 2a, Task 36. It added two
-  identities, `spark-front` and `spark-pull`, system users with no login. The polkit rule now
-  covers seven `local-ai-*` services. `agent`'s logins and user manager get an OOM score of 1000,
-  set by root, and `/etc/cron.deny` names `agent`. earlyoom runs without `--prefer`. See the
-  changelog.)*
+  which root's Compose file names. *(Since 2026-10-15, Phase 2a's Task 37: both run with
+  `cap_drop: [ALL]`, Open WebUI with `DAC_OVERRIDE` added back for its data folder, so neither can
+  bind a port below 1024. SearXNG's `request_timeout` is 6.0 s.)* *(Re-run 2026-10-15 for Phase
+  2a, Task 36. It added two identities, `spark-front` and `spark-pull`, system users with no
+  login. The polkit rule now covers seven `local-ai-*` services. `agent`'s logins and user manager
+  get an OOM score of 1000, set by root, and `/etc/cron.deny` names `agent`. earlyoom runs without
+  `--prefer`. See the changelog.)*
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
@@ -176,6 +178,11 @@ when that file was retired on 2026-09-23.
   2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
   pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
   talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
+  **btop** and NVIDIA's **DCGM 1:3.3.9** (`datacenter-gpu-manager`) were installed together with
+  `apt install` (dated 2026-10-13 by PR #9, not checked here; btop's version not recorded). DCGM's
+  host engine service, `nvidia-dcgm`, is **masked and stopped** (2026-10-14, Dan's decision): it
+  runs as root and takes commands from any account on the box. The GPU is watched with
+  `nvidia-smi` instead. Details in the changelog.
 - **The engines** (2026-09-27, Phase 1 Task 11), run by llama-swap since 2026-09-28: llama-swap
   **v257** in `/opt/local-ai/bin/llama-swap/v257/`, llama.cpp **b11146** (the prebuilt arm64 +
   CUDA 13.4 build, with its own CUDA runtime beside it) in `/opt/local-ai/bin/llama.cpp/b11146/`,
@@ -183,6 +190,20 @@ when that file was retired on 2026-09-23.
   whisper-server uses the system's CUDA 13.0, which is part of the held GPU set. `agent` runs
   llama-server and sees the GPU without docker. Checksums, commits and GPU code in the changelog;
   the pins in `stack/versions.yaml`.
+- **The fast coder's files** (2026-10-14), outside the stack, and nothing runs them: the image
+  `lmsysorg/sglang:v0.5.21`, by hasso5703's digest; Qwen3.8-27B in NVFP4 and its DFlash2 drafter in
+  `~/sglang/hf`, 22 GiB; the engine's key file, `~/sglang/secrets/engine.yaml`, Dan's alone; and
+  `~/sglang/scratch`, with the boot log. Run once by hand, with llama-swap stopped, and measured on
+  [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges). Phase 4a
+  builds it into the stack; until then the by-hand page's *Clean up* removes these. 591 GiB of disk
+  was left after (`df -h /`).
+- **Flash-Next's files** (2026-10-15), outside the stack, and nothing runs them: Qwen3.8-Flash-Next
+  at `UD-IQ3_XXS` in three shards, its vision projector and its MTP head, in
+  `~/scratch/models/qwen3.8-flash-next`, 82 GiB; and llama.cpp **b11330**'s `llama-server`, built in
+  `~/scratch/llama.cpp-b11330` for MTP and not installed. Run by hand, with llama-swap stopped, and
+  measured on [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges).
+  Phase 4a puts Flash-Next in the registry, which pulls its own copy; the by-hand page's *Clean up*
+  removes these.
 - **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
   its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
   in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
@@ -191,10 +212,11 @@ when that file was retired on 2026-09-23.
   Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
   model, and Open WebUI's task model, whose task calls run without thinking),
   `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
-  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`
-  *(since 2026-10-15, Task 36: `spark-pull:spark 2750`, read by the engines through the group; 55G,
-  with `qwen3.8-27b`'s files beside these)*,
-  with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
+  `qwen3.8-27b` (on demand; `qwen3.6-35b-a3b` until 2026-10-08, its files still on disk). Their
+  files are in `/var/lib/local-ai/hf` *(since 2026-10-15, Task 36: `spark-pull:spark 2750`, read by
+  the engines through the group; 55G, `qwen3.8-27b`'s files and `qwen3.6-35b-a3b`'s, which are
+  kept)*, with 729 GiB of disk left (2026-10-08; 752 before Qwen3.8's file). Open WebUI has its
+  admin account, Dan's, and sign-up is closed.
   `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
   the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
   with a micro-batch that holds a whole image (`--ubatch-size 2048`, `--image-max-tokens 1120`),
@@ -209,8 +231,24 @@ when that file was retired on 2026-09-23.
   `oom_score_adj` 900 and the coder at 1000; the coder keeps at most 8 context checkpoints; the
   footprints are 32, 8, 3 and 33 GiB; the brake checks at start that llama-swap takes its key,
   which `make status` and `make doctor` show; and llama-swap's own lines alone reach the journal.
+  *(Since 2026-10-08, by Dan's decision: the coder is Qwen3.8-27B at 163,840 of its 262,144 tokens,
+  footprint 35 GiB, so the footprints are 32, 8, 3 and 35, all 78 GiB the budget allows; its cold
+  load took 30.6 GiB. Phase 2a's Task 42 gives it its full context. The figures above for the coder
+  before it, Qwen3.6-35B-A3B, record that model: its full 262,144 context, its ~30 GiB cold load
+  and its 33 GiB footprint.)* *(2026-10-08, committed but not yet deployed: by Dan's decision
+  `spark render` on `main` has Phase 2a's corrected budget check, so the registry gives the coder
+  its full 262,144 tokens, with a footprint estimated at 41 GiB. The footprints come to 84 GiB,
+  within the 102 GiB ceiling, and the coder fits beside the residents with the reserve kept. The
+  box serves the coder at 163,840 until Dan runs `make apply`, which restarts llama-swap and so
+  refuses while a model is loaded (`make apply-now` restarts it anyway), and pi's lists show the
+  new window once the clients are written again; this section changes then.)* *(Deployed
+  2026-10-15, with Phase 2a's Task 37, from a `main` worktree: the box serves the coder at its full
+  262,144 tokens. The footprints are 32, 8, 3 and 41 GiB, the coder's estimated and not yet
+  measured. pi's lists show the new window once `make clients` writes them again on the Mac.)*
   The app in `/opt/local-ai/app` was last synced on 2026-10-05, by a `make apply` of Dependabot's
-  hatchling bump (16efba8), which also restarted the brake (recorded 2026-10-07).
+  hatchling bump (16efba8), which also restarted the brake (recorded 2026-10-07). *(Synced again
+  2026-10-15, by Task 37's `make apply` from a `main` worktree: `main`'s render, registry and
+  clients changes since 2026-10-08, which the changelog lists.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
@@ -279,6 +317,15 @@ when that file was retired on 2026-09-23.
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
   0.85.1, installed with npm; whether that copy is still installed is not recorded.
+- **opencode 2.0.25**, from Homebrew (its version recorded 2026-10-14). It runs one background
+  service that its windows hand their requests to, which keeps the environment it started with:
+  `opencode service restart` after adding a key. `make clients` writes its `spark` provider; the fast
+  coder's `spark-sglang` provider was added by hand from the by-hand page, its key in
+  `SPARK_SGLANG_KEY`, exported by Dan's shell like the others. Flash-Next's `spark-flash-next`
+  provider was added by hand too (2026-10-15), with a 131,072-token limit and a placeholder key,
+  since the by-hand server checks none: it reaches the server only through the tunnel on port
+  8080, and fails while that tunnel is closed. `make clients` rewrites only the `spark` provider
+  and keeps both.
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
@@ -420,7 +467,8 @@ the plan it would come in, and what was left out and why.
 - **The architecture diagrams are kept true first.** [Architecture](website/architecture.qmd)'s
   diagrams are the quickest way to see what runs and how a request gets through, so any change to a
   part or a path, or a planned part built, updates them in the same commit. Diagrams live only
-  there. Full rule in [`CLAUDE.md`](CLAUDE.md).
+  there; the overview among them is one file, `website/_overview.qmd`, that the home page includes
+  too (2026-10-14). Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
   zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,

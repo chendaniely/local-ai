@@ -1,0 +1,53 @@
+```{mermaid}
+%%| column: page
+%% The overview: one file, included by index.qmd and architecture.qmd, never copied.
+%% It changes with the Architecture page's diagrams (CLAUDE.md, Docs must be true).
+flowchart TB
+  classDef planned stroke-dasharray: 5 5
+
+  subgraph mine["my Mac and phone"]
+    harness["pi, opencode, Hermes<br/>in a terminal or Orca"]
+    browser["web UI<br/>in a browser or as an app"]
+  end
+
+  later["my apps · Phase 3<br/>family and guests · Phase 6"]:::planned
+  claude["Claude Code and<br/>Claude Desktop<br/>wherever they run"]
+  anthropic(("Anthropic"))
+
+  subgraph spark["brightroar · the DGX Spark"]
+    owui["Open WebUI<br/>with SearXNG for search"]
+    agent["pi as agent<br/>in tmux"]
+    litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place,<br/>or not at all"]:::planned
+    front["the front<br/>checks each key · Phase 2a"]:::planned
+    gate["spark-gate<br/>decides every load · Phase 2a"]:::planned
+    swap["llama-swap<br/>starts the model<br/>a request names"]
+    guard["fit check, memory brake<br/>a model loads only if it fits"]
+    engines["llama.cpp, whisper.cpp<br/>models for chat, coding,<br/>embeddings, speech"]
+    vllm["vLLM<br/>Phase 4"]:::planned
+    fast["the fast coder on SGLang<br/>Phase 4a"]:::planned
+    flash["Flash-Next on llama.cpp<br/>Phase 4a"]:::planned
+  end
+
+  nas["Synology<br/>alerts, through ntfy · Phase 5<br/>backups · Phase 5"]:::planned
+
+  harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> swap
+  browser -- "HTTPS over Tailscale" --> owui
+  later -.-> litellm
+  claude -- "never through the Spark" --> anthropic
+  owui --> swap
+  agent --> swap
+  harness -. "the same tunnel" .-> front
+  owui -.-> front
+  agent -.-> front
+  front -.-> swap
+  front -. "asks before a load" .-> gate
+  gate -. "loads, unloads" .-> swap
+  litellm -. "through the front or in its place,<br/>if Phase 3 adds it" .-> swap
+  swap --> guard
+  gate -.-> guard
+  guard --> engines
+  guard -.-> vllm
+  guard -.-> fast
+  guard -.-> flash
+  gate -. "alerts, to ntfy" .-> nas
+```

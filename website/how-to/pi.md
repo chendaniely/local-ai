@@ -52,7 +52,8 @@ make clients
 
 It writes the provider into `~/.pi/agent/models.json` and leaves every other provider there as it
 was. The previous file, if there was one, is kept as `models.json.bak`, and the line `make clients`
-prints says which.
+prints says which. *(Since 2026-10-14 `make clients` also writes the `spark` provider for opencode and Hermes:
+[opencode and Hermes on the Mac](opencode-hermes.md). `make clients-pi` writes pi's alone.)*
 
 **On the Mac**, in a spare terminal, from your clone, open the tunnel and leave it open. Ctrl-C
 closes it.
@@ -254,11 +255,18 @@ in.
 
 The Spark sets each model's context, not pi. It comes from `ctx` in `stack/models.yaml`, llama-server
 reserves it when the model loads, and no request can go past it. Every model runs at its full
-context (Dan's decision, 2026-09-28): 262,144 tokens for Gemma and for the coder. Gemma has two
-slots, and they share that context, so one request can use all of it. Requests running at the same
-time share it too: a pi session near the end of Gemma's window and a long phone chat can't both
-fit, and llama-server makes room by dropping the cache of whichever is idle, which then has to be
-read again.
+context (Dan's decision, 2026-09-28): 262,144 tokens for Gemma and for the coder. *(Changed
+2026-10-08, Dan's decision: the registry's coder is now Qwen3.8-27B, `qwen3.8-27b`, at 163,840 of
+its 262,144 tokens, so the model set fits the budget, and Phase 2a's Task 42 gives it all of them.
+pi learns the new name and window from the clients step below, once the change is deployed.)*
+*(Changed again the same day, Dan's decision: with render's corrected budget check on `main`, the
+registry gives the coder all 262,144 tokens now, not from Task 42. Until Dan deploys that, the
+Spark serves it at 163,840, and pi learns the new window from the clients step below once it is
+deployed.)*
+Gemma has two slots, and they share its context, so one request can use all of it. Requests
+running at the same time share it too: a pi session near the end of Gemma's window and a long
+phone chat can't both fit, and llama-server makes room by dropping the cache of whichever is idle,
+which then has to be read again.
 
 pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`, which
 `make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on

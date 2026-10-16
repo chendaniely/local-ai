@@ -59,18 +59,48 @@ def test_ci_reads_every_commits_patches_and_messages_with_the_repo_patterns():
 
 def test_ci_leaves_no_job_token_in_its_checkouts():
     # CI runs the repo's own code and third-party actions; none of it needs the token that
-    # actions/checkout otherwise leaves in .git/config. (publish-website.yml's publish needs it.)
+    # actions/checkout otherwise leaves in .git/config. (The Pages deploy authenticates with its own
+    # OIDC token, not this one.)
     checkouts = [step for step in steps("ci.yml") if step.get("uses", "").startswith("actions/checkout@")]
     assert checkouts
     for step in checkouts:
         assert step.get("with", {}).get("persist-credentials") is False, step
 
 
+def test_the_site_deploys_from_main_only_after_every_other_job_passed():
+    # Since 2026-10-15 Pages builds from GitHub Actions, not a gh-pages branch (Dan's setting), so
+    # the deploy is a CI job. It waits for the tests and the leak scans, so nothing reaches the
+    # public site past a failed one, and it alone may write to Pages. The old gh-pages publisher is
+    # gone: Pages no longer reads that branch, which keeps every rendered version in its history.
+    ci = jobs("ci.yml")
+    pages = ci["pages"]
+    assert pages["if"] == "github.ref == 'refs/heads/main'"
+    assert set(pages["needs"]) == set(ci) - {"pages"}
+    assert pages["permissions"] == {"pages": "write", "id-token": "write"}
+    assert [step["uses"].split("@")[0] for step in pages["steps"]] == ["actions/deploy-pages"]
+    upload = [s for s in ci["site"]["steps"] if s.get("uses", "").startswith("actions/upload-pages-artifact@")]
+    assert len(upload) == 1, upload
+    assert upload[0]["if"] == "github.ref == 'refs/heads/main'"
+    assert upload[0]["with"]["path"] == "website/_site"
+    for name, job in ci.items():
+        assert name == "pages" or "permissions" not in job, name  # the rest keep contents: read
+    assert not (ROOT / ".github/workflows/publish-website.yml").exists()
+
+
+def test_the_site_can_still_be_published_by_hand():
+    # Dan's decision, 2026-10-14: on every push to main, and by hand.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    triggers = workflow[True]  # YAML 1.1 reads the bare key `on` as true
+    assert "workflow_dispatch" in triggers, triggers
+
+
 def test_every_action_is_pinned_by_a_full_commit_sha():
     # A tag can be moved under us; a SHA can't. Dependabot moves a SHA pin and its version comment
     # together.
-    for workflow in ("ci.yml", "publish-website.yml"):
-        for step in steps(workflow):
+    workflows = sorted((ROOT / ".github/workflows").glob("*.yml"))
+    assert workflows
+    for path in workflows:
+        for step in steps(path.name):
             if "uses" in step:
                 assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
 

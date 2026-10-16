@@ -7,6 +7,11 @@ pipelines, my coding harnesses and my homelab, with a web UI on top. Claude Code
 stay as they are, talking straight to Anthropic, with only hooks that report to apps on my own
 machines added; this is a separate mode.
 
+{{< include _overview.qmd >}}
+
+**Solid** parts are built and running; **dashed** parts are planned, labelled with the phase that
+brings them. [Architecture](architecture.qmd) has the detail: every port, account and path.
+
 - **[The plan](design/plan.md)** — goals, constraints, decisions, design and phases. Start here.
 - **[Scenarios](scenarios/index.qmd)** — what happens in the situations that matter, and whether
   each is built and verified yet.

@@ -62,16 +62,16 @@ In order of how much they constrain the design:
 | Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI. PDF chat later. |
 | Speech | *"Optimize for English, but make room for other languages or be able to swap."* Vocabulary prompts, word timestamps, ~170 MB uploads (90 minutes of WAV). Works whether Dan's audio pipeline runs on the Mac or the Spark (decided later). |
 | Loading | *"If it fits just load it. If it doesn't, tell me what's happening so I can decide. Don't just auto-load a small model where it might seem like you are talking from a large model."* The same rule applies to unattended requests. Doesn't fit → **wait (per key), then refuse** with a reason. |
-| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(Corrected 2026-10-07: that budget counted the reserve twice, and Phase 2a corrects it (*Admission and memory rules*, rule 9). The whole set fits the CUDA-allocatable ceiling, 102, and with Phase 2a's coder, estimated at 41 (38 until the council raised it the same day), it comes to about 84, so about 18 GiB of the ceiling is left.)* |
+| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(Corrected 2026-10-07: that budget counted the reserve twice, and Phase 2a corrects it (*Admission and memory rules*, rule 9). The whole set fits the CUDA-allocatable ceiling, 102, and with Phase 2a's coder, estimated at 41 (38 until the council raised it the same day), it comes to about 84, so about 18 GiB of the ceiling is left.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* |
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. *(Changed 2026-10-07, Dan's decision for Phase 2a: **60 minutes**, for on-demand models only; residents never unload for being idle. The weekday preload, with a work-hours pin, is a setting that is off by default (Dan, 2026-10-05); rule 3.)* |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. *(Phase 2a, Dan's decision, 2026-10-07: make-room then holds the room it freed for him, so nothing automatic takes it back, and requests from his keys wait ahead of `agent`'s: rule 4 and *The front and the gate*.)* |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
-| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. *(2026-10-14: Dan sets opencode up by hand for the fast coder's by-hand runs now, following [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md); its rendered config comes with Phase 4a's clients.)* *(Corrected the same day: PR #7's `spark clients opencode` already renders it for the deployed models, so opencode, and Hermes too, list them once #7 is on `main` and `make clients` runs on the Mac; Phase 4a's clients add its new models.)* The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
+| Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. *(2026-10-14: Dan sets opencode up by hand for the fast coder's by-hand runs now, following [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md); its rendered config comes with Phase 4a's clients.)* *(Corrected the same day: PR #7's `spark clients opencode` already renders it for the deployed models, so opencode, and Hermes too, list them once #7 is on `main` and `make clients` runs on the Mac; Phase 4a's clients add its new models.)* *(2026-10-14, Dan's request: not any more for the deployed models. `make clients` writes OpenCode's and Hermes's `spark` provider from the registry, as it does pi's, each key by reference: [opencode and Hermes on the Mac](../how-to/opencode-hermes.md). The bake-off's new models reach them the same way.)* The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by ~~Phase 5's~~ Phase 4's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -1347,7 +1347,12 @@ the deadline it was given, so a drill's shorter one reads true.
   reference (for Dan's own code; the model table is generated from the registry) · Stack (generated
   from `versions.yaml`) · **Scenarios** · design notes (this plan and the implementation plans, in
   `website/design/`). There is no top-level `docs/`. A SHA-pinned GitHub Actions workflow publishes
-  to GitHub Pages — Dan confirms before the first publish.
+  to GitHub Pages — Dan confirms before the first publish. *(First published 2026-10-13. Since
+  2026-10-14, Dan's decision, it publishes on every push to `main`, and by hand. Since 2026-10-15,
+  Pages builds from GitHub Actions, Dan's setting: CI's `pages` job deploys the rendered site with
+  `deploy-pages`, only after every other CI job passed, the leak scans included, instead of
+  `publish-website.yml` pushing to a `gh-pages` branch. That old branch still holds every version
+  published until then; deleting it is Dan's call.)*
 - **Scenarios** have IDs that `spark doctor` checks and the phases' "done when" criteria refer to.
   Each page gives the situation · what happens · what Dan sees · how to override · status (planned /
   built / verified with a date). A behaviour change updates its scenario page **and** its check in
@@ -1832,6 +1837,12 @@ council, with Dan's fourteen decisions (Revisions).*
     reported) in 2c and routes C and D in ~~Phase 5~~ Phase 4.
   - Qwen3.6-35B-A3B leaves the registry, and its files stay on disk. The swap runs in *Deploy
     workflow*'s order: apply, then the pull, then `make clients`.
+  - *(2026-10-08: route A is already the registry's coder on `main`, at 163,840 tokens; Revisions.)*
+    *(Changed the same day, Dan's decision: with Phase 2a's corrected budget check ported to
+    `main`'s render, the registry gives the coder its full 262,144 tokens now; Revisions.)*
+    *(2026-10-15: deployed at its full context by Task 37's `make apply` from a `main` worktree,
+    and brought into `phase-2a`'s registry by Task 37's merge of `main`; Task 42 keeps only its
+    measurements and its pull.)*
 - [Spark] **the page-cache drill,** before the coder becomes the default (for real work, as above;
   Qwen3.6's way back stays written down until then): fill the page cache, only until `MemFree` is
   under the coder's cold load, load the coder, and watch for E.1's slow reclaim. Its result settles
@@ -2108,8 +2119,12 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
     (Dan, 2026-10-05); C and D wait for this phase. *(Changed 2026-10-07, Dan's decision: route A
     becomes the deployed coder in Phase 2a, with `Qwen3.8-27B-UD-Q4_K_XL.gguf`, replacing
     Qwen3.6-35B-A3B, so it is measured there rather than as a trial; route B runs on Phase 2c's lab
-    instance. The rest of this phase's comparison stands.)* TensorRT-LLM is out for now: it doesn't yet
-    load Qwen3.8-27B NVFP4 on this GPU (its issue #17723).
+    instance. The rest of this phase's comparison stands.)* *(2026-10-08, Dan's decision: route A,
+    with `Qwen3.8-27B-UD-Q4_K_XL.gguf`, became the registry's coder early, at 163,840 tokens, and
+    Phase 2a's Task 42 gives it its full context; the rest of this phase's comparison stands.)*
+    *(Changed the same day, Dan's decision: it has its full context on `main` already, since
+    render's corrected budget check came there; Revisions.)* TensorRT-LLM is out for now: it
+    doesn't yet load Qwen3.8-27B NVFP4 on this GPU (its issue #17723).
   - **Measured in that order.** Speed: decode and time to first token in pi, and prefill — vLLM
     and SGLang are reported 2–5× faster than llama.cpp at reading long prompts, which agent runs
     are full of. Quality per GB: KLD against the BF16 original (55.6 GB, which fits as a
@@ -2437,7 +2452,13 @@ Each item gets its own design pass when its turn comes.
   full context, at a quality cost to measure); Gemma on one slot (its task calls would then queue
   behind a chat); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
   caches (1 GiB for Gemma, 2 for the coder); a context below the maximum where a model never needs
-  it; and fewer image tokens (`--image-max-tokens`, less detail).
+  it; and fewer image tokens (`--image-max-tokens`, less detail). *(2026-10-08, Dan's decision: the
+  registry's coder, now Qwen3.8-27B, is already set below its maximum, at 163,840 of its 262,144
+  tokens, until Phase 2a's Task 42. The coder's 2.8 GiB above was Qwen3.6-35B-A3B's; for
+  Qwen3.8-27B a `q8_0` KV cache would save about 5 GiB at 163,840 tokens, by arithmetic from its
+  header. Its prompt cache stays 2 GiB.)* *(Changed the same day, Dan's decision: with render's
+  corrected budget check on `main`, the registry's coder is at its maximum, 262,144 tokens, where
+  a `q8_0` KV cache would save about 8 GiB, by the same arithmetic. Revisions.)*
 - **Orca on the Spark, and on the phone** (Dan, 2026-09-28: *"i want a way for the spark to act as
   the main orca server so i can also use orca on my phone"*; parked the same day to wait for the
   upstream fixes below). Two routes, each with its costs, from that day's research and council on
@@ -2532,7 +2553,12 @@ Each item gets its own design pass when its turn comes.
   reaches llama-swap without the front. Revised the same day after the council: `spark launch`
   starts nothing without the gate's admission ticket, so nothing reaches an engine's start around
   the gate, and the gate's formula also holds back the growth the loaded models are still owed
-  (rule 9).)*
+  (rule 9).)* *(Changed 2026-10-08, Dan's decision, with render's corrected budget check on
+  `main`: render refuses always-loaded models, or an on-demand model beside them, that don't fit
+  with the reserve kept, but a set that would leave less than the brake's warn line with every
+  model loaded is only a warning. Today's four leave 33 GiB of the 117 available at idle, above the
+  warn line, 28, so the stack alone still can't open the gap; a registry that renders with that
+  warning could. Revisions.)*
 - **Anyone on the box can take 127.0.0.1:9100** (found 2026-09-26, in Phase 1 Task 3's review).
   Ports from 1024 up are open to every user (checked on the box), so while llama-swap isn't holding
   9100 — after a crash, or in `spark apply`'s restart window — any local user, `agent` included, can
@@ -2737,7 +2763,9 @@ Each item gets its own design pass when its turn comes.
   estimated, 32 at most; added 2026-09-28. Corrected the same day, from Phase 1's council: the
   coder's are capped at 8; their recurrent state is about 63 MiB each by arithmetic, and the MTP
   draft's share isn't estimated, so their size is the first thing a soak at full context
-  measures).
+  measures. Noted 2026-10-08: those were Qwen3.6-35B-A3B's. The registry's coder is now
+  Qwen3.8-27B, whose 8 checkpoints are estimated at about 150 MiB each, its 48 recurrent layers'
+  state, by Phase 2a's council's arithmetic from its header; not measured).
 - **Orca on the Mac** (2026-09-28). Its status hooks copy whole Claude events, prompts and tool
   inputs included, to Orca over loopback. A failed send of an event other than a tool call's,
   prompts included, is appended to a spool file for its Orca pane, up to 5 MiB, which is emptied
@@ -3813,6 +3841,44 @@ Each item gets its own design pass when its turn comes.
     caller went is always settled, so make-room is never left refusing every run.
   - After an unplanned restart, the words say each resident's one automatic reload this hour is
     used, never that it reloaded; a hold the gate put back after a reboot says so.
+- **2026-10-08** — Dan's decision: the coder swaps early to Qwen3.8-27B at 160K on `main`, so he
+  can use it through pi while Phase 2a is built on its own branch; it gets its full 262K at Phase
+  2a's Task 42. It is Phase 5's route A: llama.cpp b11146 as deployed, with MTP, and
+  `Qwen3.8-27B-UD-Q4_K_XL.gguf` (17.6 GB) from `unsloth/Qwen3.8-27B-GGUF`, pinned at a revision
+  committed on 2026-08-20, past the seven-day rule. Phase 1's render sums every listed model against
+  allocatable − reserve, 78 GiB: the residents' 43 and the coder at its full 262,144 tokens (about
+  41 GiB) would need 84, which render refuses. At 163,840 tokens its footprint is estimated at 35
+  GiB (weights ~16.4, a KV cache of ~10.6 at 68 KiB a token, ~7.5 for the rest), and the set takes
+  all 78. Qwen3.6-35B-A3B leaves the registry, since the budget counts every listed model; its files
+  stay on disk. The footprint and the header's figures are Phase 2a's council's (2026-10-07), as is
+  the reading of b11146's source that says it loads the file and drafts from its MTP layer: none of
+  it is measured or run here yet. Route A's reported decode, 15–27 tok/s, is below the 93 that
+  Qwen3.6-35B-A3B measured on 2026-09-28. The *Always loaded* and *Models* requirements, Phase 2's
+  line, Phase 5's routes, the Backlog's model settings and *To verify* gain dated notes, and so do
+  `README.md` §Current state, `pi.md` and S09. The box changes once Dan runs `make apply` and `make
+  pull`, and pi's lists once the clients are written again; `changelog.md` records it then.
+  *(Changed the same day: the coder gets its full context on `main` already; the next line.)*
+- **2026-10-08** — Dan's decision: Phase 2a's corrected budget check comes to `main` early, so the
+  registry gives the coder its full 262,144 tokens now, not from Phase 2a's Task 42. Phase 1's
+  render summed every footprint against allocatable − reserve, 102 − 24 = 78 GiB, which counted the
+  reserve twice: the CUDA-allocatable ceiling is itself about 15 GiB below idle `MemAvailable`
+  (117 GiB on this box), and the launch check keeps the reserve free again at every load.
+  `spark render` now has Phase 2a's Task 5 check (rule 9 of the plan on the `phase-2a` branch),
+  trimmed to what `main` has. It refuses always-loaded models that don't fit idle `MemAvailable`
+  less the reserve, within the ceiling, and an on-demand model that doesn't fit beside them, by
+  `min(idle − residents − reserve, ceiling − residents)`: Phase 2a's gate formula at idle, with
+  nothing still owed. It only warns when every model loaded at once would pass the ceiling or leave
+  memory under the brake's warn line. The registry gains `budget.idle_available_gib: 117`, from the
+  117.8 GiB available before Phase 1's first load (`changelog.md`, 2026-09-28). The coder's
+  footprint is estimated at 41 GiB at 262,144 tokens (weights ~16.4, a KV cache of ~17.0 at 68 KiB
+  a token, ~7.5 for the rest; not measured), so the set comes to 84 of the 102 GiB ceiling, the
+  coder fits beside the residents, 41 of the 50 free for a load, and every model loaded at once
+  leaves 33 GiB of the 117, above the warn line, 28. The launch check and the brake don't change.
+  The *Always loaded* and *Models* requirements, Phase 2's line, Phase 5's routes, the Backlog's
+  model settings and the open item on Phase 1's static launch check gain dated notes, and so do
+  `CLAUDE.md`'s memory gotcha, `README.md` §Current state, `pi.md` and S09. The box changes once
+  Dan runs `make apply`, and pi's lists once the clients are written again; `changelog.md` records
+  it then.
 - **2026-10-08** — Phase 2a's Task 20 review, the controller's rulings. A dated note is in *The
   front and the gate* (the route policy), and dated notes in the implementation plan's Tasks 20,
   21 and 22.
@@ -4034,6 +4100,13 @@ Each item gets its own design pass when its turn comes.
   `main` changes a workflow. Dated notes are in *Closing 2a*, Task 37 and the deploy runbook's
   urgent fix. Also: the brake's three events of 2026-10-15 (test runs of the build session, ended
   by earlyoom) are recorded for Task 47.
+- **2026-10-15** — Dan's setting: GitHub Pages builds from GitHub Actions instead of the `gh-pages`
+  branch. CI gains a `pages` job that deploys the rendered site with `deploy-pages`, on `main` only
+  and only after the tests, leak scans, shellcheck and render all passed, and alone holds Pages'
+  permissions; `workflow_dispatch` keeps publishing by hand. `publish-website.yml`, which pushed to
+  `gh-pages` without waiting for the leak scan, is gone. The old branch keeps every version
+  published until now; deleting it is Dan's call. The *Design* section's site line gains a dated
+  note.
 - **2026-10-15** — Test runs on the Spark are capped, Dan's decision, after the brake's three
   events that day (*Testing* gains a dated note; so do Phase 2a's *Global Constraints*, its *How a
   code task runs* and Task 47's note of the day, and `updates.md`'s uvicorn bump; `CLAUDE.md` and

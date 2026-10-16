@@ -1080,9 +1080,9 @@ async def test_a_model_the_registry_doesnt_know_is_counted_and_named(tmp_path):
     gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready") | {"mystery": "ready"})
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
-        assert core.state.models["mystery"].footprint_gib == 33.0  # the registry's largest
+        assert core.state.models["mystery"].footprint_gib == 41.0  # the registry's largest, the coder's
         assert core.status_view()["problems"] == [
-            "llama-swap runs mystery, which the registry doesn't know; it is counted at 33 GiB, the largest footprint "
+            "llama-swap runs mystery, which the registry doesn't know; it is counted at 41 GiB, the largest footprint "
             "the registry has."]
         await core.stop()
 
@@ -1395,7 +1395,7 @@ async def test_a_model_running_lists_that_the_state_lacks_is_counted(tmp_path):
         await core.read_running()
         assert core.state.models[CODER].state == "starting"
         assert core.state.models[CODER].footprint_gib == FOOTPRINT[CODER]
-        assert core.admitter.free_for_a_load(uses_hold=True) == free - 33  # counted while it starts
+        assert core.admitter.free_for_a_load(uses_hold=True) == free - 41  # counted while it starts
         asked = admit(core, "r1", WHISPER, T + 5, key="dan-mac")  # whisper waits: one load at a time
         await settle()
         assert gate.swap.loads() == [] and not asked.done()

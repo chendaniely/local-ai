@@ -10,7 +10,8 @@ LLAMA_CPP_BATCH_DEFAULT = 2048  # llama-server b11146's --batch-size default; it
 LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
 # Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
 # at its maximum (Dan's decision, 2026-09-28): a model added, swapped or moved to a new revision needs its entry here,
-# read the same way.
+# read the same way. Qwen3.8-27B's was read from its header by Phase 2a's council, on 2026-10-07. Qwen3.6-35B-A3B left
+# the registry on 2026-10-08, and its entry stays for the way back.
 NATIVE_CTX = {
     ("google/gemma-4-26B-A4B-it-qat-q4_0-gguf", "d1c082be9cf3c8a514acf63b8761f4b41935842e",
      "gemma-4-26B_q4_0-it.gguf"): 262144,
@@ -18,7 +19,11 @@ NATIVE_CTX = {
      "Qwen3-Embedding-0.6B-Q8_0.gguf"): 32768,
     ("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
      "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"): 262144,
+    ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+     "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
 }
+# Qwen3.8-27B, the coder, was held at 163,840 by an exception here from its early swap on 2026-10-08 until render's
+# corrected budget check reached main the same day (Dan's decision), which let it run at all 262,144.
 
 
 def flag(args: tuple[str, ...], *spellings: str) -> int | None:
@@ -150,7 +155,7 @@ def test_the_stack_registrys_labels_are_the_plans_words():
         "gemma-4-26b-a4b": "Gemma",
         "qwen3-embedding-0.6b": "the embeddings",
         "whisper-large-v3-turbo": "whisper",
-        "qwen3.6-35b-a3b": "the coder",
+        "qwen3.8-27b": "the coder",
     }
     assert {name: m.used_by for name, m in models.items() if m.used_by} == {
         "gemma-4-26b-a4b": "the web UI and photos use it"}

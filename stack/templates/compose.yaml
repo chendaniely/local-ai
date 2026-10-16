@@ -4,6 +4,11 @@ services:
   open-webui:
     image: {open_webui_image}
     network_mode: host
+    # No capabilities: root on the host's network with Docker's defaults could bind a free port below 1024. One comes
+    # back only once the box shows it's needed, under cap_add:, an entry to a line, with what failed without it.
+    cap_drop: [ALL]
+    cap_add:
+      - DAC_OVERRIDE   # it runs as root, and its data folder on the host is spark:spark 0750 with root's files in it, so root needs this to enter it or write there (read on the box, 2026-10-15)
     restart: unless-stopped
     logging: {{driver: journald}}   # `make logs s=open-webui`, no docker access needed
     env_file: [/etc/local-ai/secrets/open-webui.env]
@@ -35,6 +40,7 @@ services:
   searxng:
     image: {searxng_image}
     network_mode: host
+    cap_drop: [ALL]   # as open-webui's
     restart: unless-stopped
     logging: {{driver: journald}}
     env_file: [/etc/local-ai/secrets/searxng.env]

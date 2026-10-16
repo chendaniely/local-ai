@@ -1,21 +1,26 @@
 ---
 title: "Architecture"
 description: "Where everything sits — the Mac, the phone, the Spark and the Synology — and the paths a request takes. Built parts are solid; planned parts are dashed, with their phase."
-format:
-  html:
-    mermaid:
-      theme: neutral
 ---
 
-One picture of where everything sits, then the three paths a request can take. Every scenario
-follows one of those paths, so the table at the end names the path for each, and each scenario's
-page says what happens along it. **Solid** parts are built and running; **dashed** parts are
-planned, labelled with the phase that brings them. A built part that a later phase changes stays
-solid, and its label adds the change with that phase. [The plan](design/plan.md) holds the reasons.
+The overview first, then one picture of where everything sits, then the three paths a request can
+take. Every scenario follows one of those paths, so the table at the end names the path for each,
+and each scenario's page says what happens along it. **Solid** parts are built and running;
+**dashed** parts are planned, labelled with the phase that brings them. A built part that a later
+phase changes stays solid, and its label adds the change with that phase. [The plan](design/plan.md)
+holds the reasons.
+
+## The overview
+
+The tools, and how a request reaches a model. The home page shows the same diagram, from one
+file, `website/_overview.qmd`.
+
+{{< include _overview.qmd >}}
 
 ## Where everything sits
 
 ```{mermaid}
+%%| column: screen-inset
 flowchart TB
   classDef planned stroke-dasharray: 5 5
 
@@ -24,9 +29,9 @@ flowchart TB
     orca["Orca"]
     claude_mac["Claude Code,<br/>Claude Desktop"]
     pi_mac["pi"]
+    oc_mac["opencode, Hermes"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
-    oc_mac["opencode, Hermes"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
   end
 
@@ -43,8 +48,8 @@ flowchart TB
   subgraph spark["brightroar · the Spark"]
     tss["tailscale serve,<br/>HTTPS 443"]
     guestui["guest web UI<br/>events only · Phase 6"]:::planned
-    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
-    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped · Phase 2a"]
+    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped"]
+    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
     sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets · Phase 2a"]:::planned
@@ -53,7 +58,7 @@ flowchart TB
     gate["spark-gate · Unix sockets<br/>decides every load · Phase 2a"]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold · Phase 2a"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap · Phase 2a"]:::planned
-    engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder<br/>to 800 and up; coder Qwen3.8-27B · Phase 2a"]
+    engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B<br/>to 800 and up · Phase 2a"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -124,7 +129,8 @@ flowchart TB
   800 and up, below 1024, where no other user can listen, and only the internal keys reach
   llama-swap. The gate decides every load, unloads idle models and lifts the brake's hold; the
   brake stays a unit of its own, so it runs even while the gate is down, and then sends its own
-  alert. The web containers drop their capabilities, so they can't take those ports either. ntfy
+  alert. The web containers can't take those ports either: they have dropped their capabilities
+  since 2026-10-15, built ahead of the cutover from `main` (Task 37). ntfy
   on the Synology
   carries notifications to my phone, over the tailnet or the home LAN only, and to my Mac ~~from
   Phase 2b~~. [The plan](design/plan.md#the-front-and-the-gate-phase-2a) says why. *(2026-10-14,

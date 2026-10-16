@@ -640,13 +640,13 @@ async def test_a_pin_whose_load_waits_says_why_before_its_start(tmp_path):
 @pytest.mark.anyio
 async def test_a_pin_whose_load_is_refused_says_so_last_and_pins_nothing(tmp_path):
     with anyio.fail_after(BOUND_S):
-        world = World(tmp_path, available=40)  # 40 less the 24 GiB reserve: 16 free for a load, and the coder is 33
+        world = World(tmp_path, available=40)  # 40 less the 24 GiB reserve: 16 free for a load, and the coder is 41
         pins = pins_in(world)
         lines = asyncio.get_running_loop().create_task(collect(pins.pin(CODER, None, DAN)))
         await settle()
         await world.at(T + LOAD_CALL_TIMEOUT_S)
         *_, last = lines.result()
-        assert last["code"] == "no_fit" and last["message"].startswith("The coder didn't load: it needs 33 GiB")
+        assert last["code"] == "no_fit" and last["message"].startswith("The coder didn't load: it needs 41 GiB")
         assert set(last) == set(gateproto.GateRefusalBody.__annotations__) and world.state.pins == {}
 
 

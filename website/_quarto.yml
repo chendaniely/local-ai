@@ -33,3 +33,6 @@ format:
   html:
     theme: cosmo
     toc: true
+    mermaid:
+      theme: neutral
+    include-after-body: _diagram-zoom.html

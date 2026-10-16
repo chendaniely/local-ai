@@ -8,6 +8,39 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-15 — The web containers drop their capabilities, and the coder gets its full context (Phase 2a, Task 37)
+
+**Deployed** by Dan, **on the Spark**, from a `main` worktree at `586f884`, as an urgent fix is, before
+Phase 2a's cutover: `make apply`, `make install-units`, `make apply`, at 22:39. What changed:
+- **Open WebUI and SearXNG** run with `cap_drop: [ALL]`, so neither can bind a free port below
+  1024, which 2a's llama-swap takes at the cutover.
+  - Open WebUI gets one back, `DAC_OVERRIDE`: it runs as root (`docker top`), and its data folder on
+    the host is `spark:spark 0750` with root's files in it. Checked on the box before the deploy.
+  - SearXNG gets none: it runs as root without switching user, its server listens on 8888, and it
+    doesn't use its cache folder.
+- **SearXNG's `request_timeout`** is 6.0 s, up from 3.
+- **`main`'s registry and app since 2026-10-08:**
+  - the coder, `qwen3.8-27b`, at its full 262,144 tokens (its footprint estimated at 41 GiB, not
+    yet measured);
+  - render's corrected budget check;
+  - the clients' opencode and Hermes support.
+  - llama-swap and the brake restarted. No model was loaded at the time.
+
+**Checked:**
+- Both containers answer health checks (Open WebUI `/health`, SearXNG `/healthz`: 200).
+- In each, binding 127.0.0.1:900 fails with `PermissionError: [Errno 13] Permission denied`.
+- A web search in the web UI works from the Mac.
+- SearXNG's two start-up warnings, `/etc/searxng` not owned by `searxng:searxng` and no
+  `X-Forwarded-For`, appear at every start since 2026-09-28, so they are not new.
+
+**Seen, not caused by this change:**
+- DuckDuckGo answered the box's searches with a CAPTCHA, and Brave errored once.
+- Open WebUI once failed to make a chat title (`KeyError: 'model'`).
+
+**Not yet measured:** the coder's cold load at 262,144 tokens.
+
+---
+
 ## 2026-10-15 — Bootstrap's Phase 2a re-run, and 2a's secret files (Phase 2a, Task 36)
 
 **Run** by Dan, **on the Spark**, from the `phase-2a` clone at `74f556e`. The brake and llama-swap
@@ -49,6 +82,86 @@ The stack still serves in Phase 1's layout until the cutover (Task 38). Until th
 can't add to the cache: root's copy of the pull's unit still runs as `spark`.
 
 ---
+
+## 2026-10-15 — Flash-Next, run by hand
+
+**Already there** when the run began, **on the Spark**: Qwen3.8-Flash-Next's files in
+`~/scratch/models/qwen3.8-flash-next`, from the download step of [Qwen3.8-Flash-Next, by
+hand](website/how-to/qwen3.8-flash-next.md) (on `phase-2a` until Phase 2a merges), run before this
+entry and not recorded until now: the `UD-IQ3_XXS` model in three shards, its vision projector
+`mmproj-F16.gguf` and the MTP head `mtp-Qwen3.8-Flash-Next-Q8_0.gguf`, 82 GiB (`du`).
+
+**Added** by Dan, **on the Spark**: llama.cpp **b11330**'s `llama-server`, built from the release tag
+in `~/scratch/llama.cpp-b11330` (CUDA, `121a-real`), as the page's step 5 gives it, and not
+installed: the first release with MTP for this model, out since 2026-10-02, so outside the
+seven-day window.
+
+**Ran** by Dan, times by the Spark's clock: `systemctl stop local-ai-llama-swap`, then the page
+cache dropped with `sync` and `echo 1 | sudo tee /proc/sys/vm/drop_caches`. Flash-Next served by
+hand on 127.0.0.1:8080 only, as Dan, under `choom -n 1000`: with the stack's b11146 at a 32K
+context from 15:54, again at 128K from 16:24, and with b11330 and MTP at 128K, ready at 16:42;
+used from the Mac through an SSH tunnel and opencode; each stopped with `pkill -INT`. Measured:
+31.7 tok/s without MTP and 41.7 with it, about 81 GiB at 32K and about 90 with MTP at 128K
+([Speed tests](website/reference/speed-tests.md), on `phase-2a` until it merges).
+
+**Released** by Dan, at the restore: `spark status` showed the brake holding since 04:40:58 that day,
+with 19.9 GiB available then, and had refused the coder at 08:56:32; the run never went below 27.
+The cause was the build session's own test runs, which Task 47 in `phase-2a`'s plan records. Once
+memory was back, `/opt/local-ai/app/.venv/bin/spark brake --release`, then `systemctl start
+local-ai-llama-swap`: nothing loaded, 117 GiB available, no hold. Nothing runs Flash-Next now, and
+nothing starts it. The files and the build stay, for the next run and Phase 4a; the page's *Clean
+up* removes them.
+
+**On `heartsbane`, not the Spark** — recorded because it was the same day's work: opencode's
+config gained a hand-added `spark-flash-next` provider for the tunnel on port 8080, with a
+131,072-token limit; the file before it is kept as `~/.config/opencode/opencode.json.flash-next.bak`.
+
+## 2026-10-14 — The fast coder, run once by hand
+
+**Added** by Dan, **on the Spark**, following [The fast coder, by hand](website/how-to/qwen3.8-27b-sglang.md)
+(on `phase-2a` until Phase 2a merges): the image `lmsysorg/sglang:v0.5.21`, with `sudo docker pull`,
+whose digest, `sha256:b1259f3e…f469`, is hasso5703's; the model `RadixArk/Qwen3.8-27B-NVFP4` at
+`52d1adc` and the drafter `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal` at `bd7a934`, with
+`hf download` into `~/sglang/hf`, 22 GiB; the engine's key file, `~/sglang/secrets/engine.yaml`,
+written from the Mac and readable by Dan alone; and `~/sglang/scratch`, the container's only
+writable folder, which keeps its boot logs. `df -h /` showed 591 GiB free after.
+
+**Ran** by Dan, once: `systemctl stop local-ai-llama-swap`, then the page's `docker run` (`--rm`,
+one port, 990, on 127.0.0.1 only), used from the Mac through an SSH tunnel and opencode; then
+`sudo docker stop -t 20 qwen38-coder` and `systemctl start local-ai-llama-swap`. Measured: 41.7
+tok/s against 23.8 for the deployed coder, about 45 GiB, and about 3 minutes to start
+([Speed tests](website/reference/speed-tests.md), on `phase-2a` until it merges). Nothing of it is
+left running, and nothing starts it: no unit, no restart policy. The files stay for Phase 4a; the
+page's *Clean up* removes them.
+
+## 2026-10-14 — DCGM's host engine masked (Dan's decision)
+
+**Found** by Dan, **on the Spark**: NVIDIA's DCGM, `datacenter-gpu-manager` 1:3.3.9, is installed,
+with btop, by `apt install btop datacenter-gpu-manager` (apt's own log). PR #9, never merged, dated
+that install 2026-10-13; the date isn't checked here. The host engine's service, `nvidia-dcgm`, was
+already disabled at boot.
+
+**Changed** by Dan, **on the Spark**: `sudo systemctl disable --now nvidia-dcgm`, then
+`sudo systemctl mask nvidia-dcgm`. Checked after: `systemctl is-active nvidia-dcgm` says it is
+inactive, and `pgrep -a nv-hostengine` finds no host engine. Why (Dan's decision; the plan's Phase
+2b): the host engine runs as root and takes commands from any account on the box, `agent`
+included, among them GPU diagnostics that take GPU memory without asking the gate, and clock and
+power settings. The GPU is watched with `nvidia-smi` instead. `sudo systemctl unmask nvidia-dcgm`
+undoes the mask. btop stays.
+
+## 2026-10-08 — The coder is Qwen3.8-27B, at 160K for now (Dan's decision)
+
+**Deployed** by Dan, **on the Spark**, from a `main` worktree: the apply restarted llama-swap with
+the new registry at 16:24, and `make pull` fetched `Qwen3.8-27B-UD-Q4_K_XL.gguf` (17.6 GB) at its
+pinned revision, done at 16:28. The coder is `qwen3.8-27b`, at 163,840 of its 262,144 tokens, so
+the four footprints fill the 78 GiB budget (32, 8, 3 and 35); Phase 2a's Task 42 gives it its full
+context. `qwen3.6-35b-a3b` left the registry, and its files stay on disk.
+
+**Checked**, by the Phase 2a session: one short chat request to `qwen3.8-27b` through llama-swap
+loaded it and answered. With nothing else loaded, `MemAvailable` fell 30.6 GiB across the cold load
+(120.0 → 89.4 GiB), inside the 35 GiB estimate; the file was still in the page cache from the pull,
+so the load took about 6 s. Not yet measured: the footprint under a long request, and whether its
+MTP drafting runs. The residents load on their first request after the restart, as in Phase 1.
 
 ## 2026-10-05 — Dependabot's hatchling bump deployed (recorded 2026-10-07)
 

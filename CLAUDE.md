@@ -111,7 +111,11 @@ wrong one misleads more than any wrong sentence. A change that adds, moves or re
 path (a service, a port, an account, a link between machines), or builds a planned part (dashed
 turns solid), updates the diagrams and the page's scenario table in the same commit; the change
 isn't done until they match. When unsure whether a change touches them, open the page and check.
-Diagrams live only there: other pages link to them rather than drawing their own copy.
+Diagrams live only there: other pages link to them rather than drawing their own copy. The one
+exception is the overview (Dan's decision, 2026-10-14): the simple picture of the tools and how a
+request reaches a model lives in one file, `website/_overview.qmd`, which the Architecture page and
+the site's home page both include, never copy. It is one of the Architecture page's diagrams and is
+kept true with them; any part or path it shows changes there in the same commit.
 
 These files are not independent. Known sync obligations:
 
@@ -121,7 +125,7 @@ These files are not independent. Known sync obligations:
 | An open item gets settled | the plan's Requirements or Design gain the decision, its "Open items and risks" entry is marked resolved with the date, **and** a Revisions line records it |
 | A hardware fact is corrected | `README.md` §Hardware, plus any number in the plan derived from it |
 | The stack's behaviour changes | its page under `website/scenarios/` **and** its `spark doctor` check, in the same commit |
-| A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid) **and** its scenario table, in the same commit |
+| A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid), the overview in `website/_overview.qmd` too when it shows that part, **and** its scenario table, in the same commit |
 | Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |
@@ -155,6 +159,14 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   models are still owed. The reserve stays ≥24 GiB. The design first lowered it to 22, and this
   note said so; after the design's council Dan put it back to 24 the same day, until 2a has
   measured the footprints.)*
+  *(2026-10-08, Dan's decision: `spark render` on `main` has Phase 2a's corrected budget check,
+  rule 9 in the plan on the `phase-2a` branch. It refuses always-loaded models that don't fit idle
+  `MemAvailable` (117 GiB, the registry's `idle_available_gib`) less the reserve, within the
+  ceiling, and an on-demand model that doesn't fit beside them with the reserve kept; it only warns
+  when every model loaded at once would pass the ceiling or leave memory under the brake's warn
+  line. Until then render summed every footprint against allocatable − reserve, 78 GiB, which
+  counted the reserve twice. The launch check, live `MemAvailable` capped at the ceiling, less the
+  reserve, at each load, and the brake are unchanged.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.

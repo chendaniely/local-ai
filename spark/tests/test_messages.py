@@ -1975,8 +1975,9 @@ def test_no_message_says_free_alone():
         assert re.search(FREE_WORD, FREE_ALLOWED.sub("", stray)), stray
 
 
-# Every model's registry name, today's and the plan's: refusals and notifications name models by their labels.
-NAMES = {name for _, name in MODELS} | set(REGISTRY.models)
+# Every model's registry name, today's and the plan's, and the coder before them, which the model_not_found rows ask for
+# (it left the registry on 2026-10-08): refusals and notifications name models by their labels.
+NAMES = {name for _, name in MODELS} | set(REGISTRY.models) | {"qwen3.6-35b-a3b"}
 
 
 def test_models_are_named_by_label():
