@@ -172,8 +172,8 @@ the memory each part took: at its default log level, b11146 printed no buffer si
 record](#what-to-record)).)*
 
 - **For opencode, start at `--ctx-size 131072`.** opencode's own prompt is about 20,000 tokens, and
-  at 32K it ran out of room and trimmed its history every turn, so each turn read the whole prompt
-  again, 37–41 s ([step 4](#connect-from-the-mac)). The bigger context costs about 3 GiB more,
+  at 32K each turn read the whole prompt again, 37–41 s, most likely because opencode ran out of
+  room and trimmed its history every turn ([step 4](#connect-from-the-mac)). The bigger context costs about 3 GiB more,
   leaving about 34 available.
 - **End the line with `tee -i` instead of `tee`,** so the log keeps writing while the server stops.
 - **Stop it gently from another terminal,** **on the Spark**: `pkill -INT -f 'alias
@@ -211,10 +211,11 @@ none).
 a harmless warning from macOS's ssh, as on [the fast coder's page](qwen3.8-27b-sglang.md). For
 opencode, a client's context limit decides whether the server can reuse its work between turns.
 Told 32,768 tokens with 16,384 kept for the answer, opencode had about 16,000 left for a prompt that
-was already 20,000, so it changed earlier parts of the conversation every turn, and the server,
-which reuses only a matching start, read the whole prompt again each time: 37–41 s before writing a
-word. Told 131,072, with the server started at that context too, later turns read only what was
-new, 30 to 1,347 tokens, in under 3 s.)*
+was already 20,000. Each turn's prompt then matched only about 90% of the one before, and the
+server, which reuses only a matching start, read the whole prompt again each time: 37–41 s before
+writing a word. Most likely opencode was trimming its history to fit. Told 131,072, with the server
+started at that context too (both changed at once, so the run doesn't separate them), later turns
+read only what was new, 30 to 1,347 tokens, in under 3 s.)*
 
 **opencode**, as it ran on 2026-10-15: a provider in `~/.config/opencode/opencode.json`, beside the
 `spark` one, inside `"provider"`. It needs the tunnel above, and fails while the tunnel is closed:

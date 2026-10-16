@@ -19,8 +19,9 @@ how does it do in opencode?
 **The answer, for this one prompt:** **31.7 tokens a second without MTP and 41.7 with it**, 1.3× as
 fast, for **about 81 GiB** without MTP at a 32K context and **about 90 GiB** with it at 128K. With
 MTP it writes as fast as the fast coder, for twice its memory and the whole box. In opencode it
-worked, once opencode was told the model's context is 128K: told 32K, it trimmed its history every
-turn, and each turn re-read about 20,000 tokens of prompt, 37–41 s, before writing anything.
+worked, once opencode was told the model's context is 128K. Told 32K, each turn re-read about
+20,000 tokens of prompt, 37–41 s, before writing anything, most likely because opencode trimmed its
+history every turn to fit.
 
 ### Setup
 
