@@ -15,7 +15,7 @@ TEST_PYTEST  = uv run --frozen --project spark pytest $(if $(ARGS),$(ARGS),spark
 TEST_SCOPE   = systemd-run --user --scope --quiet -p MemoryMax=$(TEST_CAP_GIB)G -p MemorySwapMax=0 --
 TEST_MANAGER = systemctl --user show --property=Version --value >/dev/null 2>&1 || { echo "make test: your systemd user manager isn't answering, and on the Spark the tests run only under its $(TEST_CAP_GIB) GiB cap. Log in again, so the user manager starts, then run make test again." >&2; exit 1; }
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients doctor
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients doctor fast-coder flash-next
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -32,7 +32,7 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks 8.19+ and y
 	@echo "leak-check hooks on for this clone"
 
 lint: ## Shellcheck the hooks and host scripts
-	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh stack/host/local-ai-notify stack/host/local-ai-agent-oom
+	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh stack/host/local-ai-notify stack/host/local-ai-agent-oom stack/host/by-hand-fast-coder stack/host/by-hand-flash-next
 
 docs: ## Regenerate the Stack and Notifications pages, check scenario pages, render the site (Quarto: on the Mac)
 	$(SPARK) docs stack --write
@@ -97,3 +97,16 @@ clients: ## Add the Spark provider to pi on this machine
 
 doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor
+
+# TEMPORARY: remove once Phase 4a puts the fast coder and Flash-Next in the registry (Dan's decision, 2026-10-15).
+# Delete then: in this Makefile, these two targets, this comment, their .PHONY names and their scripts in lint's list;
+# stack/host/by-hand-fast-coder, stack/host/by-hand-flash-next, spark/tests/test_by_hand.py, the by-hand targets'
+# tests at the end of spark/tests/test_makefile.py, and the notes naming them in website/how-to/qwen3.8-27b-sglang.md
+# and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the same, and test_by_hand.py's TEMPORARY.
+# Each runs its runbook's Run it again on the Spark, in one script; SPARK_OPT stands in for /opt/local-ai, as for
+# make test, and off the Spark the script refuses.
+fast-coder: ## TEMPORARY, on the Spark: the fast coder on SGLang beside the stack, as its runbook's Run it again; DO=wait waits for it, DO=stop stops it
+	@BY_HAND_OPT='$(SPARK_OPT)' bash stack/host/by-hand-fast-coder '$(DO)'
+
+flash-next: ## TEMPORARY, on the Spark: stops llama-swap and runs Flash-Next at 128K (MTP=1: 64K with MTP); DO=wait waits for it, DO=stop restores the stack
+	@BY_HAND_OPT='$(SPARK_OPT)' MTP='$(MTP)' bash stack/host/by-hand-flash-next '$(DO)'

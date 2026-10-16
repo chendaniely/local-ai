@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# TEMPORARY: remove once Phase 4a puts the fast coder and Flash-Next in the registry (Dan's decision, 2026-10-15).
+# Delete then: stack/host/by-hand-flash-next (this file), stack/host/by-hand-fast-coder,
+# spark/tests/test_by_hand.py, the Makefile's two targets with their comment, .PHONY names and lint entries,
+# spark/tests/test_makefile.py's tests of them, and the notes naming them in
+# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the
+# same, and test_by_hand.py's TEMPORARY.
+#
+# make flash-next: Qwen3.8-Flash-Next with the stack stopped, as the Run it again section of
+# website/how-to/qwen3.8-flash-next.md runs it. On the Spark only, as Dan, from the clone.
+#   make flash-next           steps 1 and 2: stops llama-swap (from Phase 2a's cutover, holds it down, as
+#                             website/how-to/deploy.md's Keeping llama-swap stopped does), clears the page cache,
+#                             waits up to about 2 minutes for 110 GiB available, refusing without it, then runs the
+#                             128K run without MTP in the foreground, its output kept in ~/scratch/flash-next-<time>.log
+#   make flash-next MTP=1     the same, with the 64K run with MTP on the b11330 build instead
+#   make flash-next DO=wait   step 3: waits, up to about 10 minutes, for its /health, then shows the time and free -g
+#   make flash-next DO=stop   step 5: stops the server, waits up to about 2 minutes for the memory to come back,
+#                             refusing to go on without it, releases the brake if it holds, starts llama-swap again
+#                             (from the cutover: ends the hold-down, then releases), and shows the deployed spark status
+# Its commands are the runbooks' own, as written (test_by_hand.py compares them).
+#
+# BY_HAND_OPT, BY_HAND_MEMINFO, BY_HAND_UNIT_DIR and BY_HAND_HOLD are for the tests; each defaults to the box's own path.
+set -euo pipefail
+
+OPT="${BY_HAND_OPT:-/opt/local-ai}"
+if [ ! -d "$OPT" ]; then
+  echo "make flash-next: it runs on the Spark only, and this machine has no $OPT" >&2
+  exit 1
+fi
+MEMINFO="${BY_HAND_MEMINFO:-/proc/meminfo}"
+UNIT_DIR="${BY_HAND_UNIT_DIR:-/etc/systemd/system}"
+HOLD="${BY_HAND_HOLD:-/var/lib/local-ai/brake/hold.json}" # the brake's hold, Phase 1's and 2a's (spark.hold, paths.STATE)
+SPARK="$OPT/app/.venv/bin/spark"
+
+IDLE_GIB=110     # near idle: 117 GiB with no model loaded
+WARN_GIB=28      # step 3: stop it if available is under the brake's warn line
+MEMORY_TRIES=24  # the memory waits look every 5 s: about 2 minutes
+HEALTH_TRIES=120 # step 3's loop asks every 5 s: about 10 minutes
+
+available_kib() {
+  local kib
+  kib="$(awk '$1 == "MemAvailable:" { print $2 }' "$MEMINFO")"
+  case "$kib" in
+    '' | *[!0-9]*)
+      echo "make flash-next: can't read MemAvailable from $MEMINFO" >&2
+      exit 1
+      ;;
+  esac
+  echo "$kib"
+}
+
+AVAILABLE_GIB=0
+near_idle() {
+  # Waits for IDLE_GIB available, and fails if it never comes; AVAILABLE_GIB is the last reading. Its callers test it
+  # in an if, where set -e doesn't apply, so each failure here is handled by hand.
+  local tries=0 kib
+  while :; do
+    kib="$(available_kib)" || exit 1
+    AVAILABLE_GIB=$((kib / 1048576))
+    if [ "$kib" -ge $((IDLE_GIB * 1048576)) ]; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    if [ "$tries" -ge "$MEMORY_TRIES" ]; then
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+cut_over() {
+  # Phase 2a's cutover installs the front's socket unit; until then, there's none.
+  [ -e "$UNIT_DIR/local-ai-front.socket" ]
+}
+
+release_if_held() {
+  if [ -e "$HOLD" ]; then
+    echo "make flash-next: the brake is holding, so it releases it"
+    "$SPARK" brake --release
+  fi
+}
+
+start() {
+  case "${MTP:-}" in
+    '' | 0 | 1) ;;
+    *)
+      echo "usage: make flash-next [MTP=1] [DO=wait|DO=stop]: MTP=1 starts the 64K run with MTP" >&2
+      exit 2
+      ;;
+  esac
+  echo "make flash-next: ask the Spark's build session first: Phase 2a's box tasks need the box as they left it, and Flash-Next takes the box: every model the stack serves stops until make flash-next DO=stop."
+  if cut_over; then
+    echo "make flash-next: holding llama-swap down, as deploy.md's Keeping llama-swap stopped does"
+    printf '[Unit]\nConditionPathExists=/dev/null/held-down\n' | sudo install -D -m 0644 /dev/stdin /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+    sudo systemctl daemon-reload
+    sudo systemctl stop local-ai-llama-swap
+    sudo -k
+  else
+    systemctl stop local-ai-llama-swap
+  fi
+  sync && echo 1 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+  if ! near_idle; then
+    echo "make flash-next: $AVAILABLE_GIB GiB available after about 2 minutes, under the $IDLE_GIB it needs, so Flash-Next didn't start: something else holds memory (the fast coder? make fast-coder DO=stop). llama-swap is stopped: once the memory is back, make flash-next DO=stop starts it again" >&2
+    exit 1
+  fi
+  free -g
+
+  # The runbook's lines as written: date's +%F-%H%M has no space for the shell to split on.
+  # shellcheck disable=SC2046
+  if [ "${MTP:-}" = 1 ]; then
+    choom -n 1000 -- ~/scratch/llama.cpp-b11330/build/bin/llama-server \
+      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+      --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
+      --alias qwen3.8-flash-next-mtp \
+      --host 127.0.0.1 --port 8080 \
+      --gpu-layers all --ctx-size 65536 --parallel 1 \
+      --load-mode none --lazy-mode off --cache-ram 1024 --ctx-checkpoints 8 \
+      --no-slots --jinja \
+      --spec-draft-model ~/scratch/models/qwen3.8-flash-next/mtp-Qwen3.8-Flash-Next-Q8_0.gguf \
+      --spec-type draft-mtp --spec-draft-n-max 3 2>&1 | tee -i ~/scratch/flash-next-mtp-$(date +%F-%H%M).log
+  else
+    choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
+      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+      --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
+      --alias qwen3.8-flash-next \
+      --host 127.0.0.1 --port 8080 \
+      --gpu-layers all --ctx-size 131072 --parallel 1 \
+      --load-mode none --lazy-mode off --cache-ram 1024 --ctx-checkpoints 8 \
+      --no-slots --jinja 2>&1 | tee -i ~/scratch/flash-next-$(date +%F-%H%M).log
+  fi
+}
+
+wait_for_it() {
+  echo "make flash-next: waiting for 127.0.0.1:8080/health, up to about 10 minutes (about a minute on 2026-10-15)"
+  local tries=0 kib
+  until curl -sf http://127.0.0.1:8080/health > /dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge "$HEALTH_TRIES" ]; then
+      echo "make flash-next: no answer from 127.0.0.1:8080 after about 10 minutes: look at the server's terminal, and make flash-next DO=stop stops it and restores the stack" >&2
+      exit 1
+    fi
+    sleep 5
+  done
+  date +%T
+  free -g
+  kib="$(available_kib)" || exit 1
+  if [ "$kib" -lt $((WARN_GIB * 1048576)) ]; then
+    echo "make flash-next: $((kib / 1048576)) GiB available, under the brake's $WARN_GIB GiB warn line: stop it, with make flash-next DO=stop" >&2
+    exit 1
+  fi
+}
+
+stop() {
+  local killed=0
+  pkill -INT -f 'alias qwen3.8-flash-next' || killed=$?
+  case "$killed" in
+    0) ;;
+    1) echo "make flash-next: Flash-Next wasn't running" ;;
+    *)
+      echo "make flash-next: pkill failed ($killed), so Flash-Next may still be running; nothing else was done" >&2
+      exit 1
+      ;;
+  esac
+  if ! near_idle; then
+    echo "make flash-next: $AVAILABLE_GIB GiB available after about 2 minutes, not back near 117, so it goes no further: nothing restarted, the brake not released. See what holds it (free -g, pgrep -af 'alias qwen3.8-flash-next'), then run make flash-next DO=stop again" >&2
+    exit 1
+  fi
+  free -g
+  if cut_over; then
+    echo "make flash-next: ending the hold-down, as deploy.md's Keeping llama-swap stopped does, before the brake's release"
+    sudo rm /run/systemd/system/local-ai-llama-swap.service.d/held-down.conf
+    sudo systemctl daemon-reload
+    sudo systemctl start local-ai-llama-swap
+    sudo -k
+    release_if_held
+  else
+    release_if_held
+    systemctl start local-ai-llama-swap
+  fi
+  sleep 5
+  "$SPARK" status
+}
+
+case "${1:-}" in
+  '') start ;;
+  wait) wait_for_it ;;
+  stop) stop ;;
+  *)
+    echo "usage: make flash-next [MTP=1] [DO=wait|DO=stop]" >&2
+    exit 2
+    ;;
+esac

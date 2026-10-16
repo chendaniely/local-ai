@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# TEMPORARY: remove once Phase 4a puts the fast coder and Flash-Next in the registry (Dan's decision, 2026-10-15).
+# Delete then: stack/host/by-hand-fast-coder (this file), stack/host/by-hand-flash-next,
+# spark/tests/test_by_hand.py, the Makefile's two targets with their comment, .PHONY names and lint entries,
+# spark/tests/test_makefile.py's tests of them, and the notes naming them in
+# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the
+# same, and test_by_hand.py's TEMPORARY.
+#
+# make fast-coder: the fast coder, Qwen3.8-27B on SGLang, beside the stack, as the Run it again section of
+# website/how-to/qwen3.8-27b-sglang.md runs it. On the Spark only, as Dan, from the clone.
+#   make fast-coder           step 1's checks, then step 2: it refuses while the llama.cpp coder is loaded or under
+#                             79 GiB is available, else it runs step 2's container in the foreground, its output
+#                             kept in ~/sglang/scratch/boot-<time>.log
+#   make fast-coder DO=wait   step 3: waits, up to about 10 minutes, for its /health, then shows the time and free -g
+#   make fast-coder DO=stop   step 5: stops the container, then shows free -g and the deployed spark status
+# Its commands are the runbook's, as written (test_by_hand.py compares them). It never loads Gemma, step 1's other
+# part: ask Open WebUI one question first, so the container's start sees Gemma's memory.
+#
+# BY_HAND_OPT, BY_HAND_MEMINFO and BY_HAND_UNIT_DIR are for the tests; each defaults to the box's own path.
+set -euo pipefail
+
+OPT="${BY_HAND_OPT:-/opt/local-ai}"
+if [ ! -d "$OPT" ]; then
+  echo "make fast-coder: it runs on the Spark only, and this machine has no $OPT" >&2
+  exit 1
+fi
+MEMINFO="${BY_HAND_MEMINFO:-/proc/meminfo}"
+UNIT_DIR="${BY_HAND_UNIT_DIR:-/etc/systemd/system}"
+SPARK="$OPT/app/.venv/bin/spark"
+
+NEED_GIB=79     # step 1: the container's 45, the 24 GiB reserve, and about 10 the everyday models can still grow into
+WARN_GIB=28     # step 3: stop it if available is under the brake's warn line
+HEALTH_TRIES=60 # step 3's loop asks every 10 s: about 10 minutes
+# The llama.cpp coder's engine runs as spark. While it starts, its command line is `spark launch qwen3.8-27b --
+# …/llama-server … --model …`; once launch has exec'd the engine, it's the engine's own, without `launch`. Its
+# model file's folder is in both, before Phase 2a's cutover and after it.
+CODER='models--unsloth--Qwen3\.8-27B-GGUF/'
+
+available_kib() {
+  local kib
+  kib="$(awk '$1 == "MemAvailable:" { print $2 }' "$MEMINFO")"
+  case "$kib" in
+    '' | *[!0-9]*)
+      echo "make fast-coder: can't read MemAvailable from $MEMINFO" >&2
+      exit 1
+      ;;
+  esac
+  echo "$kib"
+}
+
+cut_over() {
+  # Phase 2a's cutover installs the front's socket unit; until then, there's none.
+  [ -e "$UNIT_DIR/local-ai-front.socket" ]
+}
+
+start() {
+  echo "make fast-coder: ask the Spark's build session first: Phase 2a's box tasks (the cutover, a cold boot, the memory drills, the soak, the brake's tuning) need the box as they left it."
+  local found=0 how kib
+  pgrep -u spark -f "$CODER" > /dev/null || found=$?
+  case "$found" in
+    0)
+      if cut_over; then
+        how="$SPARK unload coder"
+      else
+        how="systemctl stop local-ai-llama-swap && systemctl start local-ai-llama-swap, which stops every model"
+      fi
+      echo "make fast-coder: the llama.cpp coder, qwen3.8-27b, is loaded, and the two coders don't fit together: unload it ($how), then run make fast-coder again" >&2
+      exit 1
+      ;;
+    1) ;;
+    *)
+      echo "make fast-coder: pgrep failed ($found), so it can't tell whether the llama.cpp coder is loaded" >&2
+      exit 1
+      ;;
+  esac
+  kib="$(available_kib)" || exit 1
+  if [ "$kib" -lt $((NEED_GIB * 1048576)) ]; then
+    echo "make fast-coder: $((kib / 1048576)) GiB available, under the $NEED_GIB it needs (its 45, the 24 reserve, and 10 the everyday models can grow into): free some, then run make fast-coder again" >&2
+    exit 1
+  fi
+
+  # The runbook's line as written: date's +%F-%H%M has no space for the shell to split on.
+  # shellcheck disable=SC2046
+  sudo docker run --rm --name qwen38-coder --init \
+    --gpus all --user "$(id -u):$(id -g)" \
+    --cap-drop ALL --security-opt no-new-privileges \
+    --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=2g --shm-size 16g \
+    --oom-score-adj 1000 --log-driver none \
+    -p 127.0.0.1:990:30000 \
+    -v "$HOME/sglang/hf":/hf:ro \
+    -v "$HOME/sglang/secrets/engine.yaml":/run/sglang/engine.yaml:ro \
+    -v "$HOME/sglang/scratch":/scratch \
+    -e HOME=/scratch -e USER=sglang -e XDG_CACHE_HOME=/scratch/.cache \
+    -e TRITON_CACHE_DIR=/scratch/triton -e TORCHINDUCTOR_CACHE_DIR=/scratch/inductor \
+    -e CUDA_CACHE_PATH=/scratch/nv -e PYTHONDONTWRITEBYTECODE=1 \
+    -e HF_HOME=/hf -e HF_HUB_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1 \
+    lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 \
+    python3 -m sglang.launch_server --config /run/sglang/engine.yaml \
+      --model-path /hf/hub/models--RadixArk--Qwen3.8-27B-NVFP4/snapshots/52d1adc5f38aa5ebf099c29ed7025ba34cfbb854 \
+      --speculative-draft-model-path /hf/hub/models--maurienne-ai--Qwen3.8-27B-DFlash2-NVFP4-RTNcal/snapshots/bd7a934213c47a9e7ef69eef36bb3325f47fd1f1 \
+      --served-model-name qwen3.8-27b-sglang --tp-size 1 \
+      --speculative-algorithm DFLASH --speculative-num-draft-tokens 16 \
+      --speculative-draft-model-quantization modelopt_fp4 \
+      --kv-cache-dtype fp8_e4m3 \
+      --max-running-requests 1 --max-total-tokens 266240 --max-mamba-cache-size 16 \
+      --mamba-ssm-dtype bfloat16 --mamba-radix-cache-strategy extra_buffer \
+      --mem-fraction-static 0.55 --chunked-prefill-size 4096 \
+      --cuda-graph-max-bs-decode 1 --disable-prefill-cuda-graph --disable-flashinfer-autotune \
+      --attention-backend flashinfer \
+      --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+      --log-level warning --host 0.0.0.0 --port 30000 \
+      2>&1 | tee ~/sglang/scratch/boot-$(date +%F-%H%M).log
+}
+
+wait_for_it() {
+  echo "make fast-coder: waiting for 127.0.0.1:990/health, up to about 10 minutes (about 3 on 2026-10-14)"
+  local tries=0 kib
+  until curl -sf http://127.0.0.1:990/health > /dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge "$HEALTH_TRIES" ]; then
+      echo "make fast-coder: no answer from 127.0.0.1:990 after about 10 minutes: look at the server's terminal, and make fast-coder DO=stop stops it" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+  date +%T
+  free -g
+  kib="$(available_kib)" || exit 1
+  if [ "$kib" -lt $((WARN_GIB * 1048576)) ]; then
+    echo "make fast-coder: $((kib / 1048576)) GiB available, under the brake's $WARN_GIB GiB warn line: stop it, with make fast-coder DO=stop" >&2
+    exit 1
+  fi
+}
+
+stop() {
+  sudo docker stop -t 20 qwen38-coder
+  free -g
+  "$SPARK" status
+}
+
+case "${1:-}" in
+  '') start ;;
+  wait) wait_for_it ;;
+  stop) stop ;;
+  *)
+    echo "usage: make fast-coder [DO=wait|DO=stop]" >&2
+    exit 2
+    ;;
+esac

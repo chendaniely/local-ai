@@ -31,6 +31,12 @@ Run everything on the Spark, as you, inside tmux (`tmux new -As coder`), unless 
 2026-10-14: the image, the model, the drafter and the key on the box, and the `spark-sglang`
 provider in opencode ([step 6](#connect-from-the-mac)).)*
 
+*(Added 2026-10-15, Dan's decision: `make fast-coder` is the short way, **on the Spark**, in the
+clone. Load Gemma first, as step 1 says. Then `make fast-coder` refuses while the llama.cpp coder
+is loaded, saying how to unload it, or while under 79 GiB is available, and otherwise runs step 2's
+command in the foreground; `make fast-coder DO=wait` is step 3, and `make fast-coder DO=stop` step
+5. It's temporary: it goes when Phase 4a puts the fast coder in the registry.)*
+
 **Ask the Spark's build session first.** Most of Phase 2a's remaining tasks measure or drill the
 box: the cutover, a cold boot, the memory drills, the soak and the brake's tuning. A container
 holding 45 GiB during one of them spoils the measurement or trips the brake. The session's code and

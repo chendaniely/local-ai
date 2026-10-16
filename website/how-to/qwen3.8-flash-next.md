@@ -33,6 +33,15 @@ Flash-Next stays usable by hand while Phases 2a and 4a are built. It needs the f
 step 5's b11330 build for MTP, both kept in `~/scratch` on 2026-10-15, and the `spark-flash-next`
 provider in opencode ([step 4](#connect-from-the-mac)).)*
 
+*(Added 2026-10-15, Dan's decision: `make flash-next` is the short way, **on the Spark**, in the
+clone. It runs steps 1 and 2: it stops llama-swap, or from the cutover holds it down, clears the
+page cache, waits up to about 2 minutes for 110 GiB available, refusing without it, and starts the
+128K run; `make flash-next MTP=1` starts the MTP run at 64K instead. `make flash-next DO=wait` is
+step 3, and `make flash-next DO=stop` step 5: it stops the server and waits up to about 2 minutes
+for the memory to come back, going no further without it. Then it releases the brake if it's
+holding and starts llama-swap, as step 5 does; from the cutover it ends the hold-down first, then
+releases the brake. It's temporary: it goes when Phase 4a puts Flash-Next in the registry.)*
+
 **Ask the Spark's build session first:** Phase 2a's box tasks need the box as they left it, as on
 the fast coder's page. **Flash-Next takes the box:** every model the stack serves stops until the
 restore, and the fast coder can't run at the same time.

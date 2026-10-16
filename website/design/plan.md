@@ -2286,6 +2286,14 @@ the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains it
 - [Mac] **Clients:** opencode, pi and Hermes list both coders and Flash-Next, rendered by `spark
   clients` (PR #7's generators, ~~once its Hermes part is fixed or left out~~ its Hermes part fixed
   the same day), with opencode's timeout raised if the drill needs it.
+- **Retire the by-hand targets** *(added 2026-10-15, Dan's decision)*. Until this phase,
+  `make fast-coder` and `make flash-next` run the two by-hand pages' *Run it again* in one command
+  each, on the Spark. Once the fast coder and Flash-Next are in the registry, delete them: the
+  `Makefile`'s two targets with their comment, `.PHONY` names and `lint` entries;
+  `stack/host/by-hand-fast-coder` and `stack/host/by-hand-flash-next`; their tests,
+  `spark/tests/test_by_hand.py` and the by-hand targets' tests at the end of
+  `spark/tests/test_makefile.py`; and the note naming each in its by-hand page's *Run it again*.
+  `test_by_hand.py`'s `TEMPORARY` lists the same pieces; `phase-4a.md` makes this a task.
 - Its implementation plan, `phase-4a.md`, is written at 4a's start, from the by-hand runs' numbers.
 - *Scenarios:* S02 (make-room, for Flash-Next), S24, S25.
 - *Done when:* Flash-Next loads after `spark make-room --all`, answers in opencode on the Mac, and
@@ -4054,6 +4062,12 @@ Each item gets its own design pass when its turn comes.
   says the cutover hasn't happened, or this is Phase 1's layout after a rollback, and no line sends
   9100 the key or asks a model there. Before the cutover, Task 36 checks the key list with that one
   check, run alone.
+- **2026-10-15** — `make fast-coder` and `make flash-next`, temporary, Dan's decision (*Phases*,
+  Phase 4a, gains the item that removes them; both by-hand pages' *Run it again* gain a note). Each
+  runs its page's repeat run in one command, on the Spark only: the fast coder refuses while the
+  llama.cpp coder is loaded or under 79 GiB is available; Flash-Next stops llama-swap, or from the
+  cutover holds it down, and starts only once 110 GiB is available; and its `DO=stop` restores the
+  stack in the page's order. They go when Phase 4a puts both models in the registry.
 
 ## Sources
 

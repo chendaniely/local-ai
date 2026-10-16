@@ -180,3 +180,37 @@ def test_make_test_off_the_spark_runs_pytest_alone(tmp_path):
     env = fakes(tmp_path, systemctl="exit 0", **{"systemd-run": "exit 0"}, uv="exit 0")
     assert make("test", f"SPARK_OPT={tmp_path / 'absent'}", env=env).returncode == 0
     assert calls(tmp_path) == [f"{PYTEST} spark/tests"]
+
+
+# TEMPORARY: make fast-coder and make flash-next, removed once Phase 4a puts the fast coder and Flash-Next in the
+# registry (test_by_hand.py's TEMPORARY lists every piece). Their scripts' own tests are in test_by_hand.py; these are
+# the Makefile's part: what each target runs, its help line, and its refusal off the Spark.
+@pytest.mark.parametrize(("args", "line"), [
+    (["fast-coder"], "BY_HAND_OPT='/opt/local-ai' bash stack/host/by-hand-fast-coder ''"),
+    (["fast-coder", "DO=wait"], "BY_HAND_OPT='/opt/local-ai' bash stack/host/by-hand-fast-coder 'wait'"),
+    (["fast-coder", "DO=stop"], "BY_HAND_OPT='/opt/local-ai' bash stack/host/by-hand-fast-coder 'stop'"),
+    (["flash-next"], "BY_HAND_OPT='/opt/local-ai' MTP='' bash stack/host/by-hand-flash-next ''"),
+    (["flash-next", "MTP=1"], "BY_HAND_OPT='/opt/local-ai' MTP='1' bash stack/host/by-hand-flash-next ''"),
+    (["flash-next", "DO=wait"], "BY_HAND_OPT='/opt/local-ai' MTP='' bash stack/host/by-hand-flash-next 'wait'"),
+    (["flash-next", "DO=stop"], "BY_HAND_OPT='/opt/local-ai' MTP='' bash stack/host/by-hand-flash-next 'stop'"),
+], ids=["fast-coder", "fast-coder wait", "fast-coder stop", "flash-next", "flash-next MTP", "flash-next wait",
+        "flash-next stop"])
+def test_the_by_hand_targets_run_their_scripts_with_do_and_mtp(args, line):
+    assert make("-n", *args).stdout.splitlines() == [line]
+
+
+@pytest.mark.parametrize("target", ["fast-coder", "flash-next"])
+def test_the_by_hand_targets_help_says_temporary_and_on_the_spark(target):
+    lines = {line.split()[0]: line for line in make("help").stdout.splitlines()}
+    assert "TEMPORARY" in lines[target] and "on the Spark" in lines[target]
+
+
+@pytest.mark.parametrize("args", [["fast-coder"], ["fast-coder", "DO=stop"], ["flash-next"], ["flash-next", "DO=stop"]],
+                         ids=["fast-coder", "fast-coder stop", "flash-next", "flash-next stop"])
+def test_the_by_hand_targets_refuse_off_the_spark_and_run_nothing(tmp_path, args):
+    # SPARK_OPT stands in for /opt/local-ai, as for make test: here, a folder that isn't there, as on the Mac or CI.
+    env = fakes(tmp_path, **{name: "exit 0" for name in
+                             ("sudo", "docker", "systemctl", "pgrep", "pkill", "curl", "free", "choom", "sync")})
+    result = make(*args, f"SPARK_OPT={tmp_path / 'absent'}", env=env)
+    assert result.returncode != 0 and calls(tmp_path) == []
+    assert "runs on the Spark" in result.stderr
