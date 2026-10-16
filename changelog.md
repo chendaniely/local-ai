@@ -8,6 +8,34 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-16 — A cold boot under llama-swap's sandbox (Phase 2a, Task 39)
+
+**Power-cycled** by Dan, **on the Spark** (`sudo poweroff`, then the power button), so nothing from
+the last boot had `nvidia-uvm` loaded. Up at 11:53:29 by the Spark's clock. Nothing changed on the
+box: this records what the boot did.
+
+**Checked,** in the first minutes after boot. Times are seconds after boot, from the journal:
+- **`nvidia-uvm`:** loaded (`lsmod` counts 1). udev loaded it, not an engine. The rule is
+  `71-nvidia.rules`, from `nvidia-kernel-common-580`: it runs `modprobe nvidia-uvm` when the NVIDIA
+  driver binds. `/dev/nvidia-uvm` was made about 9 s after boot. `nvidia-cdi-refresh` found it
+  already there at 12.8 s and skipped it.
+- **The order:** `nvidia-cdi-refresh` finished at 12.9 s, and llama-swap started at 13.4 s, as
+  Task 24's `After=` orders them.
+- **The engines on the GPU:** the three engines run as `spark` (`pgrep`), and `nvidia-smi` lists
+  the same three pids as compute apps. So none fell back to the CPU, and CUDA started under
+  `NoNewPrivileges=yes` and a bounding set of `CAP_NET_BIND_SERVICE` alone.
+- **The always-loaded models,** loaded by the gate one after another, from disk with the page cache
+  cold: Gemma from 13.9 s to 30.2 s, the embeddings by 32.5 s, whisper by 34.8 s.
+- **`make status`:** 84 GiB available of 121; free for a load 51 GiB; Gemma, the embeddings and
+  whisper loaded; the coder not loaded; health `front ok · gate ok · brake ok (key checked 11:53)
+  · ntfy not set up (Task 2, Phase 5)`.
+- **`make doctor`:** 29 of 29, with one WARN, `ntfy: not set up (Task 2, Phase 5)`. Its *stack
+  units* line says llama-swap took the brake's key at 11:53:41.
+- **The front and the gate started at boot** from their enabled sockets and services, with no step
+  by hand.
+
+---
+
 ## 2026-10-16 — The cutover: the front, the gate, and llama-swap on 900 (Phase 2a, Task 38)
 
 **Cut over** by Dan, **on the Spark**, from the `phase-2a` clone at `b614532`, as Task 38 in

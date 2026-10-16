@@ -285,7 +285,9 @@ Four services, three sockets that systemd holds, and a notifier:
   fit check and the brake's hold check, and refuses with `not_downloaded` a model whose files
   aren't there yet. *(Added 2026-10-07, after the re-review:)* the cold-boot test covers
   `CapabilityBoundingSet=` too, which strips `nvidia-modprobe`'s setuid powers just as
-  `NoNewPrivileges=` does; loading `nvidia-uvm` at boot would answer both. A ticket expires at its
+  `NoNewPrivileges=` does; loading `nvidia-uvm` at boot would answer both. *(Both answered
+  2026-10-16, at Phase 2a's Task 39's cold boot: udev already loads `nvidia-uvm` at boot, and the
+  engines start under the sandbox; see *To verify*.)* A ticket expires at its
   load's deadline, so one issued for a load that never reached llama-swap can't start a model
   later. Tickets and `spark launch`'s refusal records get a folder of their own, the only state
   `ReadWritePaths=` opens to llama-swap's sandbox; the brake's hold folder is read-only there, so
@@ -2751,8 +2753,13 @@ Each item gets its own design pass when its turn comes.
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling (Phase 2a
   measures it, carefully, and the registry follows: rule 9; added 2026-10-07); from Phase 2a's
   council (2026-10-07), each checked in 2a: that `OnFailure=` fires on a crash that `Restart=`
-  recovers (systemd 255's man page says so), that `NoNewPrivileges=` lets CUDA start from a cold
-  boot, and ~~that the engines bind ports below 1024 with the capability they inherit~~ (verified
+  recovers (systemd 255's man page says so), ~~that `NoNewPrivileges=` lets CUDA start from a cold
+  boot~~ (verified 2026-10-16, at Phase 2a's Task 39: after a power cycle, the three engines started
+  under llama-swap's sandbox, `NoNewPrivileges=yes` with a bounding set of `CAP_NET_BIND_SERVICE`
+  alone, and run on the GPU, `nvidia-smi` listing the same pids as `pgrep`. CUDA needed no setuid
+  `nvidia-modprobe`: udev loads `nvidia-uvm` at boot, by `nvidia-kernel-common-580`'s
+  `71-nvidia.rules`, before llama-swap starts. So the same boot answers `CapabilityBoundingSet=` as
+  well; see Revisions), and ~~that the engines bind ports below 1024 with the capability they inherit~~ (verified
   2026-10-16, at Phase 2a's cutover: each engine, two llama-server and one whisper-server, read
   `CapEff` and `CapAmb` `0000000000000400`, `CAP_NET_BIND_SERVICE` alone, inherited from
   llama-swap's unit, which sets it in `AmbientCapabilities=` and `CapabilityBoundingSet=`, with
@@ -4192,6 +4199,14 @@ Each item gets its own design pass when its turn comes.
   apply-now` or `make install-units` from `main` or a `main` worktree. Every deploy, an urgent fix's
   included, is committed on `phase-2a`, deployed from its clone, pushed with Dan's OK, and reaches
   `main` with the phase's merge; only Task 38's rollback deploys from `main`.
+- **2026-10-16** — A cold boot under llama-swap's sandbox, Phase 2a's Task 39 (*To verify*:
+  `NoNewPrivileges=` letting CUDA start from a cold boot, verified, which answers
+  `CapabilityBoundingSet=` too, as *The front and the gate* says it would). After a power cycle,
+  udev loaded `nvidia-uvm` by `nvidia-kernel-common-580`'s `71-nvidia.rules`, before llama-swap
+  started. The engines started under the sandbox, no setuid helper needed, and run on the GPU. The
+  gate reloaded the three always-loaded models by 35 s after boot, and `make doctor` passes 29 of
+  29, with one WARN, ntfy not set up. Bootstrap needed no `/etc/modules-load.d` line, so it keeps
+  none. The changelog and README's *Current state* record it.
 
 ## Sources
 

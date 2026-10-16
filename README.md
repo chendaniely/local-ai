@@ -278,7 +278,10 @@ when that file was retired on 2026-09-23.
   sends nothing until ntfy is set up, in Phase 5. **The brake's drill**,
   `local-ai-brake-drill.service`, runs only when Dan starts it. The pull runs as `spark-pull`.
   `make doctor`: 29 of 29, with one WARN, `ntfy: not set up (Task 2, Phase 5)`. The changelog has
-  the cutover's times and checks.)*
+  the cutover's times and checks.)* *(Since 2026-10-16's cold boot, Phase 2a's Task 39: the stack
+  comes back by itself from a power cycle, under llama-swap's sandbox. `nvidia-uvm` is loaded at
+  boot by udev's rule from `nvidia-kernel-common-580`, before llama-swap starts, so the engines
+  need no setuid helper, and every engine runs on the GPU. Nothing in bootstrap had to change.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
