@@ -1529,7 +1529,10 @@ Docker.
 ### Testing
 
 - **Unit tests (TDD):** admission decisions, brake ordering, idle policy, refusal text — pure
-  functions with fixtures. They run anywhere: the Mac, the Spark, CI.
+  functions with fixtures. They run anywhere: the Mac, the Spark, CI. *(2026-10-15, Dan's
+  decision: on the Spark they run capped at 4 GiB of memory with no swap, through `make test`, and
+  refuse an uncapped run there, for every account; the Mac and CI run them as before. A test run
+  shares the one memory pool with the models: that day a runaway one reached 107,882 MiB.)*
 - **Render tests:** golden files plus each tool's own validator; CI runs `spark render --check`.
   (2026-09-25: Phase 1's CI runs `spark render --out`, which fails on anything render refuses; there
   is no `--check` yet. Its render tests assert what matters in each rendered file rather than
@@ -4005,6 +4008,15 @@ Each item gets its own design pass when its turn comes.
   `main` changes a workflow. Dated notes are in *Closing 2a*, Task 37 and the deploy runbook's
   urgent fix. Also: the brake's three events of 2026-10-15 (test runs of the build session, ended
   by earlyoom) are recorded for Task 47.
+- **2026-10-15** — Test runs on the Spark are capped, Dan's decision, after the brake's three
+  events that day (*Testing* gains a dated note; so do Phase 2a's *Global Constraints*, its *How a
+  code task runs* and Task 47's note of the day, and `updates.md`'s uvicorn bump; `CLAUDE.md` and
+  the README's conventions gain the rule). On the Spark, `make test` runs pytest in a user scope
+  capped at 4 GiB with no swap, so the kernel kills only a runaway run, and `make test ARGS="…"`
+  runs some tests. The tests' `conftest.py` refuses an uncapped run there before any test starts,
+  for every account, so a bare `uv run … pytest` stops; no variable or flag turns it off. A full
+  suite run peaked at 346 MiB, so the cap is more than ten times a normal run. The Mac and CI run
+  as before.
 
 ## Sources
 

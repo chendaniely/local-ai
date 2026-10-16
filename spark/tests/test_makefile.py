@@ -1,5 +1,5 @@
-"""The Makefile's deploy targets, run against stand-ins for the tools they call: what each runs, and what make says and
-exits with when one fails. (make install-units' tests are in test_bootstrap.py, with bootstrap's.)"""
+"""The Makefile's deploy targets and make test, run against stand-ins for the tools they call: what each runs, and what
+make says and exits with when one fails. (make install-units' tests are in test_bootstrap.py, with bootstrap's.)"""
 
 import os
 import re
@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from memory_cap import CAP_GIB
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -116,3 +118,65 @@ def test_help_says_what_tunnel_and_brake_release_reach():
     assert "forward the Spark's model API, 127.0.0.1:9100" in lines["tunnel"]
     assert "llama-swap" not in lines["tunnel"]
     assert "through the gate" in lines["brake-release"] and "directly" in lines["brake-release"]
+
+
+# make test's memory cap (Dan's decision, 2026-10-15): where /opt/local-ai exists, the Spark, pytest runs in a user
+# scope capped at memory_cap.CAP_GIB with no swap, after a check that the user manager answers; elsewhere (the Mac, CI's
+# runners) as before. SPARK_OPT on make's command line stands in for that folder, there or not.
+PYTEST = "uv run --frozen --project spark pytest"
+SCOPE = f"systemd-run --user --scope --quiet -p MemoryMax={CAP_GIB}G -p MemorySwapMax=0 --"
+ASK_MANAGER = "systemctl --user show --property=Version --value"
+
+
+def recipe(*args: str) -> list[str]:
+    # make -n prints nothing for the line that holds only the Spark's check, off the Spark (GNU make 4.3); blank lines
+    # are dropped, so the test reads the same wherever make prints one.
+    return [line for line in make("-n", "test", *args).stdout.splitlines() if line.strip()]
+
+
+def test_make_test_on_the_spark_checks_the_user_manager_then_runs_pytest_capped(tmp_path):
+    check, run = recipe(f"SPARK_OPT={tmp_path}")
+    assert check.startswith(f"{ASK_MANAGER} >/dev/null 2>&1 || ")
+    assert run == f"{SCOPE} {PYTEST} spark/tests"
+
+
+def test_make_test_off_the_spark_runs_as_before(tmp_path):
+    assert recipe(f"SPARK_OPT={tmp_path / 'absent'}") == [f"{PYTEST} spark/tests"]
+
+
+def test_make_test_follows_this_machine():
+    # The Spark's own form here, the Mac's and CI's there: what make test does depends only on /opt/local-ai.
+    run = f"{SCOPE} {PYTEST} spark/tests" if Path("/opt/local-ai").exists() else f"{PYTEST} spark/tests"
+    assert recipe()[-1] == run
+
+
+@pytest.mark.parametrize("spark", [True, False], ids=["the Spark", "elsewhere"])
+def test_make_test_passes_args_to_pytest_in_place_of_the_whole_suite(tmp_path, spark):
+    opt = tmp_path if spark else tmp_path / "absent"
+    run = recipe(f"SPARK_OPT={opt}", 'ARGS=spark/tests/test_x.py -k "a or b"')[-1]
+    assert run == (f"{SCOPE} " if spark else "") + f'{PYTEST} spark/tests/test_x.py -k "a or b"'
+
+
+@pytest.mark.parametrize("exit_code", [0, 1], ids=["passed", "failed"])
+def test_make_test_on_the_spark_runs_the_capped_line_and_keeps_its_status(tmp_path, exit_code):
+    env = fakes(tmp_path, systemctl="exit 0", **{"systemd-run": f"exit {exit_code}"}, uv="exit 0")
+    result = make("test", f"SPARK_OPT={tmp_path}", "ARGS=spark/tests/test_x.py -k name", env=env)
+    assert calls(tmp_path) == [ASK_MANAGER, f"{SCOPE} {PYTEST} spark/tests/test_x.py -k name"]
+    assert (result.returncode == 0) == (exit_code == 0), result.stderr
+
+
+def test_make_test_on_the_spark_without_a_user_manager_says_so_and_never_runs_uncapped(tmp_path):
+    # agent's clone too: a session with no user manager gets this line, never an uncapped run.
+    env = fakes(tmp_path, systemctl="echo 'Failed to connect to bus' >&2; exit 1", **{"systemd-run": "exit 0"},
+                uv="exit 0")
+    result = make("test", f"SPARK_OPT={tmp_path}", env=env)
+    assert calls(tmp_path) == [ASK_MANAGER]
+    assert result.returncode != 0
+    assert "make test: " in result.stderr and "Log in again" in result.stderr
+    assert "Failed to connect" not in result.stderr
+
+
+def test_make_test_off_the_spark_runs_pytest_alone(tmp_path):
+    env = fakes(tmp_path, systemctl="exit 0", **{"systemd-run": "exit 0"}, uv="exit 0")
+    assert make("test", f"SPARK_OPT={tmp_path / 'absent'}", env=env).returncode == 0
+    assert calls(tmp_path) == [f"{PYTEST} spark/tests"]

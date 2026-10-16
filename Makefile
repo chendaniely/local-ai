@@ -3,14 +3,26 @@
 
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
+
+# make test's memory cap (Dan's decision, 2026-10-15). On the Spark, where SPARK_OPT exists, pytest runs in a user scope
+# capped at TEST_CAP_GIB with no swap, so the kernel kills only a runaway run, never the models' memory; a session whose
+# user manager doesn't answer gets a line saying so, never an uncapped run. Elsewhere (the Mac, CI) it runs as before.
+# The size is spark/tests/memory_cap.py's CAP_GIB, which says why; spark/tests/conftest.py refuses an uncapped run on
+# the Spark. ARGS, when given, replaces spark/tests: make test ARGS="spark/tests/test_x.py -k name".
+SPARK_OPT    = /opt/local-ai
+TEST_CAP_GIB = $(shell sed -n 's/^CAP_GIB = \([0-9][0-9]*\)$$/\1/p' spark/tests/memory_cap.py)
+TEST_PYTEST  = uv run --frozen --project spark pytest $(if $(ARGS),$(ARGS),spark/tests)
+TEST_SCOPE   = systemd-run --user --scope --quiet -p MemoryMax=$(TEST_CAP_GIB)G -p MemorySwapMax=0 --
+TEST_MANAGER = systemctl --user show --property=Version --value >/dev/null 2>&1 || { echo "make test: your systemd user manager isn't answering, and on the Spark the tests run only under its $(TEST_CAP_GIB) GiB cap. Log in again, so the user manager starts, then run make test again." >&2; exit 1; }
 .DEFAULT_GOAL := help
 .PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients doctor
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
-test: ## Run the unit and render tests
-	uv run --frozen --project spark pytest spark/tests
+test: ## Run the unit and render tests, capped on the Spark; ARGS="…" runs some
+	$(if $(wildcard $(SPARK_OPT)),@$(TEST_MANAGER))
+	$(if $(wildcard $(SPARK_OPT)),$(TEST_SCOPE) $(TEST_PYTEST),$(TEST_PYTEST))
 
 hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks 8.19+ and your denylist)
 	@command -v gitleaks >/dev/null || { echo "install gitleaks first (website/how-to/leak-guards.md)"; exit 1; }

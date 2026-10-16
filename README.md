@@ -445,6 +445,11 @@ the plan it would come in, and what was left out and why.
   by hand in `stack/versions.yaml` unless an urgent fix needs it sooner (Dan's decision,
   2026-09-28).
   Full rules for all of the above in [`CLAUDE.md`](CLAUDE.md).
+- **Test runs on the Spark are capped at 4 GiB.** `make test` runs them under the cap, and
+  `make test ARGS="…"` runs some; the tests themselves refuse an uncapped run there, for every
+  account, `agent` included, so a runaway test can't take the models' memory (my decision,
+  2026-10-15, the day one reached 105 GiB). The Mac and CI run them as before. Full rule in
+  [`CLAUDE.md`](CLAUDE.md).
 
 ## My environment (personal)
 

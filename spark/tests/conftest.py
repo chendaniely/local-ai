@@ -4,6 +4,17 @@ import os
 
 import pytest
 
+import memory_cap
+
+
+def pytest_sessionstart(session):
+    """On the Spark, a run without a memory cap stops here, before any test runs, for every account: a runaway test
+    shares the one memory pool with the models (memory_cap.py says why, and what counts as capped). `make test` runs
+    capped. No variable or flag turns this off."""
+    words = memory_cap.refusal()
+    if words is not None:
+        pytest.exit(words, returncode=pytest.ExitCode.USAGE_ERROR)
+
 
 @pytest.fixture(autouse=True)
 def fake_environment(monkeypatch, tmp_path_factory):
