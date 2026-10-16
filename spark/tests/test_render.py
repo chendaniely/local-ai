@@ -163,6 +163,55 @@ def test_open_webuis_lockdown_keeps_its_values(files):
     assert {name: webui.get(name) for name in LOCKDOWN} == LOCKDOWN
 
 
+# Phase 2a's Task 37 (Dan's decision, 2026-10-07): the web containers run as root on the host's network, and with
+# Docker's default capabilities either could bind a free port below 1024 on 127.0.0.1. So each drops them all, and a
+# capability comes back only once its container is shown to need it on the box, with what failed without it.
+
+def test_the_web_containers_drop_every_capability(files):
+    services = yaml.safe_load(files["compose/compose.yaml"])["services"]
+    # A new service gets the same treatment, so this fails until it does.
+    assert set(services) == {"open-webui", "searxng"}
+    for name, service in services.items():
+        assert service.get("cap_drop") == ["ALL"], name
+
+
+def capabilities_added(text: str) -> list[tuple[str, str]]:
+    """Each capability a Compose file's `cap_add:` lists, with the comment on its line ('' for none). Only a block
+    list, an entry to a line, lets each entry carry its own reason, so a flow list (`cap_add: [X]`) is refused."""
+    found, lines = [], text.splitlines()
+    for i, line in enumerate(lines):
+        key = re.match(r"\s*cap_add:(.*)", line)
+        if not key:
+            continue
+        assert key[1].split("#", 1)[0].strip() == "", f"cap_add as a flow list, its entries can't each say why: {line}"
+        for item in lines[i + 1:]:
+            entry = re.fullmatch(r"\s*-\s*([^\s#]+)\s*(?:#\s*(.*?))?\s*", item)
+            if not entry:
+                break
+            found.append((entry[1], entry[2] or ""))
+    return found
+
+
+def test_each_capability_added_back_carries_its_reason(files):
+    text = files["compose/compose.yaml"]
+    services = yaml.safe_load(text)["services"]
+    added = capabilities_added(text)
+    # The lines read here are the entries Compose reads, so an entry this misses can't pass unread.
+    assert sorted(cap for cap, _ in added) == sorted(cap for s in services.values() for cap in s.get("cap_add", []))
+    assert [cap for cap, reason in added if not reason] == []
+
+
+# Phase 1 (Task 13, 2026-09-28) saw duckduckgo take 2.7 s from the Spark against SearXNG's default 3 s, and the cold
+# first search found nothing.
+SLOWEST_ENGINE_S = 2.7
+
+
+def test_searxng_waits_longer_than_its_slowest_engine():
+    settings = yaml.safe_load(rendered()["compose/searxng/settings.yml"])
+    timeout = (settings.get("outgoing") or {}).get("request_timeout")
+    assert isinstance(timeout, (int, float)) and timeout > SLOWEST_ENGINE_S, timeout
+
+
 def test_llama_swap_listens_on_localhost_only():
     assert "-listen 127.0.0.1:9100" in rendered()["systemd/local-ai-llama-swap.service"]
 

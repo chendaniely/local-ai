@@ -45,8 +45,8 @@ flowchart TB
   subgraph spark["brightroar · the Spark"]
     tss["tailscale serve,<br/>HTTPS 443"]
     guestui["guest web UI<br/>events only · Phase 6"]:::planned
-    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose"]
-    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose"]
+    owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped"]
+    searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
     litellm["LiteLLM, a key per app<br/>Phase 3"]:::planned
     swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys"]

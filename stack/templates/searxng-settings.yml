@@ -7,3 +7,8 @@ search:
   formats:
     - html
     - json
+outgoing:
+  # Phase 1 saw duckduckgo time out from the Spark, taking 2.7 s against the default 3 s, and a cold first search
+  # find nothing (changelog, 2026-09-28; phase-1-retro.md). Each engine waits this long, about twice that, unless it
+  # has a timeout of its own.
+  request_timeout: 6.0
