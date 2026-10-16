@@ -26,9 +26,10 @@ date: 2026-10-07
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
 > same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
-> 1.**~~ **Done (2026-10-07 to 16):** Tasks 1 and 3–37, each reviewed (Task 36, Dan's bootstrap re-run and 2a's secret files, run on the box 2026-10-15; Task 37, the web containers' `cap_drop` and the coder's full context deployed from `main` on 2026-10-15, and `main` merged into `phase-2a` at `c97bd82`, pushed from the Mac). ~~**Task 2 [Dan]** runs side by
+> 1.**~~ **Done (2026-10-07 to 16):** Tasks 1 and 3–38, each reviewed (Task 36, Dan's bootstrap re-run and 2a's secret files, run on the box 2026-10-15; Task 37, the web containers' `cap_drop` and the coder's full context deployed from `main` on 2026-10-15, and `main` merged into `phase-2a` at `c97bd82`, pushed from the Mac; Task 38, the cutover, on 2026-10-16: the front, the gate and llama-swap on 900 serving since 10:18, every check of Steps 6 and 7 passed, recorded at `25b953a`). ~~**Task 2 [Dan]** runs side by
 > side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
-> before Task 27 starts.~~ **Next: Task 38, the cutover.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> before Task 27 starts.~~ ~~**Next: Task 38, the cutover.**~~ **Next: Task 39, a cold boot under
+> llama-swap's sandbox.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`. *(2026-10-16, Dan's decision, at the cutover: from the cutover
 > until 2a merges, the other way round. Deploys, urgent fixes included, go from the `phase-2a`
 > clone, and from `main` only Task 38's rollback; *Deploys during 2a* has it.)*
