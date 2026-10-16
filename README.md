@@ -134,14 +134,23 @@ when that file was retired on 2026-09-23.
   `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
   Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before): Open WebUI
   **v0.11.4** and SearXNG **2026.9.23-3cd69d30e**, each at the digest `stack/versions.yaml` pins,
-  which root's Compose file names.
+  which root's Compose file names. *(Re-run 2026-10-15 for Phase 2a, Task 36. It added two
+  identities, `spark-front` and `spark-pull`, system users with no login. The polkit rule now
+  covers seven `local-ai-*` services. `agent`'s logins and user manager get an OOM score of 1000,
+  set by root, and `/etc/cron.deny` names `agent`. earlyoom runs without `--prefer`. See the
+  changelog.)*
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
   2026-09-24). The kernel's full release string is `7.0.0-1019-nvidia` (recorded 2026-09-25). The
   set moves only on upgrade day, which updates this line.
 - **Secret files** for Phase 1 are in `/etc/local-ai/secrets/` (`llama-swap.env`,
-  `open-webui.env`, `searxng.env`, `hf.env`; `640 root:spark`), recorded by name in the vault.
+  `open-webui.env`, `searxng.env`, `hf.env`; ~~`640 root:spark`~~), recorded by name in the vault.
+  *(Since 2026-10-15, Phase 2a's Task 36: the folder is `root:root 0700`, and every file in it is
+  `0600 root:root`. Phase 2a's files are there too: `front.key`, `gate.key`, `brake.key`,
+  `internal-keys.env` and `client-keys.sha256`. Phase 1's stay for the rollback. ntfy's come in
+  Phase 5. The private key list, `/etc/local-ai/keys.yaml`, is `0640 root:spark-admin`: key names,
+  their groups and labels, private but not secret.)*
 - **SSH takes keys only** (2026-09-25): `/etc/ssh/sshd_config.d/10-local-ai.conf` turns password
   and keyboard-interactive logins off, and `agent`'s sessions never get a forwarded SSH agent
   ([SSH from the Mac](website/how-to/ssh.md#keys-only)). The one-time public IPv6 check is done;
@@ -182,7 +191,9 @@ when that file was retired on 2026-09-23.
   Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
   model, and Open WebUI's task model, whose task calls run without thinking),
   `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
-  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`,
+  `qwen3.6-35b-a3b` (on demand). Their five files, about 36 GiB, are in `/var/lib/local-ai/hf`
+  *(since 2026-10-15, Task 36: `spark-pull:spark 2750`, read by the engines through the group; 55G,
+  with `qwen3.8-27b`'s files beside these)*,
   with 752 GiB of disk left. Open WebUI has its admin account, Dan's, and sign-up is closed.
   `make doctor`: 15 of 15. Since 2026-09-28 (Task 14), `tailscale serve` also serves Open WebUI to
   the tailnet over HTTPS, on the Spark's tailnet name, which stays out of this repo. Gemma runs
@@ -471,4 +482,6 @@ a leaked credential. Full rule in [`CLAUDE.md`](CLAUDE.md).
 one secret file per service on the Spark (2026-09-24), the denylist the leak-check hooks read (one
 on each machine), and the Tailscale ACL policy. A private values file holding the NAS and LAN
 addresses the configs need is still to come. The vault's entry note records each one — by
-location, and by reference for anything secret — when it is created.
+location, and by reference for anything secret — when it is created. *(Since 2026-10-15, Phase 2a:
+also the private key list on the Spark, `/etc/local-ai/keys.yaml`. It holds each client key's name,
+group and label, private but not secret, and never goes in this repo.)*

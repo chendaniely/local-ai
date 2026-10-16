@@ -80,7 +80,9 @@ created during first-time setup. That vault has no git remote.
 Phase 0 added a few more private files, all outside the repo: one secret file per service on the
 Spark, the denylist the leak-check hooks read (one on each machine), and the Tailscale ACL policy.
 A private values file holding the NAS and LAN addresses the configs need is still to come. The
-vault's entry note records each one when it is created.
+vault's entry note records each one when it is created. Phase 2a adds the private key list,
+`/etc/local-ai/keys.yaml` on the Spark (2026-10-15): the client keys' names, groups and labels,
+private but not secret, and never in this repo.
 
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value

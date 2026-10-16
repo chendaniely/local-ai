@@ -8,6 +8,48 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-15 — Bootstrap's Phase 2a re-run, and 2a's secret files (Phase 2a, Task 36)
+
+**Run** by Dan, **on the Spark**, from the `phase-2a` clone at `74f556e`. The brake and llama-swap
+were stopped first, since the cache's move refuses while anything runs as `spark`. Then:
+`make bootstrap-dry-run`, `make bootstrap`, and the stack started again. A second SSH session
+stayed open until fresh logins worked: Dan's, and `agent`'s, which read `1000` from
+`/proc/self/oom_score_adj`, so the new hook ran. sshd's old PAM file is kept in `/var/backups`.
+
+What changed:
+- **New accounts:** `spark-front` and `spark-pull`, system users that can't log in. `spark-front`
+  is in `spark-users`, and `spark-admin` still holds only Dan.
+- **The model cache** `/var/lib/local-ai/hf` is now `spark-pull:spark 2750`. The engines read it
+  through the group, and no file is unreadable to it. It holds 55G: `qwen3.8-27b`'s files and
+  `qwen3.6-35b-a3b`'s, which are kept. `hf/tmp` stays `spark:spark 755` until the cutover.
+- **New folders:**
+  - the gate's, launch's (with `tickets`, `started` and `refusals`) and whisper's temporary
+    folder, each `spark:spark 750`;
+  - the pull's cache, `spark-pull:spark-pull 750`;
+  - the brake's folder, `spark:spark-admin 2770`.
+- **Root's scripts:** the failure notifier (`/usr/local/libexec/local-ai-notify`) and `agent`'s OOM
+  hook (`/usr/local/libexec/local-ai-agent-oom`) are installed.
+- **`agent`'s OOM score:** sshd's PAM stack runs the hook at line 19, before its first session
+  line, at login only (`type=open_session`). A drop-in for `agent`'s user manager sets the same
+  score. `/etc/cron.deny` names `agent`.
+- **earlyoom** runs without `--prefer`, with its other arguments as before.
+- **The polkit rule** covers seven `local-ai-*` services: llama-swap, the brake, Compose, the
+  pull, the front, the gate and the brake's drill.
+- **The secrets folder** is `root:root 0700`, every file in it `0600 root:root`.
+  - Phase 2a's files, made by Dan through secret-files.md's steps 11–13: `front.key`, `gate.key`,
+    `brake.key`, `internal-keys.env` and `client-keys.sha256`.
+  - Phase 1's files stay for the rollback: `llama-swap.env`, `open-webui.env`, `searxng.env` and
+    `hf.env`.
+  - No ntfy file yet: Phase 5's.
+- **The private key list,** `/etc/local-ai/keys.yaml`, is `0640 root:spark-admin`. It names
+  three keys, in the `dan` and `agent` groups. Its names match the digests file's: secret-files.md's
+  step 18 says so, and doctor's *key list* check passes when run alone.
+
+The stack still serves in Phase 1's layout until the cutover (Task 38). Until then, `make pull`
+can't add to the cache: root's copy of the pull's unit still runs as `spark`.
+
+---
+
 ## 2026-10-05 — Dependabot's hatchling bump deployed (recorded 2026-10-07)
 
 **Deployed** at 03:19 by a `make apply` from the clone, and not recorded until the
