@@ -9055,18 +9055,21 @@ git commit -m "docs(machine): 🤖 record a cold boot under llama-swap's sandbox
 the drills lower memory (Tasks 40, 47, 48 and 50), sized from `MemAvailable` read at the time,
 never a fixed size (the controller's ruling, 2026-10-07).
 
-- `main(argv)` with `--leave` (GiB, required: the `MemAvailable` it brings the box down to, never
-  below), `--floor` (GiB, default 24: the reserve, 4 above the brake's line; a `--leave` under it
-  is refused, exit 2), `--step-gib` (0.25), `--pause-s` (2.5) and `--hold-s` (how long it holds at
-  `--leave` before it frees everything and exits 0).
+- `main(argv)` with `--leave` (GiB, required: the `MemAvailable` it brings the box down to, ~~never
+  below~~ *within a step above it, though other processes can still take memory below it, and the
+  floor is the guard: 2026-10-16, below*), `--floor` (GiB, default 24: the reserve, 4 above the
+  brake's line; a `--leave` under it is refused, exit 2), `--step-gib` (0.25), `--pause-s` (2.5)
+  and `--hold-s` (how long it holds at `--leave` before it frees everything and exits 0).
 - `grow(read_available, take, free_all, *, leave_gib, floor_gib, step_gib, pause_s, sleep) ->
-  Result(held_gib, stopped: "leave" | "not_reflected" | "floor", detail)` — before each step it
+  Result(held_gib, stopped: "leave" | "not_reflected" | "floor", detail)` *(and `"under_leave"`,
+  2026-10-16: below)* — before each step it
   re-reads `MemAvailable`, and stops growing when that, less a step, would pass under `--leave`; a
   step is anonymous memory with every page written; after each, it re-reads every 250 ms, for up
   to 5 s, until `MemAvailable` has fallen since its start by at least 90% of all it holds, and
   otherwise frees everything and stops `not_reflected`, exit 3. While it holds, a reading under
   `--floor` frees everything at once and stops `floor`, exit 3. It prints each step's total and
-  `MemAvailable`, and frees everything on every way out, Ctrl-C and SIGTERM included.
+  `MemAvailable`, and frees everything on every way out, Ctrl-C and SIGTERM included *(and SIGHUP
+  and Ctrl-Z, 2026-10-16: below)*.
 - The pace: 0.25 GiB every 2.5 s is 0.1 GiB/s, and one step inside the rate watch's 2 s window reads
   as under 0.2 GiB/s, which Task 23's watch ~~(10 s ahead, the brake at 20) takes for a breach only
   under 22 GiB available, below the floor~~ never takes for a breach: it acts only on a fall of
@@ -9074,6 +9077,30 @@ never a fixed size (the controller's ruling, 2026-10-07).
   2026-10-14, the controller's ruling, at Task 23's re-review; the controller's ruling at Task 23's review first added this beside the
   struck clause)*. So a drill trips the brake only where it raises the brake's thresholds on
   purpose (Task 48). Its pace test reads `MIN_FALL_GIB` too, through `predict_breach`'s default.
+- *(2026-10-16, the controller's rulings at Task 40's two reviews, as built in `16ce2e4`, `5151e9f`
+  and the commit after them:)*
+  - **The floor can only be raised** (`16ce2e4`): a `--floor` under 24 is refused, exit 2, nothing
+    taken, as a `--leave` under the floor is. Every drill leaves 24 or more.
+  - **The pace can only be slowed:** a `--step-gib` over 0.25 or a `--pause-s` under 2.5 is
+    refused, exit 2, nothing taken. The pace test checks only 0.25 GiB steps 2.5 s apart against
+    the rate watch, and a bigger step or a shorter pause could read to it as a fall.
+  - **`--leave`:** the hog stops anywhere within a step above it, and other processes can still
+    take memory below it; the floor is the guard. `MemAvailable` already under `--leave` at the
+    start takes nothing and stops `under_leave`, exit 3; at `--leave` or within a step above it,
+    nothing is taken, exit 0.
+  - **The floor's reading:** while it holds anything, the hog reads `MemAvailable` every 0.25 s:
+    after a step, through each 2.5 s pause, which it sleeps in 0.25 s slices, and through the
+    hold. A reading under the floor frees everything at once.
+  - **Every way out:** SIGHUP (exit 129) and Ctrl-Z (SIGTSTP, exit 148) free everything, as Ctrl-C
+    (130) and SIGTERM (143) do. Ctrl-Z ends the hog rather than pausing it, since a paused hog
+    would hold its memory with nothing watching the floor. Under `uv run`, Ctrl-Z also stops uv
+    itself (measured on the box, uv 0.12.18): `fg` lets it exit, 148, or `kill %1` ends it, and
+    the memory is freed either way. uv forwards SIGINT, SIGHUP and SIGTERM, so a signal sent to
+    the process group reaches the hog twice; a second signal while it frees is ignored. An error
+    (an allocation refused, `/proc/meminfo` unreadable) frees everything and exits 1. `--help`
+    lists the exit codes.
+  - **`--hold-s` defaults to 3600 s,** an hour, so a hog left running ends by itself. S03 and S05
+    give none and end it with Ctrl-C.
 
 **Tests** (`spark/tests/test_hog.py`, the script loaded from its path, a stand-in reader and
 allocator):
@@ -9092,6 +9119,15 @@ allocator):
   `brake.UNLOAD_LEAD_S` and the registry's `brake_gib` → never true; so Task 47's new constants
   re-check it (`brake.MIN_FALL_GIB` among them, `predict_breach`'s default: added 2026-10-14, the
   controller's ruling, at Task 23's review).
+- *(Added 2026-10-16, at Task 40's two reviews, as built.)* The six gained cases: a step that
+  shows a second late; a `--floor` under 24, and a `--leave` under a raised floor; a fall seen
+  right after a step, in a pause, and while it holds, each read within 250 ms; SIGHUP and Ctrl-Z
+  among the ways out. Five more: `test_a_faster_pace_is_refused`,
+  `test_nothing_is_taken_at_or_under_leave`, `test_its_help_lists_every_exit_code`,
+  `test_a_second_signal_while_it_frees_changes_nothing`, and `test_its_memory_is_resident_and_freed`,
+  the one test that takes real memory: 4 MiB through the script's own allocator, refusing any
+  bigger mapping. The pace test's control, a hog fifty times as fast that the watch does catch,
+  runs through `grow`, since `main` refuses that pace.
 
 **Steps:**
 
@@ -9111,11 +9147,18 @@ git commit -m "feat(stack): 🤖 one memory hog for the drills, sized from MemAv
 
 ```bash
 cat /proc/self/oom_score_adj
-python3 -c 'v = int(open("/proc/self/oom_score_adj").read()); open("/proc/self/oom_score_adj", "w").write(str(v - 1))' 2>&1 | tail -1
+python3 -c 'v = int(open("/proc/self/oom_score_adj").read()); f = open("/proc/self/oom_score_adj", "w"); f.write(str(v - 1)); f.close(); print("now", open("/proc/self/oom_score_adj").read().strip())' 2>&1 | tail -1
 ```
 
-  Expected: Task 28's value, then `PermissionError: [Errno 13] Permission denied`. (As you, today,
-  the second line succeeds: an ordinary process may lower its own score until root sets a floor.)
+  Expected: Task 28's value, then `PermissionError: [Errno 13] Permission denied`. ~~(As you, today,
+  the second line succeeds: an ordinary process may lower its own score until root sets a floor.)~~
+  *(Corrected 2026-10-16, checked as Dan that day. The block's second line was
+  ~~`python3 -c 'v = int(open("/proc/self/oom_score_adj").read()); open("/proc/self/oom_score_adj", "w").write(str(v - 1))' 2>&1 | tail -1`~~,
+  which can't show a refusal: CPython makes the buffered write only as it finalizes the file, and
+  outside dev mode it drops an error from that close silently. As Dan, writing -500 that way exited
+  0 with no output. The line above closes the file itself, then reads the score back. And as Dan a
+  lowering is refused too: Dan's score is 0, and an unprivileged process can't go below 0 either.
+  Raising succeeds: the corrected line, with `v + 1`, printed `now 1`.)*
   Inside tmux, also the server's own. **On the Spark, as `agent`**, in tmux:
 
 ```bash
@@ -9140,7 +9183,10 @@ d=$(mktemp -d) && chmod 755 "$d" && install -m 644 stack/measure/hog.py "$d/hog.
   in `agent`'s pane (the hog frees everything), and, as you, `rm -r` the folder. *(2026-10-14, Task
   28, the controller's ruling: `earlyoom.default` has no `--prefer` from then on, so the dry run
   takes its `--avoid` alone. A hog of about 12 GiB at 1000 scores about 1392, against 1344 for the
-  coder's engine at 2% of RAM; the script's comment has the arithmetic.)*
+  coder's engine at 2% of RAM; the script's comment has the arithmetic.)* *(2026-10-16, at Task 40:
+  12 GiB exactly scores 1391; 1392 is a tenth of RAM, 12.16 GiB. The hog stops within a step above
+  `--leave`, so at `MemAvailable` less 12 it holds at most 12 GiB and scores about 1390 to 1391,
+  still about 47 above the coder's engine.)*
 - [ ] **Step 5: Stop and ask Dan** if either check fails: whether Task 28's hook comes out in a
   revert commit, and the item moves to 2b with a plan revision, is his call, since a check run in
   a tmux server older than the hook reads a working hook as a broken one.

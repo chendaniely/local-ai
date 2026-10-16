@@ -21,7 +21,10 @@ frees everything and exits 0. On the Spark, from the repo's root:
   over 0.25 or a --pause-s under 2.5 is refused, with nothing taken (exit 2).
 - It frees everything on every way out: the hold's end, a stop, an error (exit 1), Ctrl-C (130), SIGHUP (129), SIGTERM
   (143), and Ctrl-Z (148), which ends it rather than pausing it, since a paused hog would hold its memory with nothing
-  watching the floor. earlyoom would pick the hog first (the comment before Memory has the arithmetic): it sends
+  watching the floor. Under uv run, Ctrl-Z also stops uv itself, which fg lets exit (or kill %1 ends); the memory is
+  freed either way. A second signal while it frees is ignored: uv forwards SIGINT, SIGHUP and SIGTERM, so one sent to
+  the process group reaches the hog twice. earlyoom would pick the hog first (the comment before Memory has the
+  arithmetic): it sends
   SIGTERM below 12 GiB available, which the hog takes as above, and SIGKILL only below 9 GiB
   (stack/host/earlyoom.default), and the kernel frees a killed process's memory as it goes.
 - It prints each step's total and MemAvailable, in GiB. --help lists the exit codes.
@@ -66,10 +69,22 @@ REFLECTED_SHARE = 0.9  # what share of all it holds MemAvailable must have falle
 EXIT_HELD, EXIT_ERROR, EXIT_REFUSED, EXIT_STOPPED = 0, 1, 2, 3
 EXIT_CTRL_C = 130
 # Each of these ends the hog as Ctrl-C does, and it exits 128 + the signal's number. Ctrl-Z (SIGTSTP) among them (the
-# controller's ruling, 2026-10-16): a hog paused by it would hold its memory with no reading watching the floor. uv
-# doesn't stop on it either: checked with a stand-in script under `uv run --no-project` (uv 0.12.18, 2026-10-16), uv
-# exited with the stand-in's 148.
+# controller's ruling, 2026-10-16): a hog paused by it would hold its memory with no reading watching the floor.
+# Under uv run, Ctrl-Z reaches uv too, in the same process group, and uv takes SIGTSTP's default and stops. Measured on
+# brightroar in a terminal, uv 0.12.18, at Task 40's re-review (2026-10-16): uv in state T; the hog freed everything,
+# printed its words and exited 148; bash showed `[1]+ Stopped uv run …` and $? 148, its own code for a stopped job; uv
+# exited 148 only after fg. kill %1 ends it instead. The memory is freed either way, since the hog itself has exited.
+# (Corrected the same day. This said uv doesn't stop, from a check that sent SIGTSTP to a process group no terminal
+# controlled: the kernel discards a stop signal sent to an orphaned process group, so that check couldn't show it.)
 STOP_SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGTSTP)
+
+
+def _ignore_stops() -> None:
+    """On its way out the hog ignores Ctrl-C and the stop signals, so a second one can't cut its freeing short. Under uv
+    run it's routine: uv forwards SIGINT, SIGHUP and SIGTERM to the hog, so one sent to the process group (Ctrl-C, a
+    hangup, pkill, a scope's stop) reaches it twice (Task 40's re-review, 2026-10-16). main puts the handlers back."""
+    for signum in (signal.SIGINT, *STOP_SIGNALS):
+        signal.signal(signum, signal.SIG_IGN)
 
 
 @dataclass(frozen=True)
@@ -190,10 +205,16 @@ def grow(read_available: Callable[[], float], take: Callable[[float], None], fre
             free_all()
             return Result(held, "floor", _under_the_floor(available, floor_gib, held))
         if not held and available < leave_gib:
+            if available < floor_gib:  # no --leave the hog would take could help: say what's wrong instead
+                return Result(held, "under_leave",
+                              f"MemAvailable is {available:.2f} GiB, already under --leave {leave_gib:.2f} GiB and "
+                              f"under {_the_floor(floor_gib)}; nothing taken. Something else holds that memory: check "
+                              "what (spark status for the models, top -o %MEM for the rest) before any drill.")
             return Result(held, "under_leave",
                           f"MemAvailable is {available:.2f} GiB, already under --leave {leave_gib:.2f} GiB; nothing "
                           "taken. Something else holds memory the drill didn't count on: read MemAvailable again "
-                          "(grep MemAvailable /proc/meminfo), and give a --leave under it or find what holds it.")
+                          "(grep MemAvailable /proc/meminfo), and give a --leave under it but no lower than "
+                          f"{floor_gib:g} GiB, the floor, or find what holds it.")
         if available - step_gib < leave_gib:
             if not held:
                 return Result(held, "leave", f"MemAvailable is {available:.2f} GiB, already within a step of --leave "
@@ -259,7 +280,8 @@ EXIT_CODES = f"""exit status:
   {128 + signal.SIGHUP}  SIGHUP; everything freed
   {EXIT_CTRL_C}  Ctrl-C; everything freed
   {128 + signal.SIGTERM}  SIGTERM, earlyoom's first signal too; everything freed
-  {128 + signal.SIGTSTP}  Ctrl-Z, which ends the hog rather than pausing it; everything freed"""
+  {128 + signal.SIGTSTP}  Ctrl-Z, which ends the hog rather than pausing it; everything freed. Under uv run,
+       uv itself stays stopped: fg lets it exit {128 + signal.SIGTSTP}, or kill %1 ends it"""
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -268,9 +290,10 @@ def _parser() -> argparse.ArgumentParser:
         description="The drills' memory hog: takes memory until MemAvailable is down to --leave, holds it,\nthen "
                     "frees everything.")
     parser.add_argument("--leave", type=_above_zero, required=True, metavar="GIB",
-                        help="the MemAvailable to bring the box down to. It stops a step short of it, and other "
-                             "processes can still take memory below it: the floor is the guard, and a reading under "
-                             "--floor frees everything (exit 3), so a --leave equal to --floor ends at the first dip")
+                        help="the MemAvailable to bring the box down to. It stops anywhere within a step above it, and "
+                             "other processes can still take memory below it: the floor is the guard, and a reading "
+                             "under --floor frees everything (exit 3), so a --leave equal to --floor ends at the first "
+                             "dip")
     parser.add_argument("--floor", type=_above_zero, default=FLOOR_GIB, metavar="GIB",
                         help=f"while it holds anything, a reading under this frees everything at once. It can only be "
                              f"raised, and a --leave under it is refused (default {FLOOR_GIB:g}, the reserve)")
@@ -296,14 +319,14 @@ def _refusal(args: argparse.Namespace) -> str | None:
                 f"{args.floor:g} or more.")
     faster = []
     if args.step_gib > STEP_GIB:
-        faster.append(f"--step-gib {args.step_gib:g}")
+        faster.append(f"--step-gib {args.step_gib:g} is a bigger step than {STEP_GIB:g} GiB")
     if args.pause_s < PAUSE_S:
-        faster.append(f"--pause-s {args.pause_s:g}")
+        faster.append(f"--pause-s {args.pause_s:g} {'a' if faster else 'is a'} shorter pause than {PAUSE_S:g} s")
     if faster:
-        return (f"{' and '.join(faster)} would take memory faster than {STEP_GIB:g} GiB every {PAUSE_S:g} s, a pace "
-                f"the brake's rate watch (Task 23) could read as a fall and act on; nothing taken. Leave "
-                f"{'them' if len(faster) > 1 else 'it'} out, or slow the pace: steps of {STEP_GIB:g} GiB or less, "
-                f"pauses of {PAUSE_S:g} s or more.")
+        return (f"{', and '.join(faster)}. The pace test checks {STEP_GIB:g} GiB steps {PAUSE_S:g} s apart against "
+                f"the brake's rate watch (Task 23), and a bigger step or a shorter pause could read to it as a fall; "
+                f"nothing taken. Leave {'them' if len(faster) > 1 else 'it'} out, or slow the pace: steps of "
+                f"{STEP_GIB:g} GiB or less, pauses of {PAUSE_S:g} s or more.")
     return None
 
 
@@ -318,10 +341,11 @@ def main(argv: list[str] | None = None, *, read_available: Callable[[], float] |
     read_available = read_available_gib if read_available is None else read_available
     memory = Memory() if memory is None else memory
     sleep = time.sleep if sleep is None else sleep
-    handlers = {}
+    # Every handler the hog changes, SIGINT's too (_ignore_stops sets it on the way out), for finally to put back.
+    handlers = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, *STOP_SIGNALS)}
     try:
         for signum in STOP_SIGNALS:
-            handlers[signum] = signal.signal(signum, _stop)
+            signal.signal(signum, _stop)
         result = grow(read_available, memory.take, memory.free_all, leave_gib=args.leave, floor_gib=args.floor,
                       step_gib=args.step_gib, pause_s=args.pause_s, sleep=sleep)
         if result.stopped == "leave" and result.held_gib:
@@ -334,26 +358,32 @@ def main(argv: list[str] | None = None, *, read_available: Callable[[], float] |
         print(f"hog: {result.detail}", file=sys.stderr)
         return EXIT_STOPPED
     except Stopped as stop:
+        _ignore_stops()
         memory.free_all()
         if stop.signum == signal.SIGTSTP:
             print("hog: Ctrl-Z ends the hog rather than pausing it, since a paused hog would hold its memory with "
-                  "nothing watching the floor. It freed everything it held and stopped; run it again to go on.",
-                  file=sys.stderr)
+                  "nothing watching the floor. It freed everything it held and stopped. Under uv run, uv itself is "
+                  f"left stopped: fg lets it exit ({128 + stop.signum}), or kill %1 ends it; the memory is freed "
+                  "either way. Run it again to go on.", file=sys.stderr)
         else:
             print(f"hog: stopped by {stop.name}, and freed everything it held.", file=sys.stderr)
         return 128 + stop.signum
     except KeyboardInterrupt:
+        _ignore_stops()
         memory.free_all()
         print("hog: stopped by Ctrl-C, and freed everything it held.", file=sys.stderr)
         return EXIT_CTRL_C
     except OSError as err:
+        _ignore_stops()
         memory.free_all()
         print(f"hog: stopped on an error, and freed everything it held: {err}", file=sys.stderr)
         return EXIT_ERROR
     finally:
+        _ignore_stops()
         memory.free_all()
         for signum, handler in handlers.items():
-            signal.signal(signum, handler)
+            if handler is not None:  # None: a handler not set from Python, which can't be put back from here
+                signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

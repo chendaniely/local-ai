@@ -1,10 +1,11 @@
 """Task 40: the drills' memory hog, stack/measure/hog.py, loaded from its path. Every reading, step and pause here is a
 stand-in's, but for test_its_memory_is_resident_and_freed, which takes 4 MiB of real memory through the script's own
-allocator, under make test's 4 GiB cap. The fixture swaps the script's own reader and allocator for ones that fail the
+allocator, refusing any mapping bigger, under make test's 4 GiB cap. The fixture swaps the script's own reader and allocator for ones that fail the
 test if anything reaches them. A stand-in box allows a bounded number of steps, readings and seconds, so a broken loop
 fails within those bounds instead of running on toward the cap."""
 
 import importlib.util
+import mmap
 import os
 import re
 import signal
@@ -141,15 +142,21 @@ def test_a_leave_under_the_floor_is_refused(hog, capsys, argv, named, reserve):
     assert named in words and ("the reserve every load keeps free" in words) == reserve
 
 
-@pytest.mark.parametrize("argv", [["--step-gib", "0.5"], ["--pause-s", "2"], ["--step-gib", "0.3", "--pause-s", "1"]],
-                         ids=["bigger-steps", "shorter-pauses", "both"])
-def test_a_faster_pace_is_refused(hog, capsys, argv):
-    # The pace can only be slowed, as the floor can only be raised (the controller's ruling, 2026-10-16).
+@pytest.mark.parametrize("argv, named", [
+    (["--step-gib", "0.5"], ["--step-gib 0.5 is a bigger step than 0.25 GiB"]),
+    (["--pause-s", "2"], ["--pause-s 2 is a shorter pause than 2.5 s"]),
+    (["--step-gib", "0.3", "--pause-s", "1"], ["--step-gib 0.3 is a bigger step", "--pause-s 1 a shorter pause"]),
+    (["--step-gib", "0.5", "--pause-s", "10"], ["--step-gib 0.5 is a bigger step than 0.25 GiB"]),
+], ids=["bigger-steps", "shorter-pauses", "both", "bigger-steps-longer-pauses"])
+def test_a_faster_pace_is_refused(hog, capsys, argv, named):
+    # The pace can only be slowed, as the floor can only be raised (the controller's ruling, 2026-10-16): a bigger step
+    # or a shorter pause than the one the pace test checks, even one slower on average (0.5 GiB every 10 s), which the
+    # words mustn't call faster.
     box = Box(74.0)
     assert run(hog, box, "--leave", "48", "--hold-s", "0", *argv) == 2
     assert box.steps == [] and box.reads == []
     words = capsys.readouterr().err
-    assert "rate watch" in words and all(option in words for option in argv[::2])
+    assert "rate watch" in words and "faster than" not in words and all(part in words for part in named)
     # A slower one runs.
     box = Box(30.0)
     assert run(hog, box, "--leave", "28", "--step-gib", "0.125", "--pause-s", "5", "--hold-s", "0") == 0
@@ -157,18 +164,25 @@ def test_a_faster_pace_is_refused(hog, capsys, argv):
 
 
 @pytest.mark.parametrize("start, code, words", [
+    (23.5, 3, "already under --leave 48.00 GiB and under the floor, 24 GiB, the reserve every load keeps free; "
+              "nothing taken"),
     (47.75, 3, "already under --leave 48.00 GiB; nothing taken"),
     (48.0, 0, "already within a step of --leave 48.00 GiB; nothing taken"),
     (48.2, 0, "already within a step of --leave 48.00 GiB; nothing taken"),
-], ids=["under", "at", "within-a-step"])
+], ids=["under-the-floor", "under", "at", "within-a-step"])
 def test_nothing_is_taken_at_or_under_leave(hog, capsys, start, code, words):
     # Under --leave already, something else holds memory the drill didn't expect: a stop (the controller's ruling,
-    # 2026-10-16). At it, or within a step above it, the drill's moment is already there.
+    # 2026-10-16). At it, or within a step above it, the drill's moment is already there. The next step it gives is
+    # one the hog would take: a lower --leave only down to the floor, and none at all under the floor.
     box = Box(start)
     assert run(hog, box, "--leave", "48") == code
     assert box.steps == []
     out = capsys.readouterr()
     assert words in (out.err if code else out.out)
+    if start == 47.75:
+        assert "give a --leave under it but no lower than 24 GiB, the floor" in out.err
+    if start == 23.5:
+        assert "give a --leave" not in out.err
 
 
 def test_its_help_lists_every_exit_code(hog, capsys):
@@ -178,6 +192,10 @@ def test_its_help_lists_every_exit_code(hog, capsys):
     out = capsys.readouterr().out
     for code in (0, 1, 2, 3, 128 + signal.SIGHUP, 130, 128 + signal.SIGTERM, 128 + signal.SIGTSTP):
         assert re.search(rf"^\s+{code}\s", out, re.MULTILINE), code
+    words = " ".join(out.split())  # argparse wraps the options' help
+    # Under uv run, Ctrl-Z leaves uv stopped (measured on the box, 2026-10-16), and --leave is where it stops near.
+    assert "uv itself stays stopped: fg lets it exit" in words and "kill %1" in words
+    assert "It stops anywhere within a step above it" in words
 
 
 @pytest.mark.parametrize("third", [0.0, 0.2], ids=["flat", "a-fifth"])
@@ -202,9 +220,10 @@ def test_a_step_that_doesnt_show_stops_it(hog, third):
 def test_a_fall_under_the_floor_while_it_holds_frees_everything(hog, case):
     # From 30 down to --leave 28 takes 8 steps, 2.5 s apart, the last at 17.5 s, and it holds from 20 s. Something else
     # takes memory, and MemAvailable reads 23, under the floor, 24: as the third step is taken, at 5 s, so the reading
-    # right after that step is the first to see it; at 6 s, in the pause after it; or at 30 s, while it holds.
+    # right after that step is the first to see it; at 6.1 s, in the pause after it; or at 30.1 s, while it holds. The
+    # last two are off any slice's grid, so only readings 250 ms apart see them within 250 ms.
     def a_box():
-        box = Box(30.0, drop_at={"in-a-pause": 6.0, "at-leave": 30.0}.get(case), drop_to=23.0)
+        box = Box(30.0, drop_at={"in-a-pause": 6.1, "at-leave": 30.1}.get(case), drop_to=23.0)
         if case == "after-a-step":
             def drop_now(n):
                 if n == 3:
@@ -216,7 +235,7 @@ def test_a_fall_under_the_floor_while_it_holds_frees_everything(hog, case):
     assert run(hog, box, "--leave", "28", "--hold-s", "60") == 3
     assert box.steps and box.live == []
     first_under = next(at for at, gib in box.reads if gib < 24)
-    assert first_under - box.drop_at <= hog.POLL_S  # read within a poll of the fall, through every pause
+    assert first_under - box.drop_at <= 0.25  # read within 250 ms of the fall, through every pause
     assert {step["freed_at"] for step in box.steps} == {first_under}  # and freed at once: no pause, no reading first
     assert box.now == first_under and box.reads[-1][1] == 23.0
     if case != "at-leave":
@@ -261,6 +280,59 @@ def test_it_frees_everything_on_any_way_out(hog, capsys, way):
     if way == "ctrl-z":  # it ends the hog, never pauses it holding memory with nothing watching the floor
         words = capsys.readouterr().err
         assert "Ctrl-Z ends the hog rather than pausing it" in words and "freed everything" in words
+        # and says what happens to uv, which Ctrl-Z stops (measured on the box, 2026-10-16)
+        stopped = 128 + signal.SIGTSTP  # 148 on Linux
+        assert f"Under uv run, uv itself is left stopped: fg lets it exit ({stopped}), or kill %1 ends it" in words
+
+
+@pytest.mark.parametrize("second", ["sigint", "sighup", "sigterm"])
+@pytest.mark.parametrize("first", ["ctrl-c", "sighup", "sigterm"])
+def test_a_second_signal_while_it_frees_changes_nothing(hog, capsys, first, second):
+    # Under uv run, a signal to the process group reaches the hog twice: uv forwards SIGINT, SIGHUP and SIGTERM to it
+    # (the re-review's finding, 2026-10-16). The second lands while the hog frees, and must change nothing: the first
+    # signal's exit code and words, no exception out of main, nothing held.
+    signals = {"sigint": signal.SIGINT, "sighup": signal.SIGHUP, "sigterm": signal.SIGTERM}
+    sent = []
+
+    def at_step_5(n):
+        if n != 5:
+            return
+        if first == "ctrl-c":
+            raise KeyboardInterrupt  # what Python's own SIGINT handler raises
+        os.kill(os.getpid(), signals[first])
+
+    class SecondSignal(Box):
+        def free_all(self):
+            if not sent:  # the hog's first free, after the first signal
+                sent.append(second)
+                os.kill(os.getpid(), signals[second])
+            super().free_all()
+
+    # The test's own handlers only note a signal that reaches them, so one the hog doesn't ignore fails the test,
+    # never pytest (a SIGINT would otherwise interrupt the whole run).
+    reached_the_test = []
+
+    def note(signum, frame):
+        reached_the_test.append(signum)
+
+    watched = (signal.SIGINT, *SIGNALS.values())
+    before = {signum: signal.signal(signum, note) for signum in watched}
+    try:
+        box = SecondSignal(74.0, on_take=at_step_5)
+        try:
+            code = run(hog, box, "--leave", "48", "--hold-s", "0")
+        except BaseException as escaped:  # a traceback's case
+            pytest.fail(f"{type(escaped).__name__} escaped the hog after a second signal")
+        after = {signum: signal.getsignal(signum) for signum in watched}
+    finally:
+        for signum, handler in before.items():
+            signal.signal(signum, handler)
+    assert sent == [second] and reached_the_test == []
+    assert code == {"ctrl-c": 130, "sighup": 128 + signal.SIGHUP, "sigterm": 128 + signal.SIGTERM}[first]
+    words = capsys.readouterr().err
+    assert f"stopped by {'Ctrl-C' if first == 'ctrl-c' else first.upper()}, and freed everything it held." in words
+    assert len(box.steps) == 5 and box.live == []
+    assert all(handler is note for handler in after.values())  # and it put every handler back, SIGINT's too
 
 
 @pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="RssAnon is in Linux's /proc/self/status")
@@ -271,7 +343,22 @@ def test_its_memory_is_resident_and_freed(monkeypatch):
         line = next(line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("RssAnon:"))
         return int(line.split()[1])
 
-    memory = load_hog(monkeypatch).Memory()
+    class SmallMmap:
+        """The script's mmap module, but a mapping over 4 MiB and a page is refused before it is made: a script that
+        sizes its steps wrong (say GIB = 1024**4) fails here instead of mapping gigabytes."""
+
+        def __getattr__(self, name):
+            return getattr(mmap, name)
+
+        @staticmethod
+        def mmap(fileno, length, *args, **kwargs):
+            if length > 4 * 1024**2 + mmap.PAGESIZE:
+                raise AssertionError(f"the hog asked to map {length} bytes for a 4 MiB step")
+            return mmap.mmap(fileno, length, *args, **kwargs)
+
+    module = load_hog(monkeypatch)
+    monkeypatch.setattr(module, "mmap", SmallMmap())
+    memory = module.Memory()
     try:
         before = rss_anon_kib()
         memory.take(4 / 1024)
