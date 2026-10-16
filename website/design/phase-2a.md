@@ -26,9 +26,9 @@ date: 2026-10-07
 > **Progress (2026-10-07).** The design is approved (Dan, 2026-10-07), and this plan is written,
 > reviewed, and revised after a forward-and-back council, whose fourteen decisions Dan accepted the
 > same day: the *Global Constraints* and the tasks carry them. ~~No task has started. **Next: Task
-> 1.**~~ **Done (2026-10-07 to 14):** Tasks 1 and 3–35, each reviewed. ~~**Task 2 [Dan]** runs side by
+> 1.**~~ **Done (2026-10-07 to 14):** Tasks 1 and 3–36, each reviewed (Task 36, Dan's bootstrap re-run and 2a's secret files, run on the box 2026-10-15). ~~**Task 2 [Dan]** runs side by
 > side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
-> before Task 27 starts.~~ **Next: the push after Task 35, then Task 36 [Dan].** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
+> before Task 27 starts.~~ **Next: Task 37.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
 > an urgent fix goes from `main`.
 >
 > **ntfy is optional, and Task 2 leaves 2a** *(2026-10-14, Dan's decision: ntfy optional, moving
@@ -8544,7 +8544,7 @@ test -x /usr/local/libexec/local-ai-agent-oom && grep -c 'local-ai-agent-oom' /e
   whisper's; `spark-pull:spark-pull 750` for the pull's cache; `notifier: installed`; `1`. **[Dan,
   on the Spark]** `sudo stat -c '%U:%G %a' /var/lib/local-ai/hf/tmp; sudo find /var/lib/local-ai/hf
   -type f ! -perm -g=r | head -3; sudo du -sh /var/lib/local-ai/hf; sudo -k` reads `spark:spark 750`
-  (left for whisper until the cutover), no file the group can't read, and about 36 GiB. Then `make
+  (left for whisper until the cutover), no file the group can't read, and about 36 GiB *(read 55G on 2026-10-15, as run: the cache had gained `qwen3.8-27b`'s files since this was written, and keeps `qwen3.6-35b-a3b`'s)*. Then `make
   doctor`: its *secrets folder* and *spark's folders* lines pass; the lines that need the cutover
   (the front, the gate, the sockets, the scenarios) fail, as expected until Task 38; the stack
   serves. *(Corrected 2026-10-14, at Task 27's review, the reviewer's M3 and M4: `hf/tmp` reads
