@@ -8609,8 +8609,17 @@ deployed from there as an urgent fix is, pushed with Dan's OK, and merged into `
 changes only the Compose file and SearXNG's settings, which Phase 1's stack already renders.
 
 *(Added 2026-10-15, Dan's decision: `main`'s full-context apply for the coder is skipped, since
-the cutover replaces the box's config. The box keeps running `qwen3.8-27b` at 163,840 tokens until
-the cutover.)* This task's merge of `main` into `phase-2a` is what carries the coder: `main`'s
+the cutover replaces the box's config. ~~The box keeps running `qwen3.8-27b` at 163,840 tokens until
+the cutover.~~)* *(Corrected the same day, Dan's decision: this task's own deploy from the `main`
+worktree, Step 3's `make apply`, deploys `main`'s registry too. `main` is at `e32096c` by then.
+So the coder goes to its full 262,144 tokens at Step 3, before the cutover. `make apply-dry-run`
+there, before this task's change, read: llama-swap's config changes only in the coder's
+`--ctx-size`, 163,840 to 262,144; the registry gains the corrected budget check's notes and
+`idle_available_gib`, and the coder's footprint goes from 35 to 41; 10 app files change, from
+`main`'s render, registry and clients work since 2026-10-08; and llama-swap and the brake restart.
+Root's four units render as installed. Phase 1's `make apply` restarts llama-swap only while no
+model is loaded. At the dry run none was, so nothing needs unloading first. A model loaded before
+Step 3 makes `make apply` refuse, and then it is unloaded first.)* This task's merge of `main` into `phase-2a` is what carries the coder: `main`'s
 registry names `qwen3.8-27b` at 262,144 tokens, while `phase-2a`'s still names
 `qwen3.6-35b-a3b`. A trial merge on 2026-10-15 conflicts in `stack/models.yaml` exactly on that
 entry, among 12 files. Resolve it to `main`'s `qwen3.8-27b`, keeping `phase-2a`'s own changes
