@@ -14,8 +14,8 @@ frees everything and exits 0. On the Spark, from the repo's root:
   at least 90% of all the hog holds. If it hasn't, the reading isn't following what the hog takes, so the hog frees
   everything and stops (exit 3).
 - While it holds anything, a reading under --floor (24 GiB by default, the reserve every load keeps free, 4 above the
-  brake's line) frees everything at once and stops (exit 3). A --leave under the floor is refused, with nothing taken
-  (exit 2).
+  brake's line) frees everything at once and stops (exit 3). The floor can only be raised: a --floor under 24, or a
+  --leave under the floor, is refused, with nothing taken (exit 2).
 - It frees everything on every way out: the hold's end, a stop, an error (exit 1), Ctrl-C (exit 130), SIGTERM (143)
   and SIGHUP (129). Killed any other way (SIGKILL, earlyoom), the kernel frees its memory with it.
 - It prints each step's total and MemAvailable, in GiB.
@@ -37,7 +37,10 @@ MEMINFO = Path("/proc/meminfo")
 KIB_PER_GIB = 1024 * 1024
 GIB = 1024**3
 
-FLOOR_GIB = 24.0  # the reserve every admitted load keeps free (plan.md, rule 9), 4 above the brake's line, 20
+# The reserve every admitted load keeps free (plan.md, rule 9), 4 above the brake's line, 20: the floor's default, and
+# the lowest it may be set, so the hog never leaves less (the controller's ruling, 2026-10-16). Every drill leaves 24
+# or more.
+FLOOR_GIB = 24.0
 # The pace: 0.25 GiB every 2.5 s, 0.1 GiB/s. The brake's rate-of-fall watch (spark/src/spark/brake.py, Task 23) acts
 # only on a fall of MIN_FALL_GIB, 1.5 GiB, within its FALL_WINDOW_S, 2 s. At this pace a 2 s window holds one step at
 # most, since the pause comes after a step has shown, and one step falls 0.25. So the hog never trips the watch, and a
@@ -218,7 +221,7 @@ def _parser() -> argparse.ArgumentParser:
                         help="the MemAvailable it brings the box down to, never below")
     parser.add_argument("--floor", type=_above_zero, default=FLOOR_GIB, metavar="GIB",
                         help=f"while it holds anything, a reading under this frees everything at once; a --leave "
-                             f"under it is refused (default {FLOOR_GIB:g}, the reserve)")
+                             f"under it is refused (default {FLOOR_GIB:g}, the reserve, and the lowest it may be)")
     parser.add_argument("--step-gib", type=_above_zero, default=STEP_GIB, metavar="GIB",
                         help=f"how much each step takes (default {STEP_GIB:g})")
     parser.add_argument("--pause-s", type=_zero_or_more, default=PAUSE_S, metavar="S",
@@ -233,6 +236,11 @@ def main(argv: list[str] | None = None, *, read_available: Callable[[], float] |
          memory: Memory | None = None, sleep: Callable[[float], None] | None = None) -> int:
     """The command line. `read_available`, `memory` and `sleep` are the box's own unless a test gives stand-ins."""
     args = _parser().parse_args(argv)
+    if args.floor < FLOOR_GIB:
+        print(f"hog: --floor {args.floor:g} is under {FLOOR_GIB:g} GiB, the reserve every load keeps free and the "
+              f"lowest the hog may ever leave (the brake's line is 20); nothing taken. Leave --floor out, or give "
+              f"{FLOOR_GIB:g} or more.", file=sys.stderr)
+        return EXIT_REFUSED
     if args.leave < args.floor:
         print(f"hog: --leave {args.leave:g} is under the floor, {args.floor:g} GiB, the reserve every load keeps free; "
               f"nothing taken. Give a --leave of {args.floor:g} or more.", file=sys.stderr)

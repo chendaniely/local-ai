@@ -115,11 +115,15 @@ def test_it_stops_at_leave(hog, lag_s):
     assert held_until - box.steps[-1]["at"] == pytest.approx(2.5 + 60)
 
 
-def test_a_leave_under_the_floor_is_refused(hog, capsys):
+@pytest.mark.parametrize("argv", [["--leave", "20"], ["--floor", "20", "--leave", "22"]],
+                         ids=["leave-under-the-floor", "floor-under-the-reserve"])
+def test_a_leave_under_the_floor_is_refused(hog, capsys, argv):
+    # The floor can only be raised: one under the reserve, 24, is refused as a --leave under the floor is (the
+    # controller's ruling, 2026-10-16).
     box = Box(74.0)
-    assert run(hog, box, "--leave", "20") == 2
+    assert run(hog, box, *argv) == 2
     assert box.steps == [] and box.reads == []
-    assert "24" in capsys.readouterr().err  # the refusal names the floor
+    assert "24" in capsys.readouterr().err  # the refusal names the reserve
 
 
 @pytest.mark.parametrize("third", [0.0, 0.2], ids=["flat", "a-fifth"])
