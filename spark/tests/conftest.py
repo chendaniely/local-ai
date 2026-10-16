@@ -7,13 +7,26 @@ import pytest
 import memory_cap
 
 
-def pytest_sessionstart(session):
+def _refuse_an_uncapped_run() -> None:
     """On the Spark, a run without a memory cap stops here, before any test runs, for every account: a runaway test
     shares the one memory pool with the models (memory_cap.py says why, and what counts as capped). `make test` runs
     capped. No variable or flag turns this off."""
     words = memory_cap.refusal()
     if words is not None:
         pytest.exit(words, returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def pytest_sessionstart(session):
+    """The check, before collection: a run that names spark/tests, a file in it, or spark/ stops before a test module
+    is imported."""
+    _refuse_an_uncapped_run()
+
+
+def pytest_collection_finish(session):
+    """The check again, once collection is done and before any test runs. A run from the repo's root that names no path
+    finds this file only while it collects, after session start, so the first check never runs for it: before this
+    one, such a run ran the whole suite uncapped (seen on the Spark, 2026-10-15)."""
+    _refuse_an_uncapped_run()
 
 
 @pytest.fixture(autouse=True)

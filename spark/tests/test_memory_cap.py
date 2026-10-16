@@ -146,14 +146,22 @@ def test_the_real_check_reads_the_real_paths():
     assert refusal.__defaults__ == (Path("/opt/local-ai"), Path("/proc/self/cgroup"), Path("/sys/fs/cgroup"))
 
 
-def test_conftest_stops_a_refused_run_before_any_test_with_a_failing_code(monkeypatch):
+# conftest checks at session start, before collection, and again once collection is done, before any test runs: a run
+# from the repo's root that names no path finds conftest.py only while it collects, after session start, and so ran all
+# 3106 tests uncapped (seen 2026-10-15, before the second check).
+HOOKS = ["pytest_sessionstart", "pytest_collection_finish"]
+
+
+@pytest.mark.parametrize("hook", HOOKS)
+def test_conftest_stops_a_refused_run_before_any_test_with_a_failing_code(monkeypatch, hook):
     monkeypatch.setattr(memory_cap, "refusal", lambda: "the refusal's words")
     with pytest.raises(pytest.exit.Exception) as stopped:
-        conftest.pytest_sessionstart(None)
+        getattr(conftest, hook)(None)
     assert stopped.value.msg == "the refusal's words"
     assert stopped.value.returncode == pytest.ExitCode.USAGE_ERROR
 
 
-def test_conftest_lets_a_run_it_doesnt_refuse_go_ahead(monkeypatch):
+@pytest.mark.parametrize("hook", HOOKS)
+def test_conftest_lets_a_run_it_doesnt_refuse_go_ahead(monkeypatch, hook):
     monkeypatch.setattr(memory_cap, "refusal", lambda: None)
-    assert conftest.pytest_sessionstart(None) is None
+    assert getattr(conftest, hook)(None) is None
