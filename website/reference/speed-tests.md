@@ -287,7 +287,7 @@ it take?
 | Image | `lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469`, hasso5703's digest (checked) | — |
 | Weights | `RadixArk/Qwen3.8-27B-NVFP4` at `52d1adc` | `unsloth/Qwen3.8-27B-GGUF`, `UD-Q4_K_XL`, at `4ca7207` |
 | Drafting | DFlash2 drafter, `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal` at `bd7a934`, 16 tokens a step | the model's own MTP layer (`--spec-type draft-mtp`), up to 3 tokens; whether it drafts isn't checked yet |
-| Context | 266,240 tokens in an FP8 KV cache | 163,840 tokens, as deployed on 2026-10-08 (`main`'s full 262,144 isn't applied yet) |
+| Context | 266,240 tokens in an FP8 KV cache | 163,840 tokens, as deployed on 2026-10-08 (~~`main`'s full 262,144 isn't applied yet~~; applied 2026-10-15, after this run, with Phase 2a's Task 37) |
 | Requests at once | 1 | 1 |
 | How it ran | by hand, with llama-swap stopped: [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md), step 5 | the deployed stack, started again after the fast coder stopped |
 

@@ -2221,8 +2221,10 @@ context: **a client's context limit should leave room for its prompt plus the ou
 back**. At 32K the server read the whole prompt again every turn, 37–41 s, against under 3 s at
 128K, most likely because opencode trimmed its history to fit; the server's context and opencode's
 limit went up together, so the run doesn't separate the two. `spark clients` sets each model's limit to its registry
-`ctx`, so the limits match once the registry is deployed; until the cutover, `main`'s clients give
-the coder 262,144 while the box runs it at 163,840. [Speed tests](../reference/speed-tests.md) has
+`ctx`, so the limits match once the registry is deployed; ~~until the cutover, `main`'s clients give
+the coder 262,144 while the box runs it at 163,840~~ *(corrected 2026-10-15: Phase 2a's Task 37
+deployed `main`'s registry that day, so the box runs the coder at 262,144 too, and the limits match
+once `make clients` writes them again)*. [Speed tests](../reference/speed-tests.md) has
 the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains its notes.)*
 
 - **Names** (Dan, 2026-10-13): the fast coder takes over `qwen3.8-27b`, and today's llama.cpp coder
