@@ -213,7 +213,9 @@ first engine.
   date, and its first uv PR needs checking against `required-version`.
 
 **Decided, not deferred:** `publish-website.yml`'s checkout keeps the job token, because its publish
-step pushes with it; `persist-credentials: false` is only in `ci.yml` (`bad1b55`).
+step pushes with it; `persist-credentials: false` is only in `ci.yml` (`bad1b55`). *(Superseded
+2026-10-15: `publish-website.yml` is gone. CI's `pages` job deploys with GitHub's own Pages token,
+so every checkout now drops the job token.)*
 
 ## Starting over
 

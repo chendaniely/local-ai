@@ -260,7 +260,11 @@ Architecture page now, and git history keeps the drawing.)*
   from `versions.yaml`) · **Scenarios** · design notes (this plan and the implementation plans, in
   `website/design/`). There is no top-level `docs/`. A SHA-pinned GitHub Actions workflow publishes
   to GitHub Pages — Dan confirms before the first publish. *(First published 2026-10-13. Since
-  2026-10-14, Dan's decision, it publishes on every push to `main`, and by hand.)*
+  2026-10-14, Dan's decision, it publishes on every push to `main`, and by hand. Since 2026-10-15,
+  Pages builds from GitHub Actions, Dan's setting: CI's `pages` job deploys the rendered site with
+  `deploy-pages`, only after every other CI job passed, the leak scans included, instead of
+  `publish-website.yml` pushing to a `gh-pages` branch. That old branch still holds every version
+  published until then; deleting it is Dan's call.)*
 - **Scenarios** have IDs that `spark doctor` checks and the phases' "done when" criteria refer to.
   Each page gives the situation · what happens · what Dan sees · how to override · status (planned /
   built / verified with a date). A behaviour change updates its scenario page **and** its check in
@@ -1500,6 +1504,13 @@ Each item gets its own design pass when its turn comes.
   `CLAUDE.md`'s memory gotcha, `README.md` §Current state, `pi.md` and S09. The box changes once
   Dan runs `make apply`, and pi's lists once the clients are written again; `changelog.md` records
   it then.
+- **2026-10-15** — Dan's setting: GitHub Pages builds from GitHub Actions instead of the `gh-pages`
+  branch. CI gains a `pages` job that deploys the rendered site with `deploy-pages`, on `main` only
+  and only after the tests, leak scans, shellcheck and render all passed, and alone holds Pages'
+  permissions; `workflow_dispatch` keeps publishing by hand. `publish-website.yml`, which pushed to
+  `gh-pages` without waiting for the leak scan, is gone. The old branch keeps every version
+  published until now; deleting it is Dan's call. The *Design* section's site line gains a dated
+  note.
 
 ## Sources
 
