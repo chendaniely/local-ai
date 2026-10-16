@@ -10,12 +10,21 @@ download before the stack stops, a restore for today's box, and MTP from a mainl
 instead of a fork. **Not yet run on this box.** It is the stopgap until the plan's Phase 4a puts
 Flash-Next in the registry on Phase 2a's gate, and it is written for today's Phase 1 stack.)*
 
+*(Added 2026-10-15, the first run: it has now run on this box, and it serves. 31.7 tokens a second
+without MTP and 41.7 with it, about 81 GiB at a 32K context, and it worked in opencode once
+opencode was told the model's context is 128K. The numbers, the commands as run and what they don't
+tell are on [Speed tests](../reference/speed-tests.md#flash-next-by-hand-with-and-without-mtp).
+The notes below, dated the same day, correct what the run showed.)*
+
 Qwen3.8-Flash-Next is 125B parameters with 6B active per token, plus 51B of n-gram embeddings and
 a 4B MTP head. It is a vision model (image-text-to-text) with hybrid thinking. This is **not the
 stack**: it lives in `~/scratch`, runs as you, and needs no new packages. The runs also measure
 what Phase 4a needs ([What to record](#what-to-record)).
 
 Run everything on the Spark, as you, inside tmux (`tmux new -As scratch`), unless a step says Mac.
+*(Added 2026-10-15, the first run: two plain SSH terminals work as well, one for the server and one
+for the checks. The server then stops if its SSH session drops, when the Mac sleeps for instance;
+nothing breaks, and it just needs starting again.)*
 
 ## Why by hand, for now
 
@@ -60,6 +69,11 @@ model. What it takes, by arithmetic until the first run measures it:
 So `free -g` should show about 34–37 GiB available once it's loaded. **Stop the server if
 available falls under 28 GiB**, the brake's warn line. Each further 32K of context costs about
 0.8 GiB more, so there's room to raise `--ctx-size` once the first run shows the real numbers.
+
+*(Added 2026-10-15, the first run, measured as how far available memory fell from 117 GiB: at 32K,
+37 GiB available once loaded, about 80 GiB taken, and 36 after long answers, about 81. At 131,072
+tokens, 34 once loaded, about 83: the bigger context cost about 3 GiB, not 2.4. With MTP at
+131,072, 28 once loaded and 27 after the runs, about 90.)*
 
 ## 1. Check the disk, then download
 
@@ -152,6 +166,19 @@ choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
   tunnel.
 - The log goes to `~/scratch`; it records the memory each part took ([What to record](#what-to-record)).
 
+*(Added 2026-10-15, the first run: b11146 loads this model and serves it, in about a minute from a
+dropped page cache. The run changed three things in the command above, and the log didn't record
+the memory each part took: at its default log level, b11146 printed no buffer sizes ([What to
+record](#what-to-record)).)*
+
+- **For opencode, start at `--ctx-size 131072`.** opencode's own prompt is about 20,000 tokens, and
+  at 32K it ran out of room and trimmed its history every turn, so each turn read the whole prompt
+  again, 37–41 s ([step 4](#connect-from-the-mac)). The bigger context costs about 3 GiB more,
+  leaving about 34 available.
+- **End the line with `tee -i` instead of `tee`,** so the log keeps writing while the server stops.
+- **Stop it gently from another terminal,** **on the Spark**: `pkill -INT -f 'alias
+  qwen3.8-flash-next'`. It matches only this server, by its alias.
+
 Leave it running in its tmux window (detach with Ctrl-b d). **On the Spark**, from a second window:
 
 ```bash
@@ -161,6 +188,11 @@ watch -n 2 free -g
 
 The first prints `qwen3.8-flash-next`. Keep the second open while you use the model, and stop the
 server (Ctrl-C in its window) if available goes under 28.
+
+*(Added 2026-10-15, the first run: to know when the load is done, the run waited on the server's
+health check instead, **on the Spark**, in the second window, then read memory once:
+`until curl -sf http://127.0.0.1:8080/health > /dev/null; do sleep 5; done; date +%T`, then
+`free -g`.)*
 
 ## 4. Connect from the Mac
 
@@ -174,6 +206,62 @@ Then chat in a browser at <http://localhost:8080> (llama-server's own page), or 
 OpenAI-compatible provider to any client, opencode and pi included: base URL
 `http://localhost:8080/v1`, model `qwen3.8-flash-next`, any non-empty API key (this server checks
 none).
+
+*(Added 2026-10-15, the first run: the tunnel may print `setsockopt TCP_NODELAY: Invalid argument`,
+a harmless warning from macOS's ssh, as on [the fast coder's page](qwen3.8-27b-sglang.md). For
+opencode, a client's context limit decides whether the server can reuse its work between turns.
+Told 32,768 tokens with 16,384 kept for the answer, opencode had about 16,000 left for a prompt that
+was already 20,000, so it changed earlier parts of the conversation every turn, and the server,
+which reuses only a matching start, read the whole prompt again each time: 37–41 s before writing a
+word. Told 131,072, with the server started at that context too, later turns read only what was
+new, 30 to 1,347 tokens, in under 3 s.)*
+
+**opencode**, as it ran on 2026-10-15: a provider in `~/.config/opencode/opencode.json`, beside the
+`spark` one, inside `"provider"`. It needs the tunnel above, and fails while the tunnel is closed:
+
+```json
+"spark-flash-next": {
+  "npm": "@ai-sdk/openai-compatible",
+  "name": "Spark Flash-Next (by hand)",
+  "options": {
+    "apiKey": "not-needed",
+    "baseURL": "http://localhost:8080/v1"
+  },
+  "models": {
+    "qwen3.8-flash-next": {
+      "name": "qwen3.8-flash-next",
+      "limit": {
+        "context": 131072,
+        "output": 32768
+      },
+      "variants": {
+        "low": { "reasoningEffort": "low" },
+        "medium": { "reasoningEffort": "medium" },
+        "xhigh": { "reasoningEffort": "xhigh" }
+      }
+    }
+  }
+}
+```
+
+- **The limit matches the server's `--ctx-size`.** Start the server at 131,072 for opencode
+  ([step 3](#serve-it)); at 32K, set `"context": 32768` and expect the re-reading above.
+- **The efforts.** The chat template takes `low`, `medium` and `xhigh`, as the 27B coder's does; its
+  refusal names only those, so opencode's own `high` would fail (not tried with this model). The
+  `variants` replace opencode's list with those three, and
+  *default* sends no effort, so the template uses `xhigh`. To check the template, **on the Mac**,
+  with the tunnel open:
+
+  ```bash
+  curl -s http://localhost:8080/props | jq -r '.chat_template' | grep -oE 'Supported types are[^.]*' | head -1
+  ```
+
+  It printed `Supported types are xhigh (default), medium, and low`.
+- **`make clients` keeps it:** it rewrites only the `spark` provider and leaves the others.
+- **After adding or changing it,** quit opencode and run `opencode service restart` **on the Mac**
+  before starting `opencode` again. Its one background service keeps the environment it started
+  with, and maybe its settings too; the run restarted it to be sure. The restart also closes any
+  other opencode windows.
 
 **Sampling.** It's a hybrid thinking model, with thinking on by default. Unsloth's settings:
 
@@ -189,6 +277,9 @@ To start the server with thinking off, add `--chat-template-kwargs '{"enable_thi
 **Speed.** llama.cpp's own benchmark on a DGX Spark, with the 4-bit `UD-IQ4_XS` file and one
 request at a time, measured about 28 tokens a second, and about 44 with MTP (PR #29761, reported,
 not measured here). The log prints each request's speed (`eval time … tokens per second`).
+*(Added 2026-10-15, the first run, with this page's 3-bit `UD-IQ3_XXS` file: 31.7 tokens a second
+without MTP and 41.7 with it, on one prompt; about 28 in opencode at 20,000 tokens of context,
+without MTP. Reading a prompt ran at about 450–540 tokens a second.)*
 
 ## 5. MTP, optional {#mtp-optional}
 
@@ -219,6 +310,14 @@ pinned one, and these three lines added before the `2>&1`:
 - The head adds about 4 GiB, so available should settle near 30–33. If it goes under 28, use
   `UD-Q2_K_XL` for MTP runs, or a shorter context.
 
+*(Corrected 2026-10-15, the first run: "these three lines" are the two shown, and the `2>&1 | tee …`
+follows the second; [Speed tests](../reference/speed-tests.md#flash-next-by-hand-with-and-without-mtp)
+has the whole command as run. The build finished by 16:40, and its `llama-server` ran this model with
+MTP. At a 131,072-token context the head took about 6 GiB, not 4: available was 34 without it, 28
+once loaded with it and 27 after the speed runs, under the 28 line. So stop it after measuring, and
+for longer use try a 65,536-token context (not tried yet) or `UD-Q2_K_XL`. Measured: 41.7 tokens a
+second against 31.7 without, with 55% of the drafted tokens kept, 2.65 a step on average.)*
+
 ## What to record
 
 Keep each run's log. Phase 4a's settings come from these numbers, measured here:
@@ -228,6 +327,12 @@ Keep each run's log. Phase 4a's settings come from these numbers, measured here:
 - From the log: the model, KV, compute and checkpoint buffer sizes.
 - Tokens a second, with and without MTP.
 - Whether the brake held: the restore's status check says.
+
+*(Added 2026-10-15, the first run: b11146 printed none of the buffer sizes at its default log level
+(verbosity 3), and no memory breakdown when stopped, even with `tee -i` keeping the log open; so
+`free -g` gave only the totals. A higher log level (`-lv`, above 3) may print them; not tried. For each
+request the log does print `prompt eval time` and `eval time`, and with MTP `draft acceptance`;
+`grep` for those.)*
 
 ## Restore the stack
 
@@ -251,6 +356,13 @@ systemctl start local-ai-llama-swap
 Nothing loads yet: today's stack loads each model on its first request, so `free -g` stays near
 117 until something asks.
 
+*(Added 2026-10-15, the first run: check `spark status` before starting llama-swap even when the
+server never came near the brake. That day the brake had been holding since 04:40:58, hours before
+the run, from the build session's own test runs (phase-2a's plan, Task 47, records it), and had
+refused the coder at 08:56:32; the status check found it, and `spark brake --release` cleared it. Asked in
+the first second after `systemctl start local-ai-llama-swap`, `spark status` says llama-swap is
+unreachable; a few seconds later it answers, with nothing loaded.)*
+
 *(Added 2026-10-15, Phase 2a's Task 35's review: from Phase 2a's cutover, end the hold-down here
 instead, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says, and do it before you
 release the brake. While the drop-in stands, `systemctl start local-ai-llama-swap` exits 0 and
@@ -260,6 +372,9 @@ unchanged.)*
 ## Clean up
 
 Keep the files if Phase 4a is close and the disk has room; otherwise:
+
+*(Added 2026-10-15, the first run: Dan kept the model's files and the b11330 build, and opencode's
+`spark-flash-next` provider, for the next run.)*
 
 **1. On the Spark, delete the model and the build:**
 
