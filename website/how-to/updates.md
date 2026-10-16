@@ -128,9 +128,12 @@ Until a correction that day, Phase 2a's doctor sent llama-swap's own `GET /unloa
 key, which Phase 1's llama-swap obeys: every model would have unloaded. Since then it first checks
 that 9100's `/health` answers exactly the front's `{"status": "ok"}`, and if it doesn't, its front
 line reads *9100 answers as llama-swap does, not as the front: …* and 9100 gets nothing after
-`/health`.
+`/health`. *(2026-10-16: the cutover is done, Phase 2a's Task 38, so 9100 is the front, and the
+check after an update is Phase 2a's doctor, above, from the `phase-2a` clone. Phase 1's runs from a
+`main` worktree only after a rollback.)*
 
-*Phase 1's doctor*, which runs from a `main` worktree until 2a merges (until 2026-10-15, this
+*Phase 1's doctor*, which runs from a `main` worktree ~~until 2a merges~~ *(since the cutover,
+2026-10-16, only after a rollback)* (until 2026-10-15, this
 paragraph was the page's only account of doctor; Phase 2a's Task 35 put 2a's above it): it checks
 Phase 0's guardrails: the leak hooks, the GPU set held
 (the running kernel's modules package included), the driver's kernel module agreeing with
@@ -489,7 +492,9 @@ phase's branch can change the lock's package list, as Phase 2a's Task 3 pinned i
 that can't wait goes to `main` as an urgent fix, as [Deploy the stack](deploy.md)'s *An urgent fix
 during a phase's build* says. (Added 2026-10-15, Phase 2a's Task 35, from Dan's decision of
 2026-10-07: *Dependabot during 2a* in [Phase 2a's plan](../design/phase-2a.md), which held
-`huggingface-hub` 2.0.0 among them.)
+`huggingface-hub` 2.0.0 among them.) *(2026-10-16, Dan's decision, at Phase 2a's cutover: from a
+phase's cutover until it merges, such a fix goes to the phase's branch instead, deployed from its
+clone, as that section now says, and reaches `main` with the phase's merge.)*
 
 On upgrade day, for each one:
 

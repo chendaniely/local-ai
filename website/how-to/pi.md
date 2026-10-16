@@ -63,7 +63,8 @@ make tunnel
 ```
 
 None of the stack's ports listens beyond 127.0.0.1 in Phase 1, so pi reaches llama-swap only
-through the tunnel.
+through the tunnel. *(Since Phase 2a's cutover, 2026-10-16, the same tunnel and port reach the
+front, which checks the key and forwards to llama-swap; nothing in pi changes.)*
 
 In pi, `/model` → a Spark model. The footer names the model that answers.
 

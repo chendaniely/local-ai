@@ -11,6 +11,10 @@ first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09
 on the Mac and as `agent`, behind a minimal brake and launch check.
 [Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. The Mac can also
 run pi and Claude Code in [Orca](website/how-to/orca.md), and the web UI as an app of its own.
+*(2026-10-16: Phase 2a's cutover, its Task 38, put a front and a gate in front of llama-swap,
+which moved to 127.0.0.1:900, and the brake now unloads idle models first (built; not yet seen
+acting: Tasks 47 and 48). The rest of Phase 2a, its drills, measurements and close, is still being
+built on the `phase-2a` branch.)*
 
 ## Design in one line
 
@@ -152,7 +156,12 @@ when that file was retired on 2026-09-23.
   `0600 root:root`. Phase 2a's files are there too: `front.key`, `gate.key`, `brake.key`,
   `internal-keys.env` and `client-keys.sha256`. Phase 1's stay for the rollback. ntfy's come in
   Phase 5. The private key list, `/etc/local-ai/keys.yaml`, is `0640 root:spark-admin`: key names,
-  their groups and labels, private but not secret.)*
+  their groups and labels, private but not secret.)* *(Since 2026-10-16, Phase 2a's cutover:
+  llama-swap reads `internal-keys.env`; the front reads `client-keys.sha256`, `front.key` and the
+  key list; the gate reads `gate.key` and the key list; the brake and its drill read `brake.key`.
+  Nothing reads
+  `llama-swap.env`, which holds Phase 1's client keys and the brake's Phase 1 key; it stays for the
+  rollback until Phase 2a's close, Task 51, removes it.)*
 - **SSH takes keys only** (2026-09-25): `/etc/ssh/sshd_config.d/10-local-ai.conf` turns password
   and keyboard-interactive logins off, and `agent`'s sessions never get a forwarded SSH agent
   ([SSH from the Mac](website/how-to/ssh.md#keys-only)). The one-time public IPv6 check is done;
@@ -204,8 +213,10 @@ when that file was retired on 2026-09-23.
   measured on [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges).
   Phase 4a puts Flash-Next in the registry, which pulls its own copy; the by-hand page's *Clean up*
   removes these.
-- **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
-  its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
+- **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). *(The units
+  and ports below are Phase 1's, four units, llama-swap on 9100 and the engines from 5800, until
+  2026-10-16: the cutover's note, at this bullet's end, has the current ones.)* Root runs its own
+  copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
   in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
   and the web services are enabled and running; the pull unit runs only when asked. Everything
   listens on 127.0.0.1 only: llama-swap on 9100, keys required; the engines on 5800 and up;
@@ -249,13 +260,34 @@ when that file was retired on 2026-09-23.
   hatchling bump (16efba8), which also restarted the brake (recorded 2026-10-07). *(Synced again
   2026-10-15, by Task 37's `make apply` from a `main` worktree: `main`'s render, registry and
   clients changes since 2026-10-08, which the changelog lists.)*
+  *(Since 2026-10-16, Phase 2a's cutover, its Task 38, deployed from the `phase-2a` clone at
+  `b614532`, which also synced the app. Root runs eleven units: Phase 1's four, and seven new, all
+  in `/etc/systemd/system`. Requests reach **the front**, `local-ai-front.service`, as `spark-front`,
+  on 127.0.0.1:9100, which PID 1 holds through `local-ai-front.socket`, so the port stays held
+  while the front restarts. The front checks each client key against `client-keys.sha256`, the
+  keys' digests, and forwards with a key of its own. **The gate**, `local-ai-gate.service`, as
+  `spark`, serves two Unix sockets that PID 1 holds: `/run/local-ai/gate-status.sock`,
+  `spark:spark-users 660`, and `/run/local-ai/gate-control.sock`, `root:spark-admin 660`. It admits
+  every load, one at a time, and loads the three always-loaded models itself. **llama-swap** listens
+  on 127.0.0.1:900 and takes only the internal keys, the front's, the gate's and the brake's. Its
+  engines listen from 800: Gemma on 800, the embedding model on 801, whisper on 803, and the coder
+  on 802 when it loads. Only llama-swap's unit has `CAP_NET_BIND_SERVICE`, which the engines
+  inherit. **The brake** stays a unit of its own, unloading idle models first (built; not yet seen
+  acting: Tasks 47 and 48). **The failure
+  notifier**, `local-ai-notify@`, runs when the front, the gate, the brake or llama-swap fails, and
+  sends nothing until ntfy is set up, in Phase 5. **The brake's drill**,
+  `local-ai-brake-drill.service`, runs only when Dan starts it. The pull runs as `spark-pull`.
+  `make doctor`: 29 of 29, with one WARN, `ntfy: not set up (Task 2, Phase 5)`. The changelog has
+  the cutover's times and checks.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
   `spark clients`, which wrote pi's `spark` provider. Its Claude Code got the same secrets guard as
   Dan's Spark session before the key arrived: the hook script, the 35 deny rules, and a `CLAUDE.md`
   holding only the secrets rule. Its pi runs the coder through llama-swap, in tmux, and the session
-  survives a detach and a new login.
+  survives a detach and a new login. *(Since 2026-10-16, Phase 2a's cutover: the same key is one of
+  the client keys the front checks, by its digest, and pi reaches the models through the front on
+  9100. llama-swap no longer takes it: at 127.0.0.1:900 it gets a 401, checked as `agent` that day.)*
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
   nobody logged in to a desktop — and that screen held about **0.4 GiB**. The 2–3 GiB figure is for
@@ -316,7 +348,9 @@ when that file was retired on 2026-09-23.
 - **pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
-  0.85.1, installed with npm; whether that copy is still installed is not recorded.
+  0.85.1, installed with npm; whether that copy is still installed is not recorded. *(Since
+  2026-10-16, Phase 2a's cutover, the tunnel carries it to the front, on the same port, 9100; pi
+  answered through it that day.)*
 - **opencode 2.0.25**, from Homebrew (its version recorded 2026-10-14). It runs one background
   service that its windows hand their requests to, which keeps the environment it started with:
   `opencode service restart` after adding a key. `make clients` writes its `spark` provider; the fast
@@ -459,7 +493,7 @@ the plan it would come in, and what was left out and why.
   time. Real values live in `~/.secrets` and are never committed or printed.
 - **`agent` never gets my credentials** — no sudo, no docker, no GitHub token, no access to my home
   or `~/.secrets`. It holds only its own: its Claude Code login and, from Phase 1, its own
-  llama-swap key.
+  llama-swap key (since Phase 2a's cutover, 2026-10-16, a client key that the front checks).
 - **Docs must be true, and get fixed in the same change that makes them wrong.** This repo is
   mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
   Correct rather than delete, and keep unverified things marked unverified. Full rule in
@@ -479,6 +513,20 @@ the plan it would come in, and what was left out and why.
 - **The GPU set moves as one, only on upgrade day.** Kernel, NVIDIA modules, driver and CUDA are
   held together; unholding or upgrading part of them can leave a kernel with no NVIDIA module.
   Runbook: [Updates](website/how-to/updates.md).
+- **Nothing loads unless it fits, and a change that restarts llama-swap goes through `make apply`**
+  (added 2026-10-16, at Phase 2a's cutover, which built and deployed what these rules rest on). The
+  gate admits every load, one at a time, keeping the 24 GiB reserve free and holding back the growth
+  the loaded models are still owed. The brake stays a unit of its own, unloading idle models first,
+  and the gate lifts its hold only within bounds (built; not yet seen acting: Tasks 47 and 48). A
+  llama-swap restart stops every model, so `make apply` restarts it only once a minute has passed
+  with nothing in flight; after 15 minutes without one it offers to drain now, and `make apply-now`
+  restarts at once, cutting off what's in flight, after asking when the gate lists any (built; the
+  quiet wait not yet run on the box: Task 50). The gate then reloads the always-loaded models.
+  Until the cutover, `make apply` refused while models were loaded. A secret read only at start,
+  such as `internal-keys.env`, takes a restart by hand instead, as [Deploy the
+  stack](website/how-to/deploy.md)'s *What `make apply` never restarts* says. Overcommitting this
+  box's memory can freeze it, so none of this is loosened casually. Full rules in
+  [`CLAUDE.md`](CLAUDE.md)'s *GB10 gotchas*.
 - **`***`, never `---`, for a horizontal rule in markdown under `website/`** — Pandoc can read a
   mid-document `---` as a YAML block, and the render fails.
 - **Scenarios are living docs.** A change in the stack's behaviour updates its page under
@@ -489,7 +537,11 @@ the plan it would come in, and what was left out and why.
   session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Nothing
   deploys from a phase branch the running stack can't run: in Phase 2a, nothing from `phase-2a`
   until its cutover, an urgent fix going from `main`, and Dependabot's `spark/` bumps waiting until
-  the phase merges (my decision, 2026-10-07). Sessions
+  the phase merges (my decision, 2026-10-07). From the cutover it runs the other way: until
+  `phase-2a` merges into `main`, nothing deploys from `main` or a `main` worktree but Task 38's
+  rollback, and every deploy, an urgent fix's included, is committed on `phase-2a`, deployed from
+  its clone, pushed with my OK, and reaches `main` with the phase's merge (my decision, 2026-10-16,
+  at the cutover). Sessions
   stage files by explicit path, and use my denylist only through the leak check, never reading it.
 - **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
   run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well

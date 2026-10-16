@@ -129,7 +129,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. *(Phase 2a, the same: `cap_drop: [ALL]`, only what it needs added back, checked by a working search.)* |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
-| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* *(Phase 2a's Task 28, the controller's ruling, 2026-10-14; built, not yet deployed, which Task 36's bootstrap does: earlyoom has no `--prefer`. It added 300 to an engine's score, worth 450 points of `oom_score_adj`, which no score of `agent`'s could pass. The engines' own `oom_score_adj`, 1000 on demand and 900 resident, keeps them before every process at 0. Root gives `agent`'s processes 1000, which `agent` can't lower: at its SSH logins, through a `pam_exec` hook whose line goes before sshd's first session line, and for its user manager, through a drop-in. `/etc/cron.deny` names `agent`.)* |
+| **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* *(Phase 2a's Task 28, the controller's ruling, 2026-10-14; built, not yet deployed, which Task 36's bootstrap does (it did, 2026-10-15, as the changelog records): earlyoom has no `--prefer`. It added 300 to an engine's score, worth 450 points of `oom_score_adj`, which no score of `agent`'s could pass. The engines' own `oom_score_adj`, 1000 on demand and 900 resident, keeps them before every process at 0. Root gives `agent`'s processes 1000, which `agent` can't lower: at its SSH logins, through a `pam_exec` hook whose line goes before sshd's first session line, and for its user manager, through a drop-in. `/etc/cron.deny` names `agent`.)* |
 | **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
@@ -2559,7 +2559,19 @@ Each item gets its own design pass when its turn comes.
   model loaded is only a warning. Today's four leave 33 GiB of the 117 available at idle, above the
   warn line, 28, so the stack alone still can't open the gap; a registry that renders with that
   warning could. Revisions.)*
-- **Anyone on the box can take 127.0.0.1:9100** (found 2026-09-26, in Phase 1 Task 3's review).
+- ~~**Anyone on the box can take 127.0.0.1:9100**~~ **Closed as built, 2026-10-16, at Phase 2a's
+  cutover (its Task 38).** systemd's socket units hold 127.0.0.1:9100 and the gate's two sockets;
+  llama-swap listens on 127.0.0.1:900 and takes only the internal keys; and its engines hold 800,
+  801 and 803 (802 is the coder's when it loads), each with `CAP_NET_BIND_SERVICE` alone, inherited
+  from llama-swap's unit, while unprivileged ports start at 1024. Checked as `agent` that day:
+  binding 9100 failed every time for 30 s while Dan restarted the front, PID 1 holding the socket
+  through the restart; binding 900 failed every time for 30 s while he restarted llama-swap, since
+  900 is below 1024 and `agent` has no `CAP_NET_BIND_SERVICE`; `agent`'s key at 900 got a 401, and
+  `/unload` through 9100 `route_not_served`. Still to run: the crash-loop check as `agent` (Task
+  49). What remains stands as the notes below say: root, Dan's sudo among it; the engines, which
+  hold the capability and so could bind a free low port; and the engines' ports, which take no key
+  (*127.0.0.1 is not a boundary against `agent`*). The item as it stood:
+  (found 2026-09-26, in Phase 1 Task 3's review).
   Ports from 1024 up are open to every user (checked on the box), so while llama-swap isn't holding
   9100 — after a crash, or in `spark apply`'s restart window — any local user, `agent` included, can
   listen there and receive the key the brake sends every 250 ms, and the keys `spark status` and
@@ -2686,8 +2698,10 @@ Each item gets its own design pass when its turn comes.
   2026-09-25: it builds option 2.)
 - **127.0.0.1 is not a boundary against `agent`** → llama-swap checks keys, but the engines it
   starts listen on 5800 and up with none, so any local user, `agent` included, can call a loaded
-  model directly, around llama-swap's keys. In Phases 1–2 that costs nothing: `agent` has a key of
-  its own, and a direct call can't load a model. The gate doesn't change it, since it decides loads,
+  model directly, around llama-swap's keys. *(Since 2026-10-16, Phase 2a's cutover: on 800 and up,
+  still with no key; the front checks the clients' keys, and llama-swap takes only internal ones.)*
+  In Phases 1–2 that costs nothing: `agent` has a key of its own, and a direct call can't load a
+  model. The gate doesn't change it, since it decides loads,
   not who reaches an engine. Phase 3's per-key allow-lists and concurrency limits don't hold against
   a direct call, so that phase decides how to close it. (Corrected 2026-09-28, from Phase 1's
   council: a direct call reached more than a model. Each llama-server also served `/slots`, every
@@ -2738,9 +2752,25 @@ Each item gets its own design pass when its turn comes.
   measures it, carefully, and the registry follows: rule 9; added 2026-10-07); from Phase 2a's
   council (2026-10-07), each checked in 2a: that `OnFailure=` fires on a crash that `Restart=`
   recovers (systemd 255's man page says so), that `NoNewPrivileges=` lets CUDA start from a cold
-  boot, and that the engines bind ports below 1024 with the capability they inherit; and, added
-  after the re-review, that 9100 stays held through a crash loop, that the gate's uvicorn
-  subclass passes it each caller's uid, and that an engine's anonymous RSS growth (`RssAnon`)
+  boot, and ~~that the engines bind ports below 1024 with the capability they inherit~~ (verified
+  2026-10-16, at Phase 2a's cutover: each engine, two llama-server and one whisper-server, read
+  `CapEff` and `CapAmb` `0000000000000400`, `CAP_NET_BIND_SERVICE` alone, inherited from
+  llama-swap's unit, which sets it in `AmbientCapabilities=` and `CapabilityBoundingSet=`, with
+  `NoNewPrivileges=yes`;
+  `net.ipv4.ip_unprivileged_port_start` is 1024; and they held 800, 801 and 803; see Revisions); and,
+  added after the re-review, that 9100 stays held through a crash loop, ~~that the gate's uvicorn
+  subclass passes it each caller's uid~~ (verified 2026-10-16, at the cutover. The gate answers its
+  front routes only for `spark-front`'s uid and its control socket's only for spark-admin's, and
+  it answered both: the front's log reads *the gate answers the front's events call* at 10:18:22
+  and again, after the front's restart, at 10:28:07, with `spark status`'s health reading `front
+  ok`; and Dan's `spark status` and `make doctor`'s make-room plan, both on the control socket,
+  were answered. `agent`'s `spark status`, on the status socket, read `nothing` under *recent*
+  while Dan's showed the refusals of 10:18–10:21, all made with Dan's own key by doctor's probes
+  and the made-up model's request, so the gate told `agent`'s uid from Dan's. That it refuses an
+  in-flight report from any uid but `spark-front`'s wasn't tried live: `test_gate_app.py` covers
+  it, in the full run each uvicorn bump makes after `test_protocols.py`, whose
+  `test_the_gate_receives_each_callers_uid` runs a real uvicorn; see Revisions), and that an
+  engine's anonymous RSS growth (`RssAnon`)
   accounts for its growth in `MemAvailable` (rule 9's *owed*); how NVIDIA's
   web updater treats apt holds; the GPU-set move and its recovery (the first upgrade day); ~~that GRUB
   boots the newest kernel, which the move's check before the reboot relies on~~ (resolved
@@ -4141,6 +4171,27 @@ Each item gets its own design pass when its turn comes.
   llama.cpp coder is loaded or under 79 GiB is available; Flash-Next stops llama-swap, or from the
   cutover holds it down, and starts only once 110 GiB is available; and its `DO=stop` restores the
   stack in the page's order. They go when Phase 4a puts both models in the registry.
+- **2026-10-16** — Phase 2a's cutover, its Task 38, on `brightroar` (*Open items and risks*:
+  *Anyone on the box can take 127.0.0.1:9100* closed as built; *To verify*: the engines' ports
+  below 1024 with the capability they inherit, and the gate's callers' uids, both verified. The
+  changelog, README's *Current state*, the Architecture page and the overview, whose built 2a parts
+  turn solid while ntfy stays dashed, Phase 5's, the scenario pages' doctor notes, and `CLAUDE.md`'s
+  gotchas on the reserve, the brake's release and llama-swap's restarts, with README's
+  *Conventions*, all record it.) 9100 was free for 89 s, from llama-swap's stop at 10:16:33 to the
+  sockets' start at 10:18:02. Since then PID 1 holds it for the front, and the gate's two sockets;
+  llama-swap serves 127.0.0.1:900 with only the internal keys, and its engines 800 and up; the gate
+  loaded the three always-loaded models one after another. `make doctor` passes 29 of 29, with one
+  WARN, ntfy not set up. The cutover corrected one claim: without ntfy the gate logs one line at its
+  start and then one warning for each notification it would have sent, not its one line alone (Task
+  38's Step 6 and `deploy.md` gain dated corrections).
+- **2026-10-16** — Deploys after a phase's cutover, Dan's decision at Phase 2a's (`CLAUDE.md`'s
+  *Building it* and README's *Conventions*; Phase 2a's Progress note, *Deploys during 2a*,
+  *Dependabot during 2a* and Task 35's urgent-fix item; the Q&A's row on deploys during 2a;
+  `deploy.md`'s *An urgent fix during a phase's build*; `updates.md`'s Dependabot paragraph). From the cutover `main` renders Phase 1's
+  layout, the rollback, so until `phase-2a` merges into `main`, nothing runs `make apply`, `make
+  apply-now` or `make install-units` from `main` or a `main` worktree. Every deploy, an urgent fix's
+  included, is committed on `phase-2a`, deployed from its clone, pushed with Dan's OK, and reaches
+  `main` with the phase's merge; only Task 38's rollback deploys from `main`.
 
 ## Sources
 

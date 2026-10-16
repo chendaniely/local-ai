@@ -20,7 +20,8 @@ key when the brake started, and `make doctor`'s `stack units` line fails if it d
 whose key llama-swap refuses can unload nothing.)* *(2026-10-14, Phase 2a's Task 29, built, not
 yet deployed: from the cutover the gate reads that check from the brake's record, and `spark
 status`'s `health` row says it, *brake ok (key checked 09:00)*; a check that failed, or none
-recorded, reads as that with `make logs s=brake`, never *brake ok*.)*
+recorded, reads as that with `make logs s=brake`, never *brake ok*.)* *(Deployed 2026-10-16, at
+the cutover: the row read *brake ok (key checked 10:18)* that day.)*
 
 *Until Phase 2 (added 2026-09-28, from Phase 1's council):* nothing notifies me. The warning at
 28 GiB is a line in the brake's journal (`make logs s=brake`), and the hold shows on `make status`'s
@@ -30,7 +31,7 @@ which leaves out the models' GPU memory, and its dry run in Phase 1's Task 13, w
 Phase 1's council: `spark launch` now gives a resident engine `oom_score_adj` 900 and an on-demand
 one 1000, so earlyoom picks the on-demand coder first, as the brake does. Checked after that day's
 deploy: earlyoom's dry run picked the coder's engine.)* *(2026-10-14, Phase 2a's Task 28, built, not
-yet deployed (Task 36's bootstrap brings it):*
+yet deployed (Task 36's bootstrap brings it; it did, 2026-10-15, as the changelog records):*
 
 - *Root gives `agent`'s processes `oom_score_adj` 1000, which `agent` can't lower: at its SSH logins,
   through a hook in sshd's PAM stack, and for its user manager, through a drop-in. `agent` can't use
@@ -55,8 +56,10 @@ stayed. The idle-first order and the notifications arrive in Phase 2.* *(Correct
 decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5:
 the idle-first order arrives in Phase 2a, and the notifications reach my phone from Phase 5.)*
 
-**Phase 2a, as designed (2026-10-07): what happens and what I see.** The brake stays a unit of its
-own, as today, so it keeps running while the gate is down. Its order is a loading engine first,
+**Phase 2a, as designed (2026-10-07): what happens and what I see.** *(Built and running since
+2026-10-16, Phase 2a's cutover. None of it has been seen acting on the box yet: Task 48's drill
+checks it.)* The brake stays a unit of its own, as today, so it keeps running while the gate is
+down. Its order is a loading engine first,
 then idle models of any class, the longest unused first, then the least recently used, read from
 the record the gate writes every second, with Phase 1's order, on-demand first, as its fallback
 when that record is missing or stale. It also acts early when memory falls faster than the loads
@@ -110,7 +113,8 @@ the refusals read as above in the client. 2a's drill verifies this page without 
 checks the phone's part.
 
 *(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
-it.)* `make doctor`'s `S05` line checks that the brake is active and that llama-swap took its key
+it.)* *(Deployed 2026-10-16, at the cutover: its line passed in that day's `make doctor`.)*
+`make doctor`'s `S05` line checks that the brake is active and that llama-swap took its key
 when it started. It also checks that the gate's activity record, the in-flight record whose order
 the brake reads, is under 3 s old; without it the brake would fall back to Phase 1's order. The
 brake's start check is read as the gate reads it, never following a link or waiting on a pipe.

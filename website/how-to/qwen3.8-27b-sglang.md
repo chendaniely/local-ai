@@ -16,6 +16,10 @@ against the llama.cpp coder's 23.8, about 45 GiB, and about 3 minutes from start
 ([Speed tests](../reference/speed-tests.md#the-fast-coder-against-todays-coder)). For a repeat run,
 [Run it again](#run-it-again) has only the commands it needs.)*
 
+*(2026-10-16: Phase 2a's cutover is done, its Task 38, so the box runs Phase 2a's stack. Where
+this page says *today's* stack, it means Phase 1's, before that day; its *from Phase 2a's cutover*
+notes are how it runs now.)*
+
 This is **not the stack**: a container you start and stop yourself, beside it or instead of it. It
 serves Qwen3.8-27B as RadixArk's NVFP4 checkpoint, with a DFlash2 drafter that proposes 16 tokens
 at a time, on SGLang v0.5.21. hasso5703 reports 71.4 tokens a second (greedy median on its
@@ -38,9 +42,9 @@ command in the foreground; `make fast-coder DO=wait` is step 3, and `make fast-c
 5. It's temporary: it goes when Phase 4a puts the fast coder in the registry.)*
 
 **Ask the Spark's build session first.** Most of Phase 2a's remaining tasks measure or drill the
-box: the cutover, a cold boot, the memory drills, the soak and the brake's tuning. A container
-holding 45 GiB during one of them spoils the measurement or trips the brake. The session's code and
-docs work doesn't conflict.
+box: the cutover *(done 2026-10-16)*, a cold boot, the memory drills, the soak and the brake's
+tuning. A container holding 45 GiB during one of them spoils the measurement or trips the brake.
+The session's code and docs work doesn't conflict.
 
 **It runs beside the stack**, so Open WebUI, pi and `agent` keep their models. Alone it took about
 45 GiB, and by arithmetic that fits beside the everyday models: their 43, its 45 and the 24 GiB
@@ -456,9 +460,15 @@ free -g
 - `docker ps` lists nothing once it's gone; available comes back within seconds.
 - If the status says the brake is holding, release it, **on the Spark**:
   `/opt/local-ai/app/.venv/bin/spark brake --release`. (The deployed app, not the clone: the clone
-  is on `phase-2a`, whose `make status` misreads today's box.)
+  is on `phase-2a`, whose `make status` misreads today's box. *Since the cutover, 2026-10-16, it
+  reads the box rightly too.*)
 - If you stopped the stack for the first run, start it again, **on the Spark**:
   `systemctl start local-ai-llama-swap`. Today's stack loads each model on its first request.
+  *(Since the cutover, 2026-10-16, the gate loads the always-loaded models by itself once
+  llama-swap is back; the coder still loads on its first request. It does so at most once an hour
+  for each: if llama-swap started anew within the last hour, after which the gate already reloaded
+  them, they wait for `spark load`, as `make logs s=gate` says. While the brake's hold stands,
+  they wait for its release.)*
   *(Added 2026-10-15, Phase 2a's Task 35's review: from Phase 2a's cutover, end the hold-down
   instead, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says, and do it before you
   release the brake. While the drop-in stands, `systemctl start local-ai-llama-swap` exits 0 and

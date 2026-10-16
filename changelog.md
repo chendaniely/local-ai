@@ -8,6 +8,87 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-16 — The cutover: the front, the gate, and llama-swap on 900 (Phase 2a, Task 38)
+
+**Cut over** by Dan, **on the Spark**, from the `phase-2a` clone at `b614532`, as Task 38 in
+[Phase 2a's plan](website/design/phase-2a.md) and *Moving a Phase 1 box to Phase 2a* in
+[Deploy the stack](website/how-to/deploy.md) give it. Times by the Spark's clock:
+- **Before anything moved:** the rollback's check passed: `main` renders Phase 1's layout,
+  llama-swap on 9100 with `llama-swap.env`. The coder check read `1`, then `0`: the clone deploys
+  `qwen3.8-27b`, not `qwen3.6-35b-a3b`. `make apply` staged root's ten new or changed unit files and
+  stopped. New: the front's service and socket, the gate's service and its status and control
+  sockets, the failure notifier (`local-ai-notify@`) and the brake's drill. Changed: the brake,
+  llama-swap and the pull. The compose unit was unchanged.
+- **10:14:01:** `make install-units`, with systemd reloaded at 10:14:03. Nothing new started.
+- **10:16:32:** the brake and llama-swap stopped, and Gemma, the one model loaded, went with them.
+  `make apply` then deployed `phase-2a`'s config, registry and app, and exited 0.
+- **10:18:02:** the three sockets started (sudo, then `sudo -k`). At 10:18:21–22: llama-swap, now
+  on 127.0.0.1:900, the brake, the front and the gate. So 9100 was free from 10:16:33 to 10:18:02,
+  89 s, the cutover's one window.
+- **The always-loaded models,** loaded by the gate one after another: Gemma from 10:18:22 to
+  10:18:26, the embeddings by 10:18:28, whisper by 10:18:31.
+- **Bare `spark` on Dan's `PATH`:** `~/.local/bin/spark` links to
+  `/opt/local-ai/app/.venv/bin/spark`, the deployed app's, as deploy.md's *`spark` on your PATH*
+  gives it.
+
+**Checked,** from 10:18:
+- **`make doctor`:** 29 of 29, with one WARN, `ntfy: not set up (Task 2, Phase 5)`. (28 at the
+  first run, until `make hooks` set the clone's `core.hooksPath` back to `.githooks`: the hooks
+  were on throughout.)
+- **`make status`:** 83 GiB available of 121, 63 above the brake's 20 GiB line; free for a load
+  50 GiB, that is 83.8 available less the 24 GiB reserve and 9.8 GiB still owed. Gemma (up to
+  32 GiB), the embeddings (8) and whisper (3) loaded, always loaded; the coder, `qwen3.8-27b`, not
+  loaded, up to 41 GiB, loads when asked. Health: `front ok · gate ok · brake ok (key checked
+  10:18) · ntfy not set up (Task 2, Phase 5)`.
+- **`make logs s=gate`:** the residents loading one after another. Without ntfy, the gate logs one
+  line at its start that ntfy isn't set up for it, then a warning for each notification it would
+  have sent.
+- **The accounts** (`systemctl show`): the front as `spark-front`, in `spark-users`; the gate, the
+  brake, llama-swap and the drill as `spark`, with no supplementary group; the pull as
+  `spark-pull`; the notifier with `DynamicUser=yes`. The status socket is `spark:spark-users 660`,
+  the control socket `root:spark-admin 660`. The front's socket and service allow `127.0.0.0/8
+  ::1/128` and deny `0.0.0.0/0 ::/0`. `systemd-analyze security`: the front 4.7 (OK) and the gate
+  8.3 (EXPOSED), equal to their offline baselines.
+- **Listening ports:** 800, 801, 803, 900 and 9100 among them, and no 5800.
+- **The engines' capability:** llama-swap's unit has `AmbientCapabilities=` and
+  `CapabilityBoundingSet=` set to `cap_net_bind_service`, and `NoNewPrivileges=yes`. Each engine,
+  two llama-server and one whisper-server, reads `CapEff` and `CapAmb` `0000000000000400`,
+  CAP_NET_BIND_SERVICE alone; `net.ipv4.ip_unprivileged_port_start` is 1024; and they hold 800, 801
+  and 803.
+- **The three internal keys:** the front's, by pi on the Mac answering through `make tunnel` at
+  10:25 (Gemma, HTTP 200) and the web UI chatting at 10:26; the gate's, by `make status` showing
+  the residents' states, with no 401 in the gate's log; the brake's, by `brake ok (key checked
+  10:18)`.
+- **`make logs s=front`:** one line per request, with the key's name, the model, the status and
+  the time, and no key, header or body; and *the gate answers the front's events call* at 10:18:22,
+  and again after the front's restart at 10:28:07, a call the gate answers only for `spark-front`'s
+  uid.
+- **A made-up model** through the front, with Dan's key on curl's stdin: HTTP 404,
+  `model_not_found`, its words naming the four models.
+- **The web UI on the phone:** it chats, searches and transcribes (Dan).
+- **As `agent`,** 10:27–10:30, Dan in `sudo -iu agent`:
+  - binding 127.0.0.1:9100 failed every time for 30 s while Dan restarted the front, at 10:28:07:
+    PID 1 held the socket through the front's restart;
+  - binding 127.0.0.1:900 failed every time for 30 s while Dan restarted llama-swap, at 10:29:17:
+    900 is below 1024, and `agent` has no CAP_NET_BIND_SERVICE;
+  - that restart stopped the three residents, and the gate reloaded them by itself from 10:29:18,
+    saying llama-swap had started anew with no apply announced; all three were loaded by 10:29:25;
+  - `agent`'s `spark status` answered through the status socket, its *recent* row reading
+    `nothing` while Dan's showed the refusals of 10:18–10:21, all made with Dan's own key, by
+    doctor's probes and the made-up model's request;
+  - `spark make-room --done` was refused at the control socket, which only `spark-admin`'s members
+    can use;
+  - `/unload` through 9100, with `agent`'s key: HTTP 404, `route_not_served`;
+  - `agent`'s key at llama-swap's `http://127.0.0.1:900/running`: HTTP 401.
+
+**Kept for the rollback,** until Phase 2a's close (Task 51): Phase 1's `llama-swap.env`, with the
+client keys and the brake's Phase 1 key. Nothing reads it now.
+
+**Not set up:** ntfy, Phase 5's. No notification leaves the box; what one would say shows in
+`spark status` and `make doctor`.
+
+---
+
 ## 2026-10-15 — The web containers drop their capabilities, and the coder gets its full context (Phase 2a, Task 37)
 
 **Deployed** by Dan, **on the Spark**, from a `main` worktree at `586f884`, as an urgent fix is, before

@@ -10,7 +10,9 @@ phone.
 
 A new box takes *First deploy*. A box already running Phase 1's stack, llama-swap on 9100, moves to
 Phase 2a's once, by *Moving a Phase 1 box to Phase 2a*, which also holds the way back. *(Added
-2026-10-15, Phase 2a's Task 35.)*
+2026-10-15, Phase 2a's Task 35.)* *(2026-10-16: `brightroar` made that move, Phase 2a's Task 38,
+and runs Phase 2a's stack. Where this page says *from the cutover*, that is how the box runs now;
+*until the cutover* is Phase 1's, which the rollback brings back.)*
 
 ## Before the first deploy
 
@@ -263,6 +265,13 @@ never reads `~/.profile`, so it doesn't find `~/.local/bin`: there, call
 ## Moving a Phase 1 box to Phase 2a
 
 *(Added 2026-10-15, Phase 2a's Task 35: its Task 38's sequence, word for word. Not yet performed.)*
+*(Performed 2026-10-16 on `brightroar`, Phase 2a's Task 38, as written here: 9100 was free for
+89 s, from Step 4's stop to Step 5's sockets, and every check in Step 6 and Task 38's Step 7
+passed, `make doctor`'s once `make hooks` had reset the clone's `core.hooksPath`: doctor's *leak
+hooks* line takes only `.githooks`, and an earlier worktree session had left an absolute path to
+the same folder, so its first run read 28 of 29. The run corrected one sentence, Step 6's on the
+gate's ntfy lines. The changelog has the
+times and the checks.)*
 
 Once, on a box running Phase 1's stack: llama-swap on 9100, with the client keys. It comes after
 *Before the first deploy*'s Phase 2a files (Phase 2a's Task 36) and after the web containers'
@@ -397,8 +406,13 @@ before anything else runs, so the clone's own code never runs with sudo's creden
 one window.
 
 **6. Check it.** `make status` reads as the plan's layout, its *health* row with `ntfy not set up
-(Task 2, Phase 5)`. `make logs s=gate` shows the residents loading one after another, and its one
-line that ntfy isn't set up. Once `make status` shows the always-loaded models loaded, `make doctor`
+(Task 2, Phase 5)`. `make logs s=gate` shows the residents loading one after another, ~~and its one
+line that ntfy isn't set up~~ the line the gate logs at its start, `ntfy isn't set up for the gate
+(…): no notification reaches the phone, …`, and then a `notify: a <type> notification wasn't sent:
+ntfy isn't set up for the gate (…)` warning for each notification it would have sent. *(Corrected
+2026-10-16, at Phase 2a's cutover: the gate logs one line at its start and one for each
+notification, as Phase 2a's design says, not its one line alone.)* Once `make status` shows the
+always-loaded models loaded, `make doctor`
 passes every line but `ntfy`, which reads `WARN  ntfy: not set up (Task 2, Phase 5)` and fails
 nothing, until ntfy is set up in Phase 5. *(Corrected 2026-10-15, at Phase 2a's Task 35's review:
 doctor came first here. Run straight after Step 5, its end-to-end line fails, the embeddings model
@@ -727,7 +741,16 @@ This holds only until the cutover: from then on the box runs the phase's stack, 
 `make apply` would deploy the older one over it, as the rollback in *Moving a Phase 1 box to Phase
 2a* does on purpose.
 
-**On the Spark**, from the phase's clone, make the worktree:
+*(2026-10-16, Dan's decision, at Phase 2a's cutover: from the cutover until the phase merges into
+`main`, the same rule runs the other way.)* Nothing runs `make apply`, `make apply-now` or `make
+install-units` from `main` or a `main` worktree: `main` renders Phase 1's layout, llama-swap on
+9100, which is the rollback, and only the rollback deploys from there. An urgent fix is committed
+on the phase's branch, `phase-2a`, and deployed from its clone, as *Every later change* says; it
+is pushed with Dan's OK, after [the scan before every push](leak-guards.md#before-every-push) with
+`phase-2a` as `<branch>`, and reaches `main` with the phase's merge. No worktree and no merge of
+`main` are needed for it.
+
+*Before the cutover,* **on the Spark**, from the phase's clone, make the worktree:
 
 ```bash
 git worktree add ../local-ai-main main && git -C ../local-ai-main pull --ff-only

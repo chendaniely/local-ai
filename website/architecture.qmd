@@ -52,13 +52,13 @@ flowchart TB
     searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped"]
     agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
-    sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets · Phase 2a"]:::planned
-    front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys · Phase 2a"]:::planned
-    swap["llama-swap · 127.0.0.1:9100<br/>as spark, keys<br/>to 127.0.0.1:900, internal keys · Phase 2a"]
-    gate["spark-gate · Unix sockets<br/>decides every load · Phase 2a"]:::planned
-    brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold · Phase 2a"]
-    notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap · Phase 2a"]:::planned
-    engines["engines · 127.0.0.1:5800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B<br/>to 800 and up · Phase 2a"]
+    sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets"]
+    front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys"]
+    swap["llama-swap · 127.0.0.1:900<br/>as spark, internal keys only"]
+    gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
+    brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
+    notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
+    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -76,24 +76,21 @@ flowchart TB
   claude_mac --> anthropic
   webapp -- "HTTPS over Tailscale" --> tss
   pwa -- "HTTPS over Tailscale" --> tss
-  pi_mac -- "SSH tunnel, make tunnel" --> swap
-  oc_mac -- "same tunnel" --> swap
+  pi_mac -- "SSH tunnel, make tunnel" --> front
+  oc_mac -- "same tunnel" --> front
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
-  owui --> swap
-  agent_tmux --> swap
+  owui --> front
+  agent_tmux --> front
+  agent_tmux -- "spark status, the status socket" --> gate
   agent_tmux -- "its Claude Code" --> anthropic
-  pi_mac -. "same tunnel" .-> front
-  oc_mac -. "same tunnel" .-> front
-  owui -.-> front
-  agent_tmux -.-> front
-  front -. "internal key" .-> swap
-  front -. "asks before a load" .-> gate
-  gate -. "loads, unloads" .-> swap
-  gate -. "reads and lifts its hold" .-> brake
-  sockets -.-> front
-  sockets -.-> gate
+  front -- "internal key" --> swap
+  front -- "asks before a load" --> gate
+  gate -- "loads, unloads" --> swap
+  gate -- "reads and lifts its hold" --> brake
+  sockets --> front
+  sockets --> gate
   apps -.-> litellm
   family -.-> tss
   family -.-> litellm
@@ -101,14 +98,14 @@ flowchart TB
   guests -.-> litellm
   guestui -.-> litellm
   litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap
-  swap -- "spark launch" --> engines
+  swap -- "spark launch, with the gate's ticket" --> engines
   swap -.-> vllm
   swap -. "start route designed in 4a" .-> fast
   swap -. "spark launch" .-> flash
   brake -- "unloads through llama-swap" --> engines
-  gate -.-> ntfy
-  brake -. "its own alert, while the gate is down" .-> ntfy
-  notifier -.-> ntfy
+  gate -. "Phase 5" .-> ntfy
+  brake -. "its own alert, while the gate is down · Phase 5" .-> ntfy
+  notifier -. "Phase 5" .-> ntfy
   watchdog -.-> ntfy
   ntfy -.-> ntfy_mac
   ntfy -.-> ntfy_phone
@@ -122,10 +119,11 @@ flowchart TB
   the brake; and `agent`, for coding agents in tmux, with no sudo, no docker and keys of its own.
   Root runs the web services from its own copies of their units. From Phase 2a, `spark` also runs
   the gate, beside the brake, and two system users of their own run the front (`spark-front`) and
-  the model downloads (`spark-pull`).
-- **From Phase 2a (planned), the front takes 127.0.0.1:9100** with the same keys, so pi, the web UI
-  and `agent` change nothing. systemd holds 9100 and the gate's two sockets, so they are never free,
-  even while the front or the gate restarts, or crashes again and again. llama-swap moves to 127.0.0.1:900 and the engines to
+  the model downloads (`spark-pull`). *(They do since Phase 2a's cutover, 2026-10-16, and the
+  failure notifier runs as a user systemd makes for each of its runs, `DynamicUser=`.)*
+- **From Phase 2a ~~(planned)~~, the front takes 127.0.0.1:9100** with the same keys, so pi, the
+  web UI and `agent` change nothing. systemd holds 9100 and the gate's two sockets, so they are
+  never free, even while the front or the gate restarts, or crashes again and again. llama-swap moves to 127.0.0.1:900 and the engines to
   800 and up, below 1024, where no other user can listen, and only the internal keys reach
   llama-swap. The gate decides every load, unloads idle models and lifts the brake's hold; the
   brake stays a unit of its own, so it runs even while the gate is down, and then sends its own
@@ -139,7 +137,12 @@ flowchart TB
   backups, so the diagram labels them Phase 5, as it does the shares and backups; until then the
   stack runs without ntfy, the gate, the brake and the failure notifier send nothing and say so,
   and what they would report shows in `spark status` and `make doctor`. The bake-off's vLLM and
-  SGLang are Phase 4's.)*
+  SGLang are Phase 4's.)* *(Built 2026-10-16, at Phase 2a's cutover, its Task 38: all of this runs
+  on `brightroar` but ntfy and its alerts, which stay dashed, Phase 5's. Checked as `agent` that
+  day: binding 9100 while the front restarted, and 900 while llama-swap restarted, both failed. Not
+  yet checked on the box: the front crashing again and again, which Task 49's crash-loop check
+  runs, and the gate's sockets through its restart; nor has the brake been seen acting, Tasks 47
+  and 48.)*
 - **Phase 4a (planned, 2026-10-14)** brings the fast coder, Qwen3.8-27B on SGLang in a container
   that root's unit runs, and Qwen3.8-Flash-Next on llama.cpp, which loads after `spark make-room`
   clears the box; opencode on the Mac lists them. Until then both run by hand, outside the stack:
@@ -167,20 +170,17 @@ flowchart LR
   serve["tailscale serve, 443<br/>Tailscale only"]
   owui["Open WebUI"]
   searx["SearXNG"]
-  front["the front, 127.0.0.1:9100 · Phase 2a<br/>the same keys, then an internal key"]:::planned
-  swap["llama-swap, 127.0.0.1:9100<br/>a key on every request<br/>to 127.0.0.1:900 · Phase 2a"]
+  front["the front, 127.0.0.1:9100<br/>the same keys, then an internal key"]
+  swap["llama-swap, 127.0.0.1:900<br/>internal keys only"]
   litellm["LiteLLM on a LAN port · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
   anthropic(("Anthropic"))
 
-  piT --> tunnel --> swap
-  ui --> serve --> owui --> swap
+  piT --> tunnel --> front
+  ui --> serve --> owui --> front
   owui --> searx
-  piA --> swap
+  piA --> front
   cc --> anthropic
-  tunnel -.-> front
-  owui -.-> front
-  piA -.-> front
-  front -.-> swap
+  front --> swap
   app -.-> litellm
   litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap
   fam -.-> serve
@@ -189,13 +189,16 @@ flowchart LR
   guest -.-> litellm
 ```
 
-pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
-beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
+pi on the Mac reaches ~~llama-swap~~ the models only while `make tunnel` runs, since nothing on the
+Spark listens beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
 Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`). From
-Phase 2a (planned), the same tunnel, address and keys reach the front instead, which checks the key
+Phase 2a ~~(planned)~~, the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
-inference routes go through: llama-swap's admin routes stay out of every client's reach. From Phase
+inference routes go through: llama-swap's admin routes stay out of every client's reach. *(Built
+2026-10-16, at Phase 2a's cutover: pi on the Mac answered through the tunnel that day, the web UI
+chatted, searched and transcribed from the phone, and `/unload` through 9100 got
+`route_not_served`.)* From Phase
 3, apps reach the models with a key of their own; Phase 3 decides whether LiteLLM sits ahead of the
 front, takes its place, or isn't used at all, the front growing what Phase 3 needs. From Phase 6,
 family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only
@@ -208,51 +211,40 @@ network only.
 flowchart TD
   classDef planned stroke-dasharray: 5 5
 
-  req["a request names a model"] --> loaded{"already loaded?"}
-  loaded -- yes --> answer["the engine answers"]
-  loaded -- no --> launch["llama-swap starts it<br/>through spark launch<br/>Phase 2a: only with the gate's ticket"]
-  launch --> held{"is the brake holding<br/>new loads?"}
-  held -- yes --> refuse["refused, with its reason<br/>make status shows it"]
-  held -- no --> fits{"does its footprint fit in<br/>free memory, less the reserve?"}
-  fits -- no --> refuse
-  fits -- yes --> load["the engine loads"] --> answer
-  low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, on-demand ones first<br/>Phase 2a: idle ones first, and on the rate of fall"]
-  brake --> held
-
-  front["Phase 2a: the front, on 9100, checks the key and the route<br/>and counts the requests in flight"]:::planned
-  gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down, a 503;<br/>at boot, nothing loads"]:::planned
-  ask{"the gate: brake clear, and the footprint fits what's free for a load:<br/>available memory less the reserve, the growth the loaded models are owed,<br/>any load starting and any make-room hold that isn't mine?<br/>one load at a time, my keys first"}:::planned
-  gload["the gate gives spark launch a ticket and loads it through llama-swap;<br/>spark launch keeps the hold check and a zero-wait fit check"]:::planned
-  hold["the gate keeps the request waiting<br/>for its key's wait: 30 s for mine, 10 minutes for agent's"]:::planned
-  inline["refused inline, like any API error: a 409, which clients don't retry,<br/>memory needed against what's free for a load, the top holders, one next step and a code"]:::planned
-  release["Phase 2a: the gate lifts the hold after 5 minutes above 28 GiB, if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]:::planned
-  idle["Phase 2a: the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]:::planned
-
-  req -.-> front
-  front -. loaded .-> answer
-  front -. "not loaded" .-> ask
-  front -. "gate down" .-> gdown
-  ask -. yes .-> gload
-  gload -.-> answer
-  gload -. "load fails" .-> inline
-  ask -. no .-> hold
-  hold -. "fits in time" .-> gload
-  hold -. "time is up" .-> inline
-  brake -.-> release
-  ask -.- idle
+  req["a request names a model"] --> front["the front, on 9100, checks the key and the route<br/>and counts the requests in flight"]
+  front -- loaded --> answer["the engine answers"]
+  front -- "not loaded" --> ask{"the gate: brake clear, and the footprint fits what's free for a load:<br/>available memory less the reserve, the growth the loaded models are owed,<br/>any load starting and any make-room hold that isn't mine?<br/>one load at a time, my keys first"}
+  front -- "gate down" --> gdown["gate down: loaded models keep serving,<br/>new loads refused with gate_down, a 503;<br/>at boot, nothing loads"]
+  ask -- yes --> gload["the gate gives spark launch a ticket and loads it through llama-swap;<br/>spark launch keeps the hold check and a zero-wait fit check"]
+  gload --> answer
+  gload -- "load fails" --> inline["refused inline, like any API error: a 409, which clients don't retry,<br/>memory needed against what's free for a load, the top holders, one next step and a code"]
+  ask -- no --> hold["the gate keeps the request waiting<br/>for its key's wait: 30 s for mine, 10 minutes for agent's"]
+  hold -- "fits in time" --> gload
+  hold -- "time is up" --> inline
+  low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, idle ones first,<br/>and acts on the rate of fall"]
+  brake -- "holds new loads" --> ask
+  brake --> release["the gate lifts the hold after 5 minutes above 28 GiB, if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]
+  ask --- idle["the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]
 ```
 
 A model loads only if it fits: nothing is evicted to make room, and nothing is swapped for a
 smaller model. Free memory is the smaller of `MemAvailable` and what the GPU can allocate, and the
 reserve stays free, because overcommitting a GB10 can freeze it without an out-of-memory kill.
 
-From Phase 2a (planned, dashed), a request reaches the front first. A model that's loaded is
+*(2026-10-16, at Phase 2a's cutover, its Task 38: the front's and the gate's path, dashed until
+then, is built and running, and the diagram shows it alone. Phase 1's path, a request reaching
+llama-swap, which started the model through `spark launch`'s brake check and static fit and refused
+with a plain error, its reason in `make status`, ended that day. Those two checks stay in `spark
+launch`, as backstops behind the gate's ticket. git history keeps the diagram as it was.)*
+
+From Phase 2a ~~(planned, dashed)~~, a request reaches the front first. A model that's loaded is
 forwarded at once; for one that isn't, the front asks the gate, which admits one load at a time,
 my keys ahead of `agent`'s. What's *free for a load* is then available memory less the reserve,
 the growth the loaded models are still owed, and any room make-room is holding for me, which my
 own requests may load into and `agent`'s may not. If the model doesn't fit, the request waits
 for its key's wait, then gets a refusal that says why, in the client itself. `spark launch` starts
-nothing without the gate's ticket, and keeps today's checks as backstops that never wait. The
+nothing without the gate's ticket, and keeps ~~today's~~ Phase 1's checks *(reworded 2026-10-16, at
+the cutover, when they stopped being today's path)* as backstops that never wait. The
 reserve stays 24 GiB: the design lowered it to 22, and it went back to 24 the same day.
 
 ## Apps and speech (Phase 3, planned)
@@ -271,7 +263,8 @@ flowchart LR
 ```
 
 Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 2a they
-reach the front instead, with the same keys, and it already waits per key and refuses inline. From
+reach the front instead, with the same keys, and it already waits per key and refuses inline.
+*(Since 2026-10-16, Phase 2a's cutover, they do, and llama-swap takes only the internal keys.)* From
 Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
 never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front, takes its
 place, or isn't used at all, the front growing what Phase 3 needs.
@@ -290,7 +283,7 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S01 · Morning start](scenarios/s01-morning-start.md) | Loading a model |
 | [S02 · Big job while an agent works](scenarios/s02-big-job.md) | Loading a model |
 | [S03 · Doesn't fit (interactive)](scenarios/s03-doesnt-fit-interactive.md) | Loading a model |
-| [S04 · Doesn't fit (unattended)](scenarios/s04-doesnt-fit-unattended.md) | Loading a model: through the front for `agent` from Phase 2a, through LiteLLM for apps |
+| [S04 · Doesn't fit (unattended)](scenarios/s04-doesnt-fit-unattended.md) | Loading a model: through the front for `agent` ~~from Phase 2a~~ since Phase 2a's cutover (2026-10-16), through LiteLLM for apps |
 | [S05 · Memory critically low](scenarios/s05-memory-critically-low.md) | Loading a model: the brake |
 | [S06 · An agent's long GPU step](scenarios/s06-agent-gpu-step.md) | Loading a model |
 | [S07 · Lecture → transcript with speakers](scenarios/s07-lecture-transcript.md) | Apps and speech |

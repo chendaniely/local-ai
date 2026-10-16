@@ -8,7 +8,9 @@ its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-0
 its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
 Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
 inherits; the plan's Phase 2 line says what comes next. Orca and the web UI on the Mac came in
-between, as docs, not a phase (2026-09-30).
+between, as docs, not a phase (2026-09-30). Phase 2a's cutover (2026-10-16, its Task 38) put a front
+and a gate in front of llama-swap, which moved to 127.0.0.1:900; the rest of Phase 2a is still being
+built on the `phase-2a` branch.
 
 **The machine is a GIGABYTE AI TOP ATOM** (`ATAGB10-9002` rev 1.0), hostname `brightroar` — an OEM
 DGX Spark variant, **not** NVIDIA's Founders Edition. In this repo "the Spark" always means this
@@ -167,6 +169,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   line. Until then render summed every footprint against allocatable − reserve, 78 GiB, which
   counted the reserve twice. The launch check, live `MemAvailable` capped at the ceiling, less the
   reserve, at each load, and the brake are unchanged.)*
+  *(2026-10-16, at Phase 2a's cutover, its Task 38: the gate's half is built and running. The gate
+  admits each load by rule 9's formula, one at a time, keeping the reserve free and holding back
+  the growth the loaded models are still owed, and `spark launch` starts nothing without the gate's
+  ticket, keeping its own check as a backstop. The reserve is 24 GiB; the ceiling is still the
+  reported 102 GiB, not yet measured (Task 41).)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.
@@ -180,17 +187,34 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   loosens the brake on purpose, within bounds: its hold lifts by itself once memory has stayed above
   the warn line for 5 minutes and the reloads fit, at most once an hour; a hold found after a reboot
   waits for Dan; and the model that was loading when it fired doesn't reload by itself. The brake
-  stays a unit of its own. The plan's rule 5.)*
-- **Never reload llama-swap while models are loaded** — in v257 a config reload stops every engine.
-  Changes go through `make apply`, which refuses to restart llama-swap while models are loaded;
-  `make apply-now` restarts it anyway, when you choose to. (Corrected 2026-09-28, from Phase 1's
-  council: this said `spark apply` "waits for idle or asks", which it never did.) *(Phase 2a's
+  stays a unit of its own. The plan's rule 5.)* *(2026-10-16, at Phase 2a's cutover, its Task 38:
+  built and running, the release in the gate, and in the brake its idle-first order and its watch on
+  the rate of fall. Not yet seen acting on the box: Task 47 measures its timings, and Task 48's
+  drill, S05, checks it.)*
+- ~~**Never reload llama-swap while models are loaded**~~ **A llama-swap restart stops every model**
+  *(heading changed 2026-10-16, at Phase 2a's cutover: 2a's `make apply` restarts it with models
+  loaded, as the last note below says)* — in v257 a config reload stops every engine.
+  Changes go through `make apply`, ~~which refuses to restart llama-swap while models are loaded~~
+  *(Phase 1's, until 2026-10-16: since the cutover it waits for a quiet minute, as the last note
+  below says)*; `make apply-now` restarts it anyway, when you choose to. (Corrected 2026-09-28,
+  from Phase 1's council: this said `spark apply` "waits for idle or asks", which it never did.) *(Phase 2a's
   design, 2026-10-07, approved by Dan the same day; not yet built, replaces this rule once built:
   `make apply` restarts llama-swap with models loaded, once no request has been in flight for ~60 s
   by the front's counts, waiting 15 minutes at most before it offers "drain now" and then `make
   apply-now`, and the gate reloads the residents; without Dan's say (`make apply-now`), no request
   in flight is cut off, though a restart of the front itself cuts the requests it holds. Until 2a is
-  built, the rule above stands. The plan's *Deploy workflow*.)*
+  built, the rule above stands. The plan's *Deploy workflow*.)* *(2026-10-16, at Phase 2a's
+  cutover, its Task 38: built and deployed, so 2a's rule replaces the one above. The quiet wait
+  hasn't yet run on the box: the cutover's own `make apply` ran with llama-swap stopped, and Task
+  50's drill, S17, checks it. A bare `systemctl restart local-ai-llama-swap` still stops every
+  model; at the cutover's check as `agent`, the gate saw llama-swap start anew with no apply
+  announced and reloaded the three always-loaded models by itself, within 7 s. That reload has a
+  bound: after such an unplanned restart each always-loaded model reloads by itself at most once an
+  hour. After a second one within the hour the gate leaves them for Dan's `spark load`, and says so
+  in its log and in one `resident_waiting` notification ("… have each used their one automatic
+  reload this hour"), which reaches nothing until ntfy is set up; while the brake's hold stands,
+  the reloads wait for its release; and a model the brake marked or was loading when it fired, or
+  that Dan unloaded this boot, isn't reloaded.)*
 - **Tens of tok/s is the realistic band** on a large MoE. Don't promise more: the reference repo's
   75 tok/s needed *two* Sparks **and** speculative decoding.
 - **`sm_121`** — from-source builds need `CMAKE_CUDA_ARCHITECTURES=121` and
@@ -251,7 +275,13 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   for Phase 2a): from `phase-2a`, no `make apply`, `make apply-now` or `make install-units` until
   its cutover task; an urgent fix is committed on `main`, deployed from a `main` worktree, pushed
   with Dan's OK and merged into the phase branch. Dependabot's `spark/` bumps wait unmerged until
-  the phase merges. The phase plan's *Global Constraints* say which tasks.
+  the phase merges. The phase plan's *Global Constraints* say which tasks. That holds until the
+  phase's cutover. *(2026-10-16, Dan's decision, at Phase 2a's cutover: from then the same rule runs
+  the other way. The box runs `phase-2a`'s stack, and `main` renders Phase 1's layout, the rollback.
+  So until `phase-2a` merges into `main`, nothing runs `make apply`, `make apply-now` or `make
+  install-units` from `main` or a `main` worktree; every deploy, an urgent fix's included, is
+  committed on `phase-2a`, deployed from the `phase-2a` clone, pushed with Dan's OK, and reaches
+  `main` with the phase's merge. Only Task 38's rollback deploys from `main`.)*
 - **One session at a time.** The active session owns the phase branch; at a switch it commits, the
   branch is pushed with Dan's OK, and the other machine pulls.
 - **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase
@@ -284,8 +314,9 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   models and earlyoom ended it. The Mac and CI run as before.
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
-  and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets
-  credentials at all, which stopped being true when it got its own Claude Code login.)
+  and, from Phase 1, its own llama-swap key (since Phase 2a's cutover, 2026-10-16, a client key that
+  the front checks). (Corrected 2026-09-25: this said `agent` never gets credentials at all, which
+  stopped being true when it got its own Claude Code login.)
 - **Never bypass the leak hooks** — no `git commit --no-verify` in this repo once `.githooks` exists
   (Phase 0).
 - **Stage files by explicit path** (`git add <paths>`), never `git add -A` or `git add .` — a broad

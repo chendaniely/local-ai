@@ -13,7 +13,8 @@ needed against what's available, the top memory holders, and my options.
 **What I see.** An error in the client: today a plain one, with the explanation on the Spark; from
 Phase 2a the explanation itself, inline in the client, and a notification on my phone *(from Phase
 5: corrected 2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5
-swapped, the NAS phase now 5)*.
+swapped, the NAS phase now 5)*. *(Since 2026-10-16, Phase 2a's cutover, the explanation comes
+inline. A `no_fit` hasn't been seen on the box yet: Task 50's drill checks it.)*
 
 **How to override.** Free memory (`spark make-room`, stop a job), pick a model that fits, or
 retry.
@@ -65,7 +66,8 @@ set up*. The refusal in the client and `spark status`'s history of recent refusa
 2a's drill verifies this page without the phone; Phase 5 checks the phone's part.
 
 *(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
-it.)* A `no_fit` can't be asked for without filling memory, so `make doctor`'s `S03` line checks
+it.)* *(Deployed 2026-10-16, at the cutover: its line passed in that day's `make doctor`.)*
+A `no_fit` can't be asked for without filling memory, so `make doctor`'s `S03` line checks
 the refusal path with a model that doesn't exist: a made-up model name, sent through the front with
 my key, gets a `404` with `model_not_found`'s words, and nothing loads. That refusal shows in
 `spark status`'s *recent* afterwards.

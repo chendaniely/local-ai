@@ -233,7 +233,7 @@ phases. **Dan: "all recommended"** (2026-10-07):
 | Question | Answer, and why |
 |---|---|
 | `restarting`, `llama_swap_down` and `draining` come after the key's wait too: 503 or 409? | **409.** pi would retry a 503 three times, each with its own wait, so they would reach Dan after about 2¼ minutes and `agent` after about 40. Only `gate_down`, answered at once while the gate is down, stays a 503. |
-| A `make apply` from `phase-2a` before the cutover would break the running stack | **No deploys from `phase-2a` until the cutover;** an urgent fix goes from `main`. |
+| A `make apply` from `phase-2a` before the cutover would break the running stack | **No deploys from `phase-2a` until the cutover;** an urgent fix goes from `main`. *(2026-10-16, Dan's decision, at the cutover: from then until 2a merges, the other way round. Deploys, urgent fixes included, go from the `phase-2a` clone, and from `main` only Task 38's rollback: the plan's Revisions.)* |
 | The web containers could take llama-swap's new ports until `cap_drop` | **`cap_drop` comes before the cutover,** made and deployed from `main`. |
 | Dependabot's `spark/` bumps, `huggingface-hub` 2.0.0 among them | **Held until 2a merges,** since the plan pins the lock's package list. |
 | The residents after an unplanned llama-swap restart, or an earlyoom kill | **They reload by themselves,** one at a time, as at boot and after `apply`. |

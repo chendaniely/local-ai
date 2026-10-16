@@ -29,7 +29,9 @@ date: 2026-10-07
 > 1.**~~ **Done (2026-10-07 to 16):** Tasks 1 and 3–37, each reviewed (Task 36, Dan's bootstrap re-run and 2a's secret files, run on the box 2026-10-15; Task 37, the web containers' `cap_drop` and the coder's full context deployed from `main` on 2026-10-15, and `main` merged into `phase-2a` at `c97bd82`, pushed from the Mac). ~~**Task 2 [Dan]** runs side by
 > side with the Spark tasks: no task before Task 27 reads what it makes, and it has to be done
 > before Task 27 starts.~~ **Next: Task 38, the cutover.** Until the cutover (Task 38), nothing deploys from `phase-2a` (*Deploys during 2a*, below);
-> an urgent fix goes from `main`.
+> an urgent fix goes from `main`. *(2026-10-16, Dan's decision, at the cutover: from the cutover
+> until 2a merges, the other way round. Deploys, urgent fixes included, go from the `phase-2a`
+> clone, and from `main` only Task 38's rollback; *Deploys during 2a* has it.)*
 >
 > **ntfy is optional, and Task 2 leaves 2a** *(2026-10-14, Dan's decision: ntfy optional, moving
 > with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5)*. ntfy needs a Synology homelab
@@ -106,10 +108,18 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   urgent fix is committed on `main`, deployed from a `main` worktree (`git worktree add`, as Task
   38's rollback does), pushed with Dan's OK and merged into `phase-2a`; Task 37's `cap_drop`, which
   comes before the cutover, goes the same way. Until the cutover, read the box with the deployed
-  app (*How a code task runs*).
+  app (*How a code task runs*). *(2026-10-16, Dan's decision, at the cutover: what this says holds
+  until the cutover. From then the same rule runs the other way: the box runs `phase-2a`'s stack,
+  and `main` renders Phase 1's layout, llama-swap on 9100 with `llama-swap.env`, which is the
+  rollback. So until `phase-2a` merges into `main`, nothing runs `make apply`, `make apply-now` or
+  `make install-units` from `main` or a `main` worktree. Every deploy, an urgent fix's included, is
+  committed on `phase-2a`, deployed from the `phase-2a` clone, pushed with Dan's OK, and reaches
+  `main` with the phase's merge. Only Task 38's rollback (its Step 1) deploys from `main`.)*
 - **Dependabot during 2a** (Dan's decision, the same day): its `spark/` bumps, `huggingface-hub`
   2.0.0 among them, wait unmerged until 2a merges, since Task 3 pins the lock's package list. A
-  security fix that can't wait goes to `main` as an urgent fix.
+  security fix that can't wait goes to `main` as an urgent fix. *(From the cutover, 2026-10-16,
+  Dan's decision: to `phase-2a` as an urgent fix, deployed from its clone, as *Deploys during 2a*
+  now says.)*
 - **Values the box decides** (Dan's decision, the same day): a value a task sets from a
   measurement or a reading — Gemma's `--slot-prompt-similarity` (Task 24), the engines' OOM scores
   (Task 28), the brake's constants (Task 47) — is the controller's ruling, and Dan is told. Where a
@@ -8435,6 +8445,8 @@ git commit -m "feat(clients): 🤖 spark clients sets agent's pi to wait 15 minu
 - *An urgent fix during a phase's build*: nothing deploys from `phase-2a` before the cutover
   (*Deploys during 2a*); the fix is committed on `main`, deployed from a `main` worktree, pushed
   with Dan's OK and merged into `phase-2a` — the block Task 37 runs, on stand-ins first.
+  *(2026-10-16, Dan's decision, at the cutover: and from the cutover until the merge, the other way
+  round, committed on `phase-2a` and deployed from its clone; the section gains it.)*
 - `updates.md`: a uvicorn or Starlette bump runs `test_protocols.py` and `test_sockets.py` first,
   and `make apply` then restarts in Task 31's order; Dependabot's `spark/` bumps wait while a
   phase is being built (*Dependabot during 2a*).
@@ -8862,10 +8874,18 @@ systemctl start local-ai-llama-swap.service local-ai-gate.service local-ai-front
   the NAS phase now 5. Unless Task 2 has run, which it won't have in 2a: `make doctor` passes every
   line but `ntfy`, which reads `WARN  ntfy: not set up (Task 2, Phase 5)` and fails nothing (Task
   33); `make status`'s `health` row reads `ntfy not set up (Task 2, Phase 5)` (Task 29); `make logs
-  s=gate` holds its one line that ntfy isn't set up, and no other ntfy line; and the gate, the
+  s=gate` holds ~~its one line that ntfy isn't set up, and no other ntfy line~~ the line it logs at
+  its start, `ntfy isn't set up for the gate (NTFY_URL or NTFY_TOPIC_GATE isn't set: the values
+  file gives both): no notification reaches the phone, …`, then one `notify: a <type> notification
+  wasn't sent: ntfy isn't set up for the gate (…)` warning for each notification it would have
+  sent, `load_started`, `loaded` and `refused` among them; and the gate, the
   brake and the notifier's units started with neither the values file nor a header file there,
-  the system-unit check Task 25 left for this step.)* *(Added 2026-10-14, at Task 24's review, the
-  controller's ruling:)* llama-swap's keys under its sandbox, checked here first as a system unit.
+  the system-unit check Task 25 left for this step.)* *(Corrected 2026-10-16, at the cutover: the
+  gate logs what *ntfy is optional until Task 2* says, once that ntfy isn't set up, and then each
+  notification failing as ntfy out of reach does. "No other ntfy line" was never what Task 19 built.
+  `deploy.md`'s Step 6 had the same words, and is corrected with this.)*
+  *(Added 2026-10-14, at Task 24's review, the controller's ruling:)* llama-swap's keys under its
+  sandbox, checked here first as a system unit.
   Its unit reads `EnvironmentFile=/etc/local-ai/secrets/internal-keys.env` while
   `InaccessiblePaths=/etc/local-ai/secrets` hides that folder. systemd.exec(5) says environment
   files are read from the service manager's own file system, before any bind mounts, but a user

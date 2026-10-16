@@ -16,6 +16,10 @@ opencode was told the model's context is 128K. The numbers, the commands as run 
 tell are on [Speed tests](../reference/speed-tests.md#flash-next-by-hand-with-and-without-mtp).
 The notes below, dated the same day, correct what the run showed.)*
 
+*(2026-10-16: Phase 2a's cutover is done, its Task 38, so the box runs Phase 2a's stack. Where
+this page says *today's* stack or box, it means Phase 1's, before that day; its *from Phase 2a's
+cutover* notes are how it runs now.)*
+
 Qwen3.8-Flash-Next is 125B parameters with 6B active per token, plus 51B of n-gram embeddings and
 a 4B MTP head. It is a vision model (image-text-to-text) with hybrid thinking. This is **not the
 stack**: it lives in `~/scratch`, runs as you, and needs no new packages. The runs also measure
@@ -474,15 +478,20 @@ free -g
 
 Available should be back near 117. If the brake line says it's holding, release it once memory is
 back, **on the Spark**: `/opt/local-ai/app/.venv/bin/spark brake --release`. (The deployed app,
-not the clone: the clone is on `phase-2a`, whose `make status` misreads today's box.) Then, **on
-the Spark:**
+not the clone: the clone is on `phase-2a`, whose `make status` misreads today's box. *Since the
+cutover, 2026-10-16, it reads the box rightly too.*) Then, **on the Spark:**
 
 ```bash
 systemctl start local-ai-llama-swap
 ```
 
 Nothing loads yet: today's stack loads each model on its first request, so `free -g` stays near
-117 until something asks.
+117 until something asks. *(Since the cutover, 2026-10-16, the gate loads the always-loaded models
+by itself once llama-swap is back, so available falls, to 83 GiB with the three loaded at the
+cutover's check; the coder still waits for its first request. It does so at most once an hour
+for each: if llama-swap started anew within the last hour, after which the gate already reloaded
+them, they wait for `spark load`, as `make logs s=gate` says. While the brake's hold stands, they
+wait for its release.)*
 
 *(Added 2026-10-15, the first run: check `spark status` before starting llama-swap even when the
 server never came near the brake. That day the brake had been holding since 04:40:58, hours before

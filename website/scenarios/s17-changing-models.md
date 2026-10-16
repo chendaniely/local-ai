@@ -57,9 +57,12 @@ the Mac, `make clients` updates pi's list.* The plan's [*What you see in Phase
 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
 *(2026-10-15, Phase 2a's Task 32: built, not yet deployed or verified; Task 50's drill checks it on
-the box.)* `make apply` asks the gate what is in flight, never llama-swap, and says what it waits
-on each time that changes. It adds two lines of its own: one when the gate restarted and doesn't
-have the front's counts yet, and one when no request has come since the front started. Ctrl-C, or
+the box.)* *(Deployed 2026-10-16, at the cutover, and `make doctor`'s `S17` line passed that day;
+still not verified: the cutover's own `make apply` ran with llama-swap stopped, so the wait below
+hasn't run on the box yet.)* `make apply` asks the gate what is in flight, never llama-swap, and
+says what it waits on each time that changes. It adds two lines of its own: one when the gate
+restarted and doesn't have the front's counts yet, and one when no request has come since the
+front started. Ctrl-C, or
 a dropped SSH session, changes nothing while it waits. "Drain now" holds new requests and waits,
 however long, for the requests in flight, naming whose they are. Before any request is held, after
 the quiet minute or the yes to drain now, apply syncs the app. It stops any sync that hasn't

@@ -18,9 +18,9 @@ flowchart TB
     owui["Open WebUI<br/>with SearXNG for search"]
     agent["pi as agent<br/>in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place,<br/>or not at all"]:::planned
-    front["the front<br/>checks each key · Phase 2a"]:::planned
-    gate["spark-gate<br/>decides every load · Phase 2a"]:::planned
-    swap["llama-swap<br/>starts the model<br/>a request names"]
+    front["the front<br/>checks each key"]
+    gate["spark-gate<br/>decides every load"]
+    swap["llama-swap<br/>starts the model<br/>the gate admits"]
     guard["fit check, memory brake<br/>a model loads only if it fits"]
     engines["llama.cpp, whisper.cpp<br/>models for chat, coding,<br/>embeddings, speech"]
     vllm["vLLM<br/>Phase 4"]:::planned
@@ -30,21 +30,18 @@ flowchart TB
 
   nas["Synology<br/>alerts, through ntfy · Phase 5<br/>backups · Phase 5"]:::planned
 
-  harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> swap
+  harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> front
   browser -- "HTTPS over Tailscale" --> owui
   later -.-> litellm
   claude -- "never through the Spark" --> anthropic
-  owui --> swap
-  agent --> swap
-  harness -. "the same tunnel" .-> front
-  owui -.-> front
-  agent -.-> front
-  front -.-> swap
-  front -. "asks before a load" .-> gate
-  gate -. "loads, unloads" .-> swap
+  owui --> front
+  agent --> front
+  front --> swap
+  front -- "asks before a load" --> gate
+  gate -- "loads, unloads" --> swap
   litellm -. "through the front or in its place,<br/>if Phase 3 adds it" .-> swap
   swap --> guard
-  gate -.-> guard
+  gate --> guard
   guard --> engines
   guard -.-> vllm
   guard -.-> fast

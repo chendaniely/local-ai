@@ -45,7 +45,8 @@ After 2a this page stays `planned`, with a dated note recording its gate part, u
 completes it.
 
 *(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
-it.)* `make doctor`'s `S01` line checks the gate's part of this morning's setup: the deployed
+it.)* *(Deployed 2026-10-16, at the cutover: its line passed in that day's `make doctor`.)*
+`make doctor`'s `S01` line checks the gate's part of this morning's setup: the deployed
 registry unloads an on-demand model after 60 minutes idle, and the gate counts the same models as
 always loaded as the registry, which never unload for being idle.
 

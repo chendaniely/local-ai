@@ -63,7 +63,8 @@ verifies this page without the phone, the notifier seen running on each failure;
 each alert on the phone, once per failure and once per 5 minutes through a crash loop.
 
 *(2026-10-15, Phase 2a's Task 33: built, not yet deployed; the cutover's first `make doctor` runs
-it.)* `make doctor`'s `S14` line checks, by `systemctl show`, that the front, the gate, the brake
+it.)* *(Deployed 2026-10-16, at the cutover: its line passed in that day's `make doctor`.)*
+`make doctor`'s `S14` line checks, by `systemctl show`, that the front, the gate, the brake
 and llama-swap each start the failure notifier when they fail. It also checks that the first three
 never stop restarting (`StartLimitIntervalSec=0`; llama-swap's unit keeps systemd's default limit,
 which its 5 s between restarts can't reach), and that the notifier's script is installed. Its `gate`
