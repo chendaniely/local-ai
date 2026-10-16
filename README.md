@@ -186,6 +186,13 @@ when that file was retired on 2026-09-23.
   [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges). Phase 4a
   builds it into the stack; until then the by-hand page's *Clean up* removes these. 591 GiB of disk
   was left after (`df -h /`).
+- **Flash-Next's files** (2026-10-15), outside the stack, and nothing runs them: Qwen3.8-Flash-Next
+  at `UD-IQ3_XXS` in three shards, its vision projector and its MTP head, in
+  `~/scratch/models/qwen3.8-flash-next`, 82 GiB; and llama.cpp **b11330**'s `llama-server`, built in
+  `~/scratch/llama.cpp-b11330` for MTP and not installed. Run by hand, with llama-swap stopped, and
+  measured on [Speed tests](website/reference/speed-tests.md) (on `phase-2a` until Phase 2a merges).
+  Phase 4a puts Flash-Next in the registry, which pulls its own copy; the by-hand page's *Clean up*
+  removes these.
 - **The stack** (Phase 1, Tasks 12–13: deployed 2026-09-27, running since 2026-09-28). Root runs
   its own copies: the four units in `/etc/systemd/system/local-ai-*.service` and the Compose project
   in `/etc/local-ai/compose`, `root:root`, installed by `make install-units`. llama-swap, the brake
@@ -294,7 +301,11 @@ when that file was retired on 2026-09-23.
   service that its windows hand their requests to, which keeps the environment it started with:
   `opencode service restart` after adding a key. `make clients` writes its `spark` provider; the fast
   coder's `spark-sglang` provider was added by hand from the by-hand page, its key in
-  `SPARK_SGLANG_KEY`, exported by Dan's shell like the others.
+  `SPARK_SGLANG_KEY`, exported by Dan's shell like the others. Flash-Next's `spark-flash-next`
+  provider was added by hand too (2026-10-15), with a 131,072-token limit and a placeholder key,
+  since the by-hand server checks none: it reaches the server only through the tunnel on port
+  8080, and fails while that tunnel is closed. `make clients` rewrites only the `spark` provider
+  and keeps both.
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
