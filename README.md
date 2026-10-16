@@ -134,7 +134,9 @@ when that file was retired on 2026-09-23.
   `local-ai-*` unit, and reload systemd, but not start transient ones.)* Two containers run,
   Open WebUI and SearXNG, under root's Compose unit (2026-09-28; none existed before): Open WebUI
   **v0.11.4** and SearXNG **2026.9.23-3cd69d30e**, each at the digest `stack/versions.yaml` pins,
-  which root's Compose file names.
+  which root's Compose file names. *(Since 2026-10-15, Phase 2a's Task 37: both run with
+  `cap_drop: [ALL]`, Open WebUI with `DAC_OVERRIDE` added back for its data folder, so neither can
+  bind a port below 1024. SearXNG's `request_timeout` is 6.0 s.)*
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
@@ -228,7 +230,10 @@ when that file was retired on 2026-09-23.
   within the 102 GiB ceiling, and the coder fits beside the residents with the reserve kept. The
   box serves the coder at 163,840 until Dan runs `make apply`, which restarts llama-swap and so
   refuses while a model is loaded (`make apply-now` restarts it anyway), and pi's lists show the
-  new window once the clients are written again; this section changes then.)*
+  new window once the clients are written again; this section changes then.)* *(Deployed
+  2026-10-15, with Phase 2a's Task 37, from a `main` worktree: the box serves the coder at its full
+  262,144 tokens. The footprints are 32, 8, 3 and 41 GiB, the coder's estimated and not yet
+  measured. pi's lists show the new window once `make clients` writes them again on the Mac.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for

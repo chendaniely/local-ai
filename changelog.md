@@ -8,6 +8,39 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-15 — The web containers drop their capabilities, and the coder gets its full context (Phase 2a, Task 37)
+
+**Deployed** by Dan, **on the Spark**, from a `main` worktree at `586f884`, as an urgent fix is, before
+Phase 2a's cutover: `make apply`, `make install-units`, `make apply`, at 22:39. What changed:
+- **Open WebUI and SearXNG** run with `cap_drop: [ALL]`, so neither can bind a free port below
+  1024, which 2a's llama-swap takes at the cutover.
+  - Open WebUI gets one back, `DAC_OVERRIDE`: it runs as root (`docker top`), and its data folder on
+    the host is `spark:spark 0750` with root's files in it. Checked on the box before the deploy.
+  - SearXNG gets none: it runs as root without switching user, its server listens on 8888, and it
+    doesn't use its cache folder.
+- **SearXNG's `request_timeout`** is 6.0 s, up from 3.
+- **`main`'s registry and app since 2026-10-08:**
+  - the coder, `qwen3.8-27b`, at its full 262,144 tokens (its footprint estimated at 41 GiB, not
+    yet measured);
+  - render's corrected budget check;
+  - the clients' opencode and Hermes support.
+  - llama-swap and the brake restarted. No model was loaded at the time.
+
+**Checked:**
+- Both containers answer health checks (Open WebUI `/health`, SearXNG `/healthz`: 200).
+- In each, binding 127.0.0.1:900 fails with `PermissionError: [Errno 13] Permission denied`.
+- A web search in the web UI works from the Mac.
+- SearXNG's two start-up warnings, `/etc/searxng` not owned by `searxng:searxng` and no
+  `X-Forwarded-For`, appear at every start since 2026-09-28, so they are not new.
+
+**Seen, not caused by this change:**
+- DuckDuckGo answered the box's searches with a CAPTCHA, and Brave errored once.
+- Open WebUI once failed to make a chat title (`KeyError: 'model'`).
+
+**Not yet measured:** the coder's cold load at 262,144 tokens.
+
+---
+
 ## 2026-10-15 — Flash-Next, run by hand
 
 **Already there** when the run began, **on the Spark**: Qwen3.8-Flash-Next's files in
