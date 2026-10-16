@@ -2746,7 +2746,18 @@ Each item gets its own design pass when its turn comes.
   `agent`'s GPU jobs an OOM score "before `agent` runs GPU work", which is a promise, not a
   control. → Dan's decision, 2026-10-07: in 2a, root
   gives `agent`'s processes an `oom_score_adj` that `agent` can't lower, if it holds when tested as
-  `agent`; otherwise in 2b, with S06.
+  `agent`; otherwise in 2b, with S06. *(Resolved in 2a, 2026-10-16, Phase 2a's Task 40: it holds.
+  Since Task 28, root gives `agent`'s SSH logins and its user manager `oom_score_adj` 1000, and
+  earlyoom runs without `--prefer`, so "earlyoom picks the engines (900 and 1000) before `agent`'s
+  processes (0)" above no longer describes the box. As `agent`, after a fresh login, the score read
+  1000 outside tmux and in it, the tmux server's too, and lowering it by one was refused
+  (`PermissionError`). With a job of `agent`'s holding 9.75 GiB, earlyoom's dry run named it, score
+  1380, not an engine. What stays: the engines run at 1000 on demand and 900 resident, so between a
+  job of `agent`'s and an on-demand engine earlyoom takes the one holding more RSS. Qwen3.6's engine
+  holds about 4.8 GiB of its own, not the ~2.6 GiB Task 28's arithmetic took for an engine, so a job
+  of `agent`'s outscores it only above about 5 GiB: the first dry run, at 4.6 GiB, named Qwen3.6's
+  engine, 1356. Rule 9's reserve and the brake stay the guards for memory taken outside the gate;
+  see Revisions.)*
 - **To verify on the box:** ~~`121` vs `121a-real`~~ (resolved 2026-09-28: `121a-real` builds
   native `sm_121a` code that runs here; no `121` build was made; see Revisions); ~~`agent`'s CUDA access~~ (resolved 2026-09-27:
   as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
@@ -4219,6 +4230,13 @@ Each item gets its own design pass when its turn comes.
   41 of 50), but not together, so the gate refuses whichever is asked for second until the other
   unloads; `spark render` warns that every model at once passes the ceiling, as rule 9 has it warn.
   llama-swap numbers the engines by name, so it takes 802, the coder 803 and whisper 804.
+- **2026-10-16** — `agent`'s OOM score, tested as `agent`, Phase 2a's Task 40 (*Open items and
+  risks*: *`agent`'s own GPU jobs are outside the gate*, resolved in 2a). Root's score of 1000 held:
+  `agent` couldn't lower it outside tmux or in it, and earlyoom's dry run named a 9.75 GiB job of
+  `agent`'s, score 1380, before any engine. An on-demand engine's own RSS sets the crossover:
+  Qwen3.6's, about 4.8 GiB, beat a 4.6 GiB job. Task 40's drills' memory hog, `stack/measure/hog.py`,
+  is built and twice reviewed: its floor can only be raised and its pace only slowed. Task 40's Step
+  3 check line was corrected: the plan's one-liner could never show a refused write.
 
 ## Sources
 

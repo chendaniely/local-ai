@@ -8,6 +8,40 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-16 — `agent`'s OOM score, tested as `agent` (Phase 2a, Task 40)
+
+Nothing on the box changed: this records Task 40's checks. Task 28's hook and drop-in, installed by
+Task 36's bootstrap, give `agent`'s SSH logins and its user manager `oom_score_adj` 1000, set by
+root.
+
+**Checked** by Dan, **on the Spark**, as `agent`, after a fresh SSH login (the cold boot had ended
+`agent`'s old tmux server):
+- **The score and its floor:** `/proc/self/oom_score_adj` read 1000, outside tmux and in a new one,
+  and the tmux server's read 1000 too. Lowering it by one was refused, `PermissionError: [Errno 13]
+  Permission denied`, outside tmux and in it. Every process of `agent`'s read 1000: its user
+  manager, sshd's session process, its shell.
+- **The plan's first check line printed nothing,** which proved nothing. `open(...).write(...)`
+  buffers the write until Python throws the file away, and outside dev mode CPython drops an error
+  from that close silently. As Dan, writing -500 that way exited 0 with no output. The corrected line
+  closes the file itself and reads the score back. Task 40's Step 3 now gives it.
+- **earlyoom's choice:** a copy of the drills' memory hog, run as `agent` in that tmux with `--leave
+  39.9`, held 9.75 GiB at 40.04 GiB available. earlyoom's dry run (`--dryrun -r 1 -M
+  125829120,125829110 -s 100,100`, with `earlyoom.default`'s `--avoid` and no `--prefer`) would have
+  sent SIGKILL to `agent`'s `python`, badness 1380, VmRSS 10,002 MiB, and to no engine. Ctrl-C then
+  ended the hog: *stopped by Ctrl-C, and freed everything it held*.
+- **A first dry run, too early,** while the hog held about 4.6 GiB and was still growing, named
+  Qwen3.6's `llama-server` instead: badness 1356, VmRSS 4,911 MiB. Qwen3.6's engine holds about
+  4.8 GiB of its own, not the ~2.6 GiB Task 28's arithmetic took for an engine. So a job of
+  `agent`'s outscores an on-demand engine only once it holds more than that engine's RSS, about
+  5 GiB against Qwen3.6's. Both run at 1000, and earlyoom takes the bigger.
+
+**Built, the same day:** the drills' one memory hog, `stack/measure/hog.py`. It is sized from
+`MemAvailable` at the time, takes 0.25 GiB every 2.5 s with every page written, reads the floor
+every 0.25 s, frees everything on every way out, refuses a floor under 24 GiB or a faster pace, and
+was reviewed twice.
+
+---
+
 ## 2026-10-16 — Qwen3.6-35B-A3B back on demand, beside the coder (Dan's decision)
 
 **Deployed** by the Spark session, **on the Spark**, from the `phase-2a` clone at `03d36b1`, with

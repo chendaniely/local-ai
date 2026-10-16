@@ -144,7 +144,10 @@ when that file was retired on 2026-09-23.
   2a, Task 36. It added two identities, `spark-front` and `spark-pull`, system users with no
   login. The polkit rule now covers seven `local-ai-*` services. `agent`'s logins and user manager
   get an OOM score of 1000, set by root, and `/etc/cron.deny` names `agent`. earlyoom runs without
-  `--prefer`. See the changelog.)*
+  `--prefer`. See the changelog.)* *(Checked as `agent` on 2026-10-16, Phase 2a's Task 40: `agent`
+  can't lower that score, outside tmux or in it, and earlyoom would pick a 10 GiB job of `agent`'s
+  before any engine. A job of `agent`'s outscores an on-demand engine only once it holds more than
+  the engine's own RSS: about 5 GiB against Qwen3.6's.)*
 - **The GPU set**, as the 2026-09-23 DGX OS update left it and bootstrap held it: kernel 7.0, NVIDIA
   driver 580.178, CUDA 13.0.3, the numbers [Updates](website/how-to/updates.md#upgrade-day-the-gpu-set)
   records for that update. `nvcc` reports 13.0, and `/usr/local/cuda` points to CUDA 13.0 (checked
