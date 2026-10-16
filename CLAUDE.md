@@ -258,6 +258,16 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   llama-swap, the container images, the tools: pin a release only once it is a week old, unless an
   urgent fix needs it sooner, and say so in the commit (Dan's decision, 2026-09-28, at Phase 1's
   close: llama.cpp and llama-swap went in 4–5 days after release).
+- **Test runs on the Spark are capped at 4 GiB, through `make test`** (Dan's decision, 2026-10-15).
+  There `make test` runs pytest in a user scope with `MemoryMax=4G` and no swap, so the kernel kills
+  a runaway run, never the models' memory; `make test ARGS="spark/tests/test_x.py -k name"` runs
+  some tests. The tests' `conftest.py` refuses an uncapped run on the Spark before any test starts,
+  for every account, `agent` and subagents included, so a bare `uv run --frozen --project spark
+  pytest …` stops there; no variable or flag turns it off. A session whose user manager doesn't
+  answer gets a line from `make test` saying to log in again, never an uncapped run. The size is
+  `spark/tests/memory_cap.py`'s `CAP_GIB`, which the Makefile reads: a full suite run peaked at
+  346 MiB, and on 2026-10-15 a runaway one reached 107,882 MiB, while the brake unloaded three
+  models and earlyoom ended it. The Mac and CI run as before.
 - **The `agent` user never gets Dan's credentials** — no sudo, no docker group, no GitHub token, no
   access to Dan's home or `~/.secrets`. It holds only credentials of its own: its Claude Code login
   and, from Phase 1, its own llama-swap key. (Corrected 2026-09-25: this said `agent` never gets

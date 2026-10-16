@@ -588,13 +588,15 @@ way, **on the Spark**, in the clone, with the bump checked out, run `test_protoc
 rest after them:
 
 ```bash
-uv run --frozen --project spark pytest spark/tests/test_protocols.py spark/tests/test_sockets.py
+make test ARGS="spark/tests/test_protocols.py spark/tests/test_sockets.py"
 make test
 ```
 
 A Starlette bump runs the same two tests first, then the rest, as above: it moves within its range,
 so it needs no companion change, but the gate serves through Starlette, on that same uvicorn.
-*(Added 2026-10-15, Phase 2a's Task 35.)*
+*(Added 2026-10-15, Phase 2a's Task 35. Changed the same day: the two tests run through `make test
+ARGS="…"`, not `uv run … pytest`, since on the Spark the tests refuse a run that isn't capped at
+4 GiB, and `make test` caps it.)*
 
 Once a uvicorn or Starlette bump is merged and pulled on the Spark, `make apply` deploys it. A
 change to the lock is a change to the app's environment, so apply restarts the brake and the gate,

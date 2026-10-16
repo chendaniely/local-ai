@@ -1529,7 +1529,10 @@ Docker.
 ### Testing
 
 - **Unit tests (TDD):** admission decisions, brake ordering, idle policy, refusal text — pure
-  functions with fixtures. They run anywhere: the Mac, the Spark, CI.
+  functions with fixtures. They run anywhere: the Mac, the Spark, CI. *(2026-10-15, Dan's
+  decision: on the Spark they run capped at 4 GiB of memory with no swap, through `make test`, and
+  refuse an uncapped run there, for every account; the Mac and CI run them as before. A test run
+  shares the one memory pool with the models: that day a runaway one reached 107,882 MiB.)*
 - **Render tests:** golden files plus each tool's own validator; CI runs `spark render --check`.
   (2026-09-25: Phase 1's CI runs `spark render --out`, which fails on anything render refuses; there
   is no `--check` yet. Its render tests assert what matters in each rendered file rather than
@@ -1928,6 +1931,13 @@ council, with Dan's fourteen decisions (Revisions).*
   `make docs` passes, `check-scenarios` included; the overview on the home page and on the
   Architecture page matches 2a; and a click on *Where everything sits* opens it full-screen,
   where Fit, 100%, + and dragging work.)*
+  *(Added 2026-10-15, Dan's decision: Task 37's merge of `main` into `phase-2a`, before the
+  cutover, is now the first one. So it does what this note describes for the closing merge: both
+  sides of the Architecture page's opening, `_overview.qmd`'s labels brought up to 2a's phases in
+  the same merge commit, and `make docs` on the Mac before the push. It also resolves
+  `stack/models.yaml` to `main`'s `qwen3.8-27b`. It takes this note's route too: the Spark makes,
+  resolves, tests and commits it without pushing; the Mac fetches it over SSH, scans and pushes.
+  The closing merge then brings in only what `main` has gained since, by the same route.)*
 - *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
@@ -4006,6 +4016,23 @@ Each item gets its own design pass when its turn comes.
   is written until the drain is done* gains a dated note, as do Task 32's notes in its plan, S17
   and the box reviewer's M-7 Minor). `make apply`'s app sync, whose locks any account can hold,
   runs before apply's hold, bounded at 3 minutes, and names the lock it waited on.
+- **2026-10-15** — Phase 2a's merges of `main`, Dan's decision: Task 37's merge, before the
+  cutover, is the first, so it does what *Closing 2a* described for the closing merge (the
+  Architecture page's opening, the overview's labels, `make docs` on the Mac) and resolves the
+  coder to `main`'s `qwen3.8-27b`. Both merges take *Closing 2a*'s route: the Spark makes, resolves,
+  tests and commits each without pushing, and the Mac fetches it over SSH, scans and pushes, since
+  `main` changes a workflow. Dated notes are in *Closing 2a*, Task 37 and the deploy runbook's
+  urgent fix. Also: the brake's three events of 2026-10-15 (test runs of the build session, ended
+  by earlyoom) are recorded for Task 47.
+- **2026-10-15** — Test runs on the Spark are capped, Dan's decision, after the brake's three
+  events that day (*Testing* gains a dated note; so do Phase 2a's *Global Constraints*, its *How a
+  code task runs* and Task 47's note of the day, and `updates.md`'s uvicorn bump; `CLAUDE.md` and
+  the README's conventions gain the rule). On the Spark, `make test` runs pytest in a user scope
+  capped at 4 GiB with no swap, so the kernel kills only a runaway run, and `make test ARGS="…"`
+  runs some tests. The tests' `conftest.py` refuses an uncapped run there before any test starts,
+  for every account, so a bare `uv run … pytest` stops; no variable or flag turns it off. A full
+  suite run peaked at 346 MiB, so the cap is more than ten times a normal run. The Mac and CI run
+  as before.
 - **2026-10-15** — Flash-Next's first by-hand run (*Phases*, Phase 4a, gains a dated note; the
   by-hand page gains its notes, and *Speed tests* the run). b11146 serves it at 31.7 tok/s, and
   b11330 with MTP at 41.7, for about 90 GiB: MTP looks worth b11330's pin, Dan's call at 4a. MTP at

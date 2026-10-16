@@ -747,11 +747,15 @@ workflows:
 git diff --stat HEAD...main -- .github/workflows
 ```
 
-If it lists anything, the merge is made on the Mac, not here. The Spark's GitHub token can't push a
-branch that brings in a `.github/workflows/` change (`CLAUDE.md`, *Building it*). `main` is pushed
-already: remove the worktree, still **on the Spark**, with `git worktree remove ../local-ai-main`,
-and make the merge on the Mac, which takes the phase's branch as at any switch between the
-machines. *(Added 2026-10-15, at Phase 2a's Task 35's review:
+If it lists anything, ~~the merge is made on the Mac, not here.~~ the Spark can't push the merge,
+since its GitHub token can't push a branch that brings in a `.github/workflows/` change
+(`CLAUDE.md`, *Building it*). ~~`main` is pushed already: remove the worktree, still **on the
+Spark**, with `git worktree remove ../local-ai-main`, and make the merge on the Mac, which takes
+the phase's branch as at any switch between the machines.~~ *(Corrected 2026-10-15, Dan's
+decision, the route of plan.md's *Closing 2a*:)* make the merge here anyway, **on the Spark**, as
+below: resolve every conflict, run the tests, and commit it **without pushing**. Then, **on the
+Mac**, fetch the merge commit from the Spark over SSH, run the scan before every push, and push the
+phase's branch from there. *(Added 2026-10-15, at Phase 2a's Task 35's review:
 `origin/main` has changed `publish-website.yml` since 2a branched, so this holds for Task 37's
 merge.)* If it lists nothing, **on the Spark**, merge it in, and remove the worktree:
 

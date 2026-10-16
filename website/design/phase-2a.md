@@ -408,6 +408,15 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   asks for it); the engines' own user; a private network namespace.
 - **`make doctor`'s heavy checks** — the 170 MB upload and the privacy canary through the front —
   run only with `spark doctor --full` (the controller's ruling).
+- **Test runs are capped** *(added 2026-10-15, Dan's decision, after the brake's three events that
+  day, each a build session's test run: Task 47's note)*. On the Spark, `make test` runs pytest in a
+  user scope capped at 4 GiB with no swap, so the kernel kills only a runaway run, and the tests'
+  `conftest.py` refuses any uncapped run there before a test starts, a bare `uv run --frozen
+  --project spark pytest …` among them, for every account. So a task's own runs are `make test
+  ARGS="<its test files>"`, from the repo's root, with pytest's flags after the files (`-k …`, `-x`)
+  where needed (*How a code task runs*, step 2); `make test lint` stays as it is. A session whose
+  user manager doesn't answer gets a line from `make test` saying to log in again, never an
+  uncapped run. The size is `spark/tests/memory_cap.py`'s `CAP_GIB`, which says why.
 
 ## Review Focus
 
@@ -522,7 +531,8 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 | `spark/src/spark/cli.py` | Registers `front`, `gate` and the new commands |
 | `spark/tests/fake_llamaswap.py` (new) | A llama-swap v257 stand-in that behaves as its source does, for the async tests |
 | `spark/tests/test_*.py` | One file per new module, named in each task; the existing files change with their modules |
-| `Makefile` | `logs` gains `front`, `gate`, `notify`; `restart-front`; help texts |
+| `Makefile` | `logs` gains `front`, `gate`, `notify`; `restart-front`; help texts; `test` runs capped on the Spark, and takes `ARGS` *(2026-10-15, Dan's decision)* |
+| `spark/tests/memory_cap.py`, `spark/tests/conftest.py` (2026-10-15) | The cap's size, `CAP_GIB`, and the check by which the tests refuse an uncapped run on the Spark *(Global Constraints, Test runs are capped)* |
 | `website/how-to/ntfy.md` (new) | Dan's runbook: ntfy, the phone, the tokens, the values file; Phase 5's since 2026-10-14, when Task 2 moved there |
 | `website/reference/notifications.md` (new, generated) | Every notification type with its priority, from the registry |
 | `website/how-to/deploy.md`, `secret-files.md`, `pi.md`, `bootstrap.md`, `updates.md`, `index.qmd` | Runbooks for 2a |
@@ -536,7 +546,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
 Every **[Spark]** task that changes code follows the same steps, given in each task as checkboxes:
 
 1. Write the task's tests, as its **Tests** list says, in the files it names.
-2. **On the Spark**, run them with `uv run --frozen --project spark pytest <its test files>`, and see
+2. **On the Spark**, run them with ~~`uv run --frozen --project spark pytest <its test files>`~~
+   `make test ARGS="<its test files>"` *(corrected 2026-10-15: on the Spark the tests refuse a run
+   that isn't capped, Global Constraints' *Test runs are capped*)*, and see
    each fail for the reason expected: a module or name that doesn't exist yet, or the assertion
    the test exists for. A test that passes before the code is written is wrong.
 3. Implement to the task's **Interfaces**, nothing more.
@@ -550,7 +562,8 @@ the box, which still runs Phase 1's layout. Until the cutover (Task 38), read th
 deployed app: `/opt/local-ai/app/.venv/bin/spark status` and `…/spark doctor`; and deploy nothing
 from the clone (*Deploys during 2a*).
 
-Tests run in the environment `spark/tests/conftest.py` builds (no secret, an empty `HOME`). Unix
+Tests run in the environment `spark/tests/conftest.py` builds (no secret, an empty `HOME`), and on
+the Spark only under the cap (*Test runs are capped*, added 2026-10-15). Unix
 sockets in tests live under a short `mkdtemp(dir="/tmp")`, since macOS caps an `AF_UNIX` path at
 104 bytes. Async tests use anyio's pytest plugin (`@pytest.mark.anyio`, backend `asyncio`), each
 bounded by `anyio.fail_after`, and inject a clock so that waits of minutes run in milliseconds.
@@ -8592,12 +8605,28 @@ git commit -m "feat(stack): 🤖 the web containers drop every capability they d
   Then *Before every push* with `main` as `<branch>`, and **Dan OKs** `git push origin main`. Back
   in the `phase-2a` clone, **on the Spark**: *(Added 2026-10-15, at Task 35's review, the
   controller's ruling: first `git diff --stat HEAD...main -- .github/workflows`. If it lists
-  anything, the merge is made on the Mac, since the Spark's token can't push a branch that brings
-  in a `.github/workflows/` change (`CLAUDE.md`'s Building it): `main` is pushed from the Spark
+  anything, ~~the merge is made on the Mac, since~~ the Spark's token can't push a branch that brings
+  in a `.github/workflows/` change (`CLAUDE.md`'s Building it)~~: `main` is pushed from the Spark
   with Dan's OK as above, the worktree removed, and the merge made on the Mac, which takes
-  `phase-2a` as at any switch. It applies today: `origin/main` has changed `publish-website.yml`
+  `phase-2a` as at any switch~~. It applies today: `origin/main` has changed `publish-website.yml`
   since 2a branched. deploy.md's urgent-fix section says the same. Today's merge of `origin/main`,
   tried in a scratch clone at Task 35, also conflicted in twelve files, not only the four below.)*
+  *(Corrected 2026-10-15, Dan's decision: one route for this merge and the closing one, plan.md's
+  *Closing 2a* route. The Spark session makes the merge here, resolves every conflict and runs 2a's
+  tests, as below, then commits it **without pushing**. **On the Mac**, the merge commit is
+  fetched from the Spark over SSH, the scan before every push runs, and the Mac pushes `phase-2a`.
+  Since this is now the first merge of `main` into `phase-2a`, it also does what *Closing 2a*
+  describes for the closing merge:*
+  - *`website/architecture.qmd`'s opening keeps both sides: `main`'s opening, then 2a's sentence on
+    a built part that a later phase changes, then `main`'s *The overview* section with its include;*
+  - *the same merge commit brings `website/_overview.qmd`'s labels up to 2a's phases, as Closing
+    2a lists them;*
+  - *`stack/models.yaml` is resolved to `main`'s `qwen3.8-27b`, as noted above;*
+  - *on the Mac, before the push, `make docs` passes, `check-scenarios` included, and the overview
+    reads right on the home page and the Architecture page.*
+
+  *The closing merge at 2a's end then brings in only what `main` has gained since, by the same
+  route.)*
 
 ```bash
 git merge --no-ff main -m "chore(repo): 🤖 merge main's cap_drop into phase-2a" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -9383,6 +9412,35 @@ git commit -m "docs(machine): 🤖 both pis work with Qwen3.8-27B" \
   `changelog.md`; and, as the readings say, `stack/host/earlyoom.default` or a swappiness setting
   in `stack/host/bootstrap.sh`, each with its test first
 
+*(Added 2026-10-15, at Dan's request: a real event for this task's tuning. Read from the
+journal, `sar` and earlyoom's own lines. Nothing changed for it.)* On 2026-10-15, Phase 1's
+brake fired three times, unattended, and each time the cause was a test run of the build session's
+own, not a model. Every request and every model was idle; llama-swap logged only the brake's polls.
+- **04:30–04:40.** Committed memory rose from 17.4 to 55.0 GB in one `sar` interval, and
+  available fell from 49.7 GiB (earlyoom's 04:35:53 report) to 28.0 at 04:39:11, the warn line. At
+  04:40:58 it was 19.9 GiB: the brake held and unloaded `qwen3.8-27b`. By 04:50 committed memory
+  was back to 13.6 GB, so the process had ended. Which process it was isn't recorded. It came
+  during a Task 32 build session's test runs, and matches the event below in every reading.
+- **06:10–06:50.** Committed memory climbed about 25 GB every ten minutes, from 24 to 120 GB.
+  The brake unloaded `gemma-4-26b-a4b` at 06:35:48 and `whisper-large-v3-turbo` at 06:45:48, each
+  at 20.0 GiB available. Neither unload could stop it, because the brake unloads only models. At
+  06:50:24 earlyoom, at 9.87% available (12.3 GiB), sent SIGTERM to a `pytest` process of Dan's
+  account holding **107,882 MiB** of RSS. It exited in 0.1 s, and at 07:00 available was 117 GiB.
+  It was a Task 33 build session's run. Its likeliest cause, unproven: a deliberate mutation that
+  removed a read guard, so that a test's link to `/dev/zero` was read whole.
+- **What it shows for this task:**
+  - The line at 20 GiB held each time. At 04:40:58 the brake fired as available reached it, 107 s
+    after the warning at 04:39:11.
+  - The brake only buys time against a process that isn't a model. earlyoom's 12/9 GiB backstop is
+    what ended it, about 5 minutes after the brake's last unload.
+  - Phase 1's hold then stood until Dan released it, and refused `qwen3.8-27b` at 08:56:32.
+  - A test run on this box shares the one memory pool with the models. ~~Capping test runs is
+    proposed to Dan, not built.~~ *(Corrected 2026-10-15: built the same day, Dan's decision, at
+    4 GiB. On the Spark, `make test` runs capped, and the tests refuse an uncapped run: Global
+    Constraints, *Test runs are capped*. A scratch allocator run through the same `systemd-run`
+    line was killed by the kernel inside its scope at 3.97 GiB of RSS, while available memory
+    stayed at 113.9 GiB or more.)*
+
 - [ ] **Step 1: Measure,** each with the sampler: a busy engine's stop time, by Task 44's method
   (the drill brake unloading the coder while it answers, the only model loaded); how long after an
   engine leaves `/running` its memory shows in `MemAvailable`; `MemAvailable`'s noise while models
@@ -9818,7 +9876,9 @@ Every command block above was run on 2026-10-07, before it went in:
   install-units`), which exist and are run as Phase 1 ran them. Each runbook's blocks are run in the
   task that writes them, on stand-ins, and its report says how.
 - **The pytest form** in *How a code task runs* was run on `spark/tests/test_registry.py` (108
-  passed).
+  passed). *(2026-10-15: its new form, `make test ARGS="spark/tests/test_registry.py"`, was run
+  on the Spark, under the cap: 174 passed, the file having grown since. The old form is now
+  refused there.)*
 - **ntfy's Compose file:** `docker compose config` with stand-in values read the file's shape this
   task's test pins (Docker's CLI needs no daemon for it): with the values it printed the service,
   a bcrypt hash's `$` kept; without them it stopped, naming `NTFY_BASE_URL`.
