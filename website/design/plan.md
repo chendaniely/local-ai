@@ -2198,6 +2198,21 @@ were all thinking; about 45 GiB, as `MemAvailable` went from 117 to 72 GiB; read
 minutes; the image's digest is hasso5703's. Not yet measured: code output, long prompts, and the
 fast coder beside the always-loaded models. [Speed tests](../reference/speed-tests.md) has the
 setup, the commands and the caveats. Flash-Next's run is still to come.)*
+*(Flash-Next's first by-hand run, 2026-10-15, alone with llama-swap stopped (it came the next day,
+so the sentence above is superseded): b11146 serves it, confirming its architecture, at 31.7 tok/s
+on the same prompt; b11330, built in `~/scratch`, serves it with MTP at 41.7 tok/s, keeping 55% of
+the drafted tokens. That is the fast coder's speed, for about 90 GiB and the whole box against its
+45. So MTP is worth having, and b11330, out since 2026-10-02, meets the seven-day rule for the pin
+change. By `MemAvailable`'s fall from 117 GiB it took about 81 GiB at a 32K context and 83 at 128K,
+and MTP's head about 6 more at 128K, leaving 27 GiB: under the brake's 28 GiB warn line, so the
+registry's entry with MTP needs a 64K context (not tried) or `UD-Q2_K_XL`. b11146 logged no buffer
+sizes at its default level, so the footprint comes from `MemAvailable`. opencode needs the 128K
+context: **a client's context limit has to leave room for its prompt plus the output it keeps
+back**, or opencode trims its history every turn and the server reads the whole prompt again, 37–41
+s a turn at 32K against under 3 s at 128K. `spark clients` sets each model's limit to its registry
+`ctx`, so the limits match once the registry is deployed; until the cutover, `main`'s clients give
+the coder 262,144 while the box runs it at 163,840. [Speed tests](../reference/speed-tests.md) has
+the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains its notes.)*
 
 - **Names** (Dan, 2026-10-13): the fast coder takes over `qwen3.8-27b`, and today's llama.cpp coder
   stays as `qwen3.8-27b-gguf`, the fallback. Both are on demand, and they don't fit together
@@ -3990,6 +4005,11 @@ Each item gets its own design pass when its turn comes.
   is written until the drain is done* gains a dated note, as do Task 32's notes in its plan, S17
   and the box reviewer's M-7 Minor). `make apply`'s app sync, whose locks any account can hold,
   runs before apply's hold, bounded at 3 minutes, and names the lock it waited on.
+- **2026-10-15** — Flash-Next's first by-hand run (*Phases*, Phase 4a, gains a dated note; the
+  by-hand page gains its notes, and *Speed tests* the run). b11146 serves it at 31.7 tok/s, and
+  b11330 with MTP at 41.7, for about 90 GiB: MTP is worth b11330's pin. MTP at 128K leaves 27 GiB,
+  under the warn line, so 4a's entry needs 64K or `UD-Q2_K_XL`. A client's context limit has to
+  leave room for its prompt and its kept-back output, or opencode re-reads every turn.
 
 ## Sources
 
