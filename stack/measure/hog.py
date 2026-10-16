@@ -8,17 +8,23 @@ frees everything and exits 0. On the Spark, from the repo's root:
 
     uv run --no-project stack/measure/hog.py --leave 48
 
-- Before each step it reads MemAvailable, and stops growing when that, less a step, would pass under --leave.
+- Before each step it reads MemAvailable, and stops growing when that, less a step, would pass under --leave. If
+  MemAvailable is already under --leave when it starts, it takes nothing and stops (exit 3).
 - A step is private anonymous memory with every page written, so all of it is resident at once (Memory, below).
 - After each step it re-reads MemAvailable every 250 ms, for up to 5 s, until it has fallen since the hog's start by
   at least 90% of all the hog holds. If it hasn't, the reading isn't following what the hog takes, so the hog frees
   everything and stops (exit 3).
-- While it holds anything, a reading under --floor (24 GiB by default, the reserve every load keeps free, 4 above the
-  brake's line) frees everything at once and stops (exit 3). The floor can only be raised: a --floor under 24, or a
-  --leave under the floor, is refused, with nothing taken (exit 2).
-- It frees everything on every way out: the hold's end, a stop, an error (exit 1), Ctrl-C (exit 130), SIGTERM (143)
-  and SIGHUP (129). Killed any other way (SIGKILL, earlyoom), the kernel frees its memory with it.
-- It prints each step's total and MemAvailable, in GiB.
+- While it holds anything it reads MemAvailable at least every 250 ms, through every pause and the whole hold, and a
+  reading under --floor (24 GiB by default, the reserve every load keeps free, 4 above the brake's line) frees
+  everything at once and stops (exit 3).
+- The floor can only be raised, and the pace only slowed: a --floor under 24, a --leave under the floor, a --step-gib
+  over 0.25 or a --pause-s under 2.5 is refused, with nothing taken (exit 2).
+- It frees everything on every way out: the hold's end, a stop, an error (exit 1), Ctrl-C (130), SIGHUP (129), SIGTERM
+  (143), and Ctrl-Z (148), which ends it rather than pausing it, since a paused hog would hold its memory with nothing
+  watching the floor. earlyoom would pick the hog first (the comment before Memory has the arithmetic): it sends
+  SIGTERM below 12 GiB available, which the hog takes as above, and SIGKILL only below 9 GiB
+  (stack/host/earlyoom.default), and the kernel frees a killed process's memory as it goes.
+- It prints each step's total and MemAvailable, in GiB. --help lists the exit codes.
 
 Standard library only (PEP 723, no dependencies). spark/tests/test_hog.py loads it from this path."""
 
@@ -45,24 +51,33 @@ FLOOR_GIB = 24.0
 # only on a fall of MIN_FALL_GIB, 1.5 GiB, within its FALL_WINDOW_S, 2 s. At this pace a 2 s window holds one step at
 # most, since the pause comes after a step has shown, and one step falls 0.25. So the hog never trips the watch, and a
 # drill trips the brake only where it raises the brake's thresholds on purpose (Task 48).
-# test_its_pace_stays_under_the_rate_watch checks it with the brake's own constants, so Task 47's re-check it.
+# test_its_pace_stays_under_the_rate_watch checks it with the brake's own constants, so Task 47's new constants
+# re-check it. The pace can only be slowed (the controller's ruling, 2026-10-16): a bigger step or a shorter pause is
+# refused.
 STEP_GIB = 0.25
 PAUSE_S = 2.5
 # How long it holds at --leave unless told otherwise: an hour, so a hog left running ends by itself. The drills that
 # end it with Ctrl-C (S03, S05) give no --hold-s.
 HOLD_S = 3600.0
-POLL_S = 0.25  # how often it re-reads MemAvailable after a step, and while it holds
+POLL_S = 0.25  # how often it reads MemAvailable while it holds anything: after a step, through each pause, and holding
 REFLECT_S = 5.0  # how long, after a step, it waits for MemAvailable to show what it holds
 REFLECTED_SHARE = 0.9  # what share of all it holds MemAvailable must have fallen by since its start
 
 EXIT_HELD, EXIT_ERROR, EXIT_REFUSED, EXIT_STOPPED = 0, 1, 2, 3
-STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+EXIT_CTRL_C = 130
+# Each of these ends the hog as Ctrl-C does, and it exits 128 + the signal's number. Ctrl-Z (SIGTSTP) among them (the
+# controller's ruling, 2026-10-16): a hog paused by it would hold its memory with no reading watching the floor. uv
+# doesn't stop on it either: checked with a stand-in script under `uv run --no-project` (uv 0.12.18, 2026-10-16), uv
+# exited with the stand-in's 148.
+STOP_SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGTSTP)
 
 
 @dataclass(frozen=True)
 class Result:
     held_gib: float  # what it held when it stopped; for "not_reflected" and "floor", already freed
-    stopped: Literal["leave", "not_reflected", "floor"]
+    # "under_leave": MemAvailable was already under --leave at the start, and it took nothing (the controller's ruling,
+    # 2026-10-16)
+    stopped: Literal["leave", "under_leave", "not_reflected", "floor"]
     detail: str  # why it stopped, in a sentence for the person watching
 
 
@@ -119,7 +134,7 @@ class Memory:
 
 
 class Stopped(BaseException):
-    """SIGTERM or SIGHUP, raised wherever the hog is, so it frees everything as on Ctrl-C."""
+    """SIGHUP, SIGTERM or Ctrl-Z's SIGTSTP, raised wherever the hog is, so it frees everything as on Ctrl-C."""
 
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
@@ -131,17 +146,41 @@ def _stop(signum: int, frame: object) -> None:
     raise Stopped(signum)
 
 
+def _the_floor(floor_gib: float) -> str:
+    """The floor in words: the reserve when it is the default, and the floor given when it was raised."""
+    if floor_gib == FLOOR_GIB:
+        return f"the floor, {floor_gib:g} GiB, the reserve every load keeps free"
+    return f"the floor you set, --floor {floor_gib:g} GiB"
+
+
 def _under_the_floor(available: float, floor_gib: float, held_gib: float) -> str:
-    return (f"MemAvailable read {available:.2f} GiB, under the floor, {floor_gib:.2f} GiB, while the hog held "
-            f"{held_gib:.2f} GiB: something else is taking memory too. It freed everything at once and stopped.")
+    return (f"MemAvailable read {available:.2f} GiB, under {_the_floor(floor_gib)}, while the hog held {held_gib:.2f} "
+            "GiB: something else is taking memory too. It freed everything at once and stopped. Check what else is "
+            "using memory (spark status for the models, top -o %MEM for the rest) before running it again.")
+
+
+def _watch(read_available: Callable[[], float], sleep: Callable[[float], None], *, seconds: float,
+           floor_gib: float) -> float:
+    """Waits `seconds` in POLL_S slices, reading MemAvailable after each, and returns the first reading under
+    `floor_gib` at once, or else the last. With no time to wait, it reads once."""
+    waited = 0.0
+    while True:
+        pause = min(POLL_S, seconds - waited)
+        sleep(pause)
+        waited += pause
+        available = read_available()
+        if available < floor_gib or waited >= seconds:
+            return available
 
 
 def grow(read_available: Callable[[], float], take: Callable[[float], None], free_all: Callable[[], None], *,
          leave_gib: float, floor_gib: float, step_gib: float, pause_s: float,
          sleep: Callable[[float], None]) -> Result:
     """Takes `step_gib` at a time, `pause_s` apart, until MemAvailable less a step would pass under `leave_gib`, each step
-    confirmed in MemAvailable (REFLECTED_SHARE of all it holds, within REFLECT_S) and never under `floor_gib` while it
-    holds anything. At "leave" it still holds what it took; at "not_reflected" and "floor" it has freed everything."""
+    confirmed in MemAvailable (REFLECTED_SHARE of all it holds, within REFLECT_S). While it holds anything it reads
+    MemAvailable at least every POLL_S, through each pause, and a reading under `floor_gib` frees everything at once.
+    At "leave" it still holds what it took; at "not_reflected" and "floor" it has freed everything; at "under_leave" it
+    took nothing."""
     start = read_available()
     print(f"hog: MemAvailable is {start:.2f} GiB. Taking {step_gib:g} GiB every {pause_s:g} s down to "
           f"{leave_gib:.2f} GiB; under {floor_gib:.2f} GiB it frees everything at once.", flush=True)
@@ -150,10 +189,15 @@ def grow(read_available: Callable[[], float], take: Callable[[float], None], fre
         if held and available < floor_gib:
             free_all()
             return Result(held, "floor", _under_the_floor(available, floor_gib, held))
+        if not held and available < leave_gib:
+            return Result(held, "under_leave",
+                          f"MemAvailable is {available:.2f} GiB, already under --leave {leave_gib:.2f} GiB; nothing "
+                          "taken. Something else holds memory the drill didn't count on: read MemAvailable again "
+                          "(grep MemAvailable /proc/meminfo), and give a --leave under it or find what holds it.")
         if available - step_gib < leave_gib:
             if not held:
                 return Result(held, "leave", f"MemAvailable is {available:.2f} GiB, already within a step of --leave "
-                                             f"{leave_gib:.2f} GiB: nothing taken.")
+                                             f"{leave_gib:.2f} GiB; nothing taken.")
             return Result(held, "leave", f"MemAvailable is {available:.2f} GiB, within a step of --leave "
                                          f"{leave_gib:.2f} GiB, with {held:.2f} GiB held.")
         take(step_gib)
@@ -174,24 +218,17 @@ def grow(read_available: Callable[[], float], take: Callable[[float], None], fre
                           f"{REFLECTED_SHARE:.0%} of the {held:.2f} GiB the hog held, {REFLECT_S:g} s after its last "
                           "step: the reading isn't following what it takes, perhaps because something else freed "
                           "memory meanwhile. It freed everything and stopped; run it again once memory is steady.")
-        sleep(pause_s)
-        available = read_available()
+        available = _watch(read_available, sleep, seconds=pause_s, floor_gib=floor_gib)
 
 
 def hold(read_available: Callable[[], float], free_all: Callable[[], None], *, held_gib: float, floor_gib: float,
          hold_s: float, sleep: Callable[[float], None]) -> Result:
     """Holds what it took for `hold_s`, reading MemAvailable every POLL_S; a reading under `floor_gib` frees everything
     at once ("floor"). Once the time is up it frees everything ("leave")."""
-    waited = 0.0
-    while waited < hold_s:
-        pause = min(POLL_S, hold_s - waited)
-        sleep(pause)
-        waited += pause
-        available = read_available()
-        if available < floor_gib:
-            free_all()
-            return Result(held_gib, "floor", _under_the_floor(available, floor_gib, held_gib))
+    available = _watch(read_available, sleep, seconds=hold_s, floor_gib=floor_gib)
     free_all()
+    if available < floor_gib:
+        return Result(held_gib, "floor", _under_the_floor(available, floor_gib, held_gib))
     return Result(held_gib, "leave", f"Held {held_gib:.2f} GiB for {hold_s:g} s, and freed it.")
 
 
@@ -213,37 +250,70 @@ def _zero_or_more(text: str) -> float:
     return _number(text, zero_ok=True)
 
 
+EXIT_CODES = f"""exit status:
+  0    held at --leave for --hold-s, then freed everything; or already within a step of --leave
+  1    an error (an allocation refused, /proc/meminfo unreadable); everything it held freed
+  2    refused, nothing taken: a --floor under {FLOOR_GIB:g}, a --leave under the floor, or a faster pace
+  3    stopped, everything freed: a reading under the floor, or MemAvailable not following what it
+       took; or nothing taken, since MemAvailable was already under --leave
+  {128 + signal.SIGHUP}  SIGHUP; everything freed
+  {EXIT_CTRL_C}  Ctrl-C; everything freed
+  {128 + signal.SIGTERM}  SIGTERM, earlyoom's first signal too; everything freed
+  {128 + signal.SIGTSTP}  Ctrl-Z, which ends the hog rather than pausing it; everything freed"""
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="hog.py", description="The drills' memory hog: takes memory until MemAvailable is down to --leave, "
-                                   "holds it, then frees everything.")
+        prog="hog.py", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EXIT_CODES,
+        description="The drills' memory hog: takes memory until MemAvailable is down to --leave, holds it,\nthen "
+                    "frees everything.")
     parser.add_argument("--leave", type=_above_zero, required=True, metavar="GIB",
-                        help="the MemAvailable it brings the box down to, never below")
+                        help="the MemAvailable to bring the box down to. It stops a step short of it, and other "
+                             "processes can still take memory below it: the floor is the guard, and a reading under "
+                             "--floor frees everything (exit 3), so a --leave equal to --floor ends at the first dip")
     parser.add_argument("--floor", type=_above_zero, default=FLOOR_GIB, metavar="GIB",
-                        help=f"while it holds anything, a reading under this frees everything at once; a --leave "
-                             f"under it is refused (default {FLOOR_GIB:g}, the reserve, and the lowest it may be)")
+                        help=f"while it holds anything, a reading under this frees everything at once. It can only be "
+                             f"raised, and a --leave under it is refused (default {FLOOR_GIB:g}, the reserve)")
     parser.add_argument("--step-gib", type=_above_zero, default=STEP_GIB, metavar="GIB",
-                        help=f"how much each step takes (default {STEP_GIB:g})")
+                        help=f"how much each step takes; it can only be made smaller (default {STEP_GIB:g})")
     parser.add_argument("--pause-s", type=_zero_or_more, default=PAUSE_S, metavar="S",
-                        help=f"the pause after each step has shown (default {PAUSE_S:g})")
+                        help=f"the pause after each step has shown; it can only be made longer (default {PAUSE_S:g})")
     parser.add_argument("--hold-s", type=_zero_or_more, default=HOLD_S, metavar="S",
                         help=f"how long it holds at --leave before it frees everything and exits 0 (default "
                              f"{HOLD_S:g}, an hour); Ctrl-C frees it sooner")
     return parser
 
 
+def _refusal(args: argparse.Namespace) -> str | None:
+    """Why the hog won't start, in words, or None. The floor can only be raised, and the pace only slowed (the
+    controller's rulings, 2026-10-16)."""
+    if args.floor < FLOOR_GIB:
+        return (f"--floor {args.floor:g} is under {FLOOR_GIB:g} GiB, the reserve every load keeps free and the lowest "
+                f"the hog may ever leave (the brake's line is 20); nothing taken. Leave --floor out, or give "
+                f"{FLOOR_GIB:g} or more.")
+    if args.leave < args.floor:
+        return (f"--leave {args.leave:g} is under {_the_floor(args.floor)}; nothing taken. Give a --leave of "
+                f"{args.floor:g} or more.")
+    faster = []
+    if args.step_gib > STEP_GIB:
+        faster.append(f"--step-gib {args.step_gib:g}")
+    if args.pause_s < PAUSE_S:
+        faster.append(f"--pause-s {args.pause_s:g}")
+    if faster:
+        return (f"{' and '.join(faster)} would take memory faster than {STEP_GIB:g} GiB every {PAUSE_S:g} s, a pace "
+                f"the brake's rate watch (Task 23) could read as a fall and act on; nothing taken. Leave "
+                f"{'them' if len(faster) > 1 else 'it'} out, or slow the pace: steps of {STEP_GIB:g} GiB or less, "
+                f"pauses of {PAUSE_S:g} s or more.")
+    return None
+
+
 def main(argv: list[str] | None = None, *, read_available: Callable[[], float] | None = None,
          memory: Memory | None = None, sleep: Callable[[float], None] | None = None) -> int:
     """The command line. `read_available`, `memory` and `sleep` are the box's own unless a test gives stand-ins."""
     args = _parser().parse_args(argv)
-    if args.floor < FLOOR_GIB:
-        print(f"hog: --floor {args.floor:g} is under {FLOOR_GIB:g} GiB, the reserve every load keeps free and the "
-              f"lowest the hog may ever leave (the brake's line is 20); nothing taken. Leave --floor out, or give "
-              f"{FLOOR_GIB:g} or more.", file=sys.stderr)
-        return EXIT_REFUSED
-    if args.leave < args.floor:
-        print(f"hog: --leave {args.leave:g} is under the floor, {args.floor:g} GiB, the reserve every load keeps free; "
-              f"nothing taken. Give a --leave of {args.floor:g} or more.", file=sys.stderr)
+    refusal = _refusal(args)
+    if refusal is not None:
+        print(f"hog: {refusal}", file=sys.stderr)
         return EXIT_REFUSED
     read_available = read_available_gib if read_available is None else read_available
     memory = Memory() if memory is None else memory
@@ -265,12 +335,17 @@ def main(argv: list[str] | None = None, *, read_available: Callable[[], float] |
         return EXIT_STOPPED
     except Stopped as stop:
         memory.free_all()
-        print(f"hog: stopped by {stop.name}, and freed everything it held.", file=sys.stderr)
+        if stop.signum == signal.SIGTSTP:
+            print("hog: Ctrl-Z ends the hog rather than pausing it, since a paused hog would hold its memory with "
+                  "nothing watching the floor. It freed everything it held and stopped; run it again to go on.",
+                  file=sys.stderr)
+        else:
+            print(f"hog: stopped by {stop.name}, and freed everything it held.", file=sys.stderr)
         return 128 + stop.signum
     except KeyboardInterrupt:
         memory.free_all()
         print("hog: stopped by Ctrl-C, and freed everything it held.", file=sys.stderr)
-        return 130
+        return EXIT_CTRL_C
     except OSError as err:
         memory.free_all()
         print(f"hog: stopped on an error, and freed everything it held: {err}", file=sys.stderr)
