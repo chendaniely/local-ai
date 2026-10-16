@@ -26,6 +26,124 @@ Run everything on the Spark, as you, inside tmux (`tmux new -As scratch`), unles
 for the checks. The server then stops if its SSH session drops, when the Mac sleeps for instance;
 nothing breaks, and it just needs starting again.)*
 
+## Run it again {#run-it-again}
+
+*(Added 2026-10-15, Dan's decision: as on [the fast coder's page](qwen3.8-27b-sglang.md#run-it-again),
+Flash-Next stays usable by hand while Phases 2a and 4a are built. It needs the files from step 1,
+step 5's b11330 build for MTP, both kept in `~/scratch` on 2026-10-15, and the `spark-flash-next`
+provider in opencode ([step 4](#connect-from-the-mac)).)*
+
+**Ask the Spark's build session first:** Phase 2a's box tasks need the box as they left it, as on
+the fast coder's page. **Flash-Next takes the box:** every model the stack serves stops until the
+restore, and the fast coder can't run at the same time.
+
+**1. Stop the stack and clear the page cache, on the Spark:**
+
+```bash
+systemctl stop local-ai-llama-swap
+sync && echo 1 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+free -g
+```
+
+Available should be near 117. From Phase 2a's cutover, hold llama-swap down in place of the first
+line, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says.
+
+**2. Start it, on the Spark**, in tmux or a terminal you'll keep open. Pick one of the two:
+
+- **For long opencode sessions: 128K, without MTP.** Measured on 2026-10-15: 31.7 tokens a second,
+  with 34 GiB available. It answers as `qwen3.8-flash-next`, opencode's 128K entry.
+
+  ```bash
+  choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
+    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+    --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
+    --alias qwen3.8-flash-next \
+    --host 127.0.0.1 --port 8080 \
+    --gpu-layers all --ctx-size 131072 --parallel 1 \
+    --load-mode none --lazy-mode off --cache-ram 1024 --ctx-checkpoints 8 \
+    --no-slots --jinja 2>&1 | tee -i ~/scratch/flash-next-$(date +%F-%H%M).log
+  ```
+
+- **For faster writing: MTP at 64K.** About 41.7 tokens a second. At 128K, MTP left 27 GiB
+  available, under the brake's 28 GiB warn line, so this run halves the context. 64K hasn't run
+  yet: its first run measures it, and it should leave about 29–30. It answers as
+  `qwen3.8-flash-next-mtp`, opencode's 64K entry.
+
+  ```bash
+  choom -n 1000 -- ~/scratch/llama.cpp-b11330/build/bin/llama-server \
+    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+    --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
+    --alias qwen3.8-flash-next-mtp \
+    --host 127.0.0.1 --port 8080 \
+    --gpu-layers all --ctx-size 65536 --parallel 1 \
+    --load-mode none --lazy-mode off --cache-ram 1024 --ctx-checkpoints 8 \
+    --no-slots --jinja \
+    --spec-draft-model ~/scratch/models/qwen3.8-flash-next/mtp-Qwen3.8-Flash-Next-Q8_0.gguf \
+    --spec-type draft-mtp --spec-draft-n-max 3 2>&1 | tee -i ~/scratch/flash-next-mtp-$(date +%F-%H%M).log
+  ```
+
+**3. Check it, on the Spark**, from a second terminal. It loads in about a minute:
+
+```bash
+until curl -sf http://127.0.0.1:8080/health > /dev/null; do sleep 5; done; date +%T
+free -g
+```
+
+If the first terminal shows an error and returns to its prompt, press Ctrl-C here. **Stop it if
+available is under 28:** Ctrl-C in its terminal, or `pkill -INT -f 'alias qwen3.8-flash-next'` from
+this one, which stops either run.
+
+**4. Connect from the Mac**, with the one tunnel both by-hand models use, left running, **on the
+Mac**:
+
+```bash
+ssh -N -L 8990:127.0.0.1:990 -L 8080:127.0.0.1:8080 brightroar
+```
+
+In opencode, pick the entry that matches the run with `/model`, under "Spark Flash-Next (by hand)":
+`qwen3.8-flash-next` for 128K, `qwen3.8-flash-next-mtp` for MTP at 64K. Leave the effort on
+default. Each entry's limit has to match its run's context: a bigger one lets opencode run past the
+server's context, and a too-small one most likely made every turn a full re-read at 32K
+([step 4](#connect-from-the-mac)). The MTP entry
+goes beside the first one, inside `"models"`, and keeps back 16,384 tokens for the answer instead of
+32,768, so that a 64K context still leaves opencode about 48,000 for its prompt:
+
+```json
+"qwen3.8-flash-next-mtp": {
+  "name": "qwen3.8-flash-next-mtp",
+  "limit": {
+    "context": 65536,
+    "output": 16384
+  },
+  "variants": {
+    "low": { "reasoningEffort": "low" },
+    "medium": { "reasoningEffort": "medium" },
+    "xhigh": { "reasoningEffort": "xhigh" }
+  }
+}
+```
+
+**5. Stop it and restore the stack, on the Spark**, from the second terminal:
+
+```bash
+pkill -INT -f 'alias qwen3.8-flash-next'
+free -g
+/opt/local-ai/app/.venv/bin/spark status
+```
+
+Once available is back near 117, release the brake if `spark status` says it's holding:
+`/opt/local-ai/app/.venv/bin/spark brake --release`. Then start the stack, **on the Spark**:
+
+```bash
+systemctl start local-ai-llama-swap
+sleep 5; /opt/local-ai/app/.venv/bin/spark status
+```
+
+`spark status` should read `loaded nothing`, with no problem line; asked in the first second, it
+says llama-swap is unreachable. From the cutover, end the hold-down here instead, before releasing
+the brake, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says. **On the Mac:** Ctrl-C
+where the tunnel runs.
+
 ## Why by hand, for now
 
 Beside the always-loaded models it doesn't fit. Rule 9's room for an on-demand model is
