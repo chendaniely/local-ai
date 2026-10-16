@@ -24,8 +24,7 @@ frees everything and exits 0. On the Spark, from the repo's root:
   watching the floor. Under uv run, Ctrl-Z also stops uv itself, which fg lets exit (or kill %1 ends); the memory is
   freed either way. A second signal while it frees is ignored: uv forwards SIGINT, SIGHUP and SIGTERM, so one sent to
   the process group reaches the hog twice. earlyoom would pick the hog first (the comment before Memory has the
-  arithmetic): it sends
-  SIGTERM below 12 GiB available, which the hog takes as above, and SIGKILL only below 9 GiB
+  arithmetic): it sends SIGTERM below 12 GiB available, which the hog takes as above, and SIGKILL only below 9 GiB
   (stack/host/earlyoom.default), and the kernel frees a killed process's memory as it goes.
 - It prints each step's total and MemAvailable, in GiB. --help lists the exit codes.
 
@@ -71,9 +70,10 @@ EXIT_CTRL_C = 130
 # Each of these ends the hog as Ctrl-C does, and it exits 128 + the signal's number. Ctrl-Z (SIGTSTP) among them (the
 # controller's ruling, 2026-10-16): a hog paused by it would hold its memory with no reading watching the floor.
 # Under uv run, Ctrl-Z reaches uv too, in the same process group, and uv takes SIGTSTP's default and stops. Measured on
-# brightroar in a terminal, uv 0.12.18, at Task 40's re-review (2026-10-16): uv in state T; the hog freed everything,
-# printed its words and exited 148; bash showed `[1]+ Stopped uv run …` and $? 148, its own code for a stopped job; uv
-# exited 148 only after fg. kill %1 ends it instead. The memory is freed either way, since the hog itself has exited.
+# brightroar on a pseudo-terminal, with a stand-in for the hog's memory, uv 0.12.18, at Task 40's re-review
+# (2026-10-16): uv in state T; the hog freed everything, printed its words and exited 148; bash showed
+# `[1]+ Stopped uv run …` and $? 148, its own code for a stopped job; uv exited 148 only after fg. kill %1 ends it
+# instead. The memory is freed either way, since the hog itself has exited.
 # (Corrected the same day. This said uv doesn't stop, from a check that sent SIGTSTP to a process group no terminal
 # controlled: the kernel discards a stop signal sent to an orphaned process group, so that check couldn't show it.)
 STOP_SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGTSTP)

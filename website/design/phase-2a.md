@@ -9089,7 +9089,7 @@ never a fixed size (the controller's ruling, 2026-10-07).
     start takes nothing and stops `under_leave`, exit 3; at `--leave` or within a step above it,
     nothing is taken, exit 0.
   - **The floor's reading:** while it holds anything, the hog reads `MemAvailable` every 0.25 s:
-    after a step, through each 2.5 s pause, which it sleeps in 0.25 s slices, and through the
+    after a step, through each pause, which it sleeps in 0.25 s slices, and through the
     hold. A reading under the floor frees everything at once.
   - **Every way out:** SIGHUP (exit 129) and Ctrl-Z (SIGTSTP, exit 148) free everything, as Ctrl-C
     (130) and SIGTERM (143) do. Ctrl-Z ends the hog rather than pausing it, since a paused hog
@@ -9099,8 +9099,8 @@ never a fixed size (the controller's ruling, 2026-10-07).
     the process group reaches the hog twice; a second signal while it frees is ignored. An error
     (an allocation refused, `/proc/meminfo` unreadable) frees everything and exits 1. `--help`
     lists the exit codes.
-  - **`--hold-s` defaults to 3600 s,** an hour, so a hog left running ends by itself. S03 and S05
-    give none and end it with Ctrl-C.
+  - **`--hold-s` defaults to 3600 s,** an hour, so a hog left running ends by itself (the first
+    build's choice, 8e84530, not a review's ruling). S03 and S05 give none and end it with Ctrl-C.
 
 **Tests** (`spark/tests/test_hog.py`, the script loaded from its path, a stand-in reader and
 allocator):
@@ -9120,7 +9120,7 @@ allocator):
   re-check it (`brake.MIN_FALL_GIB` among them, `predict_breach`'s default: added 2026-10-14, the
   controller's ruling, at Task 23's review).
 - *(Added 2026-10-16, at Task 40's two reviews, as built.)* The six gained cases: a step that
-  shows a second late; a `--floor` under 24, and a `--leave` under a raised floor; a fall seen
+  shows a second late (with the first build, 8e84530); a `--floor` under 24, and a `--leave` under a raised floor; a fall seen
   right after a step, in a pause, and while it holds, each read within 250 ms; SIGHUP and Ctrl-Z
   among the ways out. Five more: `test_a_faster_pace_is_refused`,
   `test_nothing_is_taken_at_or_under_leave`, `test_its_help_lists_every_exit_code`,
@@ -9157,7 +9157,8 @@ python3 -c 'v = int(open("/proc/self/oom_score_adj").read()); f = open("/proc/se
   which can't show a refusal: CPython makes the buffered write only as it finalizes the file, and
   outside dev mode it drops an error from that close silently. As Dan, writing -500 that way exited
   0 with no output. The line above closes the file itself, then reads the score back. And as Dan a
-  lowering is refused too: Dan's score is 0, and an unprivileged process can't go below 0 either.
+  lowering is refused too: an unprivileged process can't go below its `oom_score_adj_min`, the
+  value root last set for it, which is 0 for Dan's login, his score.
   Raising succeeds: the corrected line, with `v + 1`, printed `now 1`.)*
   Inside tmux, also the server's own. **On the Spark, as `agent`**, in tmux:
 
