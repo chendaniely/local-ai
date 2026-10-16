@@ -1785,7 +1785,7 @@ council, with Dan's fourteen decisions (Revisions).*
   default, too, unless Dan leaves it until he turns it on, as the council's security review
   suggests. *(Ruled 2026-10-07, with the plan: not in 2a; the Backlog, until Dan asks for it.)*
 - [Spark] `spark status` (requests waiting, recent refusals, the growth owed, the holds,
-  unaccounted memory, `--json`, in *What you see in Phase 2a*'s plain words and layout) · `spark doctor` with the front, the gate, the brake and ntfy (its ntfy line a warning, *not set up*, until Phase 5: 2026-10-14), a
+  unaccounted memory, `--json`, in *What you see in Phase 2a*'s plain words and layout) · `spark doctor` with the front, the gate, the brake and ntfy (its ntfy line a warning, *not set up*, until Phase 5: 2026-10-14; *2026-10-15:* first deciding, by its `/health`, whether 9100 is the front at all, before anything with the key goes there: Revisions), a
   check for each of 2a's scenarios, doctor's version-drift checks, and the rendered llama-swap
   config checked against v257's embedded schema (both from Phase 1's close) · `make apply`'s diff,
   quiet wait, deadline and drain, and `make apply-now` (*Deploy workflow*).
@@ -4039,6 +4039,19 @@ Each item gets its own design pass when its turn comes.
   128K leaves 27 GiB, under the warn line, so 4a's entry needs 64K or `UD-Q2_K_XL`. A client's
   context limit should leave room for its prompt and its kept-back output: at 32K opencode most
   likely trimmed its history, and every turn was read again.
+- **2026-10-15** — Phase 2a's `spark doctor` decides whether 9100 is the front before it sends
+  anything there with Dan's key (the Phase 2a line gains a dated note; so do Task 33's notes, as a
+  correction, Task 36's Steps 2 and 3, Task 38's rollback and *How a code task runs* in its plan,
+  and `bootstrap.md`, `updates.md` and `deploy.md`). Found on the box that day, read-only, as Dan
+  was about to run the clone's doctor for Task 36's key list; it wasn't run, and nothing was
+  unloaded. Until the cutover, and again after a rollback, 9100 is Phase 1's llama-swap. Its
+  `/health` answers 200, and its `/v1/models` 401 without a key, as the front's do, so the front
+  line went on to send llama-swap's own `GET /unload` with Dan's key, which Phase 1's llama-swap
+  obeys: every model would have unloaded. Now 9100 is the front only when its `/health` answers
+  exactly `{"status": "ok"}`, read up to 256 bytes, decided once, first. Otherwise the front line
+  says the cutover hasn't happened, or this is Phase 1's layout after a rollback, and no line sends
+  9100 the key or asks a model there. Before the cutover, Task 36 checks the key list with that one
+  check, run alone.
 
 ## Sources
 

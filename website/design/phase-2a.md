@@ -560,7 +560,11 @@ From Task 4 on, the clone's registry needs sections the deployed one lacks, and 
 `paths.LLAMASWAP_URL` is 127.0.0.1:900, so the clone's own `make status` and `make doctor` misread
 the box, which still runs Phase 1's layout. Until the cutover (Task 38), read the box with the
 deployed app: `/opt/local-ai/app/.venv/bin/spark status` and `…/spark doctor`; and deploy nothing
-from the clone (*Deploys during 2a*).
+from the clone (*Deploys during 2a*). *(Added 2026-10-15: from Task 33 until its correction that
+day, the clone's doctor did worse than misread. Its front line sent `GET /unload` with Dan's key to
+9100, where Phase 1's llama-swap obeys it: every model would have unloaded. Since the correction,
+it sends 9100 nothing after `/health` unless that answers exactly as the front's does. Task 33's
+last note has it.)*
 
 Tests run in the environment `spark/tests/conftest.py` builds (no secret, an empty `HOME`), and on
 the Spark only under the cap (*Test runs are capped*, added 2026-10-15). Unix
@@ -8123,7 +8127,11 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
 **Interfaces** (each a `Check`; doctor never prints a key, a URL, a topic or a token):
 
 - `front` — 9100's `/health` answers 200; a request without a key gets 401; `GET /unload`, `POST
-  /api/models/unload/x` and `GET /logs` get 404 `route_not_served`.
+  /api/models/unload/x` and `GET /logs` get 404 `route_not_served`. *(Corrected 2026-10-15, after
+  Task 33, as its last as-built note below says: a 200 from `/health` and a 401 without a key don't
+  tell the front from Phase 1's llama-swap, which holds 9100 until the cutover, so 9100 is the
+  front only when its `/health` answers exactly the front's `{"status": "ok"}`, decided once,
+  before anything with the key goes there.)*
 - `llama-swap` — its unit active; `SPARK_API_KEY` refused at `http://127.0.0.1:900/running` (401).
   *(Added 2026-10-14, at Task 24's review:)* `doctor.py`'s refusal of a `SPARK_LLAMASWAP_URL` that
   isn't an http(s) URL still offers `http://127.0.0.1:9100` as its example, the front's port from
@@ -8261,6 +8269,41 @@ git commit -m "feat(spark): 🤖 make apply waits for a quiet minute, offers dra
   - **The front line's `GET /unload`** relies on the front's route filter. Were the filter broken,
     the front would pass the route on with its own key and unload every model. The module's
     docstring says so.
+- *(Corrected 2026-10-15, a correction to the notes above. It was found on the box that day,
+  read-only, as Dan was about to run the clone's doctor for Task 36's Step 3. It wasn't run, and
+  nothing was unloaded:)*
+  - **The front line didn't know whether 9100 was the front.** Until the cutover, and again after
+    a rollback, 9100 is Phase 1's llama-swap. Its `/health` answers 200, with the text `OK`, and
+    `/v1/models` without a key answers 401, as the front's do. So both of the line's guards
+    passed, and it went on to send `GET /unload`, `POST /api/models/unload/x` and `GET /logs` with
+    Dan's key. Phase 1's llama-swap obeys `GET /unload` with that key: every model would have
+    unloaded. S03 sent its chat request with the key to whatever answered on 9100. The end-to-end
+    line, `--full`'s upload and the canary sent theirs only once the gate's view showed a model
+    loaded, which no gate gives before the cutover; had one, Phase 1's llama-swap would have taken
+    them with Dan's key, and loaded a model for any it hadn't loaded.
+  - **Now doctor decides once, first, whether 9100 is the front** (`front_identity`). It is only
+    if its `/health`, asked without a key, answers 200 with a JSON body that is exactly the front's
+    `{"status": "ok"}`, read up to 256 bytes. Probe's reads gained a `limit`, and a body past it is
+    no answer, by its Content-Length or as it comes, chunked. Otherwise the front line reads *9100
+    answers as llama-swap does, not as the front: the cutover hasn't happened, or this is Phase 1's
+    layout after a rollback. Phase 2a's doctor runs after the cutover, and `make doctor` from a
+    `main` worktree checks Phase 1's layout*, and 9100 gets nothing after its `/health`. The four
+    lines that would send it the key, or ask a model there (*a model, end to end*, S03, *a 170 MB
+    upload* and *privacy canary*), fail with *nothing sent:* and the same words, unless a reason of
+    their own comes first, such as a registry that doesn't load. A `/health` that doesn't answer
+    200 keeps its old line, and those four say the front line has the reason. The check tells the
+    front from llama-swap. It is no defence against a process that takes 9100 to pass for the
+    front: that is what the front's socket, held by PID 1, is for.
+  - **Tests**, each seen failing on the code before the fix:
+    `test_doctor_sends_nothing_with_the_key_to_phase_1s_llama_swap_on_9100` (a stand-in on a free
+    port, answering as Phase 1's llama-swap answered, gets only `GET /health`, without a key);
+    `test_doctor_sends_nothing_with_the_key_to_a_9100_whose_health_isnt_the_fronts` (the same, for
+    six other bodies: other JSON, JSON cut short, and the front's own words padded past the cap);
+    `test_the_front_is_known_by_its_own_health_and_still_gets_every_check` (the front's stand-in:
+    `/health` asked once, first, without a key, and every line passes, `--full`'s too); and
+    `test_a_chunked_health_past_the_cap_isnt_the_front`.
+  - Task 36's Steps 2 and 3, Task 38's rollback and *How a code task runs* gain dated notes, as do
+    `bootstrap.md`, `updates.md` and `deploy.md`.
 
 **Tests** (`spark/tests/test_doctor.py`, a `Probe` stand-in; one pass and one failure per check,
 and):
@@ -8508,13 +8551,38 @@ test -x /usr/local/libexec/local-ai-agent-oom && grep -c 'local-ai-agent-oom' /e
   `spark:spark` with `750` or `755`, most likely `755`, since Phase 1's pull made it under systemd's
   default umask, not yet seen; `getent group spark-admin` names Dan alone; and bootstrap.md's step 6
   also lists anything in the cache writable by its group or others, or that the group can't read or
-  enter, expecting none.)*
+  enter, expecting none.)* *(Corrected 2026-10-15, with Task 33's correction that day: this `make
+  doctor` is the clone's, Phase 2a's, and 9100 is still Phase 1's llama-swap. Until that correction,
+  its front line, finding `/health` answering 200 and a request without a key 401, went on to send
+  `GET /unload` with Dan's key, which Phase 1's llama-swap obeys: every model would have unloaded.
+  Since it, doctor first checks that 9100's `/health` answers exactly the front's `{"status":
+  "ok"}`. Here it doesn't, so the front line reads *9100 answers as llama-swap does, not as the
+  front: …*, nothing after `/health` goes to 9100, and each line that would have sent it something
+  fails without sending it, S03's with *nothing sent: …*. They fail as expected until Task 38, with
+  the gate's, the sockets' and the scenarios' lines.)*
 - [ ] **Step 3 [Dan, on the Spark]:** secret-files.md's 2a steps: the three internal keys, each
   written once to its raw file and to `internal-keys.env`; `client-keys.sha256` from the existing
   client keys; each file `0600 root:root`. Its hash checks print only *match*. Then the key list,
   `/etc/local-ai/keys.yaml`, from `stack/keys.example.yaml`, its names the digests file's, `0640
-  root:spark-admin`; `spark doctor`'s *key list* line (as the deployed app can't yet run it, the
-  clone's `uv run --frozen --project spark spark doctor`) passes for it.
+  root:spark-admin`; ~~`spark doctor`'s *key list* line (as the deployed app can't yet run it, the
+  clone's `uv run --frozen --project spark spark doctor`) passes for it~~ doctor's *key list*
+  check, run alone, passes for it. *(Corrected 2026-10-15, found on the box that day, read-only,
+  before the clone's doctor was run for this step: it wasn't, and nothing was unloaded. The clone's whole doctor is Phase 2a's, and until the
+  cutover 9100 is Phase 1's llama-swap. Its front line sent llama-swap's own admin routes with
+  Dan's key, `GET /unload` among them, which Phase 1's llama-swap obeys: every model would have
+  unloaded. Task 33's correction, the same day, stops that. Before the cutover, though, only the key
+  list is checked here, by the command below. It runs that one check and reads two files, the key
+  list and the repo's registry, and sends nothing anywhere. It isn't a test run, so `make test`'s
+  cap, which `CLAUDE.md` sets for test runs, doesn't apply.)* **On the Spark**, from the clone's
+  root:
+
+```bash
+uv run --frozen --project spark python -c 'from pathlib import Path; from spark import doctor; from spark.registry import load_registry; c = doctor.key_list(doctor.Probe(Path(".")), load_registry("stack/models.yaml"), None); print(("ok" if c.ok else "FAIL") + " | " + c.detail)'
+```
+
+  Expected: `ok | /etc/local-ai/keys.yaml loads: <n> keys, each in one of the registry's key
+  groups (dan and agent)`, `<n>` the number of keys in the list. *(Run on 2026-10-15, after Task 36's
+  record: it passed.)*
 - [ ] **Step 4 [Dan, on the Spark]:** `sudo ls -l /etc/local-ai/secrets`, read aloud by name and
   mode only, never a value: the 2a files, the ntfy headers (Task 2), `llama-swap.env` still there
   for the rollback. *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4
@@ -8729,7 +8797,11 @@ systemctl start local-ai-llama-swap.service local-ai-brake.service
   failed too. The rollback leaves 2a's bootstrap and secret files in place: the two accounts, the
   PAM hook, `agent`'s drop-in and cron line, earlyoom without `--prefer`, the polkit rule, 2a's
   units disabled, the internal keys, the digests and the key list, and the cache, `spark-pull`'s,
-  so no `make pull` from `main`; deploy.md lists them.)*
+  so no `make pull` from `main`; deploy.md lists them.)* *(Added 2026-10-15, with Task 33's
+  correction: that worktree's doctor, `main`'s, never the `phase-2a` clone's. After a rollback 9100
+  is Phase 1's llama-swap again. Until that correction, 2a's front line sent it `GET /unload` with
+  Dan's key, which it obeys: every model would have unloaded. Since it, 2a's doctor finds 9100
+  answering as llama-swap does, fails its front line, and sends 9100 nothing after `/health`.)*
 
 - [ ] **Step 2:** `make apply`. Expected: it lists root's ten new or changed unit files (the
   compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 32),

@@ -1,19 +1,28 @@
 """`spark doctor` (`make doctor`) — Phase 0's guardrails and Phase 2a's stack, checked in one pass (Task 33).
 
 Run it on the Spark, from the repo root, after any update, a reboot or upgrade day, and after the cutover (Task 38):
-before it, the box runs Phase 1's layout, and the lines for the front, the gate, the sockets and the scenarios fail.
-It needs no sudo, and it is read-only on the box: it loads no model, restarts nothing, and writes nothing but its own
-lines. A model is asked something only once the gate's view shows it loaded, so the request can't start a load, and
-make-room is asked only for its plan, which unloads nothing. What its requests leave behind is what any request
-leaves: the front's journal line for each; the gate's record of the refusals it asks for on purpose (S03's model and
-the routes the front doesn't serve), which `spark status` shows under *recent*; and make-room's plan, which the gate
-keeps in memory among its newest few. The front line sends llama-swap's own admin routes, `GET /unload` among them,
-with your key, as the plan's check requires: it relies on the front's route filter to refuse them, so a front whose
-filter were broken would pass `GET /unload` on to llama-swap with its own key, and that would unload every model.
+before it, and after a rollback to Phase 1's layout, 9100 is Phase 1's llama-swap, and the lines for the front, the
+gate, the sockets and the scenarios fail. It needs no sudo, and it is read-only on the box: it loads no model, restarts
+nothing, and writes nothing but its own lines. A model is asked something only once the gate's view shows it loaded,
+so the request can't start a load, and make-room is asked only for its plan, which unloads nothing. What its requests
+leave behind is what any request leaves: the front's journal line for each; the gate's record of the refusals it asks
+for on purpose (S03's model and the routes the front doesn't serve), which `spark status` shows under *recent*; and
+make-room's plan, which the gate keeps in memory among its newest few. The front line sends llama-swap's own admin
+routes, `GET /unload` among them, with your key, as the plan's check requires: it relies on the front's route filter to
+refuse them, so a front whose filter were broken would pass `GET /unload` on to llama-swap with its own key, and that
+would unload every model.
+
+**Is 9100 the front?** Decided once a run, first (front_identity), by its /health alone: only an answer of exactly the
+front's own body, FRONT_HEALTH, counts. Unless 9100 answered so, nothing goes there with your key, and nothing that
+could load a model: it gets nothing after its /health, and each line that would have sent it something fails, saying
+so. Phase 1's llama-swap, on 9100 until the cutover and again after a rollback, answers its /health 200 and a request
+without a key 401, as the front does, and obeys `GET /unload` with your key. Until 2026-10-15 those two answers were
+all the front line asked before it sent `GET /unload` with your key, which there would have unloaded every model (found
+that day, on the box, read-only, before anyone ran doctor against Phase 1's layout).
 
 It never prints a key, a token, a topic or an address from the environment, which can carry a password: your key
-goes only in a header, only to the front and to llama-swap's port (which must refuse it), through no proxy and never
-on to where a redirect points.
+goes only in a header, only to the front, once 9100 has answered as the front, and to llama-swap's port (which must
+refuse it), through no proxy and never on to where a redirect points.
 
 Each line reads `ok`, `FAIL` or `WARN`. A `WARN` (only ntfy's, while it isn't set up: Task 2, in Phase 5) passes, fails
 nothing, and isn't counted in *N of M checks pass*; the summary says how many warned. One check per Phase 2a scenario
@@ -146,6 +155,13 @@ JOURNAL_GROUPS = {"adm", "systemd-journal"}  # either reads the system journal
 # streamed tokens holds, as `[N bytes blob data]`, and the canary in it would never be found (Task 33's review, I2).
 JOURNAL_ARGS = ("journalctl", "--no-pager", "--quiet", "--all", "--output=verbose")
 ANSWER_MAX = 4 << 20  # an answer's body is read up to this; doctor reads only its status and a few fields
+# Whether 9100 is the front (front_identity): the front answers GET /health with this, 200, as JSON (front/app.py, its
+# step 1), and doctor reads at most HEALTH_MAX bytes of the answer. Phase 1's llama-swap answers the text `OK`.
+FRONT_HEALTH = {"status": "ok"}
+HEALTH_MAX = 256
+NOT_THE_FRONT = ("9100 answers as llama-swap does, not as the front: the cutover hasn't happened, or this is Phase 1's "
+                 "layout after a rollback. Phase 2a's doctor runs after the cutover, and `make doctor` from a `main` "
+                 "worktree checks Phase 1's layout")
 
 
 @dataclass(frozen=True)
@@ -320,12 +336,12 @@ class Probe:
         return GateClient(paths.GATE_CONTROL_SOCKET, REQUEST_TIMEOUT_S).post(route, body)
 
     def http(self, url: str, *, key: str | None = None, body: dict | None = None,
-             timeout: float = 10.0) -> tuple[int, str]:
+             timeout: float = 10.0, limit: int = ANSWER_MAX) -> tuple[int, str]:
         """The HTTP status and body, a refusal's body included; 0 when nothing answered, when no whole HTTP answer came
-        back, or when the request couldn't be made. A POST when `body` is given, sent as JSON. The key goes in a
-        header, never a URL, and only to `url`: through no proxy, and never on to where a redirect points, a keyed
-        request's redirect coming back as its status. A key that isn't printable ASCII isn't sent at all (the checks
-        refuse it first, and say so)."""
+        back (a body longer than `limit` bytes among them), or when the request couldn't be made. A POST when `body` is
+        given, sent as JSON. The key goes in a header, never a URL, and only to `url`: through no proxy, and never on
+        to where a redirect points, a keyed request's redirect coming back as its status. A key that isn't printable
+        ASCII isn't sent at all (the checks refuse it first, and say so)."""
         if key and not _sendable(key):
             return 0, ""
         try:
@@ -336,7 +352,7 @@ class Probe:
             request.add_header("Content-Type", "application/json")
         if key:
             request.add_header("Authorization", f"Bearer {key}")
-        return self._send(request, timeout)
+        return self._send(request, timeout, limit)
 
     def upload(self, url: str, *, key: str | None, fields: dict[str, str], file_name: str, size: int,
                chunks: Iterable[bytes], timeout: float = UPLOAD_TIMEOUT_S) -> tuple[int, str]:
@@ -364,16 +380,18 @@ class Probe:
             request.add_header("Authorization", f"Bearer {key}")
         return self._send(request, timeout)
 
-    def _send(self, request: urllib.request.Request, timeout: float) -> tuple[int, str]:
+    def _send(self, request: urllib.request.Request, timeout: float, limit: int = ANSWER_MAX) -> tuple[int, str]:
         try:
             with self._opener.open(request, timeout=timeout) as response:
-                data = response.read(ANSWER_MAX)
-                if response.length:  # bytes its Content-Length promised that never came, or past the cap: no answer
+                data = response.read(limit + 1)
+                # Bytes its Content-Length promised that never came, or a body past the cap, by its Content-Length or
+                # as it came (chunked): no answer.
+                if response.length or len(data) > limit:
                     return 0, ""
                 return response.status, data.decode(errors="replace")
         except urllib.error.HTTPError as err:  # it answered with an error, or with a redirect a key didn't follow
             try:
-                text = err.read(ANSWER_MAX).decode(errors="replace")
+                text = err.read(limit).decode(errors="replace")
             except (OSError, http.client.HTTPException, ValueError):
                 text = ""
             finally:
@@ -1017,15 +1035,41 @@ def llama_swap(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
                              "one with your client key, which only the front takes")
 
 
-def front(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
-    """The front, on 9100: its own /health answers 200, a request without a key gets 401, and each of llama-swap's own
-    routes NOT_SERVED gets 404 `route_not_served`, with your key, since the front checks the key before the route."""
-    name = "front"
+def front_identity(probe: Probe) -> str | None:
+    """None when 9100 is the front: its /health, asked without a key, answers 200 with a JSON body that is exactly the
+    front's own, FRONT_HEALTH, read up to HEALTH_MAX bytes. Otherwise why not, in the front line's words, NOT_THE_FRONT
+    for any other 200: a body that isn't JSON, or isn't exactly that object. `checks` asks it once, first, and no check
+    sends 9100 your key, or anything that could load a model, unless it was None (2026-10-15: until the cutover, and
+    after a rollback, 9100 is Phase 1's llama-swap, which answers /health 200 `OK` and obeys `GET /unload` with your
+    key). It tells the front from llama-swap; it is no defence against a process that takes 9100 to pass for the
+    front, which the front's socket, held by PID 1, is for."""
     if bad := _front_url():
-        return Check(name, False, bad)
-    health, _ = probe.http(f"{paths.FRONT_URL}/health")
-    if health != 200:
-        return Check(name, False, f"/health answered {health or 'nothing'}: `make logs s=front`")
+        return bad
+    code, body = probe.http(f"{paths.FRONT_URL}/health", limit=HEALTH_MAX)
+    if code != 200:
+        return f"/health answered {code or 'nothing'}: `make logs s=front`"
+    try:
+        said = json.loads(body)
+    except (ValueError, RecursionError):  # not JSON, or nested past what the parser follows
+        return NOT_THE_FRONT
+    return None if said == FRONT_HEALTH else NOT_THE_FRONT
+
+
+def _not_sent(not_front: str) -> str:
+    """The words of a line that would have sent your key, or asked a model, through 9100, which front_identity didn't
+    find to be the front: it sent nothing."""
+    if not_front == NOT_THE_FRONT:
+        return f"nothing sent: {NOT_THE_FRONT}"
+    return "nothing sent: 9100 didn't answer /health as the front does (the front line says why)"
+
+
+def front(probe: Probe, key: str | None, key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
+    """The front, on 9100. `not_front` is front_identity's verdict, asked once a run: unless it is None, its words are
+    the line, and nothing else is sent. Then a request without a key gets 401, and each of llama-swap's own routes
+    NOT_SERVED gets 404 `route_not_served`, with your key, since the front checks the key before the route."""
+    name = "front"
+    if not_front is not None:
+        return Check(name, False, not_front)
     anonymous, _ = probe.http(f"{paths.FRONT_URL}/v1/models")
     if anonymous != 401:
         return Check(name, False, f"GET /v1/models without a key answered {anonymous or 'nothing'}, not 401: the front "
@@ -1188,8 +1232,9 @@ def _not_ready(view: dict | None, model: Any) -> str | None:
 
 
 def model(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
-          key_env: str = KEY_ENV) -> Check:
-    """One request through the front, with your key, to the embeddings model, once the gate shows it loaded."""
+          key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
+    """One request through the front, with your key, to the embeddings model, once 9100 has answered as the front
+    (`not_front` None, front_identity) and the gate shows the model loaded."""
     name = "a model, end to end"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
@@ -1200,6 +1245,8 @@ def model(probe: Probe, key: str | None, registry: Registry | None, view: dict |
     embed = models[0]
     if bad := _front_url():
         return Check(name, False, bad)
+    if not_front is not None:
+        return Check(name, False, _not_sent(not_front))
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     if waits := _not_ready(view, embed):
@@ -1269,11 +1316,14 @@ def s02(probe: Probe) -> Check:
                               "unloads")
 
 
-def s03(probe: Probe, key: str | None, key_env: str = KEY_ENV) -> Check:
+def s03(probe: Probe, key: str | None, key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
     """S03, a model that can't be had: a made-up model through the front gets 404 with model_not_found's words, and
-    loads nothing, since the front refuses it before it asks the gate."""
+    loads nothing, since the front refuses it before it asks the gate. Asked only once 9100 has answered as the front
+    (`not_front` None, front_identity)."""
     if bad := _front_url():
         return Check("S03", False, bad)
+    if not_front is not None:
+        return Check("S03", False, _not_sent(not_front))
     if unusable := _unusable(key, key_env):
         return Check("S03", False, unusable)
     code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key,
@@ -1378,11 +1428,12 @@ def _ready_one(view: dict | None, models: list) -> tuple[Any, str | None]:
 
 
 def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
-           key_env: str = KEY_ENV) -> Check:
-    """A 170 MB upload to speech-to-text through the front, once the gate shows it loaded. The front spools it and sends
-    it on as a chunked form, which v257 passes on still chunked (Task 21): this is the check that whisper-server takes
-    a chunked body (Task 21's note). llama-swap reads a POST body whole into memory, so with memory under the warn
-    line, or unreadable, it isn't sent (Task 33's review, I1)."""
+           key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
+    """A 170 MB upload to speech-to-text through the front, once 9100 has answered as the front (`not_front` None,
+    front_identity) and the gate shows the model loaded. The front spools it and sends it on as a chunked form, which
+    v257 passes on still chunked (Task 21): this is the check that whisper-server takes a chunked body (Task 21's
+    note). llama-swap reads a POST body whole into memory, so with memory under the warn line, or unreadable, it isn't
+    sent (Task 33's review, I1)."""
     name = "a 170 MB upload"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
@@ -1392,6 +1443,8 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
                                   "`make apply`")
     if bad := _front_url():
         return Check(name, False, bad)
+    if not_front is not None:
+        return Check(name, False, _not_sent(not_front))
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     stt, waits = _ready_one(view, models)
@@ -1427,17 +1480,20 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
 
 
 def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
-           key_env: str = KEY_ENV) -> Check:
+           key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
     """The privacy canary: a unique string, sent through chat and speech-to-text with your key, each to a model the
     gate shows loaded, then looked for in the journal, which your account reads in group adm, and through the gate's
     POST /v1/canary, in its state, its refusal history and launch's records, which only spark reads. Found in none, it
     passes. The front's spool isn't searched: no account but the front sees its private /tmp, and Task 20's tests pin
-    that each upload's file goes when its request ends."""
+    that each upload's file goes when its request ends. Sent only once 9100 has answered as the front (`not_front`
+    None, front_identity)."""
     name = "privacy canary"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     if bad := _front_url():
         return Check(name, False, bad)
+    if not_front is not None:
+        return Check(name, False, _not_sent(not_front))
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     chats = [m for m in registry.models.values() if m.capability == "chat"]
@@ -1500,20 +1556,23 @@ def checks(probe: Probe, key: str | None, registry: Registry | None, problem: st
            key_env: str = KEY_ENV, *, full: bool = False) -> list[Check]:
     """Every check, in order; with `full`, the upload and the canary last. `key` is what the shell's `key_env` holds,
     and the checks that need it name that variable when it's missing. The gate's view is read once, for every line
-    that needs it."""
+    that needs it; and whether 9100 is the front is decided once, first, before anything that carries your key or
+    could load a model goes there (front_identity)."""
+    not_front = front_identity(probe)
     view, why = gate_view(probe)
     results = [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe), agent_oom(probe),
         firewall(probe), secrets_folder(probe), spark_folders(probe), root_copies(probe), needrestart(probe),
         engine_config(probe), units(probe), sockets(probe), key_list(probe, registry, problem),
         version_drift(probe, registry, problem), llama_swap_config(probe), llama_swap(probe, key, key_env),
-        front(probe, key, key_env), gate(view, why), ntfy(view), bypass(view, registry), web(probe),
-        model(probe, key, registry, view, problem, key_env), s01(registry, problem, view), s02(probe),
-        s03(probe, key, key_env), s05(probe, view), s14(probe), s17(probe),
+        front(probe, key, key_env, not_front=not_front), gate(view, why), ntfy(view), bypass(view, registry),
+        web(probe), model(probe, key, registry, view, problem, key_env, not_front=not_front),
+        s01(registry, problem, view), s02(probe), s03(probe, key, key_env, not_front=not_front), s05(probe, view),
+        s14(probe), s17(probe),
     ]
     if full:
-        results += [upload(probe, key, registry, view, problem, key_env),
-                    canary(probe, key, registry, view, problem, key_env)]
+        results += [upload(probe, key, registry, view, problem, key_env, not_front=not_front),
+                    canary(probe, key, registry, view, problem, key_env, not_front=not_front)]
     return results
 
 

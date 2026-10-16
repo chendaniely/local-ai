@@ -303,4 +303,12 @@ has been pulled since.
    and every folder one it can enter. Files' write bits aren't listed: the move cleared them, and a
    later download makes its lock files `0664` again, by design. If a path is listed, bring it to the
    Claude session working on the repo.
-7. `make doctor`: its *secrets folder* and *spark's folders* lines pass.
+7. `make doctor`: its *secrets folder* and *spark's folders* lines pass. *(Added 2026-10-15: this
+   is the clone's doctor, Phase 2a's, run while 9100 is still Phase 1's llama-swap. Until a
+   correction that day, its front line, finding `/health` answering 200 and a request without a key
+   401, went on to send `GET /unload` with your key, which Phase 1's llama-swap obeys: every model
+   would have unloaded. Since the correction, doctor first checks that 9100's `/health` answers
+   exactly the front's `{"status": "ok"}`. Here it doesn't, so its front line reads *9100 answers as
+   llama-swap does, not as the front: …*, 9100 gets nothing after `/health`, and each line that
+   would have sent it something fails without sending it. Those lines, and the others that need
+   the cutover, fail as expected until then: Phase 2a's plan, Task 36.)*

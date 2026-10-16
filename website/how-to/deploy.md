@@ -325,7 +325,11 @@ folder*, which reports `root:root 700`, as 2a's bootstrap left it (Task 36), and
 start line, after a failed Step 4, its units, llama-swap and end-to-end checks failed too.)* Phase
 1's pull, which runs as `spark`, can't write the model cache either, since 2a's bootstrap gave it to
 `spark-pull` and leaves `spark` reading it through its group (not tried): no `make pull` from that
-worktree.
+worktree. *(Added 2026-10-15:)* that worktree's doctor, `main`'s, never the `phase-2a` clone's.
+After a rollback 9100 is Phase 1's llama-swap again. Until a correction that day, Phase 2a's
+doctor sent it llama-swap's own `GET /unload` with your key, which Phase 1's llama-swap obeys:
+every model would have unloaded. Since the correction, Phase 2a's doctor finds 9100 answering as
+llama-swap does, fails its front line, and sends 9100 nothing after `/health`.
 
 The rollback puts back Phase 1's units, config and app, and nothing else: 2a's bootstrap and secret
 files stay. Left in place are the accounts `spark-front` and `spark-pull`; the PAM hook that gives
@@ -863,7 +867,12 @@ gate's *recent*. It loads no model. It asks a model something only once the gate
 so its request never starts a load, and otherwise its line fails, naming the `spark load` to run.
 *(Corrected 2026-10-15, Phase 2a's Task 35: this said its end-to-end check loads the embeddings
 model if it isn't loaded, so that a load that starts clears the last refusal record. That is
-Phase 1's doctor; from Phase 2a's Task 33, doctor loads nothing.)*
+Phase 1's doctor; from Phase 2a's Task 33, doctor loads nothing.)* *(Added 2026-10-15: before
+the cutover, and after a rollback, 9100 is Phase 1's llama-swap, and the doctor to run is `main`'s,
+from a `main` worktree. Phase 2a's first checks that 9100's `/health` answers exactly the front's
+`{"status": "ok"}`, and when it doesn't, it fails its front line and sends 9100 nothing after
+`/health`. Before that check, added that day, its front line sent `GET /unload` with your key,
+which Phase 1's llama-swap obeys.)*
 
 ```bash
 make doctor

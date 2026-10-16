@@ -250,7 +250,7 @@ class FakeProbe:
         self.posted.append((route, body))
         return self.gate_get(route)
 
-    def http(self, url, *, key=None, body=None, timeout=10.0):
+    def http(self, url, *, key=None, body=None, timeout=10.0, limit=doctor.ANSWER_MAX):
         self.keys_sent.append(key)
         self.asked.append((url, body))
         if url in self.answers:
@@ -1526,9 +1526,14 @@ class LlamaSwapStandIn(StandIn):
 
 class FrontStandIn(StandIn):
     """The front, as doctor asks it: /health; a 401 without the key KEY; 404 route_not_served for a route it doesn't
-    serve; the embeddings."""
+    serve; the embeddings; and chat, S03's made-up model refused with model_not_found's words."""
 
     name = "front"
+    asked: dict | None = None  # a POST's JSON body
+
+    def do_POST(self):
+        self.asked = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"null")
+        self.do_GET()
 
     def do_GET(self):
         auth = self.headers.get("Authorization")
@@ -1541,7 +1546,30 @@ class FrontStandIn(StandIn):
             return self.answer(401, refusal("invalid_api_key").encode())
         if self.path == "/v1/embeddings":
             return self.answer(200, json.dumps({"data": [{"embedding": [0.25, 0.5]}]}).encode())
+        if self.path == "/v1/chat/completions":
+            if (self.asked or {}).get("model") == doctor.MADE_UP_MODEL:
+                return self.answer(404, NOT_FOUND.encode())
+            return self.answer(200, json.dumps({"choices": [{"message": {"content": "OK"}}]}).encode())
         self.answer(404, refusal("route_not_served").encode())
+
+
+class Phase1LlamaSwapStandIn(StandIn):
+    """Phase 1's llama-swap, which holds 9100 until the cutover and again after a rollback, as it answered on the box on
+    2026-10-15 (read-only): /health 200 with the text `OK`, and 401 to a request without a key, as the front's do. It
+    takes a client key, as Phase 1's takes Dan's, and with it `GET /unload` would unload every model. A test may give
+    /health another body."""
+
+    name = "llama-swap on 9100"
+    health = b"OK"
+
+    def do_GET(self):
+        auth = self.headers.get("Authorization")
+        REACHED.append((self.name, self.requestline.split()[1], auth))
+        if self.path == "/health":
+            return self.answer(200, self.health)
+        if not auth:
+            return self.answer(401, b'{"error": "unauthorized"}')
+        self.answer(200, b"")
 
 
 class Garbled(BaseHTTPRequestHandler):
@@ -1591,11 +1619,11 @@ class LiveProbe(FakeProbe):
         super().__init__()
         self.real = Probe(ROOT)
 
-    def http(self, url, *, key=None, body=None, timeout=10.0):
+    def http(self, url, *, key=None, body=None, timeout=10.0, limit=doctor.ANSWER_MAX):
         if not url.startswith((doctor.paths.LLAMASWAP_URL, doctor.paths.FRONT_URL)):
-            return super().http(url, key=key, body=body, timeout=timeout)
+            return super().http(url, key=key, body=body, timeout=timeout, limit=limit)
         self.keys_sent.append(key)
-        return self.real.http(url, key=key, body=body, timeout=timeout)
+        return self.real.http(url, key=key, body=body, timeout=timeout, limit=limit)
 
 
 def keyed_elsewhere() -> list[tuple[str, str, str | None]]:
@@ -1608,8 +1636,9 @@ def test_a_proxy_in_the_environment_never_gets_a_request(stand_ins, monkeypatch)
         monkeypatch.setenv("http_proxy", proxy)
         monkeypatch.setattr(urllib.request, "_opener", None)  # urlopen keeps the proxies it read on first use
         probe = LiveProbe()
-        results = [doctor.llama_swap(probe, KEY), doctor.front(probe, KEY),
-                   doctor.model(probe, KEY, REG, status_view())]
+        not_front = doctor.front_identity(probe)
+        results = [doctor.llama_swap(probe, KEY), doctor.front(probe, KEY, not_front=not_front),
+                   doctor.model(probe, KEY, REG, status_view(), not_front=not_front)]
     assert [request for request in REACHED if request[0] not in ("llama-swap", "front")] == []
     assert [c.ok for c in results] == [True, True, True], results
 
@@ -1658,12 +1687,101 @@ def test_a_request_with_the_key_never_follows_a_redirect(stand_ins, which, path)
     probe = LiveProbe()
     with serving(StandIn) as elsewhere:
         REDIRECT[path] = f"{elsewhere}/stolen"
-        check = {"/running": lambda: doctor.llama_swap(probe, KEY), "/unload": lambda: doctor.front(probe, KEY),
-                 "/v1/embeddings": lambda: doctor.model(probe, KEY, REG, status_view())}[path]()
+        not_front = doctor.front_identity(probe)  # None: the front's stand-in answers /health as the front
+        check = {"/running": lambda: doctor.llama_swap(probe, KEY),
+                 "/unload": lambda: doctor.front(probe, KEY, not_front=not_front),
+                 "/v1/embeddings": lambda: doctor.model(probe, KEY, REG, status_view(), not_front=not_front)}[path]()
     assert keyed_elsewhere() == []
     assert not check.ok and ("303" if path == "/v1/embeddings" else "302") in check.detail, check
     assert "a redirect, which doctor never follows with your key" in check.detail
     assert stand_ins[0] not in check.detail and stand_ins[1] not in check.detail  # no address, which may hold a password
+
+
+# Found on the box on 2026-10-15, read-only, before Dan ran the clone's doctor at Task 36 Step 3: until the cutover, and
+# again after a rollback, 9100 is Phase 1's llama-swap. Its /health answered 200 and its /v1/models 401 without a key,
+# as the front's do, so the front line went on to send llama-swap's own `GET /unload` with Dan's key, which Phase 1's
+# llama-swap obeys: every model would have unloaded. The end-to-end check, S03, the upload and the canary sent their
+# requests there with the key too.
+NOT_THE_FRONT = ("9100 answers as llama-swap does, not as the front: the cutover hasn't happened, or this is Phase 1's "
+                 "layout after a rollback. Phase 2a's doctor runs after the cutover, and `make doctor` from a `main` "
+                 "worktree checks Phase 1's layout")
+THROUGH_9100 = ("a model, end to end", "S03", "a 170 MB upload", "privacy canary")  # every line but the front's that
+# sends your key to 9100, or asks a model there
+
+
+def against_9100(monkeypatch, handler) -> tuple[LiveProbe, dict[str, tuple[bool, str]], list]:
+    """Every check, --full's included, with `handler` on 9100 and the llama-swap stand-in on 900: the probe, each line's
+    (ok, detail), and each request 9100 got, as (target, key header)."""
+    with serving(handler) as nine_one_hundred:
+        monkeypatch.setattr(doctor.paths, "FRONT_URL", nine_one_hundred)
+        probe = LiveProbe()
+        results = {c.name: (c.ok, c.detail) for c in checks(probe, KEY, REG, full=True)}
+    return probe, results, [(target, auth) for who, target, auth in REACHED if who == handler.name]
+
+
+def test_doctor_sends_nothing_with_the_key_to_phase_1s_llama_swap_on_9100(stand_ins, monkeypatch):
+    probe, results, got = against_9100(monkeypatch, Phase1LlamaSwapStandIn)
+    # Its /health, without a key, and nothing else: no `GET /unload`, no route at all with the key, nothing that loads.
+    assert got == [("/health", None)]
+    assert keyed_elsewhere() == [] and probe.uploads == []
+    nothing_sent = f"nothing sent: {NOT_THE_FRONT}"
+    assert {name: detail for name, (ok, detail) in results.items() if not ok} == {
+        "front": NOT_THE_FRONT, **{name: nothing_sent for name in THROUGH_9100}}
+
+
+@pytest.mark.parametrize("health, said", [
+    (b'{"status": "OK"}', NOT_THE_FRONT),
+    (b'{"status": "ok", "version": "v257"}', NOT_THE_FRONT),
+    (b'[{"status": "ok"}]', NOT_THE_FRONT),
+    (b'{"status": "ok"', NOT_THE_FRONT),  # cut short: not JSON
+    (b"[" * 200, NOT_THE_FRONT),
+    # The front's own words, padded past the cap on what doctor reads of /health: no whole answer, so not the front.
+    (b'{"status": "ok"}' + b" " * 300, "/health answered nothing: `make logs s=front`"),
+], ids=["another-status", "another-field", "in-a-list", "cut-short", "nested", "past-the-cap"])
+def test_doctor_sends_nothing_with_the_key_to_a_9100_whose_health_isnt_the_fronts(stand_ins, monkeypatch, health,
+                                                                                    said):
+    handler = type("Health", (Phase1LlamaSwapStandIn,), {"health": health})
+    probe, results, got = against_9100(monkeypatch, handler)
+    assert got == [("/health", None)]
+    assert keyed_elsewhere() == [] and probe.uploads == []
+    assert results["front"] == (False, said)
+    assert all(not results[name][0] and results[name][1].startswith("nothing sent: ") for name in THROUGH_9100)
+
+
+def test_the_front_is_known_by_its_own_health_and_still_gets_every_check(stand_ins):
+    probe = LiveProbe()
+    assert doctor.front_identity(probe) is None
+    REACHED.clear()
+    results = checks(probe, KEY, REG, full=True)
+    assert [c.name for c in results if not c.ok] == []
+    got = [(target, auth) for who, target, auth in REACHED if who == "front"]
+    # Decided once, first, without a key; then the front line's routes and the model's request, with it.
+    assert got[0] == ("/health", None) and got.count(("/health", None)) == 1
+    assert {("/unload", f"Bearer {KEY}"), ("/v1/embeddings", f"Bearer {KEY}")} <= set(got)
+
+
+class ChunkedHealth(BaseHTTPRequestHandler):
+    """Answers chunked, with no Content-Length: the front's own body, then `padding` spaces."""
+
+    padding = 0
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        self.close_connection = True
+        body = b'{"status": "ok"}' + b" " * self.padding
+        self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+        self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(body), body))
+
+
+@pytest.mark.parametrize("padding, the_front", [(0, True), (doctor.HEALTH_MAX, False)], ids=["whole", "past-the-cap"])
+def test_a_chunked_health_past_the_cap_isnt_the_front(monkeypatch, padding, the_front):
+    # A body with no Content-Length is read up to the cap too, and one longer is no answer: its first HEALTH_MAX bytes,
+    # the front's words and spaces, would otherwise pass for the front's.
+    with serving(type("Padded", (ChunkedHealth,), {"padding": padding})) as url:
+        monkeypatch.setattr(doctor.paths, "FRONT_URL", url)
+        assert (doctor.front_identity(Probe(ROOT)) is None) == the_front
 
 
 def test_a_request_without_the_key_still_follows_a_redirect():

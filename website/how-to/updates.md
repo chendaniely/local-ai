@@ -122,6 +122,14 @@ fails, naming the `spark load` to run. It restarts nothing, and needs no sudo. I
 `~/.secrets`. `spark doctor --full`, run from the clone's root, adds two heavy checks: a 170 MB
 upload to speech-to-text through the front, and the privacy canary.
 
+*(Added 2026-10-15:)* before the cutover, and after a rollback to Phase 1's layout, 9100 is Phase
+1's llama-swap, and the check after an update is Phase 1's doctor, below, from a `main` worktree.
+Until a correction that day, Phase 2a's doctor sent llama-swap's own `GET /unload` there with your
+key, which Phase 1's llama-swap obeys: every model would have unloaded. Since then it first checks
+that 9100's `/health` answers exactly the front's `{"status": "ok"}`, and if it doesn't, its front
+line reads *9100 answers as llama-swap does, not as the front: …* and 9100 gets nothing after
+`/health`.
+
 *Phase 1's doctor*, which runs from a `main` worktree until 2a merges (until 2026-10-15, this
 paragraph was the page's only account of doctor; Phase 2a's Task 35 put 2a's above it): it checks
 Phase 0's guardrails: the leak hooks, the GPU set held
