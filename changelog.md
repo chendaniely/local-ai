@@ -8,6 +8,39 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-15 — Flash-Next, run by hand
+
+**Already there** when the run began, **on the Spark**: Qwen3.8-Flash-Next's files in
+`~/scratch/models/qwen3.8-flash-next`, from the download step of [Qwen3.8-Flash-Next, by
+hand](website/how-to/qwen3.8-flash-next.md) (on `phase-2a` until Phase 2a merges), run before this
+entry and not recorded until now: the `UD-IQ3_XXS` model in three shards, its vision projector
+`mmproj-F16.gguf` and the MTP head `mtp-Qwen3.8-Flash-Next-Q8_0.gguf`, 82 GiB (`du`).
+
+**Added** by Dan, **on the Spark**: llama.cpp **b11330**'s `llama-server`, built from the release tag
+in `~/scratch/llama.cpp-b11330` (CUDA, `121a-real`), as the page's step 5 gives it, and not
+installed: the first release with MTP for this model, out since 2026-10-02, so outside the
+seven-day window.
+
+**Ran** by Dan, times by the Spark's clock: `systemctl stop local-ai-llama-swap`, then the page
+cache dropped with `sync` and `echo 1 | sudo tee /proc/sys/vm/drop_caches`. Flash-Next served by
+hand on 127.0.0.1:8080 only, as Dan, under `choom -n 1000`: with the stack's b11146 at a 32K
+context from 15:54, again at 128K from 16:24, and with b11330 and MTP at 128K, ready at 16:42;
+used from the Mac through an SSH tunnel and opencode; each stopped with `pkill -INT`. Measured:
+31.7 tok/s without MTP and 41.7 with it, about 81 GiB at 32K and about 90 with MTP at 128K
+([Speed tests](website/reference/speed-tests.md), on `phase-2a` until it merges).
+
+**Released** by Dan, at the restore: `spark status` showed the brake holding since 04:40:58 that day,
+with 19.9 GiB available then, and had refused the coder at 08:56:32; the run never went below 27.
+The cause was the build session's own test runs, which Task 47 in `phase-2a`'s plan records. Once
+memory was back, `/opt/local-ai/app/.venv/bin/spark brake --release`, then `systemctl start
+local-ai-llama-swap`: nothing loaded, 117 GiB available, no hold. Nothing runs Flash-Next now, and
+nothing starts it. The files and the build stay, for the next run and Phase 4a; the page's *Clean
+up* removes them.
+
+**On `heartsbane`, not the Spark** — recorded because it was the same day's work: opencode's
+config gained a hand-added `spark-flash-next` provider for the tunnel on port 8080, with a
+131,072-token limit; the file before it is kept as `~/.config/opencode/opencode.json.flash-next.bak`.
+
 ## 2026-10-14 — The fast coder, run once by hand
 
 **Added** by Dan, **on the Spark**, following [The fast coder, by hand](website/how-to/qwen3.8-27b-sglang.md)
