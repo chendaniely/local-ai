@@ -9262,7 +9262,16 @@ for the 93 GiB the box can give.
   `brake_fired`. Then `spark make-room --done`: the residents reload. If the brake fires anyway,
   Dan stops the script with Ctrl-C (it frees everything); the residents then reload only after the
   brake's release, 5 minutes above 28 GiB, not at `--done`; and the reading goes to Task 47, since
-  the watch's constants are wrong.
+  the watch's constants are wrong. *(Added 2026-10-16, the controller's rulings, from the script's
+  build, 7fb4c76:)* Before the script, `grep MemAvailable /proc/meminfo`: the run expects the
+  registry's idle 117 GiB, less the ~0.24 GiB CUDA's own context takes, and the script refuses to
+  start within a step of the reserve. Run it as `uv run --no-project stack/measure/cuda_ceiling.py`,
+  as its docstring gives it: about 371 steps of 2.5 s from ~116.8 GiB to 24, about 15.5
+  minutes, so expect *at least about 92.75 GiB*, not 93. ~~Expected on the phone: `memory_warning`
+  once~~ ntfy isn't set up until Phase 5, so `memory_warning` is read in `spark status`'s *recent* row
+  and `make logs s=gate` (its *notification wasn't sent* line), and `brake_fired` in `make logs
+  s=brake`. Each step's line prints `cudaMemGetInfo`'s free beside `MemAvailable`; keep the whole
+  output for the record.
 - [ ] **Step 4:** the registry follows. The method stops at the reserve, so on an idle box it
   shows *at least* about 93 GiB (117 available less the 24 reserve), below the reported 102: when
   the script stopped at the reserve, `allocatable_gib` is the figure it reached, recorded as *at
@@ -9270,7 +9279,14 @@ for the 93 GiB the box can give.
   decision, 2026-10-07, after the forward-and-back council). The ceiling term then equals the
   reserve's at idle and never binds; `cosmicbboy-local-ai.md`'s claim becomes `[verified]` only
   for *at least 93 GiB*. A run stopped by `cuda_error` below that is a real ceiling, recorded as it
-  is. A run stopped `not_reflected` proves nothing: **stop and ask Dan.** Render still passes. **If
+  is. *(Added 2026-10-16, the controller's ruling, from the script's one real check at its build:
+  `cudaMemGetInfo`'s free equals `MemFree`, which leaves out the page cache, 43 GiB of it at the
+  time, while `MemAvailable` counts it. A `cuda_error` while `MemAvailable` is still far above the
+  reserve and `cudaMemGetInfo`'s free is near 0 says CUDA didn't reclaim the page cache: not the
+  ceiling, and a question for the gate, which admits loads by `MemAvailable`. **Stop and ask Dan.**
+  The script's own stops: `reserve`, exit 0, the measurement; `under_reserve` and `not_reflected`,
+  exit 3, which measure nothing; a CUDA error, exit 4.)* A run stopped `not_reflected` proves
+  nothing: **stop and ask Dan.** Render still passes. **If
   render refuses the 2a set at the measured ceiling, stop and ask Dan** before Task 42: the swap
   waits for his choice (the design's: the old coder, still the registry's and on disk, or his
   full-context, f16 rule), and a plan revision records it.
