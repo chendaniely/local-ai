@@ -97,6 +97,13 @@ How things actually stand, as opposed to how they are designed. Kept current wit
 machine; [`changelog.md`](changelog.md) records how it got here. Moved here from `planning.md` §8
 when that file was retired on 2026-09-23.
 
+> **Since 2026-10-16 the Spark runs Phase 2a's stack, from the `phase-2a` branch** (its Task 38,
+> the cutover): the front on 127.0.0.1:9100 checks the client keys, the gate admits each load, and
+> llama-swap listens on 127.0.0.1:900 with internal keys only. What follows about the stack's
+> layout is Phase 1's, as it stood before the cutover. `phase-2a`'s README and changelog record the
+> current state, and land here when the phase merges. Until then, nothing deploys from `main`
+> (*Conventions*).
+
 ### The Spark — `brightroar`
 
 - **GIGABYTE AI TOP ATOM** — full spec under [Hardware](#hardware).
@@ -454,6 +461,10 @@ stack must account for to run it. Its numbers are its own, not measured here.
   them) and rendering the site until Quarto is on the Spark; sudo, logins and secrets are mine. One
   session at a time, a checkpoint commit per task, and pushes only with my explicit OK. Sessions
   stage files by explicit path, and use my denylist only through the leak check, never reading it.
+- **Nothing deploys from `main` until Phase 2a merges** (2026-10-16). The box runs the `phase-2a`
+  branch's stack since its cutover that day, and `main`'s `make apply` or `make install-units` would
+  put Phase 1's layout back, which is the rollback. Deploys and urgent fixes go from `phase-2a`.
+  Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **Phase 0's lessons are rules**: scan everything going out with the denylist before every push,
   run a plan's code before it goes in the plan, test shell and apt behaviour on Ubuntu 24.04 as well
   as the Mac, check box facts on the box, keep root out of paths `spark` and `agent` control, and

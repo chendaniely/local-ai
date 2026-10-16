@@ -224,6 +224,14 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   from the Mac, touch the Spark only with read-only SSH checks Dan has OK'd. (Until 2026-09-25 the
   Mac wrote the code, tests, CI and docs, and the Spark ran only what touched its GPU, memory,
   systemd or Docker.)
+- **Nothing deploys from `main` until Phase 2a merges** (Dan's decision, 2026-10-16, at Phase 2a's
+  cutover). Since 2026-10-16 the box runs the `phase-2a` branch's stack: the front on 9100, the gate,
+  and llama-swap on 900. `main` still renders Phase 1's layout, llama-swap on 9100, so `make apply`,
+  `make apply-now` or `make install-units` from `main` or a `main` worktree would put it back, and
+  that is the cutover's rollback. Deploys, urgent fixes included, are committed on `phase-2a`,
+  deployed from the `phase-2a` clone and pushed with Dan's OK, and reach `main` with the phase's
+  merge. Only the rollback (`phase-2a`'s Task 38, Step 1) deploys from `main`. The rest of `main`'s
+  docs describe Phase 1's stack until the merge; `phase-2a` records the cutover in full.
 - **One session at a time.** The active session owns the phase branch; at a switch it commits, the
   branch is pushed with Dan's OK, and the other machine pulls.
 - **Commit along the way.** A checkpoint commit after each task, on a branch per phase; a phase

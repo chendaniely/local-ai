@@ -8,6 +8,17 @@ Mac**: sending your llama-swap key, in *Before the first deploy*, and the tunnel
 *The web UI's first account*. In *The web UI*, you log in from a browser on the Mac or the
 phone.
 
+::: {.callout-warning}
+## Don't deploy from `main` until Phase 2a merges (2026-10-16)
+
+Since 2026-10-16 the Spark runs Phase 2a's stack, from the `phase-2a` branch (its Task 38, the
+cutover): the front on 127.0.0.1:9100, the gate, and llama-swap on 127.0.0.1:900. This page, as
+`main` has it, deploys Phase 1's layout, so its `make apply` or `make install-units` from a `main`
+clone or worktree would put llama-swap back on 9100, which is the cutover's rollback. Until Phase 2a
+merges into `main`, deploy from the `phase-2a` clone with `phase-2a`'s copy of this page, urgent
+fixes included. Only that branch's rollback (Task 38, Step 1) deploys from `main`.
+:::
+
 ## Before the first deploy
 
 Phase 0 is done, bootstrap and the secret files included, and the engines are installed (the
