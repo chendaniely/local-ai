@@ -8,6 +8,43 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-16 — Qwen3.6-35B-A3B back on demand, beside the coder (Dan's decision)
+
+**Deployed** by the Spark session, **on the Spark**, from the `phase-2a` clone at `03d36b1`, with
+`make apply`, by the rule that deploys go from `phase-2a` since the cutover. The registry gains
+`qwen3.6-35b-a3b` again, labelled *Qwen3.6*: Phase 1's coder until the swap of 2026-10-08, its
+entry Phase 1's, at its full 262,144 tokens with MTP drafting, its footprint estimated at 33 GiB.
+It loads on demand, has no role (pi's coder stays `qwen3.8-27b`), and every key can ask for it by
+name. Why (Dan): a fast model to compare with Gemma, for jobs such as finding text in a day's email.
+- **The first `make apply`, 13:00–13:15,** was the first real run of Phase 2a's wait for a quiet
+  moment. Dan's Mac key was using Gemma and the coder throughout, in requests of 60 to 173 s, so no
+  minute was quiet. At 15 minutes it asked whether to drain now, read no answer, there being no
+  terminal, and changed nothing: *No quiet minute in 15 minutes. … there's no terminal to answer on,
+  so that's a no*.
+- **The second, at 13:17,** once Dan had stopped the Mac's request: a quiet minute, the app synced,
+  the front held new requests, llama-swap restarted (the coder, loaded at the time, went with it),
+  and the gate reloaded Gemma, the embeddings and whisper. `make status` then read 84 GiB available,
+  free for a load 50 GiB.
+- **The weights:** `make pull` fetched nothing; Qwen3.6's file was still in the cache at its pinned
+  revision, kept since the swap.
+- **The ports:** llama-swap numbers the engines by name, so Qwen3.6 has 802, the coder 803 when it
+  loads, and whisper 804, where it was on 803.
+- **First load,** through the front with Dan's key: a cold load and 600 tokens, every one of them
+  thinking (both chat models think by default), in 26.1 s, at 78.1 tokens/s. `MemAvailable` went
+  from 84 to 54 GiB.
+- **Against Gemma,** warm, thinking off (`chat_template_kwargs: {"enable_thinking": false}`), one
+  request each:
+  - five lines from a short prompt: Qwen3.6 93 tokens at 71.1 tokens/s, Gemma 88 at 76.5;
+  - a 10,000-token log, asked to find dates in it: Qwen3.6 read it at 2,100 tokens/s and answered
+    at 85.1; Gemma read it at 3,185 and answered at 57.3. Wall times 6.5 s and 4.9 s.
+
+  One request each, so a first reading, not a measurement: neither answer was checked for quality.
+- **Not yet:** `make clients` on the Mac and as `agent`, for pi's list. The web UI lists it by
+  itself. The coder and Qwen3.6 don't fit at once beside the residents, so the gate refuses
+  whichever is asked for second until the other unloads.
+
+---
+
 ## 2026-10-16 — A cold boot under llama-swap's sandbox (Phase 2a, Task 39)
 
 **Power-cycled** by Dan, **on the Spark** (`sudo poweroff`, then the power button), so nothing from

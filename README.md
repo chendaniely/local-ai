@@ -223,7 +223,9 @@ when that file was retired on 2026-09-23.
   Open WebUI on 3000; SearXNG on 8888. Four models: `gemma-4-26b-a4b` (resident; the small vision
   model, and Open WebUI's task model, whose task calls run without thinking),
   `qwen3-embedding-0.6b` and `whisper-large-v3-turbo` (resident), and the coder,
-  `qwen3.8-27b` (on demand; `qwen3.6-35b-a3b` until 2026-10-08, its files still on disk). Their
+  `qwen3.8-27b` (on demand; `qwen3.6-35b-a3b` until 2026-10-08, its files still on disk). *(Since
+  2026-10-16, Dan's decision, five: `qwen3.6-35b-a3b` is back, on demand beside the coder, labelled
+  Qwen3.6, with no role; the two don't fit at once beside the residents.)* Their
   files are in `/var/lib/local-ai/hf` *(since 2026-10-15, Task 36: `spark-pull:spark 2750`, read by
   the engines through the group; 55G, `qwen3.8-27b`'s files and `qwen3.6-35b-a3b`'s, which are
   kept)*, with 729 GiB of disk left (2026-10-08; 752 before Qwen3.8's file). Open WebUI has its
@@ -270,8 +272,9 @@ when that file was retired on 2026-09-23.
   `spark:spark-users 660`, and `/run/local-ai/gate-control.sock`, `root:spark-admin 660`. It admits
   every load, one at a time, and loads the three always-loaded models itself. **llama-swap** listens
   on 127.0.0.1:900 and takes only the internal keys, the front's, the gate's and the brake's. Its
-  engines listen from 800: Gemma on 800, the embedding model on 801, whisper on 803, and the coder
-  on 802 when it loads. Only llama-swap's unit has `CAP_NET_BIND_SERVICE`, which the engines
+  engines listen from 800: Gemma on 800, the embedding model on 801, ~~whisper on 803, and the coder
+  on 802 when it loads~~ *(since 2026-10-16, 13:17, when Qwen3.6 came back on demand: Qwen3.6 on 802
+  and the coder on 803 when each loads, and whisper on 804; llama-swap numbers them by name)*. Only llama-swap's unit has `CAP_NET_BIND_SERVICE`, which the engines
   inherit. **The brake** stays a unit of its own, unloading idle models first (built; not yet seen
   acting: Tasks 47 and 48). **The failure
   notifier**, `local-ai-notify@`, runs when the front, the gate, the brake or llama-swap fails, and
