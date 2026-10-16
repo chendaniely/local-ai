@@ -2065,12 +2065,12 @@ async def test_the_engines_found_after_damage_are_those_of_the_start_that_found_
         assert first.state.ticketed[EMBED].ticket_id == FOUND_AFTER_DAMAGE
         await first.stop()
         process(gate.proc, 4343, "llama-server", uid=SPARK, rss_anon_kib=gib(2),
-                argv=("llama-server", "--port", "802"))
+                argv=("llama-server", "--port", "803"))  # the coder's port since Qwen3.6 took 802 (2026-10-16)
         gate.swap.states[CODER] = "ready"
         core = await gate.started()
         assert core.state.fresh_after_damage is True and CODER not in core.state.ticketed
         await core.each_five_s()
-        assert core.status_view()["health"]["unticketed_engines"] == [{"model": CODER, "port": 802, "pid": 4343}]
+        assert core.status_view()["health"]["unticketed_engines"] == [{"model": CODER, "port": 803, "pid": 4343}]
         await core.stop()
 
 
@@ -2133,4 +2133,5 @@ async def test_apply_restarted_waits_for_a_reload_queued_while_it_checks(tmp_pat
 
 def test_engine_ports_follow_llama_swaps_own_order():
     # v257 gives ${PORT} to each model in its names' sorted order, from startPort (internal/config/macros.go:150-186).
-    assert engine_ports(REGISTRY) == {GEMMA: 800, EMBED: 801, CODER: 802, WHISPER: 803}
+    # Since Qwen3.6 came back on demand (2026-10-16), it sorts between the embeddings and the coder.
+    assert engine_ports(REGISTRY) == {GEMMA: 800, EMBED: 801, "qwen3.6-35b-a3b": 802, CODER: 803, WHISPER: 804}

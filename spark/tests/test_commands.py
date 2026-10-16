@@ -47,8 +47,9 @@ MARKER = "CREDENTIAL-MARKER"  # stands for a key, wherever one might travel
 
 
 def registry_text() -> str:
-    """The stack's registry, the coder under the plan's name for it (Task 42's Qwen3.8-27B): its first role `coder`."""
-    return STACK.read_text().replace("\n  qwen3.6-35b-a3b:\n", f"\n  {CODER}:\n")
+    """The stack's registry, whose coder is the plan's Qwen3.8-27B (its first role `coder`). Until Qwen3.6 came back
+    beside it (2026-10-16), this renamed Qwen3.6's entry to the coder's, a no-op since the swap reached this branch."""
+    return STACK.read_text()
 
 
 # The gate's stand-in.

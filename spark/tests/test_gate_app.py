@@ -476,7 +476,7 @@ async def test_status_view_has_every_key(tmp_path):
             assert set(view["health"]) == _keys_of(gateproto.HealthView)
             assert set(view["health"]["brake"]) == _keys_of(gateproto.BrakeHealth)
             assert set(view["health"]["ntfy"]) == _keys_of(gateproto.NtfyHealth)
-            assert [set(model) for model in view["models"]] == [_keys_of(gateproto.ModelView)] * 4
+            assert [set(model) for model in view["models"]] == [_keys_of(gateproto.ModelView)] * 5  # Qwen3.6's, too
         await core.stop()
 
 
@@ -533,7 +533,9 @@ async def test_status_view_at_the_examples_moment(tmp_path):
                        "committed_gib": 43.0, "starting_gib": 0.0, "ceiling_binds": False},
             "models": [model(GEMMA, inflight=1, oldest_request_s=20.0), model(EMBED), model(WHISPER),
                        model(CODER, state="not_loaded", last_use=None,
-                             brake_mark={"at": at(3, 12), "seen_gib": 26.0})],
+                             brake_mark={"at": at(3, 12), "seen_gib": 26.0}),
+                       # Qwen3.6, on demand beside the coder since 2026-10-16 (Dan's decision)
+                       model("qwen3.6-35b-a3b", state="not_loaded", last_use=None)],
             "waiting": [{"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "dan",
                          "free_gib": 18.0}],
             "paused": None, "held": None, "pins": [], "sessions": [],

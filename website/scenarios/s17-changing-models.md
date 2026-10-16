@@ -53,7 +53,9 @@ ran out. Try again in a minute.* During the swap, a request for the new coder re
 isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).*, and one for the old name
 *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma
 (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On
-the Mac, `make clients` updates pi's list.* The plan's [*What you see in Phase
+the Mac, `make clients` updates pi's list.* *(2026-10-16: Qwen3.6 is back, on demand, beside the coder
+(Dan's decision), so the old name now loads it; the example shows the message as it read from the swap of
+2026-10-08 until then, and as it reads for any name that has left.)* The plan's [*What you see in Phase
 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
 *(2026-10-15, Phase 2a's Task 32: built, not yet deployed or verified; Task 50's drill checks it on

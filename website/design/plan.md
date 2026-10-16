@@ -1839,6 +1839,8 @@ council, with Dan's fourteen decisions (Revisions).*
     reported) in 2c and routes C and D in ~~Phase 5~~ Phase 4.
   - Qwen3.6-35B-A3B leaves the registry, and its files stay on disk. The swap runs in *Deploy
     workflow*'s order: apply, then the pull, then `make clients`.
+    *(2026-10-16, Dan's decision: Qwen3.6-35B-A3B is back, on demand beside the coder, with no
+    role, as a fast model to compare with Gemma; Revisions.)*
   - *(2026-10-08: route A is already the registry's coder on `main`, at 163,840 tokens; Revisions.)*
     *(Changed the same day, Dan's decision: with Phase 2a's corrected budget check ported to
     `main`'s render, the registry gives the coder its full 262,144 tokens now; Revisions.)*
@@ -2026,7 +2028,8 @@ moved.
 - [Spark] `spark try`, `spark promote` and `spark forget`, with the lab instance (S11) · then
   Qwen3.8-27B's route B, DFlash2 on llama.cpp, as the speed step after 2a's route A; routes C and D
   stay in ~~Phase 5~~ Phase 4. (Until 2026-10-07, routes A and B were both to run on `spark try` here: Dan,
-  2026-10-05.) Qwen3.6-35B-A3B can come back here as a trial.
+  2026-10-05.) Qwen3.6-35B-A3B can come back here as a trial. *(It came back sooner, on 2026-10-16, on demand beside the coder:
+  Dan's decision, in Revisions.)*
 - *Added 2026-10-07, after 2a's council (the session's rulings):* route B is measured in ~~Phase
   5's~~ Phase 4's order, decode and time to first token in pi, then quality per GB, then long context; whether it
   becomes the coder is 2c's call, with those measurements. S11's trial note is written on the Spark,
@@ -4207,6 +4210,15 @@ Each item gets its own design pass when its turn comes.
   gate reloaded the three always-loaded models by 35 s after boot, and `make doctor` passes 29 of
   29, with one WARN, ntfy not set up. Bootstrap needed no `/etc/modules-load.d` line, so it keeps
   none. The changelog and README's *Current state* record it.
+- **2026-10-16** — Qwen3.6-35B-A3B back in the registry, on demand beside the coder, Dan's decision
+  (*Phases*, the coder's swap and Phase 2c's trial gain dated notes; S17's example a note). Dan wants
+  a fast model to compare with Gemma, for jobs such as finding text in a day's email: Phase 1 measured
+  it at 93 tokens/s against Gemma's 78. Its entry is Phase 1's, at its full 262,144 tokens with MTP
+  drafting and an estimated footprint of 33 GiB; it has no role, so pi's coder stays Qwen3.8-27B,
+  and every key group can ask for it by name. It and the coder each fit beside the residents (33 and
+  41 of 50), but not together, so the gate refuses whichever is asked for second until the other
+  unloads; `spark render` warns that every model at once passes the ceiling, as rule 9 has it warn.
+  llama-swap numbers the engines by name, so it takes 802, the coder 803 and whisper 804.
 
 ## Sources
 

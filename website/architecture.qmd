@@ -58,7 +58,7 @@ flowchart TB
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
-    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B"]
+    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B,<br/>Qwen3.6-35B-A3B on demand"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned

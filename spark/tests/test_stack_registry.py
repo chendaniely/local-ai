@@ -156,6 +156,7 @@ def test_the_stack_registrys_labels_are_the_plans_words():
         "qwen3-embedding-0.6b": "the embeddings",
         "whisper-large-v3-turbo": "whisper",
         "qwen3.8-27b": "the coder",
+        "qwen3.6-35b-a3b": "Qwen3.6",  # back on demand beside the coder (Dan's decision, 2026-10-16)
     }
     assert {name: m.used_by for name, m in models.items() if m.used_by} == {
         "gemma-4-26b-a4b": "the web UI and photos use it"}

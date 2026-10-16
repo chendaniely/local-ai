@@ -439,8 +439,12 @@ def test_the_2a_set_renders_where_phase_1s_check_refused_it(tmp_path):
     # Phase 1's check summed every footprint against allocatable − reserve, 102 − 24 = 78, which counted the reserve
     # twice (plan.md, rule 9, corrected 2026-10-07). With 2a's coder at its ~41 the set comes to 84, within the
     # ceiling, and the coder fits beside the residents with the reserve kept: 41 of 117 − 43 − 24 = 50.
+    # The set is the residents and the coder: Qwen3.6, back on demand beside it since 2026-10-16 (Dan's decision),
+    # is left out here, since every model at once then passes the ceiling, which render only warns of
+    # (test_the_real_registry_warns_only_that_all_cant_load_at_once).
     data = yaml.safe_load((ROOT / "stack/models.yaml").read_text())
-    coder = next(name for name, m in data["models"].items() if "coder" in m["roles"])
+    coder = next(name for name, m in data["models"].items() if "coder" in m.get("roles", []))
+    data["models"] = {name: m for name, m in data["models"].items() if m["resident"] or name == coder}
     data["models"][coder]["footprint_gib"] = 41
     path = tmp_path / "models.yaml"
     path.write_text(yaml.safe_dump(data))
@@ -454,6 +458,15 @@ def test_the_real_registry_renders():
                    templates=ROOT / "stack/templates")
     assert set(files) == set(rendered())  # the same eight files as the fixture renders
     assert set(yaml.safe_load(files["llama-swap.yaml"])["models"]) == set(registry.models)
+
+
+def test_the_real_registry_warns_only_that_all_cant_load_at_once():
+    # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
+    # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.
+    warnings = spark.render.check_budget(load_registry(ROOT / "stack/models.yaml"))
+    assert len(warnings) == 2
+    assert "above the CUDA-allocatable ceiling" in warnings[0]
+    assert "under the brake's warn line" in warnings[1]
 
 
 # Task 6's fix round 1: a registry edit can't rebind an engine, or put a key where llama-swap shows it.
@@ -825,8 +838,12 @@ def test_spark_render_writes_what_render_renders(tmp_path, monkeypatch, capsys, 
     out = tmp_path / "out"
     files = ["--registry", str(FIX / "models.yaml"), "--versions", str(FIX / "versions.yaml")] if given else []
     assert cli.main(["render", "--out", str(out), *files]) == 0
-    # The llama-swap config, the registry, the Compose project's two files and the eleven units (Task 25).
-    assert capsys.readouterr().out == f"render: 15 files → {out}\n"
+    # The llama-swap config, the registry, the Compose project's two files and the eleven units (Task 25). The stack's
+    # own registry adds render's two warnings since Qwen3.6 came back (2026-10-16): every model at once can't load.
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[0] == f"render: 15 files → {out}"
+    assert len(printed) == (1 if given else 3)
+    assert all(line.startswith("render: warning — every model loaded at once") for line in printed[1:])
     assert tree(out) == (rendered() if given else real())
 
 
