@@ -11,6 +11,11 @@ v0.5.21's source. It differs from hasso5703's unit in five ways: memory capped b
 than by a share of free memory, a key on every route, no host network, no remote code, and no
 restart. It is written for today's Phase 1 stack.)*
 
+*(Added 2026-10-15: it ran on 2026-10-14, alone, with the stack stopped: 41.7 tokens a second
+against the llama.cpp coder's 23.8, about 45 GiB, and about 3 minutes from start to ready
+([Speed tests](../reference/speed-tests.md#the-fast-coder-against-todays-coder)). For a repeat run,
+[Run it again](#run-it-again) has only the commands it needs.)*
+
 This is **not the stack**: a container you start and stop yourself, beside it or instead of it. It
 serves Qwen3.8-27B as RadixArk's NVFP4 checkpoint, with a DFlash2 drafter that proposes 16 tokens
 at a time, on SGLang v0.5.21. hasso5703 reports 71.4 tokens a second (greedy median on its
@@ -18,6 +23,111 @@ at a time, on SGLang v0.5.21. hasso5703 reports 71.4 tokens a second (greedy med
 ([What to record](#what-to-record)).
 
 Run everything on the Spark, as you, inside tmux (`tmux new -As coder`), unless a step says Mac.
+
+## Run it again {#run-it-again}
+
+*(Added 2026-10-15, Dan's decision: the fast coder and Flash-Next stay usable by hand while Phases
+2a and 4a are built, so each page starts with its repeat run. It needs steps 1–3 done once, as on
+2026-10-14: the image, the model, the drafter and the key on the box, and the `spark-sglang`
+provider in opencode ([step 6](#connect-from-the-mac)).)*
+
+**Ask the Spark's build session first.** Most of Phase 2a's remaining tasks measure or drill the
+box: the cutover, a cold boot, the memory drills, the soak and the brake's tuning. A container
+holding 45 GiB during one of them spoils the measurement or trips the brake. The session's code and
+docs work doesn't conflict.
+
+**It runs beside the stack**, so Open WebUI, pi and `agent` keep their models. Alone it took about
+45 GiB, and by arithmetic that fits beside the everyday models: their 43, its 45 and the 24 GiB
+reserve make 112 of 117. The first repeat run is also the first measured beside them, so keep the
+`free -g` readings for [Speed tests](../reference/speed-tests.md). Flash-Next can't run at the same
+time.
+
+**1. Make room, on the Spark:**
+
+```bash
+/opt/local-ai/app/.venv/bin/spark status
+free -g
+```
+
+- **The llama.cpp coder, `qwen3.8-27b`, mustn't be loaded:** the two coders don't fit together. If
+  `spark status` lists it, unload it. Today's stack unloads only by stopping llama-swap, which stops
+  every model and cuts off any answer in progress, **on the Spark**:
+  `systemctl stop local-ai-llama-swap && systemctl start local-ai-llama-swap`. From Phase 2a's
+  cutover, `/opt/local-ai/app/.venv/bin/spark unload coder` unloads only the coder.
+- **Then load Gemma:** ask Open WebUI one question, so the container's start sees Gemma's memory.
+- **Start only if `free -g` shows at least 79 GiB available:** the container's 45, the 24 reserve,
+  and about 10 the everyday models can still grow into.
+
+**2. Start it, on the Spark**, in tmux or a terminal you'll keep open. It's step 5's command with
+the image's digest filled in, hasso5703's, checked on the Spark on 2026-10-14:
+
+```bash
+sudo docker run --rm --name qwen38-coder --init \
+  --gpus all --user "$(id -u):$(id -g)" \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=2g --shm-size 16g \
+  --oom-score-adj 1000 --log-driver none \
+  -p 127.0.0.1:990:30000 \
+  -v "$HOME/sglang/hf":/hf:ro \
+  -v "$HOME/sglang/secrets/engine.yaml":/run/sglang/engine.yaml:ro \
+  -v "$HOME/sglang/scratch":/scratch \
+  -e HOME=/scratch -e USER=sglang -e XDG_CACHE_HOME=/scratch/.cache \
+  -e TRITON_CACHE_DIR=/scratch/triton -e TORCHINDUCTOR_CACHE_DIR=/scratch/inductor \
+  -e CUDA_CACHE_PATH=/scratch/nv -e PYTHONDONTWRITEBYTECODE=1 \
+  -e HF_HOME=/hf -e HF_HUB_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1 \
+  lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 \
+  python3 -m sglang.launch_server --config /run/sglang/engine.yaml \
+    --model-path /hf/hub/models--RadixArk--Qwen3.8-27B-NVFP4/snapshots/52d1adc5f38aa5ebf099c29ed7025ba34cfbb854 \
+    --speculative-draft-model-path /hf/hub/models--maurienne-ai--Qwen3.8-27B-DFlash2-NVFP4-RTNcal/snapshots/bd7a934213c47a9e7ef69eef36bb3325f47fd1f1 \
+    --served-model-name qwen3.8-27b-sglang --tp-size 1 \
+    --speculative-algorithm DFLASH --speculative-num-draft-tokens 16 \
+    --speculative-draft-model-quantization modelopt_fp4 \
+    --kv-cache-dtype fp8_e4m3 \
+    --max-running-requests 1 --max-total-tokens 266240 --max-mamba-cache-size 16 \
+    --mamba-ssm-dtype bfloat16 --mamba-radix-cache-strategy extra_buffer \
+    --mem-fraction-static 0.55 --chunked-prefill-size 4096 \
+    --cuda-graph-max-bs-decode 1 --disable-prefill-cuda-graph --disable-flashinfer-autotune \
+    --attention-backend flashinfer \
+    --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+    --log-level warning --host 0.0.0.0 --port 30000 \
+    2>&1 | tee ~/sglang/scratch/boot-$(date +%F-%H%M).log
+```
+
+If that terminal's SSH session drops, the container may keep running: look with
+`sudo docker ps --filter name=qwen38-coder`, and stop it as in step 5 below.
+
+**3. Check it, on the Spark**, from a second terminal. It takes about 3 minutes to answer:
+
+```bash
+until curl -sf http://127.0.0.1:990/health > /dev/null; do sleep 10; done; date +%T
+free -g
+```
+
+If the first terminal shows an error and returns to its prompt, press Ctrl-C here: the loop waits
+for an answer that won't come. **Stop it if available is under 28.**
+
+**4. Connect from the Mac.** One tunnel serves both by-hand models; leave it running, **on the
+Mac**:
+
+```bash
+ssh -N -L 8990:127.0.0.1:990 -L 8080:127.0.0.1:8080 brightroar
+```
+
+Then in opencode pick `qwen3.8-27b-sglang` with `/model`, under `spark-sglang`, and keep to one
+opencode window at a time ([What to know first](#what-to-know-first)). `Error: Unauthorized` means
+opencode's background service started without the key: [step 6](#connect-from-the-mac) has the fix.
+
+**5. Stop it, on the Spark:**
+
+```bash
+sudo docker stop -t 20 qwen38-coder
+free -g
+/opt/local-ai/app/.venv/bin/spark status
+```
+
+Available comes back within seconds. The stack kept running, so there's nothing to restore; if
+`spark status` says the brake is holding, release it as [Stop it](#stop-it) says. **On the Mac:**
+Ctrl-C where the tunnel runs.
 
 ## What to know first
 
@@ -144,7 +254,8 @@ cutover, this step is unchanged.)*
    sees them.
 2. Make sure the llama.cpp coder isn't loaded: `/opt/local-ai/app/.venv/bin/spark status`.
 3. Start only if `free -g` shows at least 77 GiB available: the container's 43, the 24 reserve, and
-   about 10 the always-loaded models can still grow into.
+   about 10 the always-loaded models can still grow into. *(Corrected 2026-10-15: 79 GiB, since the
+   first run measured the container at about 45, not 43. [Run it again](#run-it-again) uses 79.)*
 
 Anything llama-swap loads afterwards still goes through its launch check, which sees the
 container's memory as used and refuses what doesn't fit. Nothing checks the container itself.
