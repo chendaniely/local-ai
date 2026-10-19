@@ -54,6 +54,7 @@ Phase 1 box to Phase 2a*, which also holds the way back. ntfy can wait for Phase
 
 Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
 
-On the Mac, if you use it: [Orca on the Mac](orca.md) — your Claude Code and pi in Orca's panes.
+On the Mac, if you use it: [Orca on the Mac](orca.md) — your Claude Code and pi in Orca's panes;
+and [Posit Assistant on the Mac](posit-assistant.md) — the Spark's models in `pa` and Positron.
 
 ## Every runbook

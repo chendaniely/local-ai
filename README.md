@@ -23,7 +23,8 @@ subscription, with nothing in the path. (Hooks that only report to apps on my ow
 Orca's, are allowed; [the plan](website/design/plan.md) words it.) The Spark is a *second* mode: a model server for my own
 pipelines, for coding harnesses (pi, OpenCode) on the Mac and on the Spark itself, and for a web UI —
 it loads a model only when it fits, and says why when it doesn't. (Hermes, in the original version of
-this line, was parked on 2026-09-23.)
+this line, was parked on 2026-09-23.) Since 2026-10-19, Posit Assistant — the TUI `pa` and Positron —
+reaches it the same way, as a client like pi and OpenCode.
 
 ## Contents
 
@@ -366,6 +367,19 @@ when that file was retired on 2026-09-23.
   since the by-hand server checks none: it reaches the server only through the tunnel on port
   8080, and fails while that tunnel is closed. `make clients` rewrites only the `spark` provider
   and keeps both.
+- **Posit Assistant** (2026-10-19): the TUI `pa`, a development build from Posit's install script
+  that updates itself, and Positron 1.138.0, which ships the assistant as its `posit.assistant`
+  1.7.0 bootstrap extension. Both reach the Spark's models over `make tunnel`, through the
+  front's OpenAI-compatible routes, as pi and opencode do. `make clients-posit` writes the
+  built-in `openai-compatible` entry in `~/.posit/ai/providers.json` from the registry: the chat
+  models, with their windows and capabilities, and an allow list that keeps the embeddings model
+  and whisper out of the picker; the built-in form, since a custom entry has no key path that
+  works in both the TUI and Positron (its `apiKeyHelper` breaks Positron, which reads the same
+  file). The key is `OPENAI_COMPATIBLE_API_KEY` in `~/.secrets` for the TUI and Positron's
+  credential store; the file holds none. The default model is the coder, in
+  `~/.posit/assistant/settings.json`. The TUI answered through it with Gemma on 2026-10-19;
+  Positron's side, its provider UI and a conversation, is not yet checked. [Posit Assistant on
+  the Mac](website/how-to/posit-assistant.md).
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version
