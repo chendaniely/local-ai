@@ -2451,6 +2451,12 @@ Each item gets its own design pass when its turn comes.
   other machines — which could take in the Spark through a small role that runs this repo's `make
   bootstrap` and `make apply`, never replacing them; not for the Spark now (Dan, 2026-10-07: "later";
   the [Q&A](phase-2a-qa.md) has the reasons).
+- **Provider naming** (Dan, 2026-10-19): the provider pointing at the Spark's front, `spark`
+  in pi, opencode and Hermes, is to carry a machine-specific name — `brightroar - spark`, or
+  `Brightroar (spark)` — because Dan has a second Spark as a work machine, so `spark` alone is
+  ambiguous; issue #28 holds the per-harness scope, including Posit's built-in provider, which
+  Posit names itself and so only a custom entry could rename (with no key path in the TUI,
+  checked 2026-10-19).
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
