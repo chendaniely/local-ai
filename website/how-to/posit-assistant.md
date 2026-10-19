@@ -44,6 +44,11 @@ previous file, if there was one, is kept beside it as `providers.json.bak` at it
 permissions, and the line the command prints says which. A file it can't read is refused, and so
 is one that isn't the object Posit Assistant reads: then nothing is written.
 
+**The provider dialog saves into the same file.** When you change something there (a key, a
+provider added or removed), Positron rewrites the `openai-compatible` entry — keeping the
+`baseUrl`, adding its own `protocol` key — and drops the `models` block, so the picker would
+offer the embeddings model and whisper again. Run `make clients-posit` after such a save.
+
 **Why the built-in provider.** Posit's docs recommend a custom entry for an OpenAI-compatible
 endpoint, but a custom entry has no key path that works in both places: its only key mechanism,
 `apiKeyHelper`, breaks Positron, which reads the same file and ignores any entry carrying it
@@ -75,18 +80,12 @@ the key once, for OpenAI Compatible. Positron keeps it in its credential store;
 
 ## 4. Pick a model
 
-**The TUI:** start it with a model, `pa -m openai-compatible/qwen3.8-27b`, or pick one in the TUI.
-**Positron:** the assistant's model picker. To make a Spark model the default in both, put this in
-`~/.posit/assistant/settings.json`, keeping whatever else is there:
-
-```json
-{
-  "model": {
-    "provider": "openai-compatible",
-    "id": "qwen3.8-27b"
-  }
-}
-```
+**The TUI:** the model is set per session: start `pa` with it,
+`pa -m openai-compatible/gemma-4-26b-a4b`. `pa --list-models` prints the exact
+`provider/model-id` values it accepts. The current development build's default model is a Posit
+Anthropic route that needs a sign-in, so pass `-m` for the Spark's models; there is no slash
+command to switch models mid-session (2026-10-19). **Positron:** the assistant's model picker;
+the pick is remembered in `~/.posit/assistant/settings.json` under its own `preferredModel` key.
 
 The tunnel has to be open while you use either: `make tunnel` in a spare terminal. A first
 request for a model that isn't loaded waits for the gate to load it, as pi's does: a request from

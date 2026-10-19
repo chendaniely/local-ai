@@ -376,10 +376,11 @@ when that file was retired on 2026-09-23.
   and whisper out of the picker; the built-in form, since a custom entry has no key path that
   works in both the TUI and Positron (its `apiKeyHelper` breaks Positron, which reads the same
   file). The key is `OPENAI_COMPATIBLE_API_KEY` in `~/.secrets` for the TUI and Positron's
-  credential store; the file holds none. The default model is the coder, in
-  `~/.posit/assistant/settings.json`. The TUI answered through it with Gemma on 2026-10-19;
-  Positron's side, its provider UI and a conversation, is not yet checked. [Posit Assistant on
-  the Mac](website/how-to/posit-assistant.md).
+  credential store; the file holds none. Positron's side is checked: a first conversation
+  answered through it with Gemma on 2026-10-19. The TUI takes its model per session with `-m`
+  (`pa --list-models` lists the values); the model picked in Positron's picker is remembered
+  in `~/.posit/assistant/settings.json` under its `preferredModel` key (Gemma on 2026-10-19).
+  [Posit Assistant on the Mac](website/how-to/posit-assistant.md).
 - **This clone** (`~/git/hub/local-ai`) has the leak-check hooks on (`make hooks`, 2026-09-24),
   with the private denylist in `~/.config/local-ai/denylist`; its contents never enter the repo.
   `spark/`'s environment runs a uv-managed Python **3.12.13**, the minor version

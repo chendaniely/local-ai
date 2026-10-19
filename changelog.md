@@ -28,12 +28,13 @@ reach the models over `make tunnel`, as pi and opencode do. The decision is in t
   `SPARK_API_KEY`, for the TUI; Positron's credential store for Positron. The file holds none.
   A legacy block that pointed the Ollama provider at 9100 left
   `~/.posit/assistant/settings.json` — the Ollama protocol is not what the front serves — and the
-  file's own migration note says the block can go once no older version reads it. The same file
-  now sets the default model, the coder.
+  file's own migration note says the block can go once no older version reads it. After
+  Positron's own save of it the same day, that file remembers the model picked in its picker
+  under its `preferredModel` key (Gemma); the TUI takes its model per session with `-m`.
 - **Checked**: the TUI end to end, `pa -m openai-compatible/gemma-4-26b-a4b` answered through the
   tunnel on 2026-10-19, and a model outside the allow list is refused by `pa` itself, before
-  anything reaches the front. Positron's side, its provider UI and a conversation, is not yet
-  checked.
+  anything reaches the front. Positron's side checked the same day: a first conversation
+  answered through it with Gemma.
 
 ---
 
