@@ -63,7 +63,12 @@ make tunnel
 ```
 
 None of the stack's ports listens beyond 127.0.0.1 in Phase 1, so pi reaches llama-swap only
-through the tunnel.
+through the tunnel. Since 2026-10-22 the tunnel also carries SearXNG, the stack's web search, to
+`127.0.0.1:58888` on the Mac (the Spark's `127.0.0.1:8888`), with JSON on request:
+
+```bash
+curl -s 'http://127.0.0.1:58888/search?q=DGX+Spark&format=json' | jq '.results[:3] | .[] | .title'
+```
 
 In pi, `/model` → a Spark model. The footer names the model that answers.
 
