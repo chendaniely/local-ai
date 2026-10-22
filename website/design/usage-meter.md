@@ -320,8 +320,8 @@ runs across it isn't counted twice.
 **Which provider was brightroar.** Only Hermes records the endpoint; the others record a provider's
 name. Each reader takes the names that reached brightroar: what `spark clients` writes (`spark`),
 the two by-hand engines that ran on it (`spark-sglang`, `spark-flash-next`, *counted: my call*), and
-Posit Assistant's `openai-compatible`, inferred to be brightroar (one such account, all after
-2026-10-19, brightroar's model names, llama.cpp answering). Everything else is left out: the Mac's
+Posit Assistant's `openai-compatible`. Dan confirmed, after the builder check, that none of those
+names ever reached anything but brightroar since 2026-09-28. Everything else is left out: the Mac's
 own Ollama and LM Studio, Lander's Spark, cloud providers. No hostname goes in code, tests or docs.
 From now on brightroar's provider names are its own: a provider for the work Spark gets a different
 name in every harness (the provider-rename note, issue #28, on the Posit Assistant branch).
@@ -408,7 +408,7 @@ overlapping requests; the caps' fix; Hermes's command.
 6. The summary fetched over SSH by one poller on the Mac; no new route, nothing on the status socket.
 7. The price, the rate and the time zone in a private file on the Mac only.
 8. `agent`'s line limited to its own numbers.
-9. The two by-hand engines and Posit Assistant's `openai-compatible` counted as brightroar.
+9. The two by-hand engines counted as brightroar (Dan confirmed the names; counting them is mine).
 10. The order of the work, with the keys first.
 11. An interrupted turn with no prompt count left unpriced and flagged, not estimated.
 12. The gate's ledger readable by `spark`, as the gate's state is.

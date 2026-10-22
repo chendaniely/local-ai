@@ -249,3 +249,15 @@ Mac key. Where does it go?**
   without its review.
 
 **Dan: A**, the recommendation, for the reason it gave.
+
+**Q: The baseline reads every session on the Mac since 2026-09-28 from a provider named `spark`,
+`spark-sglang`, `spark-flash-next`, or Posit Assistant's `openai-compatible`. Did any of those ever
+point at the work Spark, or anywhere but brightroar, in that time?** pi and OpenCode record only a
+provider's name, so their files can't tell.
+
+- A: no, all brightroar; the readers decide by name, and from now on the work Spark's provider gets
+  a different name in every harness.
+- B: yes, sometimes; those sessions are left out by date.
+- C: not sure; counted, but marked as inferred.
+
+**Dan: A.** Those names only ever reached brightroar.
