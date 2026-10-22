@@ -59,7 +59,7 @@ In order of how much they constrain the design:
 | Role | Model server + web UI. Pipelines are Dan's own code (an audio pipeline today; Pixeltable later). Replaces the initial plan's `spark-tools` FastAPI with MCP/CLI wrappers. |
 | Agents | On the Mac **and on the Spark over SSH in tmux**, as a separate **`agent`** user: no sudo, no docker, no access to Dan's home or secrets; writes only its repos and the NAS work folders; its own API key; commits locally — **Dan pushes**. Background jobs run on mounted drives. |
 | Data science | Positron over Remote-SSH as Dan, packages installed ad hoc — outside this repo except that it shares the memory pool. |
-| Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI. PDF chat later. |
+| Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI and, over the tunnel, for the agents on the Mac (since 2026-10-22). PDF chat later. |
 | Speech | *"Optimize for English, but make room for other languages or be able to swap."* Vocabulary prompts, word timestamps, ~170 MB uploads (90 minutes of WAV). Works whether Dan's audio pipeline runs on the Mac or the Spark (decided later). |
 | Loading | *"If it fits just load it. If it doesn't, tell me what's happening so I can decide. Don't just auto-load a small model where it might seem like you are talking from a large model."* The same rule applies to unattended requests. Doesn't fit → **wait (per key), then refuse** with a reason. |
 | Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* |
@@ -115,7 +115,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **whisper.cpp** v1.9.4 ×2 | interactive (resident) + batch (on demand, Phase 3) | `--inference-path /v1/audio/transcriptions`; `prompt`; `verbose_json` word times; Whisper large-v3-turbo and Parakeet TDT v3 GGUF. Two instances, because each transcribes one file at a time. |
 | **diarization** (Phase 3) | a small FastAPI wrapper around pyannote community-1 | OpenAI's shape (`response_format=diarized_json`); waveform input (no aarch64 torchcodec wheel); Hugging Face-gated weights (a runbook step). |
 | **Open WebUI** | Compose, the standard `v0.11.4` image pinned by digest (the slim build now requires Postgres + pgvector), 127.0.0.1:3000 → `tailscale serve` | SQLite with its embedded vector store; `ENABLE_PERSISTENT_CONFIG=False`; Direct Connections and code execution off; signup off; task model = the resident small model, with thinking off for task calls (`TASK_MODEL_PARAMS`; Dan's decision, 2026-09-28), while chats keep it; embeddings and speech-to-text → the Spark's endpoints; web search → SearXNG. |
-| **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search. |
+| **SearXNG** | Compose, pinned, 127.0.0.1 | Open WebUI's web search; since 2026-10-22 also the agents' on the Mac, over the tunnel to `127.0.0.1:58888`. |
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. |
@@ -767,6 +767,10 @@ Each item gets its own design pass when its turn comes.
   logged in the vault.
 - **llama-swap** has one main maintainer and fast config churn → pin, validate, adopt no optional
   features; the gate keeps the boundary thin enough to swap it out.
+- **llama-swap's tunnel port, 9100, predates the 5-prefix convention** (2026-10-22) → renumber it to
+  59100 in one change: `make tunnel`, `spark clients`'s `--base-url` defaults, the Mac's client configs
+  (a re-run of `make clients`), and the docs that name 9100 on the Mac side; it takes effect when the
+  tunnel restarts. Until then 9100 and 58888 coexist on the Mac.
 - **LiteLLM's 2026 security record** → it arrives in Phase 3 locked down, with swap triggers; the gate
   could take over keys (~600 lines) if a trigger fires.
 - **Open WebUI churn** → a pinned minor version, env-only config, a database dump before upgrades.
@@ -1511,6 +1515,15 @@ Each item gets its own design pass when its turn comes.
   `gh-pages` without waiting for the leak scan, is gone. The old branch keeps every version
   published until now; deleting it is Dan's call. The *Design* section's site line gains a dated
   note.
+- **2026-10-22** — Dan's decision on tunnel ports: the ports the Mac binds for the stack's tunnels are
+  5 + the Spark port's last four digits — 58888 for SearXNG's 8888 — so they never sit on a common
+  port (8888 is Jupyter's) and read as the stack's; 50000–59999 lies inside macOS's ephemeral range
+  (49152–65535), which Dan accepts, since the kernel skips bound ports when it assigns ephemeral ones.
+  `make tunnel` now also carries SearXNG, the Spark's `127.0.0.1:8888`, to the Mac's `127.0.0.1:58888`,
+  so the agents on the Mac search through the same backend Open WebUI uses; `pi.md` and the
+  Architecture page's tunnel path gain dated notes. The box changes nothing; the Mac's tunnel gains
+  the port the next time it restarts. llama-swap's 9100 keeps its port for now; renumbering it to
+  59100 is an open item.
 
 ## Sources
 

@@ -73,8 +73,8 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold, once memory
 logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|searxng
 	@case "$(s)" in "") echo "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng" >&2; exit 2 ;; open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
 
-tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 (Ctrl-C closes it)
-	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
+tunnel: ## On the Mac: forward the Spark's llama-swap to 127.0.0.1:9100 and SearXNG (its 127.0.0.1:8888) to 127.0.0.1:58888 (Ctrl-C closes it)
+	ssh -N -L 9100:127.0.0.1:9100 -L 58888:127.0.0.1:8888 $${SPARK_SSH_HOST:-brightroar}
 
 clients: ## Add the Spark provider to all clients on this machine (pi, opencode, hermes)
 	$(SPARK) clients pi --write
