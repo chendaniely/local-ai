@@ -160,3 +160,11 @@ OpenCode and Hermes on the Mac share one key, `SPARK_API_KEY`.
 tracked in the harness / menubar that's a fun thing to look at." The simple numbers in each
 harness and on the menu bar are what this design builds; a dashboard of the breakdowns on the
 Spark is a project of its own. The records keep what one would need.
+
+## The goal, and power
+
+**Dan**, asking for a council to look for what's missing: "the very long term end goal is to see it
+on a dashbaord, but really i want to track the dgx usage cost and know how far away we are from
+breaking even (we're not tracking power consumption, unless you think that's remotely possible)."
+So the measure of the design is the Spark's spend at Claude's prices and the distance to break-even;
+the dashboard is the long-term end, and power is out unless the council finds it within reach.
