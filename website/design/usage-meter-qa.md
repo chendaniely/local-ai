@@ -99,7 +99,9 @@ numbers from before March?**
 - C: everything dated. January stays $300 and Gemma's past stays at Opus; a remap applies only from
   March on.
 
-**Dan: A**, the recommendation, for the reason it gave.
+**Dan: A**, and in his words: "re shoudl allow remapping. i could also make the misttake of putting
+a model at a lower/highter priced claude and want to chagne/update that. so tracking model + tokens
+will allow calculation flexibility."
 
 ## What the baseline covers
 
