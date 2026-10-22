@@ -84,3 +84,19 @@ on all harnesses i have on this current computer and tally up the model for an a
 cost as well so we can use that as a baseline and then it gets updated on the spark." The harnesses'
 own session files on the Mac give the tokens from before the counter, and the Spark's counter
 carries it on from there.
+
+## When the mapping or a price changes
+
+**Q: In January the coder does $300 of work, charged as Opus 5.5 at $4/$20. In March two things
+change: Anthropic cuts Opus to $3/$15, and Dan remaps Gemma from Opus to Sonnet. What happens to the
+numbers from before March?**
+
+- A: remaps reprice, and prices are dated. January stays $300, at what Opus cost then; Gemma's past
+  is recharged at Sonnet, since a remap corrects a judgement about the model, while a price is a
+  fact about its day. Each price line carries the date it took effect.
+- B: everything at today's prices. January becomes $225, and Gemma's past is recharged too; the
+  lifetime figure, and the payback bar with it, moves whenever Anthropic changes a price.
+- C: everything dated. January stays $300 and Gemma's past stays at Opus; a remap applies only from
+  March on.
+
+**Dan: A**, the recommendation, for the reason it gave.
