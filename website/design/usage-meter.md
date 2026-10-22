@@ -355,16 +355,24 @@ Sonnet's. Open WebUI and `agent` aren't in it.
   adds himself.
 - **`changelog.md` and README §Current state** when it is deployed.
 
-### 10. The order of the work *(my call)*
+### 10. Where it goes, and the order of the work
 
-1. **[Dan] [Mac] [Spark]** The keys per harness, and **[Spark]** the counter: the front's rows, the
-   gate's ledger, bootstrap's folders, doctor's check, the scenario page. Deployed on `phase-2a`'s
-   stack. Counting starts; nothing to see yet.
-2. **[Spark] [Mac]** `spark usage`, the mapping and the prices, the summary, the Mac's private file
-   and cache, and the menu bar.
-3. **[Mac]** pi's line first, then OpenCode's, Posit Assistant's extension and Hermes's command.
-   **[Spark]** `agent`'s line.
-4. **[Mac] [Spark] [Dan]** The baseline, before 2027-01-07.
+**Where** (Dan's decision, after the builder check): **the counter joins Phase 2a,** as tasks
+before its soak (Task 45), so the soak, the drills and 2a's review cover the changed front and
+gate; it deploys from `phase-2a` as everything does until 2a merges. **The rest is Phase 2b's first
+part,** and the menu bar is 2b's planned SwiftBar plugin, built once. Posit Assistant's line and key
+wait for its branch to merge.
+
+**The order** *(my call)*:
+
+1. **Phase 2a: [Dan] [Mac] [Spark]** the keys per harness, and **[Spark]** the counter: the front's
+   rows, the gate's ledger, bootstrap's folders, doctor's check, the scenario page. Counting starts;
+   nothing to see yet.
+2. **Phase 2b: [Spark] [Mac]** `spark usage`, the mapping and the prices, the summary, the Mac's
+   private file and cache, and the menu bar.
+3. **Phase 2b: [Mac]** pi's line first, then OpenCode's, Posit Assistant's extension and Hermes's
+   command. **[Spark]** `agent`'s line.
+4. **Phase 2b: [Mac] [Spark] [Dan]** the baseline, before 2027-01-07.
 5. The electricity estimate is in step 2; the plug is a task of its own, whenever Dan buys one.
 
 ## Left to the builder

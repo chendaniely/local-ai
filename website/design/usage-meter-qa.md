@@ -229,3 +229,23 @@ month, last month, today, all time and its percentage, the break-even date, the 
 free room and the tunnel — is in the dropdown. Phase 2b's planned title, the models and the free
 room, moves into the dropdown too. It also keeps the price private on a shared screen: the all-time
 spend and its percentage together would give it away.
+
+## After the builder check
+
+A fresh reviewer read [the design](usage-meter.md) as its builder would. Three of its questions
+were settled in the design as calls for Dan to check; two were his.
+
+**Q: Phase 2a is at Task 40 of 52, with its soak, its drills of the front and the gate, its review
+and its merge still to come. The counter changes the front, the gate, bootstrap's folders and every
+Mac key. Where does it go?**
+
+- A: the keys per harness and the counter become Phase 2a tasks before its soak, so the soak, the
+  drills and 2a's review cover them, deployed from `phase-2a` as usual; the rest (the summary, the
+  menu bar, the harness lines, the baseline) becomes Phase 2b's first part, and the menu bar is
+  2b's planned SwiftBar plugin, built once. Posit Assistant's line and key wait for its branch to
+  merge.
+- B: its own phase from `main` once 2a merges; counting starts weeks later.
+- C: deployed from this branch now, as an exception to the deploy rule, under 2a's drills and
+  without its review.
+
+**Dan: A**, the recommendation, for the reason it gave.
