@@ -212,3 +212,20 @@ management controller to ask. A metering smart plug with a local API can, at the
 
 **Dan: A**, the recommendation, for the reason it gave. The plug, when it comes, is reviewed as a
 new device on the network in the task that adds it, since its relay can cut the Spark's power.
+
+**Q: Dan glances up at the Mac's menu bar mid-afternoon. Phase 2b's plan put the loaded models and
+the free room in the title; he asked for this month's spend and the percentage. What does he see?**
+
+- A: one icon, with this month's spend and the percentage in the title and a coloured dot for ok,
+  loading, brake or unreachable; the models, the free room, the tunnel and the break-even date in
+  its dropdown.
+- B: two icons, 2b's status icon as planned and a meter icon of its own.
+- C: one icon with 2b's title, and the money in the dropdown only.
+
+**Dan: A, without the money in the title.** In his words: "money does not need to be in the title.
+i dont' need that when i'm sharing my screen. the menubar just needs a conection status dot. allt
+he other details should be showen when clicked." So the title is a dot alone, and every number — the
+month, last month, today, all time and its percentage, the break-even date, the loaded models, the
+free room and the tunnel — is in the dropdown. Phase 2b's planned title, the models and the free
+room, moves into the dropdown too. It also keeps the price private on a shared screen: the all-time
+spend and its percentage together would give it away.
