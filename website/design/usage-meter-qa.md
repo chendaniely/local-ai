@@ -100,3 +100,18 @@ numbers from before March?**
   March on.
 
 **Dan: A**, the recommendation, for the reason it gave.
+
+## What the baseline covers
+
+**Q: The counter goes live, and the baseline tallies everything the Spark served before it. Besides
+the Mac's pi, OpenCode, Hermes and Posit Assistant sessions, the box has Dan's Open WebUI chats and
+`agent`'s pi sessions since 2026-09-28. What goes into the baseline?**
+
+- A: all of it, wherever it kept token counts. The lifetime figure is the box's, so everything it
+  served counts; `agent`'s sessions are read by one command Dan runs with `sudo -u agent`.
+- B: the Mac's harnesses only, as first asked; the web chats and `agent`'s work before the counter
+  are left out.
+- C: the Mac's first, and Open WebUI and `agent` later, once reading up shows what they kept.
+
+**Dan: A**, the recommendation, for the reason it gave. What has no file — scripts, raw `curl`
+calls, llama-swap's activity, which each restart wipes — can't be counted either way.
