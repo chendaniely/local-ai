@@ -198,3 +198,17 @@ could be a few million tokens over a weekend. Should those count toward break-ev
 - C: no new key; test rows are left out afterwards by the dates the tests ran.
 
 **Dan: B.** Everything the box serves counts toward break-even, tests included.
+
+**Q: A year from now the menu bar says 60% paid back. How should electricity figure in that
+number?** The box can't measure its own draw: `nvidia-smi` reports the GPU alone, and there is no
+management controller to ask. A metering smart plug with a local API can, at the wall.
+
+- A: estimate now, plug later. Published figures for this model (about 37 W idle, 100–160 W
+  working) times the hours on and the busy hours, at Dan's rate, subtracted from savings and
+  labelled an estimate; a ~$25 metering plug's readings replace the estimate from the day one is
+  added.
+- B: the estimate only, never a plug.
+- C: leave power out; the bar reaches 100% a little early, by about $3–10 a month.
+
+**Dan: A**, the recommendation, for the reason it gave. The plug, when it comes, is reviewed as a
+new device on the network in the task that adds it, since its relay can cut the Spark's power.
