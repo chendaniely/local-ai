@@ -54,3 +54,33 @@ small, and adding one more harness has to be cheap.
 are reading/using the same code." The counting, the prices and the sums live in one place, and
 each harness only reads from it or calls it; no harness keeps its own copy of the prices or its
 own arithmetic.
+
+## Which Claude model a Spark model costs as
+
+**Q: An afternoon in pi with the coder (`qwen3.8-27b`): 4M tokens in, 3M of them from cache, and
+200K out. What should the meter say that cost?**
+
+- A: every model that writes text at Sonnet 5.5's prices, $4.60.
+- B: every one at Opus 5.5's, $8.60.
+- C: each matched by size: the coder at Sonnet 5.5's, the smaller Gemma 4 and Qwen3.6 at Haiku
+  5.5's.
+
+**Dan: none of them as asked: a mapping he edits.** In his words: "we should have a way where i can
+map a local model to a claude model and price, and if i change it the cost shoudl also be able to
+update. we can store this in a yaml/json file of sorts. i pretty much only use opus for all my work,
+so there's the simple way of just saying that, but true, not all models are opus level. i know this
+is for fun, but we do want to be able to have a somewhat accurate calculation,a nd make
+updates/changes to the pricing as needed. also prices might change over time, so i need a way to
+update that as well. let's think though how this data collection might work."
+
+So each local model maps to a Claude model in a file Dan edits, and Claude's prices are a file too,
+since they change over time. A change to either shows in the costs, so what is stored is tokens, and
+the cost is worked out from them each time.
+
+## A lifetime baseline
+
+**Dan:** "once this counter is on the dgx spark and the coutner is working i want to work backwards
+on all harnesses i have on this current computer and tally up the model for an accurate lifetime
+cost as well so we can use that as a baseline and then it gets updated on the spark." The harnesses'
+own session files on the Mac give the tokens from before the counter, and the Spark's counter
+carries it on from there.
