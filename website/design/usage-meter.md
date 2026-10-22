@@ -149,8 +149,11 @@ changes no dollar figure; it is for the harness line.
 
 **Interrupted turns.** Esc in pi or Stop in Open WebUI cancels the request before its counts arrive,
 though the prompt was read. The row records what is known (how it ended, the events counted, for
-`/v1/messages` the input from its first event), and the summary counts such rows as estimated and
-never prices an unknown as $0.
+`/v1/messages` the input from its first event). *(My call, from the builder check:)* a row with no
+prompt count is left unpriced and flagged, "N interrupted, not priced", the way `⚠map` is, so the
+totals are a lower bound and say so. The row keeps its bytes in, key, model and time, so an estimate
+can be added later and reprice the past, as a remap does. An estimate now would have to guess the
+cached share: a long pi prompt is ~$0.40 at Opus's input rate and ~$0.02 as cache reads.
 
 **The row** *(my call, from the records review: names and types are the builder's)*. Numbers and
 ids only.
@@ -171,13 +174,18 @@ Requests without a valid key (401s), `/health` and `/v1/models` get no row: they
 ### 2. The gate's events **[Spark]**
 
 *(My call, from the records review.)* The gate keeps its own ledger, in the same pattern, in a
-folder of its own that only `spark-admin` reads: one row per model load (the model, the request
+folder of its own, `spark:spark-admin 2750`: one row per model load (the model, the request
 that started it, its key, the wait, the seconds it took, how it ended), unload (and why: idle,
 make-room, brake, apply), refusal (code, key, model), brake firing or release, and start of the
 front or the gate. Today the gate keeps 50 of each for 24 hours. These rows give each model's
 loaded hours, the busy hours the electricity estimate needs, and the dashboard's waits and load
 times. The gate's admission answer gains whether the request started a load, and takes the
-request's id, so the two ledgers join.
+request's id, so the two ledgers join. *(My call, from the builder check:)* the gate runs as
+`spark`, the engines' user, so `spark` can read its ledger, as it reads the gate's state today,
+which keeps the last 50 refusals with their key names. A user of the gate's own, or handing its
+events to the front, would change the gate's unit and protocol for little: the ledger holds loads
+and refusals, not each request's sizes and times, which stay in the front's folder out of
+`spark`'s reach.
 
 ### 3. `spark usage`: the one codebase **[Spark]** **[Mac]**
 
@@ -315,6 +323,15 @@ the two by-hand engines that ran on it (`spark-sglang`, `spark-flash-next`, *cou
 Posit Assistant's `openai-compatible`, inferred to be brightroar (one such account, all after
 2026-10-19, brightroar's model names, llama.cpp answering). Everything else is left out: the Mac's
 own Ollama and LM Studio, Lander's Spark, cloud providers. No hostname goes in code, tests or docs.
+From now on brightroar's provider names are its own: a provider for the work Spark gets a different
+name in every harness (the provider-rename note, issue #28, on the Posit Assistant branch).
+
+**The by-hand engines after the counter starts** *(my call, from the builder check)*. `make
+fast-coder` and `make flash-next` are reached over tunnels of their own, not through the front,
+until Phase 4a puts them in the registry, so the counter never sees them. The readers keep importing
+those two providers from the harness files after the counter's start, not only before it; the
+upsert on each message's id makes a re-run safe, and the summary says when they were last imported.
+No second upstream is added to the front for engines that are temporary.
 No reader reads message text: only numbers, ids and times, and an error never quotes a file. Test
 fixtures are invented. The baseline is snapshotted once, since harnesses prune their files.
 
@@ -385,3 +402,7 @@ overlapping requests; the caps' fix; Hermes's command.
 8. `agent`'s line limited to its own numbers.
 9. The two by-hand engines and Posit Assistant's `openai-compatible` counted as brightroar.
 10. The order of the work, with the keys first.
+11. An interrupted turn with no prompt count left unpriced and flagged, not estimated.
+12. The gate's ledger readable by `spark`, as the gate's state is.
+13. The by-hand engines imported from the harness files after the counter starts, until Phase 4a.
+14. Brightroar's provider names reserved; the work Spark's provider named apart.
