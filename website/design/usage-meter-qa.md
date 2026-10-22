@@ -117,3 +117,15 @@ the Mac's pi, OpenCode, Hermes and Posit Assistant sessions, the box has Dan's O
 
 **Dan: A**, the recommendation, for the reason it gave. What has no file — scripts, raw `curl`
 calls, llama-swap's activity, which each restart wipes — can't be counted either way.
+
+## Only brightroar's models
+
+**Dan**, in his words: "note that i have access righ tnow to multiple "local" models, i'm
+speficilaly looking for the ones connected to the dgx spark (brightroar) i shoudl not be counting
+local models runnign on the actaul mac, and i should not be counting my lander analytics dgx spark
+(under [its address] which is what i had access to earlier int he year)." *(Its address is left out
+here: a name that resolves from outside doesn't go in this public repo.)*
+
+So the baseline counts only what brightroar served. A model's name can't decide it, since the
+Mac's own models or Lander's Spark may use the same names: a session counts when its provider
+reached brightroar, and nothing before 2026-09-28, when brightroar began serving, counts at all.
