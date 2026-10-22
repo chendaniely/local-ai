@@ -181,3 +181,20 @@ per session. Numbers and ids only: never what was asked or answered.
 **Dan:** "the cost values don't need to be refuleted in realtime, it's okay if those are delayed /
 updated preiodically/on-demand." So the Spark's totals can be worked out now and then, or when
 asked, rather than kept current with every request.
+
+## After the council
+
+Four reviewers, each with a lens (break-even and power, the records, parity with Dan's Claude Code
+status line, and privacy and operations), and three readers of the harnesses and engines, looked for
+what was missing on 2026-10-22. Their findings go into the design; the questions only Dan could
+answer follow.
+
+**Q: Phase 4's bake-off runs real tasks through pi on each candidate model, plus speed tests, which
+could be a few million tokens over a weekend. Should those count toward break-even?**
+
+- A: tests get their own key in a `test` group, recorded and shown in breakdowns but left out of the
+  payback by default.
+- B: count everything; it all ran on the box. The payback bar jumps during a bake-off.
+- C: no new key; test rows are left out afterwards by the dates the tests ran.
+
+**Dan: B.** Everything the box serves counts toward break-even, tests included.
