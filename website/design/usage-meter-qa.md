@@ -129,3 +129,34 @@ here: a name that resolves from outside doesn't go in this public repo.)*
 So the baseline counts only what brightroar served. A model's name can't decide it, since the
 Mac's own models or Lander's Spark may use the same names: a session counts when its provider
 reached brightroar, and nothing before 2026-09-28, when brightroar began serving, counts at all.
+
+## Breakdowns by app and user
+
+**Dan:** "on the spark side, since i'll having different apps and users, we should have a way to
+track that as well. so we can have breakdowns; again, not sure if agentsview will come into play
+for this." Every request already reaches the front with a key, and the private key list gives each
+key a group (who) and a label (which app), so each record keeps its key's name, and the group and
+label are looked up when the numbers are read, as the mapping is. agentsview reads session files
+on the machine it runs on, so it can't see what the front sees: Open WebUI, `agent`, pipelines, and
+from Phase 6 other people's devices.
+
+**Q: Next month the Spark served 6M tokens to the Mac. Dan opens the breakdown to see how much was
+pi, OpenCode, Hermes and Posit Assistant. How should the Spark know which was which?** Today pi,
+OpenCode and Hermes on the Mac share one key, `SPARK_API_KEY`.
+
+- A: a key per harness. `make clients` gives each harness a key of its own, each with its own
+  label on the Spark; apps get theirs from Phase 3 and other people from Phase 6, as planned. The
+  breakdown is exact, and a refusal names the right harness: today one sent to OpenCode says "pi
+  on the Mac".
+- B: one key, and each request's User-Agent recorded beside it. No new keys, but harnesses on the
+  same SDK may send the same User-Agent (not checked), and scripts send only a library's name.
+- C: both, the key for who and which app, the User-Agent within a shared key.
+
+**Dan: A**, the recommendation, for the reason it gave.
+
+## The fun part and the dashboard
+
+**Dan:** "this is almost becomming a dashboard app on the sparkside, but the simple numbers i want
+tracked in the harness / menubar that's a fun thing to look at." The simple numbers in each
+harness and on the menu bar are what this design builds; a dashboard of the breakdowns on the
+Spark is a project of its own. The records keep what one would need.
