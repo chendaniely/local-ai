@@ -168,3 +168,10 @@ on a dashbaord, but really i want to track the dgx usage cost and know how far a
 breaking even (we're not tracking power consumption, unless you think that's remotely possible)."
 So the measure of the design is the Spark's spend at Claude's prices and the distance to break-even;
 the dashboard is the long-term end, and power is out unless the council finds it within reach.
+
+## As fine-grained as possible
+
+**Dan:** "as a datascientist i like looking at data, so when possible capture data in as granualar
+as possible, so we can aggregate things up." So the records are one row per request, never totals,
+with every number and id the front can see; the baseline keeps one row per past message, not a sum
+per session. Numbers and ids only: never what was asked or answered.
