@@ -47,3 +47,10 @@ So there are two places:
 **Dan:** "i'd like this for the pi, opencode, posit assistant, hermes, pretty much any harness i
 want to use." The harness half can't be built for pi alone: whatever each harness needs has to be
 small, and adding one more harness has to be cheap.
+
+## One codebase
+
+**Dan:** "so we really need 1 codebase to calculate everything and then the individual harnesses
+are reading/using the same code." The counting, the prices and the sums live in one place, and
+each harness only reads from it or calls it; no harness keeps its own copy of the prices or its
+own arithmetic.
