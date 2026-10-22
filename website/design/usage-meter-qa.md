@@ -175,3 +175,9 @@ the dashboard is the long-term end, and power is out unless the council finds it
 as possible, so we can aggregate things up." So the records are one row per request, never totals,
 with every number and id the front can see; the baseline keeps one row per past message, not a sum
 per session. Numbers and ids only: never what was asked or answered.
+
+## Costs needn't be live
+
+**Dan:** "the cost values don't need to be refuleted in realtime, it's okay if those are delayed /
+updated preiodically/on-demand." So the Spark's totals can be worked out now and then, or when
+asked, rather than kept current with every request.
