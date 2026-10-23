@@ -111,13 +111,15 @@ Dan's decisions, each with its reason in [the questions and answers](usage-meter
 | The menu bar | one icon; its title a connection-status dot alone; every number in its dropdown |
 | Where it goes | the counter in Phase 2a, before its soak; the rest is Phase 2b's first part |
 | spark-menu | finishes its build in dotfiles, then moves here; everything consolidates in this repo |
+| Sessions | a sync keeps the Spark current with what only the harnesses know (sessions, subagents); the baseline is its first run; each harness's footer shows the Spark's own figures, a minute or two old |
 | The dashboard | a project of its own, later |
 
 ## The design
 
 The parts, in the order a request meets them: the front writes a row; the gate writes its events;
-`spark usage` turns rows into a summary on the Spark; spark-menu fetches it; the menu bar and each
-harness's line show it.
+the sync brings each harness's sessions to the Spark; `spark usage` turns all of it into a summary
+on the Spark; spark-menu fetches it; the menu bar and each harness's line show it. Every number is
+computed on the Spark, in one place.
 
 ### 1. A row per request, written by the front **[Spark]**
 
@@ -223,7 +225,7 @@ age limit, other events 50 for 24 hours, and no loads or unloads at all.
 ### 3. `spark usage`: the one codebase **[Spark]**
 
 A module of the `spark` package that does all the arithmetic, on the Spark. Nothing else keeps a
-price or adds a number (but see *Each harness's line* for the choice still open there).
+price or adds a number: the harnesses' own lines show what it worked out (Dan's decision).
 
 **Brightroar's providers.** One file in the repo lists, per harness, the provider names that reached
 brightroar, each with the dates it did; readers and adapters read it, never a hard-coded name. A
@@ -260,9 +262,11 @@ low unless the switch is on. The summary shows the uncached-input share of the s
 made and the last row's time; the counter's start; rows dropped, interrupted, cache-unknown and
 unpriced (by model, for `⚠map`); totals by UTC hour, key and model, so any time zone can group them
 into days and months; this month's, last month's, today's and all time's spend in Dan's zone; the
-uncached-input share; the electricity estimate; the payback; the break-even date; and the coverage
-gaps (counting off, the by-hand engines since the counter's start). It runs on demand; whether it
-keeps closed months' totals is the builder's.
+uncached-input share; the electricity estimate; the payback; the break-even date; the coverage
+gaps (counting off, a harness whose sync is behind, the by-hand engines); and, for the harness
+lines, each recent session's totals and its latest turn's, keyed by a hash of the harness's own
+session id, so a line can find its own without the summary holding any name. It runs on demand;
+whether it keeps closed months' totals is the builder's.
 
 **The private file** *(my call, revised after the council)*: the purchase price, the rate per kWh
 (dated) and Dan's time zone, in a file in Dan's own `0700` home on the Spark, mode `0600`, recorded
@@ -287,8 +291,8 @@ presence only, never reading them into a transcript.
 
 spark-menu already keeps one SSH master to the Spark and a poller that makes one remote call every
 10 s, writing a reading to its state folder (`~/.local/state/spark-tunnel/`), which its plugin only
-reads. The meter adds `spark usage summary --json` to that call every few minutes, by the deployed
-`spark`'s full path, and the reading carries it. No route is added to the front, which serves only
+reads. The meter adds `spark usage summary --json` to that call about once a minute, by the
+deployed `spark`'s full path, and the reading carries it; the harness lines read it from there. No route is added to the front, which serves only
 inference routes so that no key, `agent`'s included, can reach anything else; and usage stays off
 the gate's status socket, which `agent` reads. Whether the poll's reads use a key of their own with
 a forced command (as Phase 2a's forward look prescribes for `spark status --json`), while its
@@ -304,16 +308,16 @@ and last month's figure is never carried into a new month. Everything printed es
 ### 5. Each harness's line **[Mac]**; `agent`'s **[Spark]**
 
 **What it shows,** after Dan's Claude Code status line: the session's cost, labelled an API
-equivalent; this turn's cost and time; subagents' cost, where the harness records them; this
-month's Spark total, from spark-menu's reading, greyed when stale; tokens in and out, and thinking
-where the harness or engine reports it; `⚠map` for an unmapped model. *(Deferred, my call: a ⏳
-first-token timer and tokens a second go beyond parity; the menu bar's dot already shows a load.)*
+equivalent; the latest turn's; subagents' cost, where the harness records them; this month's Spark
+total; tokens in and out, and thinking where the harness or engine reports it; `⚠map` for an
+unmapped model. *(Deferred, my call: a ⏳ first-token timer and tokens a second go beyond parity;
+the menu bar's dot already shows a load.)*
 
-**How the session's cost is worked out — the open question.** Either the harness prices its own
-session from rates that `spark clients` writes into its config from the one price file (pi's and
-OpenCode's models take a `cost`; pi's footer and `/session` then show it), or each adapter hands its
-per-message usage to `spark usage` and shows what comes back. Dan chooses (see the questions after
-the council); the rest of this section holds either way.
+**Where its numbers come from** (Dan's decision): **the Spark's summary,** through spark-menu's
+reading on the Mac, a minute or two behind, with its age shown and greyed when stale. The adapter
+hashes its own session id to find its session's line in the summary; it prices nothing and adds
+nothing, so the footer, the menu bar and the dashboard later agree, and a remap shows everywhere at
+once. A turn's own cost shows once the sync has carried it, not the instant the turn ends.
 
 **Per harness** (from reading each one):
 
@@ -330,10 +334,11 @@ extension per harness that also carries 2b's planned hook for it; no npm depende
 under the seven-day rule; the harness versions each is checked against recorded in README §My
 environment. Everything an adapter prints escapes control characters.
 
-**`agent`'s pi** shows its own session's numbers and nothing else: never the Spark-wide month,
-never the payback, which is Dan's total in disguise, never another key's. The mapping and the
-prices, which aren't private, sit where `agent` can read them; the summary, the records and the
-private file never do.
+**`agent`'s pi** *(my call, revised with Dan's decision)*: its line waits. `agent` can't read the
+summary, the records or the private file, and must not, since the summary holds Dan's totals and
+the payback, which is Dan's total in disguise. `agent`'s usage is counted at the front and synced
+like any harness's, so it is in Dan's breakdowns; a line for `agent` needs a view of its own numbers
+alone, filtered by its uid, which can come later if it is wanted.
 
 ### 6. A key per harness **[Dan]** **[Mac]** **[Spark]**
 
@@ -358,7 +363,18 @@ the old key now gets a 401. The code and docs that name `SPARK_API_KEY` (`doctor
 words in `messages.py` and the refusal tables, `clients.py`, `brake.py`, and the deploy, pi,
 opencode-hermes, secret-files, updates and speed-tests runbooks) change where a key changes.
 
-### 7. The lifetime baseline **[Mac]** **[Spark]** **[Dan]**
+### 7. The sync, and the lifetime baseline **[Mac]** **[Spark]** **[Dan]**
+
+**The sync** (Dan's decision). The front sees each request, but only a harness knows the session it
+belonged to, its subagents, and what the by-hand engines served. So the readers below run every
+minute or so on what is new in each harness's files, not once: on the Mac as Dan; on the Spark for
+`agent`'s pi, from a system timer that reads as `agent` and imports as Dan *(my call)*; and for Open
+WebUI, from a system timer through its container *(my call)*. They send per-message rows to the
+Spark. The lifetime baseline is simply the sync's first run, reaching back to 2026-09-28. After the
+counter starts, the front's rows are the spend, and the sync's rows add each request's session,
+parent and harness, joined on the engine's response id where the harness keeps one (pi does) and
+otherwise on key, time and counts; before the counter, and for the by-hand engines, the sync's rows
+are the spend. A harness whose sync falls behind shows in the summary's coverage gaps.
 
 **Snapshot first.** Harnesses prune: Hermes deletes ended sessions after 90 days (its oldest
 brightroar session is from 2026-10-09, so the first would go about 2027-01-07; derived, not
@@ -371,15 +387,17 @@ and an id from the message itself (source, message id, its time, and the engine'
 the harness kept one), never from the file: pi's `/fork` and `/clone` copy messages into new files,
 and a renamed project folder renames pi's. Copies across files collapse, and the import reports how
 many. Each (source, provider) pair has a window with a start and an end. The rows live on the Spark
-in `/var/lib/local-ai/usage-baseline`, `dan:spark-admin`, mode `2750`, the summary's only other
-input; the Mac's readers send their rows there over SSH as Dan.
+in `/var/lib/local-ai/usage-sessions`, `dan:spark-admin`, mode `2750`, the summary's only other
+input; the Mac's readers send their rows there over SSH as Dan, with the same upsert, so a re-sent
+row changes nothing.
 
-**The seam.** The counter's first row's time is stored once. Each source's window ends there, per
-message, so a session that runs across it isn't counted twice; Hermes, which keeps only session
-totals that grow in place, is read from the snapshot taken before the counter started. **The
-by-hand engines** (`make fast-coder`, `make flash-next`) don't pass through the front, so their
-window stays open until Phase 4a puts them behind it: the readers are re-run once then, with that
-cutover as the window's end, and until then the summary shows them as a coverage gap.
+**The seam.** The counter's first row's time is stored once. A synced row before it carries spend;
+one after it carries only what the front's row lacks, so a session that runs across the seam is
+priced once, per message. Hermes keeps only session totals that grow in place, so its spend before
+the seam is read from the snapshot taken before the counter started, and its sync afterwards adds
+sessions only. **The by-hand engines** (`make fast-coder`, `make flash-next`) don't pass through the
+front, so their synced rows stay the spend until Phase 4a puts them behind it, which ends their
+window.
 
 | Source | Reading it |
 |---|---|
@@ -459,10 +477,11 @@ a `cut` row and refusals give rows with their codes. Both done-when lists gain t
 file lists and Task 52's Mac check (`make clients`) gain its files.
 
 **Phase 2b:** `spark usage`, the mapping, the prices, the providers' list, the summary and the
-private file; the reconciliation window, then the baseline; spark-menu's usage section, after it
-moves here; pi's line, then OpenCode's; the shared key's retirement from the Spark's runbooks;
-`agent`'s line; then Posit Assistant's and Hermes's when their turn comes. The plug is a task of its
-own, whenever Dan buys one.
+private file; the readers, the reconciliation window, then the sync, whose first run is the
+baseline; spark-menu's usage section, after it moves here; pi's line, then OpenCode's; the shared
+key's retirement from the Spark's runbooks; then Posit Assistant's and Hermes's lines when their
+turn comes. `agent`'s line waits for a view of its own numbers. The plug is a task of its own,
+whenever Dan buys one.
 
 ### What the counter can't see
 
@@ -504,12 +523,14 @@ the caps' new number; the reconciliation's tolerance.
 7. The mapping, the prices and the providers' list in the repo; mapping to a tier; every chat model
    starting at `opus`; the cache-write switch, off.
 8. The private file on the Spark, in Dan's home, so the summary does all the arithmetic.
-9. spark-menu's poller fetching the summary; no new route, nothing on the status socket.
-10. `agent`'s line limited to its own numbers.
+9. spark-menu's poller fetching the summary about once a minute; no new route, nothing on the
+   status socket.
+10. `agent`'s line waiting for a view of its own numbers.
 11. pi keeping `SPARK_API_KEY`; nothing retired in 2a; Dan's per-key cap lowered.
-12. Snapshots first; the baseline's ids from messages, not files; its rows on the Spark.
-13. The by-hand engines' window open until Phase 4a, then one re-run.
-14. The reconciliation window before the baseline is imported.
+12. Snapshots first; the synced rows' ids from messages, not files; their rows on the Spark.
+13. The sync's timers on the Spark: `agent`'s pi read as `agent` and imported as Dan; Open WebUI
+    read through its container.
+14. The reconciliation window before the sync's first import.
 15. Interrupted turns flagged and unpriced; error and refused rows never priced.
 16. The ⏳ timer and tokens a second deferred; Posit Assistant's and Hermes's lines deferred.
 17. Phase 2a's new tasks numbered 44a onward, between Tasks 44 and 45.

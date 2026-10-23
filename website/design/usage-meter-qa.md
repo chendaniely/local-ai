@@ -297,3 +297,19 @@ from?**
 breakdown dashboard to view data on the spark, so we need a way to keep the spark data up to date
 (even if it's not in real time)". So the Spark has to hold everything a breakdown would use, a
 session's identity included, which only the harness knows, and keep it current, if not live.
+
+**Q: A year from now Dan opens the dashboard on the Spark and filters to one long pi session from
+last Tuesday, with its subagents. Only the harness knew that session existed. How should that
+detail reach the Spark, and what does pi's footer show meanwhile?**
+
+- A: a sync. Every minute or so the baseline's readers read what's new in each harness's session
+  files and send per-message rows (session, parent, harness, response id) to the Spark, joined to
+  the front's rows; the baseline is the sync's first run. pi's footer shows the Spark's own figure
+  for the session, a minute or two old, so every number comes from one place.
+- B: the same sync, and pi's footer also prices the current session itself so it updates every
+  turn; the Spark's figure is the record.
+- C: each adapter tags its requests with a session id the front records; the sync is still needed
+  for the past and for subagents.
+
+**Dan: A**, the recommendation, for the reason it gave: one place computes every number, and a
+footer a minute or two behind is fine.
