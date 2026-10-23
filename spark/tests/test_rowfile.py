@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from spark import rowfile
 from spark.rowfile import RefusedLimit, RowFile
 
 OCT_1_0300Z = 1790823600.0  # 2026-10-01T03:00:00Z, still 2026-09-30 in Vancouver
@@ -241,6 +242,22 @@ def test_below_the_free_floor_counting_turns_off_with_why_disk(made, tmp_path):
     assert raw_lines(tmp_path / "usage-2026-10.jsonl") == ['{"v":1,"p":2,"dropped":1}']
     assert ons == [1]
     assert offs == ["disk"]
+
+
+def test_a_row_file_built_without_a_floor_takes_the_modules_as_it_is_built(made, tmp_path, monkeypatch):
+    # rowfile.FREE_FLOOR, 20 GiB, read as each row file is built: a test's launcher lowers it so a subprocess writes
+    # its rows whatever the test disk has free (Task 44e's review, R9).
+    assert rowfile.FREE_FLOOR == 20 << 30
+    five_gib_free = SimpleNamespace(f_bavail=5, f_frsize=1 << 30)
+    (tmp_path / "low").mkdir()
+    (tmp_path / "lowered").mkdir()
+    low = made(tmp_path / "low", statvfs=lambda path: five_gib_free)
+    monkeypatch.setattr(rowfile, "FREE_FLOOR", 0)
+    lowered = made(tmp_path / "lowered", statvfs=lambda path: five_gib_free)
+    wait_for(lambda: low.off_since() is not None)
+    lowered.put({"v": 1}, OCT_1_0300Z)
+    settle(lowered)
+    assert raw_lines(tmp_path / "lowered" / "usage-2026-10.jsonl") == ['{"v":1}']
 
 
 def test_every_thousand_rows_the_free_floor_is_checked_again(made, tmp_path):

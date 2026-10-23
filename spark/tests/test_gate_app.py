@@ -1677,6 +1677,10 @@ async def serve_ntfy(ntfy: Ntfy):
 
 
 SPARK_GATE = "import sys\nfrom spark import cli\nsys.exit(cli.main(['gate']))\n"
+# `spark gate` whose ledger writes whatever the test disk has free (rowfile.FREE_FLOOR, 20 GiB on the box), so the
+# rows the test checks don't depend on the machine (Task 44e's review, R9).
+SPARK_GATE_ANY_DISK = ("import sys\nfrom spark import cli, rowfile\nrowfile.FREE_FLOOR = 0\n"
+                       "sys.exit(cli.main(['gate']))\n")
 
 
 def _received(receiver: socket.socket, timeout: float) -> bytes:
@@ -1717,7 +1721,7 @@ async def test_spark_gate_takes_its_two_sockets_from_systemd(tmp_path, sockdir):
                     "SPARK_LAUNCH": str(launch), "SPARK_LLAMASWAP_URL": swap_url, "SPARK_GATE_LEDGER": str(ledger),
                     "SPARK_FRONT_UID": str(ME), "SPARK_ADMIN_UIDS": str(ME)}
             fds = [listener.fileno() for listener in listeners]
-            child = subprocess.Popen([sys.executable, "-c", LAUNCHER, ",".join(map(str, fds)), SPARK_GATE],
+            child = subprocess.Popen([sys.executable, "-c", LAUNCHER, ",".join(map(str, fds)), SPARK_GATE_ANY_DISK],
                                      pass_fds=fds, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             for listener in listeners:
                 listener.close()  # the gate's now, as systemd's would be

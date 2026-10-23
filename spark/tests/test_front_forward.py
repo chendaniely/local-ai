@@ -1374,10 +1374,11 @@ async def test_spark_front_takes_9100_from_systemd(tmp_path, sockdir):
     assert "Traceback" not in err and "k2" not in err
 
 
-# `spark front` with uvicorn's graceful time cut to 1 s from gateproto.GRACEFUL_S's 20, so a stream held through its stop
-# is cut within the test's bound: the same stop, sooner.
-SPARK_FRONT_QUICK_STOP = ("import sys\nfrom spark import cli\nfrom spark.front import main\nmain.GRACEFUL_S = 1\n"
-                          "sys.exit(cli.main(['front']))\n")
+# `spark front` with uvicorn's graceful time cut to 1 s from gateproto.GRACEFUL_S's 20, so a stream held through its
+# stop is cut within the test's bound: the same stop, sooner. Its row file writes whatever the test disk has free
+# (rowfile.FREE_FLOOR, 20 GiB on the box), so the rows it checks don't depend on the machine (Task 44e's review, R9).
+SPARK_FRONT_QUICK_STOP = ("import sys\nfrom spark import cli, rowfile\nfrom spark.front import main\n"
+                          "main.GRACEFUL_S = 1\nrowfile.FREE_FLOOR = 0\nsys.exit(cli.main(['front']))\n")
 
 
 @LINUX_ONLY

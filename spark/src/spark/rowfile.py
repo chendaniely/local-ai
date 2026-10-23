@@ -25,6 +25,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 _DISK_CHECK_EVERY = 1000  # rows between free-space checks while counting
+# Below this free on the disk, counting turns off (why `disk`), rather than take the room the weights need: the
+# `free_floor` of a row file built without one, read as it is built, so a test's launcher may lower it.
+FREE_FLOOR = 20 << 30
 _WINDOW_S = 60.0
 
 
@@ -50,7 +53,7 @@ class RowFile:
         queue_bytes: int = 4 << 20,
         mode: int = 0o640,
         retry_s: float = 30.0,
-        free_floor: int = 20 << 30,
+        free_floor: int | None = None,
         on_off: Callable[[float, str], None] = lambda since, why: None,
         on_on: Callable[[], None] = lambda: None,
     ) -> None:
@@ -63,7 +66,7 @@ class RowFile:
         self._queue_bytes = queue_bytes
         self._mode = mode
         self._retry_s = retry_s
-        self._free_floor = free_floor
+        self._free_floor = FREE_FLOOR if free_floor is None else free_floor
         self._on_off = on_off
         self._on_on = on_on
 
