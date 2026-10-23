@@ -1095,7 +1095,7 @@ def test_socket_modes_and_groups_are_checked():
 
 def test_the_key_list_must_load():
     assert detail(FakeProbe(), "key list") == (
-        True, f"{doctor.paths.KEYS} loads: 3 keys, each in one of the registry's key groups (dan and agent)")
+        True, f"{doctor.paths.KEYS} loads: 5 keys, each in one of the registry's key groups (dan and agent)")
     step = "website/how-to/secret-files.md, step 13, installs it"
     probe = FakeProbe()
     probe.texts[doctor.paths.KEYS] = "keys:\n  dans-phone:\n    group: friends\n    label: Dan's phone\n"
