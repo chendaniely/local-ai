@@ -197,8 +197,9 @@ pi on the Mac reaches ~~llama-swap~~ the models only while `make tunnel` runs, s
 Spark listens beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
 Hermes on the Mac go through the same tunnel, with ~~the same key~~ a key each *(corrected 2026-10-23: since
-2026-10-14 `make clients` set them all to one key, and since the keys' runbook each harness has its own: pi
-`SPARK_API_KEY`, OpenCode `SPARK_OPENCODE_KEY`, Hermes `SPARK_HERMES_KEY`)*. From
+2026-10-14 `make clients` set them all to one key. It now defaults to a key each: pi `SPARK_API_KEY`, OpenCode
+`SPARK_OPENCODE_KEY`, Hermes `SPARK_HERMES_KEY`. But the box accepts the two new ones only from the usage meter's
+deploy, Task 44l; until then all three use the one key)*. From
 Phase 2a ~~(planned)~~, the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
 inference routes go through: llama-swap's admin routes stay out of every client's reach. *(Built
