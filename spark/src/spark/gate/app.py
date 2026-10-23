@@ -471,7 +471,9 @@ class _Routes:
         comes, and a ping every PING_EVERY_S. It ends when the front goes, when a newer call replaces it, or at the
         gate's stop; the words a drain is owed and didn't get go to the next call (FrontChannel.close). A send that
         breaks ends it too, logged by its type and place (the after-fix council's finding, 2026-10-14): the front
-        calls again, as after any drop, and the event whose line never went out is owed with the words still queued."""
+        calls again, as after any drop, and the event whose line never went out is owed with the words still queued.
+        A call that ends neither by a newer call nor at the gate's stop is the front's stop, in the gate's ledger (Task
+        44e): the front went, or its connection did, and its next snapshot, if it restarted, gives its start."""
         front = self.core.front
         queue = self.core.open_front_events()
         replaced = front.dropped()
@@ -483,7 +485,10 @@ class _Routes:
             if not first.cancelled() and first.exception() is not None:
                 _broke(exchange.route, first.exception())
         finally:
+            stopped = not replaced.is_set() and not self.gate.stopping.is_set()  # before close sets `replaced`
             front.close(queue, unsent)
+            if stopped:
+                self.core.ledger.lifecycle("stop", "front")
         await exchange.end()
 
     async def _send_events(self, exchange: _Exchange, queue: asyncio.Queue, unsent: list[dict]) -> None:
@@ -549,6 +554,8 @@ class _Routes:
                                          inflight=int(counts.get("count") or 0))
         core.state.refusals.append(RefusalRecord(at=at, model=model if known else None, key=key.name, uid=None,
                                                  code=code, message=message))
+        # The ledger (Task 44e): the request's id, never the key; read leniently, since a front of before sends none.
+        core.ledger.refusal(code, model if known else None, body.get("request_id"), at=at)
         try:
             core.save()
         except (OSError, ValueError):  # the core shows it under health; the record goes with the next save
@@ -739,7 +746,9 @@ async def _settled(work: asyncio.Future) -> None:
 
 def _snapshot(body: dict) -> dict:
     """The front's whole in-flight report, checked as InflightSnapshot shapes it, so the core reads only what it
-    expects."""
+    expects. `front_started_at` and `counting_off_since` are read leniently (Task 44e): absent, null or anything but a
+    time is "not reported", left out of what the core takes, never a 400, so a front of before, or a bad value, never
+    fails the snapshot the drains and `make apply` count on."""
     def stamp(value: Any, field: str) -> float | None:
         if value is None:
             return None
@@ -750,7 +759,9 @@ def _snapshot(body: dict) -> dict:
     seq = body.get("seq")
     if isinstance(seq, bool) or not isinstance(seq, int):
         raise _Bad(_bad("seq", "a whole number"))
-    _number(body, "front_started_at")
+    lenient = ("front_started_at", "counting_off_since")
+    if any(field in body and not _time(body[field]) for field in lenient):
+        body = {field: value for field, value in body.items() if field not in lenient or _time(value)}
     models = body.get("models")
     if not isinstance(models, dict):
         raise _Bad(_bad("models", "an object"))
@@ -776,6 +787,16 @@ def _snapshot(body: dict) -> dict:
     if "at" in body:
         _number(body, "at")
     return body
+
+
+def _time(value: Any) -> bool:
+    """A time as JSON gives one: a finite number, never a flag, nor a whole number too big for a float."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _strings(value: Any) -> list[str]:

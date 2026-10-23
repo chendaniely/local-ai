@@ -1,6 +1,7 @@
 """A request's row (the usage meter's counter, Task 44d; website/design/usage-meter.md, §1): one line of numbers the front
-puts on its row file (spark.rowfile) as each request ends, after its journal line. The app builds it (usage_row) from
-the request as it holds it then, and reads the request's shape from its body as it reads the body (read_shape).
+puts on its row file (spark.rowfile) as each request ends, after its journal line, but before a cut's, whose line waits
+for the gate's why. The app builds it (usage_row) from the request as it holds it then, and reads the request's shape
+from its body as it reads the body (read_shape).
 
 What a row holds, by the plan's *The row and the ledger row*; a field whose value is None is left out:
 - **Who and what**: `v`, the row's version; `id`, the request's own, minted once and kept through the front's resends,

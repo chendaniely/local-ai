@@ -112,7 +112,7 @@ class Loaded:
         self.admits += 1
         return gatelink.Refused(self.refusal["code"], answer=self.refusal)
 
-    def refused(self, code, model, key, message):
+    def refused(self, code, model, key, message, request_id=None):
         pass
 
     async def why_cut(self, model, since):
@@ -901,7 +901,7 @@ class Waits:
         await self.admitted.wait()
         return enter()
 
-    def refused(self, code, model, key, message):
+    def refused(self, code, model, key, message, request_id=None):
         pass
 
     async def why_cut(self, model, since):

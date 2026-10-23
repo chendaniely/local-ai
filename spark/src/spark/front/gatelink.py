@@ -65,7 +65,10 @@ it is made, and when it is made, a change of the hold posted at once (Task 32's 
 and counts each request in the step that clears it, so a snapshot made while it holds has every request it let through
 before, and `make apply` counts nothing in flight only from one); `drained` and `busy`; and each
 refusal of the front's own (`refused`, gateproto.FRONT_REFUSAL_CODES) while the gate's call is open, none while it
-isn't, cut to what the gate keeps.
+isn't, cut to what the gate keeps, with the request's own id, by which the gate's ledger joins the front's row (Task
+44e). Each snapshot says when the front's usage rows stopped being written, `counting_off_since` (`counting_off`, the
+row file's off_since), only while it is a time, and `front_started_at` always, InFlight's start, from which the gate's
+ledger writes the front's start (Task 44e).
 
 **Why a stream was cut** (`why_cut`): when the gate's events show the model leave llama-swap's `/running` (the brake, a
 crash, a kill) at or after the request's forwarding, within CUT_WHY_S of the cut, the front's journal line for the cut
@@ -159,14 +162,17 @@ class GateLink:
     """The front's link to the gate at `status_socket`, every time by `clock` (Unix seconds, as the gate's are).
     `inflight` is the front's count, the app's own, whose changes the link hears (InFlight.on_change); `models` the
     front's model list, which the gate's replaces; `running` gives the models llama-swap's `/running` shows ready
-    (Upstream.ready_models), read while the gate is down. `start()` in the serving loop, `aclose()` at the end."""
+    (Upstream.ready_models), read while the gate is down; `counting_off` when the front's usage rows stopped being
+    written, or None while they are (rowfile.RowFile.off_since, Task 44e). `start()` in the serving loop, `aclose()` at
+    the end."""
 
     def __init__(self, status_socket: Path, clock: Callable[[], float] = time.time, *, inflight: InFlight,
                  models: Any, running: Callable[[], Awaitable[Iterable[str]]] | None = None,
                  down_after_s: float = GATE_DOWN_AFTER_S, poll_s: float = POLL_S, retry_s: float = RETRY_S,
                  snapshot_every_s: float = SNAPSHOT_EVERY_S, cut_why_s: float = CUT_WHY_S,
-                 late_answer_s: float = LATE_ANSWER_S):
+                 late_answer_s: float = LATE_ANSWER_S, counting_off: Callable[[], float | None] = lambda: None):
         self.status_socket = Path(status_socket)
+        self._counting_off = counting_off
         self.clock = clock
         self.inflight = inflight
         self.models = models
@@ -367,13 +373,15 @@ class GateLink:
     async def busy(self, model: str, drain_id: str) -> bool:
         return await self._post("/v1/front/busy", {"model": model, "drain_id": drain_id})
 
-    def refused(self, code: str, model: str | None, key: str, message: str) -> None:
+    def refused(self, code: str, model: str | None, key: str, message: str, request_id: str | None = None) -> None:
         """A refusal of the front's own, posted to the gate while its call is open (gateproto.FrontRefusal), its words
         and its model each cut to REFUSED_TEXT_MAX characters, an ellipsis ending one that was cut, as the gate cuts
-        them."""
+        them; with the request's own id, when given, for the gate's ledger (Task 44e)."""
         if self.connected and code in FRONT_REFUSAL_CODES:
-            self._spawn(self._post("/v1/front/refused", {"at": self.clock(), "code": code, "model": _cut(model),
-                                                         "key": key, "message": _cut(message)}))
+            body = {"at": self.clock(), "code": code, "model": _cut(model), "key": key, "message": _cut(message)}
+            if isinstance(request_id, str):
+                body["request_id"] = request_id
+            self._spawn(self._post("/v1/front/refused", body))
 
     # The waits.
 
@@ -639,6 +647,16 @@ class GateLink:
             if drain.reported and not drain.taken and not drain.posting:
                 self._send_drained(model, drain)
 
+    def _off_since(self) -> float | None:
+        """`counting_off`'s time, only when it is one: anything else, or a call that breaks, is "on"."""
+        try:
+            off = self._counting_off()
+            if isinstance(off, bool) or not isinstance(off, (int, float)) or not math.isfinite(off):
+                return None
+            return float(off)
+        except Exception:  # an OverflowError among them
+            return None
+
     def _count_changed(self, model: str) -> None:
         """InFlight's hook, on every enter and leave, in its step."""
         self._dirty.set()
@@ -657,9 +675,12 @@ class GateLink:
             self._dirty.clear()
             try:
                 if self.connected:
-                    await self._post("/v1/front/inflight", self.inflight.snapshot(
-                        models=[entry["name"] for entry in self.models], draining=list(self._drains),
-                        holding=self._holding()))
+                    snapshot = self.inflight.snapshot(models=[entry["name"] for entry in self.models],
+                                                      draining=list(self._drains), holding=self._holding())
+                    off = self._off_since()
+                    if off is not None:
+                        snapshot["counting_off_since"] = off
+                    await self._post("/v1/front/inflight", snapshot)
                     self._drained_again()
             except Exception as err:
                 _log.error("the front's in-flight report to the gate broke: %s; it reports again", type(err).__name__)

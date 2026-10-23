@@ -27,6 +27,7 @@ import pytest
 from fake_llamaswap import _envelope
 from spark import gateproto, messages, tickets
 from spark.gate.admission import LOAD_FALL_MARGIN_GIB, Admitted, Admitter, AdmitRequest, Privileges, privileges
+from spark.gate.ledger import Ledger
 from spark.gate.state import BrakeMark, GateState, ModelRecord, RoomHold, Ticketed
 from spark.gateproto import LOAD_CALL_TIMEOUT_S, PROGRESS_KINDS, RELEASE_AFTER_S
 from spark.hold import Hold
@@ -36,6 +37,7 @@ from spark.memory import MemInfo
 from spark.messages import Holder, Refusal
 from spark.registry import ClientKey, KeyGroup, load_registry
 from spark.render import HF_HOME, HEALTH_CHECK_TIMEOUT_S, model_path
+from test_gate_ledger import Rows as LedgerRows
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 STACK = load_registry(STACK_REGISTRY)
@@ -305,7 +307,8 @@ class Asked:
 class Gate:
     """An admitter with everything around it the test builds: the clock, launch's folder, a Hugging Face cache with
     every model's files, the state, MemAvailable from `available`, the brake's hold from `hold`, the top holders, the
-    stand-in llama-swap, and a record of each save (`saves`: `state.issued` and each model's record as saved)."""
+    stand-in llama-swap, a record of each save (`saves`: `state.issued` and each model's record as saved), and the
+    gate's ledger, each row it puts kept in `ledger_rows` (Task 44e)."""
 
     def __init__(self, tmp_path: Path, *, models: dict[str, ModelRecord] | None = None, available: float = 74.0,
                  registry=REGISTRY, state: GateState | None = None, holders: list[Holder] | None = None,
@@ -329,21 +332,25 @@ class Gate:
         self.emitted = Emitted(registry)
         self.swap = StandIn(self.clock, self.launch)
         self.saves: list[tuple[dict, dict]] = []
+        self.ledger_file = LedgerRows()
+        self.ledger_rows = self.ledger_file.rows
+        ledger = Ledger(self.ledger_file, self.clock, lambda: frozenset(registry.models))
         more = ({} if proc is None else {"proc": proc}) | ({} if running is None else {"running": running})
         self.admitter = Admitter(registry, self.state, self.swap, self.emitted, self.clock,
                                  read_mem=lambda: MemInfo(121.6, self.available), read_hold=lambda: self.hold,
                                  launch=self.launch, hf_home=str(self.hf_home), holders=lambda names: self.holders,
-                                 on_change=self._saved, poll_s=60.0, **more)
+                                 on_change=self._saved, poll_s=60.0, ledger=ledger, **more)
         self._n = 0
 
     def _saved(self) -> None:
         self.saves.append((dict(self.state.issued), {name: replace(r) for name, r in self.state.models.items()}))
 
-    def ask(self, key: ClientKey | None, model: str, *, kind: str = "key", deadline: float | None = None) -> Asked:
+    def ask(self, key: ClientKey | None, model: str, *, kind: str = "key", deadline: float | None = None,
+            rid: str | None = None) -> Asked:
         self._n += 1
         if kind == "key" and deadline is None:
             deadline = self.clock() + self.registry.key_groups[key.group].wait_s
-        return Asked(self, AdmitRequest(id=f"r{self._n}", model=model, kind=kind, key=key, deadline=deadline))
+        return Asked(self, AdmitRequest(id=rid or f"r{self._n}", model=model, kind=kind, key=key, deadline=deadline))
 
     async def at(self, when: float) -> None:
         """The clock at `when`, then a change, as the core reports every memory reading."""
@@ -1155,6 +1162,64 @@ async def test_a_failed_load_refuses_each_request_that_joined_it_and_sends_one_a
         assert len(gate.emitted.of("load_failed")) == 1
         assert [r.key for r in gate.state.refusals] == ["mac-pi", "agent"]
         assert CODER not in gate.state.models and CODER not in gate.state.issued
+
+
+# The gate's ledger (the usage meter's counter, Task 44e): a load is one row, however many requests joined it, with the
+# id of the request that started it and that request's wait in the queue; a load that failed or went back to the queue
+# is a row too, and so is each refusal. Ids here are the front's kind (16 hex).
+
+STARTER, JOINER = "00000000000000a1", "00000000000000b2"
+
+
+@pytest.mark.anyio
+async def test_a_load_writes_one_row_with_its_starters_id(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # The coder doesn't fit at first: agent's request waits 3 s in the queue before its load's ticket is issued.
+        gate = Gate(tmp_path, models=loaded(GEMMA, EMBED, WHISPER), available=60)
+        starter = gate.ask(AGENT, CODER, rid=STARTER)
+        await settle()
+        assert gate.swap.loads() == []
+        gate.available = 74.0
+        await gate.at(T + 3)
+        assert gate.swap.loads() == [CODER]
+        await gate.at(T + 5)
+        joiner = gate.ask(PI, CODER, rid=JOINER)  # joins the load under way
+        await settle()
+        gate.clock.now = T + 50
+        gate.swap.ready(CODER)
+        await settle()
+        assert starter.result == Admitted(CODER, True, 47.0, 47.0) and joiner.result == Admitted(CODER, True, 47.0)
+        assert gate.ledger_rows == [{"v": 1, "t": T + 50, "kind": "load", "model": CODER, "id": STARTER,
+                                     "wait_s": 3.0, "seconds": 47.0, "outcome": "ready"}]
+
+
+@pytest.mark.anyio
+async def test_a_failed_load_and_its_refusals_reach_the_ledger(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        gate = Gate(tmp_path / "failed", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        gate.swap.lines[CODER] = ["failed to load model"]
+        dans = gate.ask(PI, CODER, rid=STARTER)
+        await settle()
+        gate.clock.now = T + 12
+        gate.swap.exits(CODER)
+        await settle()
+        refused(dans, "load_failed")
+        assert gate.ledger_rows == [
+            {"v": 1, "t": T + 12, "kind": "load", "model": CODER, "id": STARTER, "wait_s": 0.0, "seconds": 12.0,
+             "outcome": "failed"},
+            {"v": 1, "t": T + 12, "kind": "refusal", "model": CODER, "id": STARTER, "code": "load_failed"}]
+
+        # The brake's unload aborts a load: it goes back to the queue, a row of its own, then its request is refused.
+        gate = Gate(tmp_path / "requeued", models=loaded(GEMMA, EMBED, WHISPER), available=74)
+        asked = gate.ask(PI, CODER, rid=STARTER)
+        await settle()
+        gate.clock.now = T + 40
+        gate.hold = hold_at_0312()
+        await gate.swap.unload(CODER)
+        await settle()
+        refused(asked, "held_by_brake")
+        assert [(row["kind"], row.get("outcome"), row.get("code"), row.get("seconds")) for row in gate.ledger_rows] == [
+            ("load", "requeued", None, 40.0), ("refusal", None, "held_by_brake", None)]
 
 
 @pytest.mark.anyio

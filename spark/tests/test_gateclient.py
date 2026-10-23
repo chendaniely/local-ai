@@ -751,6 +751,10 @@ def test_the_status_view_carries_the_plans_fields():
     assert gateproto.HealthView.__required_keys__ == {
         "front", "gate", "brake", "llama_swap", "ntfy", "activity_age_s", "unticketed_engines", "no_ticket_refusals",
         "damaged_at", "damaged_kept_as", "read_problems"}
+    # Whether the front and the gate's ledger count (Task 44e): on the control socket's view only, and not in an older
+    # gate's, so optional.
+    assert gateproto.HealthView.__optional_keys__ == {"counting"}
+    assert gateproto.CountingView.__required_keys__ == {"front_off_since", "ledger_off_since"}
     assert "key_checked_at" in gateproto.BrakeHealth.__required_keys__
     assert "failing_since" in gateproto.NtfyHealth.__required_keys__
     # What the full publish queue dropped since the gate started, which `spark status` shows (the controller's ruling
@@ -780,8 +784,8 @@ def test_a_models_pin_round_trips_with_an_end_or_without():
         assert messages.pinned(view["label"], view["pinned_until"], None, "coder", now=now) == words
 
 
-PATHS = ("GATE_STATUS_SOCKET", "GATE_CONTROL_SOCKET", "GATE_STATE", "LAUNCH", "WHISPER_TMP", "VALUES", "FRONT_URL",
-         "LLAMASWAP_URL")
+PATHS = ("GATE_STATUS_SOCKET", "GATE_CONTROL_SOCKET", "GATE_STATE", "GATE_LEDGER_DIR", "LAUNCH", "WHISPER_TMP",
+         "VALUES", "FRONT_URL", "LLAMASWAP_URL")
 READ_PATHS = f"import json; from spark import paths; print(json.dumps({{n: str(getattr(paths, n)) for n in {PATHS}}}))"
 
 
@@ -801,6 +805,7 @@ def test_the_gates_paths_default_to_the_plans_and_each_variable_overrides_it(mon
         "GATE_STATUS_SOCKET": "/run/local-ai/gate-status.sock",
         "GATE_CONTROL_SOCKET": "/run/local-ai/gate-control.sock",
         "GATE_STATE": "/var/lib/local-ai/gate",
+        "GATE_LEDGER_DIR": "/var/lib/local-ai/gate-ledger",
         "LAUNCH": "/var/lib/local-ai/launch",
         "WHISPER_TMP": "/var/lib/local-ai/whisper-tmp",
         "VALUES": "/etc/local-ai/values.env",
@@ -808,7 +813,8 @@ def test_the_gates_paths_default_to_the_plans_and_each_variable_overrides_it(mon
         "LLAMASWAP_URL": "http://127.0.0.1:900",
     }
     variables = {"GATE_STATUS_SOCKET": "SPARK_GATE_STATUS", "GATE_CONTROL_SOCKET": "SPARK_GATE_CONTROL",
-                 "GATE_STATE": "SPARK_GATE_STATE", "LAUNCH": "SPARK_LAUNCH", "WHISPER_TMP": "SPARK_WHISPER_TMP",
+                 "GATE_STATE": "SPARK_GATE_STATE", "GATE_LEDGER_DIR": "SPARK_GATE_LEDGER", "LAUNCH": "SPARK_LAUNCH",
+                 "WHISPER_TMP": "SPARK_WHISPER_TMP",
                  "VALUES": "SPARK_VALUES", "FRONT_URL": "SPARK_FRONT_URL", "LLAMASWAP_URL": "SPARK_LLAMASWAP_URL"}
     assert _paths(**{variable: f"/stand-in/{name}" for name, variable in variables.items()}) == {
         name: f"/stand-in/{name}" for name in variables}

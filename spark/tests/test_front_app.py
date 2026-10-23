@@ -117,7 +117,7 @@ class Gate:
             await self.hold.wait()
         return enter() if self.answer.get("ok") else gatelink.Refused(self.answer["code"], answer=self.answer)
 
-    def refused(self, code: str, model: str | None, key: str, message: str) -> None:
+    def refused(self, code: str, model: str | None, key: str, message: str, request_id: str | None = None) -> None:
         self.refusals.append((code, model, key, message))
 
     async def why_cut(self, model: str, since: float) -> None:

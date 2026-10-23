@@ -33,7 +33,8 @@ ExecStart=/opt/local-ai/app/.venv/bin/spark gate
 Restart=always
 RestartSec=2
 # Its stop at worst: uvicorn's grace (gateproto.GRACEFUL_S, 20 s), the bounded routes' work still running past its 503
-# (gate.app.FINISH_WORK_S, 2 s) and ntfy's last publish (gateproto.NTFY_TIMEOUT_S, 5 s): about 27 s.
+# (gate.app.FINISH_WORK_S, 2 s), ntfy's last publish (gateproto.NTFY_TIMEOUT_S, 5 s) and its ledger's last rows
+# (gate.main.LEDGER_DRAIN_S, 2 s): about 29 s.
 TimeoutStopSec=45
 OOMScoreAdjust=-900
 # Writable: its own state, launch's tickets, and the brake's hold, which it lifts (rule 5). No PrivateDevices=,

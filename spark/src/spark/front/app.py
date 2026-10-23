@@ -97,13 +97,15 @@ CUT_WHY when the gate's events show the model gone from llama-swap's `/running` 
 line waits for those events (GateLink.why_cut); the client's response never does.
 
 **Its row** (the usage meter's counter, Task 44d). Each request with a key, but the model list's, also leaves one row
-of numbers (rows.usage_row), put on the row file after its journal line, never in its way: what it was, how it ended,
-its counts, and its timings by the monotonic clock. Its id is minted once and is the gate's request id at each of its
-admits, through the front's resends. Its counts come from a usage scan (usage.scan_for) that sees each chunk of its
-answer once the client has it; what the row reads of its body is read into numbers as the body is read
-(rows.read_shape), never kept parsed, so step 6's memory bound holds. A scan, a shape or a row that breaks is logged by
-its class and where it broke, its counts or its row dropped for that request alone; its answer is never touched. A
-key's refused rows go only within its rate (rowfile.RefusedLimit), the rest summed into its next row as `refused_n`.
+of numbers (rows.usage_row), put on the row file as it ends, never in its way (after its journal line, but before a
+cut's, whose line waits for the gate's why): what it was, how it ended, its counts, and its timings by the monotonic
+clock. Its id is minted once and is the gate's request id at each of its admits, through the front's resends, and goes
+with each refusal of the front's own that the gate is told, so the gate's ledger joins its rows by it (Task 44e). Its
+counts come from a usage scan (usage.scan_for) that sees each chunk of its answer once the client has it; what the row
+reads of its body is read into numbers as the body is read (rows.read_shape), never kept parsed, so step 6's memory
+bound holds. A scan, a shape or a row that breaks is logged by its class and where it broke, its counts or its row
+dropped for that request alone; its answer is never touched. A key's refused rows go only within its rate
+(rowfile.RefusedLimit), the rest summed into its next row as `refused_n`.
 
 The calls the app makes, on Task 21's Upstream, Task 22's GateLink and Task 44b's RowFile, or the tests' stand-ins:
 - `upstream`: `await forward(method, path, headers, body, key)`, `body` None, bytes or an async iterator of bytes,
@@ -111,8 +113,9 @@ The calls the app makes, on Task 21's Upstream, Task 22's GateLink and Task 44b'
   and upstream.Broken from `aiter_raw()` for a body that broke off;
 - `gate`: `await clear(model, key, deadline, request_id, enter=…, admit=…, waits=…, loaded=…)`, giving what `enter()`
   gave (the request counted in flight) or a gatelink.Refused, and calling `loaded(load_s)` when the gate's admit
-  says the request started a load; `refused(code, model, key, message)`; `await why_cut(model, since)`, giving the
-  words for a cut's journal line, or None; and `running_models()`, the models the model list shows loaded;
+  says the request started a load; `refused(code, model, key, message, request_id=…)`; `await why_cut(model,
+  since)`, giving the words for a cut's journal line, or None; and `running_models()`, the models the model list shows
+  loaded;
 - `rows`: `put(row, at)`, which never blocks."""
 
 from __future__ import annotations
@@ -176,8 +179,9 @@ ANSWER_MAX = 64 << 10  # a 429's or a 500's body read to tell llama-swap's own, 
 # admits a model it counts ready at once, so without a pause the two would go back and forth until the deadline.
 RESEND_AFTER_S = 1.0
 EXITED, UNANSWERED = "exited", "unanswered"  # how a send ended that goes through admission again
-# At the front's stop, the requests uvicorn's stop cancelled are waited for this long, so each ends, its row put, before
-# the row file closes: each is only closing its upstream answer by then.
+# At the front's stop, the requests uvicorn's stop cancelled are waited for this long, so each that ends within it puts
+# its row before the row file closes: each is only closing its upstream answer by then. One still ending past it has
+# its row counted dropped by the closed row file.
 ENDING_S = 2.0
 _log = logging.getLogger(__name__)
 
@@ -749,11 +753,12 @@ class FrontApp:
 
     async def _refuse(self, send, request: _Request, refused: messages.Refusal | parse.Refused) -> None:
         """A refusal sent; one of the front's own that the gate keeps (FRONT_REFUSAL_CODES) told to it too: the model
-        as the client named it for model_not_found, else its registry name. Its code goes in the request's row."""
+        as the client named it for model_not_found, else its registry name, and the request's id, which its row holds
+        too, so the gate's ledger joins the two (Task 44e). Its code goes in the request's row."""
         request.refused = refused.code
         if refused.code in FRONT_REFUSAL_CODES and request.key is not None:
             model = request.asked if refused.code == "model_not_found" else request.model
-            self.gate.refused(refused.code, model, request.key, refused.message)
+            self.gate.refused(refused.code, model, request.key, refused.message, request_id=request.id)
         await self._send(send, request, refused.status, refused.body(), refused.headers())
 
     async def _send(self, send, request: _Request, status: int, payload: dict,

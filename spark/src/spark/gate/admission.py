@@ -56,6 +56,12 @@ record that isn't a start's whole while it stands, deciding at each read. A tick
 own error, refused at once. A model `/running` shows starting holds the slot whatever its record reads.
 
 `cancel(request_id)`: a client gone leaves the queue at once, and nothing loads for it; a load already started finishes.
+
+**The gate's ledger** (gate.ledger, the usage meter's counter, Task 44e): one row for each load as it ends, however
+many requests joined it, with the id of the request that started it while that request stands, its wait in the queue
+until the load's ticket was issued, the load's seconds, and how it ended: `ready`, `failed`, or `requeued` when its
+requests went back to their places; a row for each refusal, as it goes into the history; and an unload, why
+`late_start`, for a start past its deadline that the admitter unloads itself.
 """
 
 from __future__ import annotations
@@ -71,6 +77,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from spark import budget, launch, messages, procs, tickets
+from spark.gate.ledger import Ledger
 from spark.gate.state import Emit, GateState, ModelRecord, RefusalRecord, RoomHold, Ticketed
 from spark.gateproto import LOAD_CALL_TIMEOUT_S, RELEASE_AFTER_S, WAITING_WHY
 from spark.hold import Hold, release_waits_for_dan
@@ -219,6 +226,7 @@ class _Load:
     clears_mark: bool = False
     started_at: float | None = None  # launch's, from this ticket's started/ record
     task: asyncio.Task | None = None
+    wait_s: float | None = None  # its starter's wait in the queue until its ticket was issued, for the ledger
 
 
 @dataclass(frozen=True)
@@ -252,15 +260,16 @@ class Admitter:
     cache the engines read. Beside the plan's interface: `on_change` is called after every change to `state`, so the
     core saves it, before a load call with the ticket's id in `state.issued` among them, and should that one raise, no
     call is sent; `poll_s` bounds how long a request or a load being settled goes unchecked without a `changed()`;
-    `proc` is where the engines' RssAnon is read (a tree the tests build). `registry` is replaced when the registry is
-    read again."""
+    `proc` is where the engines' RssAnon is read (a tree the tests build); `ledger` the gate's ledger (Task 44e; none
+    writes nothing). `registry` is replaced when the registry is read again."""
 
     def __init__(self, registry: Registry, state: GateState, llamaswap: AsyncLlamaSwap, emit: Emit,
                  clock: Callable[[], float], *, read_mem: Callable[[], MemInfo], read_hold: Callable[[], Hold | None],
                  launch: Path, hf_home: str, holders: Callable[[bool], list[Holder]],
                  on_change: Callable[[], None] | None = None, poll_s: float = POLL_S, proc: Path = procs.PROC,
-                 running: list[Running] | None = None):
+                 running: list[Running] | None = None, ledger: Ledger | None = None):
         self.registry = registry
+        self.ledger = ledger if ledger is not None else Ledger(None, clock, frozenset)
         self.state = state
         self._swap = llamaswap
         self._emitter = emit
@@ -734,7 +743,8 @@ class Admitter:
                 free_outside_hold=figures.free(True) - held, hold=held, footprint=model.footprint_gib))
         self._dequeue(waiter)
         load = _Load(name, model.footprint_gib, ticket_id, now, now + LOAD_CALL_TIMEOUT_S, float(figures.available),
-                     "calling", starter=waiter, hold_after=hold_after, clears_mark=waiter.priv.reloads_marked)
+                     "calling", starter=waiter, hold_after=hold_after, clears_mark=waiter.priv.reloads_marked,
+                     wait_s=max(0.0, now - waiter.entered_at))
         self._loads[name] = load
         self.state.issued[name] = ticket_id
         self.state.models[name] = ModelRecord(name=name, footprint_gib=model.footprint_gib, loaded_at=now,
@@ -944,6 +954,7 @@ class Admitter:
             await self._sleep(self._poll_s)
         self._take_started(load)
         self.late_unloads[load.model] = self._clock()
+        self.ledger.unload(load.model, "late_start")
         model = self.registry.models.get(load.model)
         self._emit("unloaded", f"drain:late-start-{load.ticket_id or load.model}",
                    label=model.label if model else load.model, why="late_start")
@@ -1050,6 +1061,7 @@ class Admitter:
             self._emit("loaded", f"load:{load.ticket_id}", label=model.label if model else name, seconds=seconds)
         if ended is not None:
             self._hold_used_up(ended)
+        self._ledger_load(load, "ready", seconds)
         starter = load.starter
         for waiter in self._requesters(load):
             self._resolve(waiter, Admitted(name, True, seconds, seconds if waiter is starter else None))
@@ -1104,6 +1116,7 @@ class Admitter:
         that failed or passed its deadline; one that stopped before it was ready (`start_ended`); llama-swap's refusal
         at once (`swap_status`); or a ticket the gate couldn't confirm it withdrew (`ticket_unconfirmed`)."""
         self._drop(load)
+        self._ledger_load(load, "failed")
         model = self.registry.models.get(load.model)
         label = model.label if model else load.model
         command = model.roles[0] if model and model.roles else load.model
@@ -1122,6 +1135,7 @@ class Admitter:
         record = self.state.models.get(load.model)
         drain_for = (record.drain_why if record is not None else None) or "unknown"
         self._drop(load)
+        self._ledger_load(load, "requeued")
         now = self._clock()
         for waiter in self._requesters(load):
             self._retry(waiter, now, why)
@@ -1130,6 +1144,13 @@ class Admitter:
                 None, None)
             self._queue.append(waiter)
         self._kick()
+
+    def _ledger_load(self, load: _Load, outcome: str, seconds: float | None = None) -> None:
+        """The load's row in the gate's ledger: its seconds from its ticket (or launch's start), when not given."""
+        if seconds is None:
+            began = load.issued_at if load.issued_at is not None else load.started_at
+            seconds = None if began is None else self._clock() - began
+        self.ledger.load(load.model, load.starter.req.id if load.starter else None, load.wait_s, seconds, outcome)
 
     def _retry(self, waiter: _Waiter, now: float, why: str) -> None:
         waiter.retry_s = min(RETRY_MAX_S, max(RETRY_FIRST_S, 2 * waiter.retry_s))
@@ -1259,6 +1280,7 @@ class Admitter:
         self.state.refusals.append(RefusalRecord(at=self._clock(), model=req.model,
                                                  key=req.key.name if req.key else None, uid=req.uid, code=code,
                                                  message=refusal.message))
+        self.ledger.refusal(code, req.model, req.id)
         self._on_change_safe()
         if notify and code != "load_failed":
             sent = messages.refusal_notification(code, request_id=req.id)
