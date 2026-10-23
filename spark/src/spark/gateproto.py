@@ -177,10 +177,15 @@ class AdmitRequest(TypedDict):
     request_id: str
 
 
-class Admitted(TypedDict):
+class _Admitted(TypedDict):
     ok: Literal[True]
     model: str
-    load_s: NotRequired[float | None]  # seconds the load took, only for the request that started it (Task 44c)
+
+
+class Admitted(_Admitted, total=False):
+    # Optional, by the file's total=False pattern: `NotRequired[...]` under this module's postponed annotations reads as
+    # required at runtime (Task 44e's review, R8).
+    load_s: float | None  # seconds the load took, only for the request that started it (Task 44c)
 
 
 class AdmitRefused(TypedDict):
@@ -194,14 +199,17 @@ class AdmitRefused(TypedDict):
 AdmitAnswer = Admitted | AdmitRefused
 
 
-class ModelEntry(TypedDict):
-    """One model in the gate's model list, which the front serves from (Dan's decision of 2026-10-07)."""
-
+class _ModelEntry(TypedDict):
     name: str
     roles: list[str]
     label: str
     resident: bool
-    engine: NotRequired[str]  # the engine's name, e.g. "llama.cpp" (Task 44c); an older gate sends none
+
+
+class ModelEntry(_ModelEntry, total=False):
+    """One model in the gate's model list, which the front serves from (Dan's decision of 2026-10-07)."""
+
+    engine: str  # the engine's name, e.g. "llama.cpp" (Task 44c); an older gate sends none
 
 
 class HelloEvent(TypedDict):

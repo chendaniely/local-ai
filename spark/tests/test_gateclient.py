@@ -718,6 +718,21 @@ def test_every_route_names_its_socket_and_callers():
     assert typing.get_type_hints(gateproto.LoadConfirmation)["seconds"] == float | None
 
 
+def test_the_fields_an_older_peer_leaves_out_are_optional_at_runtime():
+    # Task 44c's `load_s` and `engine`, and Task 44e's, are optional: an older gate sends neither, and the front reads
+    # them leniently. Each is optional to the type's own key sets, not only to a type checker, and the hints resolve
+    # (Task 44e's review, R8: `NotRequired` under this module's postponed annotations was neither).
+    for typed, optional in ((gateproto.Admitted, {"load_s"}), (gateproto.ModelEntry, {"engine"}),
+                            (gateproto.FrontRefusal, {"request_id"}),
+                            (gateproto.InflightSnapshot, {"holding", "at", "front_started_at", "counting_off_since"}),
+                            (gateproto.HealthView, {"counting"})):
+        assert typed.__optional_keys__ == optional, typed
+        assert set(typing.get_type_hints(typed)) == typed.__required_keys__ | optional, typed
+    assert gateproto.Admitted.__required_keys__ == {"ok", "model"}
+    assert gateproto.ModelEntry.__required_keys__ == {"name", "roles", "label", "resident"}
+    assert typing.get_type_hints(gateproto.Admitted)["load_s"] == float | None
+
+
 def test_the_status_view_carries_the_plans_fields():
     # Task 19 builds it, Task 29 prints it, and 2b's menu bar reads it as `spark status --json`.
     assert gateproto.StatusView.__required_keys__ == {
