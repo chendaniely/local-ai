@@ -53,11 +53,15 @@ to the admitter, the drainer and Room, which write the loads, the refusals, the 
 releases. The core writes the rest: the brake's firings and its unloads, from its events as they are ingested, each at
 its own time; a model that left `/running` with no load or unload of the gate's under way, why `apply` while apply's
 hold stands with llama-swap's restart begun, else `gone`, but none while the brake's hold stands, whose own events say
-it (the brake writes its hold, unloads, then records what it did); launch's backstop refusals, each once; the front's
-start, from a snapshot with a `front_started_at` it hasn't seen, and the front's counting, off and on, from each
-snapshot, on a change (a gate restarted writes the front's start again, and its counting off if it is, each at the same
-`t` as before, which a reader takes as one); and its own writer's state each second. `health.counting`, on the control
-socket's view alone, says when the front's rows and the ledger stopped being written."""
+it (the brake writes its hold, unloads, then records what it did); launch's backstop refusals, each once in a run; the
+front's start, from a snapshot with a `front_started_at` it hasn't seen; the front's stop, from its events call
+dropping, held until the front's next snapshot says which it was (`front_call_ended`): the same `front_started_at`, and
+the connection only blipped, so nothing is written; a new one, and the stop goes in, at the drop, before the new
+start; and one still held at the gate's own stop goes in then (the controller's ruling at Task 44e's review, I1); the
+front's counting, off and on, from each snapshot, on a change; and its own writer's state each second. A gate restarted
+writes again, each at the same `t` as before, which a reader takes as one: the front's start, its counting off if it
+is, and the backstop's refusals of this boot. `health.counting`, on the control socket's view alone, says when the
+front's rows and the ledger stopped being written."""
 
 from __future__ import annotations
 
@@ -293,6 +297,7 @@ class GateCore:
         self._reported: set[tuple[str, int]] = set()  # the unticketed engines already logged
         self._backstop: set[tuple[str, str, str, str]] = set()  # launch's backstop refusals seen this boot
         self._front_started_at: float | None = None  # the front's start, as the last snapshot that gave one said
+        self._front_stop: float | None = None  # when the front's events call dropped: front_call_ended
         self._activity_at: float | None = None
         self._sent_state: tuple | None = None
         self._settle_front_drains = False
@@ -397,7 +402,9 @@ class GateCore:
         stays saved, for the next start to resume), the Notifier flushed and drained (by 5 s, within uvicorn's
         GRACEFUL_S), and `clean_shutdown` saved true. Before a start that built the parts, nothing is saved: the state
         on disk is the last run's. After a start cut short before the Notifier's task ran (`spark gate` stopped while
-        it started), there is no queue to wait on: nothing sends it (the controller's ruling at Task 19's review)."""
+        it started), there is no queue to wait on: nothing sends it (the controller's ruling at Task 19's review). The
+        front's stop still held goes in the ledger, at its drop (front_call_ended)."""
+        self._write_front_stop()
         await self._cancel(self._loops)
         if self.admitter is not None:
             await self.admitter.stop()
@@ -1313,14 +1320,18 @@ class GateCore:
         """The front's whole in-flight report. Its first after a start fresh from damage settles every drain it
         holds: each finished as a drain with why `unknown`, then unloaded, never undrained, since an undrain could cut
         a request on a model whose unload may be queued (the controller's ruling at Task 13's re-review); then the
-        damage is no longer news to the front, and the state says so. In the ledger (Task 44e): the front's start, at
-        a `front_started_at` the gate hasn't seen, and its counting, on a change (app._snapshot left out what isn't a
-        time)."""
+        damage is no longer news to the front, and the state says so. In the ledger (Task 44e): a stop held since the
+        front's events call dropped, and the front's start, when `front_started_at` is one the gate hasn't seen; the
+        same one ends the held stop with nothing written, the connection having only blipped (front_call_ended); and
+        the front's counting, on a change (app._snapshot left out what isn't a time)."""
         self.front.report(snapshot)
         started = snapshot.get("front_started_at")
-        if _finite(started) and started != self._front_started_at:
-            self._front_started_at = started
-            self.ledger.lifecycle("start", "front", at=started)
+        if _finite(started):
+            if started != self._front_started_at:
+                self._write_front_stop()
+                self._front_started_at = started
+                self.ledger.lifecycle("start", "front", at=started)
+            self._front_stop = None
         self.ledger.counting(snapshot.get("counting_off_since"), "front")
         if not self._settle_front_drains:
             return
@@ -1331,6 +1342,19 @@ class GateCore:
         if self.state.fresh_after_damage:
             self.state.fresh_after_damage = False
             self._save_quietly()
+
+    def front_call_ended(self) -> None:
+        """The front's events call ended, other than at the gate's stop: the front's stop, or only its connection
+        dropping, which its next snapshot says (`inflight`), or, should none come, the gate's own stop (the
+        controller's ruling at Task 44e's review, I1). Held from the first drop: a second, the front not back yet,
+        moves nothing."""
+        if self._front_stop is None:
+            self._front_stop = self._clock()
+
+    def _write_front_stop(self) -> None:
+        stop, self._front_stop = self._front_stop, None
+        if stop is not None:
+            self.ledger.lifecycle("stop", "front", at=stop)
 
     def quiet(self) -> dict:
         """`/v1/quiet`: how long nothing has been in flight, by the front's counts (0 while anything is), the model

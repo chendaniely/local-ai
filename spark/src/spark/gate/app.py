@@ -472,8 +472,9 @@ class _Routes:
         gate's stop; the words a drain is owed and didn't get go to the next call (FrontChannel.close). A send that
         breaks ends it too, logged by its type and place (the after-fix council's finding, 2026-10-14): the front
         calls again, as after any drop, and the event whose line never went out is owed with the words still queued.
-        A call that ends neither by a newer call nor at the gate's stop is the front's stop, in the gate's ledger (Task
-        44e): the front went, or its connection did, and its next snapshot, if it restarted, gives its start."""
+        A call that ends other than at the gate's stop, a newer call's among them, may be the front's stop: the core
+        holds it until the front's next snapshot says whether the front restarted or its connection only dropped
+        (GateCore.front_call_ended; Task 44e)."""
         front = self.core.front
         queue = self.core.open_front_events()
         replaced = front.dropped()
@@ -485,10 +486,9 @@ class _Routes:
             if not first.cancelled() and first.exception() is not None:
                 _broke(exchange.route, first.exception())
         finally:
-            stopped = not replaced.is_set() and not self.gate.stopping.is_set()  # before close sets `replaced`
             front.close(queue, unsent)
-            if stopped:
-                self.core.ledger.lifecycle("stop", "front")
+            if not self.gate.stopping.is_set():
+                self.core.front_call_ended()
         await exchange.end()
 
     async def _send_events(self, exchange: _Exchange, queue: asyncio.Queue, unsent: list[dict]) -> None:

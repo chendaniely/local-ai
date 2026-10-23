@@ -303,25 +303,82 @@ async def test_counting_shows_on_the_control_socket_only(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_the_fronts_events_call_dropping_is_its_stop_but_not_a_newer_call_or_the_gates_stop(tmp_path):
+async def test_a_dropped_events_call_is_the_fronts_stop_only_once_a_new_front_starts_or_the_gate_stops(tmp_path):
+    # The controller's ruling at Task 44e's review (I1): a drop is held as the front's stop until its next snapshot
+    # says which it was. The same front_started_at: its connection only dropped, and nothing is written. A new one: the
+    # stop, at the drop, then the new start. One still held at the gate's own stop goes in then; a call the gate's stop
+    # ends is no stop of the front's.
     gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    rows = LedgerRows()
+
+    def stop(at: float) -> dict:
+        return {"v": 1, "t": at, "kind": "stop", "who": "front"}
+
+    def start(at: float) -> dict:
+        return {"v": 1, "t": at, "kind": "start", "who": "front"}
+
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
+        status, _ = apps(core)
+        seq = iter(range(1, 100))
+
+        async def report(started: float) -> None:
+            body = {"seq": next(seq), "front_started_at": started, "models": {}, "draining": []}
+            assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=body)).status == 200
+
+        async def dropped() -> None:
+            await call(status, "GET", "/v1/front/events", uid=FRONT_UID, leave_after_head=True)
+
+        first = gate.clock.now - 600
+        await report(first)
+        assert rows.rows == [start(first)]
+        # The connection drops and the same front calls again: nothing.
+        gate.clock.now += 5
+        await dropped()
+        assert rows.rows == [start(first)]  # held
+        await report(first)
+        assert rows.rows == [start(first)]
+        # The front restarts: the stop at its drop, then the new front's start.
+        gate.clock.now += 5
+        restarted_at = gate.clock.now
+        await dropped()
+        gate.clock.now += 3
+        second = gate.clock.now - 1
+        await report(second)
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+        # A newer call replacing one still open is a drop too, settled the same way: the same front, nothing.
+        gate.clock.now += 5
+        older = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
+        while not core.front.connected:
+            await asyncio.sleep(0.01)
+        await dropped()
+        await older
+        await report(second)
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+        # The gate stops: the call its stop ends is no stop of the front's.
+        gate.clock.now += 5
+        last = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
+        while not core.front.connected:
+            await asyncio.sleep(0.01)
+        status.state.stopping.set()
+        await last
+        await core.stop()
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+
+    # The front goes for good: the gate's own stop writes the stop still held, at the drop.
+    (tmp_path / "gone").mkdir()
+    gate = Gate(tmp_path / "gone", state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
     rows = LedgerRows()
     with anyio.fail_after(BOUND_S):
         core = await gate.started(ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
         status, _ = apps(core)
-        # The front goes: its call drops, and that is its stop.
-        await call(status, "GET", "/v1/front/events", uid=FRONT_UID, leave_after_head=True)
-        assert rows.rows == [{"v": 1, "t": gate.clock.now, "kind": "stop", "who": "front"}]
-        # A newer call replaces one still open, and the gate's own stop ends the newer: neither is the front's stop.
-        first = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
-        while not core.front.connected:
-            await asyncio.sleep(0.01)
-        second = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
-        await first
-        status.state.stopping.set()
-        await second
-        assert len(rows.rows) == 1
+        await report(first)
+        gate.clock.now += 5
+        gone_at = gate.clock.now
+        await dropped()
+        gate.clock.now += 60
         await core.stop()
+        assert rows.rows == [start(first), stop(gone_at)]
 
 
 @pytest.mark.anyio
