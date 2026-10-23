@@ -37,12 +37,13 @@ RestartSec=2
 # (gate.main.LEDGER_DRAIN_S, 2 s): about 29 s.
 TimeoutStopSec=45
 OOMScoreAdjust=-900
-# Writable: its own state, launch's tickets, and the brake's hold, which it lifts (rule 5). No PrivateDevices=,
+# Writable: its own state, launch's tickets, the brake's hold, which it lifts (rule 5), and its ledger, Dan's to read
+# (the - lets a missing folder pass). No PrivateDevices=,
 # ProtectProc= or ProcSubset=: nvidia-smi needs the GPU's device nodes, and the gate reads the engines' and Dan's
 # processes in /proc.
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/brake
+ReadWritePaths=/var/lib/local-ai/gate /var/lib/local-ai/launch /var/lib/local-ai/brake -/var/lib/local-ai/gate-ledger
 ProtectHome=yes
 PrivateTmp=yes
 
