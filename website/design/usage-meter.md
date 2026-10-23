@@ -196,7 +196,7 @@ of values or a short `[A-Za-z0-9._:-]` pattern with a length limit:
 
 | Group | Fields |
 |---|---|
-| Who and what | schema version; request id, minted once per request and kept through the front's own resends; key name; route; the registry's model it resolved to, and the role if the client asked by role (an unresolved name is recorded as empty, with its length at most); the engine and its version, from the gate's model list, which gains the engine |
+| Who and what | schema version; request id, minted once per request and kept through the front's own resends; key name; route; the registry's model it resolved to, and the role if the client asked by role (an unresolved name is recorded as empty, with its length at most); the engine's name, from the gate's model list, which gains it (its version is in the changelog's dated deploys) |
 | When | start and end, as UTC epoch seconds; durations from a monotonic clock |
 | How it ended | done, cut, gone, error or refused; status; the refusal's code |
 | Tokens | *P*; *C* (empty when not reported); *O*; where they came from: `usage`, `timings` or none; events counted by kind |
