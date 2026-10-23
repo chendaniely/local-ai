@@ -184,8 +184,9 @@ class FakeProbe:
                      "/v1/make-room/plan": {"plan_id": "p1", "plan": {"candidates": [], "unload": [],
                                                                       "free_after_gib": 9, "enough": True,
                                                                       "most_gib": 82}},
-                     "/v1/canary": {"found": []}}
+                     "/v1/canary": gate_canary}
         self.posted = []  # (route, body) for each POST to the gate
+        self.refused = []  # the gate's refusal history: the model names the front refused as unknown and told it of
         self.journal = ""  # what journalctl prints, or a function of this probe that gives it
         self.groups_in = {"chendaniely", "adm", "spark-admin", "spark-users"}
         self.paused = []
@@ -279,7 +280,8 @@ class FakeProbe:
 
     def gate_post(self, route, body):
         self.posted.append((route, body))
-        return self.gate_get(route)
+        answer = self.gate[route]
+        return answer(self, body) if callable(answer) else self.gate_get(route)
 
     def http(self, url, *, key=None, body=None, timeout=10.0, limit=doctor.ANSWER_MAX):
         self.keys_sent.append(key)
@@ -304,6 +306,7 @@ class FakeProbe:
                 return 200, json.dumps({"data": [{"embedding": [0.25, 0.5]}]})
             if path == "/v1/chat/completions":
                 if body["model"] not in REG.models:  # the made-up model, and the canary sent as one
+                    self.refused.append(body["model"])  # the front tells the gate every model_not_found (_refuse)
                     return 404, NOT_FOUND
                 return 200, json.dumps({"choices": [{"message": {"content": "OK"}}]})
         return self.pages.get(url, 0), ""
@@ -314,6 +317,14 @@ class FakeProbe:
         if key != KEY:
             return 401, refusal("invalid_api_key")
         return self.upload_answer
+
+
+def gate_canary(probe, body):
+    """POST /v1/canary as the real gate answers it (gate/app.py `canary`): its refusal history keeps each refusal the
+    front told it of in the front's words, and model_not_found's name the model as the client asked for it (`refused`),
+    so a needle sent as a model name is always found there, by design (the final review's C1)."""
+    history = [f"There's no model called {name} here." for name in probe.refused]
+    return {"found": ["refusals"] if any(body["needle"] in message for message in history) else []}
 
 
 NO_KEY_REMEDY = " — set it as website/how-to/deploy.md's *Before the first deploy* says, then log in afresh"
@@ -514,8 +525,11 @@ def test_the_canary_sends_its_needle_as_a_model_and_an_effort():
     uploads = probe.uploads
     needle = uploads[-1][1]["prompt"]
     sent = [body for url, body in probe.asked if url == f"{FRONT}/v1/chat/completions"]
-    assert any(body["model"] == needle for body in sent)  # as a model: the fake answers 404 for it
-    assert any(body.get("reasoning_effort") == needle and body["model"] == "vision-chat" for body in sent)
+    # The second needle, the model name's (the final review's C1): as a model, which the fake answers 404 for, and as
+    # a reasoning effort.
+    [model] = [body["model"] for body in sent if body["model"].startswith("doctor-canary-model-")]
+    assert model != needle
+    assert any(body.get("reasoning_effort") == model and body["model"] == "vision-chat" for body in sent)
     # The model name the front doesn't refuse is a failure to say so.
     probe = FakeProbe()
     probe.answers[f"{FRONT}/v1/chat/completions"] = (
@@ -526,8 +540,8 @@ def test_the_canary_sends_its_needle_as_a_model_and_an_effort():
     probe = FakeProbe()
     probe.holders = {doctor.paths.USAGE_DIR}
     found = failures(probe, full=True)["privacy canary"]
-    assert found.startswith("the string sent through chat and speech-to-text turned up in the usage records: find "
-                            "what wrote it there before sending anything private — `grep -l doctor-canary-")
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the usage records: "
+                            "find what wrote it there before sending anything private — `grep -l -e doctor-canary-")
     probe = FakeProbe()
     probe.holders = {doctor.paths.USAGE_DIR, doctor.paths.GATE_LEDGER_DIR}
     assert "the usage records and the gate's ledger:" in failures(probe, full=True)["privacy canary"]
@@ -536,6 +550,40 @@ def test_the_canary_sends_its_needle_as_a_model_and_an_effort():
     probe.newest = PermissionError(13, "denied")
     probe.holds = lambda path, needle: (_ for _ in ()).throw(PermissionError(13, "denied"))
     assert failures(probe, full=True)["privacy canary"].endswith("log in again, so spark-admin's group applies")
+
+
+def test_the_canary_looks_for_its_model_name_only_in_the_meter_folders():
+    # The final review's C1: the gate's refusal history keeps the name a client asked for, in the front's words, so a
+    # needle sent as a model name is always found there. The model name and the reasoning effort carry a second needle of
+    # their own, looked for only in this month's usage and ledger files, which keep registry names alone.
+    probe = FakeProbe()  # its gate answers POST /v1/canary from the refusals it was told of, as the real one does
+    held = []
+    probe.holds = lambda path, needle: held.append((Path(path).parent, needle)) or False
+    assert failures(probe, full=True) == {}
+    needle = probe.uploads[-1][1]["prompt"]
+    sent = [body for url, body in probe.asked if url == f"{FRONT}/v1/chat/completions"]
+    [model] = [body["model"] for body in sent if body["model"].startswith("doctor-canary")]  # not S03's made-up one
+    assert model.startswith("doctor-canary-model-") and model != needle and needle not in model and model not in needle
+    assert any(body.get("reasoning_effort") == model for body in sent)  # the effort carries the second needle too
+    assert not any(needle in json.dumps(body) for body in sent if body["model"] not in REG.models)
+    assert not any(body.get("reasoning_effort") == needle for body in sent)
+    # The first needle goes to the gate's search; the second never does, and both go to the meter's two folders.
+    assert [body for route, body in probe.posted if route == "/v1/canary"] == [{"needle": needle}]
+    assert sorted(held) == sorted((folder, each) for folder in (doctor.paths.USAGE_DIR, doctor.paths.GATE_LEDGER_DIR)
+                                  for each in (needle, model))
+    # The gate still finds the first needle when it holds it: a refusal history holding it fails.
+    probe = FakeProbe()
+    probe.gate["/v1/canary"] = {"found": ["refusals"]}
+    assert failures(probe, full=True)["privacy canary"].startswith(
+        "a string doctor sent through chat and speech-to-text turned up in the gate's refusal history: ")
+    # A usage row that kept the model name as the client sent it fails, naming the usage records and both needles.
+    probe = FakeProbe()
+    probe.holds = lambda path, needle: Path(path).parent == doctor.paths.USAGE_DIR and needle in probe.refused
+    found = failures(probe, full=True)["privacy canary"]
+    model = next(name for name in probe.refused if name.startswith("doctor-canary-model-"))
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the usage records: find "
+                            f"what wrote it there before sending anything private — `grep -l -e doctor-canary-")
+    assert f"-e {model} {doctor.paths.USAGE_DIR}/* {doctor.paths.GATE_LEDGER_DIR}/*` shows which month's file" in found
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -1418,10 +1466,10 @@ def test_full_runs_the_upload_and_the_canary():
     results = {c.name: (c.ok, c.detail) for c in checks(probe, KEY, REG, full=True)}
     assert results["a 170 MB upload"] == (True, "whisper took a 170 MB upload through the front, which sends a form "
                                                 "on chunked, and answered")
-    assert results["privacy canary"] == (True, "a string sent through chat (as a message, a model name and a reasoning "
-                                               "effort) and speech-to-text is in none of the journal, the gate's "
-                                               "state, its refusal history, launch's records, the usage records or the "
-                                               "gate's ledger")
+    assert results["privacy canary"] == (True, "a string sent through chat as a message and through speech-to-text "
+                                               "is in none of the journal, the gate's state, its refusal history, "
+                                               "launch's records, the usage records or the gate's ledger, and one sent "
+                                               "as a model name and a reasoning effort is in neither of the last two")
     [big, small] = probe.uploads
     assert big[0] == small[0] == f"{FRONT}/v1/audio/transcriptions" and big[3] == 170_000_000
     assert big[1] == {"model": "stt", "response_format": "json"}
@@ -1443,16 +1491,16 @@ def test_full_runs_the_upload_and_the_canary():
     needle = next(body for url, body in probe.asked if url.endswith("/chat/completions")
                   and body["model"] == "vision-chat")["messages"][0]["content"].split()[-1]
     assert found == {"privacy canary": (
-        "the string sent through chat and speech-to-text turned up in the journal: find what wrote it there before "
-        "sending anything private — `journalctl --no-pager --quiet --all --output=verbose "
+        "a string doctor sent through chat and speech-to-text turned up in the journal: find what wrote it there "
+        "before sending anything private — `journalctl --no-pager --quiet --all --output=verbose "
         f"--since=@{int(NOW) - 1} | grep -n {needle}` shows where in the journal")}
     # Found by the gate, in its refusal history: named, with where to look.
     probe = FakeProbe()
     probe.gate["/v1/canary"] = {"found": ["refusals", "launch"]}
     found = failures(probe, full=True)["privacy canary"]
-    assert found.startswith("the string sent through chat and speech-to-text turned up in the gate's refusal history "
-                            "and launch's records: find what wrote it there before sending anything private — `sudo -u "
-                            "spark grep -rl doctor-canary-")
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the gate's refusal "
+                            "history and launch's records: find what wrote it there before sending anything private — "
+                            "`sudo -u spark grep -rl doctor-canary-")
     assert found.endswith(" /var/lib/local-ai/gate /var/lib/local-ai/launch` shows which of the gate's and launch's "
                           "files")
     # The gate not answering the canary route: the real step, never `make doctor`.

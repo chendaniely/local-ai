@@ -1644,12 +1644,14 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
 def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
            key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
     """The privacy canary: a unique string, sent through chat and speech-to-text with your key, each to a model the
-    gate shows loaded (as a message, a model name the front must refuse with 404, and a reasoning effort), then looked
-    for in the journal, which your account reads in group adm, through the gate's POST /v1/canary, in its state, its
-    refusal history and launch's records, which only spark reads, and in this month's usage and ledger files, which
-    spark-admin reads. Found in none, it passes. The front's spool isn't searched: no account but the front sees its private /tmp, and Task 20's tests pin
-    that each upload's file goes when its request ends. Sent only once 9100 has answered as the front (`not_front`
-    None, front_identity)."""
+    gate shows loaded (as a message, a prompt and a file name), then looked for in the journal, which your account
+    reads in group adm, through the gate's POST /v1/canary, in its state, its refusal history and launch's records,
+    which only spark reads, and in this month's usage and ledger files, which spark-admin reads. A second one goes where
+    a client chooses a string a meter row could keep: as a model name the front must refuse with 404, and as a reasoning
+    effort. It is looked for only in those two month files, since the gate's refusal history keeps the name a client
+    asked for in the front's words, by design (the final review's C1). Found in none, it passes. The front's spool isn't
+    searched: no account but the front sees its private /tmp, and Task 20's tests pin that each upload's file goes when
+    its request ends. Sent only once 9100 has answered as the front (`not_front` None, front_identity)."""
     name = "privacy canary"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
@@ -1675,6 +1677,7 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if not probe.groups() & JOURNAL_GROUPS:
         return Check(name, False, "your account isn't in group adm, so it can't read the system journal: log in again")
     needle = f"doctor-canary-{secrets.token_hex(8)}"
+    model_needle = f"doctor-canary-model-{secrets.token_hex(8)}"  # neither holds the other
     since = int(probe.now()) - 1
     code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key, timeout=120,
                             body={"model": chat.name, "max_tokens": 1,
@@ -1682,16 +1685,18 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if code != 200:
         return Check(name, False, f"the canary couldn't be sent through chat: {chat.label} answered "
                                   f"{_answered(code, body)} — `make logs s=front`, and `make status` for the model")
-    # The meter's rows hold numbers and the registry's own model name, so the needle goes where a client chooses a
-    # string a row could keep: as the model, which the front refuses as unknown (404), and as a reasoning effort.
+    # The meter's rows hold numbers and the registry's own model name, so a second needle goes where a client chooses
+    # a string a row could keep: as the model, which the front refuses as unknown (404), and as a reasoning effort. Not
+    # the first: the gate's refusal history keeps the name a refused client asked for, in the front's words, and the
+    # gate's search would find it there on every run.
     code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key, timeout=120,
-                            body={"model": needle, "max_tokens": 1,
+                            body={"model": model_needle, "max_tokens": 1,
                                   "messages": [{"role": "user", "content": "Reply with one word."}]})
     if code != 404:
         return Check(name, False, f"the canary sent as a model name should be refused as unknown (404), and the front "
                                   f"answered {_answered(code, body)} — `make logs s=front`")
     code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key, timeout=120,
-                            body={"model": chat.name, "max_tokens": 1, "reasoning_effort": needle,
+                            body={"model": chat.name, "max_tokens": 1, "reasoning_effort": model_needle,
                                   "messages": [{"role": "user", "content": "Reply with one word."}]})
     if code == 0 or code == 401:
         return Check(name, False, f"the canary couldn't be sent as a reasoning effort: the front answered "
@@ -1722,24 +1727,26 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     try:
         for place, folder, prefix in (("the usage records", paths.USAGE_DIR, USAGE_PREFIX),
                                       ("the gate's ledger", paths.GATE_LEDGER_DIR, LEDGER_PREFIX)):
-            if probe.holds(_month_file(folder, prefix, probe.now()), needle):
+            month = _month_file(folder, prefix, probe.now())
+            if any(probe.holds(month, each) for each in (needle, model_needle)):
                 meter.append(place)
     except PermissionError:
         return Check(name, False, "your account can't read the usage records or the gate's ledger, so it can't show the "
-                                  "string isn't in them: log in again, so spark-admin's group applies")
+                                  "strings aren't in them: log in again, so spark-admin's group applies")
     found += meter
     if found:
         steps = [f"`{' '.join(JOURNAL_ARGS)} --since=@{since} | grep -n {needle}` shows where in the journal"
                  ] if "the journal" in found else []
         steps += [f"`sudo -u spark grep -rl {needle} {paths.GATE_STATE} {paths.LAUNCH}` shows which of the gate's and "
                   "launch's files"] if places else []
-        steps += [f"`grep -l {needle} {paths.USAGE_DIR}/* {paths.GATE_LEDGER_DIR}/*` shows which month's file"
-                  ] if meter else []
-        return Check(name, False, f"the string sent through chat and speech-to-text turned up in {_and(found)}: find "
-                                  f"what wrote it there before sending anything private — {'; '.join(steps)}")
-    return Check(name, True, "a string sent through chat (as a message, a model name and a reasoning effort) and "
-                             "speech-to-text is in none of the journal, the gate's state, its refusal history, "
-                             "launch's records, the usage records or the gate's ledger")
+        steps += [f"`grep -l -e {needle} -e {model_needle} {paths.USAGE_DIR}/* {paths.GATE_LEDGER_DIR}/*` shows which "
+                  "month's file"] if meter else []
+        return Check(name, False, f"a string doctor sent through chat and speech-to-text turned up in {_and(found)}: "
+                                  f"find what wrote it there before sending anything private — {'; '.join(steps)}")
+    return Check(name, True, "a string sent through chat as a message and through speech-to-text is in none of the "
+                             "journal, the gate's state, its refusal history, launch's records, the usage records or "
+                             "the gate's ledger, and one sent as a model name and a reasoning effort is in neither of "
+                             "the last two")
 
 
 def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,

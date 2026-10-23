@@ -412,8 +412,11 @@ others, no link inside; they fail naming `make bootstrap` for a missing folder a
 `counting` runs after doctor's end-to-end chat and passes when this month's usage file holds a row with `t0` after the
 check began (counted, nothing printed), the ledger's file exists, and health's `counting` shows neither off; an old
 gate's health without `counting` reads "unknown". The canary also sends its needle as a model (expect 404) and as a
-`reasoning_effort`, and fails if either folder's month files hold it. `spark status` prints `counting off since <time>`
-for the front or the ledger.
+`reasoning_effort`, and fails if either folder's month files hold it. *(Corrected 2026-10-23, the final review's C1: a
+second needle, `doctor-canary-model-…`, is the one sent as the model and the effort, and it is looked for only in those
+month files. The first, sent as a model, was found in the gate's refusal history on every run, since that history
+keeps the name a client asked for in the front's words.)* `spark status` prints `counting off since <time>` for the
+front or the ledger.
 - [ ] **Step 1: Write the failing tests:** one passing case on real tmp folders with real `chmod` (the owners
   monkeypatched to the running user); failing cases for a file readable by others, `0o750` (setgid lost), `0o2755`, a
   missing folder, a refused listing and a link; `test_counting_needs_a_fresh_row`; `test_the_canary_sends_its_needle_as_a_model_and_an_effort`;

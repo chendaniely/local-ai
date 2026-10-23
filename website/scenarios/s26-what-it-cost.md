@@ -39,17 +39,20 @@ On the Spark, `make status` adds a line under *health* for each side that has st
 since 08:52 (the front's usage rows)*, or *(the gate's ledger)*, on the control socket's view only.
 It says nothing while both are on.
 
-With `--full`, the privacy canary also sends its string where a client chooses one that a row could
-keep: as a message, a file name, a model name (the front answers 404, and the name must not reach a
-row) and a reasoning effort. It then looks for the string in the journal, the gate's state, its
-refusal history, launch's records, and this month's usage and ledger files. It reports only where it
-was found or that it was not, never what the row holds.
+With `--full`, the privacy canary sends its string as a message, a speech-to-text prompt and a file
+name, then looks for it in the journal, the gate's state, its refusal history, launch's records, and
+this month's usage and ledger files. A second string goes where a client chooses one that a row
+could keep: as a model name (the front answers 404, and the name must not reach a row) and as a
+reasoning effort. Doctor looks for that one only in this month's usage and ledger files: the gate's
+refusal history keeps the name a client asked for, in the front's words, so it would always be found
+there. The canary reports only where a string was found or that neither was, never what the row
+holds.
 
 **How to override.** Nothing to override: counting has no switch, and a failure to count is shown,
 never fixed by dropping the request. If a folder fails, **On the Spark:** run `make bootstrap`, which
 makes both with their owners, groups and modes. If a listing is refused, log in again, so the
 `spark-admin` group applies. If `counting` says the front's rows stopped, **On the Spark:** run
 `make status` for since when, and `make logs s=front` for why (below 20 GiB free on the disk,
-counting turns itself off rather than take the room the weights need). If the canary finds its
+counting turns itself off rather than take the room the weights need). If the canary finds either
 string in either folder, stop: something is writing what a client sent, and nothing private goes
 through the Spark until it is found.
