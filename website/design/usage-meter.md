@@ -380,7 +380,11 @@ are the spend. A harness whose sync falls behind shows in the summary's coverage
 brightroar session is from 2026-10-09, so the first would go about 2027-01-07; derived, not
 checked). So read-only copies of every source are taken before anything else, into a private
 `0700` folder outside the worktree, never synced to iCloud or the vault; the readers read the
-copies. The Spark's sources are copied in the Phase 2a task that starts the counter.
+copies. **The Mac's were taken on 2026-10-23** (Dan's decision), in
+`~/.local/state/local-ai/usage-snapshots/2026-10-23/`: Hermes's and OpenCode's databases and pi's
+and Posit Assistant's session folders, without Hermes's request dumps (they hold an Authorization
+header) or Posit Assistant's developer logs. The Spark's sources are copied in the Phase 2a task
+that starts the counter.
 
 **The rows.** One per past message, in the row's schema with its source (harness), the format read,
 and an id from the message itself (source, message id, its time, and the engine's response id where
@@ -464,9 +468,9 @@ first part; spark-menu moves here once its build is done.
 **Phase 2a** *(numbering and placement my call)*: new tasks numbered 44a onward, run after Task 44
 and before Task 45, so no existing task is renumbered (they are cited across the repo).
 
-1. **[Mac] [Dan]** The snapshots of the Mac's sources (they can be taken today).
-2. **[Dan] [Mac] [Spark]** OpenCode's and Hermes's keys, the caps lowered.
-3. **[Spark]** The counter: the front's rows and scanner, the gate's ledger, bootstrap's folders, the
+1. **[Dan] [Mac] [Spark]** OpenCode's and Hermes's keys, the caps lowered. (The Mac's snapshots
+   were taken on 2026-10-23.)
+2. **[Spark]** The counter: the front's rows and scanner, the gate's ledger, bootstrap's folders, the
    units' paths, `--enable-cache-report` on the by-hand SGLang, doctor's checks, the scenario page,
    and the Spark's snapshots. Counting starts.
 

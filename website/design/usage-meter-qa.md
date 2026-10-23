@@ -313,3 +313,16 @@ detail reach the Spark, and what does pi's footer show meanwhile?**
 
 **Dan: A**, the recommendation, for the reason it gave: one place computes every number, and a
 footer a minute or two behind is fine.
+
+**Q: It's January, and Hermes has quietly pruned its October sessions before the sync's first run.
+How does the baseline still have them?** Hermes deletes ended sessions after 90 days; its oldest
+brightroar session is from 2026-10-09 (derived, not checked in Hermes).
+
+- A: snapshot the Mac's sources now: read-only copies of Hermes's and OpenCode's databases and pi's
+  and Posit Assistant's session folders, in a private folder outside the worktree; no ticket needed.
+- B: a YouTrack ticket in DAN, due 2026-12-20.
+- C: leave it to the Phase 2a task that starts the counter.
+
+**Dan: A.** Taken on 2026-10-23, in `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the Mac,
+`0700`, its files Dan's alone; both databases pass SQLite's integrity check. Hermes's request dumps,
+which hold an Authorization header, and Posit Assistant's developer request logs were left out.
