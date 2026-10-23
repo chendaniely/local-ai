@@ -7,6 +7,11 @@ name, `front` (sockets.listen_fds).
   private key list, and `client-keys`, the client keys' digests, each read whole and checked against the other
   (app.read_keys), and `llamaswap-key`, the front's own key for llama-swap. llama-swap's address is
   paths.LLAMASWAP_URL.
+- **What it writes**: a row of numbers for each request (front/rows.py) into the month's file in paths.USAGE_DIR,
+  from a thread of its own (rowfile.RowFile), never in a request's way. The folder is opened there, after the front
+  starts, so no state of it keeps the front from starting or serving: a folder it can't write turns counting off, one
+  journal line each time (and on again once it can), and the requests go on as ever. A key's refused rows past
+  rowfile.RefusedLimit's rate are folded into its next row.
 - **Its modules** are spark.front.FRONT_MODULES, every one imported before it serves, so the code it runs is the code
   it started with, and `spark apply` knows which changes restart it (Task 31): spark.cli, which `spark front` starts it
   from, with spark.gateclient, which spark.cli imports (Task 31's review), and the rest imported here.
@@ -24,8 +29,9 @@ name, `front` (sockets.listen_fds).
   *… without starting response.*, which is one here too.
 - **Its stop**: SIGTERM or SIGINT; uvicorn's graceful shutdown, within gateproto.GRACEFUL_S, below the unit's
   TimeoutStopSec=, lets the answers in flight finish and cuts those that outlast it, the requests it holds waiting
-  among them; then the cuts' journal lines still waiting for why written without it, the gate link closed, and each
-  upstream client closed.
+  among them; then those still ending waited for (app.ENDING_S), each putting its row; the cuts' journal lines still
+  waiting for why written without it; the rows queued written, within ROWS_DRAIN_S, from a thread, never blocking the
+  loop; the gate link closed, and each upstream client closed.
 
 A startup refusal is one line on stderr, exit 1: a socket missing or one too many, a credential missing or malformed
 (named, never quoted), a registry or a key list that won't load, digests and a key list that disagree (a key's name,
@@ -33,6 +39,7 @@ never a key or a digest), or an address or a key for llama-swap the front can't 
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -50,6 +57,7 @@ from spark.front.upstream import InFlight, Upstream
 from spark.gateproto import GRACEFUL_S
 from spark.protocols import make_protocol
 from spark.registry import load_registry
+from spark.rowfile import RefusedLimit, RowFile
 from spark.serve import run_servers
 from spark.sockets import FRONT, SocketsError, listen_fds
 
@@ -59,11 +67,16 @@ TESTED_AGAINST = {"llama-swap": "v257"}
 HEADER_TIMEOUT_S = 10  # a request's head, and a body nobody will read, past which a connection closes (Task 9)
 JOURNAL = "spark.front"  # the logger of the front's journal lines
 LLAMASWAP_KEY_CREDENTIAL = "llamaswap-key"
+USAGE_PREFIX = "usage"  # the row file's name: usage-YYYY-MM.jsonl
+# The rows still queued at the stop are written within this, after uvicorn's graceful shutdown (gateproto.GRACEFUL_S),
+# both inside the unit's TimeoutStopSec=.
+ROWS_DRAIN_S = 5
 # uvicorn 0.54.0 logs this at ERROR when an app returns with its response begun and unfinished (h11_impl.py:430-433),
 # which is how the front passes a cut on.
 INCOMPLETE_RESPONSE = "ASGI callable returned without completing response."
 __all__ = ["configure_logging", "run"]
 _journal = logging.getLogger(JOURNAL)
+_log = logging.getLogger(__name__)
 _REFUSALS = (SocketsError, CredentialError, ValueError, OSError, yaml.YAMLError)  # KeyListError is a ValueError
 
 
@@ -71,6 +84,17 @@ def configure_logging() -> None:
     """The front's logging, before it serves: serve.configure_logging's, with uvicorn's INCOMPLETE_RESPONSE line
     dropped too (the controller's ruling, at Task 21's review). Called again, it adds nothing."""
     serve.configure_logging(also_dropped=(INCOMPLETE_RESPONSE,))
+
+
+def _counting_off(since: float, why: str) -> None:
+    """The row file's on_off, from its thread: one line each time counting turns off; `why` is an error's class, or
+    `disk`, never its text."""
+    _log.error("counting off: the front can't write its usage rows to %s (%s); every request is served as ever",
+               paths.USAGE_DIR, why)
+
+
+def _counting_on() -> None:
+    _log.warning("counting on again: the front writes its usage rows to %s", paths.USAGE_DIR)
 
 
 def run(env: MutableMapping[str, str] = os.environ) -> int:
@@ -85,17 +109,22 @@ def run(env: MutableMapping[str, str] = os.environ) -> int:
         keys, digests = read_keys(registry.key_groups, env)
         upstream = Upstream(paths.LLAMASWAP_URL, read_credential(LLAMASWAP_KEY_CREDENTIAL, env))
         models, inflight = parse.ModelList.from_registry(registry), InFlight()
+        # Built before the gate link, which Task 44e gives its off_since (counting_off=), so the gate hears when the
+        # front isn't counting. It opens its folder in its own thread, so no state of the folder is a refusal here.
+        rows = RowFile(paths.USAGE_DIR, USAGE_PREFIX, on_off=_counting_off, on_on=_counting_on)
         gate = GateLink(paths.GATE_STATUS_SOCKET, time.time, inflight=inflight, models=models,
                         running=upstream.ready_models)
         app = FrontApp(models, keys, registry.key_groups, digests, upstream=upstream, gate=gate,
-                       caps=parse.KeyCaps(keys, registry.key_groups), log=_journal.info, inflight=inflight)
+                       caps=parse.KeyCaps(keys, registry.key_groups), log=_journal.info, inflight=inflight,
+                       rows=rows, refused_limit=RefusedLimit())
     except _REFUSALS as err:
         print(f"spark front: {err}", file=sys.stderr)
         return 1
 
     async def shutdown() -> None:
         try:
-            await app.aclose()
+            await app.aclose()  # every request has ended by now, its row put
+            await asyncio.to_thread(rows.close, ROWS_DRAIN_S)  # its join in a thread, never blocking the loop
             await gate.aclose()
         finally:
             await upstream.aclose()

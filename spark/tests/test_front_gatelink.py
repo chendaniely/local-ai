@@ -27,7 +27,7 @@ from spark.front import app as front_app
 from spark.front import gatelink, parse, upstream
 from spark.gate import app as gate_app
 from spark.gateproto import GATE_DOWN_AFTER_S, LOAD_CALL_TIMEOUT_S, REQUEST_TIMEOUT_S
-from test_front_forward import DELTA, DONE, INTERNAL, auth, chat, nothing_listening, serve_app, until
+from test_front_forward import DELTA, DONE, INTERNAL, Rows, auth, chat, nothing_listening, serve_app, until
 
 BOUND_S = 20
 T = 1000.0
@@ -527,6 +527,29 @@ async def test_exited_prematurely_is_asked_again_and_forwarded_from_the_held_bod
         (_, first), (_, again) = r.swap.seen[4:]
         assert audio in first and audio in again and b'name="model"\r\n\r\nstt\r\n' in again
         assert first.split(b"\r\n", 1)[0] != again.split(b"\r\n", 1)[0]  # a boundary of its own: encoded again
+
+
+@pytest.mark.anyio
+async def test_one_request_id_across_a_resend():
+    # The coder not loaded: admitted, its load taking 41.5 s, then sent; llama-swap's start exited, so admitted again,
+    # with no load of its own this time, and sent again. One request, one id, the load's seconds kept (Task 44d).
+    rows = Rows()
+    async with rig(ready=[GEMMA], rows=rows) as r:
+        r.gate.answer = lambda body: {"ok": True, "model": body["model"],
+                                      "load_s": 41.5 if len(r.gate.admits) == 1 else None}
+        r.swap.exited = 1
+        with anyio.fail_after(BOUND_S):
+            answer = await r.post()
+            assert (answer.status_code, answer.content) == (200, DELTA + DONE)
+            await until(lambda: len(rows.rows) == 1)
+            assert (await r.post()).status_code == 200
+            await until(lambda: len(rows.rows) == 2)
+    first_admit, again, second_admit = r.gate.admits
+    assert first_admit["request_id"] == again["request_id"] != second_admit["request_id"]
+    first, second = rows.rows
+    assert (first["id"], first["attempts"], first["load_s"], first["end"]) == (first_admit["request_id"], 2, 41.5,
+                                                                                "done")
+    assert (second["id"], second["attempts"], "load_s" in second) == (second_admit["request_id"], 1, False)
 
 
 # Draining.

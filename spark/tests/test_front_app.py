@@ -106,7 +106,8 @@ class Gate:
         self.answer: dict = {"ok": True}
         self.refusals: list[tuple[str, str | None, str, str]] = []
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not admit and model in self.ready:
             return enter()
         if not waits():
@@ -710,7 +711,8 @@ class ClearsOnCue(Gate):
         self.cue = asyncio.Event()
         self.stubborn = stubborn
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not waits():
             return gatelink.Refused("too_many_requests")
         try:
