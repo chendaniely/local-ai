@@ -84,7 +84,10 @@ Spark, the denylist the leak-check hooks read (one on each machine), and the Tai
 A private values file holding the NAS and LAN addresses the configs need is still to come. The
 vault's entry note records each one when it is created. Phase 2a adds the private key list,
 `/etc/local-ai/keys.yaml` on the Spark (2026-10-15): the client keys' names, groups and labels,
-private but not secret, and never in this repo.
+private but not secret, and never in this repo. The usage meter adds a snapshot of the Mac's
+harness session stores (2026-10-23), `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the
+Mac, `0700`: where the meter's lifetime baseline reads everything from before its counter started
+(the design's §7). It holds full chat text, so nothing from it enters this repo but numbers.
 
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value
