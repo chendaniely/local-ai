@@ -284,3 +284,16 @@ build and we can move it over here and just consolidate it all into this repo no
 So spark-menu finishes its build in dotfiles, then moves into this repo, and this repo holds all of
 it: the counting, the arithmetic, the menu bar and its tunnel. The meter builds no menu bar or
 poller of its own; it gives spark-menu the numbers to show.
+
+**Q: Mid-session in pi, Dan glances at its footer. Where should that session's dollar figure come
+from?**
+
+- A: the harnesses' own cost display, with rates `make clients` writes from the one price file; a
+  thin adapter adds the month.
+- B: each harness's adapter hands its usage to `spark usage` and shows what comes back.
+- C: the built-ins now, ours later where they fall short.
+
+**Dan: think long term.** In his words: "let's think long term: eventually i'd want a cost/usage
+breakdown dashboard to view data on the spark, so we need a way to keep the spark data up to date
+(even if it's not in real time)". So the Spark has to hold everything a breakdown would use, a
+session's identity included, which only the harness knows, and keep it current, if not live.
