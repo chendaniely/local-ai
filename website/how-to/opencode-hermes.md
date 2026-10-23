@@ -157,7 +157,8 @@ that one line in your editor. The file holds your other keys, so don't print it.
 ## Rolling back to Phase 1
 
 Phase 1's llama-swap doesn't know the new keys. After [the rollback](deploy.md), **on the Mac**,
-put both clients back on `SPARK_API_KEY`:
+put both clients back on `SPARK_API_KEY`. These are also the commands to run before Task 44l's deploy, while the box
+knows only that one key:
 
 ```bash
 uv run --frozen --project spark spark clients opencode --write --key-env SPARK_API_KEY
