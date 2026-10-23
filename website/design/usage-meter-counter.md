@@ -1,6 +1,6 @@
 ---
 title: "The usage meter's counter — implementation plan"
-description: "Phase 2a's part of the usage meter: the front writes a row per request, the gate a ledger of its events, in folders only Dan reads; keys for OpenCode and Hermes; doctor's checks, the units, bootstrap, the docs. Tasks 44a onward, run after Task 44 and before Task 45."
+description: "Phase 2a's part of the usage meter: the front writes a row per request, the gate a ledger of its events, in folders only Dan reads; keys for OpenCode and Hermes; doctor's checks, the units, bootstrap, the docs. Tasks 44a onward, run after Task 44 and before Task 45. Revised after its council."
 date: 2026-10-23
 ---
 
@@ -10,44 +10,59 @@ date: 2026-10-23
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** from Phase 2a's soak on, every request through the front leaves one row of numbers in a folder only Dan
-reads, and the gate leaves a row for each load, unload, refusal and brake event, so nothing the meter will price is
-lost before the rest of it (Phase 2b) is built.
+reads, and the gate leaves a row for each load, unload, refusal, brake event and start or stop, so nothing the meter
+will price is lost before the rest of it (Phase 2b) is built.
 
 **Architecture:** a bounded scanner in the front reads each response's counts from a fixed head and tail
 (`front/usage.py`); a shared writer appends JSONL rows from a thread of its own (`rowfile.py`); the front builds one row
-per request when it ends; the gate's admission answer carries a load's seconds, and a gate ledger writes its events;
-systemd units, bootstrap and doctor give the two folders their owners, modes and checks.
+per request when it ends (`front/rows.py`); the gate's admission answer carries a load's seconds, and a gate ledger
+(`gate/ledger.py`) writes its events; systemd units, bootstrap and doctor give the two folders their owners, modes and
+checks.
 
 **Tech Stack:** Python (the `spark` uv project), pytest with anyio, raw ASGI on uvicorn, systemd units rendered from
 `stack/templates/`, bash for bootstrap.
 
 **Spec:** [the usage meter's design](usage-meter.md), with [its questions and answers](usage-meter-qa.md). This plan
-builds its §1, §2, §6 (2a's half) and the 2a parts of §8 and §9; Phase 2b's plan builds the rest.
+builds its §1, §2, §6 (2a's half) and the 2a parts of §8 and §9.
 
 **Where it runs.** Each task's label says where its work belongs by the repo's rule: **[Spark]** for code, tests and
-docs, **[Dan]** for keys and sudo. *(Dan's instruction, 2026-10-23: this round writes and tests the [Spark] tasks on
-the Mac, on branch `chendaniely/harness-status-bar`, cut from `phase-2a`; Task 44l, the deploy, and every [Dan] step
-stay for the Spark session and Dan.)* Tests run with `make test ARGS="…"`, which is `uv run --frozen --project spark
-pytest …`.
+docs, **[Dan]** for keys and sudo. *(Dan's instruction, 2026-10-23: this round writes and tests Tasks 44a–44j on the
+Mac, on branch `chendaniely/harness-status-bar`, cut from `phase-2a`. The Mac skips the Linux-only tests, so a full
+`make test` on the Spark comes before the merge. Task 44k is made on `phase-2a` by the Spark session after 44a–44j
+merge into it, so its plan edits don't conflict with Tasks 40–44's; Task 44l, the deploy, and every [Dan] step stay for
+the Spark session and Dan. 44l finishes before Task 45 starts: nothing deploys during the soak.)* Tests run with
+`make test ARGS="…"`, which is `uv run --frozen --project spark pytest …`.
+
+**The test listings** are specifications: each names the test, the rig it uses and its assertions. The task writes
+them against the existing rigs it names (`test_front_forward.py`'s `rig` and `Rig`, `test_gate_admission.py`'s `Gate`,
+`test_gate_room.py`'s `World`, `test_doctor.py`'s `FakeProbe`, `test_status.py`'s `text(view)`, `test_units.py`'s
+`settings` and `words`, `test_bootstrap.py`'s `dry_run()` and `install_d_line`), widening a rig where the test needs
+it, and sees each new test fail for the reason given before making it pass (the Phase 0 lessons).
 
 ## Global Constraints
 
-- Rows hold numbers, and text only from a fixed set or `[A-Za-z0-9._:-]{1,64}`; never a prompt, an answer, a file
-  name, a title or a model name the client chose (the model is the registry's name it resolved to).
+- Nothing the meter stores holds a prompt, an answer, thinking text, a file name, a title, or any string a client
+  chose. Text in a row is from a fixed set, a registry name, or `[A-Za-z0-9._:-]{1,64}` from the engine; a model is
+  the registry's name it resolved to, never the client's.
 - No row for a 401, `/health` or `GET /v1/models`.
 - In 2a the front reads counts on `/v1/chat/completions`, `/v1/completions` and `/v1/embeddings` only; every other
   route's row has `"from": "none"`.
 - The cached count `c` is absent (null), never 0, when the engine didn't report it.
-- The front never changes a request to get counts (no `stream_options`), and never refuses or slows a request because
-  counting failed.
+- The front never changes a request to get counts (no `stream_options`). No failure of counting, and no state of either
+  folder, refuses or slows a request, or keeps the front or the gate from starting.
 - One JSONL file per UTC month: `/var/lib/local-ai/usage/usage-YYYY-MM.jsonl` (`spark-front:spark-admin`, folder
-  `2750`, files `0640`) and `/var/lib/local-ai/gate-ledger/ledger-YYYY-MM.jsonl` (`spark:spark-admin`, folder
-  `2750`, files `0640`).
+  `2750`, files `0640`) and `/var/lib/local-ai/gate-ledger/ledger-YYYY-MM.jsonl` (`spark:spark-admin`, folder `2750`,
+  files `0640`). `SPARK_USAGE_DIR` and `SPARK_GATE_LEDGER` override the folders, as `paths.py`'s other entries are
+  overridden, so no test writes the live folders.
 - The ledger holds no key names; it joins the front's rows on the request id.
 - One request id per request, minted once, kept through the front's resends.
+- Durations come from a monotonic clock; `t0`, `t1` and `t` are UTC epoch seconds.
 - pi keeps `SPARK_API_KEY`; OpenCode's key is `SPARK_OPENCODE_KEY`, Hermes's `SPARK_HERMES_KEY`; nothing is retired in
-  2a.
-- No live figure from the meter goes in the repo, the site or a commit; fixtures and examples are invented.
+  2a; the caps stay as they are (`max_waiting: 8`), a per-group cap waits for 2b.
+- Every new field between the front and the gate is optional both ways: an old peer's message without it, or with a
+  bad value, is read as "not reported", never refused.
+- No live figure from the meter goes in the repo, the site or a commit; fixtures and examples are invented; a check
+  against real rows prints a verdict only.
 - Commits: Conventional Commits with 🤖 after the prefix, files staged by path, and the trailer
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; never `--no-verify`.
 
@@ -56,28 +71,33 @@ pytest …`.
 These are the names every task uses. A field whose value is None is left out of the line.
 
 ```text
-usage row:  v=1, id (16 hex), t0, t1 (UTC epoch s), key, route, model, role, engine,
-            end (done|cut|gone|error|refused), status, why,
+usage row:  v=1, id (16 hex), t0, t1, key, route, model, role, engine, asked_len,
+            end (done|cut|gone|error|refused), status, code,
             p, c, o, from (usage|timings|none), ev_think, ev_text,
             wait_s, load_s, first_s, prompt_ms, gen_ms,
-            stream, attempts, n, images, bytes_in, effort, resp_id, dropped
+            stream, attempts, n, images, bytes_in, effort, resp_id, dropped, refused_n
 route:      chat | completions | embeddings | responses | messages | transcriptions
+end:        done (whole); cut; gone; error (the engine's error event, or a non-2xx answer from upstream);
+            refused (a refusal of the front's or the gate's, its code in `code`)
 ledger row: v=1, t, kind (load|unload|refusal|brake_fired|brake_released|start|stop|counting_off|counting_on),
-            model, id, why, code, wait_s, seconds, outcome
+            who (front|gate, for start, stop and counting), model, id, why, code, wait_s, seconds, outcome
 ```
+
+`load_s` is on the row of the request that started the load only; the others that waited on it carry their `wait_s`.
+`refused_n` sums the refused rows a key's per-minute limit folded into this one (Task 44b).
 
 ## Review Focus
 
-1. **A multi-megabyte last event or body** (a long answer on `/v1/responses`, a non-streamed chat with a huge reply):
-   the scanner's memory stays constant and the stream isn't slowed. Test in Task 44a.
-2. **A full disk or a folder that can't be written:** every request is still served; rows are dropped and counted;
-   the front still starts. Tests in Tasks 44b and 44d.
-3. **A client that names a model that doesn't exist, or sends long strings:** the row holds no client text. Test in
-   Task 44d.
-4. **A stream cut or a client gone mid-answer:** the row is written with how it ended and whatever counts were seen,
-   and `from` is `none` when none were. Test in Task 44d.
-5. **`timings` sent twice, or `usage` and `timings` both:** the last copy wins, `usage` before `timings`, and nothing
-   is added up. Test in Task 44a.
+1. **Embeddings and other bodies whose usage isn't at the end:** llama-server writes an embeddings answer's `usage`
+   before its vectors, so the scanner reads the head as well as the tail. Test in Task 44a.
+2. **A cut stream's unclosed last object, or a multi-megabyte line:** the scanner's regex runs in linear time and its
+   memory stays constant, so the event loop never stalls into the watchdog. Tests in Task 44a.
+3. **A scanner or writer that raises, a full disk, a folder that can't be written:** every request is still served
+   byte for byte, rows are dropped and counted, the front and the gate still start. Tests in Tasks 44b, 44d and 44e.
+4. **A client string that passes the text pattern** (`secretproj-q3` as a model, an effort or a route): no row and no
+   ledger row holds it. Tests in Tasks 44d and 44e.
+5. **A mixed deploy** (a new front with an old gate, or the reverse) and Task 38's rollback: every new field is read
+   leniently, so the front's snapshots, admits and model lists keep working. Tests in Tasks 44c and 44e.
 
 ***
 
@@ -88,84 +108,53 @@ ledger row: v=1, t, kind (load|unload|refusal|brake_fired|brake_released|start|s
 - Test: `spark/tests/test_front_usage.py`
 
 **Interfaces:**
-- Produces: `ROUTES_COUNTED = {"/v1/chat/completions": "chat", "/v1/completions": "completions", "/v1/embeddings":
-  "embeddings"}`; `ROUTE_NAMES` mapping every `parse.INFERENCE_PATHS` path to its row name;
-  `@dataclass Counts(p: int|None, c: int|None, o: int|None, source: str, ev_think: int, ev_text: int,
-  prompt_ms: float|None, gen_ms: float|None, resp_id: str|None)`;
-  `class UsageScan: __init__(self, path: str, *, streamed: bool)`, `feed(self, chunk: bytes) -> None`,
-  `finish(self) -> Counts`; `scan_for(path: str, status: int, headers) -> UsageScan | None` (None for a route not in
-  `ROUTES_COUNTED` or a status outside 2xx; `streamed` from `content-type: text/event-stream`); `safe_text(value) ->
-  str | None` (the pattern above, else None).
+- Produces: `ROUTE_NAMES` (each of `parse.INFERENCE_PATHS` to its row name); `ROUTES_COUNTED` (the three counted
+  paths); `@dataclass(frozen=True) Counts(p, c, o, source, ev_think, ev_text, prompt_ms, gen_ms, resp_id)` (ints or
+  None; `source` one of `usage|timings|none`); `class UsageScan(path: str, *, streamed: bool)` with `feed(chunk:
+  bytes) -> None`, `finish() -> Counts` (idempotent), `held_bytes() -> int`; `scan_for(path, status, headers) ->
+  UsageScan | None` (None outside `ROUTES_COUNTED` or 2xx; `streamed` from the media type read as
+  `upstream.StreamEnd.watching` reads it: split on `;`, lowercased, identity encoding only); `safe_text(value) -> str
+  | None`; `HEAD = 4096`, `TAIL = 16384`.
 
-- [ ] **Step 1: Write the failing tests**
+**How it reads.** Per data line of a stream, or per body when not streamed, it keeps a head of the first `HEAD` bytes
+and a tail of the last `TAIL`, never more. At a line's end (or at `finish()` for a body) it looks for the **last**
+`"usage"` and the **last** `"timings"` object in the tail, and in the head when the tail has none (embeddings), each
+matched by exactly `\{(?:[^{}]|\{[^{}]*\})*\}` after its key (linear time; no other pattern), and parses only that
+object with `json.loads`. A value that isn't a non-negative int below 2**53 is not reported. `usage` gives `p =
+prompt_tokens`, `o = completion_tokens`, and `c = prompt_tokens_details.cached_tokens`, else `timings.cache_n` when
+`timings` came, else None; with no `usage`, `timings` gives `p = prompt_n + cache_n`, `c = cache_n`, `o = predicted_n`;
+embeddings give `o = 0`. Events count by regex on each data line's head: `"reasoning_content"\s*:\s*"` gives
+`ev_think`, `"content"\s*:\s*"` gives `ev_text` (a `null` is no event). `resp_id` is the top-level `"id"` of the first
+data line of a stream, or of a body's tail outside any `"tool_calls"`, through `safe_text`. Lines end at CR, LF or
+CRLF, a CR's LF possibly in the next chunk; a `:` line is a ping; a line past `HEAD + TAIL` keeps only those two parts.
 
-```python
-def sse(data: str) -> bytes: return f"data: {data}\n\n".encode()
+- [ ] **Step 1: Write the failing tests**, with fixtures in llama-server b11146's real shape: chunk fields in the order
+  `choices, created, id, model, system_fingerprint, object[, usage], timings`; the first delta
+  `{"role":"assistant","content":null}`; `timings` keys `cache_n, prompt_n, prompt_ms, prompt_per_token_ms,
+  prompt_per_second, predicted_n, predicted_ms, …`; a non-streamed body ending `…,"usage":{…},"id":"chatcmpl-…",
+  "timings":{…}}`; an embeddings body `{"model":…,"object":"list","usage":{…},"data":[…]}`.
 
-def test_a_chat_stream_without_usage_is_counted_from_the_last_timings():
-    s = UsageScan("/v1/chat/completions", streamed=True)
-    s.feed(sse('{"id":"chatcmpl-ab12","choices":[{"delta":{"reasoning_content":"hm"}}]}'))
-    s.feed(sse('{"choices":[{"delta":{"content":"ok"}}]}'))
-    s.feed(sse('{"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":10,"cache_n":90,'
-               '"predicted_n":5,"prompt_ms":12.5,"predicted_ms":40.0}}'))
-    s.feed(b"data: [DONE]\n\n")
-    c = s.finish()
-    assert (c.p, c.c, c.o, c.source) == (100, 90, 5, "timings")
-    assert (c.ev_think, c.ev_text, c.prompt_ms, c.gen_ms, c.resp_id) == (1, 1, 12.5, 40.0, "chatcmpl-ab12")
+  - `test_a_chat_stream_without_usage_is_counted_from_the_last_timings`: (p, c, o, source) = (100, 90, 5, "timings"),
+    ev_think 1, ev_text 1, prompt_ms and gen_ms from timings, resp_id from the first chunk.
+  - `test_timings_repeated_at_a_stop_word_count_once`: predicted_n 4 then 5 gives o == 5.
+  - `test_usage_wins_over_timings_and_the_last_copy_of_each_wins`: (200, 150, 7, "usage").
+  - `test_one_feed_holding_the_finish_the_usage_and_done`: the counts from the usage chunk.
+  - `test_a_completions_stream_is_counted`: usage on its final chunk.
+  - `test_no_cache_reported_is_none_not_zero`, and `"prompt_tokens_details":null` keeps p and o with c None.
+  - `test_embeddings_usage_sits_before_the_vectors`: one 1024-float vector and eight; (12, None, 0, "usage").
+  - `test_a_line_split_across_chunks_and_a_cr_lf_split_are_read_whole`, with a ping before the first data line.
+  - `test_a_non_streamed_resp_id_is_the_top_level_id_never_a_tool_calls`: a `"id":"call_report-q3.md"` in the head is
+    not taken.
+  - `test_an_unclosed_usage_or_timings_object_is_dropped_in_linear_time`: n in (30, 16_000), streamed and not, CPU time
+    by `time.thread_time()` under 0.05 s, source "none".
+  - `test_a_multi_megabyte_line_costs_constant_memory_and_little_cpu`: 128 chunks of 64 KiB then the usage, under
+    `tracemalloc` peak below 256 KiB above one chunk, under 0.25 s of thread time, the counts found.
+  - `test_bad_numbers_are_not_reported`: `true`, `-1`, `1.5`, `2**53`.
+  - `test_a_quoted_usage_inside_content_is_not_counted` and `test_multibyte_and_invalid_bytes_at_the_edges`.
+  - `test_nothing_found_is_source_none`, `test_scan_for_counts_only_the_three_routes_and_2xx`,
+    `test_safe_text_takes_only_the_pattern`, `test_finish_is_idempotent`.
 
-def test_usage_wins_over_timings_and_the_last_copy_of_each_wins():
-    s = UsageScan("/v1/chat/completions", streamed=True)
-    s.feed(sse('{"choices":[],"timings":{"prompt_n":1,"cache_n":1,"predicted_n":1}}'))
-    s.feed(sse('{"choices":[],"usage":{"prompt_tokens":200,"completion_tokens":7,'
-               '"prompt_tokens_details":{"cached_tokens":150}},"timings":{"prompt_n":50,"cache_n":150,"predicted_n":7}}'))
-    c = s.finish()
-    assert (c.p, c.c, c.o, c.source) == (200, 150, 7, "usage")
-
-def test_no_cache_reported_is_none_not_zero():
-    s = UsageScan("/v1/chat/completions", streamed=False)
-    s.feed(b'{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":30,"completion_tokens":4}}')
-    assert (s.finish().p, s.finish().c) == (30, None)
-
-def test_embeddings_count_prompt_tokens_only():
-    s = UsageScan("/v1/embeddings", streamed=False)
-    s.feed(b'{"data":[{"embedding":[0.1]}],"usage":{"prompt_tokens":12,"total_tokens":12}}')
-    c = s.finish()
-    assert (c.p, c.c, c.o, c.source) == (12, None, 0, "usage")
-
-def test_a_line_split_across_chunks_is_read_whole():
-    s = UsageScan("/v1/chat/completions", streamed=True)
-    line = sse('{"choices":[],"timings":{"prompt_n":3,"cache_n":0,"predicted_n":2}}')
-    for i in range(0, len(line), 7):
-        s.feed(line[i:i + 7])
-    assert s.finish().p == 3
-
-def test_a_huge_line_keeps_constant_memory_and_still_finds_the_tail(monkeypatch):
-    s = UsageScan("/v1/chat/completions", streamed=False)
-    s.feed(b'{"choices":[{"message":{"content":"' + b"x" * (8 << 20) + b'"}}],')
-    s.feed(b'"usage":{"prompt_tokens":5,"completion_tokens":6}}')
-    assert s.held_bytes() <= 32 << 10
-    assert (s.finish().p, s.finish().o) == (5, 6)
-
-def test_nothing_found_is_source_none():
-    s = UsageScan("/v1/chat/completions", streamed=True)
-    s.feed(sse('{"choices":[{"delta":{"content":"o"}}]}'))
-    c = s.finish()
-    assert (c.p, c.c, c.o, c.source) == (None, None, None, "none")
-
-def test_scan_for_counts_only_the_three_routes_and_2xx():
-    stream = [(b"content-type", b"text/event-stream")]
-    assert scan_for("/v1/chat/completions", 200, stream) is not None
-    assert scan_for("/v1/responses", 200, stream) is None
-    assert scan_for("/v1/chat/completions", 500, stream) is None
-
-def test_safe_text_takes_only_the_pattern():
-    assert safe_text("chatcmpl-ab12") == "chatcmpl-ab12"
-    assert safe_text("a b") is None and safe_text("x" * 65) is None and safe_text(None) is None
-```
-
-- [ ] **Step 2: Run them to see them fail**
-
-**On the Mac or the Spark**, in the clone:
+- [ ] **Step 2: Run them to see them fail.** **On the Mac or the Spark**, in the clone:
 
 ```bash
 make test ARGS="spark/tests/test_front_usage.py -q"
@@ -173,32 +162,9 @@ make test ARGS="spark/tests/test_front_usage.py -q"
 
 Expected: FAIL, `ModuleNotFoundError: No module named 'spark.front.usage'`.
 
-- [ ] **Step 3: Implement `front/usage.py`**
-
-Per data line of a stream (or per body when not streamed) keep a head of the first 512 bytes and a tail of the last
-16 KiB, never the whole; at a line's end (or `finish()` for a body) take the **last** `"usage"` object and the
-**last** `"timings"` object found in the tail with a regex for a JSON object of at most one nested level, and
-`json.loads` only those; events count by a regex on the head (`"reasoning_content"\s*:\s*"` → `ev_think`,
-`"content"\s*:\s*"` → `ev_text`); `resp_id` from the first data line's head (`"id"\s*:\s*"…"`, through `safe_text`).
-Formulas: `usage` gives `p = prompt_tokens`, `o = completion_tokens`, `c = prompt_tokens_details.cached_tokens`, else
-`timings.cache_n` if `timings` came, else None; with no `usage`, `timings` gives `p = prompt_n + cache_n`, `c =
-cache_n`, `o = predicted_n`; embeddings give `o = 0`. `held_bytes()` returns the bytes the scanner holds now. Lines end
-at CR, LF or CRLF, a CR's LF possibly in the next chunk, as `upstream.StreamEnd` reads them.
-
-- [ ] **Step 4: Run the tests to see them pass**
-
-```bash
-make test ARGS="spark/tests/test_front_usage.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/front/usage.py spark/tests/test_front_usage.py
-git commit -m "feat(spark): 🤖 the front's usage scanner: counts from a fixed head and tail, the last copy winning" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+- [ ] **Step 3: Implement `front/usage.py`** as *How it reads* says.
+- [ ] **Step 4: Run the tests to see them pass** (the same command). Expected: PASS.
+- [ ] **Step 5: Commit** `feat(spark): 🤖 the front's usage scanner: counts from a fixed head and tail, in linear time`.
 
 ### Task 44b [Spark]: the row file writer
 
@@ -207,561 +173,370 @@ git commit -m "feat(spark): 🤖 the front's usage scanner: counts from a fixed 
 - Test: `spark/tests/test_rowfile.py`
 
 **Interfaces:**
-- Produces: `class RowFile: __init__(self, folder: Path, prefix: str, *, clock=time.time, queue_max: int = 10_000,
-  mode: int = 0o640, retry_s: float = 30.0, on_off: Callable[[float, str], None] = …, on_on: Callable[[], None] = …)`;
-  `put(self, row: dict, at: float) -> None` (never blocks, never raises); `off_since(self) -> float | None`;
-  `close(self, timeout_s: float) -> None`. `at` picks the month: `{prefix}-{YYYY-MM}.jsonl` by UTC.
+- Produces: `class RowFile(folder: Path, prefix: str, *, clock=time.time, monotonic=time.monotonic, write=os.write,
+  statvfs=os.statvfs, queue_bytes: int = 4 << 20, mode: int = 0o640, retry_s: float = 30.0, free_floor: int = 20 <<
+  30, on_off: Callable[[float, str], None] = lambda since, why: None, on_on: Callable[[], None] = lambda: None)`;
+  `put(row: dict, at: float) -> None` (never blocks, never raises, also after `close`); `off_since() -> float | None`;
+  `close(timeout_s: float) -> None`; `class RefusedLimit(per_minute: int = 60)` with `allow(key: str, now: float) ->
+  bool` and `folded(key: str) -> int` (the count it held back since the key's last allowed row, then reset).
 
-- [ ] **Step 1: Write the failing tests**
+**How it writes.** `put` serializes the row at once (`json.dumps(row, separators=(",", ":"), allow_nan=False)`, inside
+`try/except Exception`: a row that won't serialize is dropped and counted) and queues the bytes, bounded by
+`queue_bytes` in total, dropping and counting past it. One daemon thread writes each line as **one** `write()` on a
+descriptor opened `O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC`, then `os.fchmod(fd, mode)` when it created the file, so the
+mode never depends on the umask; it reopens when the UTC month changes (`{prefix}-{YYYY-MM}.jsonl` by `at`). A short
+write or any `Exception` drops the row, sets `off_since` (calling `on_off` once per spell, with the error's class name,
+never its text), closes the descriptor, and makes the next write start with `\n`; it doesn't reopen before `retry_s`
+has passed, by `monotonic`. At each reopen, and every 1,000 rows, `statvfs` below `free_floor` turns counting off with
+why `disk`. The next line written carries `"dropped": n` and calls `on_on`. The thread tries the month's file once at
+start, so a folder it can't write shows as off at once. `on_off` and `on_on` only log. `close` sets a stop event,
+doesn't block on a full queue, and joins the thread for at most `timeout_s`.
 
-```python
-def test_rows_append_one_line_each_to_the_months_file(tmp_path):
-    rows = RowFile(tmp_path, "usage")
-    rows.put({"v": 1, "p": 3}, at=1_790_000_000.0)          # 2026-09-21 UTC
-    rows.put({"v": 1, "p": 4}, at=1_793_000_000.0)          # 2026-10-26 UTC
-    rows.close(timeout_s=2)
-    assert [json.loads(l)["p"] for l in (tmp_path / "usage-2026-09.jsonl").read_text().splitlines()] == [3]
-    assert (tmp_path / "usage-2026-10.jsonl").stat().st_mode & 0o777 == 0o640
+- [ ] **Step 1: Write the failing tests**, with the `write`, `statvfs` and clocks injected, never patching `os`:
+  - `test_rows_append_one_line_each_to_the_months_file_by_utc`: TZ set to `America/Vancouver` (with `time.tzset()`), a
+    row at 2026-10-01T03:00Z lands in `usage-2026-10.jsonl`.
+  - `test_the_files_mode_is_0640_under_any_umask`: umask 0o000, 0o022 and 0o077.
+  - `test_a_missing_folder_is_counting_off_at_start_and_never_raises`, then the folder made, `on_on` once, the next row
+    carrying `dropped`, `on_off` called once with `FileNotFoundError` only, no reopen before `retry_s`.
+  - `test_a_short_write_leaves_one_torn_line_and_the_next_row_whole`: the fake writes 7 bytes; the raw lines are
+    `['{"v":1,', '{"v":1,"p":2,"dropped":1}']`.
+  - `test_a_row_that_wont_serialize_is_dropped_and_the_writer_lives`: bytes and NaN, then `{"p":3}`, giving
+    `[{"v":1,"p":3,"dropped":2}]`, the thread alive.
+  - `test_a_full_queue_drops_without_blocking`: a write blocked on an event; five puts from a thread joined within 1 s;
+    rows written plus `dropped` equal five.
+  - `test_below_the_free_floor_counting_turns_off_with_why_disk`.
+  - `test_close_returns_within_its_bound_with_a_stuck_write`: the stuck write waits on an event the test sets in
+    teardown, and the thread is joined.
+  - `test_put_after_close_never_raises`, and `test_refused_limit_folds_past_its_rate`.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_rowfile.py -q"`. Expected: FAIL, no
+  module `spark.rowfile`.
+- [ ] **Step 3: Implement `rowfile.py`** as *How it writes* says.
+- [ ] **Step 4: Run them to see them pass.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(spark): 🤖 a row file: JSONL rows from a thread of its own, never in a request's way`.
 
-def test_a_missing_folder_is_counting_off_and_never_raises(tmp_path):
-    offs = []
-    rows = RowFile(tmp_path / "absent", "usage", on_off=lambda since, why: offs.append(why))
-    rows.put({"v": 1}, at=1_793_000_000.0)
-    rows.close(timeout_s=2)
-    assert rows.off_since() is not None and len(offs) == 1
-
-def test_a_failed_write_is_counted_and_the_next_row_carries_the_count(tmp_path, monkeypatch):
-    rows = RowFile(tmp_path, "usage", retry_s=0)
-    real, failed = os.write, []
-    def flaky(fd, data):
-        if not failed:
-            failed.append(1)
-            raise OSError(errno.ENOSPC, "full")
-        return real(fd, data)
-    monkeypatch.setattr(rowfile.os, "write", flaky)
-    rows.put({"v": 1, "p": 1}, at=1_793_000_000.0)
-    rows.put({"v": 1, "p": 2}, at=1_793_000_001.0)
-    rows.close(timeout_s=2)
-    lines = [json.loads(l) for l in (tmp_path / "usage-2026-10.jsonl").read_text().splitlines() if l]
-    assert lines == [{"v": 1, "p": 2, "dropped": 1}]
-
-def test_a_full_queue_drops_without_blocking(tmp_path):
-    rows = RowFile(tmp_path, "usage", queue_max=1)
-    rows.pause_for_test()                       # the writer holds before its next row
-    for p in range(5):
-        rows.put({"v": 1, "p": p}, at=1_793_000_000.0)
-    rows.resume_for_test(); rows.close(timeout_s=2)
-    written = (tmp_path / "usage-2026-10.jsonl").read_text().splitlines()
-    assert sum(json.loads(l).get("dropped", 0) for l in written) + len(written) == 5
-
-def test_close_returns_within_its_bound_with_a_stuck_write(tmp_path, monkeypatch):
-    monkeypatch.setattr(rowfile.os, "write", lambda fd, data: time.sleep(10))
-    rows = RowFile(tmp_path, "usage")
-    rows.put({"v": 1}, at=1_793_000_000.0)
-    started = time.monotonic(); rows.close(timeout_s=0.5)
-    assert time.monotonic() - started < 2
-```
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_rowfile.py -q"
-```
-
-Expected: FAIL, no module `spark.rowfile`.
-
-- [ ] **Step 3: Implement `rowfile.py`**
-
-A daemon thread reads a `queue.Queue(maxsize=queue_max)`; `put` uses `put_nowait` and counts a `queue.Full` as
-dropped. Each row is `json.dumps(row, separators=(",", ":"))` plus `\n`, written as **one** `os.write` on a descriptor
-opened `O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC` with `mode`, reopened when the month changes; a short write or an
-`OSError` counts the row dropped, sets `off_since` (calling `on_off` once per spell, with the error's class name, never
-its text), closes the descriptor, and makes the next write start with `\n`; no reopen before `retry_s` has passed. The
-next row written carries `"dropped": n` (rows lost since the last one written) and `on_on` is called. `close` puts a
-sentinel and joins the thread for at most `timeout_s`. `pause_for_test` / `resume_for_test` hold the thread on an
-event, for the queue test only.
-
-- [ ] **Step 4: Run the tests to see them pass**
-
-```bash
-make test ARGS="spark/tests/test_rowfile.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/rowfile.py spark/tests/test_rowfile.py
-git commit -m "feat(spark): 🤖 a row file: JSONL rows appended from a thread of its own, never in a request's way" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
-### Task 44c [Spark]: the gate's answer gains a load's seconds, and the model list its engine
+### Task 44c [Spark]: the admit answer gains a load's seconds, the model list each model's engine
 
 **Files:**
-- Modify: `spark/src/spark/gate/app.py` (the admit answer, ~line 460), `spark/src/spark/gateproto.py` (`Admitted`,
-  `ModelEntry`), `spark/src/spark/front/gatelink.py` (`clear`), `spark/src/spark/front/parse.py`
-  (`ModelList.from_registry`), and wherever the gate builds `ModelEntry`s
-- Test: `spark/tests/test_gate_app.py`, `spark/tests/test_front_gatelink.py`, `spark/tests/test_front_parse.py`
+- Modify: `spark/src/spark/gate/app.py` (the admit answer, ~line 460), `spark/src/spark/gate/admission.py` (whose
+  request started a load), `spark/src/spark/gate/core.py` (`_model_list`, ~line 1218), `spark/src/spark/gateproto.py`
+  (`Admitted`, `ModelEntry`), `spark/src/spark/front/gatelink.py` (`clear`, `_admit_answer`), `spark/src/spark/front/parse.py`
+  (`_entry`, `ModelList.from_registry`), `spark/tests/gate_standin.py` (its default admit answer gains
+  `"load_s": None`)
+- Test: `spark/tests/test_gate_app.py`, `test_front_gatelink.py`, `test_front_parse.py`, `test_gate_core.py`; update
+  the exact-shape tests `test_front_parse.py:483`, `test_gate_core.py:1494-1499` and the Linux-only
+  `test_gate_app.py:615`.
 
 **Interfaces:**
-- Produces: the admit answer `{"ok": True, "model": m, "load_s": float | None}` (`load_s` is the internal
-  `Admitted.seconds` when `loaded_now`, else None); `gateproto.Admitted` gains `load_s: NotRequired[float | None]`;
-  `GateLink.clear(..., loaded: Callable[[float], None] | None = None)` calls `loaded(load_s)` when an admit answer it
-  acts on carries a number; `ModelEntry` gains `engine: str` (the registry model's engine, such as `llama.cpp`).
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-# test_gate_app.py
-async def test_an_admit_that_waited_for_a_load_says_how_long_it_took(gate_rig):
-    answer = await gate_rig.admit_after_load("qwen3.8-27b", load_seconds=41.5)
-    assert answer == {"ok": True, "model": "qwen3.8-27b", "load_s": 41.5}
-
-async def test_an_admit_for_a_loaded_model_has_no_load_seconds(gate_rig):
-    assert (await gate_rig.admit_loaded("qwen3.8-27b"))["load_s"] is None
-
-# test_front_gatelink.py
-async def test_clear_reports_a_loads_seconds_to_its_caller(link_rig):
-    seen = []
-    await link_rig.link.clear("m", "k1", link_rig.deadline(), "ab" * 8, enter=lambda: "in",
-                              admit=True, loaded=seen.append)
-    assert seen == [12.0]                        # the stand-in gate answered load_s 12.0
-
-# test_front_parse.py
-def test_the_model_list_carries_each_models_engine(registry):
-    assert {e["name"]: e["engine"] for e in parse.ModelList.from_registry(registry)}["qwen3.8-27b"] == "llama.cpp"
-```
-
-Use each test file's existing rigs and stand-ins (`gate_rig`, `link_rig` and `registry` name whatever those files
-already provide); a stand-in gate's admit answer gains `"load_s"`.
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_gate_app.py spark/tests/test_front_gatelink.py spark/tests/test_front_parse.py -q"
-```
-
-Expected: FAIL on the four new tests.
-
-- [ ] **Step 3: Implement**, as the Interfaces say. The front copies only the admit fields it knows
-  (`gatelink._admit_answer`), so an old gate's answer without `load_s` is read as None.
-
-- [ ] **Step 4: Run the whole front and gate suites**
-
-```bash
-make test ARGS="spark/tests/test_gate_app.py spark/tests/test_front_gatelink.py spark/tests/test_front_parse.py spark/tests/test_front_app.py spark/tests/test_front_forward.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/gate/app.py spark/src/spark/gateproto.py spark/src/spark/front/gatelink.py spark/src/spark/front/parse.py spark/tests/test_gate_app.py spark/tests/test_front_gatelink.py spark/tests/test_front_parse.py
-git commit -m "feat(spark): 🤖 the gate's admit answer says how long a load took, and the model list names each engine" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+- Produces: the admit answer `{"ok": True, "model": m, "load_s": float | None}`, a number only for the request that
+  started the load (`admission.py`'s starter, not every requester in `_requesters(load)`); `gateproto.Admitted` gains
+  `load_s: NotRequired[float | None]`; `ModelEntry` gains `engine: NotRequired[str]`; `parse._entry` copies `engine`
+  when it is a non-empty str, never requires it; `_admit_answer` reads `load_s` as None unless a finite number ≥ 0;
+  `GateLink.clear(..., loaded: Callable[[float], None] | None = None)` calls `loaded(load_s)` for a number.
+- [ ] **Step 1: Write the failing tests:**
+  - `test_gate_app.py`: `test_the_request_that_started_a_load_hears_how_long_it_took` (the `Gate(tmp_path, …)` rig,
+    `gate.swap.hold_loads = True`, `gate.clock.now += 41.5` between the ticket and `gate.swap.ready(CODER)`; the
+    starter's answer `load_s == 41.5`, a second request that waited on the same load `load_s is None`), and
+    `test_an_admit_for_a_loaded_model_has_no_load_seconds`.
+  - `test_front_gatelink.py`: `test_clear_reports_a_loads_seconds_to_its_caller`, and
+    `test_an_old_gates_answer_or_a_bad_load_s_is_none` (absent, `True`, `"12"`, NaN, −1).
+  - `test_front_parse.py`: `test_the_model_list_carries_each_models_engine`, and
+    `test_an_entry_without_engine_is_still_listed`; `test_gate_core.py`: the hello's models carry `engine`.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_gate_app.py spark/tests/test_front_gatelink.py spark/tests/test_front_parse.py spark/tests/test_gate_core.py -q"`.
+  Expected: FAIL on the new assertions (`KeyError: 'load_s'`, `'engine'`).
+- [ ] **Step 3: Implement** as the Interfaces say.
+- [ ] **Step 4: Run them and the front's suites:** add `spark/tests/test_front_app.py spark/tests/test_front_forward.py`
+  to the command. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(spark): 🤖 the admit answer says how long the load it started took; the model list names each engine`.
 
 ### Task 44d [Spark]: the front writes a row per request
 
 **Files:**
 - Create: `spark/src/spark/front/rows.py`
-- Modify: `spark/src/spark/front/app.py` (`_Request`, `FrontApp.__init__`, `__call__`, `_cleared`, `_relay`,
-  `_read`), `spark/src/spark/front/main.py`, `spark/src/spark/paths.py`
-- Test: `spark/tests/test_front_rows.py`, `spark/tests/test_front_forward.py`
+- Modify: `spark/src/spark/front/app.py` (`_Request`, `FrontApp.__init__`, `__call__`, `_cleared`, `_relay`, `_read`,
+  `_refuse`), `spark/src/spark/front/main.py`, `spark/src/spark/front/__init__.py` (`FRONT_MODULES` gains
+  `spark.front.usage`, `spark.front.rows` and `spark.rowfile`, and its docstring lists them), `spark/src/spark/paths.py`
+  (`USAGE_DIR`, overridden by `SPARK_USAGE_DIR`)
+- Test: `spark/tests/test_front_rows.py`, `spark/tests/test_front_forward.py`, `spark/tests/test_front_app.py` (each
+  `clear` stand-in, at `test_front_app.py:109` and `:713` and `test_front_forward.py:106` and `:874`, gains
+  `loaded=None`)
 
 **Interfaces:**
-- Consumes: `UsageScan`, `scan_for`, `safe_text`, `ROUTE_NAMES` (Task 44a); `RowFile` (Task 44b); `clear(...,
-  loaded=…)` and `ModelEntry["engine"]` (Task 44c).
-- Produces: `paths.USAGE_DIR = Path("/var/lib/local-ai/usage")`; `rows.usage_row(request, ended: float) -> dict`;
-  `FrontApp(..., rows: RowFile | None = None)` (None writes nothing); `_Request.id: str` (16 hex, minted at creation,
-  passed to every `clear`).
+- Consumes: Tasks 44a, 44b, 44c.
+- Produces: `rows.usage_row(request, ended: float, monotonic_ended: float, roles: frozenset[str]) -> dict`;
+  `FrontApp(..., rows: RowFile | None = None, refused_limit: RefusedLimit | None = None)` (None writes nothing);
+  `_Request` gains `id` (`secrets.token_hex(8)` by default), `mono_started`, `mono_forwarded`, `mono_first`, `attempts`,
+  `load_s`, `scan`, `refused` (a code), and the scalars `stream`, `n`, `images`, `effort`, `bytes_in`, set in `_read`
+  from the parsed body, which isn't kept.
 
-- [ ] **Step 1: Write the failing tests** (in `test_front_forward.py`'s style, with its `rig`, `sse`, `DONE`, `CODER`
-  and a `Rows` stand-in that keeps what `put` was given)
+**How it fits.** `_cleared` passes `request.id` and `loaded=` (setting `request.load_s`). `_relay` counts `attempts`,
+and each of its calls into the scanner (`scan_for`, `feed`, `finish`) is wrapped in `try/except Exception` that sets
+`request.scan = None` and logs the class once, so a scanner fault can never touch the stream. `_refuse` sets
+`request.refused = refused.code`. `__call__`'s `finally`, after the journal line, when `request.key` is set and the
+route isn't `MODEL_LIST`, builds the row and puts it, inside its own `try/except Exception` that logs where it broke and
+counts the row dropped; a refused row goes through `refused_limit` first, a held-back one folded into the key's next
+row's `refused_n`. `usage_row` keeps `role` only when `request.asked` is one of the resolved entry's roles, `effort`
+only from `none|minimal|low|medium|high|xhigh|max`, `asked_len` only for an unresolved model (its length), `engine`
+from the entry when present, and every other text through `safe_text`; `end` follows *The row* above, an upstream
+non-2xx being `error`. `main.run` builds the `RowFile(paths.USAGE_DIR, "usage", …)` before the `GateLink`, passes
+`rows.off_since` to it (Task 44e), and its `shutdown` calls `await asyncio.to_thread(rows.close, ROWS_DRAIN_S)` with
+`ROWS_DRAIN_S = 5` after `app.aclose()`. Rows still in flight when uvicorn's graceful time ends are cut: their rows are
+put before `close`.
 
-```python
-async def test_a_stream_leaves_one_row_with_its_counts(tmp_path):
-    async with rig(tmp_path) as r:
-        r.fake.stream(CODER, [sse('{"id":"chatcmpl-1","choices":[{"delta":{"content":"o"}}]}'),
-                              sse('{"choices":[{"delta":{},"finish_reason":"stop"}],'
-                                  '"timings":{"prompt_n":4,"cache_n":6,"predicted_n":2}}'), DONE])
-        await r.complete_stream()
-        await until(lambda: len(r.rows) == 1)
-        row = r.rows[0]
-        assert {k: row[k] for k in ("v", "key", "route", "model", "end", "status", "p", "c", "o", "from")} == {
-            "v": 1, "key": "dan-mac", "route": "chat", "model": CODER, "end": "done", "status": 200,
-            "p": 10, "c": 6, "o": 2, "from": "timings"}
-        assert len(row["id"]) == 16 and row["t1"] >= row["t0"] and row["attempts"] == 1
+- [ ] **Step 1: Write the failing tests**, in `test_front_forward.py`'s `rig`, which gains `rows` (a stand-in whose
+  `put` keeps each row) and `gate`; each test waits for its rows with `until(...)`:
+  - `test_a_stream_leaves_one_row_with_its_counts`: (v, key, route, model, end, status, p, c, o, from) as streamed,
+    `id` 16 hex, `t1 ≥ t0`, `attempts == 1`.
+  - `test_each_ending_leaves_its_row`, parametrized: a cut after a chunk with timings (`cut`, `timings`, p set), the
+    engine's error event (`error`), the gate's refusal (`refused`, `code`), the front's 429 (`refused`), and a
+    non-streamed JSON answer through the fake's canned `application/json` (`done`, `usage`, `resp_id`).
+  - `test_no_client_string_reaches_a_row_even_one_that_passes_the_pattern`: `secretproj-q3` as a model (404),
+    `reasoning_effort: "secret-effort"` on a known model, a POST to `/v1/secret-route`; `"secret"` not in the rows,
+    `asked_len` set for the 404.
+  - `test_no_row_for_a_401_health_or_the_model_list`: those three, then one valid request; the only row is its.
+  - `test_one_request_id_across_a_resend` (in `test_front_gatelink.py`, with its `r.swap.exited = 1` pattern): the row's
+    `id` is the admit's `request_id`, `attempts == 2`, `load_s` kept; two requests, two ids.
+  - `test_a_scanner_that_raises_never_cuts_the_stream`: `feed` raising on its second call, then `scan_for`, then
+    `finish`: the client gets every byte, the journal line reads 200, the row has `from: "none"`.
+  - `test_a_rows_writer_that_raises_never_touches_the_request`: the journal line is written, one error line names only
+    the class, a second request is served.
+  - `test_refused_rows_past_the_limit_are_folded_into_refused_n`.
+  - `test_front_rows.py`: `usage_row` on its own for `role`, `effort`, `images`, `n` above 1 only, `wait_s` and
+    `first_s` from the monotonic marks, `engine`, None fields absent; and after `_read`, no `_Request` attribute is a
+    dict or a list.
+  - A Linux-only subprocess test beside `test_spark_front_takes_9100_from_systemd`: with `SPARK_USAGE_DIR` missing, a
+    plain file, or `0o500`, `spark front` serves `/health` and a chat; and a stream held through SIGTERM leaves its row
+    with `end: "cut"`.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_front_rows.py spark/tests/test_front_forward.py spark/tests/test_front_gatelink.py -q"`.
+  Expected: FAIL on the new tests (no rows put).
+- [ ] **Step 3: Implement** as *How it fits* says.
+- [ ] **Step 4: Run the front's suites** (add `spark/tests/test_front_app.py spark/tests/test_front_parse.py`).
+  Expected: PASS, the existing tests changed only by the stand-ins' `loaded=None`.
+- [ ] **Step 5: Commit** `feat(spark): 🤖 the front writes a row of numbers per request, one id through its resends`.
 
-async def test_an_unknown_model_leaves_a_refused_row_without_the_clients_text(tmp_path):
-    async with rig(tmp_path) as r:
-        await r.post_json({"model": "my secret project name", "messages": []})
-        await until(lambda: len(r.rows) == 1)
-        assert r.rows[0]["end"] == "refused" and "model" not in r.rows[0]
-        assert "secret" not in json.dumps(r.rows[0])
-
-async def test_a_client_gone_mid_stream_leaves_a_gone_row(tmp_path):
-    async with rig(tmp_path) as r:
-        r.fake.stream(CODER, [sse('{"choices":[{"delta":{"content":"o"}}]}')] * 50, delay_s=0.05)
-        await r.leave_mid_stream()
-        await until(lambda: len(r.rows) == 1)
-        assert r.rows[0]["end"] == "gone" and r.rows[0]["from"] == "none"
-
-async def test_no_row_for_a_401_or_the_model_list(tmp_path):
-    async with rig(tmp_path) as r:
-        await r.get("/v1/models"); await r.post_json(chat(), key="not-a-key")
-        await asyncio.sleep(0.05)
-        assert r.rows == []
-
-async def test_one_request_id_across_a_resend(tmp_path):
-    async with rig(tmp_path, gate=Resending()) as r:     # the stand-in records each clear's request_id
-        await r.post_json(chat(stream=False))
-        assert len(set(r.gate.request_ids)) == 1 and r.rows[0]["attempts"] == 2
-
-async def test_a_rows_writer_that_raises_never_touches_the_request(tmp_path):
-    async with rig(tmp_path, rows=Exploding()) as r:     # put() raises
-        response = await r.post_json(chat(stream=False))
-        assert response.status_code == 200
-```
-
-`test_front_rows.py` covers `usage_row` alone: a role asked by name gives `role`; `effort` kept only when one of
-`none|minimal|low|medium|high|xhigh|max`; `images` counts `image_url` parts; `n` only when above 1; `wait_s` is
-forwarded-at less started; `load_s` from `loaded()`; `engine` from the entry; None fields absent.
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_front_rows.py spark/tests/test_front_forward.py -q"
-```
-
-Expected: FAIL on the new tests.
-
-- [ ] **Step 3: Implement**
-
-`_Request` gains `id` (`secrets.token_hex(8)` by default factory), `attempts`, `load_s`, `first_at`, `scan`, `body`
-(the parsed JSON dict, for `stream`, `n`, `images`, `effort`) and `bytes_in`; `_cleared` passes `request.id` and
-`loaded=lambda s: setattr(request, "load_s", s)`; `_relay` counts `attempts`, sets `request.scan = scan_for(path,
-response.status, response.headers)` and feeds it every chunk, setting `first_at` at the first; `__call__`'s `finally`,
-after the journal line, calls `self.rows.put(usage_row(request, ended), at=request.started)` inside its own
-`try/except Exception` that only logs where it broke, when `request.key` is set and the route isn't `MODEL_LIST`.
-`usage_row` maps `outcome()` to `end` (`refused` for a refusal of the front's or the gate's, from `request.why` or a
-4xx/5xx sent by `_refuse`), and every text through `safe_text` or its fixed set. `main.run` builds `RowFile(
-paths.USAGE_DIR, "usage", on_off=…, on_on=…)` (each logging one line by `_log`, the error's class only), passes it, and
-its `shutdown` calls `rows.close(timeout_s=ROWS_DRAIN_S)` with `ROWS_DRAIN_S = 5` after `app.aclose()`. Opening the
-folder is the writer's, so no state of it can make `run` return 1.
-
-- [ ] **Step 4: Run the front's suites**
-
-```bash
-make test ARGS="spark/tests/test_front_rows.py spark/tests/test_front_forward.py spark/tests/test_front_app.py -q"
-```
-
-Expected: PASS, the existing tests unchanged.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/front/rows.py spark/src/spark/front/app.py spark/src/spark/front/main.py spark/src/spark/paths.py spark/tests/test_front_rows.py spark/tests/test_front_forward.py
-git commit -m "feat(spark): 🤖 the front writes a row of numbers per request, one id through its resends" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
-### Task 44e [Spark]: the gate's ledger, and counting off reported through the front's snapshot
+### Task 44e [Spark]: the gate's ledger, and counting reported through the front's snapshot
 
 **Files:**
 - Create: `spark/src/spark/gate/ledger.py`
-- Modify: `spark/src/spark/paths.py`, `spark/src/spark/gateproto.py` (`InflightSnapshot`, `StatusView`'s health),
-  `spark/src/spark/front/gatelink.py` (the snapshot), `spark/src/spark/gate/main.py`, `spark/src/spark/gate/admission.py`,
-  `spark/src/spark/gate/room.py`, `spark/src/spark/gate/policy.py`, `spark/src/spark/gate/core.py`,
+- Modify: `spark/src/spark/paths.py` (`GATE_LEDGER_DIR`, overridden by `SPARK_GATE_LEDGER`), `spark/src/spark/gateproto.py`
+  (`InflightSnapshot` gains `counting_off_since` and `front_started_at`, both optional; `HealthView` gains `counting`
+  as `NotRequired`), `spark/src/spark/front/gatelink.py` (the snapshot; `GateLink(..., counting_off=…)`),
+  `spark/src/spark/front/main.py`, `spark/src/spark/gate/main.py`, `spark/src/spark/gate/admission.py`,
+  `spark/src/spark/gate/policy.py`, `spark/src/spark/gate/room.py`, `spark/src/spark/gate/core.py`,
   `spark/src/spark/gate/app.py`
-- Test: `spark/tests/test_gate_ledger.py`, and one new test each in `test_gate_admission.py` and `test_gate_room.py`
+- Test: `spark/tests/test_gate_ledger.py`; one each in `test_gate_admission.py`, `test_gate_room.py`,
+  `test_gate_core.py`, `test_gate_app.py`, `test_front_gatelink.py`; update `test_gate_app.py:468-479` (the status
+  socket's health keys are `HealthView`'s less `counting`) and `test_gateclient.py:751`.
 
 **Interfaces:**
-- Consumes: `RowFile` and its `off_since()` (Task 44b).
-- Produces: `paths.GATE_LEDGER_DIR = Path("/var/lib/local-ai/gate-ledger")`; `class Ledger: __init__(self, rows:
-  RowFile | None, clock)`, with `load(model, request_id, wait_s, seconds, outcome)`, `unload(model, why)`,
-  `refusal(code, model, request_id)`, `brake(kind)` (`brake_fired`|`brake_released`), `lifecycle(kind)`
-  (`start`|`stop`), `counting(off_since: float | None)` (writes `counting_off` or `counting_on` on a change only);
-  `InflightSnapshot` gains `counting_off_since: float` (optional); `StatusView`'s health gains `counting: {"off_since":
-  float | None}`, on the control socket's view only; `GateLink(..., counting_off: Callable[[], float | None] = lambda:
-  None)`, which `front/main.py` gives the front's `RowFile.off_since`.
+- Consumes: `RowFile` and `off_since()` (Task 44b).
+- Produces: `class Ledger(rows: RowFile | None, clock, models: Callable[[], frozenset[str]])` with `load(model,
+  request_id, wait_s, seconds, outcome)`, `unload(model, why)`, `refusal(code, model, request_id)`, `brake(kind)`,
+  `lifecycle(kind, who)`, `counting(off_since, who)`, `off_since()`; each method never raises (it logs the class), keeps
+  `model` only when it is a registry name, `id` only when 16 hex, `why` only from `gateproto.DRAIN_WHY` plus `brake`,
+  `apply` and `gone`, `code` only from the refusal codes; `counting` writes only on a change. `GateLink(...,
+  counting_off: Callable[[], float | None] = lambda: None)` puts `counting_off_since` in a snapshot only when it is a
+  number, and `front_started_at` always; the gate's `_snapshot` reads both leniently (absent, null or a bad value is
+  "not reported", never a 400). `HealthView["counting"] = {"front_off_since": float | None, "ledger_off_since": float |
+  None}`, on the control socket's view only.
 
-- [ ] **Step 1: Write the failing tests**
+**Where each event is written.** `Admitter`, `Drainer`, `Room` and `GateCore` each take `ledger: Ledger | None =
+None`, `GateCore` handing its own to each. A load once per load where admission marks it ready (`_ready`), with id
+`load.starter.req.id if load.starter else None`, and where a load fails; a refusal where a `RefusalRecord` is appended
+(`admission.py:1257`, `app.py:550` with `model if known else None`), and in `core.py`'s backstop only when the record
+is new to `self._backstop`; an unload where the Drainer reports `unloaded` (`policy.py`, near its `unloaded` event) and
+in `_lost` (why `gone`), and where the brake's kills are ingested (`core._ingest_brake`'s loop, why `brake`, and
+`brake_fired`); `brake_released` where `room.py` records it; `unload` with why `apply` around apply's llama-swap
+restart; `lifecycle("start"|"stop", "gate")` in `gate/main.py`, and the front's (`who: "front"`) when a snapshot shows a
+new `front_started_at` or the front's events call drops; `counting(..., "front")` from each snapshot, and the gate's
+own writer's state as `ledger_off_since`. `FrontRefusal` gains `request_id`, which the front's `refused()` sends.
 
-```python
-def test_each_event_is_one_row_with_no_key_name():
-    rows = Collect()                                     # a RowFile stand-in keeping (row, at)
-    ledger = Ledger(rows, clock=lambda: 1_793_000_000.0)
-    ledger.load("qwen3.8-27b", "ab" * 8, wait_s=2.0, seconds=40.5, outcome="ready")
-    ledger.refusal("model_not_found", None, "cd" * 8)
-    ledger.unload("qwen3.8-27b", "idle")
-    assert [r["kind"] for r, _ in rows.got] == ["load", "refusal", "unload"]
-    assert all("key" not in r for r, _ in rows.got)
-
-def test_counting_writes_only_on_a_change():
-    rows = Collect(); ledger = Ledger(rows, clock=lambda: 1.0)
-    for since in (None, 5.0, 5.0, None):
-        ledger.counting(since)
-    assert [r["kind"] for r, _ in rows.got] == ["counting_off", "counting_on"]
-
-# test_gate_admission.py
-async def test_a_load_and_a_refusal_reach_the_ledger(admission_rig):
-    await admission_rig.load_for("qwen3.8-27b", request_id="ab" * 8)
-    assert ("load", "ab" * 8) in [(r["kind"], r.get("id")) for r, _ in admission_rig.ledger_rows]
-
-# test_gate_room.py
-async def test_a_brake_release_reaches_the_ledger(room_rig):
-    await room_rig.release_brake()
-    assert "brake_released" in [r["kind"] for r, _ in room_rig.ledger_rows]
-```
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_gate_ledger.py spark/tests/test_gate_admission.py spark/tests/test_gate_room.py -q"
-```
-
-Expected: FAIL on the new tests.
-
-- [ ] **Step 3: Implement**
-
-`Ledger` builds the ledger row (None fields left out) and calls `rows.put(row, at=now)`; with `rows=None` it writes
-nothing. Wire it once in `gate/main.py` (`RowFile(paths.GATE_LEDGER_DIR, "ledger", …)`, `lifecycle("start")` after
-startup, `lifecycle("stop")` then `rows.close(timeout_s=5)` in shutdown) and hand it to the core. Call it where each
-event already happens: a load's end where admission resolves its requesters (near `admission.py:1053`, `outcome
-"ready"`) and where a load fails; each refusal where a `RefusalRecord` is appended (`admission.py:1257`, `core.py:1190`,
-`app.py:550`), with the request id where that path has one; each unload where a drain starts with its why (`policy.py`,
-`room.py:533`); `brake_released` where `room.py` records it (`:646`, `:800`) and `brake_fired` where the brake's
-events are ingested (`notify.py`, `ingest_brake_events`). The front's `GateLink` puts `counting_off_since` into each
-snapshot it posts; the gate's snapshot handler calls `ledger.counting(...)` and keeps the value for `StatusView`'s
-control-socket health.
-
-- [ ] **Step 4: Run the gate's and the front's suites**
-
-```bash
-make test ARGS="spark/tests/test_gate_ledger.py spark/tests/test_gate_admission.py spark/tests/test_gate_room.py spark/tests/test_gate_app.py spark/tests/test_gate_core.py spark/tests/test_front_gatelink.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/gate/ledger.py spark/src/spark/paths.py spark/src/spark/gateproto.py spark/src/spark/front/gatelink.py spark/src/spark/gate/main.py spark/src/spark/gate/admission.py spark/src/spark/gate/room.py spark/src/spark/gate/policy.py spark/src/spark/gate/core.py spark/src/spark/gate/app.py spark/src/spark/gate/notify.py spark/tests/test_gate_ledger.py spark/tests/test_gate_admission.py spark/tests/test_gate_room.py
-git commit -m "feat(spark): 🤖 the gate's ledger: loads, unloads, refusals and the brake, joined to the front's rows by request id" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+- [ ] **Step 1: Write the failing tests:**
+  - `test_gate_ledger.py`: `test_each_event_is_one_row_with_no_key_name`; `test_a_clients_string_never_reaches_the_ledger`
+    (`refusal("model_not_found", "secretproj-q3", None)` has no `model` and no "secret"; an id that isn't 16 hex is
+    dropped); `test_counting_writes_only_on_a_change` for (None, 5.0, 5.0, 7.0, None); `test_a_put_that_raises_never_reaches_the_caller`.
+  - `test_gate_admission.py` (its `Gate` rig gains `ledger_rows`): `test_a_load_writes_one_row_with_its_starters_id`, two
+    requests on one load giving one row.
+  - `test_gate_room.py` (its `World` gains `ledger_rows`): `test_a_brake_release_reaches_the_ledger`, through
+    `world.room.release(uid, room=False, brake=True)` with a brake hold.
+  - `test_gate_app.py`: `test_a_bad_counting_field_never_fails_the_snapshot` (`"x"`, NaN, null, absent each 200, the
+    counts taken); `test_counting_shows_on_the_control_socket_only`; and, posting `/v1/front/refused` with a key named
+    `needlekey-q3` and a model `needlemodel-q3`, no "needle" in the ledger.
+  - `test_front_gatelink.py`: `test_the_snapshot_carries_counting_off_since_only_when_it_is_a_number`.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_gate_ledger.py spark/tests/test_gate_admission.py spark/tests/test_gate_room.py spark/tests/test_gate_app.py spark/tests/test_front_gatelink.py -q"`.
+  Expected: FAIL, no module `spark.gate.ledger`, then the new assertions.
+- [ ] **Step 3: Implement** as above.
+- [ ] **Step 4: Run the gate's and the front's suites** (add `test_gate_core.py test_gate_policy.py test_gate_notify.py
+  test_gateclient.py test_front_forward.py test_front_app.py`). Expected: PASS.
+- [ ] **Step 5: Commit** `feat(spark): 🤖 the gate's ledger: loads, unloads, refusals, the brake and starts, joined to the front's rows by request id`.
 
 ### Task 44f [Spark]: the units and bootstrap's folders
 
 **Files:**
-- Modify: `stack/templates/local-ai-front.service`, `stack/templates/local-ai-gate.service`,
-  `stack/templates/local-ai-llama-swap.service`, `stack/host/bootstrap.sh` (the *State* block, after the brake's folder)
-- Test: `spark/tests/test_units.py`, `spark/tests/test_bootstrap.py`
+- Modify: `stack/templates/local-ai-front.service` (`ReadWritePaths=-/var/lib/local-ai/usage`, `UMask=0027`, its stop
+  comment: 20 s graceful plus the 5 s drain inside its 30 s), `stack/templates/local-ai-gate.service`
+  (`-/var/lib/local-ai/gate-ledger` added to its `ReadWritePaths=`, its stop comment), `stack/templates/local-ai-llama-swap.service`
+  (`InaccessiblePaths=` gains `-/var/lib/local-ai/usage -/var/lib/local-ai/gate-ledger` beside its secrets entry),
+  `stack/host/bootstrap.sh` (the *State* block, after the brake's folder: root makes both folders, beside, never inside,
+  `spark`'s, a comment saying why), `website/how-to/deploy.md` (the rollback's "what it leaves" gains both folders)
+- Test: `spark/tests/test_units.py`, `spark/tests/test_bootstrap.py`, `spark/tests/test_render.py`; update
+  `test_units.py:195` (the front's `ReadWritePaths`), `test_units.py:251-252` (the gate's four paths), the stop-time sums
+  at `test_units.py:307-319`, and `test_render.py:305-316` (`InaccessiblePaths`).
+- [ ] **Step 1: Write the failing tests**, exact, never by substring: `words(service["ReadWritePaths"]) ==
+  ["-/var/lib/local-ai/usage"]` and `service["UMask"] == ["0027"]` for the front; the gate's paths as their exact list;
+  llama-swap's `InaccessiblePaths` as its exact list; bootstrap's `install_d_line("/var/lib/local-ai/usage")` holding
+  `-o spark-front -g spark-admin -m 2750` and the ledger's `-o spark -g spark-admin -m 2750`, each after
+  `/var/lib/local-ai` is made and after `spark-front` exists.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_units.py spark/tests/test_bootstrap.py spark/tests/test_render.py -q"`.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them to see them pass, then in Ubuntu 24.04.** **On the Mac**, then in a throwaway `ubuntu:24.04`
+  container with `systemd` installed, so `systemd-analyze verify` runs (`-rs` shows it passed, not skipped), and
+  bootstrap's folder block run as root with stand-in users: `stat -c '%U:%G %a'` gives `spark-front:spark-admin 2750`;
+  a file made by `spark-front` under umask 0027 is `640`; a stand-in in `spark-admin` reads it and an `agent` stand-in
+  can't. Each command is run before it is written here.
+- [ ] **Step 5: Commit** `feat(stack): 🤖 the usage and ledger folders, Dan's to read, writable only by the front and the gate`.
 
-**Interfaces:** the two folders and modes in *Global Constraints*.
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-def test_the_front_writes_only_its_usage_folder_with_a_private_umask(units):
-    front = units["local-ai-front.service"]
-    assert "ReadWritePaths=-/var/lib/local-ai/usage" in front and "UMask=0027" in front
-
-def test_the_gate_may_write_its_ledger_folder_and_a_missing_one_never_fails_it(units):
-    assert "-/var/lib/local-ai/gate-ledger" in _line(units["local-ai-gate.service"], "ReadWritePaths=")
-
-def test_the_engines_cant_reach_the_records(units):
-    line = _line(units["local-ai-llama-swap.service"], "InaccessiblePaths=")
-    assert "-/var/lib/local-ai/usage" in line and "-/var/lib/local-ai/gate-ledger" in line
-
-# test_bootstrap.py, in its dry-run style
-def test_bootstrap_makes_the_meters_folders_readable_by_dan_alone(dry_run):
-    assert "install -d -o spark-front -g spark-admin -m 2750 /var/lib/local-ai/usage" in dry_run
-    assert "install -d -o spark -g spark-admin -m 2750 /var/lib/local-ai/gate-ledger" in dry_run
-```
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_units.py spark/tests/test_bootstrap.py -q"
-```
-
-Expected: FAIL on the new tests.
-
-- [ ] **Step 3: Implement.** Root makes both folders under root's `/var/lib/local-ai`, beside, never inside, `spark`'s
-  own folders (a comment says why: `install -d` follows a link). `InaccessiblePaths=` on llama-swap's unit keeps its
-  secrets entry.
-
-- [ ] **Step 4: Run them to see them pass, and on Ubuntu 24.04**
-
-**On the Mac**, then in a throwaway `ubuntu:24.04` container if Docker is there (the Phase 0 lesson):
-
-```bash
-make test ARGS="spark/tests/test_units.py spark/tests/test_bootstrap.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add stack/templates/local-ai-front.service stack/templates/local-ai-gate.service stack/templates/local-ai-llama-swap.service stack/host/bootstrap.sh spark/tests/test_units.py spark/tests/test_bootstrap.py
-git commit -m "feat(stack): 🤖 the usage and ledger folders, Dan's to read, writable only by the front and the gate" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
-### Task 44g [Spark]: doctor's checks, the privacy canary, and `spark status`
+### Task 44g [Spark]: doctor's checks, `spark status`, and the meter's scenario page
 
 **Files:**
-- Modify: `spark/src/spark/doctor.py`, `spark/src/spark/status.py`
-- Test: `spark/tests/test_doctor.py`, `spark/tests/test_status.py`
+- Modify: `spark/src/spark/doctor.py` (three checks and the canary), `spark/src/spark/status.py`
+- Create: `website/scenarios/s26-what-it-cost.md` (front matter `scenario-id`, `phase`, `status`, then **Situation.**,
+  **What happens.**, **What I see.**, **How to override.**, naming the three checks)
+- Test: `spark/tests/test_doctor.py` (its `NAMES` gains `usage records`, `gate ledger` and `counting`, in that order,
+  after the folders' checks), `spark/tests/test_status.py`
 
-**Interfaces:**
-- Consumes: the folders (Task 44f); `StatusView` health's `counting` (Task 44e).
-- Produces: doctor checks `usage records` and `gate ledger` (owner, group `spark-admin`, mode `2750` with setgid, no
-  file in them readable by others) and `counting` (pass unless the control socket's health says `off_since`); the
-  privacy canary also reads this month's files in both folders for its needle; `spark status` prints
-  `counting off since <time>` when it is.
+**Interfaces:** `Probe` gains `files(folder) -> list[tuple[str, str, str, int]]` (name, owner, group, mode; raises
+`PermissionError` as the real listing does) and `holds(path, needle) -> bool` (bounded, never returns content);
+`FakeProbe` gets the folders and files by default and its `holds` answers from the posted needle, as its journal does.
+`usage records` and `gate ledger` pass for owner, group `spark-admin`, mode `2750` with setgid, no file readable by
+others, no link inside; they fail naming `make bootstrap` for a missing folder and "log in again" for a listing refused.
+`counting` runs after doctor's end-to-end chat and passes when this month's usage file holds a row with `t0` after the
+check began (counted, nothing printed), the ledger's file exists, and health's `counting` shows neither off; an old
+gate's health without `counting` reads "unknown". The canary also sends its needle as a model (expect 404) and as a
+`reasoning_effort`, and fails if either folder's month files hold it. `spark status` prints `counting off since <time>`
+for the front or the ledger.
+- [ ] **Step 1: Write the failing tests:** one passing case on real tmp folders with real `chmod` (the owners
+  monkeypatched to the running user); failing cases for a file readable by others, `0o750` (setgid lost), `0o2755`, a
+  missing folder, a refused listing and a link; `test_counting_needs_a_fresh_row`; `test_the_canary_sends_its_needle_as_a_model_and_an_effort`;
+  `test_status_says_when_counting_is_off` through `text(view)`.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_doctor.py spark/tests/test_status.py -q"`.
+- [ ] **Step 3: Implement**, in doctor's style; each check prints a verdict only, never a file's content or a key name.
+  Write the scenario page.
+- [ ] **Step 4: Run them to see them pass**, and `make docs` on the Mac renders.
+- [ ] **Step 5: Commit** (the checks and the page together, as `CLAUDE.md` requires)
+  `feat(spark): 🤖 doctor checks the meter's folders and that counting is on; its scenario page`.
 
-- [ ] **Step 1: Write the failing tests**
-
-```python
-def test_doctor_fails_a_usage_file_others_can_read(box):
-    box.usage_folder(owner="spark-front", group="spark-admin", mode=0o2750)
-    box.usage_file("usage-2026-10.jsonl", mode=0o644)
-    assert box.doctor_check("usage records").failed
-
-def test_doctor_passes_the_folders_as_bootstrap_makes_them(box):
-    box.usage_folder(owner="spark-front", group="spark-admin", mode=0o2750)
-    box.ledger_folder(owner="spark", group="spark-admin", mode=0o2750)
-    assert box.doctor_check("usage records").passed and box.doctor_check("gate ledger").passed
-
-def test_the_canarys_needle_must_not_be_in_the_records(box):
-    box.usage_file("usage-2026-10.jsonl", text='{"v":1}\n' + box.needle)
-    assert box.doctor_check("privacy canary").failed
-
-def test_status_says_when_counting_is_off(status_rig):
-    out = status_rig.print_with_health(counting={"off_since": 1_793_000_000.0})
-    assert "counting off since" in out
-```
-
-Use `test_doctor.py`'s existing box stand-in, widened as the tests need.
-
-- [ ] **Step 2: Run them to see them fail**
-
-```bash
-make test ARGS="spark/tests/test_doctor.py spark/tests/test_status.py -q"
-```
-
-Expected: FAIL on the new tests.
-
-- [ ] **Step 3: Implement**, in doctor's existing check style; each check prints a verdict only, never a file's
-  content or a key name.
-
-- [ ] **Step 4: Run them to see them pass**
-
-```bash
-make test ARGS="spark/tests/test_doctor.py spark/tests/test_status.py -q"
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/doctor.py spark/src/spark/status.py spark/tests/test_doctor.py spark/tests/test_status.py
-git commit -m "feat(spark): 🤖 doctor checks the meter's folders and that counting is on; status says when it isn't" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
-### Task 44h [Spark]: OpenCode's and Hermes's own keys, and the caps
+### Task 44h [Spark]: OpenCode's and Hermes's own keys
 
 **Files:**
-- Modify: `spark/src/spark/clients.py` (the `--key-env` defaults), `stack/models.yaml` (`key_groups.dan.max_waiting`),
-  `stack/keys.example.yaml`, `website/how-to/opencode-hermes.md`, `website/how-to/secret-files.md`
-- Test: `spark/tests/test_clients.py`
-
-**Interfaces:** `spark clients opencode` and `spark clients hermes` default `--key-env` to `SPARK_OPENCODE_KEY` and
-`SPARK_HERMES_KEY`; pi's stays `SPARK_API_KEY`. `key_groups.dan.max_waiting: 2` (four of Dan's keys together stay
-below llama-swap's 10 per model).
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-def test_each_harness_names_its_own_key(capsys):
-    assert "{env:SPARK_OPENCODE_KEY}" in render_opencode_provider()
-    assert render_hermes_provider()["key_env"] == "SPARK_HERMES_KEY"
-    assert render_pi_provider()["apiKey"] == "${SPARK_API_KEY}"
-```
-
-Use `test_clients.py`'s existing helpers for each provider's render.
-
-- [ ] **Step 2: Run it to see it fail**
-
-```bash
-make test ARGS="spark/tests/test_clients.py -q"
-```
-
-- [ ] **Step 3: Implement**; the runbooks gain Dan's steps for the two keys (made on the Mac, values by reference in
-  `~/.secrets`, only digests to the Spark, a line each in the key list, one `make restart-front`), and the example key
-  list two invented lines.
-
-- [ ] **Step 4: Run it to see it pass, and render's tests for the cap**
-
-```bash
-make test ARGS="spark/tests/test_clients.py spark/tests/test_render.py -q"
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add spark/src/spark/clients.py stack/models.yaml stack/keys.example.yaml website/how-to/opencode-hermes.md website/how-to/secret-files.md spark/tests/test_clients.py
-git commit -m "feat(clients): 🤖 OpenCode and Hermes get keys of their own; Dan's cap per key lowered to keep the group under llama-swap's" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+- Modify: `spark/src/spark/clients.py` (the `--key-env` defaults at `:365` and `:373`; `hermes_placeholder_left` checks
+  `SPARK_API_KEY` too), `spark/src/spark/messages.py` (`UNKNOWN_KEY` names no single variable), `stack/keys.example.yaml`
+  (two invented lines), `website/how-to/opencode-hermes.md`, `website/how-to/secret-files.md`
+- Test: `spark/tests/test_clients.py`; update `test_messages.py:658`, `test_front_app.py:242` and `test_registry.py:695`.
+- [ ] **Step 1: Write the failing tests** through the parser: `parse_args(["opencode"]).key_env ==
+  "SPARK_OPENCODE_KEY"`, Hermes's `"SPARK_HERMES_KEY"`, pi's still `"SPARK_API_KEY"`; the placeholder check finds an
+  old `SPARK_API_KEY=` line.
+- [ ] **Step 2: Run them to see them fail.** `make test ARGS="spark/tests/test_clients.py spark/tests/test_messages.py -q"`.
+- [ ] **Step 3: Implement.** The runbooks gain Dan's steps, in this order:
+  1. **On the Mac:** each key made into `~/.secrets` with the `printf` builtin, guarded by `grep -c` so it isn't made
+     twice.
+  2. **On the Mac:** only its digest goes to the Spark:
+     `( . ~/.secrets; printf '%s' "$SPARK_OPENCODE_KEY" | shasum -a 256 | cut -d' ' -f1 ) | ssh brightroar 'umask 077; cat > ~/.spark-digest-in'`.
+  3. **On the Spark:** the digests file's line by the secret-files runbook's "another machine" step (checked as 64 hex),
+     the key list's line with a label pi's retry list won't match, then its restart steps.
+  4. **On the Mac:** each key checked off the command line:
+     `printf 'Authorization: Bearer %s\n' "$SPARK_OPENCODE_KEY" | curl -s -o /dev/null -w '%{http_code}\n' -H @- <front URL>/v1/models`,
+     expecting `200`.
+  5. **On the Mac:** only then `make clients`. A note says the new key names go into the denylist on both machines,
+     and that names the docs use (`opencode`, `hermes`) would trip the leak hook. Task 38's rollback gains its own
+     step: on the Mac,
+     `uv run --frozen --project spark spark clients opencode --write --key-env SPARK_API_KEY`, the same for `hermes`,
+     then a restart of both, since Phase 1's llama-swap doesn't know the new keys.
+- [ ] **Step 4: Run them to see them pass.**
+- [ ] **Step 5: Commit** `feat(clients): 🤖 OpenCode and Hermes get keys of their own; the 401 names no one variable`.
 
 ### Task 44i [Spark]: the by-hand SGLang reports its cache
 
-**Files:** Modify `stack/host/by-hand-fast-coder` (its `sglang.launch_server` line); Test `spark/tests/test_by_hand.py`.
+**Files:** Modify `stack/host/by-hand-fast-coder` (its `sglang.launch_server` line) and the *Run it again* block of
+`website/how-to/qwen3.8-27b-sglang.md`, byte for byte the same; Test `spark/tests/test_by_hand.py`.
 
 - [ ] **Step 1:** a test that the launch line holds `--enable-cache-report`. **Step 2:** see it fail. **Step 3:** add
-  the flag. **Step 4:** see it pass. **Step 5:** commit
+  the flag to both. **Step 4:** see it and `test_it_holds_the_runbooks_block_as_written` pass. **Step 5:** commit
   `feat(stack): 🤖 the by-hand SGLang reports its cached tokens, so its rows aren't read as uncached`.
 
-### Task 44j [Spark]: the scenario page and the Architecture page
+### Task 44j [Spark]: the Architecture page
 
-**Files:** Create `website/scenarios/s26-what-it-cost.md` (the meter's scenario, tied to doctor's three checks);
-Modify `website/scenarios/index.qmd`, `website/architecture.qmd` (the front's records and the gate's ledger, dashed
-until Task 44l deploys them; its scenario table), and `_overview.qmd` only if it shows the front's outputs.
+**Files:** Modify `website/architecture.qmd` (the front's records and the gate's ledger, dashed until Task 44l deploys
+them; the scenario table's row for S26; line 195's "the same key" corrected, dated), and `_overview.qmd` only if it
+shows the front's outputs.
 
-- [ ] **Step 1:** write the scenario in the pages' existing shape (*What happens*, *What I see*, *How to check*, the
-  doctor checks by name). **Step 2:** draw the two stores dashed. **Step 3:** `make docs` on the Mac renders the site
-  with no errors. **Step 4:** commit `docs(website): 🤖 the usage meter's scenario and its parts, dashed until
-  deployed`.
+- [ ] **Step 1:** draw the two stores dashed. **Step 2:** `make docs` on the Mac renders. **Step 3:** commit
+  `docs(website): 🤖 the usage meter's two stores, dashed until deployed`.
 
-### Task 44k [Spark]: the plan, Phase 2a's plan and the rules
+### Task 44k [Spark]: the plan, Phase 2a's plan and the rules, on `phase-2a`
 
-**Files:** Modify `website/design/plan.md` (a Revisions line in its `- **YYYY-MM-DD** — …` form; Phase 2a's line
-gaining the counter; Phase 2b's gaining the rest; the Requirements row "always see what model is being used", the
-SwiftBar plugin's row, the menu bar line, 2b's item and done-when each annotated with the dot-only title; Phase 3's,
-4a's, 5's, 2c's and 6's lines as the design's §8 lists, Phase 6's "nothing anyone sends is logged" corrected),
-`website/design/phase-2a.md` (a pointer to this plan for Tasks 44a–44l; Task 45's peak memory with the scanner, no
-rows dropped, rows checked against pi's own counts; Task 49's `gone` rows and an unwritable folder never stopping the
-front; Task 50's `cut` and refusal rows; both done-when lists; Task 51's file lists; Task 52's `make clients` check),
+Made by the Spark session on `phase-2a` once Tasks 44a–44j have merged into it with Dan's OK, so these edits never
+conflict with Tasks 40–44's own.
+
+**Files:** `website/design/plan.md` (a Revisions line in its `- **YYYY-MM-DD** — …` form; Phase 2a's line gaining the
+counter; Phase 2b's gaining the rest and a per-group cap; the Requirements row "always see what model is being used",
+the SwiftBar plugin's row, the menu bar line, 2b's item and its done-when each annotated with the dot-only title; the
+`invalid_api_key` row at `:1108`; Phase 3's, 4a's, 5's (with S18's rebuild), 2c's and 6's lines as the design's §8 lists,
+Phase 6's "nothing anyone sends is logged" corrected; the Open items the design's §8 names), `website/design/phase-2a.md`
+(a pointer to this plan for Tasks 44a–44l; Task 45 recording the front's peak memory with the scanner, no rows
+dropped, and rows checked against pi's own counts as a verdict only ("within N %"); Task 49: after a SIGKILL there are
+no rows for the killed requests, and the ledger shows the front's stop and start, and an unwritable folder never stops
+the front; Task 50's `cut` and refusal rows with their codes; both done-when lists; Task 51's file lists; Task 52's
+`make clients` check; `:380` and `:1300`'s 401 words), `website/design/usage-meter.md` (its status: approved, dated),
 `CLAUDE.md` and README §Conventions (key names never reused; no live figure from the meter in the repo).
 
-- [ ] **Step 1:** make each edit, correcting rather than deleting, each dated. **Step 2:** `make docs` renders.
-  **Step 3:** commit `docs(plan): 🤖 the usage meter's counter joins Phase 2a as Tasks 44a–44l; the rest opens 2b`.
+- [ ] **Step 1:** each edit, correcting rather than deleting, dated. **Step 2:** `make docs` renders. **Step 3:** commit
+  `docs(plan): 🤖 the usage meter's counter joins Phase 2a as Tasks 44a–44l; the rest opens 2b`.
 
 ### Task 44l [Spark] [Dan]: deploy, snapshot the Spark's sources, record
 
-Box work, for the Spark session and Dan, after Tasks 44a–44k are merged into `phase-2a` with Dan's OK.
+Box work, for the Spark session and Dan, after Task 44k, and finished before Task 45 begins. Each command is run once
+before it is relied on (the Phase 0 lesson); the box facts marked are checked first.
 
-- [ ] **Step 1 [Dan]:** the two keys, by the runbook Task 44h wrote.
-- [ ] **Step 2 [Dan], on the Spark:** `make bootstrap`, for the two folders (it asks for sudo once).
-- [ ] **Step 3 [Spark], on the Spark:** `make apply` (it waits for a quiet minute), then `make restart-front` for the
-  keys; `make doctor` passes the three new checks.
-- [ ] **Step 4 [Spark], on the Spark:** one request from pi on the Mac, then, as Dan, the newest row's field names
-  only: `tail -1 /var/lib/local-ai/usage/usage-$(date -u +%Y-%m).jsonl | python3 -c 'import json,sys;
-  print(sorted(json.load(sys.stdin)))'`. Expected: the row's names, with `p`, `o` and `from`.
-- [ ] **Step 5 [Dan], on the Spark:** snapshots, into a private `0700` folder: Open WebUI's database through its
-  container, and `agent`'s pi sessions as `agent`, by the design's §7.
-- [ ] **Step 6 [Spark]:** `changelog.md`, README §Current state, the Architecture page's two stores solid, the vault's
-  note (Dan): commit `docs(machine): 🤖 the usage meter's counter is running`.
+- [ ] **Step 1 [Dan]:** the two keys, by Task 44h's runbook, through `make clients` on the Mac; the key names into the
+  denylist on both machines.
+- [ ] **Step 2 [Dan], on the Mac:** a fresh read-only copy of Hermes's `state.db` into a new dated folder beside the
+  2026-10-23 snapshot, for its sessions since then.
+- [ ] **Step 3 [Dan], on the Spark, interactively:** the snapshots, before counting starts. Open WebUI's database as a
+  root-only copy outside every home, since it holds password hashes and users' keys as well as every chat (box facts to
+  check: the database's path in the container, `python3` in the image):
+
+```bash
+sudo install -d -o root -g root -m 0700 /var/backups/local-ai-usage
+sudo docker compose --project-directory /etc/local-ai/compose exec -T open-webui python3 -c 'import sqlite3; s=sqlite3.connect("/app/backend/data/webui.db"); d=sqlite3.connect("/tmp/usage-snap.db"); s.backup(d); d.close(); s.close()'
+sudo docker compose --project-directory /etc/local-ai/compose cp open-webui:/tmp/usage-snap.db /var/backups/local-ai-usage/open-webui-$(date -u +%F).db
+sudo docker compose --project-directory /etc/local-ai/compose exec -T open-webui rm /tmp/usage-snap.db
+sudo chmod 0600 /var/backups/local-ai-usage/open-webui-$(date -u +%F).db; sudo -k
+```
+
+  And `agent`'s pi sessions, read by `agent` and written by Dan's shell, so root never touches `agent`'s paths; the
+  archive is counted, never extracted (box fact to check: the sessions' path):
+
+```bash
+umask 077; d="$HOME/.local/state/local-ai/usage-snapshots/$(date -u +%F)"; mkdir -p "$d"
+cd / && sudo -u agent env -i HOME=/home/agent PATH=/usr/bin:/bin tar -C /home/agent/.pi/agent -cf - sessions > "$d/agent-pi-sessions.tar"
+tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
+```
+
+- [ ] **Step 4 [Dan], on the Spark:** `make bootstrap-dry-run`, read for the two `install -d` lines; then, with a
+  second SSH session open, `make bootstrap`; then
+  `stat -c '%U:%G %a %n' /var/lib/local-ai/usage /var/lib/local-ai/gate-ledger` shows `spark-front:spark-admin 2750`
+  and `spark:spark-admin 2750`. Any apt change goes in `changelog.md`.
+- [ ] **Step 5 [Dan], on the Spark, in tmux:** `make apply`, which stages the three units and stops; `git status
+  --short -- Makefile stack/host` is empty; `make install-units`, reading the `ReadWritePaths`, `UMask` and
+  `InaccessiblePaths` diffs; `make apply` again: llama-swap's unit changed, so every model stops and the residents
+  reload. Then `make status` and `make doctor`, which passes the three new checks.
+- [ ] **Step 6 [Spark], on the Spark:** after one request from pi on the Mac, the newest row's field names only:
+  `tail -n 1 /var/lib/local-ai/usage/usage-$(date -u +%Y-%m).jsonl | jq -c keys`, showing `p`, `o` and `from`.
+- [ ] **Step 7 [Spark]:** `changelog.md`, README §Current state, the Architecture page's two stores solid, S26's `status:
+  built`, `CLAUDE.md`'s private-material paragraph and README §My environment (the two folders, the Spark's
+  snapshots in `/var/backups/local-ai-usage` and Dan's `usage-snapshots`), and the vault's note (Dan): commit
+  `docs(machine): 🤖 the usage meter's counter is running`.
+
+**If counting misbehaves:** revert Tasks 44a–44e on `phase-2a` and `make apply`, which restarts only the front and the
+gate; the units' `-` paths are inert and stay. For a disk problem alone nothing is needed: the front serves with
+counting off, and doctor says so.

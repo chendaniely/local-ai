@@ -143,6 +143,9 @@ is opened lazily, outside the startup checks that refuse to start the front, so 
 folder can keep the front down. A failure writes one rate-limited journal line, and the front
 reports "counting off since …" in the in-flight snapshot it already sends the gate, which `spark
 status` shows on the control socket only, and `spark doctor` checks. The request is never touched.
+*(Added after the plan's council, my call:)* below 20 GiB free on the disk, counting turns off
+(why `disk`) rather than take the room the weights need; and a key's refused rows are capped per
+minute, the rest summed into its next row, so cheap refusals can't fill the disk.
 
 **What is read, and what it means.** The routes disagree on whether a prompt count includes the
 cached part, so each route has its own formula into the row's fields: *P*, every prompt token,
@@ -353,9 +356,10 @@ Mac's harnesses away in a rollback. The Spark's own copy of the shared key, whic
 For each new key: Dan creates it on the Mac and keeps its value in `~/.secrets` by reference; only
 its digest travels to the Spark, with its line in the private key list (a label pi's retry list
 won't match); one `make restart-front` takes the batch. **The caps:** today's are per key, Dan's
-group allowing 8 waiting each, meant to stay below llama-swap's 10 per model; Dan's group's cap per
-key is lowered so his keys together stay below it (configuration only; per-group caps later if
-needed). **Key names are never reused.** A retired key's name goes into a list of its own that holds
+group allowing 8 waiting each, meant to stay below llama-swap's 10 per model, so more of Dan's keys
+could queue more. *(Revised after the plan's council, my call:)* they stay as they are in 2a, since
+lowering each key's cap to 2 would turn parallel pi sessions and OpenCode's subagents into 429s just
+before the soak; a cap per group comes with Phase 2b. **Key names are never reused.** A retired key's name goes into a list of its own that holds
 no digest, since a line in the key list requires one and would leave the key working; retiring
 removes the digest and any copy in `llama-swap.env`, Dan removes the `~/.secrets` lines on both
 machines and checks Hermes's `.env` by counting lines, never printing them, and a check confirms
@@ -530,7 +534,10 @@ the caps' new number; the reconciliation's tolerance.
 9. spark-menu's poller fetching the summary about once a minute; no new route, nothing on the
    status socket.
 10. `agent`'s line waiting for a view of its own numbers.
-11. pi keeping `SPARK_API_KEY`; nothing retired in 2a; Dan's per-key cap lowered.
+11. pi keeping `SPARK_API_KEY`; nothing retired in 2a; the caps unchanged until 2b's per-group cap.
+18. Counting off below 20 GiB free; a key's refused rows capped per minute.
+19. Only the request that started a load records its seconds; the front's starts and stops in the
+    ledger, from its snapshots.
 12. Snapshots first; the synced rows' ids from messages, not files; their rows on the Spark.
 13. The sync's timers on the Spark: `agent`'s pi read as `agent` and imported as Dan; Open WebUI
     read through its container.
