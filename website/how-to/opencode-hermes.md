@@ -43,8 +43,16 @@ Do these in order, once per client. The commands are opencode's; for Hermes use
    does, with the group `dan` and a label pi's retry list won't match (none with `503`, `timeout`
    or `rate limit` in it), and follow its restart steps (`make restart-front`).
 
-4. **On the Mac,** check the key without it touching a command line. Put the front's URL where
-   `<front URL>` is; it should print `200`:
+4. **On the Mac,** the shell you made the key in never read it. Open a new terminal, then check
+   that the variable is exported, which prints only `True` or `False`, never the key (if it prints
+   `False`, the key's line is missing from your secrets file, or lacks `export`):
+
+   ```bash
+   python3 -c "import os; print(bool(os.environ.get('SPARK_OPENCODE_KEY')))"
+   ```
+
+   Then check the key without it touching a command line. Put the front's URL where
+   `<front URL>` is; it should print `200`, and `401` means the Spark doesn't know the key yet:
 
    ```bash
    printf 'Authorization: Bearer %s\n' "$SPARK_OPENCODE_KEY" | curl -s -o /dev/null -w '%{http_code}\n' -H @- <front URL>/v1/models
@@ -52,9 +60,11 @@ Do these in order, once per client. The commands are opencode's; for Hermes use
 
 5. **On the Mac,** only then write the providers, with `make clients` as the next section does.
 
-The new key names go into the denylist on both machines (`~/.config/local-ai/denylist`), by hand.
-The words the docs use for the clients, `opencode` and `hermes`, would trip the leak hook if they
-went in as terms, so add the variable names only.
+The two key list ids you chose in step 3 are private (the key list's names never go in this repo),
+so add those ids to the denylist on both machines (`~/.config/local-ai/denylist`), by hand. Don't
+add the variable names `SPARK_OPENCODE_KEY` and `SPARK_HERMES_KEY`, or the words `opencode` and
+`hermes`: these docs contain them, so the leak hook and the pre-push scan would fail on the repo's
+own files.
 
 ## 1. Write the providers
 
