@@ -32,7 +32,8 @@ ROUTE_NAMES = {
     "/v1/embeddings": "embeddings",
     "/v1/audio/transcriptions": "transcriptions",
 }
-assert tuple(ROUTE_NAMES) == parse.INFERENCE_PATHS  # a new route gets a name here
+if set(ROUTE_NAMES) != set(parse.INFERENCE_PATHS):  # a new route gets a name here
+    raise ImportError("usage.ROUTE_NAMES doesn't name exactly parse.INFERENCE_PATHS")
 ROUTES_COUNTED = ("/v1/chat/completions", "/v1/completions", "/v1/embeddings")
 
 # One object after its key, one level of nesting. The two alternatives start with different bytes, so the match never
@@ -167,8 +168,9 @@ class UsageScan:
             self._text += 1
         if not self._id_done:
             self._id_done = True
-            found = _ID.search(tail) or _ID.search(head)
-            self._id = safe_text(found.group(1).decode("ascii", "replace")) if found else None
+            # The last id: llama-server puts the top-level one after `choices`, whose tool calls carry the model's own.
+            found = list(_ID.finditer(tail)) or list(_ID.finditer(head))
+            self._id = safe_text(found[-1].group(1).decode("ascii", "replace")) if found else None
         self._look(head, tail)
 
     def _look(self, head: bytes, tail: bytes) -> None:
