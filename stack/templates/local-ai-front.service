@@ -37,8 +37,9 @@ OOMScoreAdjust=-900
 MemoryMax=512M
 NoNewPrivileges=yes
 ProtectSystem=strict
-# Its usage rows, Dan's to read: the folder is 2750 spark-front:spark-admin, and a row it writes is 640 under this
-# UMask. The - lets a missing folder pass; the front serves without it.
+# Its usage rows, Dan's to read: the folder is 2750 spark-front:spark-admin, and a row it writes is 640 because
+# spark.rowfile sets that with fchmod, whatever the umask; the UMask below covers anything else the front creates. The -
+# lets a missing folder pass; the front serves without it.
 ReadWritePaths=-/var/lib/local-ai/usage
 UMask=0027
 ProtectHome=yes
