@@ -28,6 +28,9 @@ Each line reads `ok`, `FAIL` or `WARN`. A `WARN` (only ntfy's, while it isn't se
 nothing, and isn't counted in *N of M checks pass*; the summary says how many warned. One check per Phase 2a scenario
 (S01, S02, S03, S05, S14, S17). `spark doctor --full` adds the two heavy ones: a 170 MB upload to speech-to-text
 through the front, and the privacy canary.
+The usage meter's three (Task 44g): `usage records` and `gate ledger` (each folder's owner, group, mode and files) and
+`counting` (a fresh row, the ledger's file, the gate's health); the canary also looks in the meter's two folders. Each
+prints a verdict only, never a file's content, a row or a key name.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Iterator
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,6 +104,16 @@ SPARK_FOLDERS = ((STATE_HOME, ("root", "root", 0o755)), (paths.STATE, ("spark", 
                  (paths.GATE_STATE, ("spark", "spark", 0o750)), (paths.LAUNCH, ("spark", "spark", 0o750)),
                  (paths.WHISPER_TMP, ("spark", "spark", 0o750)), (Path(render.HF_HOME), ("spark-pull", "spark", 0o2750)),
                  (PULL_CACHE, ("spark-pull", "spark-pull", 0o750)))
+# The usage meter's two folders (Task 44g): the front's rows, `spark-front:spark-admin`, and the gate's ledger,
+# `spark:spark-admin`, each 2750 with setgid so a file's group is spark-admin's, and each file 0640 (UMask=0027): only
+# the front or the gate writes, and spark-admin, whose one member is Dan, reads. Bootstrap makes both.
+USAGE_OWNER = ("spark-front", "spark-admin")
+LEDGER_OWNER = ("spark", "spark-admin")
+METER_MODE = 0o2750
+USAGE_PREFIX, LEDGER_PREFIX = "usage", "ledger"  # a month's file is <prefix>-YYYY-MM.jsonl, the month in UTC
+ROWS_TAIL_MAX = 8 << 20  # a row file is read from its last bytes only: the rows doctor looks for are the newest
+COUNTING_TRIES = 4  # the front writes a request's row as it ends, from a thread: a moment, no more
+COUNTING_STEP_S = 0.5
 # Where llama-server looks for a config.ini, which it reads before its command line (llama.cpp b11146, as Task 10's
 # pre-dispatch scan read it): /etc/llama.cpp/, then $XDG_CONFIG_HOME/llama.cpp/ or $HOME/.config/llama.cpp/. The
 # engines run with HOME=/var/lib/local-ai, spark's, and no XDG_CONFIG_HOME. Options added there would come around
@@ -279,6 +293,56 @@ class Probe:
             return None
         kinds = ((stat.S_ISLNK, "link"), (stat.S_ISDIR, "folder"), (stat.S_ISREG, "file"), (stat.S_ISSOCK, "socket"))
         return *owner, next((kind for test, kind in kinds if test(st.st_mode)), "other")
+
+    def files(self, folder: Path) -> list[tuple[str, str, str, int]]:
+        """Each entry of a folder as (name, owner, group, st_mode), read without following a link, so a link's mode
+        says so (stat.S_ISLNK) and a plain file's permission bits are st_mode & 0o7777. Raises PermissionError when the
+        listing is refused, as a login before spark-admin's does."""
+        found = []
+        for name in sorted(os.listdir(folder)):
+            st = os.lstat(Path(folder) / name)
+            try:
+                owner, group, _ = _who(st)
+            except KeyError:
+                owner, group = str(st.st_uid), str(st.st_gid)
+            found.append((name, owner, group, st.st_mode))
+        return found
+
+    def _tail(self, path: Path) -> bytes | None:
+        """The last ROWS_TAIL_MAX bytes of a regular file, opened without following a link or waiting on a FIFO; None
+        when it isn't there or isn't a regular file. A refusal raises PermissionError."""
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except PermissionError:
+            raise
+        except OSError:
+            return None
+        try:
+            size = os.fstat(fd).st_size
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            os.lseek(fd, max(0, size - ROWS_TAIL_MAX), os.SEEK_SET)
+            return os.read(fd, ROWS_TAIL_MAX)
+        finally:
+            os.close(fd)
+
+    def holds(self, path: Path, needle: str) -> bool:
+        """Whether a row file's last bytes hold `needle`; never its content. False for a file that isn't there."""
+        data = self._tail(path)
+        return data is not None and needle.encode() in data
+
+    def newest_t0(self, path: Path) -> float | None:
+        """The latest `t0` of the rows in a row file's last bytes, or None for no file or no row with one: a moment, not
+        a row's content."""
+        newest = None
+        for line in (self._tail(path) or b"").splitlines():
+            try:
+                t0 = json.loads(line).get("t0")
+            except (ValueError, AttributeError, RecursionError):
+                continue
+            if isinstance(t0, (int, float)) and not isinstance(t0, bool) and (newest is None or t0 > newest):
+                newest = float(t0)
+        return newest
 
     def exists(self, path: Path) -> bool | None:
         """Whether a path exists, a link included, dangling or not; None when this account can't tell, as when a
@@ -1270,6 +1334,104 @@ def model(probe: Probe, key: str | None, registry: Registry | None, view: dict |
     return Check(name, False, f"{embed.label} answered {_answered(code, body)}: `make status` says why")
 
 
+def _month_file(folder: Path, prefix: str, at: float) -> Path:
+    return Path(folder) / f"{prefix}-{datetime.fromtimestamp(at, timezone.utc):%Y-%m}.jsonl"
+
+
+def _meter_folder(probe: Probe, name: str, folder: Path, owner: tuple[str, str], writer: str) -> Check:
+    """One of the meter's folders: a folder (not a link), `owner` and group, mode 2750 with setgid, and in it only
+    regular files of the same owner and group that others can't read. A verdict only: no file's content, and no row."""
+    user, group = owner
+    entry = probe.entry(folder)
+    if entry is None:
+        return Check(name, False, f"{folder} is missing, or out of your account's reach: `make bootstrap` creates it")
+    if entry[3] != "folder":
+        return Check(name, False, f"{folder} is a {entry[3]}, not a folder: `make bootstrap` sets it")
+    if entry[:3] != (user, group, METER_MODE):
+        return Check(name, False, f"{folder} is {entry[0]}:{entry[1]} {entry[2]:o}, not {user}:{group} "
+                                  f"{METER_MODE:o}: `make bootstrap` sets it")
+    try:
+        files = probe.files(folder)
+    except PermissionError:
+        return Check(name, False, f"your account can't list {folder}: log in again, so spark-admin's group applies")
+    except OSError:
+        return Check(name, False, f"{folder} can't be listed")
+    wrong = []
+    for file, who, whose, mode in files:
+        shown = _printable(file)
+        if stat.S_ISLNK(mode):
+            wrong.append(f"{shown} is a link")
+        elif stat.S_IFMT(mode) not in (0, stat.S_IFREG):
+            wrong.append(f"{shown} isn't a regular file")
+        elif (who, whose) != (user, group):
+            wrong.append(f"{shown} is {_printable(who)}:{_printable(whose)}, not {user}:{group}")
+        elif mode & 0o007:
+            wrong.append(f"{shown} can be read by others")
+    if wrong:
+        more = f", and {len(wrong) - 3} more" if len(wrong) > 3 else ""
+        return Check(name, False, f"in {folder}, {_and(wrong[:3])}{more}: only the {writer} writes there, mode 0640, and "
+                                  "only spark-admin reads")
+    return Check(name, True, f"{user}:{group} {METER_MODE:o}, setgid; no file in it is readable by others, and no "
+                             f"link; only the {writer} writes, and only spark-admin reads")
+
+
+def usage_records(probe: Probe) -> Check:
+    return _meter_folder(probe, "usage records", paths.USAGE_DIR, USAGE_OWNER, "front")
+
+
+def gate_ledger(probe: Probe) -> Check:
+    return _meter_folder(probe, "gate ledger", paths.GATE_LEDGER_DIR, LEDGER_OWNER, "gate")
+
+
+def counting(probe: Probe, view: dict | None, began: float) -> Check:
+    """The meter counts (Task 44g): this month's usage file holds a row whose `t0` is after doctor began (the end-to-end
+    check's own request, counted: nothing is printed of it), the gate's ledger has this month's file, and the gate's
+    health shows neither the front's counting nor the ledger's off. A gate without `counting` in its health is older
+    than the meter: unknown, which fails, since nothing says either is on."""
+    name = "counting"
+    now = probe.now()
+    usage = _month_file(paths.USAGE_DIR, USAGE_PREFIX, now)
+    ledger = _month_file(paths.GATE_LEDGER_DIR, LEDGER_PREFIX, now)
+    again = "log in again, so spark-admin's group applies"
+    try:
+        newest = probe.newest_t0(usage)
+        for _ in range(COUNTING_TRIES - 1):
+            if newest is not None and newest > began:
+                break
+            probe.pause(COUNTING_STEP_S)
+            newest = probe.newest_t0(usage)
+    except PermissionError:
+        return Check(name, False, f"your account can't read {usage}: {again}")
+    if newest is None or newest <= began:
+        return Check(name, False, f"{usage.name} holds no row from this run, though the check before this one asked "
+                                  "the front for an embedding: counting is off, or that check failed. `make status` "
+                                  "shows 'counting off since' and why; `make logs s=front`")
+    present = probe.exists(ledger)
+    if present is None:
+        return Check(name, False, f"your account can't tell whether {ledger.name} is there: {again}")
+    if not present:
+        return Check(name, False, f"{ledger.name} isn't in {paths.GATE_LEDGER_DIR}: the gate's ledger isn't written, "
+                                  "`make logs s=gate`")
+    if view is None:
+        return Check(name, False, "the gate's health isn't readable, so whether counting is on can't be told (the gate "
+                                  "line says why)")
+    said = view["health"].get("counting")
+    if not (isinstance(said, dict) and all(k in said for k in ("front_off_since", "ledger_off_since"))):
+        return Check(name, False, "the gate's health says nothing of counting: unknown, as an older gate's does. "
+                                  "`make apply` deploys the one this clone has")
+    off = []
+    for who, key in (("the front's usage rows", "front_off_since"), ("the gate's ledger", "ledger_off_since")):
+        since = said[key]
+        if since is not None:
+            when = _when(since, view["at"], None) if isinstance(since, (int, float)) else "an unreadable time"
+            off.append(f"{who} since {when}")
+    if off:
+        return Check(name, False, f"the gate's health shows counting off for {_and(off)}: `make status`, and "
+                                  "`make logs s=front` or `make logs s=gate` says why")
+    return Check(name, True, "this run's request was counted in this month's usage file, the gate's ledger has this "
+                             "month's file, and the gate's health shows neither off")
+
+
 # One check per Phase 2a scenario.
 
 
@@ -1482,9 +1644,10 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
 def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
            key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
     """The privacy canary: a unique string, sent through chat and speech-to-text with your key, each to a model the
-    gate shows loaded, then looked for in the journal, which your account reads in group adm, and through the gate's
-    POST /v1/canary, in its state, its refusal history and launch's records, which only spark reads. Found in none, it
-    passes. The front's spool isn't searched: no account but the front sees its private /tmp, and Task 20's tests pin
+    gate shows loaded (as a message, a model name the front must refuse with 404, and a reasoning effort), then looked
+    for in the journal, which your account reads in group adm, through the gate's POST /v1/canary, in its state, its
+    refusal history and launch's records, which only spark reads, and in this month's usage and ledger files, which
+    spark-admin reads. Found in none, it passes. The front's spool isn't searched: no account but the front sees its private /tmp, and Task 20's tests pin
     that each upload's file goes when its request ends. Sent only once 9100 has answered as the front (`not_front`
     None, front_identity)."""
     name = "privacy canary"
@@ -1519,6 +1682,20 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if code != 200:
         return Check(name, False, f"the canary couldn't be sent through chat: {chat.label} answered "
                                   f"{_answered(code, body)} — `make logs s=front`, and `make status` for the model")
+    # The meter's rows hold numbers and the registry's own model name, so the needle goes where a client chooses a
+    # string a row could keep: as the model, which the front refuses as unknown (404), and as a reasoning effort.
+    code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key, timeout=120,
+                            body={"model": needle, "max_tokens": 1,
+                                  "messages": [{"role": "user", "content": "Reply with one word."}]})
+    if code != 404:
+        return Check(name, False, f"the canary sent as a model name should be refused as unknown (404), and the front "
+                                  f"answered {_answered(code, body)} — `make logs s=front`")
+    code, body = probe.http(f"{paths.FRONT_URL}/v1/chat/completions", key=key, timeout=120,
+                            body={"model": chat.name, "max_tokens": 1, "reasoning_effort": needle,
+                                  "messages": [{"role": "user", "content": "Reply with one word."}]})
+    if code == 0 or code == 401:
+        return Check(name, False, f"the canary couldn't be sent as a reasoning effort: the front answered "
+                                  f"{_answered(code, body)} — `make logs s=front`")
     size, chunks = wav(48044, rate=16000, channels=1)  # 1.5 s of silence
     code, body = probe.upload(f"{paths.FRONT_URL}/v1/audio/transcriptions", key=key,
                               fields={"model": stt.name, "prompt": needle, "response_format": "json"},
@@ -1541,15 +1718,28 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if not (isinstance(places, list) and all(isinstance(place, str) for place in places)):
         return Check(name, False, "the gate's answer to POST /v1/canary isn't one doctor can read: `make logs s=gate`")
     found += [CANARY_PLACES.get(place, _printable(place)) for place in places]
+    meter = []
+    try:
+        for place, folder, prefix in (("the usage records", paths.USAGE_DIR, USAGE_PREFIX),
+                                      ("the gate's ledger", paths.GATE_LEDGER_DIR, LEDGER_PREFIX)):
+            if probe.holds(_month_file(folder, prefix, probe.now()), needle):
+                meter.append(place)
+    except PermissionError:
+        return Check(name, False, "your account can't read the usage records or the gate's ledger, so it can't show the "
+                                  "string isn't in them: log in again, so spark-admin's group applies")
+    found += meter
     if found:
         steps = [f"`{' '.join(JOURNAL_ARGS)} --since=@{since} | grep -n {needle}` shows where in the journal"
                  ] if "the journal" in found else []
         steps += [f"`sudo -u spark grep -rl {needle} {paths.GATE_STATE} {paths.LAUNCH}` shows which of the gate's and "
                   "launch's files"] if places else []
+        steps += [f"`grep -l {needle} {paths.USAGE_DIR}/* {paths.GATE_LEDGER_DIR}/*` shows which month's file"
+                  ] if meter else []
         return Check(name, False, f"the string sent through chat and speech-to-text turned up in {_and(found)}: find "
                                   f"what wrote it there before sending anything private — {'; '.join(steps)}")
-    return Check(name, True, "a string sent through chat and speech-to-text is in none of the journal, the gate's "
-                             "state, its refusal history or launch's records")
+    return Check(name, True, "a string sent through chat (as a message, a model name and a reasoning effort) and "
+                             "speech-to-text is in none of the journal, the gate's state, its refusal history, "
+                             "launch's records, the usage records or the gate's ledger")
 
 
 def checks(probe: Probe, key: str | None, registry: Registry | None, problem: str | None = None,
@@ -1558,15 +1748,18 @@ def checks(probe: Probe, key: str | None, registry: Registry | None, problem: st
     and the checks that need it name that variable when it's missing. The gate's view is read once, for every line
     that needs it; and whether 9100 is the front is decided once, first, before anything that carries your key or
     could load a model goes there (front_identity)."""
+    began = probe.now()
     not_front = front_identity(probe)
     view, why = gate_view(probe)
     results = [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe), agent_oom(probe),
-        firewall(probe), secrets_folder(probe), spark_folders(probe), root_copies(probe), needrestart(probe),
+        firewall(probe), secrets_folder(probe), spark_folders(probe), usage_records(probe), gate_ledger(probe),
+        root_copies(probe), needrestart(probe),
         engine_config(probe), units(probe), sockets(probe), key_list(probe, registry, problem),
         version_drift(probe, registry, problem), llama_swap_config(probe), llama_swap(probe, key, key_env),
         front(probe, key, key_env, not_front=not_front), gate(view, why), ntfy(view), bypass(view, registry),
         web(probe), model(probe, key, registry, view, problem, key_env, not_front=not_front),
+        counting(probe, view, began),
         s01(registry, problem, view), s02(probe), s03(probe, key, key_env, not_front=not_front), s05(probe, view),
         s14(probe), s17(probe),
     ]
