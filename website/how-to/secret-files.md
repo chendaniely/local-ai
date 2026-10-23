@@ -333,6 +333,15 @@ command, as above. **On the Spark:**
 sudo bash -c 'name=example-new-key; d=/etc/local-ai/secrets; case "$name" in ""|*[!a-z0-9-]*) echo "a name is lowercase letters, digits and -" >&2; exit 1 ;; esac; if awk -v n="$name" "\$1 == n {found = 1} END {exit !found}" "$d/client-keys.sha256"; then echo "$name is in client-keys.sha256 already" >&2; exit 1; fi; IFS== read -r _ k; [ -n "$k" ] || { echo "no key in the copy" >&2; exit 1; }; printf "%s %s\n" "$name" "$(printf %s "$k" | sha256sum | cut -d" " -f1)" >> "$d/client-keys.sha256"' < ~/.spark-key-in && rm ~/.spark-key-in
 ```
 
+A key can also reach the Spark as its digest alone, when the client's machine hashes the key itself
+(as [opencode and Hermes](opencode-hermes.md) do): the copy then holds one line, the 64 hex characters,
+in `~/.spark-digest-in`, and nothing in it is a key. Set `name` in the command, as above.
+**On the Spark:**
+
+```bash
+sudo bash -c 'name=example-new-key; d=/etc/local-ai/secrets; case "$name" in ""|*[!a-z0-9-]*) echo "a name is lowercase letters, digits and -" >&2; exit 1 ;; esac; if awk -v n="$name" "\$1 == n {found = 1} END {exit !found}" "$d/client-keys.sha256"; then echo "$name is in client-keys.sha256 already" >&2; exit 1; fi; read -r h; case "$h" in *[!0-9a-f]*|"") echo "the copy is not a digest" >&2; exit 1 ;; esac; [ ${#h} -eq 64 ] || { echo "the copy is not 64 hex characters" >&2; exit 1; }; printf "%s %s\n" "$name" "$h" >> "$d/client-keys.sha256"' < ~/.spark-digest-in && rm ~/.spark-digest-in
+```
+
 **20. Add it to the key list.** **On the Spark**, copy the list, add the new name with its group,
 label and account in an editor, as in step 13, and install it again:
 

@@ -692,7 +692,7 @@ def test_parse_keys_reads_the_key_list_from_its_text(tmp_path):
     groups = load_registry(FIXTURE).key_groups
     text = EXAMPLE_KEYS.read_text()
     assert parse_keys(text, groups) == load_keys(EXAMPLE_KEYS, groups)
-    assert set(parse_keys(text, groups)) == {"example-mac", "example-web-ui", "example-agent"}
+    assert set(parse_keys(text, groups)) == {"example-mac", "example-web-ui", "example-agent", "example-opencode", "example-hermes"}
     # A text it refuses, load_keys refuses the same way, from the file that holds it.
     for refused in ("keys:\n  agent: {group: robots, label: agent}\n", "- dan-mac\n",
                     "keys:\n  agent: {group: agent, label: agent}\n  agent: {group: dan, label: x}\n"):

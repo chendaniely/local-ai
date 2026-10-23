@@ -549,3 +549,32 @@ def test_hermes_write_sets_xhigh_for_the_chat_models_only(capsys):
     data = yaml.safe_load((Path(os.environ["HOME"]) / ".hermes" / "config.yaml").read_text())
     assert data["agent"] == {"reasoning_overrides": {"vision-chat": "xhigh", "coder": "xhigh"}}
     assert "with reasoning effort xhigh for its models" in capsys.readouterr().out
+
+
+def _key_env(*argv: str) -> str:
+    return cli.build_parser().parse_args(["clients", *argv]).key_env
+
+
+def test_each_client_names_its_own_key_variable_by_default():
+    # The usage meter splits usage by key, so opencode and Hermes each have a key of their own; pi keeps the one
+    # whose label on the Spark is already pi's.
+    assert _key_env("pi") == "SPARK_API_KEY"
+    assert _key_env("opencode") == "SPARK_OPENCODE_KEY"
+    assert _key_env("hermes") == "SPARK_HERMES_KEY"
+    assert _key_env("opencode", "--key-env", "SPARK_API_KEY") == "SPARK_API_KEY"  # Task 38's rollback
+
+
+def test_hermes_flags_an_old_placeholder_line_under_the_old_variable_too(capsys):
+    # With the new default the placeholder to look for is the new variable's, but the line an earlier version wrote
+    # was under SPARK_API_KEY, and Hermes sends that line's placeholder as the key just the same.
+    env = Path(os.environ["HOME"]) / ".hermes" / ".env"
+    env.parent.mkdir()
+    env.write_text("OTHER=a-stand-in\nSPARK_API_KEY=your-llama-swap-key-here\n")
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    args = argparse.Namespace(registry=registry, base_url="u", key_env="SPARK_HERMES_KEY", write=True, default=None)
+    assert clients.run_hermes(args) == 0
+    out = capsys.readouterr().out
+    assert "still has the line SPARK_API_KEY=your-llama-swap-key-here" in out and "a-stand-in" not in out
+    env.write_text("OTHER=a-stand-in\nSPARK_HERMES_KEY=your-llama-swap-key-here\n")
+    assert clients.run_hermes(args) == 0
+    assert "still has the line SPARK_HERMES_KEY=your-llama-swap-key-here" in capsys.readouterr().out

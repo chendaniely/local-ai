@@ -18,3 +18,9 @@ keys:
     group: agent
     label: agent
     account: agent
+  example-opencode:
+    group: dan
+    label: the coding client on the Mac
+  example-hermes:
+    group: dan
+    label: the assistant on the Mac

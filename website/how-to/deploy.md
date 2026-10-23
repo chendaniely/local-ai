@@ -340,6 +340,21 @@ doctor sent it llama-swap's own `GET /unload` with your key, which Phase 1's lla
 every model would have unloaded. Since the correction, Phase 2a's doctor finds 9100 answering as
 llama-swap does, fails its front line, and sends 9100 nothing after `/health`.
 
+**On the Mac**, after the rollback, opencode and Hermes need their providers back on
+`SPARK_API_KEY`, since Phase 1's llama-swap doesn't know the keys they have of their own
+(Task 44h):
+
+```bash
+uv run --frozen --project spark spark clients opencode --write --key-env SPARK_API_KEY
+```
+
+```bash
+uv run --frozen --project spark spark clients hermes --write --key-env SPARK_API_KEY
+```
+
+Then restart both (`opencode service restart`; start Hermes again).
+[opencode and Hermes](opencode-hermes.md) has the same step.
+
 The rollback puts back Phase 1's units, config and app, and nothing else: 2a's bootstrap and secret
 files stay. Left in place are the accounts `spark-front` and `spark-pull`; the PAM hook that gives
 `agent` its OOM score, its drop-in for `agent`'s user manager, and `agent`'s line in

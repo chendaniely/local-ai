@@ -240,7 +240,7 @@ async def until(condition):
         await asyncio.sleep(0.005)
 
 
-UNKNOWN_KEY_BODY = {"error": {"message": "That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.",
+UNKNOWN_KEY_BODY = {"error": {"message": "That API key isn't one the Spark knows. Check the API key this client sends.",
                               "code": "invalid_api_key"}}
 
 
