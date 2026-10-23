@@ -122,12 +122,13 @@ calls, llama-swap's activity, which each restart wipes — can't be counted eith
 
 **Dan**, in his words: "note that i have access righ tnow to multiple "local" models, i'm
 speficilaly looking for the ones connected to the dgx spark (brightroar) i shoudl not be counting
-local models runnign on the actaul mac, and i should not be counting my lander analytics dgx spark
-(under [its address] which is what i had access to earlier int he year)." *(Its address is left out
-here: a name that resolves from outside doesn't go in this public repo.)*
+local models runnign on the actaul mac, and i should not be counting my [work] dgx spark (under [its
+address] which is what i had access to earlier int he year)." *(The work machine's owner and its
+address are left out here: a third party's machine, and a name that resolves from outside, don't go
+in this public repo.)*
 
 So the baseline counts only what brightroar served. A model's name can't decide it, since the
-Mac's own models or Lander's Spark may use the same names: a session counts when its provider
+Mac's own models or the work Spark may use the same names: a session counts when its provider
 reached brightroar, and nothing before 2026-09-28, when brightroar began serving, counts at all.
 
 ## Breakdowns by app and user
@@ -261,3 +262,25 @@ provider's name, so their files can't tell.
 - C: not sure; counted, but marked as inferred.
 
 **Dan: A.** Those names only ever reached brightroar.
+
+## The design's council, and spark-menu
+
+Five reviewers read the written design (fit with the code and engines, privacy and security, the
+numbers, fit with the plan and its docs, and a skeptic looking for what could be simpler). While
+they worked, Dan pointed to another session building **spark-menu** in his private dotfiles: a
+SwiftBar menu for the Spark, with its own tunnel, poller and dropdown, which "will be pulling data
+from this". Its own design calls it a prototype of Phase 2b's menu bar that can move into this repo.
+
+**Q: The usage meter and spark-menu both want a menu bar, a Mac poller and the Spark's numbers.
+spark-menu is mid-build in dotfiles. How should the code come together?**
+
+- A: one contract now, merge later: this repo counts and calculates, spark-menu only displays, and
+  the code merges when spark-menu moves here for Phase 2b.
+- B: move spark-menu here now.
+- C: keep them apart for good.
+
+**Dan: wait, then consolidate here.** In his words: "let's wait for the other repo to finish their
+build and we can move it over here and just consolidate it all into this repo now. so i will wait".
+So spark-menu finishes its build in dotfiles, then moves into this repo, and this repo holds all of
+it: the counting, the arithmetic, the menu bar and its tunnel. The meter builds no menu bar or
+poller of its own; it gives spark-menu the numbers to show.
