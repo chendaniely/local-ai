@@ -22,6 +22,7 @@ import pytest
 
 from spark import gateproto, messages, tickets
 from spark.gate.admission import Admitted, Admitter, AdmitRequest
+from spark.gate.ledger import Ledger
 from spark.gate.policy import SAVE_BOUND_S, Drainer, FrontChannel, Pins, Refusal, Sessions, idle_due
 from spark.gate.state import GateState, ModelRecord, Pin, Session, load_state, restore, resumable_drains, save_state
 from spark.gateproto import (DRAIN_GRACE_S, LOAD_CALL_TIMEOUT_S, PROGRESS_KINDS, SESSION_TTL_S, SESSIONS_PER_UID,
@@ -31,6 +32,7 @@ from spark.llamaswap_async import LlamaSwapNotSent, LoadOutcome
 from spark.memory import MemInfo
 from spark.registry import load_registry
 from spark.render import HF_HOME, model_path
+from test_gate_ledger import Rows as LedgerRows
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 REGISTRY = load_registry(STACK_REGISTRY)
@@ -268,8 +270,9 @@ async def settle() -> None:
 class World:
     """The drainer with everything around it the test builds: the clock, launch's folder, a Hugging Face cache with
     every model's files, the state, the stand-in llama-swap (each record's model shown as its state), the admitter,
-    the front's channel (open, unless `connected` is false, its report nothing in flight) and the saves (`saves`: each
-    model's record as saved). `live` is the drainer's, Sessions.live's stand-in."""
+    the front's channel (open, unless `connected` is false, its report nothing in flight), the saves (`saves`: each
+    model's record as saved), and the gate's ledger, the admitter's, which the drainer takes from it, each row kept in
+    `ledger_rows` (Task 44e). `live` is the drainer's, Sessions.live's stand-in."""
 
     def __init__(self, tmp_path: Path, *, models: dict[str, ModelRecord] | None = None, available: float = 117.0,
                  state: GateState | None = None, connected: bool = True, on_change=None,
@@ -291,10 +294,13 @@ class World:
         shown = {"draining": "ready"}
         self.swap.states.update({name: shown.get(r.state, r.state) for name, r in self.state.models.items()})
         self.saves: list[dict[str, ModelRecord]] = []
+        self.ledger_file = LedgerRows()
+        self.ledger_rows = self.ledger_file.rows
         self.admitter = Admitter(REGISTRY, self.state, self.swap, self.emitted, self.clock,
                                  read_mem=lambda: MemInfo(121.6, self.available), read_hold=lambda: None,
                                  launch=self.launch, hf_home=str(self.hf_home), holders=lambda names: [],
-                                 on_change=self.saved, poll_s=60.0, **({} if running is None else {"running": running}))
+                                 on_change=self.saved, poll_s=60.0, **({} if running is None else {"running": running}),
+                                 ledger=Ledger(self.ledger_file, self.clock, lambda: frozenset(REGISTRY.models)))
         self.channel = FrontChannel()
         self.channel.report(snapshot())
         self.front = Front(self.channel) if connected else None
@@ -1119,6 +1125,90 @@ async def test_each_drain_says_how_it_ended(tmp_path):
         assert [d.result() for d in drains] == [True, False, False]
         assert await world.drainer.drain(EMBED, "unload", ended=ends[EMBED].append) is True
         assert ends == {CODER: ["unloaded"], GEMMA: ["not_taken"], WHISPER: ["front_dropped"], EMBED: ["not_loaded"]}
+
+
+# The gate's ledger (Task 44e; its review, I2): a drain's own unload is one row, with its why; a drain that unloads
+# nothing writes none; and one whose model left meanwhile writes `gone`.
+
+def unload_rows(world: World) -> list[tuple[float, str, str]]:
+    return [(row["t"], row["model"], row["why"]) for row in world.ledger_rows if row["kind"] == "unload"]
+
+
+@pytest.mark.anyio
+async def test_a_drains_own_unload_is_one_ledger_row_with_its_why_and_one_that_unloads_nothing_none(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # make-room's and `spark unload`'s: unloaded, not taken, dropped before its unload, nothing loaded.
+        world = World(tmp_path / "ends", models={CODER: record(CODER), GEMMA: record(GEMMA), WHISPER: record(WHISPER)})
+        world.swap.unload_as(GEMMA, "not_sent")
+        drains = [world.drain(CODER, "make-room"), world.drain(GEMMA, "unload"), world.drain(WHISPER, "make-room")]
+        await settle()
+        world.clock.now = T + 4
+        world.channel.drained(CODER, world.front.drain_id(CODER))
+        world.channel.drained(GEMMA, world.front.drain_id(GEMMA))
+        await settle()
+        world.front.drop()
+        await settle()
+        assert [d.result() for d in drains] == [True, False, False]
+        assert await world.drainer.drain(EMBED, "unload") is True  # nothing loaded
+        assert unload_rows(world) == [(T + 4, CODER, "make-room")]
+
+        # The idle check's: one the front found busy is none, one it drained is `idle`.
+        world = World(tmp_path / "idle", models={CODER: record(CODER, last_use=T - 7200)})
+        drain = world.drain(CODER, "idle")
+        await settle()
+        assert world.channel.busy(CODER, world.front.drain_id(CODER))
+        await settle()
+        assert drain.result() is False and unload_rows(world) == []
+        world = World(tmp_path / "drained", models={CODER: record(CODER, last_use=T - 7200)})
+        drain = world.drain(CODER, "idle")
+        await settle()
+        world.clock.now = T + 9
+        world.channel.drained(CODER, world.front.drain_id(CODER))
+        await settle()
+        assert drain.result() is True and unload_rows(world) == [(T + 9, CODER, "idle")]
+
+        # The front away: nothing sent, nothing unloaded, no row.
+        world = World(tmp_path / "away", models={CODER: record(CODER)}, connected=False)
+        assert await world.drainer.drain(CODER, "unload") is False and world.ledger_rows == []
+
+        # The model gone while it drained (the brake, a crash): `gone`, at once.
+        world = World(tmp_path / "gone", models={CODER: record(CODER)})
+        ends: list[str] = []
+        drain = world.drain(CODER, "make-room", ended=ends.append)
+        await settle()
+        del world.state.models[CODER]
+        world.swap.states.pop(CODER)
+        world.clock.now = T + 2
+        world.channel.drained(CODER, world.front.drain_id(CODER))
+        await settle()
+        assert drain.result() is True and ends == ["gone"] and world.swap.unloads() == []
+        assert unload_rows(world) == [(T + 2, CODER, "gone")]
+
+
+@pytest.mark.anyio
+async def test_a_drain_that_only_waited_on_the_admitters_late_start_writes_no_row_of_its_own(tmp_path):
+    with anyio.fail_after(BOUND_S):
+        # Dan's `spark unload` while the coder's start hangs past its deadline: the admitter unloads it itself, its
+        # row `late_start`; the drain behind it, which waited on a stop not its own, writes none.
+        world = World(tmp_path)
+        load = asyncio.get_running_loop().create_task(world.admitter.admit(
+            AdmitRequest("r1", CODER, "command", None, T + LOAD_CALL_TIMEOUT_S)))
+        await settle()
+        ends: list[str] = []
+        drain = world.drain(CODER, "unload", ended=ends.append)
+        await settle()
+        world.swap._loads.pop(CODER).set_result(LoadOutcome.unknown("timeout"))  # the call ends; the start runs on
+        await settle()
+        world.swap.unload_as(CODER, "holds")
+        await world.at(T + 3600)  # past the start's deadline: the admitter's abort, its stop under way
+        await world.at(T + 3601)  # the drain looks again, and waits on that stop
+        assert world.state.models[CODER].state == "stopping" and not drain.done()
+        world.clock.now = T + 3605
+        world.swap.stop_done(CODER)
+        await settle()
+        await world.at(T + 3606)
+        assert drain.result() is True and ends == ["unloaded"] and load.done()
+        assert unload_rows(world) == [(T + 3605, CODER, "late_start")]
 
 
 @pytest.mark.anyio

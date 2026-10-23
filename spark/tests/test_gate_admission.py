@@ -1002,6 +1002,10 @@ async def test_a_load_starting_past_its_deadline_and_20_s_is_unloaded(tmp_path):
         assert gate.swap.loads() == [CODER, EMBED]  # the slot freed
         assert CODER not in gate.state.models and CODER not in gate.state.issued
         assert gate.started() == [f"{EMBED}.json"]  # the coder's record cleared; the embeddings' load is under way
+        # The gate's ledger (Task 44e; its review, I2): the admitter's own unload, why late_start, then its load failed.
+        assert [(row["kind"], row.get("why"), row.get("outcome"), row.get("code")) for row in gate.ledger_rows
+                if row.get("model") == CODER] == [("unload", "late_start", None, None), ("load", None, "failed", None),
+                                                  ("refusal", None, None, "load_failed")]
 
 
 @pytest.mark.anyio

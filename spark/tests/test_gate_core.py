@@ -2178,6 +2178,34 @@ async def test_a_model_gone_from_running_is_one_unload_with_its_why(tmp_path, ho
 
 
 @pytest.mark.anyio
+async def test_launchs_backstop_refusals_reach_the_ledger_once_each(tmp_path):
+    # launch's records are read again at every pass of the bypass check: each refusal of this boot is one row, at its
+    # own time (Task 44e; its review, I2), and none from before this boot, or that isn't the backstop's.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    ledger, rows = ledger_for(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=ledger)
+
+        def refused(model: str, when: float, code: str) -> None:
+            tickets.write_whole(tickets.record_path(gate.launch, "refusals", model), {
+                "at": datetime.fromtimestamp(when).isoformat(timespec="seconds"), "model": model, "code": code,
+                "reason": "no admission ticket from the gate"})
+
+        refused(CODER, T - 86400 - 60, "no_ticket")  # before this boot
+        await core.each_five_s()
+        for model, when, code in ((CODER, T + 1, "no_ticket"), (GEMMA, T + 3, "ticket_expired")):
+            refused(model, when, code)
+            await core.each_five_s()
+            await core.each_five_s()  # the same record, read again
+        refused(WHISPER, T + 4, "no_fit")  # not the backstop's
+        await core.each_five_s()
+        assert [row for row in rows.rows if row["kind"] == "refusal"] == [
+            {"v": 1, "t": T + 1, "kind": "refusal", "model": CODER, "code": "no_ticket"},
+            {"v": 1, "t": T + 3, "kind": "refusal", "model": GEMMA, "code": "ticket_expired"}]
+        await core.stop()
+
+
+@pytest.mark.anyio
 async def test_the_fronts_snapshots_give_its_starts_and_its_counting(tmp_path):
     # The front's start, when a snapshot shows a front_started_at the gate hasn't seen, at that time; counting off at
     # the time the front reports, and on again once a snapshot no longer reports it, each only on a change. The gate's
