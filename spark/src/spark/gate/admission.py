@@ -154,6 +154,7 @@ class Admitted:
     model: str
     loaded_now: bool  # False: it was loaded already
     seconds: float | None  # the load's, from its ticket to ready; None for a model loaded already
+    load_s: float | None = None  # `seconds`, for the one request that started the load; None for every other (Task 44c)
 
 
 @dataclass(frozen=True)
@@ -1049,8 +1050,9 @@ class Admitter:
             self._emit("loaded", f"load:{load.ticket_id}", label=model.label if model else name, seconds=seconds)
         if ended is not None:
             self._hold_used_up(ended)
+        starter = load.starter
         for waiter in self._requesters(load):
-            self._resolve(waiter, Admitted(name, True, seconds))
+            self._resolve(waiter, Admitted(name, True, seconds, seconds if waiter is starter else None))
         self._kick()
 
     def _fall(self, load: _Load, model, available_at: float | None) -> tuple[Decimal | None, bool]:

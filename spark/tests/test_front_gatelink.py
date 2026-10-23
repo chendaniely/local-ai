@@ -1061,3 +1061,24 @@ async def test_the_journal_line_says_why_a_request_was_cut_or_refused():
             assert (await r.post(EMBED)).status_code == 503
             await until(lambda: len(r.lines) == 4)
         assert r.lines[3] == f"front: dan-mac {EMBED} 503 0.0s (gate_down)"
+
+
+@pytest.mark.anyio
+async def test_clear_reports_a_loads_seconds_to_its_caller():
+    async with rig(ready=[GEMMA]) as r:
+        r.gate.answer = {"ok": True, "model": CODER, "load_s": 41.5}
+        heard: list[float] = []
+        with anyio.fail_after(BOUND_S):
+            cleared = await r.link.clear(CODER, "dan-mac", T + DAN_WAIT, "r1", enter=lambda: "in", loaded=heard.append)
+        assert (cleared, heard) == ("in", [41.5])
+        r.gate.answer = {"ok": True, "model": CODER, "load_s": None}
+        with anyio.fail_after(BOUND_S):
+            await r.link.clear(CODER, "dan-mac", T + DAN_WAIT, "r2", enter=lambda: "in", loaded=heard.append)
+        assert heard == [41.5]  # none for a request that didn't start the load
+
+
+@pytest.mark.parametrize("sent", [None, True, "12", float("nan"), -1, float("inf")])
+def test_an_old_gates_answer_or_a_bad_load_s_is_none(sent):
+    body = {"ok": True, "model": CODER} if sent is None else {"ok": True, "model": CODER, "load_s": sent}
+    response = httpx.Response(200, content=json.dumps(body).encode())
+    assert gatelink._admit_answer(response) == {"ok": True, "model": CODER, "load_s": None}

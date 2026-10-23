@@ -457,7 +457,7 @@ class _Routes:
         if work.done() and not work.cancelled():
             result = work.result()
             if isinstance(result, Admitted):
-                return await exchange.answer(200, {"ok": True, "model": result.model})
+                return await exchange.answer(200, {"ok": True, "model": result.model, "load_s": result.load_s})
             return await exchange.answer(200, {"ok": False, "code": result.code, "status": result.status,
                                                "message": result.message, "retry_after_s": result.retry_after_s})
         core.admitter.cancel(request_id)

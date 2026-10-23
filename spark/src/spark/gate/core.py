@@ -1216,8 +1216,8 @@ class GateCore:
     # The front.
 
     def _model_list(self) -> list[dict]:
-        return [{"name": name, "roles": list(model.roles), "label": model.label, "resident": model.resident}
-                for name, model in self.registry.models.items()]
+        return [{"name": name, "roles": list(model.roles), "label": model.label, "resident": model.resident,
+                 "engine": model.engine} for name, model in self.registry.models.items()]
 
     def hello(self) -> dict:
         """The events call's first line: when the gate started, whether apply's hold stands (so a restarted front

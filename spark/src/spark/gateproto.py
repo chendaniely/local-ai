@@ -180,6 +180,7 @@ class AdmitRequest(TypedDict):
 class Admitted(TypedDict):
     ok: Literal[True]
     model: str
+    load_s: NotRequired[float | None]  # seconds the load took, only for the request that started it (Task 44c)
 
 
 class AdmitRefused(TypedDict):
@@ -200,6 +201,7 @@ class ModelEntry(TypedDict):
     roles: list[str]
     label: str
     resident: bool
+    engine: NotRequired[str]  # the engine's name, e.g. "llama.cpp" (Task 44c); an older gate sends none
 
 
 class HelloEvent(TypedDict):

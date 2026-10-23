@@ -243,11 +243,13 @@ class GateLink:
     # A request's way.
 
     async def clear(self, model: str, key: str, deadline: float, request_id: str, *, enter: Callable[[], _T],
-                    admit: bool = False, waits: Callable[[], bool] = lambda: True) -> _T | Refused:
+                    admit: bool = False, waits: Callable[[], bool] = lambda: True,
+                    loaded: Callable[[float], None] | None = None) -> _T | Refused:
         """`model`'s request for `key` cleared to go to llama-swap, counted in flight by `enter()` in the step that
         cleared it, which it returns; or its refusal. `admit` sends it through admission, loaded or not (a resend, or a
         request apply's hold or an unload released). `waits` is called once, before it first waits: false, and it is
-        refused too_many_requests. Each wait ends by `deadline`, by the clock."""
+        refused too_many_requests. Each wait ends by `deadline`, by the clock. `loaded` is called with the seconds a
+        load took, when the gate's answer says this request started one."""
         waited = False
         while True:
             if self._holding():
@@ -272,10 +274,10 @@ class GateLink:
                     await self._changed(deadline)
                 continue  # undrained: loaded again; unloaded: no longer loaded, so through admission
             if not admit:
-                loaded = await self.loaded(model)
+                is_loaded = await self.loaded(model)
                 if self._blocked(model):
                     continue
-                if loaded:
+                if is_loaded:
                     return enter()
             if not self.gate_up:
                 return Refused("gate_down")  # a load while the gate is down (rule 8)
@@ -287,6 +289,8 @@ class GateLink:
             if not answer["ok"]:
                 return Refused(answer["code"], answer=answer)
             admit = False
+            if loaded is not None and answer.get("load_s") is not None:
+                loaded(answer["load_s"])
             if self._blocked(model):
                 continue
             return enter()
@@ -761,7 +765,11 @@ def _admit_answer(response: httpx.Response) -> dict:
     except ValueError:
         raise GateError("the gate's admit answer isn't JSON") from None
     if isinstance(answer, dict) and answer.get("ok") is True:
-        return {"ok": True, "model": answer.get("model")}
+        load_s = answer.get("load_s")
+        if not (isinstance(load_s, (int, float)) and not isinstance(load_s, bool) and math.isfinite(load_s)
+                and load_s >= 0):
+            load_s = None
+        return {"ok": True, "model": answer.get("model"), "load_s": load_s}
     if isinstance(answer, dict) and answer.get("ok") is False:
         code, status, message, retry = (answer.get(name) for name in ("code", "status", "message", "retry_after_s"))
         if (isinstance(code, str) and code and _whole(status) and 400 <= status <= 599 and isinstance(message, str)

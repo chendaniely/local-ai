@@ -443,7 +443,7 @@ async def test_a_model_that_fits_loads_once_with_a_ticket(tmp_path):
         gate.clock.now = T + 24
         gate.swap.ready(CODER)
         await settle()
-        assert asked.result == Admitted(CODER, True, 24.0)
+        assert asked.result == Admitted(CODER, True, 24.0, 24.0)
         assert gate.swap.loads() == [CODER]
         model = gate.state.models[CODER]
         assert (model.state, model.footprint_gib, model.load_fall_gib, model.fall_flagged) == ("ready", 41.0, 30.0,
@@ -533,7 +533,7 @@ async def test_a_residents_reload_goes_ahead_of_dans_request(tmp_path):
         assert gate.swap.loads() == ["model-a", GEMMA]
         gate.swap.ready(GEMMA)
         await settle()
-        assert (await reload) == Admitted(GEMMA, True, 0.0)
+        assert (await reload) == Admitted(GEMMA, True, 0.0, 0.0)
         assert gate.swap.loads() == ["model-a", GEMMA, CODER] and not dans.done
 
 
@@ -607,7 +607,8 @@ async def test_a_request_for_a_loading_model_joins_its_load_and_waits_past_its_w
         gate.clock.now = T + 50
         gate.swap.ready(CODER)
         await settle()
-        assert dans.result == first.result == Admitted(CODER, True, 50.0)
+        assert first.result == Admitted(CODER, True, 50.0, 50.0)
+        assert dans.result == Admitted(CODER, True, 50.0)  # joined it: the load's seconds are the starter's
         assert dans.finished_at == T + 50
 
 
@@ -847,7 +848,7 @@ async def test_a_load_call_that_times_out_keeps_the_slot_until_running_says_read
         gate.available = 41.0
         gate.swap.states[CODER] = "ready"
         await gate.at(T + 30)
-        assert coder.result == Admitted(CODER, True, 30.0)
+        assert coder.result == Admitted(CODER, True, 30.0, 30.0)
         assert gate.swap.loads() == [CODER, EMBED]
         assert gate.state.models[CODER].load_fall_gib == 35.0  # 41 fell, capped at the cold load and its margin
         assert gate.state.models[CODER].fall_flagged
@@ -2012,7 +2013,7 @@ async def test_a_started_record_that_cant_be_read_or_cleared_leaves_the_outcome_
         gate.available = 40.0
         gate.swap.ready(CODER)
         await settle()
-        assert asked.result == Admitted(CODER, True, 0.0)
+        assert asked.result == Admitted(CODER, True, 0.0, 0.0)
         assert gate.state.models[CODER].state == "ready" and CODER not in gate.state.ticketed
         assert any("started" in r.getMessage() for r in caplog.records if r.name == LOG)
 
@@ -2217,7 +2218,7 @@ async def test_progress_lines_name_their_kind_and_follow_the_reason(tmp_path):
         gate.clock.now = T + 64
         gate.swap.ready(CODER)
         await settle()
-        assert asked.result == Admitted(CODER, True, 24.0)
+        assert asked.result == Admitted(CODER, True, 24.0, 24.0)
         waiting = dict.fromkeys(gateproto.WaitProgress.__annotations__)
         assert asked.progress == [
             waiting | {"kind": "waiting", "model": CODER, "label": "the coder", "why": "slot",

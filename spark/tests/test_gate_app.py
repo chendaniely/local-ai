@@ -612,7 +612,7 @@ async def test_a_caller_that_hangs_times_out(tmp_path, monkeypatch):
                 answer = await client.post("/v1/admit", json=admit_body(CODER, gate.clock.now + 30))
             answered = time.monotonic()
             assert readied and answered >= readied[0]  # answered once the load was done, 2 s on
-            assert (answer.status_code, answer.json()) == (200, {"ok": True, "model": CODER})
+            assert (answer.status_code, answer.json()) == (200, {"ok": True, "model": CODER, "load_s": 0.0})
         await core.stop()
 
 
@@ -1614,3 +1614,36 @@ def test_spark_gate_refuses_to_start_without_its_sockets_or_its_key_list(tmp_pat
     assert two.returncode == 1 and "Traceback" not in two.stderr
     assert "dan-mac" in two.stderr and "pi's retry list" in two.stderr
     assert "KEY-STANDIN-NEVER-SHOWN" not in two.stderr
+
+
+@pytest.mark.anyio
+async def test_the_request_that_started_a_load_hears_how_long_it_took(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    gate.swap.hold_loads = True
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        starter = asyncio.create_task(call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                                           body=admit_body(CODER, gate.clock.now + 100, "r1")))
+        await settle()
+        joiner = asyncio.create_task(call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                                          body=admit_body(CODER, gate.clock.now + 100, "r2")))
+        await settle()
+        gate.clock.now += 41.5
+        gate.swap.ready(CODER)
+        starter, joiner = await asyncio.gather(starter, joiner)
+        assert (starter.status, starter.json()) == (200, {"ok": True, "model": CODER, "load_s": 41.5})
+        assert (joiner.status, joiner.json()) == (200, {"ok": True, "model": CODER, "load_s": None})
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_an_admit_for_a_loaded_model_has_no_load_seconds(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        answer = await call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                            body=admit_body(RESIDENTS[0], gate.clock.now + 30))
+        assert (answer.status, answer.json()) == (200, {"ok": True, "model": RESIDENTS[0], "load_s": None})
+        await core.stop()

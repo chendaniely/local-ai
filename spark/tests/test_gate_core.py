@@ -419,7 +419,7 @@ async def test_a_model_is_starting_in_the_record_from_its_ticket(tmp_path):
                                                     "admitted_gib": FOOTPRINT[CODER], "started_at": T,
                                                     "available_at_start": IDLE - 43}
         gate.swap.ready(CODER)
-        assert await asked == Admitted(CODER, True, 1.0)
+        assert await asked == Admitted(CODER, True, 1.0, 1.0)  # the starter hears the load's seconds
         gate.clock.now = T + 2
         core.each_second()
         assert gate.activity()["models"][CODER] == {"state": "ready", "inflight": 0, "last_use": T + 1}
@@ -1491,8 +1491,8 @@ async def test_hello_and_state_carry_the_model_list(tmp_path):
         front = Front(core)
         await settle()
         hello, state = front.seen[:2]
-        listed = [{"name": name, "roles": list(m.roles), "label": m.label, "resident": m.resident}
-                  for name, m in REGISTRY.models.items()]
+        listed = [{"name": name, "roles": list(m.roles), "label": m.label, "resident": m.resident,
+                   "engine": m.engine} for name, m in REGISTRY.models.items()]
         assert hello == {"op": "hello", "gate_started_at": T, "applying": False, "lapse_s": APPLY_LAPSE_S,
                          "models": listed}
         assert state == {"op": "state", "ready": sorted(RESIDENTS), "starting": [], "draining": [],
