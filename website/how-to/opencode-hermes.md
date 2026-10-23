@@ -139,7 +139,15 @@ made, and a new terminal still got 401 until the restart.)*
 ## If Hermes says 401
 
 The key is wrong or missing. Hermes reads `SPARK_HERMES_KEY` from its environment, so start it from a
-shell that exports it (the check is on [pi's page](pi.md), with this name). An earlier version of
+shell that exports it. **On the Mac**, check it without showing it; this prints `True` only when the
+variable is exported, not merely set, and never the value *(corrected 2026-10-23: this said pi's page had the check
+with this name, but pi's page checks `SPARK_API_KEY`)*:
+
+```bash
+python3 -c "import os; print(bool(os.environ.get('SPARK_HERMES_KEY')))"
+```
+
+An earlier version of
 `make clients` wrote a placeholder line, `SPARK_API_KEY=your-llama-swap-key-here`, into Hermes's `.env` file, and
 Hermes sends that instead of your key. `make clients` now says if that line is still there: delete
 that one line in your editor. The file holds your other keys, so don't print it.
