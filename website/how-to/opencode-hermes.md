@@ -13,7 +13,9 @@ reference, never written into their files.
 *(Changed 2026-10-23, Task 44h.)* opencode and Hermes each have a key of their own, so the usage
 meter can tell them apart from pi, which keeps `SPARK_API_KEY`. opencode's is `SPARK_OPENCODE_KEY`
 and Hermes's `SPARK_HERMES_KEY`. Make them (next section) before `make clients`, or the two
-clients send an empty key.
+clients send an empty key. The Spark accepts the two new keys only after the usage meter's deploy (Task 44l), so
+until then `make clients` with the new defaults makes opencode and Hermes get 401s; point them back with
+`--key-env SPARK_API_KEY` ([rolling back](#rolling-back-to-phase-1) shows the commands).
 
 ## 0. Make their keys
 
