@@ -13,9 +13,13 @@ shouldn't.
 **What happens.** The front writes one row of numbers for each request that passes through it, into
 this month's `usage-YYYY-MM.jsonl` (the month by UTC) in `/var/lib/local-ai/usage`. The gate writes
 its own ledger of loads, unloads, refusals, brake firings and starts into
-`/var/lib/local-ai/gate-ledger`. A row holds counts, times and the registry's own model name, and
-never a prompt, an answer, a file name, a title, a key name or any string a client chose. Both
-folders are mine to read and no one else's: owned by the front or the gate, group `spark-admin`,
+`/var/lib/local-ai/gate-ledger`. A usage row holds counts, times, the registry's own model name and
+the name of the key the request came with, so the totals split by key, and so by harness; it never
+holds a prompt, an answer, a file name, a title or any string a client chose. The ledger holds no
+key's name: a load or a refusal it records names the request's id, which joins it to that request's
+usage row. *(Corrected 2026-10-23, before the meter's deploy: this said a row never holds a key
+name, which is true only of the ledger's rows.)*
+Both folders are mine to read and no one else's: owned by the front or the gate, group `spark-admin`,
 mode `2750` with setgid, and every file `0640`, so `agent`, the engines and a guest can't read them.
 Counting never gets in a request's way: if a row can't be written, the request goes through and the
 front says counting is off, from when. Totals may lag by minutes. (The design is
