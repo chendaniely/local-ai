@@ -543,3 +543,35 @@ tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
 **If counting misbehaves:** revert Tasks 44a–44e on `phase-2a` and `make apply`, which restarts only the front and the
 gate; the units' `-` paths are inert and stay. For a disk problem alone nothing is needed: the front serves with
 counting off, and doctor says so.
+
+***
+
+## After the Mac round (2026-10-23)
+
+Tasks 44a–44j are built and reviewed on `chendaniely/harness-status-bar`: each task had a fresh implementer and a
+fresh reviewer, then a whole-branch review and one fix wave. Nothing is pushed or merged. What is left, in order:
+
+1. **[Spark] The Linux-only tests.** The Mac skips them (the front's and the gate's `spark front` / `spark gate`
+   subprocess tests among them), so a full `make test` on the Spark comes before the merge. On the Mac, the failures
+   in `test_bootstrap` (68), `test_brake` (14), `test_tested_against`, `test_tickets`, `test_launch`,
+   `test_notifier_script` and `test_ntfy_records` are the Mac's environment: the same tests fail at the plan's base
+   commit.
+2. **[Spark] Task 44f's Ubuntu 24.04 check,** which needed Docker the Mac doesn't have. *Not yet run*: the Spark
+   session runs each step before relying on it. In a throwaway `ubuntu:24.04` container with the clone mounted
+   read-only and `systemd` installed: `systemd-analyze verify` on the rendered `local-ai-front.service`,
+   `local-ai-gate.service` and `local-ai-llama-swap.service`, seen to run, not skip; then, as root with stand-in
+   users (`spark-front`, `spark`, one in `spark-admin`, an `agent`), bootstrap's two `install -d` lines, after which
+   `stat -c '%U:%G %a'` shows `spark-front:spark-admin 2750` and `spark:spark-admin 2750`, a file `spark-front` makes
+   under umask 0027 is `640`, the `spark-admin` stand-in reads it, and the `agent` stand-in can't.
+3. **[Dan] The merge into `phase-2a`,** with Dan's OK, and the denylist scan before any push. `website/design/plan.md`
+   gained one dated correction here (the `invalid_api_key` row's 401 words), which may conflict with `phase-2a`'s own
+   edits.
+4. **[Spark] Task 44k,** on `phase-2a`, which also carries what this round made untrue there: `phase-2a.md`'s "one
+   request id for each admit" (~line 5810), its `/v1/front/inflight` and `/v1/front/refused` shapes (~2070), its quotes
+   of the old 401 words (~380, ~1300), its Task 38 rollback (the two `--key-env SPARK_API_KEY` commands), its lines on
+   llama-swap's `InaccessiblePaths` (~6460) and the gate's `ReadWritePaths` (~6620), lines ~156–157; `plan.md` ~276–277
+   and ~1750; Task 49's wording (a request still waiting on the gate at SIGTERM leaves `end: gone`, not `cut`); and the
+   design's §2 on the ledger's rows.
+5. **[Spark] [Dan] Task 44l, the deploy,** as written above. Until its keys exist, `make clients` on the Mac gives
+   OpenCode and Hermes 401s: their runbook's rollback commands point them back at `SPARK_API_KEY`. Each
+   `make doctor --full` run may send one "no model by that name" notification, for the canary's own made-up model name.
