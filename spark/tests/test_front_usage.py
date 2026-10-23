@@ -131,6 +131,13 @@ def test_a_non_streamed_resp_id_is_the_top_level_id_never_a_tool_calls():
     assert scan([short.encode()], streamed=False).resp_id is None
 
 
+def test_a_streamed_resp_id_is_the_top_level_id_never_a_tool_calls():
+    first = sse('{"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"id":"call_report-q3.md",'
+                '"index":0,"type":"function","function":{"name":"f","arguments":""}}]}}],"created":1,'
+                f'"id":"{ID}","model":"m","system_fingerprint":"b","object":"chat.completion.chunk"}}')
+    assert scan([first, DONE]).resp_id == ID
+
+
 @pytest.mark.parametrize("streamed", [True, False])
 @pytest.mark.parametrize("n", [30, 16_000])
 def test_an_unclosed_usage_or_timings_object_is_dropped_in_linear_time(n, streamed):
