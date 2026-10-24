@@ -4250,6 +4250,14 @@ Each item gets its own design pass when its turn comes.
    `CLAUDE.md`, `README.md` and the overview diagram name all four, since they are read outside
    the site. Chosen over listing the four on every page and over a glossary page.
 
+- **2026-10-23** — The harnesses go by the names their own documentation gives them, Dan's
+   decision: "keep the brand names as the official documentation names them for posit assistant
+   use (`pa`) afterwards because that's the cli tool to fire it up". So **Pi**, **OpenCode**,
+   **Posit Assistant (`pa`)** and **Hermes Agent** (Hermes after the first mention, as its own
+   README has it); the commands stay lowercase in code: `pi`, `opencode`, `pa`, `hermes`. Checked
+   the same day against pi.dev, opencode.ai/docs, assistant.posit.co and Nous Research's
+   `hermes-agent` README. Chosen over all-lowercase names and over `posit-assistant`.
+
 ## Sources
 
 Three research passes (serving components; clients, DGX OS and operations; models per slot) and a
