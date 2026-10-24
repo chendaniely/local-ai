@@ -58,7 +58,7 @@ flowchart TB
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
-    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B,<br/>Qwen3.6-35B-A3B on demand"]
+    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B,<br/>Qwen3.6-35B-A3B on demand,<br/>Qwen3-ASR 1.7B and 0.6B on demand, 32K and 64K"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -258,6 +258,7 @@ flowchart LR
   litellm -. "through the front or in its place, if Phase 3 adds it" .-> swap["llama-swap"]
   swap --> chat["chat and embeddings"]
   swap --> stt["whisper, interactive"]
+  swap --> asr["Qwen3-ASR 1.7B and 0.6B, on demand<br/>llama.cpp, text without timestamps"]
   swap -.-> batch["whisper, batch"]:::planned
   swap -.-> diar["speaker labels"]:::planned
 ```
@@ -268,6 +269,13 @@ reach the front instead, with the same keys, and it already waits per key and re
 Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
 never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front, takes its
 place, or isn't used at all, the front growing what Phase 3 needs.
+
+Since 2026-10-23 (my decisions), Qwen3-ASR transcribes too, on llama.cpp, on the same
+`/v1/audio/transcriptions`, asked for by name: `qwen3-asr-1.7b-32k` and `qwen3-asr-0.6b-32k` fit
+beside the coder, and `qwen3-asr-1.7b-64k` and `qwen3-asr-0.6b-64k` take the full context, for
+when the box is otherwise free or overnight. Whisper stays the web UI's speech-to-text. Qwen3-ASR
+returns text only: captions' timestamps need its aligner, which the stack doesn't serve yet, and
+Phase 3's speech comparison picks a served one.
 
 ## When something breaks, and upkeep
 

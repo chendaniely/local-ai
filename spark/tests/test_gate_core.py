@@ -1216,13 +1216,13 @@ async def test_after_damage_the_brakes_old_events_and_the_engines_found_are_pass
 async def test_an_engine_without_a_ticket_is_reported(tmp_path):
     gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
     port = engine_ports(REGISTRY)[EMBED]
-    assert port == 801
+    assert port == 805
     process(gate.proc, 4242, "llama-server", uid=SPARK, rss_anon_kib=gib(2),
-            argv=("llama-server", "--host", "127.0.0.1", "--port", "801"))
+            argv=("llama-server", "--host", "127.0.0.1", "--port", "805"))
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
         await core.each_five_s()
-        assert core.status_view()["health"]["unticketed_engines"] == [{"model": EMBED, "port": 801, "pid": 4242}]
+        assert core.status_view()["health"]["unticketed_engines"] == [{"model": EMBED, "port": 805, "pid": 4242}]
         # Its pid in state.ticketed, started when the record says: ticketed.
         core.state.ticketed[EMBED] = Ticketed(EMBED, 4242, "t1", T - 3600, start_of(4242))
         await core.each_five_s()
@@ -1233,7 +1233,7 @@ async def test_an_engine_without_a_ticket_is_reported(tmp_path):
                    "boot_id": BOOT, "footprint_gib": 8.0, "available_gib": 80.0, "started_at": T - 4, "pid": 4242}
         tickets.write_whole(tickets.record_path(gate.launch, tickets.STARTED, EMBED), started)
         await core.each_five_s()
-        assert core.status_view()["health"]["unticketed_engines"] == [{"model": EMBED, "port": 801, "pid": 4242}]
+        assert core.status_view()["health"]["unticketed_engines"] == [{"model": EMBED, "port": 805, "pid": 4242}]
         core.state.issued[EMBED] = "t2"
         await core.each_five_s()
         assert core.status_view()["health"]["unticketed_engines"] == []
@@ -1265,7 +1265,7 @@ async def test_the_holders_never_count_a_ticketed_engine(tmp_path):
     state.ticketed[EMBED] = Ticketed(EMBED, 4242, "t1", T - 3600, start_of(4242))
     gate = Gate(tmp_path, state=state, shown=dict.fromkeys(RESIDENTS, "ready"))
     # A spark process of a comm no engine has, on the embeddings' port, its pid the one its ticket started.
-    process(gate.proc, 4242, "python3", uid=SPARK, rss_anon_kib=gib(30), argv=("python3", "--port", "801"))
+    process(gate.proc, 4242, "python3", uid=SPARK, rss_anon_kib=gib(30), argv=("python3", "--port", "805"))
     process(gate.proc, 5000, "python3", uid=DAN, rss_anon_kib=gib(20))
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
@@ -2059,18 +2059,18 @@ async def test_the_engines_found_after_damage_are_those_of_the_start_that_found_
     # A gate restarted before the front's first snapshot still has fresh_after_damage; an engine started around the
     # gate between the two starts is never recorded as found after damage, and is reported.
     gate = Gate(tmp_path, damaged=True, shown=dict.fromkeys(RESIDENTS, "ready"))
-    process(gate.proc, 4242, "llama-server", uid=SPARK, rss_anon_kib=gib(2), argv=("llama-server", "--port", "801"))
+    process(gate.proc, 4242, "llama-server", uid=SPARK, rss_anon_kib=gib(2), argv=("llama-server", "--port", "805"))
     with anyio.fail_after(BOUND_S):
         first = await gate.started()
         assert first.state.ticketed[EMBED].ticket_id == FOUND_AFTER_DAMAGE
         await first.stop()
         process(gate.proc, 4343, "llama-server", uid=SPARK, rss_anon_kib=gib(2),
-                argv=("llama-server", "--port", "803"))  # the coder's port since Qwen3.6 took 802 (2026-10-16)
+                argv=("llama-server", "--port", "807"))  # the coder's port since Qwen3-ASR's four (2026-10-23)
         gate.swap.states[CODER] = "ready"
         core = await gate.started()
         assert core.state.fresh_after_damage is True and CODER not in core.state.ticketed
         await core.each_five_s()
-        assert core.status_view()["health"]["unticketed_engines"] == [{"model": CODER, "port": 803, "pid": 4343}]
+        assert core.status_view()["health"]["unticketed_engines"] == [{"model": CODER, "port": 807, "pid": 4343}]
         await core.stop()
 
 
@@ -2133,5 +2133,8 @@ async def test_apply_restarted_waits_for_a_reload_queued_while_it_checks(tmp_pat
 
 def test_engine_ports_follow_llama_swaps_own_order():
     # v257 gives ${PORT} to each model in its names' sorted order, from startPort (internal/config/macros.go:150-186).
-    # Since Qwen3.6 came back on demand (2026-10-16), it sorts between the embeddings and the coder.
-    assert engine_ports(REGISTRY) == {GEMMA: 800, EMBED: 801, "qwen3.6-35b-a3b": 802, CODER: 803, WHISPER: 804}
+    # Since Qwen3.6 came back on demand (2026-10-16), it sorts between the embeddings and the coder; since Qwen3-ASR's
+    # four (2026-10-23), they sort between Gemma and the embeddings, '-' before '.'.
+    assert engine_ports(REGISTRY) == {GEMMA: 800, "qwen3-asr-0.6b-32k": 801, "qwen3-asr-0.6b-64k": 802,
+                                      "qwen3-asr-1.7b-32k": 803, "qwen3-asr-1.7b-64k": 804, EMBED: 805,
+                                      "qwen3.6-35b-a3b": 806, CODER: 807, WHISPER: 808}

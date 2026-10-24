@@ -366,7 +366,8 @@ def render(registry: Registry, versions: dict[str, Component], registry_text: st
         "searxng_image": _image(_component(versions, "searxng")),
         "task_model": _only(registry, "model with the 'small' role", lambda m: "small" in m.roles),
         "embedding_model": _only(registry, "embeddings model", lambda m: m.capability == "embeddings"),
-        "stt_model": _only(registry, "transcription model", lambda m: m.capability == "transcription"),
+        # By the role since Qwen3-ASR made whisper one transcription model of several (2026-10-23).
+        "stt_model": _only(registry, "model with the 'stt' role", lambda m: "stt" in m.roles),
         "notifier_priorities": " ".join(f"{name}={registry.notifications[kind]}"
                                         for name, kind in NOTIFIER_PRIORITIES.items()),
     }

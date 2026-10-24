@@ -2073,7 +2073,9 @@ huggingface_hub with network access, matters most.)*
   (ufw + ACL) · batch whisper.cpp · the diarization endpoint · the **speech comparison** on Dan's
   51.6-minute lecture against the Mac baseline: Whisper large-v3-turbo vs Parakeet TDT v3 GGUF vs
   NeMo Parakeet with boosting, plus non-English, language-switching and two-speaker samples; pyannote
-  community-1 · the endpoint reference page (chat + speech; the site render stays on the Mac until
+  community-1 *(2026-10-23, Dan's decisions: Qwen3-ASR joins the candidates, already served on
+  llama.cpp, with a served aligner for its timestamps, vLLM's or CrispASR's; *Speech*)* · the
+  endpoint reference page (chat + speech; the site render stays on the Mac until
   Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
 - *Dan's audio host (decided 2026-10-05; designed at this phase, not before):* it succeeds the
@@ -4226,7 +4228,8 @@ Each item gets its own design pass when its turn comes.
   unloads; `spark render` warns that every model at once passes the ceiling, as rule 9 has it warn.
   llama-swap numbers the engines by name, so it takes 802, the coder 803 and whisper 804.
 - **2026-10-23** — Qwen3-ASR-1.7B and Qwen3-ASR-0.6B in the registry, on demand, each at two
-  contexts, Dan's decisions (*Speech* gains a dated note). Dan needs multi-language transcription for
+  contexts, Dan's decisions (*Speech* and Phase 3 gain dated notes, and the Architecture page's
+  diagrams show them). Dan needs multi-language transcription for
   his projects, and Chinese, Japanese and English transcription and closed captions for one of them,
   now rather than at Phase 3. They are served by llama.cpp b11146, the build already deployed, from
   ggml-org's Q8_0 GGUFs with their audio projectors, through llama-server's

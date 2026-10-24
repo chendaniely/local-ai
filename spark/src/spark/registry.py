@@ -12,7 +12,8 @@ from typing import Literal
 
 import yaml
 
-ENGINES = {"llama.cpp": {"chat", "embeddings"}, "whisper.cpp": {"transcription"}}
+# llama.cpp's transcription is Qwen3-ASR's, through llama-server's /v1/audio/transcriptions (2026-10-23).
+ENGINES = {"llama.cpp": {"chat", "embeddings", "transcription"}, "whisper.cpp": {"transcription"}}
 NAME = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 # A Hugging Face repo id, org/name, as the Hub allows one: neither part starts or ends with '.' or '-', and '--' and

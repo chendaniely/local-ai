@@ -476,7 +476,8 @@ async def test_status_view_has_every_key(tmp_path):
             assert set(view["health"]) == _keys_of(gateproto.HealthView)
             assert set(view["health"]["brake"]) == _keys_of(gateproto.BrakeHealth)
             assert set(view["health"]["ntfy"]) == _keys_of(gateproto.NtfyHealth)
-            assert [set(model) for model in view["models"]] == [_keys_of(gateproto.ModelView)] * 5  # Qwen3.6's, too
+            # Qwen3.6's too, and Qwen3-ASR's four since 2026-10-23
+            assert [set(model) for model in view["models"]] == [_keys_of(gateproto.ModelView)] * 9
         await core.stop()
 
 
@@ -535,7 +536,11 @@ async def test_status_view_at_the_examples_moment(tmp_path):
                        model(CODER, state="not_loaded", last_use=None,
                              brake_mark={"at": at(3, 12), "seen_gib": 26.0}),
                        # Qwen3.6, on demand beside the coder since 2026-10-16 (Dan's decision)
-                       model("qwen3.6-35b-a3b", state="not_loaded", last_use=None)],
+                       model("qwen3.6-35b-a3b", state="not_loaded", last_use=None),
+                       # Qwen3-ASR, on demand, each at two contexts, since 2026-10-23 (Dan's decisions)
+                       *(model(name, state="not_loaded", last_use=None)
+                         for name in ("qwen3-asr-1.7b-32k", "qwen3-asr-1.7b-64k", "qwen3-asr-0.6b-32k",
+                                      "qwen3-asr-0.6b-64k"))],
             "waiting": [{"key_label": "agent", "model": CODER, "waited_s": 120.0, "wait_s": 600, "why": "dan",
                          "free_gib": 18.0}],
             "paused": None, "held": None, "pins": [], "sessions": [],

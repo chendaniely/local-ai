@@ -1174,6 +1174,24 @@ def test_the_end_to_end_check_goes_through_the_front():
     assert failures(probe) == {"a model, end to end": "the front didn't answer: `make logs s=front`"}
 
 
+def test_the_speech_checks_ask_only_the_stt_role_never_another_transcription_model():
+    # Since Qwen3-ASR (2026-10-23, Dan's decision) whisper is one transcription model of several: the upload checks
+    # that whisper-server takes a chunked body, and llama-server would hold the whole 170 MB, so with whisper not
+    # loaded and an on-demand ASR loaded, neither check is sent to the ASR.
+    asr = dataclasses.replace(REG.models["stt"], name="asr", label="the ASR", engine="llama.cpp", resident=False,
+                              roles=())
+    registry = dataclasses.replace(REG, models={**REG.models, "asr": asr})
+    probe = FakeProbe()
+    whisper = next(m for m in probe.gate["/v1/status"]["models"] if m["name"] == "stt")
+    whisper["state"] = "not_loaded"
+    probe.gate["/v1/status"]["models"].append({**whisper, "name": "asr", "label": "the ASR", "resident": False,
+                                               "state": "ready"})
+    not_loaded = "the gate shows whisper as not loaded, and doctor loads nothing: `spark load stt`, then doctor again"
+    assert failures(probe, registry=registry, full=True) == {"a 170 MB upload": not_loaded,
+                                                             "privacy canary": not_loaded}
+    assert probe.uploads == []
+
+
 def test_a_registry_without_an_embeddings_model_says_how_to_give_it_one():
     registry = dataclasses.replace(REG, models={name: m for name, m in REG.models.items()
                                                 if m.capability != "embeddings"})
