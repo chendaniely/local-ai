@@ -17,7 +17,7 @@ reach the models over `make tunnel`, as pi and opencode do. The decision is in t
 - **`pa`**: Posit's TUI, a development build from its install script (updated 2026-10-19; it
   rebuilds as Posit merges), in `/usr/local/bin`.
 - **Positron 1.138.0** ships the assistant as its `posit.assistant` 1.7.0 bootstrap extension.
-- **The provider**: `make clients-posit` (new on this branch) writes the built-in
+- **The provider**: `make clients-posit` (new in PR #30) writes the built-in
   `openai-compatible` entry into `~/.posit/ai/providers.json` from the registry: the chat models,
   with their windows and capabilities, and an allow list that keeps the embeddings model and
   whisper out of the picker. The built-in form, because a custom entry has no key path that works
