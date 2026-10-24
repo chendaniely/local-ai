@@ -2457,6 +2457,13 @@ Each item gets its own design pass when its turn comes.
   ambiguous; issue #28 holds the per-harness scope, including Posit's built-in provider, which
   Posit names itself and so only a custom entry could rename (with no key path in the TUI,
   checked 2026-10-19).
+- **The harnesses' official names in the rest of the prose** (Dan, 2026-10-23): the harnesses
+  go by Pi, OpenCode, Posit Assistant (`pa`) and Hermes Agent (*Revisions*, 2026-10-23), and the
+  first sweep renamed only the shared text: the definition on the Architecture page, the shared
+  lists, the diagrams, the harness runbooks' titles, `CLAUDE.md` and `README.md`. The rest of the
+  current prose, about 250 mentions in 30 files (lowercase "pi" and "opencode" in sentences, not
+  in code), gets one mechanical commit after `phase-2a` merges into `main`, so it doesn't collide
+  with the phase's own edits. Dated history stays as written.
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
@@ -4256,7 +4263,10 @@ Each item gets its own design pass when its turn comes.
    **Posit Assistant (`pa`)** and **Hermes Agent** (Hermes after the first mention, as its own
    README has it); the commands stay lowercase in code: `pi`, `opencode`, `pa`, `hermes`. Checked
    the same day against pi.dev, opencode.ai/docs, assistant.posit.co and Nous Research's
-   `hermes-agent` README. Chosen over all-lowercase names and over `posit-assistant`.
+   `hermes-agent` README. Chosen over all-lowercase names and over `posit-assistant`. How far the
+   rename reaches, Dan's decision the same day: the shared text now, and the rest of the prose,
+   about 250 mentions in 30 files, in one commit after `phase-2a` merges (Backlog), chosen over
+   renaming it all now, against the phase's own edits to the same files.
 
 ## Sources
 
