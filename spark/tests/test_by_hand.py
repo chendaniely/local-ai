@@ -36,6 +36,9 @@ TEMPORARY = {
     "spark/tests/test_makefile.py": "the by-hand targets' tests, at its end",
     "website/how-to/qwen3.8-27b-sglang.md": "Run it again's note naming make fast-coder",
     "website/how-to/qwen3.8-flash-next.md": "Run it again's note naming make flash-next",
+    # They name the by-hand targets on purpose: change them when Phase 4a retires the by-hand engines.
+    "website/design/usage-meter.md": "the sentences naming the by-hand targets, when Phase 4a retires them",
+    "website/design/usage-meter-counter.md": "the sentences naming the by-hand targets, when Phase 4a retires them",
     "website/design/plan.md": "nothing: Phase 4a's removal item is marked done, and its Revisions line stays",
 }
 NAMES = ("make fast-coder", "make flash-next", "by-hand-fast-coder", "by-hand-flash-next")
@@ -206,6 +209,13 @@ def test_off_the_spark_it_refuses_and_runs_nothing(tmp_path, script, do):
 ], ids=["docker run", "128K", "MTP", "hold-down", "hold-down's end"])
 def test_it_holds_the_runbooks_block_as_written(script, runbook_block):
     assert holds_block(script, runbook_block)
+
+
+def test_the_sglang_launch_reports_its_cache():
+    """The usage meter reads cached tokens from the engine's usage; SGLang leaves them out unless asked, so rows
+    would read as uncached."""
+    assert "--enable-cache-report" in FAST_CODER.read_text()
+    assert "--enable-cache-report" in DOCKER_RUN
 
 
 @pytest.mark.parametrize("script", [FAST_CODER, FLASH_NEXT], ids=["fast-coder", "flash-next"])

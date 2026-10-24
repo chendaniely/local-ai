@@ -335,14 +335,18 @@ def merge_hermes(path: Path, provider: dict, default: str | None = None,
     return backup
 
 
-def hermes_placeholder_left(path: Path, key_env: str) -> bool:
-    """Whether Hermes's .env still holds the placeholder this command's first version wrote, which Hermes would send as
-    the key. Only the verdict leaves here: the file holds other secrets."""
+def hermes_placeholder_left(path: Path, key_env: str) -> str | None:
+    """The variable whose placeholder line Hermes's .env still holds, or None. The line is the one this command's first
+    version wrote, which Hermes would send as the key; that version wrote it under SPARK_API_KEY, so this looks for
+    that name as well as key_env. Only the variable's name leaves here: the file holds other secrets."""
     try:
-        lines = path.read_text().splitlines()
+        lines = [line.strip() for line in path.read_text().splitlines()]
     except (OSError, ValueError):
-        return False
-    return f"{key_env}={HERMES_PLACEHOLDER}" in (line.strip() for line in lines)
+        return None
+    for name in dict.fromkeys([key_env, "SPARK_API_KEY"]):
+        if f"{name}={HERMES_PLACEHOLDER}" in lines:
+            return name
+    return None
 
 
 def register(subparsers) -> None:
@@ -362,7 +366,7 @@ def register(subparsers) -> None:
     opencode = sub.add_parser("opencode", help="the Spark provider for OpenCode")
     opencode.add_argument("--write", action="store_true", help=f"merge it into {OPENCODE_CONFIG}")
     opencode.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
-    opencode.add_argument("--key-env", default="SPARK_API_KEY")
+    opencode.add_argument("--key-env", default="SPARK_OPENCODE_KEY")
     opencode.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
     opencode.set_defaults(func=run_opencode)
 
@@ -370,7 +374,7 @@ def register(subparsers) -> None:
     hermes.add_argument("--write", action="store_true", help=f"merge it into {HERMES_CONFIG}")
     hermes.add_argument("--default", metavar="MODEL", help="also make this Spark model Hermes's default")
     hermes.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
-    hermes.add_argument("--key-env", default="SPARK_API_KEY")
+    hermes.add_argument("--key-env", default="SPARK_HERMES_KEY")
     hermes.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
     hermes.set_defaults(func=run_hermes)
 
@@ -431,7 +435,8 @@ def run_hermes(args: argparse.Namespace) -> int:
     elif chat:
         coder = next((m.name for m in chat if "coder" in m.roles), chat[0].name)
         print(f"clients: in Hermes, /model custom:spark:{coder} picks a Spark model")
-    if hermes_placeholder_left(HERMES_ENV.expanduser(), args.key_env):
-        print(f"clients: {HERMES_ENV} still has the line {args.key_env}={HERMES_PLACEHOLDER}, which an earlier version "
+    left = hermes_placeholder_left(HERMES_ENV.expanduser(), args.key_env)
+    if left:
+        print(f"clients: {HERMES_ENV} still has the line {left}={HERMES_PLACEHOLDER}, which an earlier version "
               f"of this command wrote; delete it, or Hermes sends it as the key instead of your {args.key_env}")
     return 0

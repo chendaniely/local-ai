@@ -28,6 +28,7 @@ from spark import brakeevents, gateproto, messages, procs, tickets
 from spark.brakeevents import BrakeEvent, append_event
 from spark.gate.admission import AdmitRequest, Admitted
 from spark.gate.core import ACTIVITY_FILE, FOUND_AFTER_DAMAGE, GateCore, engine_ports
+from spark.gate.ledger import Ledger
 from spark.gate.state import (STATE_FILE, ApplyHold, GateState, ModelRecord, Pin, RefusalRecord, RecentRecord,
                               RoomHold, Ticketed, load_state, save_state)
 from spark.gate.units import UNITS, UnitState, UnitStateError
@@ -39,6 +40,7 @@ from spark.llamaswap_async import AsyncLlamaSwap, LlamaSwapNotSent, LoadOutcome
 from spark.memory import MemInfo
 from spark.registry import ClientKey, load_registry
 from spark.render import HF_HOME, model_path
+from test_gate_ledger import Rows as LedgerRows
 from test_procs import gib, process, start_of
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
@@ -419,7 +421,7 @@ async def test_a_model_is_starting_in_the_record_from_its_ticket(tmp_path):
                                                     "admitted_gib": FOOTPRINT[CODER], "started_at": T,
                                                     "available_at_start": IDLE - 43}
         gate.swap.ready(CODER)
-        assert await asked == Admitted(CODER, True, 1.0)
+        assert await asked == Admitted(CODER, True, 1.0, 1.0)  # the starter hears the load's seconds
         gate.clock.now = T + 2
         core.each_second()
         assert gate.activity()["models"][CODER] == {"state": "ready", "inflight": 0, "last_use": T + 1}
@@ -1491,8 +1493,8 @@ async def test_hello_and_state_carry_the_model_list(tmp_path):
         front = Front(core)
         await settle()
         hello, state = front.seen[:2]
-        listed = [{"name": name, "roles": list(m.roles), "label": m.label, "resident": m.resident}
-                  for name, m in REGISTRY.models.items()]
+        listed = [{"name": name, "roles": list(m.roles), "label": m.label, "resident": m.resident,
+                   "engine": m.engine} for name, m in REGISTRY.models.items()]
         assert hello == {"op": "hello", "gate_started_at": T, "applying": False, "lapse_s": APPLY_LAPSE_S,
                          "models": listed}
         assert state == {"op": "state", "ready": sorted(RESIDENTS), "starting": [], "draining": [],
@@ -2135,3 +2137,101 @@ def test_engine_ports_follow_llama_swaps_own_order():
     # v257 gives ${PORT} to each model in its names' sorted order, from startPort (internal/config/macros.go:150-186).
     # Since Qwen3.6 came back on demand (2026-10-16), it sorts between the embeddings and the coder.
     assert engine_ports(REGISTRY) == {GEMMA: 800, EMBED: 801, "qwen3.6-35b-a3b": 802, CODER: 803, WHISPER: 804}
+
+
+# The gate's ledger (the usage meter's counter, Task 44e).
+
+def ledger_for(gate: Gate) -> tuple[Ledger, LedgerRows]:
+    """A ledger for the core on the gate's clock, each row it puts kept in the stand-in's `rows`."""
+    rows = LedgerRows()
+    return Ledger(rows, gate.clock, lambda: frozenset(REGISTRY.models)), rows
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("how", ["crash", "apply", "brake"])
+async def test_a_model_gone_from_running_is_one_unload_with_its_why(tmp_path, how):
+    # A model that leaves /running with no unload of the gate's under way: a crash (`gone`); apply's restart of
+    # llama-swap (`apply`); or the brake's kill, which its own events say, at their own times, and which /running's
+    # read doesn't say again while its hold stands. The brake writes its hold, unloads, then records what it did.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS, CODER), shown=dict.fromkeys([*RESIDENTS, CODER], "ready"))
+    ledger, rows = ledger_for(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=ledger)
+        if how == "apply":
+            core.drain_all(DAN)
+            core.apply_begin(["llama-swap"])
+        if how == "brake":
+            this_boots_hold(gate)
+            events = gate.brake / brakeevents.EVENTS_FILE
+            append_event(events, BrakeEvent(1, T + 1, BOOT, 1, "fired", None, None, 19.6, 20.0, False))
+            append_event(events, BrakeEvent(1, T + 1.5, BOOT, 1, "unload", CODER, "idle", 19.6, 20.0, False))
+        gate.swap.states.pop(CODER)
+        gate.clock.now = T + 5
+        await core.read_running()
+        assert CODER not in core.state.models
+        want = {"crash": [{"v": 1, "t": T + 5, "kind": "unload", "model": CODER, "why": "gone"}],
+                "apply": [{"v": 1, "t": T + 5, "kind": "unload", "model": CODER, "why": "apply"}],
+                "brake": [{"v": 1, "t": T + 1, "kind": "brake_fired"},
+                          {"v": 1, "t": T + 1.5, "kind": "unload", "model": CODER, "why": "brake"}]}[how]
+        assert [row for row in rows.rows if row["kind"] in ("unload", "brake_fired")] == want
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_launchs_backstop_refusals_reach_the_ledger_once_each(tmp_path):
+    # launch's records are read again at every pass of the bypass check: each refusal of this boot is one row, at its
+    # own time (Task 44e; its review, I2), and none from before this boot, or that isn't the backstop's.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    ledger, rows = ledger_for(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=ledger)
+
+        def refused(model: str, when: float, code: str) -> None:
+            tickets.write_whole(tickets.record_path(gate.launch, "refusals", model), {
+                "at": datetime.fromtimestamp(when).isoformat(timespec="seconds"), "model": model, "code": code,
+                "reason": "no admission ticket from the gate"})
+
+        refused(CODER, T - 86400 - 60, "no_ticket")  # before this boot
+        await core.each_five_s()
+        for model, when, code in ((CODER, T + 1, "no_ticket"), (GEMMA, T + 3, "ticket_expired")):
+            refused(model, when, code)
+            await core.each_five_s()
+            await core.each_five_s()  # the same record, read again
+        refused(WHISPER, T + 4, "no_fit")  # not the backstop's
+        await core.each_five_s()
+        assert [row for row in rows.rows if row["kind"] == "refusal"] == [
+            {"v": 1, "t": T + 1, "kind": "refusal", "model": CODER, "code": "no_ticket"},
+            {"v": 1, "t": T + 3, "kind": "refusal", "model": GEMMA, "code": "ticket_expired"}]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_the_fronts_snapshots_give_its_starts_and_its_counting(tmp_path):
+    # The front's start, when a snapshot shows a front_started_at the gate hasn't seen, at that time; counting off at
+    # the time the front reports, and on again once a snapshot no longer reports it, each only on a change. The gate's
+    # own writer is read each second, as `health.counting` reads both, on the control socket's view.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    ledger, rows = ledger_for(gate)
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=ledger)
+        report = snapshot()  # a front started a day ago
+        core.inflight(report)
+        core.inflight(report | {"seq": 2})
+        core.inflight(report | {"seq": 3, "counting_off_since": T - 30})
+        core.inflight(report | {"seq": 4, "counting_off_since": T - 30})
+        assert core.status_view()["health"]["counting"] == {"front_off_since": T - 30, "ledger_off_since": None}
+        gate.clock.now = T + 10
+        core.inflight(report | {"seq": 5})
+        restarted = report | {"seq": 1, "front_started_at": T + 9}
+        core.inflight(restarted)
+        assert rows.rows == [
+            {"v": 1, "t": T - 86400, "kind": "start", "who": "front"},
+            {"v": 1, "t": T - 30, "kind": "counting_off", "who": "front"},
+            {"v": 1, "t": T + 10, "kind": "counting_on", "who": "front", "seconds": 40.0},
+            {"v": 1, "t": T + 9, "kind": "start", "who": "front"}]
+        rows.off = T + 8  # the ledger's own folder can't be written since
+        core.each_second()
+        assert rows.rows[-1] == {"v": 1, "t": T + 8, "kind": "counting_off", "who": "gate"}
+        assert core.status_view()["health"]["counting"] == {"front_off_since": None, "ledger_off_since": T + 8}
+        assert "counting" not in core.status_view(sees=lambda item: True)["health"]  # the status socket's view
+        await core.stop()

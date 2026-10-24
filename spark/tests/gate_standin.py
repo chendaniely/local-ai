@@ -283,7 +283,7 @@ class GateStandIn:
 
     def _answer(self, body: dict) -> dict:
         answer = self.answer(body) if callable(self.answer) else self.answer
-        return answer if answer is not None else {"ok": True, "model": body["model"]}
+        return answer if answer is not None else {"ok": True, "model": body["model"], "load_s": None}
 
 
 async def _first(work, stopping: asyncio.Event):

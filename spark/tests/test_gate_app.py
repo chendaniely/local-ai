@@ -19,6 +19,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import math
 import os
 import shutil
 import signal
@@ -43,15 +44,18 @@ from spark import brake, gateproto, messages, protocols, serve
 from spark.brake import KeyCheck, write_key_check
 from spark.gate import app as gate_app
 from spark.gate.admission import AdmitRequest
+from spark.gate.ledger import Ledger
 from spark.gate.state import BrakeMark, RecentRecord, RefusalRecord, RoomHold, load_state
 from spark.gateclient import GateClient
 from spark.hold import Hold, read_hold, write_hold
 from spark.llamaswap_async import AsyncLlamaSwap
 from spark.messages import Holder, Moment
+from spark.registry import ClientKey
 # anyio_backend and local_zone are test_gate_core's fixtures, imported so they apply here as there.
 from test_gate_core import (AGENT, BOOT, BOUND_S, CODER, DAN, EMBED, FOOTPRINT, GEMMA, KEY, KEYS, RESIDENTS, SPARK,
                             STACK_REGISTRY, USERS, WHISPER, Front, Gate, _check_at, anyio_backend, at, loaded,
                             local_zone, record, settle, this_boots_hold)
+from test_gate_ledger import Rows as LedgerRows
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
 
@@ -250,6 +254,131 @@ async def test_an_inflight_report_from_any_uid_but_spark_fronts_is_refused(tmp_p
         assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=held)).status == 200
         assert core.front.snapshot == held
         await core.stop()
+
+
+# The usage meter's counter (Task 44e): the front reports counting off in its snapshot, read leniently, so a front of
+# before or a value that isn't a time never fails the snapshot that drains and `make apply` count on.
+
+@pytest.mark.anyio
+async def test_a_bad_counting_field_never_fails_the_snapshot(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        counts = busy_on(GEMMA, at_s=gate.clock.now - 5)
+        report = {"seq": 1, "front_started_at": gate.clock.now - 60, "models": counts, "draining": []}
+        before = {name: value for name, value in report.items() if name != "front_started_at"}  # a front of before
+        for n, sent in enumerate([report | {"counting_off_since": "x"}, report | {"counting_off_since": math.nan},
+                                  report | {"counting_off_since": None}, report | {"counting_off_since": True},
+                                  report, report | {"front_started_at": "x"}, report | {"front_started_at": None},
+                                  report | {"front_started_at": math.inf}, before], start=1):
+            core.front.snapshot = None
+            answer = await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=sent | {"seq": n})
+            assert answer.status == 200, sent
+            assert core.front.snapshot["seq"] == n and core.front.snapshot["models"] == counts  # the counts taken
+            assert core.status_view()["health"]["counting"]["front_off_since"] is None
+        off = report | {"seq": 99, "counting_off_since": gate.clock.now - 30}
+        assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=off)).status == 200
+        assert core.status_view()["health"]["counting"]["front_off_since"] == gate.clock.now - 30
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_counting_shows_on_the_control_socket_only(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    rows = LedgerRows()
+    rows.off = gate.clock.now - 3  # the ledger's folder can't be written since
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
+        status, control = apps(core)
+        report = {"seq": 1, "front_started_at": gate.clock.now - 60, "models": {}, "draining": [],
+                  "counting_off_since": gate.clock.now - 7}
+        assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=report)).status == 200
+        full = (await call(control, "GET", "/v1/status", uid=DAN)).json()
+        assert full["health"]["counting"] == {"front_off_since": gate.clock.now - 7,
+                                              "ledger_off_since": gate.clock.now - 3}
+        for uid in (AGENT, DAN):
+            assert "counting" not in (await call(status, "GET", "/v1/status", uid=uid)).json()["health"]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_dropped_events_call_is_the_fronts_stop_only_once_a_new_front_starts_or_the_gate_stops(tmp_path):
+    # The controller's ruling at Task 44e's review (I1): a drop is held as the front's stop until its next snapshot
+    # says which it was. The same front_started_at: its connection only dropped, and nothing is written. A new one: the
+    # stop, at the drop, then the new start. One still held at the gate's own stop goes in then; a call the gate's stop
+    # ends is no stop of the front's.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    rows = LedgerRows()
+
+    def stop(at: float) -> dict:
+        return {"v": 1, "t": at, "kind": "stop", "who": "front"}
+
+    def start(at: float) -> dict:
+        return {"v": 1, "t": at, "kind": "start", "who": "front"}
+
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
+        status, _ = apps(core)
+        seq = iter(range(1, 100))
+
+        async def report(started: float) -> None:
+            body = {"seq": next(seq), "front_started_at": started, "models": {}, "draining": []}
+            assert (await call(status, "POST", "/v1/front/inflight", uid=FRONT_UID, body=body)).status == 200
+
+        async def dropped() -> None:
+            await call(status, "GET", "/v1/front/events", uid=FRONT_UID, leave_after_head=True)
+
+        first = gate.clock.now - 600
+        await report(first)
+        assert rows.rows == [start(first)]
+        # The connection drops and the same front calls again: nothing.
+        gate.clock.now += 5
+        await dropped()
+        assert rows.rows == [start(first)]  # held
+        await report(first)
+        assert rows.rows == [start(first)]
+        # The front restarts: the stop at its drop, then the new front's start.
+        gate.clock.now += 5
+        restarted_at = gate.clock.now
+        await dropped()
+        gate.clock.now += 3
+        second = gate.clock.now - 1
+        await report(second)
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+        # A newer call replacing one still open is a drop too, settled the same way: the same front, nothing.
+        gate.clock.now += 5
+        older = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
+        while not core.front.connected:
+            await asyncio.sleep(0.01)
+        await dropped()
+        await older
+        await report(second)
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+        # The gate stops: the call its stop ends is no stop of the front's.
+        gate.clock.now += 5
+        last = asyncio.create_task(call(status, "GET", "/v1/front/events", uid=FRONT_UID))
+        while not core.front.connected:
+            await asyncio.sleep(0.01)
+        status.state.stopping.set()
+        await last
+        await core.stop()
+        assert rows.rows == [start(first), stop(restarted_at), start(second)]
+
+    # The front goes for good: the gate's own stop writes the stop still held, at the drop.
+    (tmp_path / "gone").mkdir()
+    gate = Gate(tmp_path / "gone", state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    rows = LedgerRows()
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
+        status, _ = apps(core)
+        await report(first)
+        gate.clock.now += 5
+        gone_at = gate.clock.now
+        await dropped()
+        gate.clock.now += 60
+        await core.stop()
+        assert rows.rows == [start(first), stop(gone_at)]
 
 
 @pytest.mark.anyio
@@ -469,11 +598,13 @@ async def test_status_view_has_every_key(tmp_path):
     gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
     with anyio.fail_after(BOUND_S):
         core = await gate.started()
-        for app, uid in zip(apps(core), (AGENT, DAN), strict=True):
+        for app, uid, socket_name in zip(apps(core), (AGENT, DAN), ("status", "control"), strict=True):
             view = (await call(app, "GET", "/v1/status", uid=uid)).json()
             assert set(view) == _keys_of(gateproto.StatusView)
             assert set(view["memory"]) == _keys_of(gateproto.MemoryView)
-            assert set(view["health"]) == _keys_of(gateproto.HealthView)
+            # `counting` is the control socket's alone (Task 44e): whether the front and the ledger count.
+            assert set(view["health"]) == _keys_of(gateproto.HealthView) - ({"counting"} if socket_name == "status"
+                                                                              else set())
             assert set(view["health"]["brake"]) == _keys_of(gateproto.BrakeHealth)
             assert set(view["health"]["ntfy"]) == _keys_of(gateproto.NtfyHealth)
             assert [set(model) for model in view["models"]] == [_keys_of(gateproto.ModelView)] * 5  # Qwen3.6's, too
@@ -549,12 +680,16 @@ async def test_status_view_at_the_examples_moment(tmp_path):
             "health": {"front": "ok", "gate": "ok", "brake": {"status": "ok", "key_checked_at": at(9, 0)},
                        "llama_swap": "ok", "ntfy": {"status": "ok", "failing_since": None, "dropped": 0},
                        "activity_age_s": 0.0, "unticketed_engines": [], "no_ticket_refusals": 0,
-                       "damaged_at": None, "damaged_kept_as": None, "read_problems": []},
+                       "damaged_at": None, "damaged_kept_as": None, "read_problems": [],
+                       # The control socket's alone (Task 44e): the front's rows and the ledger both written.
+                       "counting": {"front_off_since": None, "ledger_off_since": None}},
             "applying": None, "problems": []}
         # agent's view of the same moment, through the status socket: its own refusal and the system's event, the
-        # brake's release, which every caller sees; Dan's refusal left out, and Dan's process unnamed.
+        # brake's release, which every caller sees; Dan's refusal left out, and Dan's process unnamed; and no
+        # `counting`, the control socket's alone (Task 44e).
         agents = (await call(status, "GET", "/v1/status", uid=AGENT)).json()
-        assert agents == full | {"recent": full["recent"][:2]}
+        statuses = {name: value for name, value in full["health"].items() if name != "counting"}
+        assert agents == full | {"recent": full["recent"][:2], "health": statuses}
         assert "chendaniely" not in json.dumps(agents) and "a process of Dan's, 32 GiB" in json.dumps(agents)
         waiting.cancel()
         await core.stop()
@@ -612,7 +747,7 @@ async def test_a_caller_that_hangs_times_out(tmp_path, monkeypatch):
                 answer = await client.post("/v1/admit", json=admit_body(CODER, gate.clock.now + 30))
             answered = time.monotonic()
             assert readied and answered >= readied[0]  # answered once the load was done, 2 s on
-            assert (answer.status_code, answer.json()) == (200, {"ok": True, "model": CODER})
+            assert (answer.status_code, answer.json()) == (200, {"ok": True, "model": CODER, "load_s": 0.0})
         await core.stop()
 
 
@@ -852,6 +987,33 @@ async def test_a_front_refusal_is_recorded_and_sent(tmp_path):
             messages.notification("refused", core.registry, code="model_not_found", moment=Moment(
                 asked_name="gpt-4", key_label="pi on the Mac", words="dan", names_processes=True, wait_s=30,
                 models=[(m.label, name) for name, m in core.registry.models.items()])).message]
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_a_front_refusal_keeps_no_key_and_no_clients_string_in_the_ledger(tmp_path):
+    # The ledger (Task 44e) joins the front's rows by the request's id: a key's name never goes in, nor a model the
+    # registry doesn't have, nor an id the front doesn't mint. Its time is the front's refusal's.
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    rows = LedgerRows()
+    needle = ClientKey("needlekey-q3", "dan", "the needle's key", "chendaniely")
+    request_id = "00000000000000c3"
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started(keys=KEYS | {needle.name: needle},
+                                  ledger=Ledger(rows, gate.clock, lambda: frozenset(core.registry.models)))
+        status, _ = apps(core)
+        for model, more in (("needlemodel-q3", {"request_id": request_id}), (GEMMA, {"request_id": "needle-id"}),
+                            (None, {})):
+            answer = await call(status, "POST", "/v1/front/refused", uid=FRONT_UID,
+                                body={"at": gate.clock.now - 1, "code": "model_not_found", "model": model,
+                                      "key": needle.name, "message": "There's no model called needlemodel-q3."}
+                                | more)
+            assert answer.status == 200
+        assert rows.rows == [
+            {"v": 1, "t": gate.clock.now - 1, "kind": "refusal", "id": request_id, "code": "model_not_found"},
+            {"v": 1, "t": gate.clock.now - 1, "kind": "refusal", "model": GEMMA, "code": "model_not_found"},
+            {"v": 1, "t": gate.clock.now - 1, "kind": "refusal", "code": "model_not_found"}]
+        assert "needle" not in json.dumps(rows.rows)
         await core.stop()
 
 
@@ -1515,6 +1677,10 @@ async def serve_ntfy(ntfy: Ntfy):
 
 
 SPARK_GATE = "import sys\nfrom spark import cli\nsys.exit(cli.main(['gate']))\n"
+# `spark gate` whose ledger writes whatever the test disk has free (rowfile.FREE_FLOOR, 20 GiB on the box), so the
+# rows the test checks don't depend on the machine (Task 44e's review, R9).
+SPARK_GATE_ANY_DISK = ("import sys\nfrom spark import cli, rowfile\nrowfile.FREE_FLOOR = 0\n"
+                       "sys.exit(cli.main(['gate']))\n")
 
 
 def _received(receiver: socket.socket, timeout: float) -> bytes:
@@ -1532,8 +1698,8 @@ async def test_spark_gate_takes_its_two_sockets_from_systemd(tmp_path, sockdir):
     (credentials / "keys").write_text(EXAMPLE_KEYS.read_text())
     registry = tmp_path / "models.yaml"
     registry.write_text(STACK_REGISTRY.read_text())
-    state_dir, brake, launch = tmp_path / "gate", tmp_path / "brake", tmp_path / "launch"
-    for folder in (state_dir, brake, launch):
+    state_dir, brake, launch, ledger = tmp_path / "gate", tmp_path / "brake", tmp_path / "launch", tmp_path / "ledger"
+    for folder in (state_dir, brake, launch, ledger):
         folder.mkdir()
     fake = FakeLlamaSwap({KEY}, gate_core_models())
     for name in RESIDENTS:
@@ -1552,10 +1718,10 @@ async def test_spark_gate_takes_its_two_sockets_from_systemd(tmp_path, sockdir):
             env |= {"LISTEN_FDS": "2", "LISTEN_FDNAMES": "status:control", "NOTIFY_SOCKET": str(sockdir / "notify"),
                     "CREDENTIALS_DIRECTORY": str(credentials), "NTFY_URL": ntfy_url, "NTFY_TOPIC_GATE": "gate-standin",
                     "SPARK_REGISTRY": str(registry), "SPARK_GATE_STATE": str(state_dir), "SPARK_STATE": str(brake),
-                    "SPARK_LAUNCH": str(launch), "SPARK_LLAMASWAP_URL": swap_url,
+                    "SPARK_LAUNCH": str(launch), "SPARK_LLAMASWAP_URL": swap_url, "SPARK_GATE_LEDGER": str(ledger),
                     "SPARK_FRONT_UID": str(ME), "SPARK_ADMIN_UIDS": str(ME)}
             fds = [listener.fileno() for listener in listeners]
-            child = subprocess.Popen([sys.executable, "-c", LAUNCHER, ",".join(map(str, fds)), SPARK_GATE],
+            child = subprocess.Popen([sys.executable, "-c", LAUNCHER, ",".join(map(str, fds)), SPARK_GATE_ANY_DISK],
                                      pass_fds=fds, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             for listener in listeners:
                 listener.close()  # the gate's now, as systemd's would be
@@ -1576,6 +1742,10 @@ async def test_spark_gate_takes_its_two_sockets_from_systemd(tmp_path, sockdir):
             assert "Traceback" not in err
     state, problem = load_state(state_dir)
     assert problem is None and state.clean_shutdown is True
+    # Its ledger (Task 44e): its start and its stop, the first and last rows of its month's file.
+    [month] = ledger.glob("ledger-*.jsonl")
+    rows = [json.loads(line) for line in month.read_text().splitlines()]
+    assert [(row["kind"], row.get("who")) for row in (rows[0], rows[-1])] == [("start", "gate"), ("stop", "gate")]
 
 
 @LINUX_ONLY
@@ -1614,3 +1784,36 @@ def test_spark_gate_refuses_to_start_without_its_sockets_or_its_key_list(tmp_pat
     assert two.returncode == 1 and "Traceback" not in two.stderr
     assert "dan-mac" in two.stderr and "pi's retry list" in two.stderr
     assert "KEY-STANDIN-NEVER-SHOWN" not in two.stderr
+
+
+@pytest.mark.anyio
+async def test_the_request_that_started_a_load_hears_how_long_it_took(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    gate.swap.hold_loads = True
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        starter = asyncio.create_task(call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                                           body=admit_body(CODER, gate.clock.now + 100, "r1")))
+        await settle()
+        joiner = asyncio.create_task(call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                                          body=admit_body(CODER, gate.clock.now + 100, "r2")))
+        await settle()
+        gate.clock.now += 41.5
+        gate.swap.ready(CODER)
+        starter, joiner = await asyncio.gather(starter, joiner)
+        assert (starter.status, starter.json()) == (200, {"ok": True, "model": CODER, "load_s": 41.5})
+        assert (joiner.status, joiner.json()) == (200, {"ok": True, "model": CODER, "load_s": None})
+        await core.stop()
+
+
+@pytest.mark.anyio
+async def test_an_admit_for_a_loaded_model_has_no_load_seconds(tmp_path):
+    gate = Gate(tmp_path, state=loaded(*RESIDENTS), shown=dict.fromkeys(RESIDENTS, "ready"))
+    with anyio.fail_after(BOUND_S):
+        core = await gate.started()
+        status, _ = apps(core)
+        answer = await call(status, "POST", "/v1/admit", uid=FRONT_UID,
+                            body=admit_body(RESIDENTS[0], gate.clock.now + 30))
+        assert (answer.status, answer.json()) == (200, {"ok": True, "model": RESIDENTS[0], "load_s": None})
+        await core.stop()

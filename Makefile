@@ -113,7 +113,8 @@ doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 # Delete then: in this Makefile, these two targets, this comment, their .PHONY names and their scripts in lint's list;
 # stack/host/by-hand-fast-coder, stack/host/by-hand-flash-next, spark/tests/test_by_hand.py, the by-hand targets'
 # tests at the end of spark/tests/test_makefile.py, and the notes naming them in website/how-to/qwen3.8-27b-sglang.md
-# and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the same, and test_by_hand.py's TEMPORARY.
+# and website/how-to/qwen3.8-flash-next.md, and the sentences naming them in website/design/usage-meter.md and
+# website/design/usage-meter-counter.md. plan.md's Phase 4a lists the same, and test_by_hand.py's TEMPORARY.
 # Each runs its runbook's Run it again on the Spark, in one script; SPARK_OPT stands in for /opt/local-ai, as for
 # make test, and off the Spark the script refuses.
 fast-coder: ## TEMPORARY, on the Spark: the fast coder on SGLang beside the stack, as its runbook's Run it again; DO=wait waits for it, DO=stop stops it

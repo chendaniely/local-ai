@@ -519,6 +519,22 @@ def test_the_brakes_health_says_whats_wrong_never_ok():
         assert row(view, "health", words="agent") == [f"health      front ok · gate ok · {agents} · ntfy ok"]
 
 
+def test_status_says_when_counting_is_off():
+    # The usage meter's counter (Task 44g): the control socket's health says when the front's rows, or the gate's
+    # ledger, stopped being written; nothing while each is on, and nothing from a view that carries no `counting`.
+    view = example_view()
+    assert "counting" not in text(view)  # an older gate's view, or the status socket's: no word of it
+    view["health"]["counting"] = {"front_off_since": None, "ledger_off_since": None}
+    assert text(view) == "\n".join(EXAMPLE)
+    view["health"]["counting"] = {"front_off_since": at(8, 52), "ledger_off_since": None}
+    assert row(view, "health")[1:] == ["            counting off since 08:52 (the front's usage rows)"]
+    view["health"]["counting"] = {"front_off_since": None, "ledger_off_since": at(8, 30)}
+    assert row(view, "health")[1:] == ["            counting off since 08:30 (the gate's ledger)"]
+    view["health"]["counting"] = {"front_off_since": at(8, 52), "ledger_off_since": at(8, 30)}
+    assert row(view, "health")[1:] == ["            counting off since 08:52 (the front's usage rows)",
+                                       "            counting off since 08:30 (the gate's ledger)"]
+
+
 def test_whats_wrong_on_the_gates_side_shows_under_health():
     view = example_view()
     view["health"] |= {

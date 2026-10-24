@@ -591,3 +591,12 @@ addresses the configs need is still to come. The vault's entry note records each
 location, and by reference for anything secret — when it is created. *(Since 2026-10-15, Phase 2a:
 also the private key list on the Spark, `/etc/local-ai/keys.yaml`. It holds each client key's name,
 group and label, private but not secret, and never goes in this repo.)*
+
+**Private files (from the usage meter).** *(Since 2026-10-23.)* A snapshot of the Mac's harness
+session stores — Hermes's and OpenCode's databases, pi's and Posit Assistant's session folders —
+in `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the Mac, `0700`, Dan's alone. It is
+where the meter's lifetime baseline reads anything from before its counter started, since the
+harnesses prune their own files (Hermes after 90 days). It holds full chat text, so it never
+syncs anywhere without a decision. The design's §7 ([`usage-meter.md`](website/design/usage-meter.md))
+says how it is read; the vault's entry note records it, and will record the meter's folders on the
+Spark as they are made.

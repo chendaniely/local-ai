@@ -106,7 +106,8 @@ class Gate:
         self.answer: dict = {"ok": True}
         self.refusals: list[tuple[str, str | None, str, str]] = []
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not admit and model in self.ready:
             return enter()
         if not waits():
@@ -116,7 +117,7 @@ class Gate:
             await self.hold.wait()
         return enter() if self.answer.get("ok") else gatelink.Refused(self.answer["code"], answer=self.answer)
 
-    def refused(self, code: str, model: str | None, key: str, message: str) -> None:
+    def refused(self, code: str, model: str | None, key: str, message: str, request_id: str | None = None) -> None:
         self.refusals.append((code, model, key, message))
 
     async def why_cut(self, model: str, since: float) -> None:
@@ -239,7 +240,7 @@ async def until(condition):
         await asyncio.sleep(0.005)
 
 
-UNKNOWN_KEY_BODY = {"error": {"message": "That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.",
+UNKNOWN_KEY_BODY = {"error": {"message": "That API key isn't one the Spark knows. Check the API key this client sends.",
                               "code": "invalid_api_key"}}
 
 
@@ -710,7 +711,8 @@ class ClearsOnCue(Gate):
         self.cue = asyncio.Event()
         self.stubborn = stubborn
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not waits():
             return gatelink.Refused("too_many_requests")
         try:

@@ -90,7 +90,8 @@ def status_view() -> dict:
         "health": {"front": "ok", "gate": "ok", "brake": {"status": "ok", "key_checked_at": NOW - 3600},
                    "llama_swap": "ok", "ntfy": {"status": "ok", "failing_since": None, "dropped": 0},
                    "activity_age_s": 0.4, "unticketed_engines": [], "no_ticket_refusals": 0, "damaged_at": None,
-                   "damaged_kept_as": None, "read_problems": []},
+                   "damaged_kept_as": None, "read_problems": [],
+                   "counting": {"front_off_since": None, "ledger_off_since": None}},
     }
 
 
@@ -120,7 +121,7 @@ class FakeProbe:
         self.properties = {unit: {"OnFailure": f"local-ai-notify@{unit}.service",
                                   "StartLimitIntervalUSec": "10s" if unit == "local-ai-llama-swap.service" else "0"}
                            for unit in FAILURE_UNITS}
-        self.files = {
+        self.texts = {
             Path("/proc/4242/cmdline"): "\0".join(["/usr/bin/earlyoom", *REPO_ARGS]) + "\0",
             UFW_CONF: "# /etc/ufw/ufw.conf\nENABLED=yes\nLOGLEVEL=low\n",
             # needrestart's override, installed by bootstrap as the repo has it.
@@ -146,6 +147,16 @@ class FakeProbe:
         self.entries |= {path: ("root", "root", 0o644, "file") for path in doctor.ROOT_FILES}
         # spark's home, root's own, and the brake's folder, as bootstrap sets them.
         self.entries |= {path: (*owner, "folder") for path, owner in doctor.SPARK_FOLDERS}
+        # The meter's two folders (Task 44g), and the files in each, as the front and the gate leave them: a listing is
+        # a list of (name, owner, group, st_mode), or the error it raises.
+        self.entries |= {doctor.paths.USAGE_DIR: (*doctor.USAGE_OWNER, 0o2750, "folder"),
+                         doctor.paths.GATE_LEDGER_DIR: (*doctor.LEDGER_OWNER, 0o2750, "folder")}
+        self.listing = {doctor.paths.USAGE_DIR: [("usage-2026-10.jsonl", *doctor.USAGE_OWNER, 0o100640)],
+                        doctor.paths.GATE_LEDGER_DIR: [("ledger-2026-10.jsonl", *doctor.LEDGER_OWNER, 0o100640)]}
+        # The moment of the newest row in this month's usage file (None: no row), later than doctor's start; and the
+        # paths whose rows would hold anything sent through the front (holds answers from what was sent, as the journal).
+        self.newest = NOW + 1
+        self.holders = set()
         self.entries |= {
             doctor.paths.GATE_STATUS_SOCKET: ("spark", "spark-users", 0o660, "socket"),
             doctor.paths.GATE_CONTROL_SOCKET: ("root", "spark-admin", 0o660, "socket"),
@@ -157,6 +168,7 @@ class FakeProbe:
             Path(REG.engines["whisper.cpp"]): ("chendaniely", "chendaniely", 0o755, "file"),
         }
         self.present = {}  # a path that exists (True) or can't be told about (None); any other doesn't exist
+        self.ledger = True  # this month's ledger file is there (a test that sets `present` leaves it alone)
         self.open_folders = set()
         self.pages = {"http://127.0.0.1:3000/": 200, "http://127.0.0.1:8888/": 200}
         # A test's own answer to a URL: (status, body), or a function of the key and the body that gives one.
@@ -172,8 +184,9 @@ class FakeProbe:
                      "/v1/make-room/plan": {"plan_id": "p1", "plan": {"candidates": [], "unload": [],
                                                                       "free_after_gib": 9, "enough": True,
                                                                       "most_gib": 82}},
-                     "/v1/canary": {"found": []}}
+                     "/v1/canary": gate_canary}
         self.posted = []  # (route, body) for each POST to the gate
+        self.refused = []  # the gate's refusal history: the model names the front refused as unknown and told it of
         self.journal = ""  # what journalctl prints, or a function of this probe that gives it
         self.groups_in = {"chendaniely", "adm", "spark-admin", "spark-users"}
         self.paused = []
@@ -198,8 +211,8 @@ class FakeProbe:
 
     def read(self, path):
         path = Path(path)
-        if path in self.files:
-            return self.files[path]
+        if path in self.texts:
+            return self.texts[path]
         if not path.is_absolute():  # the repo's own files: the clone's, as doctor reads them from its root
             return (ROOT / path).read_text()
         return None
@@ -214,7 +227,26 @@ class FakeProbe:
         return self.entries.get(Path(path))
 
     def exists(self, path):
+        if Path(path) == doctor.paths.GATE_LEDGER_DIR / "ledger-2026-10.jsonl" and Path(path) not in self.present:
+            return self.ledger
         return self.present.get(Path(path), False)
+
+    def files(self, folder):
+        listing = self.listing[Path(folder)]
+        if isinstance(listing, Exception):
+            raise listing
+        return listing
+
+    def holds(self, path, needle):
+        if isinstance(self.newest, Exception):
+            raise self.newest
+        sent = json.dumps([self.asked, self.uploads])
+        return Path(path).parent in self.holders and needle in sent
+
+    def newest_t0(self, path):
+        if isinstance(self.newest, Exception):
+            raise self.newest
+        return self.newest
 
     def uid(self, name):
         return {"agent": AGENT_UID}.get(name)
@@ -232,7 +264,7 @@ class FakeProbe:
         self.paused.append(seconds)
 
     def brake_key_check(self):
-        text = self.files.get(doctor.paths.STATE / brake.KEY_CHECK_FILE)
+        text = self.texts.get(doctor.paths.STATE / brake.KEY_CHECK_FILE)
         if text is None:
             return None, None
         try:
@@ -248,7 +280,8 @@ class FakeProbe:
 
     def gate_post(self, route, body):
         self.posted.append((route, body))
-        return self.gate_get(route)
+        answer = self.gate[route]
+        return answer(self, body) if callable(answer) else self.gate_get(route)
 
     def http(self, url, *, key=None, body=None, timeout=10.0, limit=doctor.ANSWER_MAX):
         self.keys_sent.append(key)
@@ -272,7 +305,8 @@ class FakeProbe:
                 assert body == {"model": "embed", "input": "doctor"}
                 return 200, json.dumps({"data": [{"embedding": [0.25, 0.5]}]})
             if path == "/v1/chat/completions":
-                if body["model"] == doctor.MADE_UP_MODEL:
+                if body["model"] not in REG.models:  # the made-up model, and the canary sent as one
+                    self.refused.append(body["model"])  # the front tells the gate every model_not_found (_refuse)
                     return 404, NOT_FOUND
                 return 200, json.dumps({"choices": [{"message": {"content": "OK"}}]})
         return self.pages.get(url, 0), ""
@@ -285,12 +319,20 @@ class FakeProbe:
         return self.upload_answer
 
 
+def gate_canary(probe, body):
+    """POST /v1/canary as the real gate answers it (gate/app.py `canary`): its refusal history keeps each refusal the
+    front told it of in the front's words, and model_not_found's name the model as the client asked for it (`refused`),
+    so a needle sent as a model name is always found there, by design (the final review's C1)."""
+    history = [f"There's no model called {name} here." for name in probe.refused]
+    return {"found": ["refusals"] if any(body["needle"] in message for message in history) else []}
+
+
 NO_KEY_REMEDY = " — set it as website/how-to/deploy.md's *Before the first deploy* says, then log in afresh"
 # Every check, in order, without --full; --full adds the two last.
 NAMES = ["leak hooks", "GPU set", "running kernel's modules", "GPU driver", "earlyoom", "agent's OOM score", "firewall",
-         "secrets folder", "spark's folders", "root's copies", "needrestart", "engine config files", "stack units",
+         "secrets folder", "spark's folders", "usage records", "gate ledger", "root's copies", "needrestart", "engine config files", "stack units",
          "sockets", "key list", "version drift", "llama-swap config", "llama-swap", "front", "gate", "ntfy", "bypass",
-         "web services", "a model, end to end", "S01", "S02", "S03", "S05", "S14", "S17"]
+         "web services", "a model, end to end", "counting", "S01", "S02", "S03", "S05", "S14", "S17"]
 FULL = ["a 170 MB upload", "privacy canary"]
 KEY_CHECKS = {"llama-swap", "front", "a model, end to end", "S03"}  # the checks that send your key
 
@@ -310,6 +352,238 @@ def test_a_healthy_spark_passes_every_check():
     assert [c.name for c in results if not c.ok or c.warn] == []
     full = checks(FakeProbe(), KEY, REG, full=True)
     assert [c.name for c in full] == NAMES + FULL and all(c.ok and not c.warn for c in full)
+
+
+# The usage meter's folders and counter (Task 44g).
+
+def meter_folders(tmp_path, monkeypatch, *, mode=0o2750, file_mode=0o640):
+    """The two folders on a real disk, chmod'ed for real, owned by the running user, whose names stand for the front's
+    and the gate's: the check reads them through the real Probe."""
+    import grp
+    import pwd
+    me, mine = pwd.getpwuid(os.getuid()).pw_name, grp.getgrgid(os.getgid()).gr_name
+    monkeypatch.setattr(doctor, "USAGE_OWNER", (me, mine))
+    monkeypatch.setattr(doctor, "LEDGER_OWNER", (me, mine))
+    for attr, name, row in (("USAGE_DIR", "usage", "usage-2026-10.jsonl"), ("GATE_LEDGER_DIR", "ledger",
+                                                                          "ledger-2026-10.jsonl")):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / row).write_text('{"t0": 1}\n')
+        (folder / row).chmod(file_mode)
+        folder.chmod(mode)
+        monkeypatch.setattr(doctor.paths, attr, folder)
+    return tmp_path / "usage", tmp_path / "ledger"
+
+
+def test_the_meters_folders_pass_when_bootstrap_made_them(tmp_path, monkeypatch):
+    meter_folders(tmp_path, monkeypatch)
+    probe = Probe(ROOT)
+    usage, ledger = doctor.usage_records(probe), doctor.gate_ledger(probe)
+    assert usage.ok and ledger.ok, (usage.detail, ledger.detail)
+    assert usage.detail.endswith("only the front writes, and only spark-admin reads")
+    assert ledger.detail.endswith("only the gate writes, and only spark-admin reads")
+    # The same on the fake box, which holds the real owners.
+    assert detail(FakeProbe(), "usage records")[0] and detail(FakeProbe(), "gate ledger")[0]
+
+
+@pytest.mark.parametrize("mode, file_mode, said", [
+    (0o2750, 0o644, "usage-2026-10.jsonl can be read by others"),
+    (0o2750, 0o604, "usage-2026-10.jsonl can be read by others"),
+    (0o750, 0o640, "is {me} 750, not {want} 2750"),  # setgid lost: a file's group would be the writer's
+    (0o2755, 0o640, "is {me} 2755, not {want} 2750"),
+])
+def test_a_meter_folder_that_others_can_read_or_without_setgid_fails(tmp_path, monkeypatch, mode, file_mode, said):
+    folder, _ = meter_folders(tmp_path, monkeypatch, mode=mode, file_mode=file_mode)
+    me, group = doctor.USAGE_OWNER
+    result = doctor.usage_records(Probe(ROOT))
+    assert not result.ok
+    assert said.format(me=f"{me}:{group}", want=f"{me}:{group}") in result.detail
+    assert str(folder) in result.detail
+
+
+def test_a_link_in_a_meter_folder_fails(tmp_path, monkeypatch):
+    folder, _ = meter_folders(tmp_path, monkeypatch)
+    folder.chmod(0o2770)
+    (folder / "usage-2026-09.jsonl").symlink_to("/etc/hostname")
+    folder.chmod(0o2750)
+    result = doctor.usage_records(Probe(ROOT))
+    assert not result.ok and "usage-2026-09.jsonl is a link" in result.detail
+
+
+def test_the_meter_folders_fail_on_the_fake_box_in_words():
+    probe = FakeProbe()
+    probe.entries[doctor.paths.USAGE_DIR] = (*doctor.USAGE_OWNER, 0o2755, "folder")
+    probe.entries[doctor.paths.GATE_LEDGER_DIR] = ("spark", "spark", 0o2750, "folder")
+    failed = failures(probe)
+    assert failed["usage records"] == ("/var/lib/local-ai/usage is spark-front:spark-admin 2755, not "
+                                       "spark-front:spark-admin 2750: `make bootstrap` sets it")
+    assert failed["gate ledger"] == ("/var/lib/local-ai/gate-ledger is spark:spark 2750, not spark:spark-admin 2750: "
+                                     "`make bootstrap` sets it")
+    # Missing: bootstrap makes it.
+    probe = FakeProbe()
+    del probe.entries[doctor.paths.USAGE_DIR]
+    assert failures(probe) == {"usage records": "/var/lib/local-ai/usage is missing, or out of your account's reach: "
+                                                "`make bootstrap` creates it"}
+    # A file the front didn't write, a stray one others read, and a link.
+    probe = FakeProbe()
+    probe.listing[doctor.paths.USAGE_DIR] += [("stray.jsonl", "chendaniely", "spark-admin", 0o100640),
+                                              ("old.jsonl", "spark-front", "spark-admin", 0o100644),
+                                              ("next.jsonl", "spark-front", "spark-admin", 0o120777)]
+    assert failures(probe)["usage records"] == (
+        "in /var/lib/local-ai/usage, stray.jsonl is chendaniely:spark-admin, not spark-front:spark-admin, old.jsonl can "
+        "be read by others and next.jsonl is a link: only the front writes there, mode 0640, and only spark-admin reads")
+
+
+def test_a_refused_listing_says_log_in_again_never_no_files():
+    probe = FakeProbe()
+    probe.listing[doctor.paths.USAGE_DIR] = PermissionError(13, "Permission denied")
+    probe.listing[doctor.paths.GATE_LEDGER_DIR] = PermissionError(13, "Permission denied")
+    failed = failures(probe)
+    assert failed == {
+        "usage records": "your account can't list /var/lib/local-ai/usage: log in again, so spark-admin's group applies",
+        "gate ledger": "your account can't list /var/lib/local-ai/gate-ledger: log in again, so spark-admin's group "
+                       "applies"}
+
+
+def test_the_real_probe_raises_on_a_listing_it_is_refused(tmp_path):
+    folder = tmp_path / "closed"
+    folder.mkdir()
+    folder.chmod(0)
+    try:
+        if os.access(folder, os.R_OK):  # root reads anything
+            pytest.skip("this account reads a mode-0 folder")
+        with pytest.raises(PermissionError):
+            Probe(ROOT).files(folder)
+    finally:
+        folder.chmod(0o700)
+
+
+def test_the_real_probe_searches_and_dates_rows_without_returning_them(tmp_path):
+    rows = tmp_path / "usage-2026-10.jsonl"
+    rows.write_text('{"t0": 5.5, "k": "needle-xyz"}\nnot json\n{"t0": 9}\n{"t0": true}\n')
+    probe = Probe(ROOT)
+    assert probe.holds(rows, "needle-xyz") is True and probe.holds(rows, "other") is False
+    assert probe.holds(tmp_path / "missing.jsonl", "x") is False
+    assert probe.newest_t0(rows) == 9.0 and probe.newest_t0(tmp_path / "missing.jsonl") is None
+    (tmp_path / "link.jsonl").symlink_to(rows)
+    assert probe.holds(tmp_path / "link.jsonl", "needle-xyz") is False  # never follows a link
+
+
+def test_counting_needs_a_fresh_row():
+    assert detail(FakeProbe(), "counting") == (
+        True, "this run's request was counted in this month's usage file, the gate's ledger has this month's file, "
+              "and the gate's health shows neither off")
+    # A row older than the run began: not this run's request. It waits a moment for the front's thread, then fails.
+    probe = FakeProbe()
+    probe.newest = NOW - 5
+    ok, said = detail(probe, "counting")
+    assert not ok and said.startswith("usage-2026-10.jsonl holds no row from this run") and probe.paused
+    probe = FakeProbe()
+    probe.newest = None
+    assert not detail(probe, "counting")[0]
+    # The ledger's file missing.
+    probe = FakeProbe()
+    probe.ledger = False
+    assert detail(probe, "counting") == (False, "ledger-2026-10.jsonl isn't in /var/lib/local-ai/gate-ledger: the "
+                                                "gate's ledger isn't written, `make logs s=gate`")
+    # A usage file this account can't read: log in again.
+    probe = FakeProbe()
+    probe.newest = PermissionError(13, "denied")
+    assert detail(probe, "counting") == (
+        False, "your account can't read /var/lib/local-ai/usage/usage-2026-10.jsonl: log in again, so spark-admin's "
+               "group applies")
+
+
+def test_counting_reads_the_gates_word_for_each_side():
+    probe = FakeProbe()
+    probe.gate["/v1/status"]["health"]["counting"] = {"front_off_since": NOW - 600, "ledger_off_since": None}
+    assert detail(probe, "counting") == (
+        False, "the gate's health shows counting off for the front's usage rows since 08:50: `make status`, and "
+               "`make logs s=front` or `make logs s=gate` says why")
+    probe.gate["/v1/status"]["health"]["counting"] = {"front_off_since": NOW - 600, "ledger_off_since": NOW - 60}
+    assert "the front's usage rows since 08:50 and the gate's ledger since 08:59" in detail(probe, "counting")[1]
+    # An older gate says nothing of counting: unknown, never a pass.
+    probe = FakeProbe()
+    del probe.gate["/v1/status"]["health"]["counting"]
+    ok, said = detail(probe, "counting")
+    assert not ok and said.startswith("the gate's health says nothing of counting: unknown")
+    # No view at all.
+    probe = FakeProbe()
+    probe.gate["/v1/status"] = GateUnavailable("down")
+    assert not detail(probe, "counting")[0]
+
+
+def test_counting_prints_no_row_and_no_key():
+    probe = FakeProbe()
+    for each in checks(probe, KEY, REG, full=True):
+        assert KEY not in each.detail and '"t0"' not in each.detail
+
+
+def test_the_canary_sends_its_needle_as_a_model_and_an_effort():
+    probe = FakeProbe()
+    assert failures(probe, full=True) == {}
+    uploads = probe.uploads
+    needle = uploads[-1][1]["prompt"]
+    sent = [body for url, body in probe.asked if url == f"{FRONT}/v1/chat/completions"]
+    # The second needle, the model name's (the final review's C1): as a model, which the fake answers 404 for, and as
+    # a reasoning effort.
+    [model] = [body["model"] for body in sent if body["model"].startswith("doctor-canary-model-")]
+    assert model != needle
+    assert any(body.get("reasoning_effort") == model and body["model"] == "vision-chat" for body in sent)
+    # The model name the front doesn't refuse is a failure to say so.
+    probe = FakeProbe()
+    probe.answers[f"{FRONT}/v1/chat/completions"] = (
+        lambda key, body: (200, json.dumps({"choices": []})) if body["model"] not in REG.models else (200, "{}"))
+    assert failures(probe, full=True)["privacy canary"].startswith(
+        "the canary sent as a model name should be refused as unknown (404), and the front answered 200")
+    # Found in this month's usage file, or the ledger: named, with where to look, never what the row holds.
+    probe = FakeProbe()
+    probe.holders = {doctor.paths.USAGE_DIR}
+    found = failures(probe, full=True)["privacy canary"]
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the usage records: "
+                            "find what wrote it there before sending anything private — `grep -l -e doctor-canary-")
+    probe = FakeProbe()
+    probe.holders = {doctor.paths.USAGE_DIR, doctor.paths.GATE_LEDGER_DIR}
+    assert "the usage records and the gate's ledger:" in failures(probe, full=True)["privacy canary"]
+    # A usage file this account can't read can't show the string isn't in it.
+    probe = FakeProbe()
+    probe.newest = PermissionError(13, "denied")
+    probe.holds = lambda path, needle: (_ for _ in ()).throw(PermissionError(13, "denied"))
+    assert failures(probe, full=True)["privacy canary"].endswith("log in again, so spark-admin's group applies")
+
+
+def test_the_canary_looks_for_its_model_name_only_in_the_meter_folders():
+    # The final review's C1: the gate's refusal history keeps the name a client asked for, in the front's words, so a
+    # needle sent as a model name is always found there. The model name and the reasoning effort carry a second needle of
+    # their own, looked for only in this month's usage and ledger files, which keep registry names alone.
+    probe = FakeProbe()  # its gate answers POST /v1/canary from the refusals it was told of, as the real one does
+    held = []
+    probe.holds = lambda path, needle: held.append((Path(path).parent, needle)) or False
+    assert failures(probe, full=True) == {}
+    needle = probe.uploads[-1][1]["prompt"]
+    sent = [body for url, body in probe.asked if url == f"{FRONT}/v1/chat/completions"]
+    [model] = [body["model"] for body in sent if body["model"].startswith("doctor-canary")]  # not S03's made-up one
+    assert model.startswith("doctor-canary-model-") and model != needle and needle not in model and model not in needle
+    assert any(body.get("reasoning_effort") == model for body in sent)  # the effort carries the second needle too
+    assert not any(needle in json.dumps(body) for body in sent if body["model"] not in REG.models)
+    assert not any(body.get("reasoning_effort") == needle for body in sent)
+    # The first needle goes to the gate's search; the second never does, and both go to the meter's two folders.
+    assert [body for route, body in probe.posted if route == "/v1/canary"] == [{"needle": needle}]
+    assert sorted(held) == sorted((folder, each) for folder in (doctor.paths.USAGE_DIR, doctor.paths.GATE_LEDGER_DIR)
+                                  for each in (needle, model))
+    # The gate still finds the first needle when it holds it: a refusal history holding it fails.
+    probe = FakeProbe()
+    probe.gate["/v1/canary"] = {"found": ["refusals"]}
+    assert failures(probe, full=True)["privacy canary"].startswith(
+        "a string doctor sent through chat and speech-to-text turned up in the gate's refusal history: ")
+    # A usage row that kept the model name as the client sent it fails, naming the usage records and both needles.
+    probe = FakeProbe()
+    probe.holds = lambda path, needle: Path(path).parent == doctor.paths.USAGE_DIR and needle in probe.refused
+    found = failures(probe, full=True)["privacy canary"]
+    model = next(name for name in probe.refused if name.startswith("doctor-canary-model-"))
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the usage records: find "
+                            f"what wrote it there before sending anything private — `grep -l -e doctor-canary-")
+    assert f"-e {model} {doctor.paths.USAGE_DIR}/* {doctor.paths.GATE_LEDGER_DIR}/*` shows which month's file" in found
 
 
 def test_hooks_that_are_off_say_how_to_turn_them_on():
@@ -360,7 +634,7 @@ def test_the_module_and_nvidia_smi_must_agree():
 def test_earlyoom_must_run_with_the_repos_arguments():
     probe = FakeProbe()
     old = [arg.replace("sshd.*", "sshd") for arg in REPO_ARGS]  # the args before Phase 0's fix
-    probe.files[Path("/proc/4242/cmdline")] = "\0".join(["/usr/bin/earlyoom", *old]) + "\0"
+    probe.texts[Path("/proc/4242/cmdline")] = "\0".join(["/usr/bin/earlyoom", *old]) + "\0"
     assert "other arguments than stack/host/earlyoom.default" in failures(probe)["earlyoom"]
     probe.states["earlyoom"] = "inactive"
     assert failures(probe)["earlyoom"].startswith("inactive")
@@ -371,7 +645,7 @@ def test_earlyoom_follows_the_repos_file_which_has_no_prefer():
     assert REPO_ARGS and not any(arg.startswith("--prefer") for arg in REPO_ARGS)
     probe = FakeProbe()
     phase_1 = [*REPO_ARGS, "--prefer", "^(llama-server|whisper-server)$"]
-    probe.files[Path("/proc/4242/cmdline")] = "\0".join(["/usr/bin/earlyoom", *phase_1]) + "\0"
+    probe.texts[Path("/proc/4242/cmdline")] = "\0".join(["/usr/bin/earlyoom", *phase_1]) + "\0"
     assert failures(probe) == {"earlyoom": "running with other arguments than stack/host/earlyoom.default: "
                                            "`make bootstrap` puts the repo's back"}
 
@@ -402,32 +676,32 @@ def test_agents_oom_hook_must_stand_before_sshds_first_session_line():
              f"{doctor.PAM_SSHD} names the hook at line 10, besides bootstrap's line before its first session line: "
              f"{by_hand}")):
         probe = FakeProbe()
-        probe.files[doctor.PAM_SSHD] = sshd
+        probe.texts[doctor.PAM_SSHD] = sshd
         assert failures(probe) == {"agent's OOM score": said}, said
     # A backslash at the end of a line before the hook's joins the hook's line onto it, across a comment line too, as
     # libpam reads it: the hook never runs. One inside a comment joins nothing (bootstrap's `continues`).
     probe = FakeProbe()
-    probe.files[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
+    probe.texts[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
                                                 "@include common-account\naccount optional pam_permit.so \\  \n# x\n")
     assert failures(probe) == {"agent's OOM score": (
         f"line 4 of {doctor.PAM_SSHD} ends in a backslash, so libpam reads the hook's line as part of it and never runs "
         "the hook: take the backslash out by hand, then run `make bootstrap`")}
-    probe.files[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
+    probe.texts[doctor.PAM_SSHD] = SSHD.replace("@include common-account\n",
                                                 "@include common-account\naccount optional pam_permit.so # \\\n")
     assert failures(probe) == {}
     # A session line is `session` in any case, `-session`, or an @include of common-session, as bootstrap and libpam
     # read them: the hook after any of them is after sshd's first session line.
     for first in ("-session optional pam_systemd.so", "Session required pam_loginuid.so", "@include common-session"):
         probe = FakeProbe()
-        probe.files[doctor.PAM_SSHD] = SSHD.replace(f"{HOOK_LINE}\n", f"{first}\n{HOOK_LINE}\n")
+        probe.texts[doctor.PAM_SSHD] = SSHD.replace(f"{HOOK_LINE}\n", f"{first}\n{HOOK_LINE}\n")
         assert set(failures(probe)) == {"agent's OOM score"}, first
-        probe.files[doctor.PAM_SSHD] = SSHD.replace(f"{HOOK_LINE}\n", f"{HOOK_LINE}\n{first}\n")
+        probe.texts[doctor.PAM_SSHD] = SSHD.replace(f"{HOOK_LINE}\n", f"{HOOK_LINE}\n{first}\n")
         assert failures(probe) == {}, first
     probe = FakeProbe()
-    probe.files[doctor.PAM_SSHD] = "\n".join(line for line in lines if "session" not in line.lower()) + "\n"
+    probe.texts[doctor.PAM_SSHD] = "\n".join(line for line in lines if "session" not in line.lower()) + "\n"
     assert failures(probe)["agent's OOM score"].startswith(f"{doctor.PAM_SSHD} has no session line")
     probe = FakeProbe()
-    del probe.files[doctor.PAM_SSHD]
+    del probe.texts[doctor.PAM_SSHD]
     assert failures(probe) == {"agent's OOM score": f"can't read {doctor.PAM_SSHD}: `ls -l {doctor.PAM_SSHD}` shows why"}
     # Root's own file, which only root writes, as bootstrap's pam_check needs it (bootstrap.sh's roots_own).
     for owner in (("root", "root", 0o664, "file"), ("chendaniely", "root", 0o644, "file"), ("root", "root", 0o777, "link")):
@@ -445,26 +719,26 @@ def test_agents_oom_hook_must_stand_before_sshds_first_session_line():
         f"{doctor.AGENT_HOOK} is missing, or out of your account's reach; {DROP_IN} is root:root 664, not root:root "
         "644: `make bootstrap` installs them")}
     probe = FakeProbe()
-    probe.files[doctor.AGENT_HOOK] = "#!/bin/sh\nexit 0\n"
+    probe.texts[doctor.AGENT_HOOK] = "#!/bin/sh\nexit 0\n"
     assert failures(probe) == {"agent's OOM score": f"{doctor.AGENT_HOOK} differs from the repo's "
                                                     "stack/host/local-ai-agent-oom: `make bootstrap` installs it"}
 
     probe = FakeProbe()
-    probe.files[doctor.CRON_DENY] = "nobody\nagent2\n"
+    probe.texts[doctor.CRON_DENY] = "nobody\nagent2\n"
     assert failures(probe) == {"agent's OOM score": f"{doctor.CRON_DENY} doesn't name agent: `make bootstrap` adds it"}
     probe = FakeProbe()
-    probe.files[doctor.CRON_ALLOW] = "agent\n"
+    probe.texts[doctor.CRON_ALLOW] = "agent\n"
     assert failures(probe) == {"agent's OOM score": f"{doctor.CRON_ALLOW} names agent, and cron reads it instead of "
                                                     f"{doctor.CRON_DENY}: take agent out of it"}
     # Task 33's review: a file that is there but can't be read is never a pass, nor *doesn't name agent*.
     for path in (doctor.CRON_DENY, doctor.CRON_ALLOW):
         probe = FakeProbe()
-        probe.files.pop(path, None)
+        probe.texts.pop(path, None)
         probe.present[path] = True
         assert failures(probe) == {"agent's OOM score": f"{path} can't be read from your account, so whether it names "
                                                         f"agent is unknown: `ls -l {path}` shows why"}, path
     probe = FakeProbe()
-    del probe.files[doctor.CRON_DENY]
+    del probe.texts[doctor.CRON_DENY]
     assert failures(probe) == {"agent's OOM score": f"{doctor.CRON_DENY} doesn't name agent: `make bootstrap` adds it"}
     probe = FakeProbe()
     probe.uid = lambda name: None
@@ -487,9 +761,9 @@ def test_the_hook_check_reads_what_bootstrap_writes():
 
 def test_the_firewall_must_be_on_and_an_unreadable_conf_says_how_to_check():
     probe = FakeProbe()
-    probe.files[UFW_CONF] = "ENABLED=no\n"
+    probe.texts[UFW_CONF] = "ENABLED=no\n"
     assert failures(probe)["firewall"].startswith("ufw is off")
-    del probe.files[UFW_CONF]
+    del probe.texts[UFW_CONF]
     assert "sudo ufw status" in failures(probe)["firewall"]
 
 
@@ -661,10 +935,10 @@ def test_needrestart_leaves_the_stack_alone():
     # Task 10's scan (R14): the stack's behaviour changed, so it gets its doctor check. On brightroar this fails
     # until Phase 1's Task 12 Step 1 re-runs bootstrap, which installs the override.
     probe = FakeProbe()
-    del probe.files[doctor.NEEDRESTART_CONF]
+    del probe.texts[doctor.NEEDRESTART_CONF]
     assert failures(probe) == {"needrestart": "/etc/needrestart/conf.d/local-ai.conf is missing, or can't be read: "
                                               "`make bootstrap` installs it"}
-    probe.files[doctor.NEEDRESTART_CONF] = "$nrconf{override_rc}->{qr(^local-ai-llama)} = 0;\n"
+    probe.texts[doctor.NEEDRESTART_CONF] = "$nrconf{override_rc}->{qr(^local-ai-llama)} = 0;\n"
     assert failures(probe) == {"needrestart": "/etc/needrestart/conf.d/local-ai.conf differs from "
                                               "stack/host/needrestart.conf: `make bootstrap` installs the repo's"}
 
@@ -743,9 +1017,9 @@ def test_an_active_brake_whose_start_check_didnt_pass_fails_the_stack_units_line
     # Folded into the stack units line, and S05's, which reads it too; the gate's own view is the gate line's.
     probe = FakeProbe()
     if record is None:
-        del probe.files[CHECK]
+        del probe.texts[CHECK]
     else:
-        probe.files[CHECK] = record
+        probe.texts[CHECK] = record
     results = checks(probe, KEY, REG)
     failed = {c.name: c.detail for c in results if not c.ok}
     assert [c.name for c in results] == NAMES and set(failed) == {"stack units", "S05"}
@@ -821,10 +1095,10 @@ def test_socket_modes_and_groups_are_checked():
 
 def test_the_key_list_must_load():
     assert detail(FakeProbe(), "key list") == (
-        True, f"{doctor.paths.KEYS} loads: 3 keys, each in one of the registry's key groups (dan and agent)")
+        True, f"{doctor.paths.KEYS} loads: 5 keys, each in one of the registry's key groups (dan and agent)")
     step = "website/how-to/secret-files.md, step 13, installs it"
     probe = FakeProbe()
-    probe.files[doctor.paths.KEYS] = "keys:\n  dans-phone:\n    group: friends\n    label: Dan's phone\n"
+    probe.texts[doctor.paths.KEYS] = "keys:\n  dans-phone:\n    group: friends\n    label: Dan's phone\n"
     found = failures(probe)["key list"]
     assert found.startswith(f"{doctor.paths.KEYS} doesn't load: keys: dans-phone: group 'friends' is not one of ")
     assert found.endswith(f": {step}")
@@ -878,13 +1152,13 @@ def test_the_deployed_config_is_checked_against_v257s_schema():
     group = config["routing"]["router"]["settings"]["groups"]["stack"]
     group["swapp"] = group.pop("swap")  # v257 drops a key it doesn't know, and swaps: its schema's closed reading doesn't
     probe = FakeProbe()
-    probe.files[doctor.DEPLOYED_CONFIG] = yaml.safe_dump(config)
+    probe.texts[doctor.DEPLOYED_CONFIG] = yaml.safe_dump(config)
     found = failures(probe)["llama-swap config"]
     assert found.startswith(f"{doctor.DEPLOYED_CONFIG} doesn't pass llama-swap {PINS['llama-swap']}'s schema: ")
     assert "swapp" in found and found.endswith(": `make apply-dry-run` shows how it differs from the repo's")
-    probe.files[doctor.DEPLOYED_CONFIG] = "models: [unclosed\n"
+    probe.texts[doctor.DEPLOYED_CONFIG] = "models: [unclosed\n"
     assert failures(probe)["llama-swap config"].startswith(f"{doctor.DEPLOYED_CONFIG} doesn't load: ")
-    del probe.files[doctor.DEPLOYED_CONFIG]
+    del probe.texts[doctor.DEPLOYED_CONFIG]
     assert failures(probe) == {"llama-swap config": f"{doctor.DEPLOYED_CONFIG} is missing, or can't be read: "
                                                     "`make apply` deploys it"}
 
@@ -970,7 +1244,7 @@ def test_the_gate_must_answer_and_its_health_show_the_four_services():
                               f"is no socket at /run/local-ai/gate-control.sock. {doctor.GATE_STEP}")
     assert "make doctor" not in report(checks(probe, KEY, REG))
     # Every line that reads the gate's view says it couldn't, and points at the gate's line.
-    assert set(failed) == {"gate", "ntfy", "bypass", "a model, end to end", "S01", "S05"}
+    assert set(failed) == {"gate", "ntfy", "bypass", "a model, end to end", "counting", "S01", "S05"}
     assert all(failed[name].startswith("the gate didn't answer (its own line says why)")
                for name in ("ntfy", "bypass", "a model, end to end", "S01", "S05"))
     probe.gate["/v1/status"] = {"schema": gateproto.STATUS_SCHEMA + 1, "health": {}, "models": []}
@@ -1098,7 +1372,7 @@ def test_each_2a_scenario_has_its_check():
     assert failures(probe) == {"S14": "local-ai-brake.service starts no local-ai-notify@local-ai-brake.service.service "
                                       "when it fails: `make install-units`"}
     probe.properties["local-ai-gate.service"]["StartLimitIntervalUSec"] = "10s"
-    del probe.files[doctor.NOTIFIER]
+    del probe.texts[doctor.NOTIFIER]
     assert failures(probe) == {"S14": (
         "local-ai-gate.service's StartLimitIntervalSec= is 10s, not 0: `make install-units`; "
         "local-ai-brake.service starts no local-ai-notify@local-ai-brake.service.service when it fails: `make "
@@ -1192,15 +1466,17 @@ def test_full_runs_the_upload_and_the_canary():
     results = {c.name: (c.ok, c.detail) for c in checks(probe, KEY, REG, full=True)}
     assert results["a 170 MB upload"] == (True, "whisper took a 170 MB upload through the front, which sends a form "
                                                 "on chunked, and answered")
-    assert results["privacy canary"] == (True, "a string sent through chat and speech-to-text is in none of the "
-                                               "journal, the gate's state, its refusal history or launch's records")
+    assert results["privacy canary"] == (True, "a string sent through chat as a message and through speech-to-text "
+                                               "is in none of the journal, the gate's state, its refusal history, "
+                                               "launch's records, the usage records or the gate's ledger, and one sent "
+                                               "as a model name and a reasoning effort is in neither of the last two")
     [big, small] = probe.uploads
     assert big[0] == small[0] == f"{FRONT}/v1/audio/transcriptions" and big[3] == 170_000_000
     assert big[1] == {"model": "stt", "response_format": "json"}
     needle = small[1]["prompt"]
     assert needle.startswith("doctor-canary-") and small[2] == f"{needle}.wav" and small[1]["model"] == "stt"
     chat = [body for url, body in probe.asked if url == f"{FRONT}/v1/chat/completions"
-            and body["model"] == "vision-chat"]
+            and body["model"] == "vision-chat" and "reasoning_effort" not in body]
     assert len(chat) == 1 and needle in chat[0]["messages"][0]["content"]
     assert ("/v1/canary", {"needle": needle}) in probe.posted and probe.paused
     # Task 33's review (I2): the journal is read with --all, or a field holding a CR, an ESC or a byte that isn't UTF-8
@@ -1215,16 +1491,16 @@ def test_full_runs_the_upload_and_the_canary():
     needle = next(body for url, body in probe.asked if url.endswith("/chat/completions")
                   and body["model"] == "vision-chat")["messages"][0]["content"].split()[-1]
     assert found == {"privacy canary": (
-        "the string sent through chat and speech-to-text turned up in the journal: find what wrote it there before "
-        "sending anything private — `journalctl --no-pager --quiet --all --output=verbose "
+        "a string doctor sent through chat and speech-to-text turned up in the journal: find what wrote it there "
+        "before sending anything private — `journalctl --no-pager --quiet --all --output=verbose "
         f"--since=@{int(NOW) - 1} | grep -n {needle}` shows where in the journal")}
     # Found by the gate, in its refusal history: named, with where to look.
     probe = FakeProbe()
     probe.gate["/v1/canary"] = {"found": ["refusals", "launch"]}
     found = failures(probe, full=True)["privacy canary"]
-    assert found.startswith("the string sent through chat and speech-to-text turned up in the gate's refusal history "
-                            "and launch's records: find what wrote it there before sending anything private — `sudo -u "
-                            "spark grep -rl doctor-canary-")
+    assert found.startswith("a string doctor sent through chat and speech-to-text turned up in the gate's refusal "
+                            "history and launch's records: find what wrote it there before sending anything private — "
+                            "`sudo -u spark grep -rl doctor-canary-")
     assert found.endswith(" /var/lib/local-ai/gate /var/lib/local-ai/launch` shows which of the gate's and launch's "
                           "files")
     # The gate not answering the canary route: the real step, never `make doctor`.
@@ -1547,7 +1823,7 @@ class FrontStandIn(StandIn):
         if self.path == "/v1/embeddings":
             return self.answer(200, json.dumps({"data": [{"embedding": [0.25, 0.5]}]}).encode())
         if self.path == "/v1/chat/completions":
-            if (self.asked or {}).get("model") == doctor.MADE_UP_MODEL:
+            if (self.asked or {}).get("model") not in REG.models:  # the made-up model, and the canary sent as one
                 return self.answer(404, NOT_FOUND.encode())
             return self.answer(200, json.dumps({"choices": [{"message": {"content": "OK"}}]}).encode())
         self.answer(404, refusal("route_not_served").encode())

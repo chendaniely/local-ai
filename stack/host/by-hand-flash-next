@@ -3,8 +3,9 @@
 # Delete then: stack/host/by-hand-flash-next (this file), stack/host/by-hand-fast-coder,
 # spark/tests/test_by_hand.py, the Makefile's two targets with their comment, .PHONY names and lint entries,
 # spark/tests/test_makefile.py's tests of them, and the notes naming them in
-# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the
-# same, and test_by_hand.py's TEMPORARY.
+# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md, and the sentences naming them in
+# website/design/usage-meter.md and website/design/usage-meter-counter.md. plan.md's Phase 4a lists the same, and
+# test_by_hand.py's TEMPORARY.
 #
 # make flash-next: Qwen3.8-Flash-Next with the stack stopped, as the Run it again section of
 # website/how-to/qwen3.8-flash-next.md runs it. On the Spark only, as Dan, from the clone.

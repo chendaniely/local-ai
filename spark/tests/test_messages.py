@@ -655,7 +655,7 @@ def test_messages_imports_no_more_than_the_registry(tmp_path):
 
 
 def test_the_unknown_key_text_is_the_rulings():
-    assert UNKNOWN_KEY == "That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine."
+    assert UNKNOWN_KEY == "That API key isn't one the Spark knows. Check the API key this client sends."
 
 
 # The notifications, on Dan's phone (plan.md, *Notifications, on the phone*), and what each command says (*Each command
