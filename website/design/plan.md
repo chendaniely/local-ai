@@ -4241,6 +4241,15 @@ Each item gets its own design pass when its turn comes.
    Posit Assistant. Dan, asked whether to leave it out: "what is the issue with hermes? is it
    different somehow?" Nothing changes in the code or on the Spark.
 
+- **2026-10-23** — "Harness" and "client" get one definition, Dan's decision: "we should make
+   sure that client and harness are more generic in the docs". A harness is an agent tool that
+   reaches the models with a key of its own (pi, opencode, Posit Assistant and Hermes on the Mac,
+   over `make tunnel`; `agent`'s pi on the Spark); a client is anything that sends the front a
+   keyed request (the harnesses, the web UI, Dan's own pipelines and apps). The definition goes on
+   the Architecture page, beside the diagrams; other pages say "the harnesses" and link to it, and
+   `CLAUDE.md`, `README.md` and the overview diagram name all four, since they are read outside
+   the site. Chosen over listing the four on every page and over a glossary page.
+
 ## Sources
 
 Three research passes (serving components; clients, DGX OS and operations; models per slot) and a
