@@ -1336,6 +1336,12 @@ the deadline it was given, so a drill's shorter one reads true.
   (on demand: lectures). Whisper large-v3-turbo (vocabulary `prompt`, ~99 languages) and Parakeet TDT
   v3 GGUF (speed). NeMo's Parakeet with per-request phrase boosting is tested in the Phase 3 speech
   comparison and adopted only if it clearly wins.
+- *(2026-10-23, Dan's decisions; Revisions.)* **Qwen3-ASR**, on demand on llama.cpp: 1.7B for
+  multi-language transcription, 0.6B for Chinese, Japanese and English, each at 32,768 tokens (fits
+  beside the coder) and at its full 65,536 (when the box is otherwise free, or overnight). Text only:
+  timestamps for captions need Qwen3-ForcedAligner-0.6B, which the stack doesn't serve, so the
+  Phase 3 speech comparison adds Qwen3-ASR and a served aligner (vLLM's or CrispASR's) to its
+  candidates. Whisper keeps the `stt` role and the web UI's speech-to-text.
 - `verbose_json` word timestamps, language detection, and ~170 MB uploads allowed through every hop.
 - Speaker labels come from the diarization service in OpenAI's `diarized_json` shape; whether it also
   returns speaker embeddings (for speaker identification in Dan's pipeline) gets confirmed against
@@ -4219,6 +4225,27 @@ Each item gets its own design pass when its turn comes.
   41 of 50), but not together, so the gate refuses whichever is asked for second until the other
   unloads; `spark render` warns that every model at once passes the ceiling, as rule 9 has it warn.
   llama-swap numbers the engines by name, so it takes 802, the coder 803 and whisper 804.
+- **2026-10-23** — Qwen3-ASR-1.7B and Qwen3-ASR-0.6B in the registry, on demand, each at two
+  contexts, Dan's decisions (*Speech* gains a dated note). Dan needs multi-language transcription for
+  his projects, and Chinese, Japanese and English transcription and closed captions for one of them,
+  now rather than at Phase 3. They are served by llama.cpp b11146, the build already deployed, from
+  ggml-org's Q8_0 GGUFs with their audio projectors, through llama-server's
+  `/v1/audio/transcriptions` (b11146's `tools/server/server.cpp` and `PROJECTOR_TYPE_QWEN3A` in
+  `tools/mtmd/mtmd.cpp`, read 2026-10-23). Dan chose that over vLLM run by hand beside the stack,
+  which would also serve the aligner but outside the gate, and over CrispASR as a third engine, the
+  only server found that returns SRT or VTT. They return text only, in llama-server's `json`, each
+  transcript starting `language <name><asr_text>` (llama.cpp issue #26749, closed not planned): no
+  timestamps, which come from Qwen3-ForcedAligner-0.6B, which no engine in the stack serves. The
+  captions project runs the aligner itself until Phase 3's speech comparison picks a served one. Each
+  model is listed twice, as `-32k` at 32,768 tokens and `-64k` at its full 65,536: Dan first chose the
+  full context only, then both, so he can "use the full larger context when I'm not doing anything
+  else or batch overnight. and I can use the smaller [context] if I'm doing other parallel work". The
+  `-32k` entries are the first models below their full context since *every model at its full
+  context* (2026-09-28): at 32K each fits beside the coder (~7 and ~6 GiB of the 9 left beside it),
+  and at 65,536 the 1.7B (~11) doesn't. A request is held to the model's own limit, 20 minutes of
+  audio, by the client, at either context. The footprints are estimates until a load is measured.
+  Whisper keeps the `stt` role, so it stays the web UI's speech-to-text and the model doctor's speech
+  checks send to; render and doctor now find it by that role, not as the only transcription model.
 
 ## Sources
 
