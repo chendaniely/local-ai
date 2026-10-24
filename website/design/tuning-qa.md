@@ -53,3 +53,21 @@ keep it if it helps. What do you expect to do?***
 **Dan: A** (2026-10-23). He gave no reason beyond the request's: a few settings, not all of them.
 The recommendation's caveat, given with it: if the loops happen in pi rather than in the web UI, pi
 may have no per-session temperature (not checked), and B would fit better.
+
+## Context
+
+**Q2. *You need the transcription model loaded beside the coder, and today they don't fit at the
+coder's full context. How often does that pairing come up, and what do you expect?***
+
+- A: every day: lower the coder's default context once (to 131,072, say, freeing ~8.5 GiB), so both
+  always fit, with nothing on the fly for this case; pi on the coder compacts sooner, at ~115k
+  tokens instead of ~246k.
+- B: now and then: the registry gains a second, smaller version of the coder, loaded by name when
+  the transcription model is needed.
+- C: rarely: keep things as they are, and unload the coder by hand while the transcription model
+  is needed.
+
+**Dan: none of these** (2026-10-23): "I may want to change the context window of either the coder or
+the transcription model." So the context is changed case by case, for either model, not set once for
+a pair. The question took whisper large-v3-turbo, which has no context window and already fits
+beside the coder, to be some other model; which one isn't settled.
