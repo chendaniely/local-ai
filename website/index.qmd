@@ -3,7 +3,8 @@ title: "local-ai"
 ---
 
 A single NVIDIA DGX Spark — `brightroar`, a GIGABYTE AI TOP ATOM — serving open models to my own
-pipelines, my coding harnesses and my homelab, with a web UI on top. Claude Code and Claude Desktop
+pipelines, [my harnesses](architecture.qmd#harnesses) and my homelab, with a web UI on top.
+Claude Code and Claude Desktop
 stay as they are, talking straight to Anthropic, with only hooks that report to apps on my own
 machines added; this is a separate mode.
 

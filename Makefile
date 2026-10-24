@@ -15,7 +15,7 @@ TEST_PYTEST  = uv run --frozen --project spark pytest $(if $(ARGS),$(ARGS),spark
 TEST_SCOPE   = systemd-run --user --scope --quiet -p MemoryMax=$(TEST_CAP_GIB)G -p MemorySwapMax=0 --
 TEST_MANAGER = systemctl --user show --property=Version --value >/dev/null 2>&1 || { echo "make test: your systemd user manager isn't answering, and on the Spark the tests run only under its $(TEST_CAP_GIB) GiB cap. Log in again, so the user manager starts, then run make test again." >&2; exit 1; }
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients doctor fast-coder flash-next
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients clients-pi clients-opencode clients-hermes clients-posit doctor fast-coder flash-next
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -92,12 +92,13 @@ logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|sear
 tunnel: ## On the Mac: forward the Spark's model API, 127.0.0.1:9100 (Ctrl-C closes it)
 	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
 
-clients: ## Add the Spark provider to all clients on this machine (pi, opencode, hermes)
+clients: ## Add the Spark provider to every harness on this machine (pi, opencode, hermes, posit)
 	$(SPARK) clients pi --write
 	$(SPARK) clients opencode --write
 	$(SPARK) clients hermes --write
+	$(SPARK) clients posit --write
 
-clients-pi: ## Add the Spark provider to pi only
+clients-pi: ## Add the Spark provider to Pi only
 	$(SPARK) clients pi --write
 
 clients-opencode: ## Add the Spark provider to OpenCode only
@@ -105,6 +106,9 @@ clients-opencode: ## Add the Spark provider to OpenCode only
 
 clients-hermes: ## Add the Spark provider to Hermes only
 	$(SPARK) clients hermes --write
+
+clients-posit: ## Add the Spark provider to Posit Assistant only
+	$(SPARK) clients posit --write
 
 doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor

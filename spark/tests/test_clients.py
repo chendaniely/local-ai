@@ -8,7 +8,8 @@ import pytest
 import yaml
 
 from spark import cli, clients
-from spark.clients import hermes_provider, merge_hermes, merge_opencode, merge_pi, opencode_provider, pi_provider
+from spark.clients import (hermes_provider, merge_hermes, merge_opencode, merge_pi, merge_posit, opencode_provider,
+                           pi_provider, posit_provider)
 from spark.registry import load_registry
 
 REG = load_registry(Path(__file__).parent / "fixtures" / "models.yaml")
@@ -549,3 +550,116 @@ def test_hermes_write_sets_xhigh_for_the_chat_models_only(capsys):
     data = yaml.safe_load((Path(os.environ["HOME"]) / ".hermes" / "config.yaml").read_text())
     assert data["agent"] == {"reasoning_overrides": {"vision-chat": "xhigh", "coder": "xhigh"}}
     assert "with reasoning effort xhigh for its models" in capsys.readouterr().out
+
+
+# Posit Assistant's providers.json gets the same care as pi's and OpenCode's files: it holds other providers'
+# settings. Its key never goes in it, though — providers.json holds no credential: OPENAI_COMPATIBLE_API_KEY for the
+# TUI, Positron's credential store for Positron.
+
+def test_posit_provider_lists_the_chat_models_with_their_windows_and_holds_no_key():
+    p = posit_provider(REG, "http://127.0.0.1:9100/v1")
+    assert p["baseUrl"] == "http://127.0.0.1:9100/v1" and p["enabled"] is True
+    assert "apiKey" not in json.dumps(p) and "key" not in json.dumps(p).lower().replace("openai", "")
+    assert p["models"]["allow"] == ["vision-chat", "coder"]  # no embeddings or speech models in its picker
+    overrides = p["models"]["overrides"]
+    assert overrides["vision-chat"] == {"name": "the vision model", "maxContextLength": 32768, "supportsTools": True,
+                                        "supportsImages": True, "supportsToolResultImages": False,
+                                        "supportsWebSearch": False}
+    assert overrides["coder"] == {"name": "the coder", "maxContextLength": 131072, "supportsTools": True,
+                                  "supportsImages": False, "supportsToolResultImages": False,
+                                  "supportsWebSearch": False}
+
+
+def test_posit_merge_keeps_other_providers_and_replaces_its_own_and_backs_up(tmp_path):
+    path = tmp_path / "providers.json"
+    old = {"$schema": "https://assistant.posit.co/schemas/providers.schema.json", "version": 1,
+           "providers": {"openai": {"enabled": True},
+                         "openai-compatible": {"enabled": True, "baseUrl": "http://old"},
+                         "custom": {"acme": {"type": "openai-compatible", "baseUrl": "https://a/v1"}}}}
+    path.write_text(json.dumps(old))
+    path.chmod(0o600)
+    backup = merge_posit(path, {"enabled": True, "baseUrl": "u", "models": {}})
+    data = json.loads(path.read_text())
+    assert data["$schema"] == old["$schema"] and data["version"] == 1
+    assert data["providers"]["openai"] == {"enabled": True} and data["providers"]["custom"] == old["providers"]["custom"]
+    assert data["providers"]["openai-compatible"] == {"enabled": True, "baseUrl": "u", "models": {}}  # replaced whole
+    assert json.loads(backup.read_text()) == old and stat.S_IMODE(backup.stat().st_mode) == 0o600
+
+
+def test_a_first_posit_write_starts_the_file_with_its_schema_and_version(tmp_path):
+    path = tmp_path / ".posit" / "ai" / "providers.json"
+    assert merge_posit(path, {"baseUrl": "u"}) is None
+    assert json.loads(path.read_text()) == {"$schema": "https://assistant.posit.co/schemas/providers.schema.json",
+                                            "version": 1,
+                                            "providers": {"openai-compatible": {"baseUrl": "u"}}}
+
+
+@pytest.mark.parametrize("bad", [*BAD, "a folder"])
+def test_a_posit_file_that_wont_load_is_refused_by_name(tmp_path, bad):
+    # json's own message names no file. Nothing is backed up or written.
+    path = tmp_path / "providers.json"
+    if bad == "a folder":
+        path.mkdir()
+    else:
+        path.write_bytes(BAD[bad])
+    with pytest.raises(ValueError) as err:
+        merge_posit(path, {"baseUrl": "u"})
+    assert str(err.value).startswith(f"Posit Assistant's providers file {path} won't load: ")
+    # json's error and the codec's keep the file's text, other providers' settings included: none is chained to it.
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert path.is_dir() if bad == "a folder" else path.read_bytes() == BAD[bad]
+    assert not (tmp_path / "providers.json.bak").exists()
+
+
+@pytest.mark.parametrize(("text", "kind"), [("[]", "an array"), ('"spark"', "a string"), ("3", "a number"),
+                                            ("true", "true or false"), ("null", "null")])
+def test_a_posit_top_level_that_isnt_an_object_is_refused_not_a_traceback(tmp_path, text, kind):
+    path = tmp_path / "providers.json"
+    path.write_text(text)
+    with pytest.raises(ValueError) as err:
+        merge_posit(path, {"baseUrl": "u"})
+    assert str(err.value) == (f"Posit Assistant's providers file {path} holds {kind} at its top level, not the object "
+                              "Posit Assistant reads")
+    assert path.read_text() == text and not (tmp_path / "providers.json.bak").exists()
+
+
+def test_posit_providers_that_arent_an_object_are_refused_too(tmp_path):
+    path = tmp_path / "providers.json"
+    path.write_text('{"providers": ["spark"]}')
+    with pytest.raises(ValueError) as err:
+        merge_posit(path, {"baseUrl": "u"})
+    assert str(err.value) == (f"Posit Assistant's providers file {path}: its providers are an array, not the object "
+                              "Posit Assistant reads")
+    assert path.read_text() == '{"providers": ["spark"]}' and not (tmp_path / "providers.json.bak").exists()
+
+
+def test_the_posit_cli_writes_its_file_from_the_registry_and_names_the_key_never_its_value(capsys):
+    assert cli.main(["clients", "posit", "--write", "--registry", str(REGISTRY)]) == 0
+    path = Path(os.environ["HOME"]) / ".posit" / "ai" / "providers.json"
+    data = json.loads(path.read_text())
+    assert data["providers"]["openai-compatible"]["models"]["allow"] == ["vision-chat", "coder"]
+    assert data["providers"]["openai-compatible"]["baseUrl"] == "http://127.0.0.1:9100/v1"
+    out = capsys.readouterr().out
+    assert f"to {path} (there was no previous file)" in out
+    assert "OPENAI_COMPATIBLE_API_KEY" in out  # the key's name is said, its value never is
+
+
+def test_the_posit_cli_says_a_refusal_in_one_line(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "providers.json"
+    path.write_text("[]")
+    monkeypatch.setattr(clients, "POSIT_PROVIDERS", path)
+    assert cli.main(["clients", "posit", "--write", "--registry", str(REGISTRY)]) == 1
+    assert capsys.readouterr().err == (f"spark clients: Posit Assistant's providers file {path} holds an array at its "
+                                       "top level, not the object Posit Assistant reads\n")
+
+
+def test_posits_providers_file_is_found_when_the_command_runs_not_at_import(tmp_path, monkeypatch, capsys):
+    # As for pi's models file (Task 9's rulings, R10): the tests import clients at collection, before conftest gives
+    # each test a HOME of its own: a path fixed at import is the real ~/.posit of whoever runs them.
+    written = []
+    monkeypatch.setattr(clients, "merge_posit", lambda path, provider: written.append(path))  # writes nothing
+    monkeypatch.setenv("HOME", str(tmp_path))
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    assert clients.run_posit(argparse.Namespace(registry=registry, base_url="u", write=True)) == 0
+    assert written == [tmp_path / ".posit/ai/providers.json"]
+    assert f"to {tmp_path / '.posit/ai/providers.json'} (there was no previous file)" in capsys.readouterr().out
