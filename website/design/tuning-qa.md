@@ -71,3 +71,21 @@ coder's full context. How often does that pairing come up, and what do you expec
 the transcription model." So the context is changed case by case, for either model, not set once for
 a pair. The question took whisper large-v3-turbo, which has no context window and already fits
 beside the coder, to be some other model; which one isn't settled.
+
+**Q3. *The coder is loaded at its full 262k, and you want it at 128k for the afternoon, so the
+transcription model fits beside it. What do you expect to do?***
+
+- A: a few named sizes: each model lists a few sizes in the registry; render works out each one's
+  footprint from a per-token cost and checks the budget, and `make clients` gives pi each size with
+  its own window. One command switches, unloading the model and loading it again at that size:
+  `spark load coder --size 128k` (a sketch).
+- B: any size at load time, `spark load coder --ctx 100000`, until it unloads. The gate works out
+  the footprint from the per-token cost; pi still has the full window, so a long pi session on the
+  smaller one is refused with `400`s.
+- C: edit and apply, as today: change `ctx` in `stack/models.yaml`, `make apply` (llama-swap
+  restarts, every model stops, the always-loaded ones reload), then `make clients`.
+
+**Dan: A** (2026-10-23). No reason given. The recommendation's: the gate never evicts or
+substitutes, so a switch is an unload and a reload at Dan's command; only named sizes give pi the
+window it is served; and a smaller size's footprint, worked out from a per-token cost, errs high
+until a soak measures it, since a wrong one risks the overcommit freeze.
