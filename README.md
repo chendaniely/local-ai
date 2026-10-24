@@ -7,10 +7,10 @@ reached from a MacBook or other devices over Tailscale, WireGuard, or the home L
 Started 2026-09-23, on arrival of the Spark. The design was settled the same day — see
 [the plan](website/design/plan.md). Its Phase 0 is built: leak guards and CI, the `spark` CLI's
 first tools, the host bootstrap and the docs site. Phase 1 is built too (2026-09-29): since
-2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to pi
+2026-09-28 the box serves its four models through llama-swap, to Open WebUI on the phone and to Pi
 on the Mac and as `agent`, behind a minimal brake and launch check.
 [Its retrospective](website/design/phase-1-retro.md) says what Phase 2 inherits. The Mac can also
-run pi and Claude Code in [Orca](website/how-to/orca.md), and the web UI as an app of its own.
+run Pi and Claude Code in [Orca](website/how-to/orca.md), and the web UI as an app of its own.
 *(2026-10-16: Phase 2a's cutover, its Task 38, put a front and a gate in front of llama-swap,
 which moved to 127.0.0.1:900, and the brake now unloads idle models first (built; not yet seen
 acting: Tasks 47 and 48). The rest of Phase 2a, its drills, measurements and close, is still being
@@ -21,10 +21,10 @@ built on the `phase-2a` branch.)*
 **Claude stays untouched** — Claude Code and Claude Desktop talk directly to Anthropic on my
 subscription, with nothing in the path. (Hooks that only report to apps on my own machines, such as
 Orca's, are allowed; [the plan](website/design/plan.md) words it.) The Spark is a *second* mode: a model server for my own
-pipelines, for coding harnesses (pi, OpenCode) on the Mac and on the Spark itself, and for a web UI —
-it loads a model only when it fits, and says why when it doesn't. (Hermes, in the original version of
-this line, was parked on 2026-09-23.) Since 2026-10-19, Posit Assistant — the TUI `pa` and Positron —
-reaches it the same way, as a client like pi and OpenCode.
+pipelines; for [the harnesses](website/architecture.qmd#harnesses), Pi, OpenCode, Posit Assistant
+(`pa`) and Hermes Agent on the Mac, and Pi on the Spark itself; and for a web UI. It loads a model
+only when it fits, and says why when it doesn't. (Hermes, in the original version of this line, was
+parked on 2026-09-23, and unparked on 2026-10-23. Posit Assistant joined on 2026-10-19.)
 
 ## Contents
 
@@ -186,7 +186,7 @@ when that file was retired on 2026-09-23.
   bootstrap; **Tailscale 1.102.4** came from its own install script (2026-09-24; its version
   recorded 2026-09-25); **OpenSSH 1:9.6p1-3ubuntu13.19** is Ubuntu's `openssh-server` (recorded
   2026-09-25). **Node 22.23.3** comes from NodeSource's apt repository (2026-09-28, for `agent`'s
-  pi; Ubuntu's own is 18.19, and pi needs 22.19 or later), so apt updates it. Claude Code here
+  Pi; Ubuntu's own is 18.19, and Pi needs 22.19 or later), so apt updates it. Claude Code here
   talks straight to Anthropic — it is a client like any other, not a change to the Claude path.
   **btop** and NVIDIA's **DCGM 1:3.3.9** (`datacenter-gpu-manager`) were installed together with
   `apt install` (dated 2026-10-13 by PR #9, not checked here; btop's version not recorded). DCGM's
@@ -254,11 +254,11 @@ when that file was retired on 2026-09-23.
   its full 262,144 tokens, with a footprint estimated at 41 GiB. The footprints come to 84 GiB,
   within the 102 GiB ceiling, and the coder fits beside the residents with the reserve kept. The
   box serves the coder at 163,840 until Dan runs `make apply`, which restarts llama-swap and so
-  refuses while a model is loaded (`make apply-now` restarts it anyway), and pi's lists show the
+  refuses while a model is loaded (`make apply-now` restarts it anyway), and Pi's lists show the
   new window once the clients are written again; this section changes then.)* *(Deployed
   2026-10-15, with Phase 2a's Task 37, from a `main` worktree: the box serves the coder at its full
   262,144 tokens. The footprints are 32, 8, 3 and 41 GiB, the coder's estimated and not yet
-  measured. pi's lists show the new window once `make clients` writes them again on the Mac.)*
+  measured. Pi's lists show the new window once `make clients` writes them again on the Mac.)*
   The app in `/opt/local-ai/app` was last synced on 2026-10-05, by a `make apply` of Dependabot's
   hatchling bump (16efba8), which also restarted the brake (recorded 2026-10-07). *(Synced again
   2026-10-15, by Task 37's `make apply` from a `main` worktree: `main`'s render, registry and
@@ -286,14 +286,14 @@ when that file was retired on 2026-09-23.
   comes back by itself from a power cycle, under llama-swap's sandbox. `nvidia-uvm` is loaded at
   boot by udev's rule from `nvidia-kernel-common-580`, before llama-swap starts, so the engines
   need no setuid helper, and every engine runs on the GPU. Nothing in bootstrap had to change.)*
-- **`agent`'s tools** (2026-09-28, Phase 1 Task 15). pi **0.85.1** and uv **0.12.19** in its
+- **`agent`'s tools** (2026-09-28, Phase 1 Task 15). Pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
-  `spark clients`, which wrote pi's `spark` provider. Its Claude Code got the same secrets guard as
+  `spark clients`, which wrote Pi's `spark` provider. Its Claude Code got the same secrets guard as
   Dan's Spark session before the key arrived: the hook script, the 35 deny rules, and a `CLAUDE.md`
-  holding only the secrets rule. Its pi runs the coder through llama-swap, in tmux, and the session
+  holding only the secrets rule. Its Pi runs the coder through llama-swap, in tmux, and the session
   survives a detach and a new login. *(Since 2026-10-16, Phase 2a's cutover: the same key is one of
-  the client keys the front checks, by its digest, and pi reaches the models through the front on
+  the client keys the front checks, by its digest, and Pi reaches the models through the front on
   9100. llama-swap no longer takes it: at 127.0.0.1:900 it gets a 401, checked as `agent` that day.)*
 - **Desktop session:** DGX OS boots to a desktop by default, which would hold 2–3 GiB of the shared
   memory pool. Checked 2026-09-24: the display manager (GDM) was up with only its login screen —
@@ -352,13 +352,13 @@ when that file was retired on 2026-09-23.
   Homebrew's coreutils **9.12** (2026-09-29): the install-units tests run its `timeout`, and fail
   on a Mac without it. gh's login carries the `workflow` scope (2026-09-29), which a push that
   changes `.github/workflows/` needs; without it GitHub refuses the push.
-- **pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
+- **Pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
   0.85.1, installed with npm; whether that copy is still installed is not recorded. *(Since
-  2026-10-16, Phase 2a's cutover, the tunnel carries it to the front, on the same port, 9100; pi
+  2026-10-16, Phase 2a's cutover, the tunnel carries it to the front, on the same port, 9100; Pi
   answered through it that day.)*
-- **opencode 2.0.25**, from Homebrew (its version recorded 2026-10-14). It runs one background
+- **OpenCode 2.0.25**, from Homebrew (its version recorded 2026-10-14). It runs one background
   service that its windows hand their requests to, which keeps the environment it started with:
   `opencode service restart` after adding a key. `make clients` writes its `spark` provider; the fast
   coder's `spark-sglang` provider was added by hand from the by-hand page, its key in
@@ -370,7 +370,7 @@ when that file was retired on 2026-09-23.
 - **Posit Assistant** (2026-10-19): the TUI `pa`, a development build from Posit's install script
   that updates itself, and Positron 1.138.0, which ships the assistant as its `posit.assistant`
   1.7.0 bootstrap extension. Both reach the Spark's models over `make tunnel`, through the
-  front's OpenAI-compatible routes, as pi and opencode do. `make clients-posit` writes the
+  front's OpenAI-compatible routes, as Pi and OpenCode do. `make clients-posit` writes the
   built-in `openai-compatible` entry in `~/.posit/ai/providers.json` from the registry: the chat
   models, with their windows and capabilities, and an allow list that keeps the embeddings model
   and whisper out of the picker; the built-in form, since a custom entry has no key path that
@@ -391,9 +391,9 @@ when that file was retired on 2026-09-23.
   works (2026-09-25, in keys-only SSH's checks); `brightroar-agent-lan` is not recorded as added
   here yet.
 - **Orca 1.4.220** on 2026-10-05 (installed 2026-09-24; it updates itself), in its local mode
-  ([Orca on the Mac](website/how-to/orca.md)): it runs Claude Code and pi in its panes, and pi
+  ([Orca on the Mac](website/how-to/orca.md)): it runs Claude Code and Pi in its panes, and Pi
   reaches the Spark over `make tunnel` (checked 2026-09-29). Its status hooks sit on 13 events in
-  `~/.claude/settings.json` since 2026-09-24, and its three pi extensions in
+  `~/.claude/settings.json` since 2026-09-24, and its three Pi extensions in
   `~/.pi/agent/extensions/` since 2026-09-28; after its updates to 1.4.220 its hook still only
   reports, now with the agent's process number and start time. Its settings: Agent Permissions
   Manual and telemetry off since 2026-10-05, read from its settings database (until then, its
@@ -519,6 +519,10 @@ the plan it would come in, and what was left out and why.
   mostly documentation, so a wrong doc is worse than a missing one — it gets believed and acted on.
   Correct rather than delete, and keep unverified things marked unverified. Full rule in
   [`CLAUDE.md`](CLAUDE.md).
+- **The harnesses go by their official names**: Pi, OpenCode, Posit Assistant (`pa`) and Hermes
+  Agent, as their own docs write them, defined once on
+  [Architecture](website/architecture.qmd#harnesses), which a new harness reaches first; commands
+  and paths stay lowercase in code (2026-10-23). Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **The architecture diagrams are kept true first.** [Architecture](website/architecture.qmd)'s
   diagrams are the quickest way to see what runs and how a request gets through, so any change to a
   part or a path, or a planned part built, updates them in the same commit. Diagrams live only

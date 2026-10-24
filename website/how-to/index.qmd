@@ -41,7 +41,7 @@ sudo apt install tmux gh
    the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Skip it until then: the stack
    deploys and runs without it.)*
 8. [Deploy the stack](deploy.md)
-9. [pi, the coding agent](pi.md) — `agent`'s Claude Code gets the secrets guard before its key.
+9. [Pi, the coding agent](pi.md) — `agent`'s Claude Code gets the secrets guard before its key.
 
 **After step 5**, go back to [SSH from the Mac](ssh.md#keys-only) for *Keys only* and the public
 IPv6 check, which need the tailnet name.
@@ -54,7 +54,9 @@ Phase 1 box to Phase 2a*, which also holds the way back. ntfy can wait for Phase
 
 Then ongoing, not once: [Updates](updates.md) — apt any time, and upgrade day on Saturdays.
 
-On the Mac, if you use it: [Orca on the Mac](orca.md) — your Claude Code and pi in Orca's panes;
-and [Posit Assistant on the Mac](posit-assistant.md) — the Spark's models in `pa` and Positron.
+On the Mac, if you use them: [Orca on the Mac](orca.md) — your Claude Code and Pi in Orca's panes;
+and the rest of [the harnesses](../architecture.qmd#harnesses):
+[OpenCode and Hermes Agent on the Mac](opencode-hermes.md), and
+[Posit Assistant on the Mac](posit-assistant.md) — the Spark's models in `pa` and Positron.
 
 ## Every runbook

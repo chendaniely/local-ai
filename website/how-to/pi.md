@@ -1,6 +1,6 @@
 ---
-title: "pi, the coding agent"
-description: "pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark, once agent's Claude Code has the secrets guard."
+title: "Pi, the coding agent"
+description: "Pi on the Mac through an SSH tunnel, and as agent in tmux on the Spark, once agent's Claude Code has the secrets guard."
 ---
 
 pi reaches the Spark's models as one provider, `spark`: each chat model in the registry, under its
@@ -52,8 +52,10 @@ make clients
 
 It writes the provider into `~/.pi/agent/models.json` and leaves every other provider there as it
 was. The previous file, if there was one, is kept as `models.json.bak`, and the line `make clients`
-prints says which. *(Since 2026-10-14 `make clients` also writes the `spark` provider for opencode and Hermes:
-[opencode and Hermes on the Mac](opencode-hermes.md). `make clients-pi` writes pi's alone.)*
+prints says which. *(Since 2026-10-14 `make clients` also writes the `spark` provider for
+OpenCode and Hermes Agent, [OpenCode and Hermes Agent on the Mac](opencode-hermes.md), and since 2026-10-19 Posit Assistant's,
+[Posit Assistant on the Mac](posit-assistant.md): one command for all
+[the harnesses](../architecture.qmd#harnesses). `make clients-pi` writes Pi's alone.)*
 
 **On the Mac**, in a spare terminal, from your clone, open the tunnel and leave it open. Ctrl-C
 closes it.

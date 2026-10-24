@@ -4250,9 +4250,11 @@ Each item gets its own design pass when its turn comes.
 
 - **2026-10-23** — "Harness" and "client" get one definition, Dan's decision: "we should make
    sure that client and harness are more generic in the docs". A harness is an agent tool that
-   reaches the models with a key of its own (pi, opencode, Posit Assistant and Hermes on the Mac,
-   over `make tunnel`; `agent`'s pi on the Spark); a client is anything that sends the front a
-   keyed request (the harnesses, the web UI, Dan's own pipelines and apps). The definition goes on
+   reaches the models with a client key (Pi, OpenCode, Posit Assistant and Hermes Agent on the
+   Mac, over `make tunnel`, sharing the Mac's key; `agent`'s Pi on the Spark, with `agent`'s); a
+   client is anything that sends the models a keyed request (the harnesses, the web UI with its own
+   key, and from Phase 3 Dan's own pipelines and apps, through the front or LiteLLM). The
+   definition goes on
    the Architecture page, beside the diagrams; other pages say "the harnesses" and link to it, and
    `CLAUDE.md`, `README.md` and the overview diagram name all four, since they are read outside
    the site. Chosen over listing the four on every page and over a glossary page.

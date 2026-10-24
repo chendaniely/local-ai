@@ -3,9 +3,10 @@ title: "Architecture"
 description: "Where everything sits — the Mac, the phone, the Spark and the Synology — and the paths a request takes. Built parts are solid; planned parts are dashed, with their phase."
 ---
 
-The overview first, then one picture of where everything sits, then the three paths a request can
-take. Every scenario follows one of those paths, so the table at the end names the path for each,
-and each scenario's page says what happens along it. **Solid** parts are built and running;
+The overview first, and what the harnesses and the clients are; then one picture of where
+everything sits, then the three paths a request can take. Every scenario follows one of those
+paths, so the table at the end names the path for each, and each scenario's page says what happens
+along it. **Solid** parts are built and running;
 **dashed** parts are planned, labelled with the phase that brings them. A built part that a later
 phase changes stays solid, and its label adds the change with that phase. [The plan](design/plan.md)
 holds the reasons.
@@ -16,6 +17,24 @@ The tools, and how a request reaches a model. The home page shows the same diagr
 file, `website/_overview.qmd`.
 
 {{< include _overview.qmd >}}
+
+## Harnesses and clients {#harnesses}
+
+*(Defined here on 2026-10-23, Dan's decision; [the plan](design/plan.md)'s Revisions has it.)* Other
+pages say "the harnesses" or "the clients" and link here, so a new harness is added here first,
+then to the diagrams.
+
+- **A harness** is an agent tool I run that reaches the Spark's models with a client key. On the
+  Mac there are four, each over `make tunnel`, sharing the Mac's key, its provider written from
+  the registry by `make clients`: **Pi** ([its runbook](how-to/pi.md)), **OpenCode** and **Hermes
+  Agent** ([their runbook](how-to/opencode-hermes.md)), and **Posit Assistant** (`pa`), in a
+  terminal and inside Positron ([its runbook](how-to/posit-assistant.md)). On the Spark, Pi runs
+  as `agent`, in tmux, with `agent`'s own key and no tunnel. Orca isn't one: it starts harnesses
+  in its panes ([Orca on the Mac](how-to/orca.md)).
+- **A client** is anything that sends the Spark's models a request with a key: the harnesses, the
+  web UI with its own key, and from Phase 3 my own pipelines and apps, each with a key of its own,
+  through the front or through LiteLLM, whichever Phase 3 settles on.
+- **Claude Code and Claude Desktop are neither.** They never use the Spark's models.
 
 ## Where everything sits
 
@@ -28,9 +47,11 @@ flowchart TB
     direction LR
     orca["Orca"]
     claude_mac["Claude Code,<br/>Claude Desktop"]
-    pi_mac["pi"]
-    oc_mac["opencode, Hermes"]
-    posit_mac["Posit Assistant,<br/>pa and Positron"]
+    subgraph harnesses_mac["the harnesses"]
+      pi_mac["Pi"]
+      oc_mac["OpenCode, Hermes Agent"]
+      posit_mac["Posit Assistant (pa),<br/>and in Positron"]
+    end
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
@@ -51,7 +72,7 @@ flowchart TB
     guestui["guest web UI<br/>events only · Phase 6"]:::planned
     owui["Open WebUI · 127.0.0.1:3000<br/>root's Compose<br/>capabilities dropped"]
     searx["SearXNG · 127.0.0.1:8888<br/>root's Compose<br/>capabilities dropped"]
-    agent_tmux["pi and Claude Code<br/>as agent, in tmux"]
+    agent_tmux["Pi and Claude Code<br/>as agent, in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place, or not at all"]:::planned
     sockets["systemd holds 127.0.0.1:9100<br/>and the gate's two sockets"]
     front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys"]
@@ -123,9 +144,9 @@ flowchart TB
   the gate, beside the brake, and two system users of their own run the front (`spark-front`) and
   the model downloads (`spark-pull`). *(They do since Phase 2a's cutover, 2026-10-16, and the
   failure notifier runs as a user systemd makes for each of its runs, `DynamicUser=`.)*
-- **From Phase 2a ~~(planned)~~, the front takes 127.0.0.1:9100** with the same keys, so pi, the
-  web UI and `agent` change nothing. systemd holds 9100 and the gate's two sockets, so they are
-  never free, even while the front or the gate restarts, or crashes again and again. llama-swap moves to 127.0.0.1:900 and the engines to
+- **From Phase 2a ~~(planned)~~, the front takes 127.0.0.1:9100** with the same keys, so the
+  harnesses, the web UI and `agent` change nothing. systemd holds 9100 and the gate's two sockets,
+  so they are never free, even while the front or the gate restarts, or crashes again and again. llama-swap moves to 127.0.0.1:900 and the engines to
   800 and up, below 1024, where no other user can listen, and only the internal keys reach
   llama-swap. The gate decides every load, unloads idle models and lifts the brake's hold; the
   brake stays a unit of its own, so it runs even while the gate is down, and then sends its own
@@ -147,7 +168,7 @@ flowchart TB
   and 48.)*
 - **Phase 4a (planned, 2026-10-14)** brings the fast coder, Qwen3.8-27B on SGLang in a container
   that root's unit runs, and Qwen3.8-Flash-Next on llama.cpp, which loads after `spark make-room`
-  clears the box; opencode on the Mac lists them. Until then both run by hand, outside the stack:
+  clears the box; OpenCode on the Mac lists them. Until then both run by hand, outside the stack:
   [The fast coder, by hand](how-to/qwen3.8-27b-sglang.md) and
   [Qwen3.8-Flash-Next, by hand](how-to/qwen3.8-flash-next.md).
 - **Claude never uses the Spark's models.** Claude Code and Claude Desktop talk straight to
@@ -159,9 +180,9 @@ flowchart TB
 flowchart LR
   classDef planned stroke-dasharray: 5 5
 
-  piT["pi, opencode, Hermes and Posit Assistant<br/>on the Mac, in a terminal or Orca"]
+  piT["the harnesses on the Mac<br/>Pi, OpenCode, Posit Assistant (pa), Hermes Agent<br/>in a terminal, Orca or Positron"]
   ui["web UI<br/>on the Mac or the phone"]
-  piA["pi as agent<br/>in tmux on the Spark"]
+  piA["Pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
   app["an app with its own key<br/>Phase 3"]:::planned
   fam["family and friends<br/>over a shared Tailscale node · Phase 6"]:::planned
@@ -191,12 +212,13 @@ flowchart LR
   guest -.-> litellm
 ```
 
-pi on the Mac reaches ~~llama-swap~~ the models only while `make tunnel` runs, since nothing on the
-Spark listens beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
-alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
-Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`), and Posit
-Assistant does too, `pa` and Positron, with the same key (since 2026-10-19, `make clients`;
-[its runbook](how-to/posit-assistant.md)). From
+[The harnesses](#harnesses) on the Mac reach ~~llama-swap~~ the models only while `make tunnel`
+runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH: Pi since Phase 1, and with the
+same key OpenCode and Hermes Agent (since 2026-10-14) and Posit Assistant, `pa` and Positron (since
+2026-10-19), each set up by `make clients`. The web UI needs Tailscale: on another tailnet, over
+WireGuard, the LAN alias still carries SSH and so the tunnel, but the web UI waits. `agent`'s Pi
+needs no tunnel. *(Reworded 2026-10-23, when the harnesses were defined above: this paragraph named
+pi on the Mac first and the others after it.)* From
 Phase 2a ~~(planned)~~, the same tunnel, address and keys reach the front instead, which checks the key
 and forwards to llama-swap on its new port with a key of its own; no client changes. Only the
 inference routes go through: llama-swap's admin routes stay out of every client's reach. *(Built
@@ -266,7 +288,7 @@ flowchart LR
   swap -.-> diar["speaker labels"]:::planned
 ```
 
-Today the web UI and pi reach llama-swap directly with llama-swap's own keys. From Phase 2a they
+Today the web UI and Pi reach llama-swap directly with llama-swap's own keys. From Phase 2a they
 reach the front instead, with the same keys, and it already waits per key and refuses inline.
 *(Since 2026-10-16, Phase 2a's cutover, they do, and llama-swap takes only the internal keys.)* From
 Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
