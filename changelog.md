@@ -8,6 +8,36 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-10-19 — Posit Assistant, the TUI `pa` and Positron, as Mac clients (Dan's decision)
+
+**On the Mac; nothing changes on the Spark.** The front already serves the OpenAI-compatible
+routes — `GET /v1/models` and `POST /v1/chat/completions`, key-checked — so `pa` and Positron
+reach the models over `make tunnel`, as pi and opencode do. The decision is in the plan's
+*Requirements*; the runbook is [Posit Assistant on the Mac](website/how-to/posit-assistant.md).
+- **`pa`**: Posit's TUI, a development build from its install script (updated 2026-10-19; it
+  rebuilds as Posit merges), in `/usr/local/bin`.
+- **Positron 1.138.0** ships the assistant as its `posit.assistant` 1.7.0 bootstrap extension.
+- **The provider**: `make clients-posit` (new in PR #30) writes the built-in
+  `openai-compatible` entry into `~/.posit/ai/providers.json` from the registry: the chat models,
+  with their windows and capabilities, and an allow list that keeps the embeddings model and
+  whisper out of the picker. The built-in form, because a custom entry has no key path that works
+  in both surfaces: a custom `openai-compatible` entry has no key field, ignores the environment
+  key, and its only key mechanism, `apiKeyHelper`, breaks Positron, which reads the same file.
+  Checked against the live JSON schema and verified with the front, 2026-10-19.
+- **The key**: one line in `~/.secrets`, `OPENAI_COMPATIBLE_API_KEY` by reference to
+  `SPARK_API_KEY`, for the TUI; Positron's credential store for Positron. The file holds none.
+  A legacy block that pointed the Ollama provider at 9100 left
+  `~/.posit/assistant/settings.json` — the Ollama protocol is not what the front serves — and the
+  file's own migration note says the block can go once no older version reads it. After
+  Positron's own save of it the same day, that file remembers the model picked in its picker
+  under its `preferredModel` key (Gemma); the TUI takes its model per session with `-m`.
+- **Checked**: the TUI end to end, `pa -m openai-compatible/gemma-4-26b-a4b` answered through the
+  tunnel on 2026-10-19, and a model outside the allow list is refused by `pa` itself, before
+  anything reaches the front. Positron's side checked the same day: a first conversation
+  answered through it with Gemma.
+
+---
+
 ## 2026-10-16 — Qwen3.6-35B-A3B back on demand, beside the coder (Dan's decision)
 
 **Deployed** by the Spark session, **on the Spark**, from the `phase-2a` clone at `03d36b1`, with

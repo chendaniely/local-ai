@@ -7,6 +7,7 @@ flowchart TB
 
   subgraph mine["my Mac and phone"]
     harness["pi, opencode, Hermes<br/>in a terminal or Orca"]
+    posit["Posit Assistant<br/>pa in a terminal, Positron"]
     browser["web UI<br/>in a browser or as an app"]
   end
 
@@ -31,6 +32,7 @@ flowchart TB
   nas["Synology<br/>alerts, through ntfy · Phase 5<br/>backups · Phase 5"]:::planned
 
   harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> front
+  posit -- "the same tunnel" --> front
   browser -- "HTTPS over Tailscale" --> owui
   later -.-> litellm
   claude -- "never through the Spark" --> anthropic

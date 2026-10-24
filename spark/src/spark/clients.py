@@ -19,6 +19,7 @@ from spark.registry import Registry, load_registry
 PI_MODELS = Path("~/.pi/agent/models.json")  # expanded when run_pi runs, under the HOME it runs with
 PI_SETTINGS = Path("~/.pi/agent/settings.json")  # likewise
 OPENCODE_CONFIG = Path("~/.config/opencode/opencode.json")
+POSIT_PROVIDERS = Path("~/.posit/ai/providers.json")  # expanded when run_posit runs, under the HOME it runs with
 HERMES_CONFIG = Path("~/.hermes/config.yaml")
 HERMES_ENV = Path("~/.hermes/.env")  # read only for the placeholder check below; never written
 HERMES_PLACEHOLDER = "your-llama-swap-key-here"  # what this command's first version wrote there
@@ -68,6 +69,24 @@ def hermes_provider(registry: Registry, base_url: str, key_env: str) -> dict:
     environment; nothing here writes a key anywhere."""
     models = {m.name: {"context_length": m.ctx} for m in registry.models.values() if m.capability == "chat"}
     return {"api": base_url, "key_env": key_env, "transport": "chat_completions", "models": models}
+
+
+def posit_provider(registry: Registry, base_url: str) -> dict:
+    """Posit Assistant's built-in openai-compatible provider: the endpoint, each chat model's window and
+    capabilities, and the allow list that keeps the models the front serves for other uses (embeddings, whisper) out
+    of its picker. The key never goes in the file — providers.json holds no credential: OPENAI_COMPATIBLE_API_KEY
+    for the TUI, Positron's credential store for Positron. The docs' recommended form is a custom entry, but it has
+    no key path that works in both surfaces: its only key mechanism, apiKeyHelper, breaks Positron, which reads the
+    same file (checked against the live schema and the front, 2026-10-19)."""
+    models = {}
+    for m in registry.models.values():
+        if m.capability != "chat":
+            continue  # embeddings and speech models don't belong in its picker
+        models[m.name] = {"name": m.label, "maxContextLength": m.ctx, "supportsTools": True,
+                          "supportsImages": bool(m.source.mmproj), "supportsToolResultImages": False,
+                          "supportsWebSearch": False}
+    return {"enabled": True, "baseUrl": base_url,
+            "models": {"allow": list(models), "overrides": models}}
 
 
 class ClientsError(ValueError):
@@ -264,6 +283,45 @@ def merge_opencode(path: Path, provider: dict) -> Path | None:
     return backup
 
 
+def _load_posit(path: Path) -> dict:
+    """Posit Assistant's providers file, an object whose providers are an object too; or a ClientsError that names
+    the file, as _load_opencode does, chaining nothing to it: the file can hold other providers' settings."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError, RecursionError) as err:
+        why = str(err)
+    else:
+        why = None
+    if why is not None:
+        raise ClientsError(f"Posit Assistant's providers file {path} won't load: {why}")
+    if not isinstance(data, dict):
+        raise ClientsError(f"Posit Assistant's providers file {path} holds {KINDS[type(data)]} at its top level, not "
+                           "the object Posit Assistant reads")
+    if not isinstance(data.get("providers", {}), dict):
+        raise ClientsError(f"Posit Assistant's providers file {path}: its providers are "
+                           f"{KINDS[type(data['providers'])]}, not the object Posit Assistant reads")
+    return data
+
+
+def merge_posit(path: Path, provider: dict) -> Path | None:
+    """Put `provider` under providers."openai-compatible" in Posit Assistant's providers file, keep everything
+    else, and back up the old file, as merge_opencode does: refused before anything is written if the file won't
+    load, the backup keeping its mode, and the file written in place, so a link to it stays a link. The entry is
+    replaced whole, so a model the registry dropped goes too; the key never goes in."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(json.dumps({"$schema": "https://assistant.posit.co/schemas/providers.schema.json",
+                                    "version": 1,
+                                    "providers": {"openai-compatible": provider}}, indent=2) + "\n")
+        return None
+    data = _load_posit(path)
+    backup = path.with_suffix(".json.bak")
+    shutil.copy2(path, backup)
+    data.setdefault("providers", {})["openai-compatible"] = provider
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return backup
+
+
 # What yaml.safe_load gives for each kind of YAML value but a mapping.
 YAML_KINDS = {list: "a list", str: "a string", int: "a number", float: "a number", bool: "true or false"}
 
@@ -366,6 +424,12 @@ def register(subparsers) -> None:
     opencode.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
     opencode.set_defaults(func=run_opencode)
 
+    posit = sub.add_parser("posit", help="the Spark provider for Posit Assistant")
+    posit.add_argument("--write", action="store_true", help=f"merge it into {POSIT_PROVIDERS}")
+    posit.add_argument("--base-url", default="http://127.0.0.1:9100/v1")
+    posit.add_argument("--registry", type=Path, default=Path("stack/models.yaml"))
+    posit.set_defaults(func=run_posit)
+
     hermes = sub.add_parser("hermes", help="the Spark provider for Hermes")
     hermes.add_argument("--write", action="store_true", help=f"merge it into {HERMES_CONFIG}")
     hermes.add_argument("--default", metavar="MODEL", help="also make this Spark model Hermes's default")
@@ -406,6 +470,20 @@ def run_opencode(args: argparse.Namespace) -> int:
     backup = merge_opencode(path, provider)
     kept = f"the previous file is {backup}" if backup else "there was no previous file"
     print(f"clients: wrote the 'spark' provider to {path} ({kept})")
+    return 0
+
+
+def run_posit(args: argparse.Namespace) -> int:
+    provider = posit_provider(load_registry(args.registry), args.base_url)
+    if not args.write:
+        print(json.dumps({"providers": {"openai-compatible": provider}}, indent=2))
+        return 0
+    path = POSIT_PROVIDERS.expanduser()
+    backup = merge_posit(path, provider)
+    kept = f"the previous file is {backup}" if backup else "there was no previous file"
+    print(f"clients: wrote the 'openai-compatible' provider to {path} ({kept})")
+    print("clients: its key goes nowhere in the file: OPENAI_COMPATIBLE_API_KEY for the TUI, and Positron's "
+          "credential store for Positron")
     return 0
 
 

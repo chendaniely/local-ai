@@ -68,6 +68,7 @@ In order of how much they constrain the design:
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
 | Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. *(2026-10-14: Dan sets opencode up by hand for the fast coder's by-hand runs now, following [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md); its rendered config comes with Phase 4a's clients.)* *(Corrected the same day: PR #7's `spark clients opencode` already renders it for the deployed models, so opencode, and Hermes too, list them once #7 is on `main` and `make clients` runs on the Mac; Phase 4a's clients add its new models.)* *(2026-10-14, Dan's request: not any more for the deployed models. `make clients` writes OpenCode's and Hermes's `spark` provider from the registry, as it does pi's, each key by reference: [opencode and Hermes on the Mac](../how-to/opencode-hermes.md). The bake-off's new models reach them the same way.)* The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
+| Posit Assistant (decided 2026-10-19) | Posit Assistant, Posit's data analysis assistant — the TUI `pa` and Positron — is a client on the Mac, like pi and OpenCode: it reaches the Spark's models over `make tunnel` through the front's OpenAI-compatible routes, with no change on the Spark (verified end-to-end with Gemma, 2026-10-19). Its provider is the built-in `openai-compatible` entry in `~/.posit/ai/providers.json`, written by `spark clients posit` from the registry, with the non-chat models kept out of its picker. A custom entry was tested and set aside: a custom `openai-compatible` entry has no key path that works in both the TUI and Positron — its only key mechanism, `apiKeyHelper`, breaks Positron, which reads the same file. The key is `OPENAI_COMPATIBLE_API_KEY` for the TUI and Positron's credential store; the file never holds it. Full treatment, in PR #30: the subcommand, `make clients-posit`, the runbook [Posit Assistant on the Mac](../how-to/posit-assistant.md), the diagrams and *Current state*. |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
@@ -2450,6 +2451,12 @@ Each item gets its own design pass when its turn comes.
   other machines — which could take in the Spark through a small role that runs this repo's `make
   bootstrap` and `make apply`, never replacing them; not for the Spark now (Dan, 2026-10-07: "later";
   the [Q&A](phase-2a-qa.md) has the reasons).
+- **Provider naming** (Dan, 2026-10-19): the provider pointing at the Spark's front, `spark`
+  in pi, opencode and Hermes, is to carry a machine-specific name — `brightroar - spark`, or
+  `Brightroar (spark)` — because Dan has a second Spark as a work machine, so `spark` alone is
+  ambiguous; issue #28 holds the per-harness scope, including Posit's built-in provider, which
+  Posit names itself and so only a custom entry could rename (with no key path in the TUI,
+  checked 2026-10-19).
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
@@ -4219,6 +4226,13 @@ Each item gets its own design pass when its turn comes.
   41 of 50), but not together, so the gate refuses whichever is asked for second until the other
   unloads; `spark render` warns that every model at once passes the ceiling, as rule 9 has it warn.
   llama-swap numbers the engines by name, so it takes 802, the coder 803 and whisper 804.
+
+- **2026-10-19** — Posit Assistant becomes a client on the Mac, Dan's decision (*Requirements*):
+   the TUI `pa` and Positron reach the Spark over `make tunnel`, through the front, as pi and
+   OpenCode do, and `spark clients posit` writes its provider from the registry. The built-in
+   `openai-compatible` provider, because a custom entry has no key path that works in both the TUI
+   and Positron (checked against the live schema and verified with the front, 2026-10-19). In
+   PR #30; nothing changes on the Spark.
 
 ## Sources
 
