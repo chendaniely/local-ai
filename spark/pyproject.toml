@@ -9,7 +9,7 @@ dependencies = ["pyyaml>=6.0.2", "huggingface_hub>=0.34,<2"]
 spark = "spark.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.4"]
+dev = ["pytest>=9.2.0"]
 
 [build-system]
 requires = ["hatchling>=1.32.4"]
