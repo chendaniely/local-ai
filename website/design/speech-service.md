@@ -32,7 +32,7 @@ and the times compared with the Mac's result if one is kept for that episode.
    timings.
 2. **Memory.** The box has no room for it as things stand. Read on 2026-11-09 beside SGLang, Qwen3.6 pinned, the
    embeddings and whisper: 30 GiB available, 6 GiB of it owed to the loaded models' growth, so about 7 GiB free for a
-   load even at the reserve of 17. The service needs an estimated 10 to 14 GiB at its peak, and a load from there
+   load even at the reserve of 17. The service takes about 12 GiB (step 3, below), and a load from there
    would set off the brake's watch on the rate of fall, which could only unload always-loaded models. So **Qwen3.6
    is unloaded for each transcription run** (Dan, 2026-11-09), which frees about 30 GiB, and the load starts from
    about 58 GiB free, far from the brake. Requests for Qwen3.6, the web UI's background tasks included, are refused
@@ -77,7 +77,9 @@ either holds a `*.py`, `*.bin`, `*.pt` or `*.pkl`.
 **Loading.** Once, at startup: `Qwen3ASRModel.from_pretrained` on `cuda:0` in bfloat16, the aligner given its own
 device and dtype, or it stays on the CPU, `max_inference_batch_size=1` and **`max_new_tokens=4096`**. The default of
 512 can silently cut a fast 180 s chunk, and the aligner would then spread the partial text over the whole audio. An
-answer that reaches the limit is logged. `/health` answers 200 only once both models are loaded.
+answer that reaches the limit is logged. torch 2.13's native Triton kernels are de-registered at startup
+(`torch._native.registry.deregister_op_overrides(disable_dsl_names="triton")`): they compile a C helper at run time,
+and the container has no compiler. `/health` answers 200 only once both models are loaded.
 
 **Routes.** `POST /v1/audio/transcriptions`; `GET /v1/models`, as `{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}`;
 `GET /health`. The models run in one worker thread, so `/health`, `/v1/models` and a 429 answer at once during a
@@ -176,13 +178,21 @@ environment under the 4 GiB cap. Container flags are checked as the by-hand test
 
 ### The order, and what stops it
 
-The service is written only after these pass, and steps 1 and 2 don't wait for the next deploy.
+The service is written only after these pass. **Steps 1 to 4 were run on 2026-11-09, as a throwaway test in the
+container with these pins, and passed.**
 
-1. In the container: import the package, `torch.cuda.is_available()`, a small computation.
-2. The aligner alone on a short clip.
-3. Qwen3.6 unloaded, then both models on the densest 180 s of a real episode while SGLang generates. Recorded: peak
-   memory after load and after the request, the chunk's time, SGLang's tokens a second, and the brake's log.
-4. That answer through vid2sub's real parser.
+1. In the container: import the package, `torch.cuda.is_available()`, a small computation. *torch 2.13.0+cu130 saw
+   the GB10 and ran on it from its sm_120 kernels.*
+2. The aligner alone on a short clip. *It timed each character, in 0.7 s. **Loading it beside Qwen3.6 set off the
+   brake twice,** from about 35 GiB available, on its rate of fall, which unloaded whisper and Qwen3.6 and paused new
+   loads. So nothing of this service loads until Qwen3.6 is unloaded, even the aligner alone.*
+3. Qwen3.6 unloaded, then both models on real speech: 161 s of fast Mandarin stand-up with audience laughter, starting
+   from 67 GiB available. *12.2 s for the chunk, about 13 times real time, 373 tokens, so the limit wasn't near.
+   `MemAvailable` fell 11.9 GiB; CUDA reserved 8.3 GiB at its peak, and the 16 GiB cgroup cap held 5.1 GiB of host
+   memory. The brake stayed quiet.*
+4. That answer through vid2sub's real parser, built as *The answer* says. *One segment, 489 of 489 words kept, the text
+   exact. 54 units had zero length, and a few stretched across laughter, up to 6 s on one character: how those read in
+   subtitles is checked at step 6.* Not yet measured: the chunk's time while SGLang is generating.
 5. The service, its tests and its review.
 6. The done test.
 
