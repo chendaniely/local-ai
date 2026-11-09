@@ -174,6 +174,82 @@ models:
     # default, 32 per slot, the recurrent part alone would be ~2 GiB, so cap them at 8 (~0.5 GiB of it), counted in the
     # footprint.
     args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]
+  # Qwen3-ASR, on demand (Dan's decisions, 2026-10-23): 1.7B for multi-language transcription, 0.6B for Chinese,
+  # Japanese and English. Each is listed twice over one set of files: -32k fits beside the coder, for when other work is
+  # running, and -64k, its full 65,536, for when the box is otherwise free or a batch runs overnight. No role: whisper
+  # keeps stt, and the web UI's speech-to-text with it, and a client asks for these by name. llama-server b11146 serves
+  # them on /v1/audio/transcriptions (its audio projector the mmproj), as text in its `json` only, each transcript
+  # starting `language <name><asr_text>` for the client to strip; no timestamps (plan.md, Revisions). A request is
+  # held to the model's own limit, 20 minutes of audio at 12.5 tokens a second, by the client, at either context.
+  # Footprint, at its most after admission, estimated and not yet measured: the two files (1.7B 2.35 GiB, 0.6B
+  # 0.95); the KV cache at 112 KiB a token, both models' 28 layers of 8 KV heads of 128 (3.5 GiB at 32K, 7.0 at 64K);
+  # ~1 for the compute buffers. No prompt cache: each request is new audio. Beside the coder 9 GiB are left, so the
+  # -32k entries fit with it, qwen3-asr-0.6b-64k only just (9 of 9, so live memory may refuse it), and the gate refuses
+  # qwen3-asr-1.7b-64k until the coder unloads.
+  qwen3-asr-1.7b-32k:
+    label: Qwen3-ASR 1.7B at 32K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-1.7B-GGUF
+      revision: "36a678687ba7d07a74ca70ccb0e36902e005fb80"
+      file: Qwen3-ASR-1.7B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+    ctx: 32768
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 7
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-1.7b-64k:
+    label: Qwen3-ASR 1.7B at 64K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-1.7B-GGUF
+      revision: "36a678687ba7d07a74ca70ccb0e36902e005fb80"
+      file: Qwen3-ASR-1.7B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+    ctx: 65536
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 11
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-0.6b-32k:
+    label: Qwen3-ASR 0.6B at 32K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-0.6B-GGUF
+      revision: "928ab958557df9aa2ef1c93e0e83c7ad0933fae2"
+      file: Qwen3-ASR-0.6B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+    ctx: 32768
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 6
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-0.6b-64k:
+    label: Qwen3-ASR 0.6B at 64K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-0.6B-GGUF
+      revision: "928ab958557df9aa2ef1c93e0e83c7ad0933fae2"
+      file: Qwen3-ASR-0.6B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+    ctx: 65536
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 9
+    footprint_measured: false
+    args: [--load-mode, none]
 key_groups:
   dan:                   # Dan's keys, such as pi on the Mac's and the web UI's
     wait_s: 30

@@ -21,9 +21,15 @@ NATIVE_CTX = {
      "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"): 262144,
     ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
      "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
+    # Qwen3-ASR's two, read from their headers on 2026-10-23 (architecture qwen3vl).
+    ("ggml-org/Qwen3-ASR-1.7B-GGUF", "36a678687ba7d07a74ca70ccb0e36902e005fb80", "Qwen3-ASR-1.7B-Q8_0.gguf"): 65536,
+    ("ggml-org/Qwen3-ASR-0.6B-GGUF", "928ab958557df9aa2ef1c93e0e83c7ad0933fae2", "Qwen3-ASR-0.6B-Q8_0.gguf"): 65536,
 }
 # Qwen3.8-27B, the coder, was held at 163,840 by an exception here from its early swap on 2026-10-08 until render's
 # corrected budget check reached main the same day (Dan's decision), which let it run at all 262,144.
+# The exceptions, by name, each to its context and its twin at the full context over the same files: Qwen3-ASR at 32K,
+# which fits beside the coder, for when other work is running (Dan's decisions, 2026-10-23).
+BELOW_FULL = {"qwen3-asr-1.7b-32k": (32768, "qwen3-asr-1.7b-64k"), "qwen3-asr-0.6b-32k": (32768, "qwen3-asr-0.6b-64k")}
 
 
 def flag(args: tuple[str, ...], *spellings: str) -> int | None:
@@ -44,8 +50,9 @@ def test_vision_models_decode_a_whole_image_in_one_ubatch():
     # llama.cpp decodes an image's tokens with non-causal attention, all in one micro-batch, and an image with more
     # tokens than --ubatch-size aborts the whole engine (GGML_ASSERT in llama-context.cpp): Gemma 4 died on every
     # phone photo at the default 512 (2026-09-28). b11146 gives a gemma4v image up to 1120 tokens, so each vision
-    # model pins its image budget, and a micro-batch that holds it.
-    vision = [m for m in load_registry(STACK_REGISTRY).models.values() if m.source.mmproj]
+    # model pins its image budget, and a micro-batch that holds it. An audio projector's tokens decode causally, split
+    # across batches (b11146's mtmd.cpp, mtmd_decode_use_non_causal: not Qwen3-ASR's qwen3a), so only chat models'.
+    vision = [m for m in load_registry(STACK_REGISTRY).models.values() if m.source.mmproj and m.capability == "chat"]
     assert vision
     for model in vision:
         image_tokens = flag(model.args, "--image-max-tokens")
@@ -56,9 +63,14 @@ def test_vision_models_decode_a_whole_image_in_one_ubatch():
 
 
 def test_every_llama_cpp_model_runs_at_its_full_context():
-    llama = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "llama.cpp"]
+    models = load_registry(STACK_REGISTRY).models
+    llama = [m for m in models.values() if m.engine == "llama.cpp"]
     assert llama
     for model in llama:
+        if model.name in BELOW_FULL:
+            ctx, twin = BELOW_FULL[model.name]
+            assert model.ctx == ctx and models[twin].source == model.source, model.name
+            continue
         assert model.ctx == NATIVE_CTX[(model.source.repo, model.source.revision, model.source.file)], model.name
 
 
@@ -157,6 +169,11 @@ def test_the_stack_registrys_labels_are_the_plans_words():
         "whisper-large-v3-turbo": "whisper",
         "qwen3.8-27b": "the coder",
         "qwen3.6-35b-a3b": "Qwen3.6",  # back on demand beside the coder (Dan's decision, 2026-10-16)
+        # Qwen3-ASR, on demand, each at two contexts (Dan's decisions, 2026-10-23)
+        "qwen3-asr-1.7b-32k": "Qwen3-ASR 1.7B at 32K",
+        "qwen3-asr-1.7b-64k": "Qwen3-ASR 1.7B at 64K",
+        "qwen3-asr-0.6b-32k": "Qwen3-ASR 0.6B at 32K",
+        "qwen3-asr-0.6b-64k": "Qwen3-ASR 0.6B at 64K",
     }
     assert {name: m.used_by for name, m in models.items() if m.used_by} == {
         "gemma-4-26b-a4b": "the web UI and photos use it"}

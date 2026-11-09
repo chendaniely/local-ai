@@ -44,9 +44,19 @@ def test_revision_must_be_a_pinned_commit(tmp_path):
 
 
 def test_engine_must_serve_the_capability(tmp_path):
-    path = mutated(tmp_path, lambda d: d["models"]["stt"].update(engine="llama.cpp"))
-    with pytest.raises(RegistryError, match="capability"):
+    # Until 2026-10-23 this moved whisper to llama.cpp, which since serves transcription (Qwen3-ASR, Dan's decision).
+    path = mutated(tmp_path, lambda d: d["models"]["coder"].update(engine="whisper.cpp"))
+    with pytest.raises(RegistryError, match="capability 'chat' is not served by whisper.cpp"):
         load_registry(path)
+
+
+def test_llama_cpp_serves_transcription(tmp_path):
+    # Qwen3-ASR on llama-server b11146's /v1/audio/transcriptions, its audio projector the mmproj (2026-10-23).
+    asr = {"label": "the ASR", "capability": "transcription", "resident": False, "engine": "llama.cpp",
+           "source": {"repo": "example-org/asr", "revision": "4" * 40, "file": "asr.gguf", "mmproj": "mmproj.gguf"},
+           "ctx": 32768, "footprint_gib": 7, "footprint_measured": False}
+    model = load_registry(mutated(tmp_path, lambda d: d["models"].update(asr=asr))).models["asr"]
+    assert (model.engine, model.capability, model.source.mmproj) == ("llama.cpp", "transcription", "mmproj.gguf")
 
 
 def test_roles_are_unique(tmp_path):

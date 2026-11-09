@@ -463,10 +463,12 @@ def test_the_real_registry_renders():
 def test_the_real_registry_warns_only_that_all_cant_load_at_once():
     # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
     # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.
+    # Since Qwen3-ASR's four entries (2026-10-23, Dan's decisions), every model at once, 150 GiB, passes even the 117
+    # available at idle; until then it left memory under the warn line.
     warnings = spark.render.check_budget(load_registry(ROOT / "stack/models.yaml"))
     assert len(warnings) == 2
     assert "above the CUDA-allocatable ceiling" in warnings[0]
-    assert "under the brake's warn line" in warnings[1]
+    assert "more than the 117.0 GiB available with no model loaded" in warnings[1]
 
 
 # Task 6's fix round 1: a registry edit can't rebind an engine, or put a key where llama-swap shows it.
@@ -726,9 +728,28 @@ ONE_FOR_EACH_JOB = [  # (the edit, the refusal): Open WebUI is given one task mo
                  "need exactly one model with the 'small' role, found []", id="no small model"),
     pytest.param(lambda d: d["models"]["coder"].update(capability="embeddings"),
                  "need exactly one embeddings model, found ['coder', 'embed']", id="two embeddings models"),
-    pytest.param(lambda d: d["models"].pop("stt"),
-                 "need exactly one transcription model, found []", id="no transcription model"),
+    # By the role since 2026-10-23, when Qwen3-ASR made whisper one transcription model of several (Dan's decision).
+    pytest.param(lambda d: d["models"]["stt"].update(roles=[]),
+                 "need exactly one model with the 'stt' role, found []", id="no stt model"),
 ]
+
+
+ASR = {"label": "the ASR", "capability": "transcription", "resident": False, "engine": "llama.cpp",
+       "source": {"repo": "example-org/asr", "revision": "4" * 40, "file": "asr.gguf", "mmproj": "mmproj.gguf"},
+       "ctx": 32768, "footprint_gib": 7, "footprint_measured": False, "args": ["--load-mode", "none"]}
+
+
+def test_a_second_transcription_model_leaves_the_web_uis_speech_to_text_on_the_stt_role(tmp_path):
+    files = rendered(registry_with(tmp_path, lambda d: d["models"].update(asr=ASR)))
+    assert yaml.safe_load(files["compose/compose.yaml"])["services"]["open-webui"]["environment"][
+        "AUDIO_STT_MODEL"] == "stt"
+
+
+def test_a_llama_cpp_transcription_model_gets_its_projector_and_no_embedding_switch(tmp_path):
+    registry = load_registry(registry_with(tmp_path, lambda d: d["models"].update(asr=ASR)))
+    cmd = engine_cmd(registry.models["asr"], registry)
+    assert cmd[cmd.index("--mmproj") + 1].endswith("/snapshots/" + "4" * 40 + "/mmproj.gguf")
+    assert "--embedding" not in cmd and cmd[cmd.index("--alias") + 1] == "asr"
 
 
 @pytest.mark.parametrize("change, refusal", ONE_FOR_EACH_JOB)

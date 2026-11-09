@@ -6,7 +6,7 @@ flowchart TB
   classDef planned stroke-dasharray: 5 5
 
   subgraph mine["my Mac and phone"]
-    harness["pi, opencode, Hermes<br/>in a terminal or Orca"]
+    harness["the harnesses<br/>Pi, OpenCode, Posit Assistant (pa),<br/>Hermes Agent<br/>in a terminal, Orca or Positron"]
     browser["web UI<br/>in a browser or as an app"]
   end
 
@@ -16,7 +16,7 @@ flowchart TB
 
   subgraph spark["brightroar · the DGX Spark"]
     owui["Open WebUI<br/>with SearXNG for search"]
-    agent["pi as agent<br/>in tmux"]
+    agent["Pi as agent<br/>in tmux"]
     litellm["LiteLLM, a key per app · Phase 3<br/>ahead of the front, in its place,<br/>or not at all"]:::planned
     front["the front<br/>checks each key"]
     gate["spark-gate<br/>decides every load"]

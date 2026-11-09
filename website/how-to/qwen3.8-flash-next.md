@@ -238,7 +238,8 @@ systemctl stop local-ai-llama-swap
 free -g
 ```
 
-This stops every model: Open WebUI, pi, opencode and `agent`'s models get no answers until
+This stops every model: Open WebUI, [the harnesses](../architecture.qmd#harnesses) and
+`agent`'s Pi get no answers until
 [the restore](#restore-the-stack). Available should be back near 117.
 
 *(Added 2026-10-15, Phase 2a's Task 35: from Phase 2a's cutover, stopping llama-swap by hand isn't

@@ -1437,7 +1437,8 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     name = "a 170 MB upload"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
-    models = [m for m in registry.models.values() if m.capability == "transcription"]
+    # Whisper's, by its role: llama-server's Qwen3-ASR (2026-10-23) would take the upload whole, unchunked.
+    models = [m for m in registry.models.values() if "stt" in m.roles]
     if not models:
         return Check(name, False, "the registry has no speech-to-text model: give stack/models.yaml one, then "
                                   "`make apply`")
@@ -1497,7 +1498,7 @@ def canary(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if unusable := _unusable(key, key_env):
         return Check(name, False, unusable)
     chats = [m for m in registry.models.values() if m.capability == "chat"]
-    stts = [m for m in registry.models.values() if m.capability == "transcription"]
+    stts = [m for m in registry.models.values() if "stt" in m.roles]  # whisper's, as the upload's
     if not chats or not stts:
         return Check(name, False, "the registry needs a chat model and a speech-to-text model to send it through: "
                                   "give stack/models.yaml each, then `make apply`")
