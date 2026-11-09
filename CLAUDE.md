@@ -30,7 +30,8 @@ on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`
 
 - **Claude Code and Claude Desktop stay untouched.** No gateway, proxy, `ANTHROPIC_BASE_URL`, or
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
-  coding harnesses (pi, OpenCode), my own pipelines and apps, and a web UI. Violating this defeats
+  coding harnesses (pi, OpenCode), for Posit Assistant (its TUI `pa` and Positron), my own
+  pipelines and apps, and a web UI. Violating this defeats
   the repo's primary goal. Hooks that only report — copying a session's events to an app on my own
   machines that passes none of them on, as Orca's status hooks do — are allowed, as long as they
   exit 0 and print nothing or `{}` (no decision, no added context, no changed tool input) and
