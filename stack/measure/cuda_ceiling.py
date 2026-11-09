@@ -3,9 +3,9 @@
 # dependencies = []
 # ///
 """The CUDA-allocatable ceiling, measured carefully (Phase 2a, Task 41). It asks CUDA for memory a step at a time, every
-page touched and each step confirmed in MemAvailable, until MemAvailable is within a step of the reserve; then it frees
-everything and says how much CUDA gave: the ceiling is at least that. On the Spark, from the repo's root, with the box
-cleared and someone watching (Task 41, Step 3):
+page touched and each step confirmed in MemAvailable, until MemAvailable is within a step of the reserve; then it says
+how much CUDA gave, the ceiling being at least that, and frees everything. On the Spark, from the repo's root, with the
+box cleared and someone watching (Task 41, Step 3):
 
     uv run --no-project stack/measure/cuda_ceiling.py
 
@@ -14,15 +14,24 @@ cleared and someone watching (Task 41, Step 3):
 - First it prints cudaMemGetInfo's free and total, with nothing allocated. That call starts CUDA, whose context takes
   memory of its own, so MemAvailable's start is read after it.
 - Before each step it reads MemAvailable, and stops when that, less a step, would pass under --reserve (24 GiB by
-  default, the reserve every load keeps free). It never allocates "until failure".
+  default, the reserve every load keeps free). It never allocates "until failure". There it prints its result, while
+  CUDA still holds every step, so a signal during the free that follows can't lose it (exit 0).
 - A step is cudaMalloc'd, cudaMemset over all of it, so every page is touched, and synchronized, so the touch is done
-  and an error from it is seen at that step. It prints what CUDA holds, MemAvailable, and cudaMemGetInfo's free.
-- After each step it re-reads MemAvailable every 250 ms, for up to 5 s, until it has fallen since the start by at least
-  90% of all CUDA holds. If it hasn't, the reading isn't following what CUDA takes: it frees everything and stops
-  (exit 3).
+  and an error from it is seen at that step. It prints what CUDA holds, MemAvailable, the shortfall (what CUDA holds
+  less MemAvailable's fall since the start), and cudaMemGetInfo's free.
+- After each step it re-reads MemAvailable every 250 ms, for up to 5 s, until its fall since the start is at least 90%
+  of all CUDA holds and short of it by at most 1 GiB. If it isn't, the reading isn't following what CUDA takes: it frees
+  everything and stops (exit 3). That is what each step confirms: that MemAvailable shows what CUDA took.
 - While CUDA holds anything for it, it reads MemAvailable at least every 250 ms: after a step, through each pause, which
-  it sleeps in 250 ms slices. A reading under the reserve frees everything at once (exit 3).
-- It stops at the first CUDA error, and frees everything (exit 4).
+  it sleeps in 250 ms slices. A reading under the reserve frees everything at once, before anything else (exit 3).
+- A watchdog, a thread of its own, also reads MemAvailable every 250 ms while CUDA holds anything, whatever the main
+  thread is doing, and on a reading under the reserve ends the process at once (exit 3): the process's exit frees all of
+  CUDA's memory. It covers a main thread blocked writing to a paused terminal or a full pipe, and a CUDA call that
+  hangs. Its exit skips the main thread's words, its free and its handlers; it writes one line of its own, without
+  waiting on a stalled terminal.
+- It stops at the first CUDA error, and frees everything (exit 4). Only cudaMalloc's out of memory can be a ceiling, and
+  not when MemAvailable is still more than a step above the reserve while cudaMemGetInfo's free, which leaves out the
+  page cache, is under 1 GiB: that is the page cache. Its words say which (Task 41, Step 4).
 - The reserve can only be raised, and the pace only slowed: a --reserve under 24, a --step-gib over 0.25 or a --pause-s
   under 2.5 is refused, with nothing allocated (exit 2).
 - Every pointer is freed on every way out: the stop, a CUDA error, any other error (exit 1), Ctrl-C (130), SIGHUP (129),
@@ -30,10 +39,12 @@ cleared and someone watching (Task 41, Step 3):
   with nothing watching the reserve. Under uv run, Ctrl-Z also stops uv itself, which fg lets exit (or kill %1 ends);
   the memory is freed either way. A second signal while it frees is ignored: uv forwards SIGINT, SIGHUP and SIGTERM, so
   one sent to the process group reaches the script twice. A signal that comes during a CUDA call is taken once the
-  script's record of that call is straight, so no pointer is ever lost between the two.
+  script's record of that call is straight, so no pointer is ever lost between the two. A cudaFree that fails is said,
+  and exits 1; the driver frees that memory as the process exits. Ctrl-C can't end a CUDA call that hangs: kill -KILL
+  on the pid its plan line prints, from another pane, ends it, and the driver frees CUDA's memory as the process exits.
 - CUDA's allocations don't show in a process's RSS (below), and earlyoom picks by the kernel's oom_score, which counts
-  RSS, so earlyoom can't pick this script: its own reading, confirmed at every step, is its guard against a MemAvailable
-  that reports late.
+  RSS, so earlyoom can't pick this script: its guards are its own readings of MemAvailable, the main thread's and the
+  watchdog's.
 - --help lists the exit codes.
 
 Standard library only (PEP 723, no dependencies). spark/tests/test_cuda_ceiling.py loads it from this path."""
@@ -42,8 +53,10 @@ import argparse
 import contextlib
 import ctypes
 import math
+import os
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -69,7 +82,18 @@ PAUSE_S = 2.5
 POLL_S = 0.25  # how often it reads MemAvailable while CUDA holds anything: after a step and through each pause
 REFLECT_S = 5.0  # how long, after a step, it waits for MemAvailable to show what CUDA holds
 REFLECTED_SHARE = 0.9  # what share of all CUDA holds MemAvailable must have fallen by since the start
+# And the most MemAvailable's fall may be short of all CUDA holds, so the 90% doesn't grow loose as CUDA holds more: 10%
+# of 90 GiB would be 9 GiB (the controller's ruling, 2026-10-16). Never less than a step.
+SHORTFALL_GIB = 1.0
 FILL = 0xA5  # what cudaMemset writes over every step
+OUT_OF_MEMORY = 2  # cudaErrorMemoryAllocation, the only CUDA error that can be a ceiling
+# cudaMemGetInfo's free under this, with MemAvailable more than a step above the reserve, at an out-of-memory
+# cudaMalloc: the page cache CUDA didn't take, not the ceiling (the controller's ruling, 2026-10-16).
+PAGE_CACHE_FREE_GIB = 1.0
+# How much more than a step the last step's own fall may be and still be its own: a 256 MiB step took 254 to 259 MiB of
+# MemAvailable on the box (below), and MemAvailable moves a few MiB a second with the box's other work.
+OWN_STEP_SLACK = 0.1
+WRITE_WAIT_S = 0.05  # how long the watchdog waits for its line to be written before it ends the process
 
 EXIT_MEASURED, EXIT_ERROR, EXIT_REFUSED, EXIT_STOPPED, EXIT_CUDA_ERROR = 0, 1, 2, 3, 4
 EXIT_CTRL_C = 130
@@ -95,6 +119,9 @@ BINDING: dict[str, tuple[list[Any], Any]] = {
     "cudaFree": ([ctypes.c_void_p], ctypes.c_int),
     "cudaGetErrorString": ([ctypes.c_int], ctypes.c_char_p),
 }
+DANS_CALL = "This needs Dan's decision before any rerun (Task 41, Step 4)."
+SECOND_STOP = ("This run measures nothing: run it again once memory is steady; if it stops this way again, this method "
+               "can't measure the ceiling here, and that's Dan's call (Task 41, Step 4).")
 
 
 def _ignore_stops() -> None:
@@ -151,6 +178,11 @@ class Cuda:
     def held_gib(self) -> float:
         return sum(nbytes for _, nbytes in self._held) / GIB
 
+    @property
+    def holding(self) -> bool:
+        """Whether CUDA holds anything for the script: the watchdog's question, asked from its own thread."""
+        return bool(self._held)
+
     def words(self, code: int) -> str:
         text = self._lib.cudaGetErrorString(code)
         return text.decode(errors="replace") if text else "no words for it"
@@ -197,7 +229,7 @@ class Result:
     allocated_gib: float  # what CUDA gave, every page touched, before it stopped; freed by the time it returns
     # "under_reserve": a reading under the reserve while CUDA held anything, which frees everything at once
     stopped: Literal["reserve", "under_reserve", "cuda_error", "not_reflected"]
-    detail: str  # why it stopped, in words for the person watching
+    detail: str  # why it stopped, in words for the person watching; measure prints them as it stops
 
 
 class Stopped(BaseException):
@@ -211,6 +243,11 @@ class Stopped(BaseException):
 
 def _stop(signum: int, frame: object) -> None:
     raise Stopped(signum)
+
+
+class ReadingFailed(Exception):
+    """MemAvailable couldn't be read: the script's guard is gone, so the run ends. Kept apart from the other errors, so
+    the words blame /proc/meminfo only when it was the reading that failed."""
 
 
 def read_available_gib(meminfo: Path = MEMINFO) -> float:
@@ -229,6 +266,83 @@ def _the_reserve(reserve_gib: float) -> str:
     return f"the reserve you set, --reserve {reserve_gib:g} GiB"
 
 
+def _gib(value: float) -> str:
+    """A figure in GiB to two places, never "-0.00"."""
+    return f"{round(value, 2) + 0.0:.2f}"
+
+
+def _say_without_waiting(text: str) -> None:
+    """Writes `text` to the process's stderr from a thread of its own, and waits WRITE_WAIT_S at most: a terminal
+    paused with Ctrl-S, or a full pipe, would block a write, and the watchdog's exit can't wait for one. Nothing on the
+    terminal changes: making stderr non-blocking would change it for the shell that shares it."""
+    def write() -> None:
+        with contextlib.suppress(OSError):
+            os.write(2, text.encode())
+
+    writer = threading.Thread(target=write, name="cuda_ceiling-words", daemon=True)
+    writer.start()
+    writer.join(WRITE_WAIT_S)
+
+
+def _end_process(code: int) -> None:
+    os._exit(code)
+
+
+class Watchdog:
+    """The script's second guard, a thread of its own: it reads MemAvailable every POLL_S whatever the main thread is
+    doing, and on a reading under the reserve while CUDA holds anything for the script, ends the process at once with
+    os._exit(EXIT_STOPPED). The process's exit frees all of CUDA's memory. It covers what the main thread's own readings
+    can't: a main thread blocked writing to a terminal paused with Ctrl-S or to a full pipe, and a CUDA call that hangs.
+    Its exit skips the main thread's words, its free and its handlers: it writes one line of its own first, without
+    waiting on a stalled terminal. With nothing held there is nothing of CUDA's to free, and a reading under the
+    reserve is the main thread's to say. `sleep`, `exit` and `write` are the box's own unless a test gives stand-ins;
+    `run` is the thread's loop, which a test may run in its own thread."""
+
+    def __init__(self, read_available: Callable[[], float], *, reserve_gib: float, holding: Callable[[], bool],
+                 sleep: Callable[[float], Any] | None = None, exit: Callable[[int], Any] | None = None,
+                 write: Callable[[str], Any] | None = None) -> None:
+        self._read, self._reserve_gib, self._holding = read_available, reserve_gib, holding
+        self._stopped = threading.Event()
+        self._sleep = self._stopped.wait if sleep is None else sleep
+        self._exit = _end_process if exit is None else exit
+        self._write = _say_without_waiting if write is None else write
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "Watchdog":
+        self._thread = threading.Thread(target=self.run, name="cuda_ceiling-watchdog", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stopped.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.0)
+
+    def run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                available: float | None = self._read()
+            except OSError:
+                available = None  # the main thread's own reading fails too, and ends the run with words
+            if (available is not None and available < self._reserve_gib and self._holding()
+                    and not self._stopped.is_set()):
+                self._write(f"cuda_ceiling: the watchdog read MemAvailable {available:.2f} GiB, under "
+                            f"{_the_reserve(self._reserve_gib)}, while CUDA held memory, so it ended the process at "
+                            f"once (exit {EXIT_STOPPED}); a process's exit frees its CUDA memory. The main thread's "
+                            "words were skipped. This run measures nothing. Check that MemAvailable came back (grep "
+                            "MemAvailable /proc/meminfo), and what else is using memory (spark status for the models, "
+                            "top -o %MEM for the rest).\n")
+                self._exit(EXIT_STOPPED)
+                return
+            self._sleep(POLL_S)
+
+
+def start_watchdog(read_available: Callable[[], float], *, reserve_gib: float,
+                   holding: Callable[[], bool]) -> Watchdog:
+    """The box's watchdog, started: what main starts unless a test gives a stand-in."""
+    return Watchdog(read_available, reserve_gib=reserve_gib, holding=holding).start()
+
+
 def _watch(read_available: Callable[[], float], sleep: Callable[[float], None], *, seconds: float,
            reserve_gib: float) -> float:
     """Waits `seconds` in POLL_S slices, reading MemAvailable after each, and returns the first reading under
@@ -243,59 +357,83 @@ def _watch(read_available: Callable[[], float], sleep: Callable[[float], None], 
             return available
 
 
-def _info_words(cuda: Cuda, held_gib: float) -> str:
-    """cudaMemGetInfo while CUDA holds what it holds, or why it didn't answer."""
+def _info(cuda: Cuda, held_gib: float) -> tuple[int | None, str]:
+    """cudaMemGetInfo's free in bytes while CUDA holds what it holds, and the words for it; or None, and why it didn't
+    answer."""
     try:
         free, total = cuda.mem_get_info()
     except CudaError as err:
-        return f"cudaMemGetInfo, with {held_gib:.2f} GiB held, didn't answer: {err}."
-    return f"cudaMemGetInfo, with {held_gib:.2f} GiB held: free {free / GIB:.2f} GiB, total {total / GIB:.2f} GiB."
+        return None, f"cudaMemGetInfo, with {held_gib:.2f} GiB held, didn't answer: {err}."
+    return free, (f"cudaMemGetInfo, with {held_gib:.2f} GiB held: free {free / GIB:.2f} GiB, total "
+                  f"{total / GIB:.2f} GiB.")
+
+
+def _said(result: Result) -> Result:
+    """A stop that measured nothing, its words written to stderr."""
+    print(f"cuda_ceiling: {result.detail}", file=sys.stderr, flush=True)
+    return result
 
 
 def measure(cuda: Cuda, *, read_available: Callable[[], float], reserve_gib: float, step_gib: float, pause_s: float,
             sleep: Callable[[float], None]) -> Result:
-    """Asks CUDA for `step_gib` at a time, `pause_s` apart, each step touched and confirmed in MemAvailable
-    (REFLECTED_SHARE of all CUDA holds, within REFLECT_S), until MemAvailable less a step would pass under
-    `reserve_gib`. While CUDA holds anything it reads MemAvailable at least every POLL_S, through each pause, and a
-    reading under `reserve_gib` frees everything at once. It stops at the first CUDA error. Every way it returns, CUDA
-    holds nothing for it."""
+    """Asks CUDA for `step_gib` at a time, `pause_s` apart, each step touched and confirmed in MemAvailable (its fall
+    since the start at least REFLECTED_SHARE of all CUDA holds and short of it by at most SHORTFALL_GIB, within
+    REFLECT_S), until MemAvailable less a step would pass under `reserve_gib`. While CUDA holds anything it reads
+    MemAvailable at least every POLL_S, through each pause, and a reading under `reserve_gib` frees everything at once.
+    It stops at the first CUDA error. It prints each stop's words as it stops, and every way it returns, CUDA holds
+    nothing for it."""
     try:
         free, total = cuda.mem_get_info()
     except CudaError as err:
-        return Result(0.0, "cuda_error",
-                      f"{err}, before anything was allocated. Nothing allocated, nothing measured. Check that the GPU "
-                      "answers (llama-server --list-devices, from the folder --lib is in), then run it again.")
+        return _said(Result(0.0, "cuda_error",
+                            f"{err}, before anything was allocated. Nothing allocated, nothing measured. Check that "
+                            "the GPU answers (llama-server --list-devices, from the folder --lib is in); this needs "
+                            "Dan's decision before any rerun (Task 41, Step 4)."))
     print(f"cuda_ceiling: cudaMemGetInfo, with nothing allocated: free {free / GIB:.2f} GiB, total "
           f"{total / GIB:.2f} GiB.", flush=True)
     start = read_available()  # after cudaMemGetInfo has started CUDA, so the context's memory isn't taken for a step
     step_bytes = math.ceil(step_gib * GIB)
-    available, steps = start, 0
+    shortfall_cap = max(step_gib, SHORTFALL_GIB)
+    available, before_step, steps = start, start, 0
+
+    def shown(held_gib: float) -> bool:
+        fall = start - available
+        return fall >= REFLECTED_SHARE * held_gib and held_gib - fall <= shortfall_cap
 
     def cuda_error(err: CudaError, allocated_gib: float, when: str) -> Result:
-        info = _info_words(cuda, cuda.held_gib)
+        free_bytes, info = _info(cuda, cuda.held_gib)
         cuda.free_all()
-        return Result(allocated_gib, "cuda_error",
-                      f"{when}, {err}, with MemAvailable at {available:.2f} GiB. {info} It stopped at that first CUDA "
-                      f"error and freed everything. CUDA gave {allocated_gib:.2f} GiB, every page touched, before it: "
-                      "Task 41's Step 4 records a run that stops this way as it is.")
+        if err.call != "cudaMalloc" or err.code != OUT_OF_MEMORY:
+            verdict = f"Only cudaMalloc's out of memory can be a ceiling, so this run measures nothing. {DANS_CALL}"
+        elif free_bytes is None:
+            verdict = (f"cudaMemGetInfo didn't answer after it, so it can't tell CUDA's ceiling from the page cache. "
+                       f"{DANS_CALL}")
+        elif available - reserve_gib > step_gib and free_bytes / GIB < PAGE_CACHE_FREE_GIB:
+            verdict = (f"MemAvailable was still {available - reserve_gib:.2f} GiB above {_the_reserve(reserve_gib)}, "
+                       f"but cudaMemGetInfo's free, which leaves out the page cache, was {free_bytes / GIB:.2f} GiB: "
+                       f"CUDA didn't take the memory the page cache held, so this isn't the ceiling. {DANS_CALL}")
+        else:
+            verdict = (f"CUDA gave {allocated_gib:.2f} GiB, every page touched, and refused more with "
+                       f"{free_bytes / GIB:.2f} GiB free by its own count: that's a ceiling, and Task 41's Step 4 "
+                       "records it as it is.")
+        return _said(Result(allocated_gib, "cuda_error",
+                            f"{when}, {err}, with MemAvailable at {available:.2f} GiB. {info} It stopped at that first "
+                            f"CUDA error and freed everything. {verdict}"))
 
     while True:
         held = cuda.held_gib
         if held and available < reserve_gib:
             cuda.free_all()
-            fall = start - available
-            if fall - held > step_gib:
-                why = (f"{fall - held:.2f} GiB more than CUDA held: something else took memory meanwhile. Check what "
-                       "(spark status for the models, top -o %MEM for the rest), and run it again once memory is "
-                       "steady.")
+            last_fall = before_step - available
+            if last_fall <= step_gib * (1 + OWN_STEP_SLACK):
+                why = f"within a tenth of the step's {step_gib:g} GiB: its own last step took it under."
             else:
-                why = ("within a step of what CUDA held: its own last step took it under. Run it again for a run that "
-                       "stops at the reserve.")
-            return Result(held, "under_reserve",
-                          f"MemAvailable read {available:.2f} GiB, under {_the_reserve(reserve_gib)}, while CUDA held "
-                          f"{held:.2f} GiB, so it freed everything at once and stopped. MemAvailable had fallen "
-                          f"{fall:.2f} GiB since the start, {why} CUDA gave {held:.2f} GiB, every page touched, before "
-                          "it stopped.")
+                why = (f"{last_fall - step_gib:.2f} GiB more than the step's {step_gib:g} GiB: something else took "
+                       "memory meanwhile. Check what (spark status for the models, top -o %MEM for the rest).")
+            return _said(Result(held, "under_reserve",
+                                f"MemAvailable read {available:.2f} GiB, under {_the_reserve(reserve_gib)}, while CUDA "
+                                f"held {held:.2f} GiB, so it freed everything at once and stopped. Since its last step "
+                                f"MemAvailable fell {last_fall:.2f} GiB, {why} {SECOND_STOP}"))
         if available - step_gib < reserve_gib:
             if not held:
                 where = "already under" if available < reserve_gib else "within a step of"
@@ -303,22 +441,29 @@ def measure(cuda: Cuda, *, read_available: Callable[[], float], reserve_gib: flo
                         "rest), and clear the box first (spark make-room --all, Task 41's Step 3)."
                         if available < reserve_gib else
                         "Clear the box first (spark make-room --all, Task 41's Step 3), then run it again.")
-                return Result(0.0, "reserve", f"MemAvailable is {available:.2f} GiB, {where} "
-                                              f"{_the_reserve(reserve_gib)}; nothing allocated, nothing measured. "
-                                              f"{then}")
-            info = _info_words(cuda, held)
+                return _said(Result(0.0, "reserve", f"MemAvailable is {available:.2f} GiB, {where} "
+                                                    f"{_the_reserve(reserve_gib)}; nothing allocated, nothing "
+                                                    f"measured. {then}"))
+            _, info = _info(cuda, held)
+            result = Result(held, "reserve",
+                            f"MemAvailable is {available:.2f} GiB, within a step of {_the_reserve(reserve_gib)}, so it "
+                            f"stopped there: CUDA gave {held:.2f} GiB in {steps} step{'' if steps == 1 else 's'}, "
+                            f"every page touched, and MemAvailable fell {start - available:.2f} GiB since the start. "
+                            f"{info} The CUDA-allocatable ceiling is at least {held:.2f} GiB: Task 41's Step 4 records "
+                            "it as that lower bound. It frees everything now; if make-room holds the box for this run, "
+                            "spark make-room --done ends the hold.")
+            print(f"cuda_ceiling: {result.detail}", flush=True)  # before the free: a signal during it can't lose this
             cuda.free_all()
-            return Result(held, "reserve",
-                          f"MemAvailable is {available:.2f} GiB, within a step of {_the_reserve(reserve_gib)}, so it "
-                          f"stopped there: CUDA gave {held:.2f} GiB in {steps} step{'' if steps == 1 else 's'}, every "
-                          f"page touched, and MemAvailable fell {start - available:.2f} GiB since the start. {info} It "
-                          f"freed everything. The CUDA-allocatable ceiling is at least {held:.2f} GiB: Task 41's "
-                          "Step 4 records it as that lower bound. If make-room holds the box for this run, spark "
-                          "make-room --done ends the hold.")
+            return result
         if not steps:
             print(f"cuda_ceiling: MemAvailable is {start:.2f} GiB. Allocating {step_gib:g} GiB every {pause_s:g} s, "
                   f"every page touched, until MemAvailable is within a step of {_the_reserve(reserve_gib)}; a reading "
-                  "under it frees everything at once. Ctrl-C stops it and frees everything.", flush=True)
+                  "under it frees everything at once. Each line's shortfall is what CUDA holds less MemAvailable's "
+                  f"fall since the start: over {1 - REFLECTED_SHARE:.0%} of what CUDA holds, or over "
+                  f"{shortfall_cap:g} GiB, 5 s after a step, it stops. Ctrl-C stops it and frees everything; a CUDA "
+                  f"call that hangs ignores Ctrl-C, and kill -KILL {os.getpid()} from another pane ends it, and the "
+                  "driver frees CUDA's memory as the process exits.", flush=True)
+        before_step = available
         try:
             cuda.take(step_bytes)
         except CudaError as err:
@@ -327,27 +472,27 @@ def measure(cuda: Cuda, *, read_available: Callable[[], float], reserve_gib: flo
         held = cuda.held_gib
         available = read_available()
         waited = 0.0
-        while start - available < REFLECTED_SHARE * held and available >= reserve_gib and waited < REFLECT_S:
+        while not shown(held) and available >= reserve_gib and waited < REFLECT_S:
             sleep(POLL_S)
             waited += POLL_S
             available = read_available()
+        if available < reserve_gib:
+            continue  # the reserve's check, at the top, frees everything at once, before any other call or line
         try:
             cuda_free, _ = cuda.mem_get_info()
         except CudaError as err:
             return cuda_error(err, held, f"After step {steps}")
-        print(f"cuda_ceiling: CUDA holds {held:.2f} GiB; MemAvailable {available:.2f} GiB; cudaMemGetInfo's free "
-              f"{cuda_free / GIB:.2f} GiB.", flush=True)
-        if available < reserve_gib:
-            continue  # the reserve's check, at the top, frees everything at once
-        if start - available < REFLECTED_SHARE * held:
+        print(f"cuda_ceiling: CUDA holds {held:.2f} GiB; MemAvailable {available:.2f} GiB, a shortfall of "
+              f"{_gib(held - (start - available))} GiB; cudaMemGetInfo's free {cuda_free / GIB:.2f} GiB.", flush=True)
+        if not shown(held):
             cuda.free_all()
-            return Result(held, "not_reflected",
-                          f"MemAvailable fell {start - available:.2f} GiB since the start, under "
-                          f"{REFLECTED_SHARE:.0%} of the {held:.2f} GiB CUDA held, {REFLECT_S:g} s after its last "
-                          "step: the reading isn't following what CUDA takes, perhaps because something else freed "
-                          "memory meanwhile. It freed everything and stopped: this run measures nothing. Run it again "
-                          "once memory is steady; if it stops this way again, MemAvailable isn't showing CUDA's "
-                          "allocations, and this method can't measure the ceiling (Task 41, Step 4).")
+            fall = start - available
+            return _said(Result(held, "not_reflected",
+                                f"MemAvailable fell {fall:.2f} GiB since the start, {_gib(held - fall)} GiB short of "
+                                f"the {held:.2f} GiB CUDA held, {REFLECT_S:g} s after its last step; it allows at most "
+                                f"{1 - REFLECTED_SHARE:.0%} of what CUDA holds, and at most {shortfall_cap:g} GiB. The "
+                                "reading isn't following what CUDA takes, perhaps because something else freed memory "
+                                f"meanwhile. It freed everything and stopped. {SECOND_STOP}"))
         available = _watch(read_available, sleep, seconds=pause_s, reserve_gib=reserve_gib)
 
 
@@ -372,12 +517,14 @@ def _zero_or_more(text: str) -> float:
 EXIT_CODES = f"""exit status:
   0    measured: CUDA gave every step until MemAvailable was within a step of the reserve; the
        ceiling is at least the figure printed; everything freed
-  1    an error outside CUDA (--lib unusable, /proc/meminfo unreadable); everything freed
-  2    refused, nothing allocated: a --reserve under {RESERVE_GIB:g}, or a faster pace
-  3    stopped, everything freed: MemAvailable not following what CUDA took, or a reading under
-       the reserve while CUDA held anything; or nothing allocated, since MemAvailable was already
-       within a step of the reserve
-  4    a CUDA error stopped it; everything freed, and what CUDA gave before it printed
+  1    an error: --lib unusable, MemAvailable unreadable, output it couldn't write, or a cudaFree
+       that failed (the driver frees that memory as the process exits); the rest freed
+  2    refused, nothing allocated: a --reserve under {RESERVE_GIB:g}, or a bigger step or a shorter pause
+  3    stopped, everything freed, nothing measured: MemAvailable not following what CUDA took, or
+       a reading under the reserve while CUDA held anything (the watchdog's too); or nothing
+       allocated, since MemAvailable was already within a step of the reserve
+  4    a CUDA error stopped it; everything freed. Only an out-of-memory cudaMalloc can be a
+       ceiling, and its words say whether it is one
   {128 + signal.SIGHUP}  SIGHUP; everything freed
   {EXIT_CTRL_C}  Ctrl-C; everything freed
   {128 + signal.SIGTERM}  SIGTERM; everything freed
@@ -424,9 +571,21 @@ def _refusal(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _reading(read_available: Callable[[], float]) -> Callable[[], float]:
+    """`read_available`, its OSError turned into ReadingFailed, so main can tell the reading's failure from others."""
+    def read() -> float:
+        try:
+            return read_available()
+        except OSError as err:
+            raise ReadingFailed(str(err)) from err
+
+    return read
+
+
 def main(argv: list[str] | None = None, *, lib: Any = None, read_available: Callable[[], float] | None = None,
-         sleep: Callable[[float], None] | None = None) -> int:
-    """The command line. `lib`, `read_available` and `sleep` are the box's own unless a test gives stand-ins."""
+         sleep: Callable[[float], None] | None = None, watchdog: Callable[..., Any] | None = None) -> int:
+    """The command line. `lib`, `read_available`, `sleep` and `watchdog` (what starts it) are the box's own unless a
+    test gives stand-ins."""
     args = _parser().parse_args(argv)
     refusal = _refusal(args)
     if refusal is not None:
@@ -434,9 +593,12 @@ def main(argv: list[str] | None = None, *, lib: Any = None, read_available: Call
         return EXIT_REFUSED
     read_available = read_available_gib if read_available is None else read_available
     sleep = time.sleep if sleep is None else sleep
+    watchdog = start_watchdog if watchdog is None else watchdog
     # Every handler the script changes, SIGINT's too (_ignore_stops sets it on the way out), for finally to put back.
     handlers = {signum: signal.getsignal(signum) for signum in HELD_SIGNALS}
     cuda: Cuda | None = None
+    guard: Any = None
+    code = EXIT_ERROR
     try:
         for signum in STOP_SIGNALS:
             signal.signal(signum, _stop)
@@ -446,13 +608,14 @@ def main(argv: list[str] | None = None, *, lib: Any = None, read_available: Call
             print(f"cuda_ceiling: --lib {args.lib} isn't usable: {err}. Nothing allocated. Give --lib the path to "
                   "CUDA's runtime, libcudart.so.13; llama.cpp's build folder holds one, the default.", file=sys.stderr)
             return EXIT_ERROR
-        result = measure(cuda, read_available=read_available, reserve_gib=args.reserve, step_gib=args.step_gib,
-                         pause_s=args.pause_s, sleep=sleep)
+        held_by = cuda
+        guard = watchdog(read_available, reserve_gib=args.reserve, holding=lambda: held_by.holding)
+        result = measure(cuda, read_available=_reading(read_available), reserve_gib=args.reserve,
+                         step_gib=args.step_gib, pause_s=args.pause_s, sleep=sleep)
         if result.stopped == "reserve" and result.allocated_gib:
-            print(f"cuda_ceiling: {result.detail}", flush=True)
-            return EXIT_MEASURED
-        print(f"cuda_ceiling: {result.detail}", file=sys.stderr)
-        return EXIT_CUDA_ERROR if result.stopped == "cuda_error" else EXIT_STOPPED
+            code = EXIT_MEASURED
+        else:
+            code = EXIT_CUDA_ERROR if result.stopped == "cuda_error" else EXIT_STOPPED
     except Stopped as stop:
         _ignore_stops()
         if cuda is not None:
@@ -461,27 +624,39 @@ def main(argv: list[str] | None = None, *, lib: Any = None, read_available: Call
             print("cuda_ceiling: Ctrl-Z ends this script rather than pausing it, since a paused script would hold "
                   "CUDA's memory with nothing watching the reserve. It freed everything CUDA held and stopped. "
                   f"Under uv run, uv itself is left stopped: fg lets it exit ({128 + stop.signum}), or kill %1 ends "
-                  "it; the memory is freed either way. Run it again to measure.", file=sys.stderr)
+                  "it; the memory is freed either way. Unless a line above gives the ceiling, run it again to "
+                  "measure.", file=sys.stderr)
         else:
-            print(f"cuda_ceiling: stopped by {stop.name}, and freed everything CUDA held. Run it again to measure.",
-                  file=sys.stderr)
-        return 128 + stop.signum
+            print(f"cuda_ceiling: stopped by {stop.name}, and freed everything CUDA held. Unless a line above gives "
+                  "the ceiling, run it again to measure.", file=sys.stderr)
+        code = 128 + stop.signum
     except KeyboardInterrupt:
         _ignore_stops()
         if cuda is not None:
             cuda.free_all()
-        print("cuda_ceiling: stopped by Ctrl-C, and freed everything CUDA held. Run it again to measure.",
+        print("cuda_ceiling: stopped by Ctrl-C, and freed everything CUDA held. Unless a line above gives the "
+              "ceiling, run it again to measure.", file=sys.stderr)
+        code = EXIT_CTRL_C
+    except ReadingFailed as err:
+        _ignore_stops()
+        if cuda is not None:
+            cuda.free_all()
+        print(f"cuda_ceiling: couldn't read MemAvailable, its guard, so it freed everything CUDA held and stopped: "
+              f"{err}. Check that /proc/meminfo reads (grep MemAvailable /proc/meminfo), then run it again.",
               file=sys.stderr)
-        return EXIT_CTRL_C
+        code = EXIT_ERROR
     except OSError as err:
         _ignore_stops()
         if cuda is not None:
             cuda.free_all()
-        print(f"cuda_ceiling: stopped on an error, and freed everything CUDA held: {err}. Check that /proc/meminfo "
-              "reads (grep MemAvailable /proc/meminfo), then run it again.", file=sys.stderr)
-        return EXIT_ERROR
+        print(f"cuda_ceiling: stopped on an error, and freed everything CUDA held: {type(err).__name__}: {err}. Run "
+              "it again once that's put right.", file=sys.stderr)
+        code = EXIT_ERROR
     finally:
+        # First: a signal here would cut short what follows, and after an error the free below is the only one.
         _ignore_stops()
+        if guard is not None:
+            guard.stop()
         if cuda is not None:
             cuda.free_all()
             if cuda.free_failures:
@@ -492,6 +667,9 @@ def main(argv: list[str] | None = None, *, lib: Any = None, read_available: Call
         for signum, handler in handlers.items():
             if handler is not None:  # None: a handler not set from Python, which can't be put back from here
                 signal.signal(signum, handler)
+    if cuda is not None and cuda.free_failures:
+        return EXIT_ERROR  # the result above still stands; the driver frees the rest as the process exits
+    return code
 
 
 if __name__ == "__main__":

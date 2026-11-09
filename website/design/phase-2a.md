@@ -9210,12 +9210,15 @@ git commit -m "docs(machine): 🤖 agent's processes carry a root-set OOM score"
   (rule 9's ceiling; *To verify* resolved; a Revisions line), `CLAUDE.md` (the gotcha's "to be
   measured"), `README.md` (§Hardware, where it gives the ceiling), `cosmicbboy-local-ai.md` (a claim
   this measures, `[adapted]` to `[verified]`, and no other), `changelog.md`
+- *(The controller's rulings of 2026-10-16, at the script's review, written 2026-11-09:)* Modify:
+  `spark/tests/test_hog.py`, for the same test of the hog's reader that this task's reader gets.
 
 **Interfaces:** `cuda_ceiling.py`, PEP 723 (Python ≥3.12, no dependencies), run with `uv run`:
 `main(argv)` with `--lib` (default `/opt/local-ai/bin/llama.cpp/b11146/libcudart.so.13`),
 `--reserve` (default 24), `--step-gib` (0.25) and `--pause-s` (2.5); `measure(cuda, *,
 read_available, reserve_gib, step_gib, pause_s, sleep) -> Result(allocated_gib, stopped: "reserve"
-| "cuda_error" | "not_reflected", detail)` — it prints `cudaMemGetInfo`'s free and total first,
+| "cuda_error" | "not_reflected", detail)` *(and `"under_reserve"`: below)* — it prints
+`cudaMemGetInfo`'s free and total first,
 with nothing allocated; then, before each step, stops when `MemAvailable` less a step would fall
 under the reserve; else `cudaMalloc`s a step, `cudaMemset`s it (touching every page), and prints
 the running total and `MemAvailable`; after each step it re-reads every 250 ms, for up to 5 s,
@@ -9224,6 +9227,36 @@ frees everything and stops `not_reflected`; it stops at the first CUDA error; ev
 freed on every way out, Ctrl-C included. It never allocates "until failure". CUDA's allocations
 don't show in a process's RSS, so earlyoom can't pick this script: its own reading, confirmed at
 every step, is its guard against a `MemAvailable` that reports late.
+
+*(The controller's rulings of 2026-10-16, at the script's review of 7fb4c76, written 2026-11-09, as
+built in the commit that adds this note:)*
+
+- **`stopped` gains `under_reserve`.** While CUDA holds anything, a reading under the reserve frees
+  everything at once, before any other CUDA call or printed line, and stops `under_reserve`, exit
+  3. It is read right after each step, through the wait for a step to show, and through each pause
+  in 250 ms slices.
+- **The check after each step gains an absolute cap.** It waits up to 5 s, reading every 250 ms,
+  until `MemAvailable`'s fall since the start is at least 90% of all CUDA holds *and* the shortfall,
+  what CUDA holds less that fall, is at most `max(step_gib, 1.0)` GiB; otherwise it frees everything
+  and stops `not_reflected`, exit 3. The 90% alone would allow 9 GiB at 90 GiB held. That is exactly
+  what *confirmed at every step*, above, confirms. Each step's line prints the shortfall.
+- **A CUDA error, exit 4 for every one, says what it is worth.** Only `cudaMalloc`'s out of memory
+  (code 2) can be a ceiling, and not when `MemAvailable` is still more than a step above the reserve
+  while `cudaMemGetInfo`'s free is under 1 GiB: that is the page cache, not the ceiling. An out of
+  memory that `cudaMemGetInfo` doesn't answer after can't be told from the page cache. Any other
+  CUDA error (`cudaMalloc` with another code, `cudaMemset`, `cudaDeviceSynchronize`,
+  `cudaMemGetInfo`) measures nothing. The words say which: Step 4 has the rules.
+- **A watchdog,** a daemon thread reading `MemAvailable` every 250 ms whatever the main thread is
+  doing, ends the process at once with `os._exit(3)` on a reading under the reserve while CUDA holds
+  memory, after one line to stderr that can't block on a stalled terminal. The process's exit frees
+  CUDA's memory. It covers a blocked stdout and a call hung inside CUDA; its exit skips the main
+  thread's words. With nothing held it never fires, so the main thread's *clear the box first*
+  still reaches the screen. It stops when the run ends.
+- **At the reserve the result's line is printed before the free,** so a signal during the free
+  can't lose it: the run then exits with the signal's code, the result on screen.
+- **The other exits:** 0 measured; 1 an error outside CUDA, or a `cudaFree` that failed; 2 refused,
+  nothing allocated; 3 stopped, nothing measured; 4 a CUDA error; 129, 130, 143 and 148 for SIGHUP,
+  Ctrl-C, SIGTERM and Ctrl-Z, each with everything freed. `--help` lists them.
 
 The rate watch is accounted for by pace, not paused: 0.25 GiB every 2.5 s is Task 40's hog's pace,
 under Task 23's trigger ~~while more than 22 GiB is available~~ *(corrected 2026-10-14, the controller's ruling, at Task 23's re-review:
@@ -9250,6 +9283,19 @@ for the 93 GiB the box can give.
   `cuda_error`, the 9 taken freed.
 - `test_it_reads_memgetinfo_before_allocating` — the first printed line holds the stand-in's free
   and total, before any `cudaMalloc`.
+- *(The controller's rulings of 2026-10-16, at the script's review, written 2026-11-09, as built.)*
+  The seven gained cases: a step that shows 89% of itself; a shortfall over 1 GiB (from step 81 no
+  step shows, and it stops at step 85, where the 90% alone would reach 89); CUDA's context not taken
+  for a step; drops to 23 and to 23.99 after a step, in a pause and while a step shows, each freed
+  within 250 ms and before any other call; one while a step still hasn't shown; whose fall it was, the
+  last step's own or something else's; each CUDA error's verdict, word for word; every way out, an
+  unreadable `/proc/meminfo` and a closed pipe among them; a signal inside `cudaMalloc` or `cudaFree`,
+  and one as the watchdog stops. New: the reserve's and the pace's refusals; nothing allocated within
+  a step of the reserve; `--help`'s exit codes; the ctypes binding; a library that isn't libcudart; a
+  `cudaFree` that fails; the reader, unpatched, against a stand-in `meminfo`, as `test_hog.py` now
+  tests the hog's; and the watchdog: within 250 ms of a drop, never at or above the reserve or with
+  nothing held, stopped when the run ends, never waiting on a stalled terminal. No test loads a
+  library, reads the box or ends the process.
 
 **Steps:**
 
@@ -9271,22 +9317,45 @@ for the 93 GiB the box can give.
   once~~ ntfy isn't set up until Phase 5, so `memory_warning` is read in `spark status`'s *recent* row
   and `make logs s=gate` (its *notification wasn't sent* line), and `brake_fired` in `make logs
   s=brake`. Each step's line prints `cudaMemGetInfo`'s free beside `MemAvailable`; keep the whole
-  output for the record.
+  output for the record. *(The controller's rulings of 2026-10-16, at the script's review, written
+  2026-11-09:)* While it runs, don't pause the pane's output (Ctrl-S) or pipe it to a pager: a line
+  that can't be written stops the script with CUDA's memory held. Ctrl-C can't end a call hung inside
+  CUDA: from another pane, `kill -KILL <pid>`, the pid the script's second line prints (its own
+  Python, not `uv`), ends it, and the driver frees a process's CUDA memory when it exits. The
+  watchdog (*Interfaces*) ends the process by itself, exit 3, on a reading under the reserve while
+  CUDA holds memory, with one line of its own in place of the script's other words; above the
+  reserve it does nothing, so a blocked pane or a hung call there is still Dan's to end. *(Added
+  2026-11-09, the controller's ruling:)* Before `spark make-room --all`, stop any by-hand model, by
+  step 5 of its runbook's *Run it again*: `website/how-to/qwen3.8-27b-sglang.md` for the fast coder
+  on SGLang, or `website/how-to/qwen3.8-flash-next.md` for Flash-Next, whose step 5 also restores the
+  stack. `spark make-room --all` can't clear a process outside the gate, and the run needs the idle
+  ~117 GiB, so the `grep MemAvailable /proc/meminfo` above comes after both.
 - [ ] **Step 4:** the registry follows. The method stops at the reserve, so on an idle box it
   shows *at least* about 93 GiB (117 available less the 24 reserve), below the reported 102: when
   the script stopped at the reserve, `allocatable_gib` is the figure it reached, recorded as *at
   least* that, with `allocatable_measured: true` and a comment saying it is a lower bound (Dan's
   decision, 2026-10-07, after the forward-and-back council). The ceiling term then equals the
   reserve's at idle and never binds; `cosmicbboy-local-ai.md`'s claim becomes `[verified]` only
-  for *at least 93 GiB*. A run stopped by `cuda_error` below that is a real ceiling, recorded as it
-  is. *(Added 2026-10-16, the controller's ruling, from the script's one real check at its build:
+  for *at least 93 GiB*. ~~A run stopped by `cuda_error` below that is a real ceiling, recorded as it
+  is.~~ *(Struck 2026-11-09: the rulings below say which `cuda_error` is one.)* *(Added 2026-10-16,
+  the controller's ruling, from the script's one real check at its build:
   `cudaMemGetInfo`'s free equals `MemFree`, which leaves out the page cache, 43 GiB of it at the
   time, while `MemAvailable` counts it. A `cuda_error` while `MemAvailable` is still far above the
   reserve and `cudaMemGetInfo`'s free is near 0 says CUDA didn't reclaim the page cache: not the
   ceiling, and a question for the gate, which admits loads by `MemAvailable`. **Stop and ask Dan.**
   The script's own stops: `reserve`, exit 0, the measurement; `under_reserve` and `not_reflected`,
-  exit 3, which measure nothing; a CUDA error, exit 4.)* A run stopped `not_reflected` proves
-  nothing: **stop and ask Dan.** Render still passes. **If
+  exit 3, which measure nothing; a CUDA error, exit 4.)* ~~A run stopped `not_reflected` proves
+  nothing: **stop and ask Dan.**~~ *(The controller's rulings of 2026-10-16, at the script's review,
+  written 2026-11-09, in place of the two struck sentences:)* `reserve`, exit 0, is the measurement.
+  `under_reserve` or `not_reflected`, exit 3, measure nothing, and so does the watchdog's exit, also
+  3: Dan may run it once more, and a second such stop means **stop and ask Dan**. Exit 3 with nothing
+  allocated means the box wasn't clear. A CUDA error, exit 4, is read by its words. An out-of-memory
+  `cudaMalloc` is a ceiling, recorded as it is, unless `MemAvailable` was still more than a step
+  above the reserve while `cudaMemGetInfo`'s free was under 1 GiB: that is the page cache, not the
+  ceiling, and **stop and ask Dan**. So too for an out-of-memory `cudaMalloc` after which
+  `cudaMemGetInfo` didn't answer, and for any other CUDA error, which measures nothing: **stop and
+  ask Dan**, before any rerun. A `cudaFree` that fails exits 1, after the result's line: the line
+  stands, and the driver frees that memory as the process exits. Render still passes. **If
   render refuses the 2a set at the measured ceiling, stop and ask Dan** before Task 42: the swap
   waits for his choice (the design's: the old coder, still the registry's and on disk, or his
   full-context, f16 rule), and a plan revision records it.

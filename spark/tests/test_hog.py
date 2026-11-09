@@ -335,6 +335,22 @@ def test_a_second_signal_while_it_frees_changes_nothing(hog, capsys, first, seco
     assert all(handler is note for handler in after.values())  # and it put every handler back, SIGINT's too
 
 
+def test_its_reader_reads_memavailable(monkeypatch, tmp_path):
+    # The hog's own reader, the guard its floor rests on, unpatched (the fixture swaps it everywhere else), against a
+    # meminfo in /proc/meminfo's own format, from the box (2026-10-16): MemFree before MemAvailable, every value in kB
+    # (added at Task 41's review, 2026-10-16).
+    module = load_hog(monkeypatch)
+    meminfo = tmp_path / "meminfo"
+    text = ("MemTotal:       127533356 kB\nMemFree:        11041096 kB\nMemAvailable:   51839984 kB\n"
+            "Buffers:          123456 kB\nCached:         44569984 kB\n")
+    meminfo.write_text(text)
+    assert module.read_available_gib(meminfo) == 51839984 / 1024**2  # MemAvailable, kB to GiB, not MemFree's
+    assert module.MEMINFO == Path("/proc/meminfo")
+    meminfo.write_text(text.replace("MemAvailable:   51839984 kB\n", ""))
+    with pytest.raises(OSError, match="has no MemAvailable line"):
+        module.read_available_gib(meminfo)
+
+
 @pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="RssAnon is in Linux's /proc/self/status")
 def test_its_memory_is_resident_and_freed(monkeypatch):
     # The one test that takes real memory, through the script's own allocator: 4 MiB, under make test's 4 GiB cap.
