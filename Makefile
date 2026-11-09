@@ -92,13 +92,13 @@ logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|sear
 tunnel: ## On the Mac: forward the Spark's model API, 127.0.0.1:9100 (Ctrl-C closes it)
 	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
 
-clients: ## Add the Spark provider to all clients on this machine (pi, opencode, hermes, posit)
+clients: ## Add the Spark provider to every harness on this machine (pi, opencode, hermes, posit)
 	$(SPARK) clients pi --write
 	$(SPARK) clients opencode --write
 	$(SPARK) clients hermes --write
 	$(SPARK) clients posit --write
 
-clients-pi: ## Add the Spark provider to pi only
+clients-pi: ## Add the Spark provider to Pi only
 	$(SPARK) clients pi --write
 
 clients-opencode: ## Add the Spark provider to OpenCode only

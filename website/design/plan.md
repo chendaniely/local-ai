@@ -77,7 +77,7 @@ In order of how much they constrain the design:
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
 | Build | **The Spark by default, one session at a time** (2026-09-25): a Claude Code session on the Spark (as Dan, in tmux) writes and tests the code, config and docs and runs everything touching the GPU, memory, systemd or Docker; the Mac session keeps the Mac clients, CI workflow changes and, until Quarto is on the Spark, the site render; Dan runs sudo, logins, secrets and the Synology's settings. (Until 2026-09-25 the Mac session wrote the code, tests and docs.) |
-| Parked | Hermes · a MacBook MLX fallback (so there is one gateway) · ~~`claude-dgx`~~ (dropped 2026-09-28; see *Claude is untouched*) · ~~other users~~ (Phase 6, since 2026-10-07) · the web UI banner · Orca on the Spark, and on the phone (2026-09-28; Backlog). |
+| Parked | ~~Hermes~~ (a client since 2026-10-14, when `make clients` started writing its provider; unparked 2026-10-23, Dan's decision: one of the harnesses, with pi, opencode and Posit Assistant) · a MacBook MLX fallback (so there is one gateway) · ~~`claude-dgx`~~ (dropped 2026-09-28; see *Claude is untouched*) · ~~other users~~ (Phase 6, since 2026-10-07) · the web UI banner · Orca on the Spark, and on the phone (2026-09-28; Backlog). |
 
 ## Design
 
@@ -2465,6 +2465,13 @@ Each item gets its own design pass when its turn comes.
   ambiguous; issue #28 holds the per-harness scope, including Posit's built-in provider, which
   Posit names itself and so only a custom entry could rename (with no key path in the TUI,
   checked 2026-10-19).
+- **The harnesses' official names in the rest of the prose** (Dan, 2026-10-23): the harnesses
+  go by Pi, OpenCode, Posit Assistant (`pa`) and Hermes Agent (*Revisions*, 2026-10-23), and the
+  first sweep renamed only the shared text: the definition on the Architecture page, the shared
+  lists, the diagrams, the harness runbooks' titles, `CLAUDE.md` and `README.md`. The rest of the
+  current prose, about 250 mentions in 30 files (lowercase "pi" and "opencode" in sentences, not
+  in code), gets one mechanical commit after `phase-2a` merges into `main`, so it doesn't collide
+  with the phase's own edits. Dated history stays as written.
 - **Model settings, when more models are fitted** (Dan, 2026-09-28: every model stays at its full
   context for now, and these are the levers to look at when memory gets tight; each saving is an
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
@@ -2499,7 +2506,8 @@ Each item gets its own design pass when its turn comes.
     beta) waits on #21808 (its APK is reported signed with a public debug key), #16086 (headless
     pairing), #20706 (no push from a headless server) and #20673 (connections dropping on an arm64
     host; a fix is proposed in #20844).
-- **Parked:** Hermes · ~~`claude-dgx`~~ (dropped 2026-09-28: pointing Claude Code at a local model,
+- **Parked:** ~~Hermes~~ (unparked 2026-10-23: a client since 2026-10-14, see *Requirements*) ·
+  ~~`claude-dgx`~~ (dropped 2026-09-28: pointing Claude Code at a local model,
   if ever wanted, is Ollama on the Mac, outside this repo) · a MacBook MLX fallback · ~~other
   users~~ (Phase 6, since 2026-10-07).
 
@@ -4263,6 +4271,34 @@ Each item gets its own design pass when its turn comes.
    `openai-compatible` provider, because a custom entry has no key path that works in both the TUI
    and Positron (checked against the live schema and verified with the front, 2026-10-19). In
    PR #30; nothing changes on the Spark.
+
+- **2026-10-23** — Hermes unparked, Dan's decision (*Requirements*, Parked; and the Backlog's
+   Parked line): it has reached the Spark as pi and opencode do since 2026-10-14, when `make
+   clients` started writing its provider, so it is one of the harnesses, with pi, opencode and
+   Posit Assistant. Dan, asked whether to leave it out: "what is the issue with hermes? is it
+   different somehow?" Nothing changes in the code or on the Spark.
+
+- **2026-10-23** — "Harness" and "client" get one definition, Dan's decision: "we should make
+   sure that client and harness are more generic in the docs". A harness is an agent tool that
+   reaches the models with a client key (Pi, OpenCode, Posit Assistant and Hermes Agent on the
+   Mac, over `make tunnel`, sharing the Mac's key; `agent`'s Pi on the Spark, with `agent`'s); a
+   client is anything that sends the models a keyed request (the harnesses, the web UI with its own
+   key, and from Phase 3 Dan's own pipelines and apps, through the front or LiteLLM). The
+   definition goes on
+   the Architecture page, beside the diagrams; other pages say "the harnesses" and link to it, and
+   `CLAUDE.md`, `README.md` and the overview diagram name all four, since they are read outside
+   the site. Chosen over listing the four on every page and over a glossary page.
+
+- **2026-10-23** — The harnesses go by the names their own documentation gives them, Dan's
+   decision: "keep the brand names as the official documentation names them for posit assistant
+   use (`pa`) afterwards because that's the cli tool to fire it up". So **Pi**, **OpenCode**,
+   **Posit Assistant (`pa`)** and **Hermes Agent** (Hermes after the first mention, as its own
+   README has it); the commands stay lowercase in code: `pi`, `opencode`, `pa`, `hermes`. Checked
+   the same day against pi.dev, opencode.ai/docs, assistant.posit.co and Nous Research's
+   `hermes-agent` README. Chosen over all-lowercase names and over `posit-assistant`. How far the
+   rename reaches, Dan's decision the same day: the shared text now, and the rest of the prose,
+   about 250 mentions in 30 files, in one commit after `phase-2a` merges (Backlog), chosen over
+   renaming it all now, against the phase's own edits to the same files.
 
 ## Sources
 

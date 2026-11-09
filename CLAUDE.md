@@ -5,7 +5,7 @@ over Tailscale (the primary path), the home LAN, or WireGuard (for a device on a
 Design settled on 2026-09-23. Phase 0 is built: the leak-guard hooks and CI, the `spark` CLI's leak
 check and docs tools, the host bootstrap (applied to the box on 2026-09-24), and the docs site with
 its runbooks and scenario pages. Phase 1 is built too (2026-09-29): since 2026-09-28 the box serves
-its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and pi on the
+its four models through llama-swap, with Open WebUI served to the tailnet over HTTPS and Pi on the
 Mac and as `agent`. [Its retrospective](website/design/phase-1-retro.md) records what Phase 2
 inherits; the plan's Phase 2 line says what comes next. Orca and the web UI on the Mac came in
 between, as docs, not a phase (2026-09-30). Phase 2a's cutover (2026-10-16, its Task 38) put a front
@@ -30,8 +30,9 @@ on 2026-09-23 — the original is in git history (`git show f62d2c7:planning.md`
 
 - **Claude Code and Claude Desktop stay untouched.** No gateway, proxy, `ANTHROPIC_BASE_URL`, or
   globally-installed MCP servers anywhere in the Claude path. The Spark is a *separate* mode for
-  coding harnesses (pi, OpenCode), for Posit Assistant (its TUI `pa` and Positron), my own
-  pipelines and apps, and a web UI. Violating this defeats
+  the harnesses (Pi, OpenCode, Posit Assistant (`pa`) and Hermes Agent, as
+  [the Architecture page](website/architecture.qmd#harnesses) defines them), my own pipelines and
+  apps, and a web UI. Violating this defeats
   the repo's primary goal. Hooks that only report — copying a session's events to an app on my own
   machines that passes none of them on, as Orca's status hooks do — are allowed, as long as they
   exit 0 and print nothing or `{}` (no decision, no added context, no changed tool input) and
@@ -131,6 +132,7 @@ These files are not independent. Known sync obligations:
 | A part or a path of the stack changes — a service, a port, an account, a link between machines, or a planned part that gets built | `website/architecture.qmd`'s diagrams (a built part turns from dashed to solid), the overview in `website/_overview.qmd` too when it shows that part, **and** its scenario table, in the same commit |
 | Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
+| A harness is added or removed | `website/architecture.qmd`'s *Harnesses and clients* first, then its diagrams and the overview, this file's first constraint, **and** `README.md` §Design in one line — other pages say "the harnesses" and link there (Dan's decision, 2026-10-23) |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |
 | Where private material lives | This file, `README.md` §My environment, and the vault's own entry note |
 
@@ -240,6 +242,12 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   at commit `d32fab0`.
 - Work here is self-contained (no external stakeholder, no deadline), so it tracks locally in the
   plan (`website/design/plan.md`) — not YouTrack.
+- **The harnesses go by their official names in prose** (Dan's decision, 2026-10-23): **Pi**,
+  **OpenCode**, **Posit Assistant (`pa`)** and **Hermes Agent** (Hermes after the first mention),
+  as each tool's own documentation writes them; Posit Assistant takes `(pa)` after it, the command
+  that starts it. Commands, paths and file names stay lowercase in code: `pi`, `opencode`, `pa`,
+  `hermes`, `~/.pi/`, `pi.md`. Pages written before then are renamed in one commit after
+  `phase-2a` merges (the plan's Backlog); new text uses the names now.
 - **Markdown under `website/`: a mid-document horizontal rule is `***`, never `---`.** Pandoc can
   read a `---` line anywhere in a document, not only at the top, as the start of a YAML metadata
   block, and then the Quarto render fails. The front matter's own `---` lines are fine.

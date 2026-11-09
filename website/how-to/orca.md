@@ -45,7 +45,7 @@ make tunnel
 
 Then start pi from Orca, run `/model` and pick a Spark model: its footer names the model that
 answers. It is the same pi as in a terminal, with the same `spark` provider
-([pi, the coding agent](pi.md)); without the tunnel, its requests fail to connect. At home with
+([Pi, the coding agent](pi.md)); without the tunnel, its requests fail to connect. At home with
 Tailscale down, `SPARK_SSH_HOST=brightroar-lan make tunnel` uses the LAN alias instead.
 
 ## Claude Code in Orca

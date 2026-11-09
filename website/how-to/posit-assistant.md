@@ -5,9 +5,9 @@ description: "The Spark's models in Posit Assistant — the TUI pa and Positron:
 
 *(Added 2026-10-19, with the `spark clients posit` generator.)*
 
-[pi on the Mac](pi.md) sets up what all the clients share: your shell exports `SPARK_API_KEY`,
-and `make tunnel` forwards the Spark's models to `127.0.0.1:9100`. This page adds Posit Assistant
-to that: its TUI, `pa`, and Positron itself. Both reach the Spark the way pi does, through the
+[Pi, the coding agent](pi.md) sets up what all [the harnesses](../architecture.qmd#harnesses)
+share: your shell exports `SPARK_API_KEY`, and `make tunnel` forwards the Spark's models to
+`127.0.0.1:9100`. This page adds Posit Assistant to that: its TUI, `pa`, and Positron itself. Both reach the Spark the way Pi does, through the
 tunnel, over the front's OpenAI-compatible routes, with the same key. The key never goes into
 Posit Assistant's files: `OPENAI_COMPATIBLE_API_KEY` in the environment for the TUI, Positron's
 credential store for Positron.
@@ -36,7 +36,8 @@ bootstrap extension (checked 2026-10-19).
 make clients-posit
 ```
 
-`make clients` writes it along with pi's, opencode's and Hermes's. It writes the built-in
+`make clients` writes it along with the other harnesses' providers, Pi's, OpenCode's and
+Hermes's. It writes the built-in
 `openai-compatible` provider into `~/.posit/ai/providers.json` from the registry: each chat model
 by its real name, with its context window and its capabilities, and an allow list that keeps the
 embeddings model and whisper out of the model picker. Every other provider in the file stays, the
