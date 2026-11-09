@@ -69,6 +69,8 @@ flowchart TB
   pwa -- "HTTPS over Tailscale" --> tss
   pi_mac -- "SSH tunnel, make tunnel" --> swap
   oc_mac -- "same tunnel" --> swap
+  pi_mac -- "same tunnel" --> searx
+  oc_mac -- "same tunnel" --> searx
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -123,6 +125,7 @@ flowchart LR
   anthropic(("Anthropic"))
 
   piT --> tunnel --> swap
+  tunnel --> searx
   ui --> serve --> owui --> swap
   owui --> searx
   piA --> swap
@@ -135,7 +138,11 @@ flowchart LR
 ```
 
 pi on the Mac reaches llama-swap only while `make tunnel` runs, since nothing on the Spark listens
-beyond 127.0.0.1 but SSH. The web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
+beyond 127.0.0.1 but SSH. Since 2026-10-22 the tunnel also carries SearXNG, the stack's web search,
+to `127.0.0.1:58888` (the Spark's `127.0.0.1:8888`), so the Mac's agents search through the same
+backend Open WebUI uses. Tunnel ports the Mac binds keep the 5 + the Spark port's last four digits
+(Dan's convention, 2026-10-22): 58888 for 8888, and 59100 for 9100 once that renumber lands. The
+web UI needs Tailscale: on another tailnet, over WireGuard, the LAN
 alias still carries SSH and so pi's tunnel, but the web UI waits. `agent`'s pi needs no tunnel. opencode and
 Hermes on the Mac go through the same tunnel, with the same key (since 2026-10-14, `make clients`). From
 Phase 3, apps reach the models through LiteLLM, each with a key of its own. From Phase 6, family and
