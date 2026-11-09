@@ -1,12 +1,14 @@
 ---
 title: "The usage meter — design"
-description: "Counting every token brightroar serves, pricing it at Claude's prices, and showing how far the Spark is from paying for itself: in each harness's status line and in the Spark's menu bar. A draft for Dan's approval."
+description: "Counting every token brightroar serves, pricing it at Claude's prices, and showing how far the Spark is from paying for itself: in each harness's status line and in the Spark's menu bar. Approved: its counter is Phase 2a's Tasks 44a–44l, and the rest opens Phase 2b."
 date: 2026-10-22
 ---
 
 # The usage meter — design
 
-**Status: a draft for Dan's approval (2026-10-22), revised after its design council.** Every
+**Status: approved; ~~a draft for Dan's approval (2026-10-22),~~ revised after its design council.**
+*(Recorded 2026-11-09, at the counter's Task 44k. No note records the day Dan approved it: this page
+said it would merge into `phase-2a` once he had, and it merged on 2026-11-09, #32.)* Every
 decision here comes from [its questions and answers](usage-meter-qa.md), which keep Dan's words and
 reasons; what this page adds is marked *(my call)*, and listed together at the end for checking.
 Five reviewers read the first draft (the code and engines, privacy and security, the numbers, the
@@ -14,6 +16,9 @@ plan and its docs, and a skeptic); their fixes are folded in. Once Dan approves 
 pages merge into `phase-2a`, and the Spark session, which owns that branch, writes the plan's
 Revisions line, the Phase 2a tasks and Phase 2b's part (*Where it goes*, below). The
 [Architecture page](../architecture.qmd) draws its parts dashed then; diagrams live only there.
+*(Done 2026-11-09: the pages merged with #32, Task 44j drew the Architecture page's two stores
+dashed, and Task 44k wrote the plan's Revisions line, Phase 2a's pointer to the tasks and Phase 2b's
+part.)*
 
 ## What it's for
 
@@ -223,7 +228,15 @@ make-room, brake, apply), refusal (code, model, request id), brake firing or rel
 stop of the front or the gate, and spans with counting off, as the front reports them. **No key
 names:** a row joins the front's on the request id, which holds the key, so the gate's user, which
 is also the engines', holds no per-key timeline. Today the gate keeps the newest 50 refusals with no
-age limit, other events 50 for 24 hours, and no loads or unloads at all.
+age limit, other events 50 for 24 hours, and no loads or unloads at all. *(2026-11-09, Task 44k: "today"
+was before this ledger. As built, Task 44e, each row also carries its version and time, `v` and `t`. A
+load's `id` is the request that started it, none for a command's, a reload's or a load a restarted gate
+found, and its outcome `ready`, `failed` or `requeued`. An unload's why is `idle`, `make-room`, `unload`,
+`late_start`, `unknown`, `brake`, `apply` or `gone`, not only the four above. Counting's spans are two
+rows, `counting_off` and `counting_on`, each with `who`: the front's from its snapshots and the ledger's
+own writer's too. The front's start and stop are the gate's inference, from a snapshot with a new
+`front_started_at` and from the front's events call dropping. [The counter's
+plan](usage-meter-counter.md) has the row.)*
 
 ### 3. `spark usage`: the one codebase **[Spark]**
 
@@ -474,15 +487,19 @@ first part; spark-menu moves here once its build is done.
 **Phase 2a** *(numbering and placement my call)*: new tasks numbered 44a onward, run after Task 44
 and before Task 45, so no existing task is renumbered (they are cited across the repo).
 
-1. **[Dan] [Mac] [Spark]** OpenCode's and Hermes's keys, the caps lowered. (The Mac's snapshots
-   were taken on 2026-10-23.)
+1. **[Dan] [Mac] [Spark]** OpenCode's and Hermes's keys~~, the caps lowered~~ *(2026-11-09, Task 44k:
+   the caps stay as they are in 2a, as §6 says, a cap per group waiting for Phase 2b)*. (The Mac's
+   snapshots were taken on 2026-10-23.)
 2. **[Spark]** The counter: the front's rows and scanner, the gate's ledger, bootstrap's folders, the
    units' paths, `--enable-cache-report` on the by-hand SGLang, doctor's checks, the scenario page,
    and the Spark's snapshots. Counting starts.
 
 Then 2a's own tasks cover it: Task 45 records the front's peak memory with the scanner, under its
-512M, with no rows dropped, and rows checked against Pi's own counts; Task 49 sees `gone` rows when
-the front is killed, and an unwritable folder never stopping the front; Task 50 sees S03's cut give
+512M, with no rows dropped, and rows checked against Pi's own counts; Task 49 ~~sees `gone` rows when
+the front is killed~~ sees no row for a request the front was killed under, a SIGKILL leaving nothing
+to write, and the ledger mark the front's stop and start *(corrected 2026-11-09, Task 44k: at a
+SIGTERM a stream still running leaves `cut`, and a request still waiting on the gate, no answer begun,
+leaves `gone`)*, and an unwritable folder never stopping the front; Task 50 sees S03's cut give
 a `cut` row and refusals give rows with their codes. Both done-when lists gain the meter; Task 51's
 file lists and Task 52's Mac check (`make clients`) gain its files.
 

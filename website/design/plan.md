@@ -65,7 +65,7 @@ In order of how much they constrain the design:
 | Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(Corrected 2026-10-07: that budget counted the reserve twice, and Phase 2a corrects it (*Admission and memory rules*, rule 9). The whole set fits the CUDA-allocatable ceiling, 102, and with Phase 2a's coder, estimated at 41 (38 until the council raised it the same day), it comes to about 84, so about 18 GiB of the ceiling is left.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* |
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. *(Changed 2026-10-07, Dan's decision for Phase 2a: **60 minutes**, for on-demand models only; residents never unload for being idle. The weekday preload, with a work-hours pin, is a setting that is off by default (Dan, 2026-10-05); rule 3.)* |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. *(Phase 2a, Dan's decision, 2026-10-07: make-room then holds the room it freed for him, so nothing automatic takes it back, and requests from his keys wait ahead of `agent`'s: rule 4 and *The front and the gate*.)* |
-| Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. |
+| Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. *(2026-11-09, Task 44k: Dan's decision of 2026-10-22, in [the usage meter's design](usage-meter.md), since he shares his screen: "the menubar just needs a conection status dot". So the menu bar's title is that dot alone, and the model in use, with every other number, is one click away in its dropdown, no longer always in sight there.)* |
 | Web UI | Open WebUI, Dan only (others later: Phase 6, 2026-10-07). HTTPS via `tailscale serve`; **Tailscale stays on for the web UI, at home too**. HTTPS on the LAN is in the backlog. On the Mac, the same address runs as a Safari web app (2026-09-28; `website/how-to/deploy.md`). |
 | Orca (decided 2026-09-28) | Orca, the desktop app that runs coding agents in panes, each in its own git worktree, **stays on the Mac in its local mode**: the agents it starts run on the Mac, as Dan, and nothing of Orca's runs on the Spark (neither `brightroar` nor `brightroar-agent` is an Orca target). Dan's Claude Code runs in it with Orca's status hooks kept, **Agent Permissions set to Manual** and telemetry off. **pi runs in it and reaches the Spark's models over `make tunnel`**, as it does in a terminal (tested 2026-09-29). Agents started from Orca stop when the Mac does, which Dan accepts: long unattended runs stay in tmux (S12). OpenCode waits for ~~Phase 5~~ Phase 4 *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*. *(2026-10-14: Dan sets opencode up by hand for the fast coder's by-hand runs now, following [The fast coder, by hand](../how-to/qwen3.8-27b-sglang.md); its rendered config comes with Phase 4a's clients.)* *(Corrected the same day: PR #7's `spark clients opencode` already renders it for the deployed models, so opencode, and Hermes too, list them once #7 is on `main` and `make clients` runs on the Mac; Phase 4a's clients add its new models.)* *(2026-10-14, Dan's request: not any more for the deployed models. `make clients` writes OpenCode's and Hermes's `spark` provider from the registry, as it does pi's, each key by reference: [opencode and Hermes on the Mac](../how-to/opencode-hermes.md). The bake-off's new models reach them the same way.)* The Spark as Orca's server, and Orca on the phone, are parked (Backlog). |
 | Posit Assistant (decided 2026-10-19) | Posit Assistant, Posit's data analysis assistant — the TUI `pa` and Positron — is a client on the Mac, like pi and OpenCode: it reaches the Spark's models over `make tunnel` through the front's OpenAI-compatible routes, with no change on the Spark (verified end-to-end with Gemma, 2026-10-19). Its provider is the built-in `openai-compatible` entry in `~/.posit/ai/providers.json`, written by `spark clients posit` from the registry, with the non-chat models kept out of its picker. A custom entry was tested and set aside: a custom `openai-compatible` entry has no key path that works in both the TUI and Positron — its only key mechanism, `apiKeyHelper`, breaks Positron, which reads the same file. The key is `OPENAI_COMPATIBLE_API_KEY` for the TUI and Positron's credential store; the file never holds it. Full treatment, in PR #30: the subcommand, `make clients-posit`, the runbook [Posit Assistant on the Mac](../how-to/posit-assistant.md), the diagrams and *Current state*. |
@@ -131,7 +131,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* *(Phase 2a's Task 28, the controller's ruling, 2026-10-14; built, not yet deployed, which Task 36's bootstrap does (it did, 2026-10-15, as the changelog records): earlyoom has no `--prefer`. It added 300 to an engine's score, worth 450 points of `oom_score_adj`, which no score of `agent`'s could pass. The engines' own `oom_score_adj`, 1000 on demand and 900 resident, keeps them before every process at 0. Root gives `agent`'s processes 1000, which `agent` can't lower: at its SSH logins, through a `pam_exec` hook whose line goes before sshd's first session line, and for its user manager, through a drop-in. `/etc/cron.deny` names `agent`.)* |
-| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* *(2026-11-09, Task 44k: the plugin's title is a connection-status dot alone, every number in its dropdown (Dan's decision of 2026-10-22, in [the usage meter's design](usage-meter.md)), and the plugin is spark-menu, which moves here from Dan's dotfiles once its build is done.)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
 ### The front and the gate (Phase 2a)
@@ -275,7 +275,10 @@ Four services, three sockets that systemd holds, and a notifier:
   load for 10 minutes. `Restart=` becomes `always`, since llama-swap answers a stray SIGTERM with a
   clean exit, which `on-failure` left down. Its unit is **sandboxed** (Dan, 2026-10-07):
   `NoNewPrivileges=`, `ProtectSystem=strict` with `ReadWritePaths=` for whisper's `--tmp-dir` and
-  the caches, `ProtectHome=`, `PrivateTmp=`, `InaccessiblePaths=/etc/local-ai/secrets`,
+  the caches, `ProtectHome=`, `PrivateTmp=`, `InaccessiblePaths=/etc/local-ai/secrets` *(and the
+  usage meter's two folders, `-/var/lib/local-ai/usage` and `-/var/lib/local-ai/gate-ledger`, so no
+  engine can read them: 2026-11-09, Task 44k, recording the counter's Task 44f, which Task 44l
+  deploys)*,
   `RestrictSUIDSGID=`, `ProtectKernelTunables=` and `ProtectControlGroups=`, but not
   `PrivateDevices=` or `MemoryDenyWriteExecute=`, which CUDA needs. `NoNewPrivileges=` is tested
   from a cold boot, in case CUDA needs the setuid `nvidia-modprobe` to load `nvidia-uvm`. Otherwise
@@ -942,7 +945,10 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   refusals and the names of Dan's processes. The brake stays its own unit, so its key check at
   start stays with it, and doctor checks the brake too. Its layout, in plain words, is under *What
   you see in Phase 2a*, below.)*
-- **Menu bar (SwiftBar)** polls it over SSH. The title shows the active models and the headroom; the
+- **Menu bar (SwiftBar)** polls it over SSH. ~~The title shows the active models and the
+  headroom;~~ *(2026-11-09, Task 44k: Dan's decision of 2026-10-22, in [the usage meter's
+  design](usage-meter.md): the title is a connection-status dot alone, since he shares his screen,
+  and the active models, the headroom and every other number are in the dropdown.)* The
   dropdown offers load, unload, pin, make-room and stop-all (over SSH as Dan), lists running agent
   sessions, and says "unreachable" when it is.
 - **ntfy (on the Synology):** low — loaded, unloaded, idle; default — refused, load failed, agent
@@ -1106,7 +1112,7 @@ carries its mark (rule 5).
 | `model_not_found` | 404 | *There's no model called qwen3.6-35b-a3b here. The models are the coder (qwen3.8-27b), Gemma (gemma-4-26b-a4b), the embeddings (qwen3-embedding-0.6b) and whisper (whisper-large-v3-turbo). On the Mac, `make clients` updates pi's list.* For `agent`'s key: *… On the Spark, as `agent`, `/opt/local-ai/app/.venv/bin/spark clients pi --write --registry /opt/local-ai/etc/models.yaml` updates pi's list.* (Added 2026-10-07, at the implementation plan's Task 6, the controller's ruling: `agent`'s pi is on the Spark, and the Mac's `make clients` doesn't reach it. Corrected at Task 6's review the same day: the first correction read *… pull its clone and run `spark clients pi --write` to update pi's list.*, the procedure before 2a. After the cutover `agent` has no clone and runs the deployed CLI, as Task 34 sets up.) (Corrected 2026-10-07, at the implementation plan's Task 7's review, the controller's ruling: the last sentence is pi's step only for a key of Dan's whose label starts with "pi"; for another, such as the web UI's, the list alone ends it, since `make clients` updates pi's list only.) |
 | `too_many_requests` | 429 | *agent already has as many requests waiting or open as its key allows; this one wasn't queued. Try again when one finishes.* |
 | `route_not_served` | 404 | *This address isn't served here: the Spark's model API answers only /v1/models, /v1/chat/completions, /v1/completions, /v1/responses, /v1/messages, /v1/embeddings and /v1/audio/transcriptions.* |
-| `invalid_api_key` | 401 | *That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine.* (The controller's ruling, 2026-10-07; added to this table after the implementation plan's forward-and-back council.) *(Changed 2026-10-23, Task 44h: OpenCode and Hermes now have keys of their own, so the text names no one variable: "Check the API key this client sends.")* |
+| `invalid_api_key` | 401 | *That API key isn't one the Spark knows. ~~Check SPARK_API_KEY on this machine.~~ Check the API key this client sends.* (The controller's ruling, 2026-10-07; added to this table after the implementation plan's forward-and-back council.) *(Changed 2026-10-23, Task 44h: OpenCode and Hermes now have keys of their own, so the text names no one variable: "Check the API key this client sends.")* *(The old sentence struck 2026-11-09, Task 44k.)* |
 
 Every `503` carries `Retry-After` and `x-should-retry: false` (rule 7); the `429` carries
 `Retry-After` alone, and the `404`s neither. *(Corrected 2026-10-07, with the implementation plan:
@@ -1754,7 +1760,11 @@ council, with Dan's fourteen decisions (Revisions).*
   *(Added after the final re-review:)* in the same task, whisper's `--tmp-dir`, today
   `/var/lib/local-ai/hf/tmp` inside that cache, moves to a folder of `spark`'s outside it, so
   whisper can still write its temporary files and the pull's user can't read uploaded audio;
-  llama-swap's `ReadWritePaths=` names the new folder.
+  llama-swap's `ReadWritePaths=` names the new folder. *(2026-11-09, Task 44k, recording the usage
+  meter's Task 44f: bootstrap also makes the meter's two folders, `/var/lib/local-ai/usage`,
+  `spark-front:spark-admin`, and `/var/lib/local-ai/gate-ledger`, `spark:spark-admin`, each mode
+  `2750`, beside `spark`'s folders and never inside them. The `make bootstrap` that makes them is
+  the counter's Task 44l, not this one.)*
 - [Spark] ntfy's records, in one commit: `stack/synology/compose.yaml` with the digest, a
   `stack/versions.yaml` row (`where: [synology]`), the Stack page generated again, an `updates.md`
   row, and a test that the compose file's digest is the pin. No address, token or hostname goes in.
@@ -1917,6 +1927,20 @@ council, with Dan's fourteen decisions (Revisions).*
 - [Spark] `spark clients` writes `agent`'s pi `httpIdleTimeoutMs`, 900,000, beside its provider.
 - [Mac] pi's provider is rendered again after the deploy — `make clients` on the Mac, and the same
   for `agent` on the Spark — so pi lists the new coder.
+- *Added 2026-11-09, Task 44k; Dan's decision, in [the usage meter's design](usage-meter.md):*
+  [Spark] [Dan] **the usage meter's counter**, Tasks 44a–44l of [a plan of its
+  own](usage-meter-counter.md), after Task 44 and finished, deploy included, before Task 45, since
+  nothing deploys during the soak. The front writes one row of numbers per request, never text a
+  client chose, into a month's JSONL file in `/var/lib/local-ai/usage`; the gate writes a row for
+  each load, unload, refusal, brake event and start or stop into one in
+  `/var/lib/local-ai/gate-ledger`, which holds no key names and joins the front's rows by the
+  request id. Only Dan reads either folder (`spark-admin`, mode `2750`). Counting never slows or
+  refuses a request, and no state of either folder keeps the front or the gate from starting. In 2a
+  the front reads counts on chat completions, completions and embeddings only. OpenCode and Hermes
+  Agent get keys of their own; Pi keeps `SPARK_API_KEY`; nothing is retired in 2a, and the caps stay
+  as they are, a cap per group waiting for 2b. The by-hand SGLang gains `--enable-cache-report`;
+  `spark doctor` gains three checks, with S26 as the scenario. The soak and the drills then cover
+  it: Tasks 45, 49 and 50 of [the implementation plan](phase-2a.md).
 - *Closing 2a (added 2026-10-14, Dan's decision):* `main` holds work this branch doesn't: the
   coder's early swap and render's corrected check (2026-10-08), the Phase 6 plan, and anything
   merged there since. Merging the two conflicts in about a dozen files, `plan.md` most. At 2a's
@@ -1960,7 +1984,8 @@ council, with Dan's fourteen decisions (Revisions).*
   `stack/models.yaml` to `main`'s `qwen3.8-27b`. It takes this note's route too: the Spark makes,
   resolves, tests and commits it without pushing; the Mac fetches it over SSH, scans and pushes.
   The closing merge then brings in only what `main` has gained since, by the same route.)*
-- *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17.
+- *Scenarios:* S01 (the gate's part), S02, S03, S05, S14, S17, and S26 for the usage meter's counter
+  *(added 2026-11-09, Task 44k)*.
 - *Done when:* S01's gate part, S02, S03, S05, S14 and S17 are verified (S01's page stays
   `planned`, with a dated note recording its gate part, until 2b); **Qwen3.8-27B is the registry's
   coder, and pi completes a task with it from the Mac and from tmux as `agent`**; the soak has
@@ -1973,7 +1998,11 @@ council, with Dan's fourteen decisions (Revisions).*
   the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Phone alerts are no longer a 2a item:
   the scenarios above are verified without them, each page saying its phone alerts are checked in
   Phase 5, and 2a's stack runs without ntfy, `spark status` and `make doctor` saying it isn't set
-  up.)*
+  up.)* *(Added 2026-11-09, Task 44k:)* and the usage meter's counter is deployed and counting
+  through the soak: `make doctor` passes `usage records`, `gate ledger` and `counting`; Task 45 has
+  recorded the front's peak memory with the scanner, under its 512M, with no rows dropped, and rows
+  checked against Pi's own counts as a verdict only; and Tasks 49 and 50 have seen the rows and
+  ledger rows they name.
 
 **Phase 2b — Visibility**
 
@@ -1987,7 +2016,10 @@ moved.
 - ~~[Dan] the watchdog on the Synology, beside 2a's ntfy (S13).~~ (Phase 5, 2026-10-14.)
 - [Mac] the SwiftBar menu bar, polling `spark status --json` over SSH · harness hooks on the Mac,
   which live beside Orca's status hooks, which Orca rewrites at each start (from Orca on the Mac,
-  2026-09-28).
+  2026-09-28). *(2026-11-09, Task 44k: Dan's decision of 2026-10-22, in [the usage meter's
+  design](usage-meter.md): the menu bar's title is a connection-status dot alone, and the models, the
+  free room and every other number are in its dropdown. The plugin is spark-menu, which moves here
+  from Dan's dotfiles once its build is done.)*
 - [Spark] harness hooks for `agent` · a pi session started from Orca counts as an active agent
   session and keeps its model until its pi process exits (Dan's decision, 2026-09-28), and SwiftBar
   lists those sessions *(2a builds `spark session hold`, which the Mac's hook runs over SSH, since
@@ -2025,10 +2057,22 @@ moved.
   is, `sudo systemctl disable --now nvidia-dcgm`, with the dated entry in `changelog.md` and README
   §Current state. The GPU is watched with `nvidia-smi` and `nvtop`, which need no daemon, and the
   rebuild's runbook leaves `dcgmi` out.)*
+- *Added 2026-11-09, Task 44k; Dan's decision, in [the usage meter's design](usage-meter.md):*
+  **the rest of the usage meter** opens this phase, on the counter Phase 2a deployed: `spark usage`,
+  the mapping, the prices, the providers' list, the summary and the private file; the readers, the
+  reconciliation window, then the sync, whose first run is the lifetime baseline; spark-menu's usage
+  section, after it moves here; Pi's line, then OpenCode's; the shared key's retirement from the
+  Spark's runbooks; then the lines for Posit Assistant (`pa`) and Hermes Agent when their turn comes.
+  `agent`'s line waits for a view of its own numbers, and the metering plug is a task of its own,
+  whenever Dan buys one. With them, a **cap per key group** on waiting requests: today's caps are per
+  key, so more of Dan's keys could queue more, and each key's cap stays where it is in 2a rather than
+  turn parallel Pi sessions into 429s before the soak. Its own implementation plan says when each is
+  done.
 - *Scenarios:* S06, S12, ~~S13,~~ and S01's menu-bar part, and S13's *unreachable* on the menu bar.
 - *Done when:* S06, S12, ~~S13~~ and S01's menu-bar part are verified, and the menu bar says
   *unreachable* when the Spark doesn't answer. *(2026-10-14: S13 moves to Phase 5 with the
-  watchdog.)*
+  watchdog.)* *(2026-11-09, Task 44k: with the title a dot alone, Dan's decision of 2026-10-22 in
+  the usage meter's design, the dot shows it, and the word is in the dropdown.)*
 
 **Phase 2c — The lab**
 
@@ -2048,7 +2092,9 @@ moved.
   strings, back to back and, with `parallel` above 1, together, neither in the other's reply, the
   coder staying `parallel: 1` unless it passes — and time to first token at 128K and 250K against
   the Mac pi's 300 s, since llama.cpp's DFlash path has open reports of trouble under concurrency
-  and on long prefills.)*
+  and on long prefills.)* *(2026-11-09, Task 44k, from the usage meter's design, §8: with a second
+  upstream, a request's usage row has to name the one that served it, a field today's row doesn't
+  have.)*
 - *Scenarios:* S11.
 - *Done when:* S11 is verified and route B is measured.
 
@@ -2101,7 +2147,11 @@ huggingface_hub with network access, matters most.)*
   through unchanged; with none, the front already has the digests, the per-key waits, the caps, the
   route list and the inline refusals, and lacks a per-group model list, `x-spark-model` and a
   listener beyond loopback. Keys then reload without a restart: since 2a they live in a private file
-  the front and the gate read at start, which this phase makes reloadable.)*
+  the front and the gate read at start, which this phase makes reloadable.)* *(2026-11-09, Task
+  44k, from the usage meter's design, §8: the choice decides the counter's future too, since 2a's
+  front writes its rows. LiteLLM in the front's place rebuilds the counter as well; LiteLLM ahead of
+  it leaves the front one key, so the rows can't say which app asked, unless the front trusts an
+  identity header from LiteLLM's key only. With no LiteLLM, the counter stands as built.)*
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
   *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5: ntfy now comes after this phase, so S04's, S10's and S16's notifications
@@ -2327,6 +2377,14 @@ the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains it
   `spark/tests/test_by_hand.py` and the by-hand targets' tests at the end of
   `spark/tests/test_makefile.py`; and the note naming each in its by-hand page's *Run it again*.
   `test_by_hand.py`'s `TEMPORARY` lists the same pieces; `phase-4a.md` makes this a task.
+- *Added 2026-11-09, Task 44k, from the usage meter's design, §8:* **the fast coder's tokens are
+  counted.** The registry's SGLang launch gains `--enable-cache-report`, as the by-hand one did in
+  the counter's Task 44i, since SGLang reports no cache without it and a row's cached count stays
+  empty. SGLang reports usage in a stream only when asked, or with a server flag that changes what
+  every client gets, and the front never adds `stream_options`, so this phase decides how a stream's
+  usage reaches the front. Putting the fast coder and Flash-Next behind the front ends the by-hand
+  window (the design's §7), in which the sync's rows stay the spend for `make fast-coder` and
+  `make flash-next`.
 - Its implementation plan, `phase-4a.md`, is written at 4a's start, from the by-hand runs' numbers.
 - *Scenarios:* S02 (make-room, for Flash-Next), S24, S25.
 - *Done when:* Flash-Next loads after `spark make-room --all`, answers in opencode on the Mac, and
@@ -2367,6 +2425,12 @@ Dan settles what is running)*
   - [Mac] ntfy's alerts on the Mac, from 2b: the ntfy CLI as a launchd agent, which needs no HTTPS
     and no relay (the council's toolstack review), with read tokens and a priority filter across
     the three topics (M-5).
+- *Added 2026-11-09, Task 44k, from the usage meter's design, §8:* **the nightly backups gain the
+  meter's records:** the front's rows (`/var/lib/local-ai/usage`), the gate's ledger
+  (`/var/lib/local-ai/gate-ledger`), the baseline's rows and its snapshots. How the snapshots go is
+  this phase's to design, since Open WebUI's holds password hashes, users' keys and every chat.
+  **S18's rebuild** then covers them: bootstrap makes the two folders again with their owners and
+  modes, and the restore puts the rows back.
 - *Scenarios (2026-10-14):* S13, S15, S18, and the phone alerts of 2a's scenarios.
 - *Done when:* S15 and S18 are verified. *(Added 2026-10-14:)* S13 is verified, and the 2a
   scenarios' phone alerts are checked on the phone, each page's dated note marked done.
@@ -2396,7 +2460,12 @@ Phases 2, 3 and ~~5~~ 4, the bake-off, renumbered 2026-10-14)
   with `spark try` on the lab instance, and adds it if it fits and behaves. A guest web UI: a
   separate Open WebUI instance with its own data, port and accounts Dan creates, over HTTP on a
   network he trusts, or HTTPS once LAN HTTPS exists; Dan's own web UI and chats never meet it.
-- *Throughout:* nothing anyone sends is logged, as for every key; their requests share the memory
+- *Throughout:* ~~nothing anyone sends is logged, as for every key;~~ the usage rows and the
+  gate's ledger keep no text anyone sends, but each request leaves a row of numbers, with its key's
+  name, the model, its times and its counts *(corrected 2026-11-09, Task 44k, from the usage meter's
+  design, §8: true from the counter's deploy, Task 44l. Before the first key for anyone else, this
+  phase settles this line's wording, how long other groups' rows are kept, what people are told, and
+  pseudonyms for their key names)*; their requests share the memory
   pool under the same admission rule as Dan's. *(Noted 2026-10-07, after the implementation plan's
   forward-and-back council: the web UI's one key is in Dan's key group, so family members using
   Dan's Open WebUI would get his privileges — the queue, his make-room hold, the marked model, his
@@ -2854,6 +2923,12 @@ Each item gets its own design pass when its turn comes.
   telemetry off, are checked again after each Orca update. And it moves fast: about a release a
   day, with around 7,000 open issues. Its hooks went into `~/.claude/settings.json` on 2026-09-24
   and its pi extensions on 2026-09-28, before this repo recorded either.
+- **The usage meter's unchecked assumptions** (2026-11-09, Task 44k, from the design's §8). Box
+  facts the design took from the Mac, to check on the box before 2b's readers rely on them: Open
+  WebUI's `chat_message` table at v0.11.4, the format of `agent`'s Pi sessions, and whether the
+  journal keeps boots, which the electricity estimate's hours on need. And the prices still to check
+  against Anthropic's pricing page: the cache-write rates, Haiku's cache-read rate and every start
+  date.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until ~~Phase 4~~ Phase 5 (the NAS
   phase, renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped); the web UI is out of
@@ -4338,6 +4413,22 @@ Each item gets its own design pass when its turn comes.
   their own by the steps in *A new client key, after 2a*. Phase 3 still decides how later apps
   connect. A new runbook, [Python apps and the API key](../how-to/python-apps.md), holds the setup;
   the Architecture page's diagrams, its definition of a client and the overview gain them.
+- **2026-11-09** — The usage meter's counter joins Phase 2a as Tasks 44a–44l ([its
+  plan](usage-meter-counter.md), from [its design](usage-meter.md), now approved), run after Task 44
+  and finished, deploy included, before Task 45, since nothing deploys during the soak. 44a–44j are
+  merged (#32, `6df98b9`), their code written ahead of Tasks 41–44, and nothing of it is deployed
+  until Task 44l. The rest of the meter opens Phase 2b, with a cap per key group. Dan's dot-only
+  menu bar title (2026-10-22) is written into Requirements, *Components*, *Visibility and
+  notifications* and 2b's item and done-when, each annotated. Phases 2c, 3, 4a, 5 and 6 gain what
+  the design's §8 says, Phase 6's "nothing anyone sends is logged" corrected. The `invalid_api_key`
+  row's old words are struck (Task 44h changed them), llama-swap's sandbox and bootstrap's folders
+  are annotated, and *Open items and risks* gains the design's unchecked assumptions. In [the
+  implementation plan](phase-2a.md): a pointer to the tasks; the protocol's shapes and the request
+  id as built; the units' paths; the 401's words; Task 38's rollback for OpenCode's and Hermes
+  Agent's keys; what Tasks 45, 49, 50, 51 and 52 check; and the done-when list. Task 49's drill
+  takes the usage folder to mode `000`, since a front can still append to an existing month's file
+  in a folder at `0500`. `CLAUDE.md` and README §Conventions gain two rules: a client key's name is
+  never reused, and no live figure from the meter goes in the repo.
 
 ## Sources
 

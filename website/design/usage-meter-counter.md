@@ -575,7 +575,8 @@ fresh reviewer, then a whole-branch review and one fix wave. Nothing is pushed o
    of the old 401 words (~380, ~1300), its Task 38 rollback (the two `--key-env SPARK_API_KEY` commands), its lines on
    llama-swap's `InaccessiblePaths` (~6460) and the gate's `ReadWritePaths` (~6620), lines ~156–157; `plan.md` ~276–277
    and ~1750; Task 49's wording (a request still waiting on the gate at SIGTERM leaves `end: gone`, not `cut`); and the
-   design's §2 on the ledger's rows.
+   design's §2 on the ledger's rows. *(Done 2026-11-09, with Task 44k's Files list, on top of `7b286ee`. Its Step 2,
+   `make docs`, needs Quarto and is left for the Mac. `plan.md`'s ~1750 was read as Phase 2a's bootstrap item.)*
 5. **[Spark] [Dan] Task 44l, the deploy,** as written above. Until its keys exist, `make clients` on the Mac gives
    OpenCode and Hermes 401s: their runbook's rollback commands point them back at `SPARK_API_KEY`. Each
    `make doctor --full` run may send one "no model by that name" notification, for the canary's own made-up model name.

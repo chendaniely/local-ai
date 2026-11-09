@@ -42,6 +42,13 @@ date: 2026-10-07
 > under *Global Constraints*, says how, and each task it touches carries the same dated note.
 > Task 2's text stays below, as Phase 5's starting point.
 
+> **The usage meter's counter is Tasks 44a–44l** *(added 2026-11-09, Task 44k)*, in a plan of their
+> own, [the usage meter's counter](usage-meter-counter.md). They run after Task 44 and are finished,
+> deploy included, before Task 45 starts, because nothing deploys during the soak. The code came
+> first: 44a–44j were written on the Mac on 2026-10-23 and merged into this branch on 2026-11-09
+> (#32, `6df98b9`), ahead of Tasks 41–44, and 44k was made the same day. Nothing of it is deployed
+> until Task 44l, which waits for Task 44.
+
 **Goal:** Requests reach a new front on 127.0.0.1:9100, which checks the same client keys (held
 only as digests), counts the requests in flight and forwards to llama-swap on 127.0.0.1:900 with an
 internal key. For a model that isn't loaded it asks a gate on two Unix sockets, which admits one
@@ -157,7 +164,10 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   `ProtectHome=`, `PrivateTmp=`, `InaccessiblePaths=/etc/local-ai/secrets`, `RestrictSUIDSGID=`,
   `ProtectKernelTunables=` and `ProtectControlGroups=`, but not `PrivateDevices=` or
   `MemoryDenyWriteExecute=`"; the tickets' folder is the only state its `ReadWritePaths=` opens,
-  and "the brake's hold folder is read-only there".
+  and "the brake's hold folder is read-only there". *(2026-11-09, Task 44k: the usage meter's Task
+  44f adds its two folders, `-/var/lib/local-ai/usage` and `-/var/lib/local-ai/gate-ledger`, to
+  `InaccessiblePaths=`, so neither llama-swap nor an engine can read them; `ReadWritePaths=` doesn't
+  change. Task 44l deploys it.)*
 - **llama-swap's config:** v257 stays (no upgrade in 2a); "`healthCheckTimeout` goes from 600 s to
   **180 s**"; "`ttl: 0` stays, so the gate is the only thing that unloads"; `logToStdout: proxy`
   stays (the journal question is 2b's); every `cmd` is `spark launch <model> -- …`.
@@ -377,7 +387,9 @@ brainstorm's scenario questions and the council's decisions, as questions and an
   `llama_swap_down` 30 · `too_many_requests` 10; none for the rest, which then carry no
   `Retry-After` (plan.md's dated correction, 2026-10-07).
 - **The front's `401`**, for a key it doesn't know (the controller's ruling): "That API key isn't
-  one the Spark knows. Check SPARK_API_KEY on this machine."
+  one the Spark knows. ~~Check SPARK_API_KEY on this machine.~~ Check the API key this client
+  sends." *(Changed by the usage meter's Task 44h, 2026-10-23, since OpenCode and Hermes Agent have
+  keys of their own, so the words name no one variable; recorded here 2026-11-09, Task 44k.)*
 - **The values the spec left open** (the controller's ruling, 2026-10-07; recorded, changeable):
   waiting requests per key, 8 for each of Dan's keys and 4 for `agent`'s · open connections per
   key, 32 · sessions per uid, 8, each gone 12 h after its last heartbeat or when its process exits
@@ -1296,8 +1308,10 @@ git commit -m "feat(spark): 🤖 rule 9: render checks each model against the re
   answer at once while the gate is down; `FRONT_CODES = {"model_not_found": 404,
   "too_many_requests": 429, "route_not_served": 404, "concurrency_limit": 429}`; `RETRY_AFTER_S =
   {"no_fit": 30, "held_by_brake": 300, "gate_down": 30, "restarting": 60, "draining": 60,
-  "llama_swap_down": 30, "too_many_requests": 10}`; `UNKNOWN_KEY = "That API key isn't one the
-  Spark knows. Check SPARK_API_KEY on this machine."`
+  "llama_swap_down": 30, "too_many_requests": 10}`; ~~`UNKNOWN_KEY = "That API key isn't one the
+  Spark knows. Check SPARK_API_KEY on this machine."`~~ `UNKNOWN_KEY = "That API key isn't one the
+  Spark knows. Check the API key this client sends."` *(2026-11-09, Task 44k; the usage meter's Task
+  44h changed the words on 2026-10-23)*
 - `Refusal(code: str, status: int, message: str, retry_after_s: int | None)`:
   - `body() -> dict` — `{"error": {"message": message, "code": code}}`, plus `"retry_after_s": n`
     at the top level when there is one. No other key in `error`, and never `detail` (*Before
@@ -2065,12 +2079,12 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
 
   | Socket | Route | Callers | Request → answer |
   |---|---|---|---|
-  | status | `POST /v1/admit` | front | `{model, key, deadline, request_id}`, `deadline` in Unix seconds (`time.time()`), as every time in these messages → held until ready or refused; always `200`, `{ok: true, model}` or `{ok: false, code, status, message, retry_after_s}`; any other status is the gate's own failure |
-  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at, applying: bool, lapse_s, models}` (a front that gets `applying` true holds every new request, as on `hold_all`, so a restarted front holds again; `lapse_s` is the hold's bound, `APPLY_LAPSE_S`, which `hold_all` carries too; `models` is the gate's model list, `[{name, roles, label, resident}]`, which the front serves from, Dan's decision of 2026-10-07), `{op: "state", ready, starting, draining, models}` (lists of model names, and the model list again; sent with `hello` and on every change, a registry re-read among them), `{op: "drain", model, drain_id, why}` (`why` one of `make-room`, `unload`, `idle`; and, added 2026-10-08, the controller's ruling at Task 13's review, `late_start` for Task 15's abort of a start past its deadline and `unknown` for a drain resumed with no why saved, both worded neutrally), `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "hold_all"}` and `{op: "release_all"}` (apply's restart), `{op: "ping", at}` every second |
-  | status | `POST /v1/front/inflight` | front | a whole snapshot, never a delta: `{seq, front_started_at, models: {name: {count, oldest_started_at, last_end_at, requests: [{key, started_at}]}}, draining}`, so `/v1/quiet` and apply's question can name each request's asker |
+  | status | `POST /v1/admit` | front | `{model, key, deadline, request_id}`, `deadline` in Unix seconds (`time.time()`), as every time in these messages → held until ready or refused; always `200`, `{ok: true, model}` or `{ok: false, code, status, message, retry_after_s}`; any other status is the gate's own failure *(2026-11-09, Task 44k, as built by the usage meter's Task 44c: `{ok: true, model, load_s}`, `load_s` a number only for the request that started the load, else null; the front reads a missing or bad one as null)* |
+  | status | `GET /v1/front/events` | front | NDJSON, kept open: `{op: "hello", gate_started_at, applying: bool, lapse_s, models}` (a front that gets `applying` true holds every new request, as on `hold_all`, so a restarted front holds again; `lapse_s` is the hold's bound, `APPLY_LAPSE_S`, which `hold_all` carries too; `models` is the gate's model list, `[{name, roles, label, resident}]`, which the front serves from, Dan's decision of 2026-10-07), `{op: "state", ready, starting, draining, models}` (lists of model names, and the model list again; sent with `hello` and on every change, a registry re-read among them), `{op: "drain", model, drain_id, why}` (`why` one of `make-room`, `unload`, `idle`; and, added 2026-10-08, the controller's ruling at Task 13's review, `late_start` for Task 15's abort of a start past its deadline and `unknown` for a drain resumed with no why saved, both worded neutrally), `{op: "undrain", model, drain_id}`, `{op: "unloaded", model}`, `{op: "hold_all"}` and `{op: "release_all"}` (apply's restart), `{op: "ping", at}` every second *(2026-11-09, Task 44k, as built by the usage meter's Task 44c: each model-list entry also carries `engine`, its engine's name; the front copies it when it is a non-empty string and never requires it)* |
+  | status | `POST /v1/front/inflight` | front | a whole snapshot, never a delta: `{seq, front_started_at, models: {name: {count, oldest_started_at, last_end_at, requests: [{key, started_at}]}}, draining}`, so `/v1/quiet` and apply's question can name each request's asker *(2026-11-09, Task 44k, as built: also `holding` and `at`, since Task 32's review, and, for the usage meter's Task 44e, `counting_off_since`, sent only while the front's usage rows aren't being written; `front_started_at` now also gives the gate's ledger the front's start. Those last two are optional and read leniently: absent, null or anything but a time is "not reported", never a refusal, while a bad `holding` or `at` is still a `400`)* |
   | status | `POST /v1/front/drained` | front | `{model, drain_id}` |
   | status | `POST /v1/front/busy` | front | `{model, drain_id}` — the front's answer to an idle drain that finds a request in flight; the gate unloads nothing |
-  | status | `POST /v1/front/refused` | front | `{at, code, model, key, message}` — a refusal of the front's own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`), for *recent* and `refused` |
+  | status | `POST /v1/front/refused` | front | `{at, code, model, key, message}` — a refusal of the front's own (`model_not_found`, `too_many_requests`, `route_not_served`, `draining`), for *recent* and `refused` *(2026-11-09, Task 44k, as built by the usage meter's Task 44e: also `request_id`, optional, the request's own 16 hex; the gate's ledger keeps it beside the refusal, never the key, so a ledger row joins the front's usage row by it)* |
   | status | `GET /v1/status` | users | `StatusView`, filtered for the caller |
   | status | `POST /v1/sessions` · `POST /v1/sessions/{id}/renew` · `DELETE /v1/sessions/{id}` | owner | `{model, pid, label}` → `{id, expires_at}`; `spark-admin` may end any *(2026-10-15, the controller's ruling at Task 30's review: `model` is a name or a role, resolved as `/v1/load` resolves it; Task 19's note)* |
   | control | `GET /v1/status` | admin | the full `StatusView` |
@@ -2160,6 +2174,8 @@ git commit -m "feat(spark): 🤖 systemd's sockets, each caller's uid, the watch
   and `damaged_kept_as` (Task 13's, while the damage is news) and `read_problems`. That is each
   reading the gate couldn't take at its last try, in words: `/proc`, nvidia-smi, a unit's `systemctl
   show`, launch's records, its own state's save. A failed read shows there; it never ends a loop.
+  *(Added 2026-11-09, Task 44k, for the usage meter's Task 44e:)* on the control socket's view only,
+  `health` also carries `counting`, `{front_off_since, ledger_off_since}`.
   *(Added 2026-10-14, the controller's rulings, at Task 29's review:)* `memory` gains
   `ceiling_gib`, `committed_gib`, `starting_gib` and `ceiling_binds`, all from the view's one
   reading, and its readings are null while the gate has none; each `waiting` row gains `free_gib`,
@@ -5807,9 +5823,12 @@ git commit -m "feat(spark): 🤖 the front forwards with its own key and counts 
     "forwarded again from the held body" (llama-swap's 500 `exited prematurely`, a refused
     connection) calls `encode_form(request.form)` again for a form, which it can, since the spooled
     files live until the request ends. A JSON body's bytes are held, and can go again as they are.
-  - **One request id for each admit.** Task 20's app makes a request id for each admit
-    (`app.py`, `_wait_for_load`). GateLink keeps that id when it asks a restarted gate again, so
-    the gate takes the re-ask as the same request.
+  - ~~**One request id for each admit.** Task 20's app makes a request id for each admit
+    (`app.py`, `_wait_for_load`).~~ **One request id per request** *(corrected 2026-11-09, Task 44k,
+    as the usage meter's Task 44d built it)*: the front mints it once, as the request arrives
+    (`_Request.id` in `app.py`, 16 hex), and sends it at each admit, through the front's own resends
+    too, so the request's usage row and the gate's ledger join on it. GateLink keeps that id when it
+    asks a restarted gate again, so the gate takes the re-ask as the same request.
 - `hold_all` (apply's restart), or a `hello` with `applying` true, so a front restarted inside an
   apply holds again: every new request is held, as for a draining model *(corrected 2026-10-14, the
   controller's ruling, at Task 22's review: every new request that names a model; `GET /v1/models`
@@ -6459,7 +6478,9 @@ git commit -m "feat(spark): 🤖 the brake unloads idle models first, watches th
   `AmbientCapabilities=CAP_NET_BIND_SERVICE`, `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`;
   `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ReadWritePaths=/var/lib/local-ai/whisper-tmp
   /var/lib/local-ai/cache /var/lib/local-ai/cuda-cache /var/lib/local-ai/launch`,
-  `ProtectHome=yes`, `PrivateTmp=yes`, `InaccessiblePaths=/etc/local-ai/secrets`,
+  `ProtectHome=yes`, `PrivateTmp=yes`, `InaccessiblePaths=/etc/local-ai/secrets` *(2026-11-09, Task
+  44k: `InaccessiblePaths=/etc/local-ai/secrets -/var/lib/local-ai/usage
+  -/var/lib/local-ai/gate-ledger` since the usage meter's Task 44f, which Task 44l deploys)*,
   `RestrictSUIDSGID=yes`, `ProtectKernelTunables=yes`, `ProtectControlGroups=yes`; no
   `PrivateDevices=` or `MemoryDenyWriteExecute=`; `OnFailure=local-ai-notify@%n.service`;
   `After=nvidia-cdi-refresh.service nvidia-persistenced.service`, since on this box DGX OS's
@@ -6591,7 +6612,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `StartLimitIntervalSec=0`, `OOMScoreAdjust=-900`, `MemoryMax=512M`, `TimeoutStopSec=30`,
   `Wants=` and `After=local-ai-llama-swap.service`, `After=local-ai-gate-status.socket`,
   `Requires=local-ai-front.socket`, `OnFailure=local-ai-notify@%n.service`; sandbox:
-  `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`,
+  `NoNewPrivileges=yes`, `ProtectSystem=strict` *(with `ReadWritePaths=-/var/lib/local-ai/usage`
+  and `UMask=0027` since the usage meter's Task 44f, which Task 44l deploys: 2026-11-09, Task 44k)*,
+  `ProtectHome=yes`, `PrivateTmp=yes`,
   `PrivateDevices=yes`, `ProtectProc=invisible`, `CapabilityBoundingSet=`,
   `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `IPAddressDeny=any`,
   `IPAddressAllow=localhost`; `WantedBy=multi-user.target`.
@@ -6618,7 +6641,9 @@ git commit -m "feat(spark): 🤖 llama-swap on 127.0.0.1:900, its engines from 8
   `TimeoutStopSec=` ~~30~~ 45 (see the shutdown test below), `After=` llama-swap,
   `OnFailure=local-ai-notify@%n.service`; sandbox:
   `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ReadWritePaths=/var/lib/local-ai/gate
-  /var/lib/local-ai/launch /var/lib/local-ai/brake`, `ProtectHome=yes`, `PrivateTmp=yes`; no
+  /var/lib/local-ai/launch /var/lib/local-ai/brake` *(and `-/var/lib/local-ai/gate-ledger` since the
+  usage meter's Task 44f, which Task 44l deploys: 2026-11-09, Task 44k)*, `ProtectHome=yes`,
+  `PrivateTmp=yes`; no
   `PrivateDevices=`, `ProtectProc=` or `ProcSubset=`; `WantedBy=multi-user.target`.
 - `local-ai-notify@.service` — `Type=oneshot`, `DynamicUser=yes`, `StateDirectory=local-ai-notify`,
   `LoadCredential=ntfy-token:…/ntfy-notify.header` with `SetCredential=ntfy-token:not-set-up`,
@@ -8825,6 +8850,22 @@ systemctl start local-ai-llama-swap.service local-ai-brake.service
   Dan's key, which it obeys: every model would have unloaded. Since it, 2a's doctor finds 9100
   answering as llama-swap does, fails its front line, and sends 9100 nothing after `/health`.)*
 
+  *(Added 2026-11-09, Task 44k, from the usage meter's Task 44h:)* after the rollback, **on the
+  Mac**, OpenCode and Hermes Agent need their providers back on `SPARK_API_KEY`, since Phase 1's
+  llama-swap doesn't know the keys they have of their own:
+
+```bash
+uv run --frozen --project spark spark clients opencode --write --key-env SPARK_API_KEY
+```
+
+```bash
+uv run --frozen --project spark spark clients hermes --write --key-env SPARK_API_KEY
+```
+
+  Then restart both (`opencode service restart`; start Hermes again). deploy.md's copies are
+  byte-identical, and its list of what the rollback leaves names the usage and gate-ledger folders
+  too.
+
 - [ ] **Step 2:** `make apply`. Expected: it lists root's ten new or changed unit files (the
   compose unit is unchanged), stages them, and stops, before it asks the gate anything (Task 32),
   since no gate runs yet. *(Added 2026-10-15, with Task 37's note on the coder:)* before this
@@ -9589,6 +9630,16 @@ git commit -m "docs(plan): 🤖 Qwen3.8-27B's first measurements, and route A's 
 
 ***
 
+### Tasks 44a–44l [Spark] [Dan]: the usage meter's counter
+
+*(Added 2026-11-09, Task 44k.)* These tasks are in a plan of their own, [the usage meter's
+counter](usage-meter-counter.md): the front's rows, the gate's ledger, the units and bootstrap's
+folders, doctor's checks and S26, OpenCode's and Hermes Agent's own keys, and the deploy. They run
+after Task 44 and are finished, Task 44l's deploy included, before Task 45 starts, because nothing
+deploys during the soak. So the soak below runs with the counter on.
+
+***
+
 ### Task 45 [Spark]: the soak — every footprint, and what RssAnon accounts for
 
 **Files:** `stack/models.yaml` (each footprint, `footprint_measured: true`, `cold_load_gib`;
@@ -9623,6 +9674,14 @@ line), `changelog.md`, `README.md`
   cache that couldn't be saved shows as the engine's `prompt state size … exceeds cache size limit
   …, skipping` warning (`server-task.cpp:1732`) just after the pick's line. plan.md's dated
   correction to the ruling names the levers if the count shows harm.
+- [ ] **Step 2b: the usage meter's counter under the soak** *(added 2026-11-09, Task 44k; it needs
+  Task 44l's deploy)*. **On the Spark**, read before anything restarts the front, its peak memory
+  with the scanner, `systemctl show -p MemoryPeak --value local-ai-front.service`, recorded against
+  its `MemoryMax=512M`. No rows dropped: no row of the soak's carries `dropped`, and `make status`
+  never said *counting off*. And the rows checked against Pi's own counts: for the turns of Step 1's
+  coder session in Pi, Pi's counts against the rows joined on the engine's response id (`resp_id`),
+  by the design's §7 normalization. Recorded as a verdict only ("within N %"): no row's figures, and
+  no total, go in the repo (the counter's *Global Constraints*).
 - [ ] **Step 3:** the registry's footprints become the measured ones; render passes; **[Dan]**
   decides whether the reserve moves. **If render refuses the measured set** (a footprint over what
   the set leaves it), **stop and ask Dan**, as Task 44 does: Task 42's way back, or his
@@ -9893,6 +9952,26 @@ sudo systemctl restart local-ai-front.service
 sudo -k
 ```
 
+- [ ] **Step 2b: what the usage meter's counter leaves behind** *(added 2026-11-09, Task 44k; it
+  needs Task 44l's deploy)*. Read by field names and verdicts only: no row's figures go in the repo
+  (the counter's *Global Constraints*). Each command is run by hand before it is relied on, the
+  Phase 0 lesson. **[Dan, on the Spark]:**
+  - **A SIGKILL leaves no row for the requests it kills.** A row is put as its request ends, so a
+    request in flight when Step 1 or Step 2 kills the front leaves none, and rows still queued for
+    the writer's thread are lost with the process. The gate's ledger marks the gap: a `stop` and
+    then a `start`, each `who: front`.
+  - **A SIGTERM leaves a row for each request still open.** With a stream running that outlasts the
+    front's 20 s of grace, `sudo systemctl restart local-ai-front.service`: its row reads `end: cut`.
+    A request still waiting on the gate when that grace ends, no answer begun, reads `end: gone`, not
+    `cut`, since `gone` is how a request ends when nothing of an answer has gone.
+  - **An unwritable folder never stops the front.** The usage folder's mode taken to `000`, then the
+    front restarted, since a running front keeps its file open: it still answers `/health` and a
+    chat, `make status` says *counting off since …*, and the ledger gains `counting_off`, `who:
+    front`. The mode must be `000`, not `0500`: a front can still append to a month's file that
+    exists in a folder it can't write to (a stand-in of the writer, 2026-11-09). Then the mode back
+    to `2750`; after about 30 s the next request's row is written with `dropped` set, and the ledger
+    gains `counting_on`. Then `sudo -k`.
+
 - [ ] **Step 3: Commit.** **On the Spark:**
 
 ```bash
@@ -9935,7 +10014,12 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   a cut. **[Dan, on the Mac]** pi asks the coder for a long reply; while it streams, **[Dan, on the
   Spark]** the coder's engine process is killed with `sudo kill`. pi shows an error, not a
   shorter answer as if whole, and `make logs s=front` shows that request ending `cut`, with why.
-  What the web UI shows is recorded beside it.
+  What the web UI shows is recorded beside it. *(Added 2026-11-09, Task 44k; it needs Task 44l's
+  deploy:)* the usage rows agree, read by field names and verdicts only, no row's figures in the
+  repo: the cut request leaves a row with `end: cut`, and each refusal this step draws leaves one
+  with `end: refused` and its code in `code` (`no_fit`, `gate_down`). A refusal past its key's
+  per-minute limit is folded into that key's next row's `refused_n`, so a burst needn't leave a row
+  each.
 - [ ] **Step 4: S17.** A registry edit that changes llama-swap's config, with a request in flight;
   **[Dan, on the Spark, in tmux]** `make apply`: the diff; the quiet wait's words; Ctrl-C changes
   nothing; the deadline, shortened for the drill with `spark apply --deadline-s 60` (Task 32),
@@ -9972,7 +10056,9 @@ git commit -m "docs(website): 🤖 S02, S03 and S17 verified, and S01's gate par
 `README.md`; `changelog.md`; `CLAUDE.md` and README §Conventions (any rule 2a changed);
 `website/design/plan.md` (the forward look, Revisions, Phase 2a's status line);
 `website/design/phase-2a-qa.md` (any decision made since it was written);
-`website/design/phase-2a-retro.md` (new); this plan's Progress note
+`website/design/phase-2a-retro.md` (new); this plan's Progress note. *(2026-11-09, Task 44k: and,
+for the usage meter's counter, `website/scenarios/s26-what-it-cost.md` and
+`website/design/usage-meter-counter.md`, which Step 7's `git add` names.)*
 
 *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
 NAS phase now 5.)* **Phase 2a closes without ntfy** unless Task 2 has run, and says so: in the
@@ -10012,9 +10098,10 @@ sudo -k
 ```bash
 git add website/scenarios/s01-morning-start.md website/scenarios/s02-big-job.md \
   website/scenarios/s03-doesnt-fit-interactive.md website/scenarios/s05-memory-critically-low.md \
-  website/scenarios/s14-gate-down.md website/scenarios/s17-changing-models.md website/architecture.qmd \
+  website/scenarios/s14-gate-down.md website/scenarios/s17-changing-models.md \
+  website/scenarios/s26-what-it-cost.md website/architecture.qmd \
   README.md changelog.md CLAUDE.md website/design/plan.md website/design/phase-2a-qa.md \
-  website/design/phase-2a-retro.md website/design/phase-2a.md
+  website/design/phase-2a-retro.md website/design/phase-2a.md website/design/usage-meter-counter.md
 git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward look, the retrospective" \
   -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -10045,7 +10132,18 @@ git commit -m "docs(plan): 🤖 close Phase 2a: scenario statuses, the forward l
 
   Those four, Task 19's tests over real sockets (with Task 9's reason, *SO_PEERCRED is Linux's,
   and the gate runs only on the Spark*) and those for a tool the Mac lacks that a test names
-  (`systemd-analyze`, say) are the expected skips; any other skip is a finding.
+  (`systemd-analyze`, say) are the expected skips; any other skip is a finding. *(Added 2026-11-09,
+  Task 44k:)* the usage meter's Task 44d adds a `spark front` subprocess test that takes Task 9's
+  reason, and is expected too. The counter's plan (*After the Mac round*, step 1) records that
+  `test_bootstrap`, `test_brake`, `test_tested_against`, `test_tickets`, `test_launch`,
+  `test_notifier_script` and `test_ntfy_records` failed on the Mac then, as they do at its base
+  commit, from the Mac's environment: they come under *A Mac difference is fixed here*, above.
+- [ ] **Step 1b: `make clients`, with the usage meter's keys** *(added 2026-11-09, Task 44k)*.
+  **[Dan, on the Mac]**, once Task 44l's Step 1 has made OpenCode's and Hermes Agent's keys:
+  `make clients` writes both providers on their own keys, and each answers through `make tunnel`
+  with its own, as [OpenCode and Hermes Agent](../how-to/opencode-hermes.md) checks. Until those
+  keys exist, `make clients` gives them 401s; that page's rollback commands point them back at
+  `SPARK_API_KEY`.
 - [ ] **Step 2: CI's parity** (workflows are the Mac's): `.github/workflows/ci.yml` gains `spark docs
   notifications --check` beside `spark docs stack --check`, and shellcheck of
   `stack/host/local-ai-notify` and `stack/host/local-ai-agent-oom` beside bootstrap's. Commit;
@@ -10090,6 +10188,12 @@ git merge --no-ff phase-2a -m "chore(repo): 🤖 merge phase 2a" -m "Co-Authored
   order are recorded.
 - [ ] Route A's decode, time to first token and prefill are recorded against ~~Phase 5's~~ Phase 4's
   table *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*.
+- [ ] *(Added 2026-11-09, Task 44k:)* The usage meter's counter is deployed (Tasks 44a–44l, finished
+  before Task 45) and counting through the soak: `make doctor` passes `usage records`, `gate ledger`
+  and `counting`; Task 45 has recorded the front's peak memory with the scanner, under its 512M, with
+  no rows dropped, and rows checked against Pi's own counts as a verdict only; Tasks 49 and 50 have
+  seen the rows and ledger rows they name; and Task 52's `make clients` gives OpenCode and Hermes
+  Agent their own keys.
 - [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac, and CI is green;
   README §Current state, the changelog and the architecture page are true; the council review is
   done and the forward look applied; `phase-2a` is merged to `main` with Dan's OK.

@@ -69,6 +69,10 @@ Never write into this repo:
   YouTrack ones.
 - **Unread terminal paste.** `env`, `ip addr`, `tailscale status`, `docker inspect` and
   `nvidia-smi` output all carry identifiers. Read it before it goes in.
+- **Any live figure from the usage meter** (added 2026-11-09, from its design): a row, a count, a
+  total, a spend, the payback or the break-even date, on the site and in a commit message too. Its
+  fixtures and examples are invented, and a check against real rows prints only a verdict ("within
+  N %"), never the figures.
 
 Internal hostnames (`brightroar`, `heartsbane`) and the GB10 hardware facts are deliberate
 exceptions — they are documented because the repo is useless without them.
@@ -251,6 +255,11 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   that starts it. Commands, paths and file names stay lowercase in code: `pi`, `opencode`, `pa`,
   `hermes`, `~/.pi/`, `pi.md`. Pages written before then are renamed in one commit after
   `phase-2a` merges (the plan's Backlog); new text uses the names now.
+- **A client key's name is never reused** (added 2026-11-09, from the usage meter's design, §6). A
+  usage row records the name of the key it came with, so a name given to a second client would run
+  two clients' histories together. When a key retires, its name goes into a private list of its own,
+  which holds no digest, since a line in the key list needs one and would leave the key working.
+  Nothing retires in Phase 2a; the design's §6 has the steps.
 - **Markdown under `website/`: a mid-document horizontal rule is `***`, never `---`.** Pandoc can
   read a `---` line anywhere in a document, not only at the top, as the start of a YAML metadata
   block, and then the Quarto render fails. The front matter's own `---` lines are fine.

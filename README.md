@@ -515,6 +515,10 @@ the plan it would come in, and what was left out and why.
   IPv6 prefix of my home connection, no MAC or serial. Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **No secrets in this repo.** API keys are referenced by environment variable, expanded at call
   time. Real values live in `~/.secrets` and are never committed or printed.
+- **No live figure from the usage meter goes in this repo,** its site or a commit: fixtures and
+  examples are invented, and a check against real rows prints only a verdict. **A client key's name
+  is never reused,** since a usage row records it (both 2026-11-09). Full rules in
+  [`CLAUDE.md`](CLAUDE.md).
 - **`agent` never gets my credentials** — no sudo, no docker, no GitHub token, no access to my home
   or `~/.secrets`. It holds only its own: its Claude Code login and, from Phase 1, its own
   llama-swap key (since Phase 2a's cutover, 2026-10-16, a client key that the front checks).
