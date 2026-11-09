@@ -15,6 +15,7 @@ import gc
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
@@ -35,8 +36,9 @@ from front_helpers import DIGESTS, GROUPS, KEYS, KEYS_TEXT, MODELS, field, file_
 from gate_standin import GateStandIn
 from spark import messages, serve
 from spark.front import app as front_app
-from spark.front import gatelink, parse, upstream
+from spark.front import gatelink, parse, upstream, usage
 from spark.protocols import make_protocol
+from spark.rowfile import RefusedLimit
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
 
@@ -103,13 +105,14 @@ class Loaded:
                                    "retry_after_s": 30}
         self.admits = 0
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not admit:
             return enter()
         self.admits += 1
         return gatelink.Refused(self.refusal["code"], answer=self.refusal)
 
-    def refused(self, code, model, key, message):
+    def refused(self, code, model, key, message, request_id=None):
         pass
 
     async def why_cut(self, model, since):
@@ -117,6 +120,20 @@ class Loaded:
 
     def running_models(self):
         return frozenset(NAMES)
+
+
+class Rows:
+    """The row file's stand-in, as the app calls rowfile.RowFile: each row put kept in `rows`; with `raises`, each put
+    raises it instead."""
+
+    def __init__(self, raises: Exception | None = None):
+        self.rows: list[dict] = []
+        self.raises = raises
+
+    def put(self, row, at):
+        if self.raises is not None:
+            raise self.raises
+        self.rows.append(row)
 
 
 class Tasks:
@@ -164,6 +181,8 @@ class Rig:
     lines: list[str]
     now: list[float]
     client: httpx.AsyncClient
+    rows: Rows
+    gate: object
 
     def count(self, model: str = CODER) -> int:
         return self.app.inflight.count(model)
@@ -174,9 +193,12 @@ class Rig:
 
 @contextlib.asynccontextmanager
 async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | None = None, gate=None,
-              **app_options):
+              rows: Rows | None = None, **app_options):
     """The front on a real uvicorn, its Upstream reaching `swap_url`, or the v257 stand-in `fake` (one with every model
-    ready, by default), and an httpx client for it with a read timeout well past any silence a test makes."""
+    ready, by default), its gate `gate` (Loaded, by default) and its row file `rows` (a Rows, by default), and an httpx
+    client for it with a read timeout well past any silence a test makes."""
+    gate = Loaded() if gate is None else gate
+    rows = Rows() if rows is None else rows
     if swap_url is None:
         fake = fake or FakeLlamaSwap({INTERNAL}, NAMES)
         for name in NAMES:
@@ -189,14 +211,14 @@ async def rig(tmp_path, *, fake: FakeLlamaSwap | None = None, swap_url: str | No
     lines, now = [], [T]
     async with context as url_of_swap:
         forwarder = upstream.Upstream(url_of_swap, INTERNAL)
-        app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder,
-                                 gate=Loaded() if gate is None else gate, caps=parse.KeyCaps(KEYS, GROUPS),
-                                 log=lines.append, clock=lambda: now[0], spool_dir=spool, **app_options)
+        app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder, gate=gate,
+                                 caps=parse.KeyCaps(KEYS, GROUPS), log=lines.append, clock=lambda: now[0],
+                                 spool_dir=spool, rows=rows, **app_options)
         tasks = Tasks(app)
         try:
             async with serve_app(tasks) as url, httpx.AsyncClient(base_url=url, trust_env=False,
                                                                   timeout=httpx.Timeout(15)) as client:
-                yield Rig(app, tasks, fake, url_of_swap, url, lines, now, client)
+                yield Rig(app, tasks, fake, url_of_swap, url, lines, now, client, rows, gate)
         finally:
             await forwarder.aclose()
 
@@ -871,14 +893,15 @@ class Waits:
         self.admits: list[str] = []
         self.admitted = asyncio.Event()
 
-    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True):
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
         if not waits():
             return gatelink.Refused("too_many_requests")
         self.admits.append(model)
         await self.admitted.wait()
         return enter()
 
-    def refused(self, code, model, key, message):
+    def refused(self, code, model, key, message, request_id=None):
         pass
 
     async def why_cut(self, model, since):
@@ -1004,6 +1027,258 @@ async def test_a_cut_stays_a_cut_when_the_client_goes_while_it_closes(tmp_path):
     assert app.inflight.count(CODER) == 0
 
 
+# A row per request (the usage meter's counter, Task 44d), in llama-server b11146's shapes (server-task.cpp): a chunk's
+# fields in the order choices, created, id, model, system_fingerprint, object[, usage], timings.
+
+TIMINGS = (',"timings":{"cache_n":90,"prompt_n":10,"prompt_ms":12.5,"prompt_per_token_ms":1.0,"prompt_per_second":9.0,'
+           '"predicted_n":5,"predicted_ms":80.25,"predicted_per_token_ms":1.0,"predicted_per_second":9.0}')
+
+
+def llama_chunk(delta: dict, tail: str = "") -> bytes:
+    choices = json.dumps([{"finish_reason": None, "index": 0, "delta": delta}], separators=(",", ":"))
+    return sse(f'{{"choices":{choices},"created":1790000000,"id":"chatcmpl-standin1","model":"m",'
+               f'"system_fingerprint":"b11146","object":"chat.completion.chunk"{tail}}}')
+
+
+# A stream without usage, as llama-server sends one a client didn't ask usage of: counted from its last timings.
+COUNTED = [llama_chunk({"role": "assistant", "content": None}), llama_chunk({"reasoning_content": "hm"}),
+           llama_chunk({"content": "hi"}), llama_chunk({}, TIMINGS), DONE]
+# A whole answer, not streamed: its usage, then its id, then its timings.
+ANSWER = ('{"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"ok"}}],'
+          '"created":1790000000,"model":"m","system_fingerprint":"b11146","object":"chat.completion",'
+          '"usage":{"completion_tokens":7,"prompt_tokens":200,"total_tokens":207},"id":"chatcmpl-standin2"'
+          f'{TIMINGS}}}').encode()
+
+
+class Refuses(Loaded):
+    """The gate's stand-in: every request refused, as the gate words `refusal`."""
+
+    async def clear(self, model, key, deadline, request_id, *, enter, admit=False, waits=lambda: True,
+                    loaded=None):
+        return gatelink.Refused(self.refusal["code"], answer=self.refusal)
+
+
+@pytest.mark.anyio
+async def test_a_stream_leaves_one_row_with_its_counts(tmp_path):
+    async with rig(tmp_path) as r:
+        r.fake.stream(CODER, COUNTED)
+        with anyio.fail_after(BOUND_S):
+            async with r.stream() as response:
+                assert await response.aread() == b"".join(COUNTED)
+            await until(lambda: r.rows.rows)
+    [row] = r.rows.rows
+    fields = ("v", "key", "route", "model", "end", "status", "p", "c", "o", "from")
+    assert {name: row.get(name) for name in fields} == {
+        "v": 1, "key": "dan-mac", "route": "chat", "model": CODER, "end": "done", "status": 200, "p": 100, "c": 90,
+        "o": 5, "from": "timings"}
+    assert re.fullmatch(r"[0-9a-f]{16}", row["id"])
+    assert row["t1"] >= row["t0"] and row["attempts"] == 1
+    assert (row["ev_think"], row["ev_text"], row["resp_id"], row["stream"]) == (1, 1, "chatcmpl-standin1", True)
+    assert (row["prompt_ms"], row["gen_ms"]) == (12, 80)
+    assert row["wait_s"] >= 0 and row["first_s"] >= 0
+    assert None not in row.values()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ending", ["cut", "error", "refused by the gate", "refused by the front", "whole"])
+async def test_each_ending_leaves_its_row(tmp_path, ending):
+    fake = FakeLlamaSwap({INTERNAL}, NAMES)
+    options: dict = {}
+    if ending == "refused by the gate":
+        options["gate"] = Refuses({"ok": False, "code": "no_fit", "status": 409, "message": "M", "retry_after_s": 30})
+    elif ending == "refused by the front":
+        options["budget"] = parse.BodyBudget(16)  # less than any body: front_busy, by its Content-Length
+    elif ending == "whole":
+        fake.canned("POST", "/v1/chat/completions", 200, ANSWER, {"content-type": "application/json"})
+    async with rig(tmp_path, fake=fake, **options) as r:
+        with anyio.fail_after(BOUND_S):
+            if ending == "cut":  # the connection dropped after a chunk with timings
+                r.fake.stream(CODER, [llama_chunk({"content": "hi"}, TIMINGS), DELTA, DONE], delay_s=0.05,
+                              drop_after=1)
+                with pytest.raises(httpx.RemoteProtocolError):
+                    async with r.stream() as response:
+                        await response.aread()
+            elif ending == "error":  # the engine's own error event
+                r.fake.stream(CODER, [DELTA, OAI_ERROR])
+                assert (await r.client.post("/v1/chat/completions", json=chat(), headers=auth())).status_code == 200
+            else:
+                await r.client.post("/v1/chat/completions", json=chat(stream=False), headers=auth())
+            await until(lambda: r.rows.rows)
+    [row] = r.rows.rows
+    expected = {
+        "cut": {"end": "cut", "status": 200, "from": "timings", "p": 100, "c": 90, "o": 5, "attempts": 1},
+        "error": {"end": "error", "status": 200, "code": None, "attempts": 1},
+        "refused by the gate": {"end": "refused", "status": 409, "code": "no_fit", "model": CODER, "attempts": 0,
+                                "from": "none"},
+        "refused by the front": {"end": "refused", "status": 429, "code": "front_busy", "model": None,
+                                 "route": "chat", "attempts": 0},
+        "whole": {"end": "done", "status": 200, "from": "usage", "p": 200, "c": 90, "o": 7,
+                  "resp_id": "chatcmpl-standin2", "stream": False, "attempts": 1},
+    }[ending]
+    assert {name: row.get(name) for name in expected} == expected
+    assert row["key"] == "dan-mac" and None not in row.values()
+
+
+@pytest.mark.anyio
+async def test_no_client_string_reaches_a_row_even_one_that_passes_the_pattern(tmp_path):
+    # Each passes the row's text pattern, [A-Za-z0-9._:-]{1,64}: only where a value comes from decides.
+    async with rig(tmp_path) as r:
+        r.fake.stream(CODER, [DELTA, DONE])
+        with anyio.fail_after(BOUND_S):
+            missing = await r.client.post("/v1/chat/completions", json=chat("secretproj-q3"), headers=auth())
+            assert missing.status_code == 404
+            await until(lambda: len(r.rows.rows) == 1)
+            effort = await r.client.post("/v1/chat/completions", json=chat(reasoning_effort="secret-effort"),
+                                         headers=auth())
+            assert effort.status_code == 200
+            await until(lambda: len(r.rows.rows) == 2)
+            route = await r.client.post("/v1/secret-route", json=chat(), headers=auth())
+            assert route.status_code == 404
+            await until(lambda: len(r.rows.rows) == 3)
+    assert "secret" not in json.dumps(r.rows.rows)
+    missing_row, effort_row, route_row = r.rows.rows
+    assert missing_row["asked_len"] == len("secretproj-q3") and "model" not in missing_row
+    assert missing_row["code"] == "model_not_found"
+    assert effort_row["model"] == CODER and "effort" not in effort_row and "asked_len" not in effort_row
+    assert route_row["code"] == "route_not_served" and "route" not in route_row
+
+
+@pytest.mark.anyio
+async def test_no_row_for_a_401_health_or_the_model_list(tmp_path):
+    async with rig(tmp_path) as r:
+        r.fake.stream(CODER, [DELTA, DONE])
+        with anyio.fail_after(BOUND_S):
+            assert (await r.client.get("/health")).status_code == 200
+            assert (await r.client.post("/v1/chat/completions", json=chat(),
+                                        headers=auth("not-a-key"))).status_code == 401
+            assert (await r.client.get("/v1/models", headers=auth())).status_code == 200
+            assert (await r.client.post("/v1/chat/completions", json=chat(), headers=auth())).status_code == 200
+            await until(lambda: len(r.lines) == 3)  # the 401's, the model list's and the chat's: its row is put next
+    [row] = r.rows.rows
+    assert (row["key"], row["model"], row["end"]) == ("dan-mac", CODER, "done")
+
+
+class BreakingScan(usage.UsageScan):
+    """A usage scan that breaks where `where` says: its feed, on its second call; or its finish."""
+
+    def __init__(self, where: str):
+        super().__init__("/v1/chat/completions", streamed=True)
+        self.where, self.fed = where, 0
+
+    def feed(self, chunk: bytes) -> None:
+        self.fed += 1
+        if self.where == "feed" and self.fed == 2:
+            raise RuntimeError("scan-marker")
+        super().feed(chunk)
+
+    def finish(self) -> usage.Counts:
+        if self.where == "finish":
+            raise RuntimeError("scan-marker")
+        return super().finish()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("where", ["feed", "scan_for", "finish"])
+async def test_a_scanner_that_raises_never_cuts_the_stream(tmp_path, monkeypatch, caplog, where):
+    def scan_for(path, status, headers):
+        if where == "scan_for":
+            raise RuntimeError("scan-marker")
+        return BreakingScan(where)
+
+    monkeypatch.setattr(usage, "scan_for", scan_for)
+    caplog.set_level(logging.ERROR)
+    async with rig(tmp_path) as r:
+        r.fake.stream(CODER, COUNTED, delay_s=0.05)  # apart, so each comes to the front as a chunk of its own
+        with anyio.fail_after(BOUND_S):
+            async with r.stream() as response:
+                assert await response.aread() == b"".join(COUNTED)  # every byte
+            await until(lambda: r.rows.rows)
+    assert r.lines == [f"front: dan-mac {CODER} 200 0.0s"]
+    [row] = r.rows.rows
+    assert (row["end"], row["status"], row["from"]) == ("done", 200, "none")  # the timings came after the fault
+    assert not {"p", "c", "o", "ev_think", "ev_text", "resp_id"} & set(row)
+    [broke] = [record for record in caplog.records if record.name == "spark.front.app"]  # once, for the request
+    assert "RuntimeError" in broke.getMessage() and "scan-marker" not in broke.getMessage()
+    assert broke.exc_info is None
+
+
+@pytest.mark.anyio
+async def test_a_rows_writer_that_raises_never_touches_the_request(tmp_path, caplog):
+    caplog.set_level(logging.ERROR)
+    async with rig(tmp_path, rows=Rows(raises=RuntimeError("rows-marker"))) as r:
+        r.fake.stream(CODER, [DELTA, DONE])
+        with anyio.fail_after(BOUND_S):
+            first = await r.client.post("/v1/chat/completions", json=chat(), headers=auth())
+            assert (first.status_code, first.content) == (200, DELTA + DONE)
+            await until(lambda: len(r.lines) == 1)
+            [broke] = [record for record in caplog.records if record.name == "spark.front.app"]
+            assert "RuntimeError" in broke.getMessage() and "rows-marker" not in broke.getMessage()
+            assert broke.exc_info is None
+            second = await r.client.post("/v1/chat/completions", json=chat(), headers=auth())
+            assert (second.status_code, second.content) == (200, DELTA + DONE)
+            await until(lambda: len(r.lines) == 2)
+    assert r.lines == [f"front: dan-mac {CODER} 200 0.0s"] * 2
+    assert r.app.inflight.count(CODER) == 0 and r.app.caps.open("dan-mac") == 0
+
+
+@pytest.mark.anyio
+async def test_a_stream_cut_at_the_fronts_stop_has_put_its_row_once_aclose_returns(tmp_path):
+    # uvicorn's stop cancels a stream that outlasts its graceful time and returns at once; the request ends only once
+    # its relay has closed its upstream answer, here 0.2 s later. aclose waits for it, so `spark front`'s shutdown,
+    # which closes the row file after aclose, never closes it before the row is put.
+    forwarder, rows, lines = Scripted("wait", close_s=0.2), Rows(), []
+    app = front_app.FrontApp(parse.ModelList(MODELS), KEYS, GROUPS, DIGESTS, upstream=forwarder, gate=Loaded(),
+                             caps=parse.KeyCaps(KEYS, GROUPS), log=lines.append, clock=lambda: T, spool_dir=tmp_path,
+                             rows=rows)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    server = serve.QuietServer(serve._config(app, make_protocol(peer_cred=False, header_timeout_s=10),
+                                             graceful_s=0.3))
+    serving = asyncio.create_task(server.serve(sockets=[listener]))
+    try:
+        with anyio.fail_after(BOUND_S):
+            while not server.started:
+                await asyncio.sleep(0.01)
+            url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+            async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=httpx.Timeout(15)) as client:
+                with contextlib.suppress(httpx.HTTPError):  # the cut, as the client sees it
+                    async with client.stream("POST", "/v1/chat/completions", json=chat(), headers=auth()) as response:
+                        kept = await first_chunk(response)
+                        await forwarder.reached.wait()
+                        server.should_exit = True
+                        await serving  # its graceful time spent, the stream's task cancelled: still closing
+                        assert forwarder.closed == 0 and rows.rows == []
+                        await app.aclose()
+                        del kept
+    finally:
+        server.should_exit = True
+        await asyncio.gather(serving, return_exceptions=True)
+        listener.close()
+    assert forwarder.closed == 1
+    [row] = rows.rows
+    assert (row["key"], row["model"], row["end"], row["status"]) == ("dan-mac", CODER, "cut", 200)
+    assert lines == [f"front: dan-mac {CODER} cut 0.0s"]
+
+
+@pytest.mark.anyio
+async def test_refused_rows_past_the_limit_are_folded_into_refused_n(tmp_path):
+    async with rig(tmp_path, refused_limit=RefusedLimit(per_minute=2)) as r:
+        r.fake.stream(CODER, [DELTA, DONE])
+        with anyio.fail_after(BOUND_S):
+            for _ in range(5):
+                answer = await r.client.post("/v1/chat/completions", json=chat("no-such-model"), headers=auth())
+                assert answer.status_code == 404
+            # Another key's refusals are its own.
+            answer = await r.client.post("/v1/chat/completions", json=chat("no-such-model"), headers=auth("k2"))
+            assert answer.status_code == 404
+            assert (await r.client.post("/v1/chat/completions", json=chat(), headers=auth())).status_code == 200
+            await until(lambda: len(r.lines) == 7)
+    assert [(row["key"], row["end"], row.get("refused_n")) for row in r.rows.rows] == [
+        ("dan-mac", "refused", None), ("dan-mac", "refused", None), ("agent", "refused", None),
+        ("dan-mac", "done", 3)]
+
+
 # `spark front`, as systemd starts it.
 
 SPARK_FRONT = "import sys\nfrom spark import cli\nsys.exit(cli.main(['front']))\n"
@@ -1065,7 +1340,8 @@ async def test_spark_front_takes_9100_from_systemd(tmp_path, sockdir):
             async with serve_fake(fake) as swap_url:
                 env = _environment(LISTEN_FDS="1", LISTEN_FDNAMES="front", NOTIFY_SOCKET=str(sockdir / "notify"),
                                    CREDENTIALS_DIRECTORY=str(credentials), SPARK_REGISTRY=str(registry),
-                                   SPARK_LLAMASWAP_URL=swap_url, SPARK_GATE_STATUS=str(gate.path))
+                                   SPARK_LLAMASWAP_URL=swap_url, SPARK_GATE_STATUS=str(gate.path),
+                                   SPARK_USAGE_DIR=str(tmp_path / "usage"))
                 child = subprocess.Popen([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
                                          pass_fds=[listener.fileno()], env=env, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, text=True)
@@ -1098,6 +1374,91 @@ async def test_spark_front_takes_9100_from_systemd(tmp_path, sockdir):
     assert "Traceback" not in err and "k2" not in err
 
 
+# `spark front` with uvicorn's graceful time cut to 1 s from gateproto.GRACEFUL_S's 20, so a stream held through its
+# stop is cut within the test's bound: the same stop, sooner. Its row file writes whatever the test disk has free
+# (rowfile.FREE_FLOOR, 20 GiB on the box), so the rows it checks don't depend on the machine (Task 44e's review, R9).
+SPARK_FRONT_QUICK_STOP = ("import sys\nfrom spark import cli, rowfile\nfrom spark.front import main\n"
+                          "main.GRACEFUL_S = 1\nrowfile.FREE_FLOOR = 0\nsys.exit(cli.main(['front']))\n")
+
+
+@LINUX_ONLY
+@pytest.mark.anyio
+@pytest.mark.parametrize("folder", ["missing", "a file", "read-only", "writable"])
+async def test_spark_front_serves_whatever_its_usage_folder_and_a_stream_cut_at_its_stop_leaves_its_row(
+        tmp_path, sockdir, folder):
+    # No state of the usage folder keeps the front from starting or serving (the usage meter's counter, Task 44d). A
+    # stream still open when uvicorn's graceful time ends is cut, and its row is put before the row file closes.
+    usage_dir = tmp_path / "usage"
+    if folder == "a file":
+        usage_dir.write_text("")
+    elif folder != "missing":
+        usage_dir.mkdir(mode=0o500 if folder == "read-only" else 0o700)
+    credentials = _credentials(tmp_path / "credentials")
+    registry = tmp_path / "models.yaml"
+    registry.write_text(STACK_REGISTRY.read_text())
+    from spark.registry import load_registry
+
+    loaded = load_registry(registry)
+    names = list(loaded.models)
+    fake = FakeLlamaSwap({INTERNAL}, names)
+    for name in names:
+        fake.set_state(name, "ready")
+    gate = GateStandIn(sockdir, models=list(parse.ModelList.from_registry(loaded)), ready=[GEMMA])
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    with anyio.fail_after(60), socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+        receiver.bind(str(sockdir / "notify"))
+        await gate.start()
+        try:
+            async with serve_fake(fake) as swap_url:
+                env = _environment(LISTEN_FDS="1", LISTEN_FDNAMES="front", NOTIFY_SOCKET=str(sockdir / "notify"),
+                                   CREDENTIALS_DIRECTORY=str(credentials), SPARK_REGISTRY=str(registry),
+                                   SPARK_LLAMASWAP_URL=swap_url, SPARK_GATE_STATUS=str(gate.path),
+                                   SPARK_USAGE_DIR=str(usage_dir))
+                child = subprocess.Popen([sys.executable, "-c", LAUNCHER, str(listener.fileno()),
+                                          SPARK_FRONT_QUICK_STOP], pass_fds=[listener.fileno()], env=env,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                listener.close()
+                err = ""
+                try:
+                    assert await asyncio.to_thread(_received, receiver, 30) == b"READY=1"
+                    await until(lambda: any(each["models"] for each in gate.snapshots))
+                    async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=10) as client:
+                        health = await client.get("/health")
+                        assert (health.status_code, health.json()) == (200, {"status": "ok"})
+                        fake.stream(GEMMA, [DELTA, DONE])
+                        answer = await client.post("/v1/chat/completions", json=chat(GEMMA), headers=auth("k2"))
+                        assert (answer.status_code, answer.content) == (200, DELTA + DONE)
+                        fake.stream(GEMMA, [DELTA, DELTA, DONE], delay_s=30)
+                        with contextlib.suppress(httpx.HTTPError):  # the stream's cut, as its client sees it
+                            async with client.stream("POST", "/v1/chat/completions", json=chat(GEMMA),
+                                                     headers=auth("k2")) as held:
+                                kept = await first_chunk(held)
+                                child.send_signal(signal.SIGTERM)
+                                _, err = await asyncio.to_thread(child.communicate, timeout=30)
+                                del kept
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        _, err = await asyncio.to_thread(child.communicate, timeout=10)
+                assert child.returncode == 0, err
+        finally:
+            await gate.close()
+    assert "Traceback" not in err and "k2" not in err
+    assert "front: agent gemma-4-26b-a4b cut" in err  # its journal line
+    if folder == "writable":
+        [month] = usage_dir.glob("usage-*.jsonl")
+        assert month.stat().st_mode & 0o777 == 0o640
+        rows = [json.loads(line) for line in month.read_text().splitlines()]
+        assert [(row["key"], row["model"], row["end"]) for row in rows] == [("agent", GEMMA, "done"),
+                                                                            ("agent", GEMMA, "cut")]
+    elif os.geteuid() != 0:  # root writes a read-only folder anyway
+        assert "counting off" in err
+        assert not usage_dir.is_dir() or list(usage_dir.iterdir()) == []
+
+
 @LINUX_ONLY
 def test_spark_front_refuses_to_start_without_its_socket_or_with_keys_that_disagree(tmp_path):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1109,7 +1470,8 @@ def test_spark_front_refuses_to_start_without_its_socket_or_with_keys_that_disag
     # llama-swap's address on a closed port, so a refusal that stopped refusing could reach nothing live.
     # The gate's socket, a path nothing listens on, so a refusal that stopped refusing could reach no gate either.
     common = {"CREDENTIALS_DIRECTORY": str(credentials), "SPARK_REGISTRY": str(registry),
-              "SPARK_LLAMASWAP_URL": nothing_listening(), "SPARK_GATE_STATUS": str(tmp_path / "no-gate.sock")}
+              "SPARK_LLAMASWAP_URL": nothing_listening(), "SPARK_GATE_STATUS": str(tmp_path / "no-gate.sock"),
+              "SPARK_USAGE_DIR": str(tmp_path / "usage")}
     wrong = subprocess.run([sys.executable, "-c", LAUNCHER, str(listener.fileno()), SPARK_FRONT],
                            pass_fds=[listener.fileno()], env=_environment(LISTEN_FDS="1", LISTEN_FDNAMES="status",
                                                                           **common),

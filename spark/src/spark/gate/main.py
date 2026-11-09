@@ -15,12 +15,20 @@ it, `local-ai-gate.service` as `spark`, on the two Unix sockets `local-ai-gate-s
   ADMINS_TTL_S old, so a member added is known without a restart. SPARK_FRONT_UID and SPARK_ADMIN_UIDS
   (comma-separated uids), read only when set, stand in for those databases in the tests; the units never set them, and
   a gate that finds either set says so in the journal, once, at its start.
+- **What it writes**, beside its state: its ledger (gate.ledger, the usage meter's counter, Task 44e), a row for each
+  load, unload, refusal, brake event, start and stop, the gate's own and the front's, and counting off and on, into
+  the month's file in paths.GATE_LEDGER_DIR, from a thread of its own (rowfile.RowFile), never in its way. The folder
+  is opened there, once every check that can refuse the start has passed, so no state of it keeps the gate from
+  starting or a startup refusal from staying one line: a folder it can't write turns counting off, one journal line
+  each time (and on again once it can), `health.counting` on the control socket says since when, and the gate admits
+  and unloads as ever. Its own start is the first row it writes, and its stop the last.
 - **Its core** (Task 18) starts in the servers' own loop before they serve, and stops after they have. Its stop
   (`shutdown`) first finishes or cancels the bounded routes' work still going on past its 503 (app.finish_work), then
   stops the core, which cancels every task that uses the client, the loads, the drains, the loops and the watchers,
   then closes the llama-swap client and ntfy's: so nothing meets httpx's RuntimeError on a closed client, and nothing
-  saves after the core's last save. As the stop begins, the answers that wait end (gate/app.py), so the stop never
-  waits out GRACEFUL_S for the front's events call. A stop during the start cancels it (serve.run_servers).
+  saves after the core's last save; then writes its stop in the ledger, and the rows still queued, within
+  LEDGER_DRAIN_S, from a thread. As the stop begins, the answers that wait end (gate/app.py), so the stop never waits
+  out GRACEFUL_S for the front's events call. A stop during the start cancels it (serve.run_servers).
 - **Its logging** (configure_logging, called before anything else; serve's, which the front shares since Task 21):
   the gate's lines on stderr, which the journal takes; httpx's and httpcore's request lines quieted
   (serve.quiet_http_loggers), since they carry ntfy's topic and host; and on uvicorn's, no traceback, whose
@@ -33,6 +41,7 @@ list doesn't hold), an account or a group that doesn't exist."""
 
 from __future__ import annotations
 
+import asyncio
 import grp
 import logging
 import os
@@ -48,6 +57,8 @@ from spark import paths, render
 from spark.credentials import CredentialError, read_credential, read_credential_text, read_header_credential
 from spark.gate.app import build_apps, finish_work
 from spark.gate.core import GateCore
+from spark.gate.ledger import PREFIX as LEDGER_PREFIX
+from spark.gate.ledger import Ledger
 from spark.gate.notify import NtfyError, NtfyPublisher
 from spark.gateproto import GRACEFUL_S, SOCKET_GROUPS
 from spark.llamaswap import LlamaSwapError
@@ -55,6 +66,7 @@ from spark.llamaswap_async import AsyncLlamaSwap, load_timeout_for
 from spark.messages import Notification
 from spark.protocols import make_protocol
 from spark.registry import load_registry, parse_keys
+from spark.rowfile import RowFile
 from spark.serve import configure_logging, run_servers
 from spark.sockets import CONTROL, STATUS, SocketsError, listen_fds
 
@@ -63,6 +75,9 @@ TESTED_AGAINST = {"llama-swap": "v257"}
 HEADER_TIMEOUT_S = 10  # a request's head, and a body nobody will read, past which a connection closes (Task 9)
 FRONT_ACCOUNT = "spark-front"
 ADMINS_TTL_S = 5.0  # spark-admin's members are read again once the last copy is this old
+# The ledger's rows still queued at the stop are written within this, after the core's stop: about 29 s at worst for the
+# whole stop (the unit's TimeoutStopSec= comment counts each part), inside its 45.
+LEDGER_DRAIN_S = 2
 _log = logging.getLogger(__name__)
 
 
@@ -164,16 +179,34 @@ def admin_uids(env: MutableMapping[str, str], *, clock: Callable[[], float] = ti
 _REFUSALS = (SocketsError, CredentialError, GateStartError, LlamaSwapError, ValueError, OSError, yaml.YAMLError)
 
 
-async def shutdown(core: GateCore, app: Any, clients: Iterable[Any]) -> None:
+def _counting_off(since: float, why: str) -> None:
+    """The ledger's row file's on_off, from its thread: one line each time counting turns off; `why` is an error's
+    class, or `disk`, never its text."""
+    _log.error("counting off: the gate can't write its ledger to %s (%s); it admits and unloads as ever",
+               paths.GATE_LEDGER_DIR, why)
+
+
+def _counting_on() -> None:
+    _log.warning("counting on again: the gate writes its ledger to %s", paths.GATE_LEDGER_DIR)
+
+
+async def shutdown(core: GateCore, app: Any, clients: Iterable[Any], ledger_rows: RowFile | None = None) -> None:
     """`spark gate`'s stop, once its servers have stopped: the bounded routes' work still going on finished or
     cancelled (app.finish_work), then the core stopped, which cancels every task that uses the llama-swap client and
-    saves last, then each client closed (the controller's ruling at Task 19's review)."""
+    saves last, then each client closed (the controller's ruling at Task 19's review); then the gate's stop in its
+    ledger, and the ledger's rows still queued written, within LEDGER_DRAIN_S, its join in a thread, never blocking the
+    loop."""
     try:
         await finish_work(app)
         await core.stop()
     finally:
-        for client in clients:
-            await client.aclose()
+        try:
+            for client in clients:
+                await client.aclose()
+        finally:
+            core.ledger.lifecycle("stop", "gate")
+            if ledger_rows is not None:
+                await asyncio.to_thread(ledger_rows.close, LEDGER_DRAIN_S)
 
 
 def run(env: MutableMapping[str, str] = os.environ) -> int:
@@ -197,11 +230,18 @@ def run(env: MutableMapping[str, str] = os.environ) -> int:
         print(f"spark gate: {err}", file=sys.stderr)
         return 1
     spark_uid = os.geteuid()
+    # Built once every check that can refuse the start has passed, so a startup refusal stays one line: its thread
+    # opens the folder at once, and a folder it can't write says "counting off" on a line of its own. No state of the
+    # folder is a refusal. The ledger asks the core for the registry's names at each row, so a registry read again at
+    # apply's end counts.
+    ledger_rows = RowFile(paths.GATE_LEDGER_DIR, LEDGER_PREFIX, on_off=_counting_off, on_on=_counting_on)
+    ledger = Ledger(ledger_rows, time.time, lambda: frozenset(core.registry.models))
     core = GateCore(registry, paths.GATE_STATE, registry_path=paths.REGISTRY, llamaswap=swap, publish=publisher,
                     brake_dir=paths.STATE, launch=paths.LAUNCH, hf_home=render.HF_HOME,
                     may_pin=lambda uid: uid == 0 or uid in admins(),
                     may_hold=lambda uid: uid not in (spark_uid, front),  # the stack's own accounts hold none
-                    keys=keys, spark_uid=spark_uid, dan_uids=admins)
+                    keys=keys, spark_uid=spark_uid, dan_uids=admins, ledger=ledger)
+    ledger.lifecycle("start", "gate")
     status_app, control_app = build_apps(core, front_uid=front, admin_uids=admins)
     # A SIGTERM during core.start() cancels it (serve.run_servers), which is safe: each save it makes is a whole state,
     # as the gate saves in any case, and a stop after a start cut short cancels what the start spawned and, cut before
@@ -211,5 +251,5 @@ def run(env: MutableMapping[str, str] = os.environ) -> int:
     run_servers([(status_app, [sockets[STATUS]]), (control_app, [sockets[CONTROL]])],
                 protocol=make_protocol(peer_cred=True, header_timeout_s=HEADER_TIMEOUT_S), graceful_s=GRACEFUL_S,
                 startup=core.start, stopping=status_app.state.stopping.set,
-                shutdown=lambda: shutdown(core, status_app, (swap, publisher)))
+                shutdown=lambda: shutdown(core, status_app, (swap, publisher), ledger_rows))
     return 0

@@ -304,7 +304,7 @@ def test_llama_swap_binds_below_1024_with_only_cap_net_bind_service():
 
 SANDBOX = {
     "NoNewPrivileges": "yes", "ProtectSystem": "strict", "ProtectHome": "yes", "PrivateTmp": "yes",
-    "InaccessiblePaths": "/etc/local-ai/secrets", "RestrictSUIDSGID": "yes", "ProtectKernelTunables": "yes",
+    "InaccessiblePaths": ("/etc/local-ai/secrets -/var/lib/local-ai/usage -/var/lib/local-ai/gate-ledger"), "RestrictSUIDSGID": "yes", "ProtectKernelTunables": "yes",
     "ProtectControlGroups": "yes",
 }
 

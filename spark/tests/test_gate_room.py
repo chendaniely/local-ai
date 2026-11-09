@@ -28,6 +28,7 @@ from fake_llamaswap import FakeLlamaSwap, serve_fake
 from spark import gateproto, hold, messages, tickets
 from spark.budget import ALL, Candidate
 from spark.gate.admission import Admitted, Admitter, AdmitRequest
+from spark.gate.ledger import Ledger
 from spark.gate.policy import Drainer, FrontChannel
 from spark.gate.room import Preloader, ReleaseResult, Room, RoomDone, backoff, brake_release_due
 from spark.gate.state import (BrakeMark, GateState, ModelRecord, Pin, RoomHold, Session, load_state, restore,
@@ -40,6 +41,7 @@ from spark.llamaswap_async import AsyncLlamaSwap, LlamaSwapNotSent, LoadOutcome
 from spark.memory import MemInfo
 from spark.registry import load_registry
 from spark.render import HF_HOME, model_path
+from test_gate_ledger import Rows as LedgerRows
 
 STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 STACK = load_registry(STACK_REGISTRY)
@@ -306,7 +308,8 @@ class World:
     model's files, the state, the stand-in llama-swap (each record's model shown as its state, holding its load's fall),
     MemAvailable from what the engines hold and `other` (memory outside the stack), the admitter, the front's channel
     (answering every drain at once unless `auto` is false; none when `connected` is false), the drainer, the brake's
-    hold folder, and each save (`saves`: make-room's hold as each save found it)."""
+    hold folder, each save (`saves`: make-room's hold as each save found it), and the gate's ledger, which the admitter,
+    the drainer and Room share, each row it puts kept in `ledger_rows` (Task 44e)."""
 
     def __init__(self, tmp_path: Path, *, models: dict[str, ModelRecord] | None = None, other: float = 0.0,
                  state: GateState | None = None, connected: bool = True, auto: bool = True, boot: str = BOOT,
@@ -335,19 +338,22 @@ class World:
             self.swap.held[name] = r.load_fall_gib or 0.0
         self.saves: list[RoomHold | None] = []
         self.on_save = None
+        self.ledger_file = LedgerRows()
+        self.ledger_rows = self.ledger_file.rows
+        ledger = Ledger(self.ledger_file, self.clock, lambda: frozenset(REGISTRY.models))
         self.admitter = Admitter(REGISTRY, self.state, self.swap, self.emitted, self.clock,
                                  read_mem=self.mem, read_hold=lambda: read_hold(self.brake), launch=self.launch,
                                  hf_home=str(self.hf_home), holders=lambda names: [], on_change=self.saved,
-                                 poll_s=60.0)
+                                 poll_s=60.0, ledger=ledger)
         self.channel = FrontChannel()
         self.channel.report(snapshot())
         self.front = Front(self.channel, auto=auto) if connected else None
         self.drainer = Drainer(self.channel, self.swap, self.admitter, self.emitted, self.clock, on_change=self.saved,
-                               poll_s=60.0)
+                               poll_s=60.0, ledger=ledger)
         self.released: list[Hold | None] = []
         self.room = Room(self.state, REGISTRY, self.admitter, self.drainer, self.emitted, self.clock,
                          read_mem=self.mem, read_hold=lambda: read_hold(self.brake), release_hold=self.release,
-                         boot_id=boot, front=self.channel, on_change=self.saved)
+                         boot_id=boot, front=self.channel, on_change=self.saved, ledger=ledger)
 
     @property
     def available(self) -> float:
@@ -1413,6 +1419,26 @@ async def test_brake_release_ends_only_the_brakes_hold(tmp_path):
         assert fields["after"] == "brake"
         # Nothing held: a release changes nothing and says so.
         assert await world.room.release(DAN, room=False, brake=True) == ReleaseResult(None, False, [])
+
+
+@pytest.mark.anyio
+async def test_a_brake_release_reaches_the_ledger(tmp_path):
+    # The gate's ledger (Task 44e): the brake's release, Dan's or the gate's own after 5 minutes above the warn line, is
+    # one row; a release that lifts nothing is none.
+    with anyio.fail_after(BOUND_S):
+        world = World(tmp_path / "dans", models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600,
+                                                                                            unloaded=(GEMMA,)))
+        assert (await world.room.release(DAN, room=False, brake=True)).brake is True
+        assert await world.room.release(DAN, room=False, brake=True) == ReleaseResult(None, False, [])
+        assert [row for row in world.ledger_rows if row["kind"].startswith("brake")] == [
+            {"v": 1, "t": T, "kind": "brake_released"}]
+
+        world = World(tmp_path / "auto", models={WHISPER: record(WHISPER)}, hold=fired_hold(T - 600))
+        await world.at(T)
+        world.clock.now = T + 300
+        assert await world.room.check_brake(T + 300, above_since=T) == "release"
+        assert [row for row in world.ledger_rows if row["kind"].startswith("brake")] == [
+            {"v": 1, "t": T + 300, "kind": "brake_released"}]
 
 
 # Fix round 1 (the controller's rulings at Task 17's review).

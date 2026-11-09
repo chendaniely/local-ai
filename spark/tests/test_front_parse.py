@@ -481,7 +481,21 @@ def test_the_first_model_list_is_the_registrys():
     assert [e["name"] for e in models] == list(registry.models)
     coder = next(m for m in registry.models.values() if m.label == "the coder")
     assert parse.resolve("coder", models) == {"name": coder.name, "roles": list(coder.roles), "label": "the coder",
-                                              "resident": False}
+                                              "resident": False, "engine": coder.engine}
+
+
+def test_the_model_list_carries_each_models_engine():
+    registry = load_registry(ROOT / "stack" / "models.yaml")
+    models = parse.ModelList.from_registry(registry)
+    assert {e["name"]: e["engine"] for e in models} == {m.name: m.engine for m in registry.models.values()}
+    models.replace(list(models))  # the gate's own list, replaced whole, keeps it
+    assert all(e["engine"] for e in models)
+
+
+def test_an_entry_without_engine_is_still_listed():
+    entry = {"name": "a", "roles": [], "label": "A", "resident": True}
+    models = parse.ModelList([entry, {**entry, "name": "b", "engine": ""}, {**entry, "name": "c", "engine": 7}])
+    assert list(models) == [entry, {**entry, "name": "b"}, {**entry, "name": "c"}]
 
 
 # Headers.

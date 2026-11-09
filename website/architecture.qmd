@@ -78,6 +78,8 @@ flowchart TB
     front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys"]
     swap["llama-swap · 127.0.0.1:900<br/>as spark, internal keys only"]
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
+    usage[("the front's usage records<br/>/var/lib/local-ai/usage · Dan reads<br/>Task 44l deploys")]:::planned
+    ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
     engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B,<br/>Qwen3.6-35B-A3B on demand,<br/>Qwen3-ASR 1.7B and 0.6B on demand, 32K and 64K"]
@@ -110,6 +112,8 @@ flowchart TB
   agent_tmux -- "its Claude Code" --> anthropic
   front -- "internal key" --> swap
   front -- "asks before a load" --> gate
+  front -. "a row per request" .-> usage
+  gate -. "a row per decision" .-> ledger
   gate -- "loads, unloads" --> swap
   gate -- "reads and lifts its hold" --> brake
   sockets --> front
@@ -213,9 +217,15 @@ flowchart LR
 ```
 
 [The harnesses](#harnesses) on the Mac reach ~~llama-swap~~ the models only while `make tunnel`
-runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH: Pi since Phase 1, and with the
-same key OpenCode and Hermes Agent (since 2026-10-14) and Posit Assistant, `pa` and Positron (since
-2026-10-19), each set up by `make clients`. The web UI needs Tailscale: on another tailnet, over
+runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH: Pi since Phase 1, and with
+~~the same key~~ a key each OpenCode and Hermes Agent (since 2026-10-14) *(corrected 2026-10-23: since
+2026-10-14 `make clients` set them all to one key. It now defaults to a key each: Pi `SPARK_API_KEY`, OpenCode
+`SPARK_OPENCODE_KEY`, Hermes `SPARK_HERMES_KEY`. But the box accepts the two new ones only from the usage meter's
+deploy, Task 44l; until then point all three at the one key with `--key-env SPARK_API_KEY`)*, and with Pi's key
+Posit Assistant, `pa` and Positron (since 2026-10-19), each set up by `make clients`. *(Added 2026-11-09, when the
+usage meter's key correction met Posit Assistant here: the meter's counter gave it no key of its own, so it still
+sends `SPARK_API_KEY`'s value, as `OPENAI_COMPATIBLE_API_KEY` and in Positron's credential store, and its usage
+counts under Pi's key.)* The web UI needs Tailscale: on another tailnet, over
 WireGuard, the LAN alias still carries SSH and so the tunnel, but the web UI waits. `agent`'s Pi
 needs no tunnel. *(Reworded 2026-10-23, when the harnesses were defined above: this paragraph named
 pi on the Mac first and the others after it.)* From
@@ -339,3 +349,4 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S23 · Upgrade day](scenarios/s23-upgrade-day.md) | Upkeep |
 | [S24 · The fast coder won't start](scenarios/s24-fast-coder-down.md) | Loading a model: Phase 4a's fast coder |
 | [S25 · Sub-agents on the fast coder](scenarios/s25-subagents-fast-coder.md) | Loading a model: Phase 4a's fast coder |
+| [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records and the gate's ledger, planned (dashed) until Task 44l deploys them |

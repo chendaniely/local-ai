@@ -177,9 +177,15 @@ class AdmitRequest(TypedDict):
     request_id: str
 
 
-class Admitted(TypedDict):
+class _Admitted(TypedDict):
     ok: Literal[True]
     model: str
+
+
+class Admitted(_Admitted, total=False):
+    # Optional, by the file's total=False pattern: `NotRequired[...]` under this module's postponed annotations reads as
+    # required at runtime (Task 44e's review, R8).
+    load_s: float | None  # seconds the load took, only for the request that started it (Task 44c)
 
 
 class AdmitRefused(TypedDict):
@@ -193,13 +199,17 @@ class AdmitRefused(TypedDict):
 AdmitAnswer = Admitted | AdmitRefused
 
 
-class ModelEntry(TypedDict):
-    """One model in the gate's model list, which the front serves from (Dan's decision of 2026-10-07)."""
-
+class _ModelEntry(TypedDict):
     name: str
     roles: list[str]
     label: str
     resident: bool
+
+
+class ModelEntry(_ModelEntry, total=False):
+    """One model in the gate's model list, which the front serves from (Dan's decision of 2026-10-07)."""
+
+    engine: str  # the engine's name, e.g. "llama.cpp" (Task 44c); an older gate sends none
 
 
 class HelloEvent(TypedDict):
@@ -272,7 +282,6 @@ class ModelInflight(TypedDict):
 
 class _InflightCounts(TypedDict):
     seq: int
-    front_started_at: float
     models: dict[str, ModelInflight]
     draining: list[str]  # the models the front holds as draining
 
@@ -281,10 +290,18 @@ class InflightSnapshot(_InflightCounts, total=False):
     """A whole snapshot, never a delta, so /v1/quiet and apply's question can name each request's asker. `holding`:
     whether apply's hold stood at the front as the snapshot was made; `at`, when it was made (added 2026-10-15, at Task
     32's review, C1; declared, each optional, at its re-review, N6). The gate takes a snapshot without them (as from a
-    front of before) as not holding, made at an unknown time, so `make apply` never counts nothing in flight from it."""
+    front of before) as not holding, made at an unknown time, so `make apply` never counts nothing in flight from it.
+
+    `front_started_at`, when the front started, which every front sends, and `counting_off_since`, when the front's
+    usage rows stopped being written, sent only while they are (the usage meter's counter, Task 44e): the gate's ledger
+    writes the front's start from the first, and its spans with counting off from the second. Each optional, and read
+    leniently: absent, null or anything but a time is "not reported", never a refusal, so a front of before, or a bad
+    value, never fails the snapshot the drains and `make apply` count on."""
 
     holding: bool
     at: float
+    front_started_at: float
+    counting_off_since: float
 
 
 class DrainReport(TypedDict):
@@ -292,14 +309,21 @@ class DrainReport(TypedDict):
     drain_id: str
 
 
-class FrontRefusal(TypedDict):
-    """A refusal of the front's own, for status's *recent* and the refused notification."""
-
+class _FrontRefused(TypedDict):
     at: float
     code: FrontRefusalCode
     model: str | None  # as the client asked for it; None where the request named none
     key: str  # the asking key's name
     message: str
+
+
+class FrontRefusal(_FrontRefused, total=False):
+    """A refusal of the front's own, for status's *recent* and the refused notification. `request_id`, the request's
+    own id (16 hex, minted once by the front), which the gate's ledger keeps beside the refusal, never the key, so a
+    ledger row joins the front's usage row by it (Task 44e); a front of before sends none, and an id that isn't one is
+    left out of the ledger."""
+
+    request_id: str
 
 
 # The status socket, everyone's.
@@ -655,7 +679,16 @@ class EngineView(TypedDict):
     pid: int
 
 
-class HealthView(TypedDict):
+class CountingView(TypedDict):
+    """Whether the usage meter's counter writes (Task 44e): when the front's usage rows stopped being written, as its
+    last in-flight snapshot reports it, and when the gate's own ledger did; None while each is written, or isn't
+    reported."""
+
+    front_off_since: float | None
+    ledger_off_since: float | None
+
+
+class _Health(TypedDict):
     front: str  # "ok", or what is wrong, in words; so are gate, llama_swap and the status of brake and ntfy
     gate: str
     brake: BrakeHealth
@@ -676,6 +709,12 @@ class HealthView(TypedDict):
     # launch's records, its own state's save. A failed read never ends a loop; it shows here instead (Task 18). And the
     # view's own: the brake's start check, when its record can't be read (Task 29's review).
     read_problems: list[str]
+
+
+class HealthView(_Health, total=False):
+    # Whether the front and the gate's ledger count (Task 44e): on the control socket's view only, and not in an older
+    # gate's.
+    counting: CountingView
 
 
 class ApplyingView(TypedDict):

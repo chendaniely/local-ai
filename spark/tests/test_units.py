@@ -192,7 +192,11 @@ def test_the_front_is_sandboxed_with_no_capabilities_at_all(units):
     # socket unit's.
     service = settings(units[FRONT], "Service")
     assert {name: service.get(name) for name in FRONT_SANDBOX} == FRONT_SANDBOX
-    assert not {"AmbientCapabilities", "ReadWritePaths"} & set(service)
+    assert "AmbientCapabilities" not in service
+    # Writable: only the usage folder, and the - lets a missing one pass; its rows are Dan's to read (2750), not the
+    # world's (Task 44f).
+    assert words(service["ReadWritePaths"]) == ["-/var/lib/local-ai/usage"]
+    assert service["UMask"] == ["0027"]
 
 
 def test_the_front_runs_as_spark_front_in_spark_users(units):
@@ -243,13 +247,14 @@ def test_the_gate_keeps_dev_nvidia_and_other_processes_visible(units):
     assert not {"PrivateDevices", "ProtectProc", "ProcSubset", "DevicePolicy", "DeviceAllow"} & set(service)
 
 
-def test_the_gate_runs_as_spark_and_writes_only_its_three_folders(units):
+def test_the_gate_runs_as_spark_and_writes_only_its_four_folders(units):
     service = settings(units[GATE], "Service")
     assert (service["User"], service["Group"], service["ExecStart"]) == (["spark"], ["spark"], [f"{SPARK_BIN} gate"])
     assert {name: service[name] for name in ("NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp")} == {
         "NoNewPrivileges": ["yes"], "ProtectSystem": ["strict"], "ProtectHome": ["yes"], "PrivateTmp": ["yes"]}
     assert words(service["ReadWritePaths"]) == ["/var/lib/local-ai/gate", "/var/lib/local-ai/launch",
-                                                "/var/lib/local-ai/brake"]
+                                                "/var/lib/local-ai/brake",
+                                                "-/var/lib/local-ai/gate-ledger"]
     assert service["Environment"] == [
         "SPARK_REGISTRY=/opt/local-ai/etc/models.yaml", "SPARK_STATE=/var/lib/local-ai/brake",
         "SPARK_GATE_STATE=/var/lib/local-ai/gate", "SPARK_LAUNCH=/var/lib/local-ai/launch",
@@ -305,15 +310,22 @@ def test_a_line_the_brake_gains_reaches_the_drill(tmp_path):
 
 
 def test_graceful_shutdown_fits_inside_timeout_stop_sec(units):
+    from spark.front.app import ENDING_S
+    from spark.front.main import ROWS_DRAIN_S
     from spark.gate.app import FINISH_WORK_S
+    from spark.gate.main import LEDGER_DRAIN_S
 
     front = int(settings(units[FRONT], "Service")["TimeoutStopSec"][0])
     gate = int(settings(units[GATE], "Service")["TimeoutStopSec"][0])
     assert front == 30 and front > gateproto.GRACEFUL_S
+    # The front's stop at worst (Task 44's ruling R5): uvicorn's grace, the requests still ending (ENDING_S), then
+    # the rows still queued (ROWS_DRAIN_S).
+    front_worst = gateproto.GRACEFUL_S + ENDING_S + ROWS_DRAIN_S
+    assert front_worst == 27 and front >= front_worst + 3
     # The gate's stop at worst (Task 19's review, the controller's ruling): uvicorn's grace, then the bounded routes'
-    # work still running past its 503, then ntfy's last publish.
-    worst = gateproto.GRACEFUL_S + FINISH_WORK_S + gateproto.NTFY_TIMEOUT_S
-    assert gate == 45 and gate >= worst + 10
+    # work still running past its 503, then ntfy's last publish, then its ledger's last rows (LEDGER_DRAIN_S).
+    worst = gateproto.GRACEFUL_S + FINISH_WORK_S + gateproto.NTFY_TIMEOUT_S + LEDGER_DRAIN_S
+    assert worst == 29 and gate == 45 and gate >= worst + 10
     for main in ("front/main.py", "gate/main.py"):  # both mains pass GRACEFUL_S to uvicorn
         assert "graceful_s=GRACEFUL_S" in (ROOT / "spark/src/spark" / main).read_text(), main
 

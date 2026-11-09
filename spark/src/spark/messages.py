@@ -47,7 +47,7 @@ FRONT_CODES = {"model_not_found": 404, "too_many_requests": 429, "route_not_serv
 # The controller's ruling, 2026-10-07: each code's retry-after, with its Retry-After header; none for the rest.
 RETRY_AFTER_S = {"no_fit": 30, "held_by_brake": 300, "gate_down": 30, "restarting": 60, "draining": 60,
                  "llama_swap_down": 30, "too_many_requests": 10}
-UNKNOWN_KEY = "That API key isn't one the Spark knows. Check SPARK_API_KEY on this machine."  # the front's 401
+UNKNOWN_KEY = "That API key isn't one the Spark knows. Check the API key this client sends."  # the front's 401
 
 # pi-ai 0.85.1's RETRYABLE_PROVIDER_ERROR_PATTERN (dist/utils/retry.js), word for word, then 0.87.1's two additions.
 # pi joins them with '|' and matches its error's text case-insensitively: a match makes pi retry the whole turn, up to

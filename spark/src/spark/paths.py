@@ -10,6 +10,10 @@ STATE = Path(os.environ.get("SPARK_STATE", "/var/lib/local-ai/brake"))
 GATE_STATE = Path(os.environ.get("SPARK_GATE_STATE", "/var/lib/local-ai/gate"))  # the gate's state, across restarts
 LAUNCH = Path(os.environ.get("SPARK_LAUNCH", "/var/lib/local-ai/launch"))  # admission tickets, and launch's records
 WHISPER_TMP = Path(os.environ.get("SPARK_WHISPER_TMP", "/var/lib/local-ai/whisper-tmp"))  # whisper's --tmp-dir
+# The front's usage rows, one file a UTC month (spark.rowfile), which only spark-admin reads.
+USAGE_DIR = Path(os.environ.get("SPARK_USAGE_DIR", "/var/lib/local-ai/usage"))
+# The gate's ledger (gate.ledger), the same way: beside the gate's own folder, never inside it.
+GATE_LEDGER_DIR = Path(os.environ.get("SPARK_GATE_LEDGER", "/var/lib/local-ai/gate-ledger"))
 # The gate's two sockets, which systemd holds: the status socket for group spark-users, the control socket for
 # spark-admin (gateproto.SOCKET_GROUPS).
 GATE_STATUS_SOCKET = Path(os.environ.get("SPARK_GATE_STATUS", "/run/local-ai/gate-status.sock"))

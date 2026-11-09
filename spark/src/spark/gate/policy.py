@@ -45,6 +45,11 @@ for ever on a stop that ended in `ready` (the controller's ruling at Task 16's r
 can't take now (`undrain`, `unloaded`) is saved in GateState.undrains and sent once its call is open again, and ahead
 of any new `drain` (send_owed).
 
+**The gate's ledger** (gate.ledger, Task 44e) gains an unload, with the drain's why, once `/running` shows the model
+gone after the drain's own unload; and one with why `gone` when the record a drain marked went meanwhile (the brake, a
+crash). A drain that ends with nothing unloaded (`busy`, undone, the front away) writes none: a drain's start is no
+unload.
+
 With the front's call closed a drain sends nothing and ends False, `front_away`, which Dan's commands word with
 messages.front_not_connected (Tasks 17 and 30); an idle one skips, with one journal line while the front stays away.
 Each caller hears how its drain ended (`ended`, a DrainEnd), so Room words it, `gate_stopping` too when the gate stops
@@ -79,6 +84,7 @@ from typing import Any, Literal, get_args
 
 from spark import messages, procs
 from spark.gate.admission import AdmitRequest, Admitter
+from spark.gate.ledger import Ledger
 from spark.gate.state import Emit, GateState, ModelRecord, Pin, Session, session_live
 from spark.gateproto import (DRAIN_GRACE_S, DRAIN_WHY, LOAD_CALL_TIMEOUT_S, SESSION_TTL_S, SESSIONS_PER_UID,
                              STOPPING_EVERY_S, STUCK_STOPPING_S, DrainWhy, GateRefusalBody, InflightSnapshot)
@@ -293,12 +299,14 @@ class Drainer:
     (before `drain` is sent, bounded by SAVE_BOUND_S, and before the unload call, bounded there by DRAIN_GRACE_S from
     `drained`); `poll_s` bounds how long a drain goes without reading /running or its clock when no `changed()` comes;
     `live` is Sessions.live, with which an idle drain checks again, right before it marks the model, that it is still
-    idle (the controller's ruling at Task 16's review)."""
+    idle (the controller's ruling at Task 16's review); `ledger` the gate's ledger (Task 44e), the admitter's when not
+    given."""
 
     def __init__(self, front: FrontChannel, llamaswap: AsyncLlamaSwap, admitter: Admitter, emit: Emit,
                  clock: Callable[[], float], *, on_change: Callable[[], Awaitable[None] | None] | None = None,
-                 poll_s: float = POLL_S, live: Callable[[Session], bool] | None = None):
+                 poll_s: float = POLL_S, live: Callable[[Session], bool] | None = None, ledger: Ledger | None = None):
         self._front = front
+        self._ledger = ledger if ledger is not None else admitter.ledger
         self._swap = llamaswap
         self._admitter = admitter
         self._emitter = emit
@@ -766,7 +774,8 @@ class Drainer:
         self._note()
         if d.drain_sent or d.resume:
             self._final({"op": "unloaded", "model": d.model}, d.drain_id)
-        if d.ours:
+        if d.ours:  # the drain's own unload; one it only waited on (the admitter's late start) is the admitter's row
+            self._ledger.unload(d.model, d.why)
             fields: dict[str, Any] = {"label": self._label(d.model), "why": d.why}
             if d.why == "idle":
                 fields["idle_min"] = self.registry.gate.idle_unload_min
@@ -794,6 +803,7 @@ class Drainer:
         if self.state.models.get(d.model) is None:
             _log.warning("%s left /running while it was being drained: nothing to unload", d.model)
             d.end = "gone"
+            self._ledger.unload(d.model, "gone")
             if d.drain_sent or d.resume:
                 self._final({"op": "unloaded", "model": d.model}, d.drain_id or _new_id())
             self._admitter.changed()

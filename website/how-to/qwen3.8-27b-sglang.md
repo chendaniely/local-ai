@@ -41,6 +41,8 @@ is loaded, saying how to unload it, or while under 79 GiB is available, and othe
 command in the foreground; `make fast-coder DO=wait` is step 3, and `make fast-coder DO=stop` step
 5. It's temporary: it goes when Phase 4a puts the fast coder in the registry.)*
 
+*(Added 2026-10-23: the command holds `--enable-cache-report`, so the engine reports how many prompt tokens came from its cache and the usage meter's rows for this engine aren't read as all uncached. Step 5's command has it too.)*
+
 **Ask the Spark's build session first.** Most of Phase 2a's remaining tasks measure or drill the
 box: the cutover *(done 2026-10-16)*, a cold boot, the memory drills, the soak and the brake's
 tuning. A container holding 45 GiB during one of them spoils the measurement or trips the brake.
@@ -99,6 +101,7 @@ sudo docker run --rm --name qwen38-coder --init \
     --cuda-graph-max-bs-decode 1 --disable-prefill-cuda-graph --disable-flashinfer-autotune \
     --attention-backend flashinfer \
     --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+    --enable-cache-report \
     --log-level warning --host 0.0.0.0 --port 30000 \
     2>&1 | tee ~/sglang/scratch/boot-$(date +%F-%H%M).log
 ```
@@ -302,6 +305,7 @@ sudo docker run --rm --name qwen38-coder --init \
     --cuda-graph-max-bs-decode 1 --disable-prefill-cuda-graph --disable-flashinfer-autotune \
     --attention-backend flashinfer \
     --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+    --enable-cache-report \
     --log-level warning --host 0.0.0.0 --port 30000 \
     2>&1 | tee ~/sglang/scratch/boot-$(date +%F-%H%M).log
 ```

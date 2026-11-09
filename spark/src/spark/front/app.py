@@ -96,14 +96,27 @@ from the gate, or after a wait for a load, a drain, apply's hold or llama-swap; 
 CUT_WHY when the gate's events show the model gone from llama-swap's `/running` (the brake, a crash, a kill). A cut's
 line waits for those events (GateLink.why_cut); the client's response never does.
 
-The calls the app makes, on Task 21's Upstream and Task 22's GateLink, or the tests' stand-ins:
+**Its row** (the usage meter's counter, Task 44d). Each request with a key, but the model list's, also leaves one row
+of numbers (rows.usage_row), put on the row file as it ends, never in its way (after its journal line, but before a
+cut's, whose line waits for the gate's why): what it was, how it ended, its counts, and its timings by the monotonic
+clock. Its id is minted once and is the gate's request id at each of its admits, through the front's resends, and goes
+with each refusal of the front's own that the gate is told, so the gate's ledger joins its rows by it (Task 44e). Its
+counts come from a usage scan (usage.scan_for) that sees each chunk of its answer once the client has it; what the row
+reads of its body is read into numbers as the body is read (rows.read_shape), never kept parsed, so step 6's memory
+bound holds. A scan, a shape or a row that breaks is logged by its class and where it broke, its counts or its row
+dropped for that request alone; its answer is never touched. A key's refused rows go only within its rate
+(rowfile.RefusedLimit), the rest summed into its next row as `refused_n`.
+
+The calls the app makes, on Task 21's Upstream, Task 22's GateLink and Task 44b's RowFile, or the tests' stand-ins:
 - `upstream`: `await forward(method, path, headers, body, key)`, `body` None, bytes or an async iterator of bytes,
   giving a response with `status`, `headers`, `aiter_raw()` and `await aclose()`; upstream.Unreached for no answer,
   and upstream.Broken from `aiter_raw()` for a body that broke off;
-- `gate`: `await clear(model, key, deadline, request_id, enter=…, admit=…, waits=…)`, giving what `enter()` gave (the
-  request counted in flight) or a gatelink.Refused; `refused(code, model, key, message)`; `await why_cut(model,
-  since)`, giving the words for a cut's journal line, or None; and `running_models()`, the models the model list
-  shows loaded."""
+- `gate`: `await clear(model, key, deadline, request_id, enter=…, admit=…, waits=…, loaded=…)`, giving what `enter()`
+  gave (the request counted in flight) or a gatelink.Refused, and calling `loaded(load_s)` when the gate's admit
+  says the request started a load; `refused(code, model, key, message, request_id=…)`; `await why_cut(model,
+  since)`, giving the words for a cut's journal line, or None; and `running_models()`, the models the model list shows
+  loaded;
+- `rows`: `put(row, at)`, which never blocks."""
 
 from __future__ import annotations
 
@@ -124,7 +137,7 @@ from typing import TYPE_CHECKING, Any
 
 from spark import messages
 from spark.credentials import parse_digests, read_credential_text
-from spark.front import parse
+from spark.front import parse, rows, usage
 from spark.front.gatelink import Refused
 from spark.front.upstream import (Broken, InFlight, InFlightRequest, StreamEnd, Unreached, concurrency_limited,
                                   exited_prematurely, retry_after)
@@ -136,6 +149,7 @@ if TYPE_CHECKING:
 
     from spark.gateproto import ModelEntry
     from spark.registry import ClientKey, KeyGroup
+    from spark.rowfile import RefusedLimit, RowFile
 
 KEYS_CREDENTIAL = "keys"  # the private key list, /etc/local-ai/keys.yaml, by LoadCredential=
 DIGESTS_CREDENTIAL = "client-keys"  # the client keys' digests, `<key name> <sha256 hex>` lines
@@ -165,6 +179,10 @@ ANSWER_MAX = 64 << 10  # a 429's or a 500's body read to tell llama-swap's own, 
 # admits a model it counts ready at once, so without a pause the two would go back and forth until the deadline.
 RESEND_AFTER_S = 1.0
 EXITED, UNANSWERED = "exited", "unanswered"  # how a send ended that goes through admission again
+# At the front's stop, the requests uvicorn's stop cancelled are waited for this long, so each that ends within it puts
+# its row before the row file closes: each is only closing its upstream answer by then. One still ending past it has
+# its row counted dropped by the closed row file.
+ENDING_S = 2.0
 _log = logging.getLogger(__name__)
 
 
@@ -217,7 +235,9 @@ def _where(err: BaseException) -> str:
 
 @dataclass
 class _Request:
-    """One request as the front has it so far, for its answer and its journal line."""
+    """One request as the front has it so far, for its answer, its journal line and its row (rows.usage_row). Its body
+    is kept only as the bytes it goes on as (`json`) or its form: what its row reads of it is read into numbers as the
+    body is read (rows.read_shape), never kept parsed."""
 
     started: float  # when the front received it, by its clock: Unix seconds, as the gate's deadlines are
     held: parse.Held  # its share of the body budget, given back when it ends
@@ -233,6 +253,21 @@ class _Request:
     form: parse.Form | None = None  # its spooled form, deleted when it ends
     forwarded_at: float | None = None  # when it was last counted in flight, by the front's clock
     why: str | None = None  # why it was refused, for its journal line, where the gate gives it
+    # Its row's (the usage meter's counter, Task 44d). Its id, minted once, is the gate's request id for it at each
+    # admit, through the front's resends; its marks are by the monotonic clock.
+    id: str = dataclasses.field(default_factory=lambda: secrets.token_hex(8))
+    mono_started: float = dataclasses.field(default_factory=time.monotonic)  # when the front received it
+    mono_forwarded: float | None = None  # when it was last counted in flight
+    mono_first: float | None = None  # when its answer's first event came
+    attempts: int = 0  # its sends to llama-swap
+    load_s: float | None = None  # the seconds the load it started took, by the gate's admit answer
+    scan: usage.UsageScan | None = None  # its answer's usage scan, while it counts
+    refused: str | None = None  # the code of the refusal it was answered with
+    stream: bool | None = None  # from its JSON body (rows.read_shape), as the rest below
+    n: int | None = None
+    images: int | None = None
+    effort: str | None = None  # one of rows.EFFORTS, as rows' own copy
+    bytes_in: int | None = None
 
     def outcome(self) -> int | str:
         """Its journal line's status: how it ended, else its status, `gone` when it ended before any answer (its
@@ -247,13 +282,15 @@ class _Request:
 
 class FrontApp:
     """The front's ASGI app. Refuses to start, naming the key and never a digest, when the key digests and the private
-    key list (Task 4) disagree."""
+    key list (Task 4) disagree. With `rows`, each request with a key, but the model list's, puts its row there as it
+    ends; with `refused_limit` too, a refused one only within its key's rate (Task 44d)."""
 
     def __init__(self, models: parse.ModelList, keys: dict[str, ClientKey], groups: dict[str, KeyGroup],
                  digests: dict[str, bytes], *, upstream: Any, gate: Any, caps: parse.KeyCaps,
                  log: Callable[[str], None], clock: Callable[[], float] = time.time, spool_dir: Path = SPOOL_DIR,
                  budget: parse.BodyBudget | None = None, inflight: InFlight | None = None,
-                 uploads_at_once: int = UPLOADS_AT_ONCE, resend_after_s: float = RESEND_AFTER_S):
+                 uploads_at_once: int = UPLOADS_AT_ONCE, resend_after_s: float = RESEND_AFTER_S,
+                 rows: RowFile | None = None, refused_limit: RefusedLimit | None = None):
         check_keys(keys, digests)
         self.models = models
         self.keys, self.groups, self.digests = keys, groups, digests
@@ -267,10 +304,18 @@ class FrontApp:
         self.uploads_at_once = uploads_at_once
         self.uploading = 0  # the uploads forwarded now, front-wide
         self.resend_after_s = resend_after_s
+        self.rows, self.refused_limit = rows, refused_limit
         self._lines: set[asyncio.Task] = set()  # cuts' journal lines, each waiting for why
+        self._requests: set[asyncio.Task] = set()  # each request's own task, as uvicorn runs it, until it ends
 
     async def aclose(self) -> None:
-        """The cuts' journal lines still waiting for why are written now, without it."""
+        """At the front's stop, once uvicorn has stopped serving: the requests still ending, each cancelled by uvicorn's
+        stop and closing its upstream answer, waited for, at most ENDING_S, so each has written its journal line and
+        put its row before the row file closes; then the cuts' journal lines still waiting for why written now, without
+        it."""
+        ending = [task for task in self._requests if not task.done()]
+        if ending:
+            await asyncio.wait(ending, timeout=ENDING_S)
         lines = list(self._lines)
         for task in lines:
             task.cancel()
@@ -293,6 +338,8 @@ class FrontApp:
             await _answer(send, 200, {"status": "ok"})
             return
         request = _Request(started=self.clock(), held=parse.Held(self.budget))
+        task = asyncio.current_task()
+        self._requests.add(task)
         try:
             await self._serve(scope, receive, send, request)
         except Exception as err:
@@ -303,15 +350,38 @@ class FrontApp:
                     await self._send(send, request, 500, {"error": {"message": BROKE[self._words(request)],
                                                                     "code": BROKE_CODE}}, [JSON, NO_RETRY])
         finally:
+            self._requests.discard(task)  # nothing below awaits: aclose, which waits for the task, can't come between
+            ended, monotonic_ended = self.clock(), time.monotonic()
             request.held.release()
             if request.form is not None:
                 request.form.close()
-            seconds = self.clock() - request.started
+            seconds = ended - request.started
             if request.outcome() == "cut" and request.model is not None and request.forwarded_at is not None:
                 self._cut_line(request, seconds)
             else:
                 self.log(parse.journal_line(request.key or "-", request.model or "-", request.outcome(), seconds,
                                             why=request.why))
+            if self.rows is not None and request.key is not None and request.route != parse.MODEL_LIST:
+                self._put_row(request, ended, monotonic_ended)
+
+    def _put_row(self, request: _Request, ended: float, monotonic_ended: float) -> None:
+        """The request's row put on the row file (rows.usage_row), never raising: one that breaks is logged by where it
+        broke and counted dropped, so the next row written carries it. A refused one goes only within its key's rate,
+        the rest folded into the key's next row put, as its `refused_n`."""
+        try:
+            limit = self.refused_limit
+            if limit is not None and request.refused is not None and not limit.allow(request.key, monotonic_ended):
+                return
+            roles = frozenset(request.entry["roles"]) if request.entry is not None else frozenset()
+            row = rows.usage_row(request, ended, monotonic_ended, roles)
+            folded = limit.folded(request.key) if limit is not None else 0
+            if folded:
+                row["refused_n"] = folded
+            self.rows.put(row, ended)
+        except Exception as err:
+            _log.error("the front couldn't put a request's row: %s at %s", type(err).__name__, _where(err))
+            with contextlib.suppress(Exception):
+                self.rows.put(None, ended)  # not a row: the row file counts it dropped, and its next line says so
 
     def _cut_line(self, request: _Request, seconds: float) -> None:
         """A cut's journal line, once the gate link has said why, or that it can't (GateLink.why_cut), in a task of its
@@ -445,9 +515,12 @@ class FrontApp:
             elif not work.cancelled():
                 work.exception()  # taken: an error is raised from the result below
 
-        work = asyncio.ensure_future(self.gate.clear(model, key, deadline, secrets.token_hex(8), admit=admit,
-                                                     waits=waits, enter=functools.partial(self.inflight.enter,
-                                                                                          model, key)))
+        def loaded(load_s: float) -> None:  # the gate's admit said this request started the load, and its seconds
+            request.load_s = load_s
+
+        work = asyncio.ensure_future(self.gate.clear(model, key, deadline, request.id, admit=admit, waits=waits,
+                                                     enter=functools.partial(self.inflight.enter, model, key),
+                                                     loaded=loaded))
         work.add_done_callback(settle)
         watch = asyncio.ensure_future(_disconnected(receive))
         watch.add_done_callback(lambda done: done.cancelled() or done.exception())
@@ -468,7 +541,7 @@ class FrontApp:
             return None
         cleared = work.result()
         if not isinstance(cleared, Refused):
-            request.forwarded_at = cleared.started_at
+            request.forwarded_at, request.mono_forwarded = cleared.started_at, time.monotonic()
         return cleared
 
     async def _refuse_cleared(self, send, request: _Request, refused: Refused) -> None:
@@ -533,7 +606,9 @@ class FrontApp:
 
     async def _relay(self, method: str, path: str, headers: parse.Headers, send, request: _Request) -> str | None:
         """One send to llama-swap, its body made for it (_body), and its answer back to the client as it comes; or
-        EXITED or UNANSWERED instead, nothing sent (step 12)."""
+        EXITED or UNANSWERED instead, nothing sent (step 12). The answer's usage scan (usage.scan_for) sees each chunk
+        once the client has it, its every call guarded (_scanning)."""
+        request.attempts += 1
         content_type, body = self._body(request)
         sent = [*headers, (b"content-type", content_type)]
         try:
@@ -553,13 +628,17 @@ class FrontApp:
                         worded, retry_after_s=retry_after(response.headers)))
                     return None
             end = StreamEnd.watching(path, response.status, response.headers)
+            request.scan = self._scanning(request, usage.scan_for, path, response.status, response.headers)
             sent_back = response.headers
             if end is not None:  # chunked to the client, so a cut shows in its framing, which a length would hide
                 sent_back = [(name, value) for name, value in sent_back if name != b"content-length"]
             await send({"type": "http.response.start", "status": response.status, "headers": sent_back})
             request.status = response.status
             if head:
+                self._mark_first(request, head)
                 await send({"type": "http.response.body", "body": head, "more_body": True})
+                if request.scan is not None:
+                    self._scanning(request, request.scan.feed, head)
             try:
                 if broke:
                     raise Broken
@@ -567,7 +646,10 @@ class FrontApp:
                     if chunk:
                         if end is not None:
                             end.feed(chunk)
+                        self._mark_first(request, chunk)
                         await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                        if request.scan is not None:
+                            self._scanning(request, request.scan.feed, chunk)
             except Broken:
                 request.ended = "cut"
                 return None  # without the last chunk: uvicorn closes the connection, and the client sees a cut
@@ -579,10 +661,31 @@ class FrontApp:
             request.complete = True
             return None
         finally:
+            if request.scan is not None:  # its counts, from what came, however the answer ended
+                self._scanning(request, request.scan.finish)
             closing = getattr(chunks, "aclose", None)
             if closing is not None:
                 await closing()
             await response.aclose()
+
+    @staticmethod
+    def _scanning(request: _Request, call: Callable[..., Any], *args: Any) -> Any:
+        """`call(*args)`, a call into the request's usage scan, or None when it raises: its counting then stops, for this
+        request alone, logged once, by its class and where it broke, and the answer goes on untouched."""
+        try:
+            return call(*args)
+        except Exception as err:
+            request.scan = None
+            _log.error("the front stopped counting a request's answer, its usage scan broken: %s at %s",
+                       type(err).__name__, _where(err))
+            return None
+
+    @staticmethod
+    def _mark_first(request: _Request, chunk: bytes) -> None:
+        """The answer's first event, by the monotonic clock: the first chunk with more than SSE pings (`:` lines) and
+        blank lines, or a body's first bytes."""
+        if request.mono_first is None and any(line and not line.startswith(b":") for line in chunk.splitlines()):
+            request.mono_first = time.monotonic()
 
     @staticmethod
     def _body(request: _Request) -> tuple[bytes, bytes | AsyncIterator[bytes]]:
@@ -598,8 +701,9 @@ class FrontApp:
         return self.groups[self.keys[request.key].group].words if request.key else "dan"
 
     async def _read(self, path: str, headers: parse.Headers, receive, request: _Request) -> str:
-        """The body, kept in `request` (its form, or its JSON as it goes on); the model it names. Refused by its
-        Content-Length before any of it is read, by its cap or the body budget, then as parse reads it."""
+        """The body, kept in `request` (its form, or its JSON as it goes on), and its shape for its row, read into
+        numbers (_shape); the model it names. Refused by its Content-Length before any of it is read, by its cap or the
+        body budget, then as parse reads it."""
         content_type = next((value for name, value in headers if name == b"content-type"), b"").decode("latin-1")
         is_form = path in parse.FORM_PATHS
         limit = MAX_BODY_BYTES if is_form else MAX_JSON_BYTES
@@ -609,13 +713,25 @@ class FrontApp:
         if is_form:
             request.held.take(parse.FORM_IN_MEMORY)
             request.form = await parse.read_form(receive, content_type, spool_dir=self.spool_dir, max_bytes=limit)
+            self._shape(request, path, request.form)
             return request.form.model
         if content_type.split(";", 1)[0].strip().lower().startswith("multipart/"):
             raise parse.Refused(400, parse.BAD_REQUEST, parse.FORM_NOT_TAKEN)
         if length is not None:
             request.held.take(length)  # before any of it is read
         parsed, request.json = await parse.read_json(receive, max_bytes=limit, held=request.held)
+        self._shape(request, path, parsed)
         return parsed["model"]
+
+    @staticmethod
+    def _shape(request: _Request, path: str, body: dict | parse.Form) -> None:
+        """rows.read_shape, whose fault is logged by its class and where it broke, never refusing the request: its row
+        then lacks what wasn't read."""
+        try:
+            rows.read_shape(request, path, body)
+        except Exception as err:
+            _log.error("the front couldn't read a request's shape for its row: %s at %s", type(err).__name__,
+                       _where(err))
 
     def _model_list(self) -> dict:
         """`GET /v1/models`' answer, in llama-swap v257's shape for the registry's models (step 5a)."""
@@ -637,10 +753,12 @@ class FrontApp:
 
     async def _refuse(self, send, request: _Request, refused: messages.Refusal | parse.Refused) -> None:
         """A refusal sent; one of the front's own that the gate keeps (FRONT_REFUSAL_CODES) told to it too: the model
-        as the client named it for model_not_found, else its registry name."""
+        as the client named it for model_not_found, else its registry name, and the request's id, which its row holds
+        too, so the gate's ledger joins the two (Task 44e). Its code goes in the request's row."""
+        request.refused = refused.code
         if refused.code in FRONT_REFUSAL_CODES and request.key is not None:
             model = request.asked if refused.code == "model_not_found" else request.model
-            self.gate.refused(refused.code, model, request.key, refused.message)
+            self.gate.refused(refused.code, model, request.key, refused.message, request_id=request.id)
         await self._send(send, request, refused.status, refused.body(), refused.headers())
 
     async def _send(self, send, request: _Request, status: int, payload: dict,

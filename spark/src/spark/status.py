@@ -366,6 +366,13 @@ def _health(view: Mapping[str, Any], now: float, tz: tzinfo | None, words: str) 
     if refused:
         lines.append(_under(f"spark launch refused {refused} start{'s' if refused != 1 else ''} without a ticket from "
                             "the gate this boot"))
+    # The usage meter's counter (Task 44g): said only while it is off. The status socket's view carries none, and an
+    # older gate's control view carries none either, so an absent field says nothing here (doctor's line says unknown).
+    counting = health.get("counting") or {}
+    for who, key in (("the front's usage rows", "front_off_since"), ("the gate's ledger", "ledger_off_since")):
+        since = counting.get(key)
+        if since is not None:
+            lines.append(_under(f"counting off since {_when(since, now, tz)} ({who})"))
     age = health["activity_age_s"]
     if age is not None and age > gateproto.ACTIVITY_STALE_S:
         lines.append(_under(f"the gate's activity record is {int(age)} s old, so the brake goes by Phase 1's order"))

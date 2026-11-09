@@ -60,6 +60,7 @@ from typing import Any, Literal
 from spark import budget, messages
 from spark.budget import ALL, Candidate, RoomPlan
 from spark.gate.admission import RELOAD_AFTER, AdmitRequest, Admitted, Admitter
+from spark.gate.ledger import Ledger
 from spark.gate.policy import SAVE_BOUND_S, DrainEnd, Drainer, FrontChannel
 from spark.gate.state import Emit, GateState, ModelRecord, RecentRecord, RoomHold, Session
 from spark.gateproto import LOAD_CALL_TIMEOUT_S, RELEASE_AFTER_S, RESIDENT_RELOAD_EVERY_S, InflightSnapshot
@@ -348,14 +349,16 @@ class Room:
     Sessions.live, so a session that has ended marks nothing; `on_change` is called after every change to the state,
     so the core saves it, and may return an awaitable, awaited where a save must come first (make-room's hold before
     its first drain, the brake's release before its hold file goes, and a release rolled back), bounded by
-    SAVE_BOUND_S."""
+    SAVE_BOUND_S. `ledger` is the gate's ledger (Task 44e), which gains each release of the brake's hold, Dan's or the
+    gate's own; the admitter's when not given."""
 
     def __init__(self, state: GateState, registry: Registry, admitter: Admitter, drainer: Drainer, emit: Emit,
                  clock: Callable[[], float], *, read_mem: Callable[[], MemInfo], read_hold: Callable[[], Hold | None],
                  release_hold: Callable[[Hold | None], bool], boot_id: str, front: FrontChannel | None = None,
                  live: Callable[[Session], bool] | None = None,
-                 on_change: Callable[[], Awaitable[None] | None] | None = None):
+                 on_change: Callable[[], Awaitable[None] | None] | None = None, ledger: Ledger | None = None):
         self.state = state
+        self._ledger = ledger if ledger is not None else admitter.ledger
         self._admitter = admitter
         self._drainer = drainer
         self._emitter = emit
@@ -645,6 +648,7 @@ class Room:
                 # A system event: empty uids, so every caller sees it (the controller's ruling at Task 17's review).
                 self.state.recent.append(RecentRecord(at=self._clock(), kind="brake_released", model=None, uids=[],
                                                       text=messages.recent_brake_released(labels, by_dan=True)))
+                self._ledger.brake("released")
                 self._note()
                 self._admitter.changed()
         return ReleaseResult(done, lifted, reloading)
@@ -799,6 +803,7 @@ class Room:
         labels = self._reload(names, "brake")
         self.state.recent.append(RecentRecord(at=now, kind="brake_released", model=None, uids=[],
                                               text=messages.recent_brake_released(labels, by_dan=False)))
+        self._ledger.brake("released", at=now)
         self._note()
         reading: dict[str, Any]
         try:

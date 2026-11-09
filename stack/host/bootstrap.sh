@@ -507,6 +507,12 @@ directories() {
   run runuser -u spark -- install -d -o spark -g spark -m 0750 /var/lib/local-ai/launch/tickets \
     /var/lib/local-ai/launch/started /var/lib/local-ai/launch/refusals
   run install -d -o spark -g spark-admin -m 2770 /var/lib/local-ai/brake
+  # The usage rows (the front's) and the gate's ledger: Dan reads them (spark-admin, 2750) and only their writer
+  # writes. Beside spark's folders, never inside: root's install -d would follow a link spark planted there. The
+  # units' ReadWritePaths= and UMask=0027 give each writer its folder; llama-swap's InaccessiblePaths= hides both
+  # from the engines. spark-front exists by now (users_and_groups).
+  run install -d -o spark-front -g spark-admin -m 2750 /var/lib/local-ai/usage
+  run install -d -o spark -g spark-admin -m 2750 /var/lib/local-ai/gate-ledger
   # The pull's own cache (XDG_CACHE_HOME in its unit): hf_xet and huggingface_hub keep more than
   # the model files.
   run install -d -o spark-pull -g spark-pull -m 0750 /var/lib/local-ai/pull-cache

@@ -46,7 +46,22 @@ or within APPLY_LAPSE_S of its end) is never llama-swap's own `restart`, even af
 
 **The bypass check.** Each engine found on an engine port is ticketed when its pid is the one its ticket's start
 recorded (`state.ticketed`), or a live `started/` record of a ticket the gate issued holds it; any other is named in
-`health.unticketed_engines`. launch's `no_ticket` and `ticket_expired` refusals of this boot are counted once each."""
+`health.unticketed_engines`. launch's `no_ticket` and `ticket_expired` refusals of this boot are counted once each.
+
+**The ledger** (gate.ledger, the usage meter's counter, Task 44e): the core holds the gate's one ledger and hands it
+to the admitter, the drainer and Room, which write the loads, the refusals, the drains' unloads and the brake's
+releases. The core writes the rest: the brake's firings and its unloads, from its events as they are ingested, each at
+its own time; a model that left `/running` with no load or unload of the gate's under way, why `apply` while apply's
+hold stands with llama-swap's restart begun, else `gone`, but none while the brake's hold stands, whose own events say
+it (the brake writes its hold, unloads, then records what it did); launch's backstop refusals, each once in a run; the
+front's start, from a snapshot with a `front_started_at` it hasn't seen; the front's stop, from its events call
+dropping, held until the front's next snapshot says which it was (`front_call_ended`): the same `front_started_at`, and
+the connection only blipped, so nothing is written; a new one, and the stop goes in, at the drop, before the new
+start; and one still held at the gate's own stop goes in then (the controller's ruling at Task 44e's review, I1); the
+front's counting, off and on, from each snapshot, on a change; and its own writer's state each second. A gate restarted
+writes again, each at the same `t` as before, which a reader takes as one: the front's start, its counting off if it
+is, and the backstop's refusals of this boot. `health.counting`, on the control socket's view alone, says when the
+front's rows and the ledger stopped being written."""
 
 from __future__ import annotations
 
@@ -71,6 +86,7 @@ from spark.brake import KEY_CHECK_FILE, read_key_check
 from spark.brakeevents import EVENTS_FILE, read_events
 from spark.gate import units as unitwatch
 from spark.gate.admission import Admitted, Admitter
+from spark.gate.ledger import Ledger
 from spark.gate.notify import MemoryWarning, Notifier, ingest_brake_events
 from spark.gate.policy import POLL_S, Drainer, FrontChannel, Pins, Sessions, idle_due
 from spark.gate.room import Preloader, Room, fired_at, kept_out
@@ -205,9 +221,10 @@ class GateCore:
     list, each key by its name. `spark_uid` is the account the engines run as (this one's, by default); `dan_uids` the
     accounts whose processes are Dan's, or what gives them, asked at each read of the holders, so a member of
     spark-admin added is named as Dan's without a restart (the controller's ruling at Task 19's review); `may_pin` and
-    `may_hold` are Pins' and Sessions'. The rest are the readings the
-    tests stand in for: the clock, /proc/meminfo, the boot id and when the boot began, each unit's `systemctl show`,
-    nvidia-smi, /proc, the host's name, the registry's reader, the drain's and admission's poll, and `sleep`."""
+    `may_hold` are Pins' and Sessions'; `ledger` the gate's ledger (Task 44e), none writing nothing. The rest are the
+    readings the tests stand in for: the clock, /proc/meminfo, the boot id and when the boot began, each unit's
+    `systemctl show`, nvidia-smi, /proc, the host's name, the registry's reader, the drain's and admission's poll, and
+    `sleep`."""
 
     def __init__(self, registry: Registry, state_dir: Path, *, registry_path: Path, llamaswap: Any,
                  publish: Callable[[Notification], Awaitable[None]], brake_dir: Path, launch: Path, hf_home: str,
@@ -218,8 +235,9 @@ class GateCore:
                  boot_time: float | None = None, read_unit: Callable[[str], UnitState] = unitwatch.unit_state,
                  nvidia_smi: Callable[[], str] = _nvidia_smi, proc: Path = procs.PROC, host: str | None = None,
                  load_registry: Callable[[Path], Registry] = read_registry, poll_s: float = POLL_S,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, ledger: Ledger | None = None):
         self._registry = registry
+        self.ledger = ledger if ledger is not None else Ledger(None, clock, frozenset)
         self.state_dir = Path(state_dir)
         self._registry_path = Path(registry_path)
         self._swap = llamaswap
@@ -278,6 +296,8 @@ class GateCore:
         self._unticketed: list[dict] = []
         self._reported: set[tuple[str, int]] = set()  # the unticketed engines already logged
         self._backstop: set[tuple[str, str, str, str]] = set()  # launch's backstop refusals seen this boot
+        self._front_started_at: float | None = None  # the front's start, as the last snapshot that gave one said
+        self._front_stop: float | None = None  # when the front's events call dropped: front_call_ended
         self._activity_at: float | None = None
         self._sent_state: tuple | None = None
         self._settle_front_drains = False
@@ -339,7 +359,7 @@ class GateCore:
         self.admitter = Admitter(self._registry, state, self._swap, self.notifier, self._clock,
                                  read_mem=self._read_meminfo, read_hold=self._read_hold, launch=self._launch,
                                  hf_home=self._hf_home, holders=self.holders, on_change=self.save,
-                                 poll_s=self._poll_s, proc=self._proc, running=running)
+                                 poll_s=self._poll_s, proc=self._proc, running=running, ledger=self.ledger)
         if not answered:
             self.admitter.set_llamaswap_up(False)
         else:
@@ -349,12 +369,13 @@ class GateCore:
         self.sessions = Sessions(state, self._clock, proc=self._proc, may_hold=self._may_hold,
                                  is_model=lambda name: name in self.registry.models, on_change=self.save)
         self.drainer = Drainer(self.front, self._swap, self.admitter, self.notifier, self._clock,
-                               on_change=self.save, poll_s=self._poll_s, live=self.sessions.live)
+                               on_change=self.save, poll_s=self._poll_s, live=self.sessions.live, ledger=self.ledger)
         self.pins = Pins(state, self.admitter, self.notifier, self._clock, may_pin=self._may_pin,
                          on_change=self.save)
         self.room = Room(state, self._registry, self.admitter, self.drainer, self.notifier, self._clock,
                          read_mem=self._read_meminfo, read_hold=self._read_hold, release_hold=self._release_hold,
-                         boot_id=self.boot_id, front=self.front, live=self.sessions.live, on_change=self.save)
+                         boot_id=self.boot_id, front=self.front, live=self.sessions.live, on_change=self.save,
+                         ledger=self.ledger)
         self.preloader = Preloader(self.admitter, self._registry, self.notifier, self._clock, llamaswap=self._swap,
                                    read_hold=self._read_hold, on_change=self.save, sleep=self._sleep)
         self.room.at_start(ended, recovered=recovered)
@@ -381,7 +402,9 @@ class GateCore:
         stays saved, for the next start to resume), the Notifier flushed and drained (by 5 s, within uvicorn's
         GRACEFUL_S), and `clean_shutdown` saved true. Before a start that built the parts, nothing is saved: the state
         on disk is the last run's. After a start cut short before the Notifier's task ran (`spark gate` stopped while
-        it started), there is no queue to wait on: nothing sends it (the controller's ruling at Task 19's review)."""
+        it started), there is no queue to wait on: nothing sends it (the controller's ruling at Task 19's review). The
+        front's stop still held goes in the ledger, at its drop (front_call_ended)."""
+        self._write_front_stop()
         await self._cancel(self._loops)
         if self.admitter is not None:
             await self.admitter.stop()
@@ -582,6 +605,11 @@ class GateCore:
         self._done_seq = seq
         self._ingest_brake()
         gone = self._reconcile(running, before, sent_at)
+        if gone:
+            try:
+                self._ledger_gone(gone)
+            except Exception as err:  # never at the cost of the read: the ledger's row is all it costs
+                _log.error("the ledger's unloads of what left /running broke: %s", type(err).__name__)
         self._answering = True
         self._answered_at = sent_at
         self.admitter.observe_running(running)
@@ -600,7 +628,8 @@ class GateCore:
         now = self._clock()
         for name, duty in (("the brake's events", self._ingest_brake), ("apply's lapse", lambda: self._lapse(now)),
                            ("the activity record", lambda: (self._note_starts(), self._write_activity(now))),
-                           ("the front's state", self._send_state_if_changed)):
+                           ("the front's state", self._send_state_if_changed),
+                           ("the ledger's own state", lambda: self.ledger.counting(self.ledger.off_since(), "gate"))):
             try:
                 duty()
             except Exception:
@@ -697,6 +726,20 @@ class GateCore:
         if changed:
             self._save_quietly()
         return gone
+
+    def _ledger_gone(self, gone: Mapping[str, ModelRecord]) -> None:
+        """The ledger's unload for each model `_reconcile` found gone: `apply` while apply's hold stands with
+        llama-swap's restart begun, else `gone` (a crash, a kill around the gate); none while the brake's hold stands,
+        whose own events give its unloads (`_ingest_brake`), the brake having written its hold before it unloaded."""
+        hold = self.state.applying
+        if hold is not None and not hold.ended and hold.begun_at is not None and _names_llama_swap(hold.restarting):
+            why = "apply"
+        elif self._read_hold() is not None:
+            return
+        else:
+            why = "gone"
+        for name in gone:
+            self.ledger.unload(name, why)
 
     def _footprint(self, name: str) -> float:
         known = self.registry.models.get(name)
@@ -1027,12 +1070,14 @@ class GateCore:
 
     def _ingest_brake(self) -> None:
         """The brake's new events, as the notifications they send (Task 14), with this boot's id, the gate's clock,
-        and each starting model's MemAvailable at admission as `starts`; its marks and its place saved."""
+        and each starting model's MemAvailable at admission as `starts`; its marks and its place saved; and in the
+        ledger, each firing and each unload it took, at the event's own time (Task 44e)."""
         starts = {name: available for name, (available, _) in self._starts.items()}
         after, marks = self.state.brake_events_after, dict(self.state.brake_marks)
+        taken: list = []
         try:
             found = ingest_brake_events(self._events_path, self.state, self.registry, boot_id=self.boot_id,
-                                        now=self._clock(), starts=starts)
+                                        now=self._clock(), starts=starts, taken=taken)
         except (OSError, ValueError) as err:
             self._unread("brake events", f"the brake's events {self._events_path} couldn't be read ({_said(err)})")
             return
@@ -1041,6 +1086,11 @@ class GateCore:
             self._save_quietly()
         if self.state.brake_marks != marks:
             self.admitter.changed()
+        for event in taken:
+            if event.kind == "fired":
+                self.ledger.brake("fired", at=event.at)
+            elif event.kind == "unload":
+                self.ledger.unload(event.model, "brake", at=event.at)
         for kind, key, fields in found:
             self._emit(kind, key, **fields)
 
@@ -1140,7 +1190,10 @@ class GateCore:
                 continue  # another boot's
             if self._boot_time is None and self._started_at is not None and when < self._started_at:
                 continue  # this boot's start unknown: only what came since the gate started
-            self._backstop.add((record["model"], record["at"], record["code"], record["reason"]))
+            seen = (record["model"], record["at"], record["code"], record["reason"])
+            if seen not in self._backstop:  # each once: launch's records are read again at every pass
+                self._backstop.add(seen)
+                self.ledger.refusal(record["code"], record["model"], None, at=when)
 
     def _gather(self, loaded: dict[str, tuple[str, float]], ticketed: dict[str, Ticketed], ports: dict[str, int],
                 now: float) -> _Gathered:
@@ -1216,8 +1269,8 @@ class GateCore:
     # The front.
 
     def _model_list(self) -> list[dict]:
-        return [{"name": name, "roles": list(model.roles), "label": model.label, "resident": model.resident}
-                for name, model in self.registry.models.items()]
+        return [{"name": name, "roles": list(model.roles), "label": model.label, "resident": model.resident,
+                 "engine": model.engine} for name, model in self.registry.models.items()]
 
     def hello(self) -> dict:
         """The events call's first line: when the gate started, whether apply's hold stands (so a restarted front
@@ -1267,8 +1320,19 @@ class GateCore:
         """The front's whole in-flight report. Its first after a start fresh from damage settles every drain it
         holds: each finished as a drain with why `unknown`, then unloaded, never undrained, since an undrain could cut
         a request on a model whose unload may be queued (the controller's ruling at Task 13's re-review); then the
-        damage is no longer news to the front, and the state says so."""
+        damage is no longer news to the front, and the state says so. In the ledger (Task 44e): a stop held since the
+        front's events call dropped, and the front's start, when `front_started_at` is one the gate hasn't seen; the
+        same one ends the held stop with nothing written, the connection having only blipped (front_call_ended); and
+        the front's counting, on a change (app._snapshot left out what isn't a time)."""
         self.front.report(snapshot)
+        started = snapshot.get("front_started_at")
+        if _finite(started):
+            if started != self._front_started_at:
+                self._write_front_stop()
+                self._front_started_at = started
+                self.ledger.lifecycle("start", "front", at=started)
+            self._front_stop = None
+        self.ledger.counting(snapshot.get("counting_off_since"), "front")
         if not self._settle_front_drains:
             return
         self._settle_front_drains = False
@@ -1278,6 +1342,19 @@ class GateCore:
         if self.state.fresh_after_damage:
             self.state.fresh_after_damage = False
             self._save_quietly()
+
+    def front_call_ended(self) -> None:
+        """The front's events call ended, other than at the gate's stop: the front's stop, or only its connection
+        dropping, which its next snapshot says (`inflight`), or, should none come, the gate's own stop (the
+        controller's ruling at Task 44e's review, I1). Held from the first drop: a second, the front not back yet,
+        moves nothing."""
+        if self._front_stop is None:
+            self._front_stop = self._clock()
+
+    def _write_front_stop(self) -> None:
+        stop, self._front_stop = self._front_stop, None
+        if stop is not None:
+            self.ledger.lifecycle("stop", "front", at=stop)
 
     def quiet(self) -> dict:
         """`/v1/quiet`: how long nothing has been in flight, by the front's counts (0 while anything is), the model
@@ -1370,7 +1447,7 @@ class GateCore:
                          for pin in state.pins.values() if pin.until is None or pin.until > now],
                 "sessions": [{"id": s.id, "model": s.model, "label": s.label, "started_at": s.started_at,
                               "expires_at": s.renewed_at + SESSION_TTL_S} for s in state.sessions.values()],
-                "recent": self._recent(sees), "health": self._health(now, brake, key_problem),
+                "recent": self._recent(sees), "health": self._health(now, brake, key_problem, full=sees is None),
                 "applying": None if hold is None or hold.ended else {"since": hold.since,
                                                                      "restarting": list(hold.restarting)},
                 "problems": self._problems()}
@@ -1444,23 +1521,33 @@ class GateCore:
                 rows.append({"at": item.at, "text": item.text, "code": None, "model": item.model, "key_label": None})
         return rows
 
-    def _health(self, now: float, brake: dict, key_problem: str | None) -> dict:
+    def _health(self, now: float, brake: dict, key_problem: str | None, *, full: bool = True) -> dict:
+        """`full`: the control socket's view, which alone says whether the front and the ledger count (Task 44e)."""
         state = self.state
         if getattr(self._publish, "not_set_up", False) is True:  # gate.main's publisher for a gate without ntfy
             ntfy = "not_set_up"
         else:
             ntfy = "ok" if state.notify_failing_since is None else "failing"
-        return {"front": "ok" if self.front.connected else "not connected", "gate": "ok",
-                "brake": brake,
-                "llama_swap": "ok" if self._answering else "not answering",
-                "ntfy": {"status": ntfy, "failing_since": state.notify_failing_since, "dropped": self.notifier.dropped},
-                "activity_age_s": None if self._activity_at is None else max(0.0, now - self._activity_at),
-                "unticketed_engines": [dict(engine) for engine in self._unticketed],
-                "no_ticket_refusals": len(self._backstop),
-                "damaged_at": state.damaged_at, "damaged_kept_as": state.damaged_kept_as,
-                # The view's own reads' too, the brake's start check (Task 29's review), kept nowhere: the view changes
-                # nothing.
-                "read_problems": [*self._read_problems.values(), *([key_problem] if key_problem else [])]}
+        health = {"front": "ok" if self.front.connected else "not connected", "gate": "ok",
+                  "brake": brake,
+                  "llama_swap": "ok" if self._answering else "not answering",
+                  "ntfy": {"status": ntfy, "failing_since": state.notify_failing_since,
+                           "dropped": self.notifier.dropped},
+                  "activity_age_s": None if self._activity_at is None else max(0.0, now - self._activity_at),
+                  "unticketed_engines": [dict(engine) for engine in self._unticketed],
+                  "no_ticket_refusals": len(self._backstop),
+                  "damaged_at": state.damaged_at, "damaged_kept_as": state.damaged_kept_as,
+                  # The view's own reads' too, the brake's start check (Task 29's review), kept nowhere: the view
+                  # changes nothing.
+                  "read_problems": [*self._read_problems.values(), *([key_problem] if key_problem else [])]}
+        if full:
+            health["counting"] = self._counting()
+        return health
+
+    def _counting(self) -> dict:
+        """gateproto.CountingView: the front's, as its last snapshot reported it, and the ledger's own writer's."""
+        off = (self.front.snapshot or {}).get("counting_off_since")
+        return {"front_off_since": float(off) if _finite(off) else None, "ledger_off_since": self.ledger.off_since()}
 
     def _brake_health(self) -> tuple[dict, str | None]:
         """The brake's unit, as last read, and its check at start that llama-swap takes its key, read fresh from the

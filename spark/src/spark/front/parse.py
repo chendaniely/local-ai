@@ -704,7 +704,11 @@ def _entry(raw: Any) -> ModelEntry:
     if not (isinstance(name, str) and name and isinstance(label, str) and label and isinstance(resident, bool)
             and isinstance(roles, list) and all(isinstance(role, str) for role in roles)):
         raise ValueError("a model list entry needs a name, a list of roles, a label, and resident true or false")
-    return {"name": name, "roles": list(roles), "label": label, "resident": resident}
+    entry: ModelEntry = {"name": name, "roles": list(roles), "label": label, "resident": resident}
+    engine = raw.get("engine")
+    if isinstance(engine, str) and engine:
+        entry["engine"] = engine
+    return entry
 
 
 class ModelList:
@@ -718,7 +722,8 @@ class ModelList:
 
     @classmethod
     def from_registry(cls, registry: Registry) -> ModelList:
-        return cls({"name": model.name, "roles": list(model.roles), "label": model.label, "resident": model.resident}
+        return cls({"name": model.name, "roles": list(model.roles), "label": model.label, "resident": model.resident,
+                    "engine": model.engine}
                    for model in registry.models.values())
 
     def replace(self, entries: Iterable[ModelEntry]) -> None:

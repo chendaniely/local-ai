@@ -472,11 +472,14 @@ def _held_back(events: list[BrakeEvent], now: float, boot_id: str) -> int:
 
 
 def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boot_id: str, now: float | None = None,
-                        starts: Mapping[str, float] | None = None) -> list[tuple[str, str, dict[str, Any]]]:
+                        starts: Mapping[str, float] | None = None,
+                        taken: list[BrakeEvent] | None = None) -> list[tuple[str, str, dict[str, Any]]]:
     """The brake's events since `state.brake_events_after` (brake/events.jsonl, Task 13's), as the notifications they
     send, each (type, event key, fields) for Notifier.emit; `state.brake_events_after` advances past what was read,
     and `state.brake_marks` gains the marks. `boot_id` is this boot's; `now` is the gate's clock (time.time() by
     default); `starts`, each starting model's MemAvailable when its load began, from its ticket, as the core has it.
+    `taken`, when given, gains each event this read took, every one, whatever it sends, as it is in the file, for the
+    caller's ledger (Task 44e): each is taken once, as `brake_events_after` moves past it.
 
     - An episode's first alert is `brake_fired`, worded with its `fired` event's own reading and line (a drill's raised
       line as itself), naming the unloads that came with it, each by the registry's label and in its state. A `fired`
@@ -528,8 +531,10 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     events = read_events(path, None)
     start = _new_from(events, state.brake_events_after)
     new = events[start:]
-    taken = new[:len(new) - _held_back(new, now, boot_id)]
-    if not taken:
+    read = new[:len(new) - _held_back(new, now, boot_id)]
+    if taken is not None:
+        taken.extend(read)
+    if not read:
         return []
     read_before = {_episode(e) for e in events[:start]}  # an episode read before: its first alert went then
     begun = set(read_before)
@@ -539,7 +544,7 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
     group: _Group | None = None
     firsts: dict[tuple[str, int], _Group] = {}  # this read's first alerts, by episode
     reboots: dict[tuple[str, int], _Group] = {}
-    for e in taken:
+    for e in read:
         episode = _episode(e)
         if e.kind == "warn":
             continue
@@ -583,7 +588,7 @@ def ingest_brake_events(path: Path, state: GateState, registry: Registry, *, boo
         _add(group, e)
         groups.append(group)
         begun.add(episode)
-    last = taken[-1]
+    last = read[-1]
     state.brake_events_after = (last.boot_id, last.seq, last.at)
     found = [_notification(group, path, state, registry, now, boot_id) for group in groups if not group.sent]
     return [each for each in found if each is not None]

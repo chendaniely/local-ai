@@ -28,7 +28,8 @@ Environment=SPARK_LLAMASWAP_URL=http://{llamaswap_listen}
 ExecStart=/opt/local-ai/app/.venv/bin/spark front
 Restart=always
 RestartSec=2
-# Above uvicorn's graceful shutdown, gateproto.GRACEFUL_S (20 s).
+# Its stop at worst: uvicorn's grace (gateproto.GRACEFUL_S, 20 s), the requests still ending (front.app.ENDING_S, 2 s) and
+# its usage rows' last write (front.main.ROWS_DRAIN_S, 5 s): about 27 s.
 TimeoutStopSec=30
 OOMScoreAdjust=-900
 # A form's file parts past 1 MiB spool to files in its PrivateTmp= /tmp, on disk on this box, not in memory
@@ -36,6 +37,11 @@ OOMScoreAdjust=-900
 MemoryMax=512M
 NoNewPrivileges=yes
 ProtectSystem=strict
+# Its usage rows, Dan's to read: the folder is 2750 spark-front:spark-admin, and a row it writes is 640 because
+# spark.rowfile sets that with fchmod, whatever the umask; the UMask below covers anything else the front creates. The -
+# lets a missing folder pass; the front serves without it.
+ReadWritePaths=-/var/lib/local-ai/usage
+UMask=0027
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

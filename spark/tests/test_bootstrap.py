@@ -1241,6 +1241,24 @@ def test_root_owns_the_state_directory_so_spark_cannot_swap_what_root_creates_in
     assert "-o spark -g spark-admin -m 2770" in install_d_line("/var/lib/local-ai/brake")
 
 
+def test_root_makes_the_usage_and_ledger_folders_beside_sparks_never_inside(  # Task 44f
+):
+    # Dan reads them (spark-admin, 2750); only the front writes the usage rows and only the gate its ledger. Root makes
+    # both under its own /var/lib/local-ai: inside a folder spark controls, install -d would follow a planted link.
+    lines = dry_run()
+
+    def index(text):
+        return next(i for i, line in enumerate(lines) if text in line)
+
+    usage, ledger = install_d_line("/var/lib/local-ai/usage"), install_d_line("/var/lib/local-ai/gate-ledger")
+    assert "-o spark-front -g spark-admin -m 2750" in usage
+    assert "-o spark -g spark-admin -m 2750" in ledger
+    for line in (usage, ledger):
+        assert "runuser" not in line
+        assert lines.index(line) > index("install -d -o root -g root -m 0755 /var/lib/local-ai")
+    assert lines.index(usage) > index("useradd --system --gid spark-front")
+
+
 def test_spark_gets_its_cache_folders_from_root():
     # spark can't write its home, so the units that run engines or pull models set XDG_CACHE_HOME
     # and CUDA_CACHE_PATH to these. Root creates them directly under its own parent, never inside a

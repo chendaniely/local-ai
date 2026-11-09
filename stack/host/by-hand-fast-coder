@@ -3,8 +3,9 @@
 # Delete then: stack/host/by-hand-fast-coder (this file), stack/host/by-hand-flash-next,
 # spark/tests/test_by_hand.py, the Makefile's two targets with their comment, .PHONY names and lint entries,
 # spark/tests/test_makefile.py's tests of them, and the notes naming them in
-# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md. plan.md's Phase 4a lists the
-# same, and test_by_hand.py's TEMPORARY.
+# website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md, and the sentences naming them in
+# website/design/usage-meter.md and website/design/usage-meter-counter.md. plan.md's Phase 4a lists the same, and
+# test_by_hand.py's TEMPORARY.
 #
 # make fast-coder: the fast coder, Qwen3.8-27B on SGLang, beside the stack, as the Run it again section of
 # website/how-to/qwen3.8-27b-sglang.md runs it. On the Spark only, as Dan, from the clone.
@@ -108,6 +109,7 @@ start() {
       --cuda-graph-max-bs-decode 1 --disable-prefill-cuda-graph --disable-flashinfer-autotune \
       --attention-backend flashinfer \
       --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
+      --enable-cache-report \
       --log-level warning --host 0.0.0.0 --port 30000 \
       2>&1 | tee ~/sglang/scratch/boot-$(date +%F-%H%M).log
 }
