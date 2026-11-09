@@ -1905,9 +1905,9 @@ council, with Dan's fourteen decisions (Revisions).*
   least recently used. If the soak shows harm, the levers are Gemma's `--cache-ram`, raised so that
   a chat with checkpoints can be saved, and Open WebUI's task model, moved off Gemma, which is the
   clients phase's call.)* *(2026-11-09, Dan's decision; Revisions: from the next deploy that task
-  model moves to Qwen3.6, with the always-loaded change. Its two slots set no
-  `--slot-prompt-similarity`, so b11146's default, 0.10, applies; whether it takes Gemma's 0.5 waits
-  for Dan, and the soak counts the picks in Qwen3.6's log.)*; a test
+  model moves to Qwen3.6, with the always-loaded change. Its two slots take Gemma's 0.5 too, for the
+  same reason (the controller's ruling, the same day, Dan told), and the soak counts the picks in
+  Qwen3.6's log.)*; a test
   that ties the code's version assumptions — the front's and the gate's on llama-swap v257 among
   them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own user,
   `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's sandboxing.
@@ -4376,7 +4376,9 @@ Each item gets its own design pass when its turn comes.
   else or batch overnight. and I can use the smaller [context] if I'm doing other parallel work". The
   `-32k` entries are the first models below their full context since *every model at its full
   context* (2026-09-28): at 32K each fits beside the coder (~7 and ~6 GiB of the 9 left beside it),
-  and at 65,536 the 1.7B (~11) doesn't. A request is held to the model's own limit, 20 minutes of
+  and at 65,536 the 1.7B (~11) doesn't. *(2026-11-09, Dan's decision; the Revisions line of that
+  date: from the next deploy, with Qwen3.6 always loaded in Gemma's place, 8 are left beside the
+  coder, so the 32K entries still fit, and the 0.6B at 65,536, ~9, no longer does.)* A request is held to the model's own limit, 20 minutes of
   audio, by the client, at either context. The footprints are estimates until a load is measured.
   Whisper keeps the `stt` role, so it stays the web UI's speech-to-text and the model doctor's speech
   checks send to; render and doctor now find it by that role, not as the only transcription model.
@@ -4458,7 +4460,9 @@ Each item gets its own design pass when its turn comes.
   thinking loops for him, he suspects the quantization (untested), and he had stopped using it, last
   on 2026-10-23 against Qwen3.6 on 2026-11-05. Qwen3.6 gets `resident: true`, the `small` role (so
   the web UI's background tasks, and its `used_by`), two slots sharing its 262,144 tokens through
-  render's `--kv-unified`, and `--ctx-checkpoints 4`, 8 in all as Gemma has. Gemma goes on demand,
+  render's `--kv-unified`, and `--ctx-checkpoints 4`, 8 in all as Gemma has; and Gemma's
+  `--slot-prompt-similarity 0.5`, for Gemma's reason, by the controller's ruling the same day, Dan
+  told, which Task 45's soak checks on Qwen3.6's log. Gemma goes on demand,
   with only the `vision` role and its `args` as they were, kept for comparison and as the
   policy-safe option. No model file's pinned revision moves, and Qwen3.6's own vision file isn't
   added: that waits for a real photo test. Unmeasured: Qwen3.6's footprint at two slots, still the

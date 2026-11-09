@@ -188,9 +188,12 @@ models:
     # A checkpoint holds its recurrent layers' state, ~63 MiB by arithmetic, and its MTP draft's state, which that
     # leaves out (b11146 saves both: server-context.cpp, update_dft and data_spec); neither is measured. At the
     # default, 32 per slot, the recurrent part alone would be ~2 GiB per slot, so cap them at 4 a slot since 2026-11-09,
-    # 8 in all (~0.5 GiB of it), counted in the footprint; it was 8 on the one slot it had until then. Unlike Gemma it
-    # sets no --slot-prompt-similarity, so b11146's default, 0.10, applies.
-    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "4"]
+    # 8 in all (~0.5 GiB of it), counted in the footprint; it was 8 on the one slot it had until then.
+    # --slot-prompt-similarity is Gemma's 0.5, for Gemma's reason (the controller's ruling, 2026-11-09, Dan told): with
+    # two slots, at b11146's default, 0.10, a short web UI task can take a long chat's slot, and a chat too big for the
+    # 2 GiB --cache-ram then re-reads whole. Task 45's soak checks it on Qwen3.6's log.
+    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "4",
+           --slot-prompt-similarity, "0.5"]
   # Qwen3-ASR, on demand (Dan's decisions, 2026-10-23): 1.7B for multi-language transcription, 0.6B for Chinese,
   # Japanese and English. Each is listed twice over one set of files: -32k fits beside the coder, for when other work is
   # running, and -64k, its full 65,536, for when the box is otherwise free or a batch runs overnight. No role: whisper

@@ -294,6 +294,14 @@ def test_gemmas_slots_are_chosen_by_prompt_only_when_half_of_it_matches():
     assert values(shlex.split(cfg["models"]["gemma-4-26b-a4b"]["cmd"]), "--slot-prompt-similarity") == ["0.5"]
 
 
+def test_qwen36s_two_slots_are_chosen_by_prompt_the_same_way():
+    # The controller's ruling, 2026-11-09, Dan told: the same value as Gemma's, for the same reason. With two slots, at
+    # b11146's default, 0.10, a short web UI task can take a long chat's slot, and a chat too big for --cache-ram then
+    # re-reads whole. Task 45's soak checks it on Qwen3.6's log.
+    cfg = yaml.safe_load(real()["llama-swap.yaml"])
+    assert values(shlex.split(cfg["models"]["qwen3.6-35b-a3b"]["cmd"]), "--slot-prompt-similarity") == ["0.5"]
+
+
 def test_llama_swap_binds_below_1024_with_only_cap_net_bind_service():
     # The engines inherit it across `spark launch`'s exec; no other unit gets it (plan.md, Phase 2a).
     service = llama_swap_unit()

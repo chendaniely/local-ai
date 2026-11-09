@@ -9646,7 +9646,7 @@ deploys during the soak. So the soak below runs with the counter on.
 always-loaded chat model is Qwen3.6-35B-A3B, at two slots, and Gemma loads on demand. So Step 1's
 residents through the web UI mean Qwen3.6, and this soak measures its footprint at two slots and
 whether two slots work with `--spec-type draft-mtp` at b11146. Step 2's slot-choice counts read
-Qwen3.6's log, not Gemma's, as long as it's the task model.)*
+Qwen3.6's log, at the same 0.5, not Gemma's, as long as it's the task model.)*
 
 **Files:** `stack/models.yaml` (each footprint, `footprint_measured: true`, `cold_load_gib`;
 `gate.owed_reads_rss` as the evidence says), `spark/tests/test_stack_registry.py` (Task 4's
