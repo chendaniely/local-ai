@@ -159,7 +159,7 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over ~110 GB
   do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path. The plan
   budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be measured) and
-  keeps ≥24 GiB free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day:
+  keeps ~~≥24 GiB~~ ≥17 GiB (from the next deploy; the last note below) free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day:
   the plan's rule 9. Render's half is built on the `phase-2a` branch (2026-10-07): `spark render`
   refuses always-loaded models that don't fit idle `MemAvailable` less the reserve and, since Task
   5's review, the ceiling too, and an on-demand model that doesn't fit beside them (one marked
@@ -168,7 +168,7 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   first said the check would become the set's footprints within the ceiling; Dan made that a
   warning after the implementation plan's forward-and-back council, the same day. Not yet built,
   the gate's half: each load keeping the reserve free and holding back the growth the loaded
-  models are still owed. The reserve stays ≥24 GiB. The design first lowered it to 22, and this
+  models are still owed. ~~The reserve stays ≥24 GiB.~~ The design first lowered it to 22, and this
   note said so; after the design's council Dan put it back to 24 the same day, until 2a has
   measured the footprints.)*
   *(2026-10-08, Dan's decision: `spark render` on `main` has Phase 2a's corrected budget check,
@@ -184,6 +184,12 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   the growth the loaded models are still owed, and `spark launch` starts nothing without the gate's
   ticket, keeping its own check as a backstop. The reserve is 24 GiB; the ceiling is still the
   reported 102 GiB, not yet measured (Task 41).)*
+  *(2026-11-09, Dan's decision, replacing his of 2026-10-07 to keep 24 until 2a had measured the
+  footprints: the reserve comes down to 17 GiB, the brake's line to 14 and the warn line to 21, in
+  the registry from the next deploy; earlyoom stays at 12 and 9. His words: "yes the machine has
+  been stable so far. let's drop down the reserve RAM to 15GB"; the registry refuses a reserve at or
+  under the brake's line, so he chose 17, 14 and 21 from three options, because every Qwen3-ASR
+  model then fits beside SGLang. These lines are unmeasured until Tasks 45 and 47.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.
@@ -193,7 +199,7 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   design anything that loads models around the gate.
 - **Overcommitting memory can hard-freeze the box** — no OOM kill, just a power cycle (reported;
   open NVIDIA driver issue #1358). The admission reserve and the brake exist for this; don't loosen
-  them casually. *(Phase 2a's design, 2026-10-07, approved by Dan the same day; not yet built,
+  them casually. *(Loosened on purpose on 2026-11-09, Dan's decision: the note above, on the reserve.)* *(Phase 2a's design, 2026-10-07, approved by Dan the same day; not yet built,
   loosens the brake on purpose, within bounds: its hold lifts by itself once memory has stayed above
   the warn line for 5 minutes and the reloads fit, at most once an hour; a hold found after a reboot
   waits for Dan; and the model that was loading when it fired doesn't reload by itself. The brake

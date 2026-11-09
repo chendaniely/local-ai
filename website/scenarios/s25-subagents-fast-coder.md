@@ -24,4 +24,5 @@ checks it, and the timeout in opencode's config goes up if so. Not built yet.*
 
 *(2026-11-09, Dan's decision, from the next deploy: the always-loaded chat model is Qwen3.6, so read
 Qwen3.6 for Gemma on this page. By the numbers the fast coder still fits beside the always-loaded
-models: 44 GiB for them, its 45 and the 24 GiB reserve make 113 of the 117 available; not measured.)*
+models: 44 GiB for them, its 45 and the reserve's 17, the same day's decision, make 106 of the 117
+available; not measured.)*

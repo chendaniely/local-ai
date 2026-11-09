@@ -34,7 +34,9 @@ HOLD="${BY_HAND_HOLD:-/var/lib/local-ai/brake/hold.json}" # the brake's hold, Ph
 SPARK="$OPT/app/.venv/bin/spark"
 
 IDLE_GIB=110     # near idle: 117 GiB with no model loaded
-WARN_GIB=28      # step 3: stop it if available is under the brake's warn line
+# Step 3: stop it if available is under this: the brake's warn line until the next deploy, which makes that 21 (Dan's
+# decision, 2026-11-09). This stays 28 for now, the wider margin; lowering it is Dan's to decide.
+WARN_GIB=28
 MEMORY_TRIES=24  # the memory waits look every 5 s: about 2 minutes
 HEALTH_TRIES=120 # step 3's loop asks every 5 s: about 10 minutes
 

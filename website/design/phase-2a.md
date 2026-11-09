@@ -9244,6 +9244,12 @@ git commit -m "docs(machine): 🤖 agent's processes carry a root-set OOM score"
 
 ### Task 41 [Spark]: the CUDA-allocatable ceiling, carefully
 
+*(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the stack's reserve is 17, the
+brake's line 14 and the warn line 21. This script keeps its own floor of 24, so it still stops about
+93 GiB in, and the *at least* in Step 4 stands. Its default is the drills' floor now, not the stack's
+reserve, in its words and its tests. Run after the deploy it never passes the warn line, so it sends no
+`memory_warning`; the lines below that say it sends one, at 28, are as written before that date.)*
+
 **Files:**
 
 - Create: `stack/measure/cuda_ceiling.py`, `spark/tests/test_cuda_ceiling.py`
@@ -9648,6 +9654,11 @@ residents through the web UI mean Qwen3.6, and this soak measures its footprint 
 whether two slots work with `--spec-type draft-mtp` at b11146. Step 2's slot-choice counts read
 Qwen3.6's log, at the same 0.5, not Gemma's, as long as it's the task model.)*
 
+*(2026-11-09, Dan's decision; plan.md's Revisions: Step 3's "decides whether the reserve moves" has
+moved already, to 17, with the brake's line at 14 and the warn line at 21, ahead of this soak and
+replacing his decision to keep 24 until it. So this soak now says whether those lines hold against the
+measured footprints, and Dan decides whether they stay.)*
+
 **Files:** `stack/models.yaml` (each footprint, `footprint_measured: true`, `cold_load_gib`;
 `gate.owed_reads_rss` as the evidence says), `spark/tests/test_stack_registry.py` (Task 4's
 `test_owed_reads_rss_stays_off_until_the_soak`, rewritten to the evidence), `website/design/plan.md`
@@ -9725,6 +9736,14 @@ git commit -m "docs(machine): 🤖 both pis work with Qwen3.8-27B" \
 ***
 
 ### Task 47 [Spark]: the brake's timings, the lag, earlyoom's order and swap
+
+*(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the warn line is 21 and the
+brake's line 14, and the hog's floor stays 24, so Step 1's readings all stop above both. Its "how far
+below 28" becomes "how far above 21"; swap is measured down to 24 only, so the 14–24 band stays
+unmeasured; and the hog can't reach the warn line or the brake at all. Reaching them needs one of two
+things, and which is Dan's to decide: a raised line for the drill, as Task 48 already does for the
+brake, or the hog taking a lower floor under a flag. `FLOOR_TOLERANCE_GIB`, too, is re-checked against
+the 2 GiB now between the brake's line and earlyoom's. Everything in Step 2 stands.)*
 
 **Files:**
 
@@ -9824,6 +9843,11 @@ systemctl start local-ai-brake-drill.service
 journalctl -u local-ai-brake-drill.service -n 5 -o cat
 ```
 
+  *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the deployed registry reads
+  `warn_gib: 21`, `brake_gib: 14` and `reserve_gib: 17`, so the `sed` above changes its three patterns
+  to those; the copy, raised above what's available, works as before, and the running lines are
+  unchanged.)*
+
   Expected: `644`, so `spark` reads the copy whatever Dan's umask; the three thresholds at `a + 10`,
   `a + 5` and `a + 6`; then the drill's lines, `brake: holding new loads …` and `brake: unloaded
   <model> at … GiB available`. Each start unloads one model, as the brake does each tick, so a
@@ -9854,7 +9878,12 @@ sudo -k
 - [ ] **Step 2: S05, message by message,** each checked word for word, on the phone, in pi and in
   `spark status`:
   - Task 40's hog, `--leave 26`, takes memory under the real warn line, 28: `memory_warning`, once;
-    then Ctrl-C;
+    then Ctrl-C. *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the warn
+    line is 21, so `--leave 26` stops above it and `memory_warning` doesn't fire, and the hog's floor,
+    24, can't reach it. The gate reads its warn line from the deployed registry, so reaching it needs
+    either a raised warn line in that registry for this step (a registry edit and `make apply`, as
+    S01's drill does for its idle time), or the hog with a lower floor under a flag. Which is Dan's to
+    decide; this step waits for it.)*
   - with the coder loading (`spark load coder` in another pane), the drill's brake: `brake_fired`,
     high, its line the drill's (`a + 5`), naming the loading engine; then one start of the unit per
     further unload, each a follow-up of the same episode naming the idle model it unloads;
@@ -10014,6 +10043,9 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
   `--leave 48`: S03's moment, 48 GiB available, whatever the hog has to take to get there (about
   26 from the residents' 74; *from the next deploy, 2026-11-09's decision, 25 from their 73*). **[Dan, on
   the Mac]**, pi shows only its usual thinking for 30 s,
+  *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the refusal's figures move
+  with the reserve: 48 available less the reserve's 17 and the 6 owed is 25 free for a load, not 18,
+  and the coder's 41 still doesn't fit, so the refusal stands.)*
   nothing added to the stream, then the refusal, `409: {"message":"The coder didn't load:
   …","code":"no_fit"}`, at 30 s and without retrying: `make logs s=front` shows one request from
   `dan-mac`, ending 409. **[Dan, on the phone]**, the web UI, asked the same, shows the sentence

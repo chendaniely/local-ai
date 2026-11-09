@@ -29,12 +29,17 @@
 budget:
   allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
   allocatable_measured: false  # true once the ceiling above is measured on this box (plan.md, rule 9)
-  reserve_gib: 24        # a load must leave this much MemAvailable free
+  # 24 until 2026-11-09, when Dan's decision replaced his of 2026-10-07 to keep 24 until 2a had measured the footprints:
+  # "yes the machine has been stable so far. let's drop down the reserve RAM to 15GB". The registry refuses a reserve at
+  # or under the brake's line, so he chose 17, 14 and 21 from three options (15, 13 and 19, or keep 24, 20 and 28), so
+  # that every Qwen3-ASR model fits beside SGLang. These three lines are unmeasured until Tasks 45 and 47. earlyoom
+  # stays at 12 and 9.
+  reserve_gib: 17        # a load must leave this much MemAvailable free
   # MemAvailable with no model loaded: 117.8 GiB before Phase 1's first load (changelog.md, 2026-09-28), rounded down.
   idle_available_gib: 117
-brake:
-  warn_gib: 28
-  brake_gib: 20
+brake:                   # 28 and 20 until 2026-11-09 (Dan's decision; beside reserve_gib, above)
+  warn_gib: 21
+  brake_gib: 14
   poll_ms: 250
 engines:
   llama.cpp: /opt/local-ai/bin/llama.cpp/b11146/llama-server
@@ -131,8 +136,8 @@ models:
     # reached main the same day (Dan's decision): the residents' 43 GiB and its 41 come to 84, within the ceiling, and
     # it fits beside the residents with the reserve kept, 41 of 117 − 43 − 24 = 50. Until then the registry held it at
     # 163,840, with a footprint of 35, because Phase 1's check summed every listed model against allocatable − reserve,
-    # 78 GiB. (Since 2026-11-09, Dan's decision, with Qwen3.6 always loaded in Gemma's place, the residents are 44 GiB:
-    # the set comes to 85, and it fits with 41 of 117 − 44 − 24 = 49.)
+    # 78 GiB. (Since 2026-11-09, Dan's decisions, with Qwen3.6 always loaded in Gemma's place and the reserve at 17, the
+    # residents are 44 GiB: the set comes to 85, and it fits with 41 of 117 − 44 − 17 = 56.)
     # Qwen3.6-35B-A3B, the coder before it, left the registry when it came; its files stay on disk.
     # Footprint, at its most after admission, estimated from the file's header (Phase 2a's council, 2026-10-07) and not
     # yet measured: weights ~16.4 GiB (the file); the KV cache ~17.0 at 68 KiB a token, 64 for its 16 attention layers
@@ -205,9 +210,10 @@ models:
   # 0.95); the KV cache at 112 KiB a token, both models' 28 layers of 8 KV heads of 128 (3.5 GiB at 32K, 7.0 at 64K);
   # ~1 for the compute buffers. No prompt cache: each request is new audio. Beside the coder 9 GiB are left, so the
   # -32k entries fit with it, qwen3-asr-0.6b-64k only just (9 of 9, so live memory may refuse it), and the gate refuses
-  # qwen3-asr-1.7b-64k until the coder unloads. (Since 2026-11-09, Dan's decision, with Qwen3.6 always loaded in Gemma's
-  # place, the residents are 44 GiB and 8 are left beside the coder: both -32k entries still fit with it, 7 and 6, and
-  # the gate refuses both -64k entries, 11 and 9, until the coder unloads.)
+  # qwen3-asr-1.7b-64k until the coder unloads. (Since 2026-11-09, Dan's decisions, with Qwen3.6 always loaded in
+  # Gemma's place and the reserve at 17, the residents are 44 GiB and 15 are left beside the coder, so all four fit with
+  # it, 7, 11, 6 and 9. Beside SGLang, about 45 GiB outside the stack, 11 are left: all four fit there too, the 1.7B at
+  # 64K only just.)
   qwen3-asr-1.7b-32k:
     label: Qwen3-ASR 1.7B at 32K
     capability: transcription

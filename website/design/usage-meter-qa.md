@@ -349,3 +349,10 @@ from the mac, we should be able to go back into the mac and backfill all the SGL
 measuring? i'm currently using the SGLang model as the default right nwo." The design's §7 already
 makes the harness's files the record for the by-hand engines; *Open for later* holds what the
 backfill needs.
+
+**Lifetime and monthly cost in the menu bar. Dan:** "i'd also like my swiftbar to start tracking
+lifetime token cost and maybe also by month. and then we can work on separate dashboard to view data
+to break down by other dates and models". The design's §4 already holds that, in 2b: its dropdown
+shows this month, last month, today and all time. A monthly figure needs the sync as well, since the
+by-hand SGLang doesn't pass through the front. The separate dashboard stays the project of its own
+it was.

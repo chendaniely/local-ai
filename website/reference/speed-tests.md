@@ -263,7 +263,8 @@ started again.
   drafts land on code isn't known.
 - **Quality isn't compared,** and the runs used temperature 0, not Unsloth's settings for thinking
   (temperature 1.0, top_p 0.95, top_k 20).
-- **MTP at 128K leaves 27 GiB,** under the brake's 28 GiB warn line. Phase 4a needs MTP at a 64K
+- **MTP at 128K leaves 27 GiB,** under the brake's 28 GiB warn line *(above it from the next deploy,
+  when the warn line is 21: Dan's decision of 2026-11-09)*. Phase 4a needs MTP at a 64K
   context (not tried) or the 2-bit `UD-Q2_K_XL` file.
 - **MTP wasn't tried in opencode.**
 - **Where the memory goes isn't split.** b11146 printed no buffer sizes or breakdown at its default
@@ -386,7 +387,8 @@ filesystem had 591 GiB free after (`df -h /`).
 - **The fast coder ran alone.** Beside the always-loaded models, its memory and speed aren't
   measured yet. By the numbers it fits there: 43 GiB for them, 45 for it and the 24 GiB reserve
   make 112, within the 117 available. *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6
-  always loaded in Gemma's place makes it 44 for them and 113 in all, still within the 117.)*
+  always loaded in Gemma's place and the reserve at 17, the same day's decision, make it 44 for them
+  and 106 in all, still within the 117.)*
 - **Quality isn't compared.** SGLang also warned that the FP8 KV cache has no scaling factors, so
   it uses 1.0 for each.
 

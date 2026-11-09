@@ -603,11 +603,11 @@ def _fail_at(call, n, code, *, memgetinfo_after=False):
     (117.0, "cudaMalloc", 1, OUT_OF_MEMORY, 80.0, False, 0.0, 0, NOTHING_GIVEN),
     (117.0, "cudaMalloc", 1, OUT_OF_MEMORY, 0.5, False, 0.0, 0, NOTHING_GIVEN),
     (26.5, "cudaMalloc", 10, OUT_OF_MEMORY, 3.0, False, 2.25, 9,
-     "MemAvailable was still 0.25 GiB above the reserve, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
+     "MemAvailable was still 0.25 GiB above the drills' floor, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
      "page cache, was 0.75 GiB: CUDA didn't take the memory the page cache held, so this isn't the ceiling. "
      + DANS_CALL),
     (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 3.0, False, 2.25, 9,
-     "MemAvailable was still 90.75 GiB above the reserve, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
+     "MemAvailable was still 90.75 GiB above the drills' floor, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
      "page cache, was 0.75 GiB: CUDA didn't take the memory the page cache held, so this isn't the ceiling. "
      + DANS_CALL),
     (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 80.0, True, 2.25, 9,
@@ -673,8 +673,8 @@ def test_it_reads_memgetinfo_before_allocating(cc, capsys):
 
 
 @pytest.mark.parametrize("argv, named", [
-    (["--reserve", "20"], "--reserve 20 is under 24 GiB, the reserve every load keeps free"),
-    (["--reserve", "23.9"], "--reserve 23.9 is under 24 GiB, the reserve every load keeps free"),
+    (["--reserve", "20"], "--reserve 20 is under 24 GiB, the drills' own floor"),
+    (["--reserve", "23.9"], "--reserve 23.9 is under 24 GiB, the drills' own floor"),
 ], ids=["20", "23.9"])
 def test_a_reserve_under_24_is_refused(cc, capsys, argv, named):
     # The reserve can only be raised, as the hog's floor (the controller's ruling, 2026-10-16): nothing loaded, read or
@@ -689,7 +689,7 @@ def test_a_reserve_under_24_is_refused(cc, capsys, argv, named):
     assert run(cc, box, "--reserve", "30") == 0
     assert len(box.allocs) == 8 and box.live == [] and [r for r, _ in box.watchdog.started] == [30.0]
     out = capsys.readouterr().out
-    assert "the reserve you set, --reserve 30 GiB" in out and "the reserve every load keeps free" not in out
+    assert "the reserve you set, --reserve 30 GiB" in out and "the drills' own floor" not in out
 
 
 @pytest.mark.parametrize("argv, named", [
@@ -749,7 +749,7 @@ def test_a_fall_under_the_reserve_while_it_holds_frees_everything(cc, capsys, ca
     out, err = capsys.readouterr()
     assert f"MemAvailable {drop_to:.2f} GiB, a shortfall" not in out
     last_fall = 29.5 - drop_to  # since the reading before the third step, 29.5
-    assert (f"MemAvailable read {drop_to:.2f} GiB, under the reserve, 24 GiB, while CUDA held 0.75 GiB, so it freed "
+    assert (f"MemAvailable read {drop_to:.2f} GiB, under the drills' floor, 24 GiB, while CUDA held 0.75 GiB, so it freed "
             f"everything at once and stopped. Since just before its last step MemAvailable fell {last_fall:.2f} GiB, "
             f"{last_fall - 0.25:.2f} GiB more than the step's 0.25 GiB: something else took memory meanwhile.") in err
     assert "This run measures nothing: " + SECOND_STOP in err
@@ -798,9 +798,9 @@ def test_under_the_reserve_it_says_whose_fall_it_was(cc, capsys, last_shows, own
 
 
 @pytest.mark.parametrize("start, words", [
-    (23.5, "MemAvailable is 23.50 GiB, already under the reserve, 24 GiB; nothing allocated, nothing measured"),
-    (24.0, "MemAvailable is 24.00 GiB, within a step of the reserve, 24 GiB; nothing allocated, nothing measured"),
-    (24.2, "MemAvailable is 24.20 GiB, within a step of the reserve, 24 GiB; nothing allocated, nothing measured"),
+    (23.5, "MemAvailable is 23.50 GiB, already under the drills' floor, 24 GiB; nothing allocated, nothing measured"),
+    (24.0, "MemAvailable is 24.00 GiB, within a step of the drills' floor, 24 GiB; nothing allocated, nothing measured"),
+    (24.2, "MemAvailable is 24.20 GiB, within a step of the drills' floor, 24 GiB; nothing allocated, nothing measured"),
 ], ids=["under", "at", "within-a-step"])
 def test_nothing_is_allocated_within_a_step_of_the_reserve(cc, capsys, start, words):
     # A box that isn't clear measures nothing: it stops (exit 3) and says to clear it first.
@@ -1043,7 +1043,7 @@ def test_the_watchdog_ends_the_process_within_250_ms_of_a_drop(cc, drop_at):
     watchdog.run()
     first_under = next(at for at, gib in seen if gib < 24)
     assert first_under - drop_at <= 0.25 and exits == [3] and clock.now == first_under
-    assert said == ["cuda_ceiling: the watchdog read MemAvailable 23.99 GiB, under the reserve, 24 GiB, while CUDA "
+    assert said == ["cuda_ceiling: the watchdog read MemAvailable 23.99 GiB, under the drills' floor, 24 GiB, while CUDA "
                     "held memory, so it ended the process at once (exit 3); a process's exit frees its CUDA memory. "
                     "The main thread's words were skipped. If a result line is printed above, it stands; if not, this "
                     "run measures nothing. Check that MemAvailable came back (grep MemAvailable /proc/meminfo), and "

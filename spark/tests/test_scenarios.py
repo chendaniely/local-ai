@@ -84,6 +84,7 @@ def test_the_notifications_page_is_generated_from_the_registry():
     # Its examples keep the plan's words, Gemma among them: a real message names whichever model the registry lists.
     assert "name Gemma as the always-loaded chat model, as the plan's do" in prose
     assert "a real message names whichever model the registry lists" in prose
+    assert "Their memory figures, the 24 GiB reserve and the 20 and 28 GiB lines among them, are as of when they were written" in prose
     assert "| Type | Priority | When | Example |" in page
     rows = _rows(page)
     assert len(rows) == 20

@@ -141,7 +141,8 @@ gpt-oss-120b, lighter Qwen3.6-35B-A3B, the resident vision model, and embeddings
   and no new privileges. It runs by hand now
   ([Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md)), and in Phase 4a as a registry
   model that loads after `spark make-room` clears the box. hasso5703's lane leaves about 17 GiB
-  available, under the reserve.)*
+  available, under the reserve *(of 24 then; the reserve is 17 from the next deploy, Dan's decision of
+  2026-11-09)*.)*
   [GaelicThunder/moe-offload-findings](https://github.com/GaelicThunder/moe-offload-findings) is the
   counterweight: nine mostly negative findings on streaming MoE experts from NVMe.
 

@@ -300,11 +300,11 @@ def test_fast_coder_refuses_when_it_cant_tell_whether_the_coder_is_loaded(tmp_pa
     assert "pgrep" in result.stderr
 
 
-# 79 until 2026-11-09, Dan's decision: 72 is the container's 45, the 24 GiB reserve and 3 of margin, the sum the refusal
-# spells out, with Qwen3.6 always loaded leaving about 78 available by Phase 1's cold loads.
-@pytest.mark.parametrize(("kib", "starts"), [(72 * GIB, True), (72 * GIB - 1, False), (40 * GIB, False)],
-                         ids=["72 GiB", "just under", "40 GiB"])
-def test_fast_coder_starts_only_with_72_gib_available(tmp_path, kib, starts):
+# 79 until 2026-11-09, Dan's decisions: 68 is the container's 45, the stack's 17 GiB reserve and the 6 the always-loaded
+# models can still grow into, the sum the refusal spells out.
+@pytest.mark.parametrize(("kib", "starts"), [(68 * GIB, True), (68 * GIB - 1, False), (40 * GIB, False)],
+                         ids=["68 GiB", "just under", "40 GiB"])
+def test_fast_coder_starts_only_with_68_gib_available(tmp_path, kib, starts):
     box = Box(tmp_path)
     box.set_kib(kib)
     result = box.run(FAST_CODER)
@@ -312,7 +312,7 @@ def test_fast_coder_starts_only_with_72_gib_available(tmp_path, kib, starts):
     assert any(call.startswith("sudo docker run ") for call in box.calls()) == starts
     if not starts:
         assert result.stderr.count("\n") == 1 and f"{kib // GIB} GiB available" in result.stderr
-        assert "under the 72 it needs (its 45, the 24 reserve, and 3 of margin)" in result.stderr
+        assert "under the 68 it needs (its 45, the 17 reserve, and the 6 the always-loaded models can still grow into)" in result.stderr
 
 
 def test_fast_coder_says_so_when_meminfo_has_no_memavailable(tmp_path):

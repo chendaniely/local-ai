@@ -269,7 +269,7 @@ flowchart TD
   hold -- "time is up" --> inline
   low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, idle ones first,<br/>and acts on the rate of fall"]
   brake -- "holds new loads" --> ask
-  brake --> release["the gate lifts the hold after 5 minutes above 28 GiB, if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]
+  brake --> release["the gate lifts the hold after 5 minutes above 28 GiB (21 from the next deploy),<br/>if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]
   ask --- idle["the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]
 ```
 
@@ -291,7 +291,9 @@ own requests may load into and `agent`'s may not. If the model doesn't fit, the 
 for its key's wait, then gets a refusal that says why, in the client itself. `spark launch` starts
 nothing without the gate's ticket, and keeps ~~today's~~ Phase 1's checks *(reworded 2026-10-16, at
 the cutover, when they stopped being today's path)* as backstops that never wait. The
-reserve stays 24 GiB: the design lowered it to 22, and it went back to 24 the same day.
+reserve stays 24 GiB: the design lowered it to 22, and it went back to 24 the same day. *(2026-11-09,
+Dan's decision: from the next deploy the reserve is 17 GiB, the brake's line 14 and the warn line 21,
+unmeasured until Tasks 45 and 47; earlyoom stays at 12 and 9. Plan: the Revisions line of that date.)*
 
 ## Apps and speech (Phase 3, planned)
 

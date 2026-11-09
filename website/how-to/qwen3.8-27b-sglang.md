@@ -37,8 +37,8 @@ provider in opencode ([step 6](#connect-from-the-mac)).)*
 
 *(Added 2026-10-15, Dan's decision: `make fast-coder` is the short way, **on the Spark**, in the
 clone. Load Gemma first, as step 1 says. Then `make fast-coder` refuses while the llama.cpp coder
-is loaded, saying how to unload it, or while under ~~79~~ 72 GiB is available (72 since 2026-11-09,
-Dan's decision; step 1 says why), and otherwise runs step 2's
+is loaded, saying how to unload it, or while under ~~79~~ 68 GiB is available (68 since 2026-11-09,
+Dan's decisions; step 1 says why), and otherwise runs step 2's
 command in the foreground; `make fast-coder DO=wait` is step 3, and `make fast-coder DO=stop` step
 5. It's temporary: it goes when Phase 4a puts the fast coder in the registry.)*
 
@@ -55,8 +55,8 @@ The session's code and docs work doesn't conflict.
 
 **It runs beside the stack**, so Open WebUI, pi and `agent` keep their models. Alone it took about
 45 GiB, and by arithmetic that fits beside the everyday models: their 43, its 45 and the 24 GiB
-reserve make 112 of 117. *(2026-11-09, Dan's decision, from the next deploy: their 44, which makes
-113 of 117; step 1's note has the rest.)* The first repeat run is also the first measured beside
+reserve make 112 of 117. *(2026-11-09, Dan's decisions, from the next deploy: their 44 and the
+reserve's 17, which makes 106 of 117; step 1's note has the rest.)* The first repeat run is also the first measured beside
 them, so keep the
 `free -g` readings for [Speed tests](../reference/speed-tests.md). Flash-Next can't run at the same
 time.
@@ -74,19 +74,18 @@ free -g
   `systemctl stop local-ai-llama-swap && systemctl start local-ai-llama-swap`. From Phase 2a's
   cutover, `/opt/local-ai/app/.venv/bin/spark unload coder` unloads only the coder.
 - **Then load Gemma:** ask Open WebUI one question, so the container's start sees Gemma's memory.
-- **Start only if `free -g` shows at least ~~79~~ 72 GiB available:** the container's 45, the 24
-  reserve, and ~~about 10 the everyday models can still grow into~~ 3 of margin. *(Changed
-  2026-11-09, Dan's decision: 72, not 79. It no longer covers all the growth the always-loaded
-  models are still owed, about 5–6 GiB with Qwen3.6, as the 79 did. That is how it has been running
-  since 2026-10-26, with 30–32 GiB left, and it's temporary until Phase 4a.)*
+- **Start only if `free -g` shows at least ~~79~~ 68 GiB available:** the container's 45, the ~~24~~
+  17 reserve, and ~~about 10~~ the 6 the everyday models can still grow into. *(Changed 2026-11-09,
+  Dan's decisions: 68, not 79, with the stack's reserve at 17 from the next deploy, so that growth
+  is covered. It's temporary until Phase 4a.)*
 
 *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6 is the always-loaded chat model, so this
 step's second part becomes "load Qwen3.6": ask it one question in Open WebUI, or run
 `/opt/local-ai/app/.venv/bin/spark load small`, **on the Spark**, so the container's start sees
 Qwen3.6's memory. Gemma, on demand, doesn't come into it. By Phase 1's cold loads, 29.8, 6.3 and
 about 2.5 GiB, the always-loaded set then leaves about 78 GiB available: arithmetic, not measured.
-That is under the old 79, and above the 72 this step and `make fast-coder` ask for since the same
-day, by Dan's decision.)*
+That is under the old 79, and above the 68 this step and `make fast-coder` ask for since the same
+day, by Dan's decisions.)*
 
 **2. Start it, on the Spark**, in tmux or a terminal you'll keep open. It's step 5's command with
 the image's digest filled in, hasso5703's, checked on the Spark on 2026-10-14:
@@ -192,7 +191,8 @@ from SGLang's source, until the first run measures it:
 | **Total** | **about 40–46** |
 
 So `free -g` available should fall by about 43 GiB once it's up. **Stop it (`sudo docker stop -t
-20 qwen38-coder`) if available goes under 28 GiB**, the brake's warn line. Beside the always-loaded
+20 qwen38-coder`) if available goes under 28 GiB**, the brake's warn line *(21 from the next deploy,
+Dan's decision of 2026-11-09; this step and `make fast-coder` keep 28 for now)*. Beside the always-loaded
 models the room is 50 GiB (rule 9), so it fits there too, with little to spare.
 
 ## 1. Before you start
@@ -269,7 +269,8 @@ free -g
 
 That stops every model the stack serves until you start it again ([Stop it](#stop-it)), and clears
 the page cache the downloads left (the plan's open risk *Page cache and the launch check*).
-Available should be back near 117. The brake keeps running: if available falls under 20 GiB it
+Available should be back near 117. The brake keeps running: if available falls under 20 GiB
+*(14 from the next deploy, Dan's decision of 2026-11-09)* it
 writes its hold, which blocks the stack's loads until you release it.
 
 *(Added 2026-10-15, Phase 2a's Task 35: from Phase 2a's cutover, stopping llama-swap by hand isn't
@@ -288,8 +289,8 @@ cutover, this step is unchanged.)*
 3. Start only if `free -g` shows at least 77 GiB available: the container's 43, the 24 reserve, and
    about 10 the always-loaded models can still grow into. *(Corrected 2026-10-15: 79 GiB, since the
    first run measured the container at about 45, not 43. [Run it again](#run-it-again) uses 79.)*
-   *(Changed 2026-11-09, Dan's decision: [Run it again](#run-it-again) uses 72, the container's 45,
-   the 24 reserve and 3 of margin, and says why.)*
+   *(Changed 2026-11-09, Dan's decisions: [Run it again](#run-it-again) uses 68, the container's 45,
+   the 17 reserve and the 6 the always-loaded models can still grow into, and says why.)*
 
 Anything llama-swap loads afterwards still goes through its launch check, which sees the
 container's memory as used and refuses what doesn't fit. Nothing checks the container itself.

@@ -635,7 +635,10 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    any class, then the least recently used. Each step notifies, and "held by brake" blocks automatic
    reloads. Starting thresholds — tunable, set above the band where freezes have been reported: warn
    at 28 GiB available, brake at 20 GiB, admission keeps ≥24 GiB free, earlyoom at 12/9 GiB. Tuned
-   from measurements. *(Phase 2a: ~~the brake moves into the gate, with the same thresholds and
+   from measurements. *(2026-11-09, Dan's decision, replacing his of 2026-10-07 to keep 24 until 2a
+   had measured the footprints; Revisions: warn at 21, brake at 14 and admission keeping ≥17 GiB
+   free, from the next deploy, with earlyoom still at 12 and 9. Unmeasured until Tasks 45 and 47.)*
+   *(Phase 2a: ~~the brake moves into the gate, with the same thresholds and
    order.~~ It **releases by itself** once memory has stayed above the warn line, 28 GiB, for
    **5 minutes** (Dan, 2026-10-05: "a few minutes"), and its notification says when it fired and
    when it released. The gate then reloads the resident models one at a time, as at boot (Dan,
@@ -651,7 +654,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      early when the fall would reach the brake line before an unload can free enough, set from 2a's measurements
      of loads' falls (2.0 to 2.6 GiB/s so far) and engines' stop times (*The minimal brake's
      reach*). The thresholds stay, and admission keeps **≥24 GiB** free: rule 9 records the
-     reserve's swing to 22 and back, the same day. *(Corrected 2026-10-07, after the
+     reserve's swing to 22 and back, the same day *(and 2026-11-09's change to 21, 14 and 17: the note
+     at this rule's start)*. *(Corrected 2026-10-07, after the
      implementation plan's review, which found that a watch on the fall alone fires on every
      ordinary coder load, since 2.0 to 2.6 GiB/s is how fast a load falls:)* **a fall the gate
      knowingly admitted is not a crash.** The watch subtracts the expected fall of the loads in
@@ -795,8 +799,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      formula becomes
      `footprint ≤ idle MemAvailable − reserve − the loaded models' footprints`, which is render's
      check below. The coder beside the residents: 117 − 43 − 24 leaves 50, against its ~41, cold
-     residents or grown. *(From the next deploy, Dan's decision of 2026-11-09: 117 − 44 − 24 leaves
-     49, with Qwen3.6 in Gemma's place; Revisions.)* *(Corrected 2026-10-07, after the re-review: *owed* was first a model's
+     residents or grown. *(From the next deploy, Dan's decisions of 2026-11-09: 117 − 44 − 17 leaves
+     56, with Qwen3.6 in Gemma's place and the reserve at 17; Revisions.)* *(Corrected 2026-10-07, after the re-review: *owed* was first a model's
      footprint less its load's fall alone, which counted growth that had already happened twice,
      once in `MemAvailable` and once in *owed*. It erred safe, but it would refuse the coder once
      memory outside the stack and the residents' growth passed 9 GiB together, with nothing else
@@ -816,11 +820,15 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      and nothing else running, so render and the gate hold one formula between them. *(And since
      Task 5's review, 2026-10-07, the residents' check and a `needs_room` model's are the gate's
      formula too, with nothing loaded.)* It warns when every model loaded at its footprint would
-     leave memory under the warn line, 28 GiB. With Phase 2a's coder at ~41, the set comes to ~84 of
+     leave memory under the warn line, 28 GiB *(21 from the next deploy, Dan's decision of
+     2026-11-09)*. With Phase 2a's coder at ~41, the set comes to ~84 of
      the 102; the coder, the residents and the reserve to 108 of the 117; and everything loaded
      would leave about 33, 5 GiB above the warn line.
    - **The reserve stays ≥24 GiB,** above the brake line, 20, which the registry enforces, so that
-     a fresh load never trips the brake.
+     a fresh load never trips the brake. *(2026-11-09, Dan's decision, which replaces this one; his
+     words and the options are in Revisions: from the next deploy the reserve is 17 and the brake's
+     line 14, and the warn line 21. The registry still refuses a reserve at or under the brake's line.
+     Unmeasured until Tasks 45 and 47.)*
    - **The ceiling gets measured** in 2a without coming near a freeze: first what CUDA reports with
      nothing allocated (`llama-server --list-devices`); then a standard-library `ctypes` script
      against llama.cpp's bundled CUDA runtime that allocates and touches 1 GiB steps, re-reads
@@ -1049,7 +1057,9 @@ reach the phone once ntfy is set up; the clause returns then.)*
 *(2026-11-09, Dan's decision; Revisions: from the next deploy the always-loaded chat model is Qwen3.6,
 33 GiB, not Gemma, 32, which loads when asked. This section's examples keep Gemma and its numbers as
 written: each message names the model the registry lists, so they'll name Qwen3.6, and the figures
-move with it: 44 GiB of residents, 49 free for a load beside them, and 8 beside the coder.)*
+move with it. With the reserve at 17, Dan's decision the same day, that's 44 GiB of residents, 56
+free for a load beside them and 15 beside the coder. The examples' 24 GiB reserve and 20 and 28 GiB
+lines are as of when they were written.)*
 
 **Plain words everywhere Dan reads.** Models by role first, as he knows them: *the coder*, *Gemma*,
 *the embeddings*, *whisper*; file names only in `spark status` and make-room's list, in brackets,
@@ -2676,7 +2686,8 @@ Each item gets its own design pass when its turn comes.
   `main`: render refuses always-loaded models, or an on-demand model beside them, that don't fit
   with the reserve kept, but a set that would leave less than the brake's warn line with every
   model loaded is only a warning. Today's four leave 33 GiB of the 117 available at idle, above the
-  warn line, 28, so the stack alone still can't open the gap; a registry that renders with that
+  warn line, 28, so the stack alone still can't open the gap *(the warn line is 21 from the next
+  deploy, Dan's decision of 2026-11-09)*; a registry that renders with that
   warning could. Revisions.)*
 - ~~**Anyone on the box can take 127.0.0.1:9100**~~ **Closed as built, 2026-10-16, at Phase 2a's
   cutover (its Task 38).** systemd's socket units hold 127.0.0.1:9100 and the gate's two sockets;
@@ -2774,7 +2785,8 @@ Each item gets its own design pass when its turn comes.
   the same day after the council: the reserve stays 24, Dan's decision, and the coder's estimate
   rises to ~41, so the set comes to about 84; the corrected check, now with its formulas, is what
   lets the coder fit, and the gate's formula also holds back the growth the loaded models are
-  still owed: rule 9.)*
+  still owed: rule 9.)* *(2026-11-09, Dan's decision: the reserve becomes 17 from the next deploy,
+  replacing that 24; Revisions.)*
 - ~~**Fresh releases in the lock — Dan's decision**~~ **Resolved 2026-09-27: a rolling seven-day
   window.** Dan chose it while the stack is still early, to see how it works in practice: uv
   0.12.18 takes `exclude-newer = "7 days"` and records the span in the lock (`exclude-newer-span =
@@ -2919,7 +2931,9 @@ Each item gets its own design pass when its turn comes.
   brake (the 16 GiB swap file; earlyoom ignores swap), which sets swap size and swappiness (Phase
   2a measures it at the real thresholds; added 2026-10-07; corrected the same day, after the
   implementation plan's re-check: down to 24 GiB available only, the drills' floor, with the 20–24
-  band left unmeasured by choice); that
+  band left unmeasured by choice; *2026-11-09, Dan's decision: from the next deploy the real lines
+  are 21 and 14, so the band left unmeasured is 14–24, and how the drills reach the lines at all is
+  his to decide: Tasks 47 and 48*); that
   the stack keeps serving through a routine upgrade that moves `libc6` or `libstdc++6`, and through
   one that moves Docker (`docker-ce`, `containerd.io`), and which of the two Docker's restart does
   to the web services (the 2026-09-28 upgrade moved none of them; added 2026-09-28); how much host
@@ -4378,8 +4392,8 @@ Each item gets its own design pass when its turn comes.
   `-32k` entries are the first models below their full context since *every model at its full
   context* (2026-09-28): at 32K each fits beside the coder (~7 and ~6 GiB of the 9 left beside it),
   and at 65,536 the 1.7B (~11) doesn't. *(2026-11-09, Dan's decision; the Revisions line of that
-  date: from the next deploy, with Qwen3.6 always loaded in Gemma's place, 8 are left beside the
-  coder, so the 32K entries still fit, and the 0.6B at 65,536, ~9, no longer does.)* A request is held to the model's own limit, 20 minutes of
+  date: from the next deploy, with Qwen3.6 always loaded in Gemma's place and the reserve at 17, 15 are
+  left beside the coder, so all four fit there, the 0.6B at 65,536, ~9, included.)* A request is held to the model's own limit, 20 minutes of
   audio, by the client, at either context. The footprints are estimates until a load is measured.
   Whisper keeps the `stt` role, so it stays the web UI's speech-to-text and the model doctor's speech
   checks send to; render and doctor now find it by that role, not as the only transcription model.
@@ -4468,9 +4482,9 @@ Each item gets its own design pass when its turn comes.
   policy-safe option. No model file's pinned revision moves, and Qwen3.6's own vision file isn't
   added: that waits for a real photo test. Unmeasured: Qwen3.6's footprint at two slots, still the
   33 GiB estimate, and whether two slots work with `--spec-type draft-mtp` at b11146, which hasn't
-  been run on this box. The always-loaded set goes from 43 to 44 GiB, so an on-demand model gets 49
-  GiB beside it, not 50, and beside the coder only 8, which refuses `qwen3-asr-0.6b-64k`, the one of
-  the Qwen3-ASR entries that fit there only just. The tests of the code's behaviour now read a
+  been run on this box. The always-loaded set goes from 43 to 44 GiB (and, with the reserve at 17,
+  the line below, an on-demand model gets 56 GiB beside it and 15 beside the coder, where all four
+  Qwen3-ASR entries fit). The tests of the code's behaviour now read a
   frozen registry, so a change of models touches only the tests about the shipped file. Each page
   this touches has a dated note; README's *Current state* and `changelog.md` wait for the deploy.
 - **2026-11-09** — `make fast-coder` starts at 72 GiB available, not 79 (Dan's decision): the
@@ -4479,7 +4493,22 @@ Each item gets its own design pass when its turn comes.
   always-loaded models could still grow into. 72 no longer covers all the growth they're still owed,
   about 5–6 GiB with Qwen3.6. That is how it has been running since 2026-10-26, with 30–32 GiB left,
   and it's temporary until Phase 4a puts the fast coder in the registry. The script's refusal, its
-  test and [the runbook](../how-to/qwen3.8-27b-sglang.md) say so.
+  test and [the runbook](../how-to/qwen3.8-27b-sglang.md) say so. *(Later the same day: 68, the line
+  below, which covers that growth again.)*
+- **2026-11-09** — The memory lines come down, in the registry from the next deploy (Dan's decision,
+  replacing his of 2026-10-07 to keep 24 until 2a had measured the footprints): `budget.reserve_gib`
+  17, `brake.brake_gib` 14 and `brake.warn_gib` 21, with earlyoom still at 12 and 9. His words: "yes
+  the machine has been stable so far. let's drop down the reserve RAM to 15GB". The registry refuses a
+  reserve at or under the brake's line, so he chose 17, 14 and 21 from three options (17, 14 and 21;
+  15, 13 and 19; or keep 24, 20 and 28), because every Qwen3-ASR model then fits beside SGLang, with 11
+  GiB left there. These lines are unmeasured until Tasks 45 and 47. The room moves with them: 56 GiB free
+  beside the always-loaded models, 15 beside the coder, where all four Qwen3-ASR entries fit, and 2 GiB
+  between the brake's line and earlyoom's, where there were 8. `make fast-coder` starts at 68 GiB
+  available: the container's 45, the reserve's 17 and the 6 the always-loaded models can still grow
+  into, so the growth is covered. The drills' hog and the ceiling script keep their own floor of 24
+  GiB, now above the reserve, so the hog can't reach the warn line or the brake; how Tasks 47 and 48
+  reach them is Dan's to decide (each says what it needs). Every rule and page that stated the lines
+  has a dated note; example messages keep their figures as of when they were written.
 
 ## Sources
 

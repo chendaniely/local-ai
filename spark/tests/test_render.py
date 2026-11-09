@@ -489,7 +489,7 @@ def test_the_real_registry_warns_only_that_all_cant_load_at_once():
     # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
     # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.
     # (Since 2026-11-09, Dan's decision, Qwen3.6 is always loaded and Gemma on demand: the coder's 41 and Gemma's 32 of
-    # 117 − 44 − 24 = 49.)
+    # 117 − 44 − 17 = 56, with the reserve at 17.)
     # Since Qwen3-ASR's four entries (2026-10-23, Dan's decisions), every model at once, 150 GiB, passes even the 117
     # available at idle; until then it left memory under the warn line.
     warnings = spark.render.check_budget(load_registry(ROOT / "stack/models.yaml"))

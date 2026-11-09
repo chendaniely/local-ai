@@ -133,13 +133,14 @@ def test_it_stops_at_leave(hog, lag_s):
     (["--floor", "30", "--leave", "28"], "--floor 30 GiB", False),
 ], ids=["leave-under-the-floor", "floor-under-the-reserve", "leave-under-a-raised-floor"])
 def test_a_leave_under_the_floor_is_refused(hog, capsys, argv, named, reserve):
-    # The floor can only be raised: one under the reserve, 24, is refused as a --leave under the floor is (the
-    # controller's ruling, 2026-10-16). A floor raised above the reserve isn't called the reserve.
+    # The floor can only be raised: one under the drills' own floor, 24, is refused as a --leave under the floor is (the
+    # controller's ruling, 2026-10-16). A floor raised above it isn't called the drills' own; since 2026-11-09 (Dan's
+    # decision) the stack's reserve is 17, under this floor, so the floor no longer calls itself the reserve.
     box = Box(74.0)
     assert run(hog, box, *argv) == 2
     assert box.steps == [] and box.reads == []
     words = capsys.readouterr().err
-    assert named in words and ("the reserve every load keeps free" in words) == reserve
+    assert named in words and ("the drills' own, above the stack's reserve" in words) == reserve
 
 
 @pytest.mark.parametrize("argv, named", [
@@ -164,7 +165,7 @@ def test_a_faster_pace_is_refused(hog, capsys, argv, named):
 
 
 @pytest.mark.parametrize("start, code, words", [
-    (23.5, 3, "already under --leave 48.00 GiB and under the floor, 24 GiB, the reserve every load keeps free; "
+    (23.5, 3, "already under --leave 48.00 GiB and under the floor, 24 GiB, the drills' own, above the stack's reserve; "
               "nothing taken"),
     (47.75, 3, "already under --leave 48.00 GiB; nothing taken"),
     (48.0, 0, "already within a step of --leave 48.00 GiB; nothing taken"),

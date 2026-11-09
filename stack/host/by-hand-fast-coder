@@ -10,7 +10,7 @@
 # make fast-coder: the fast coder, Qwen3.8-27B on SGLang, beside the stack, as the Run it again section of
 # website/how-to/qwen3.8-27b-sglang.md runs it. On the Spark only, as Dan, from the clone.
 #   make fast-coder           step 1's checks, then step 2: it refuses while the llama.cpp coder is loaded or under
-#                             72 GiB is available, else it runs step 2's container in the foreground, its output
+#                             68 GiB is available, else it runs step 2's container in the foreground, its output
 #                             kept in ~/sglang/scratch/boot-<time>.log
 #   make fast-coder DO=wait   step 3: waits, up to about 10 minutes, for its /health, then shows the time and free -g
 #   make fast-coder DO=stop   step 5: stops the container, then shows free -g and the deployed spark status
@@ -30,12 +30,13 @@ MEMINFO="${BY_HAND_MEMINFO:-/proc/meminfo}"
 UNIT_DIR="${BY_HAND_UNIT_DIR:-/etc/systemd/system}"
 SPARK="$OPT/app/.venv/bin/spark"
 
-# Step 1's limit: the container's 45, the 24 GiB reserve and 3 of margin (Dan's decision, 2026-11-09). It was 79 until
-# then, with about 10 the always-loaded models could still grow into in place of the 3, and Qwen3.6 always loaded leaves
-# about 78 by Phase 1's cold loads. 72 no longer covers all the growth those models are still owed, about 5-6 GiB with
-# Qwen3.6. That is how it has been running since 2026-10-26, with 30-32 GiB left, and it's temporary until Phase 4a.
-NEED_GIB=72
-WARN_GIB=28     # step 3: stop it if available is under the brake's warn line
+# Step 1's limit: the container's 45, the stack's reserve of 17 and the 6 the always-loaded models can still grow into,
+# so the growth is covered (Dan's decisions, 2026-11-09). It was 79 until then: 45, the 24 reserve and about 10 of that
+# growth, with Gemma. It's temporary until Phase 4a.
+NEED_GIB=68
+# Step 3: stop it if available is under this: the brake's warn line until the next deploy, which makes that 21 (Dan's
+# decision, 2026-11-09). This stays 28 for now, the wider margin; lowering it is Dan's to decide.
+WARN_GIB=28
 HEALTH_TRIES=60 # step 3's loop asks every 10 s: about 10 minutes
 # The llama.cpp coder's engine runs as spark. While it starts, its command line is `spark launch qwen3.8-27b --
 # …/llama-server … --model …`; once launch has exec'd the engine, it's the engine's own, without `launch`. Its
@@ -81,7 +82,7 @@ start() {
   esac
   kib="$(available_kib)" || exit 1
   if [ "$kib" -lt $((NEED_GIB * 1048576)) ]; then
-    echo "make fast-coder: $((kib / 1048576)) GiB available, under the $NEED_GIB it needs (its 45, the 24 reserve, and 3 of margin): free some, then run make fast-coder again" >&2
+    echo "make fast-coder: $((kib / 1048576)) GiB available, under the $NEED_GIB it needs (its 45, the 17 reserve, and the 6 the always-loaded models can still grow into): free some, then run make fast-coder again" >&2
     exit 1
   fi
 

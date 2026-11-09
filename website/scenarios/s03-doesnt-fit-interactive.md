@@ -53,7 +53,8 @@ The next step works: make-room's hold is mine, so `spark make-room 41G` unloads 
 shrinks to the 9 GiB left. `spark make-room --done` ends that, and Gemma comes back once there's
 room for it, after my python job. *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, 33
 GiB, is the always-loaded chat model here, and it's what make-room would unload and reload; this
-example's other figures keep Gemma's 32 GiB and move with it by about a gigabyte.)*
+example's other figures keep Gemma's 32 GiB and the 24 GiB reserve, as of when it was written, and
+from the next deploy they move with both, the reserve to 17 by the same day's decision.)*
 
 Every refusal but one is a `409`, which pi shows at once; a start that fails reads `load_failed`,
 with its reason, and a model not yet downloaded `not_downloaded`. Only `gate_down`, which the front

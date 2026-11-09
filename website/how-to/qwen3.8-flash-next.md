@@ -167,8 +167,9 @@ with llama-swap stopped. Phase 4a (after Phase 2a) makes it a registry model tha
 `spark make-room` clears the others, which only Dan can run; this page retires then.
 
 *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, 33 GiB, replaces Gemma, 32, among the
-always-loaded models, so that room is min(117 − 44 − 24, 102 − 44) = 49 GiB; the model still doesn't
-fit beside them.)*
+always-loaded models, and the reserve comes down to 17 by the same day's decision, so that room is
+min(117 − 44 − 17, 102 − 44) = 56 GiB; the model still doesn't fit beside them. On an empty box the
+room becomes min(117 − 17, 102) = 100, not 93.)*
 
 ## What fits
 
@@ -190,7 +191,7 @@ KL divergence 0.165 against 0.225, and the same top token 85.4% of the time agai
 ## The budget
 
 With llama-swap stopped, about 117 GiB is free, and the reserve keeps 24 of it: 93 GiB for the
-model. What it takes, by arithmetic until the first run measures it:
+model. *(From the next deploy, Dan's decision of 2026-11-09: the reserve keeps 17, so 100.)* What it takes, by arithmetic until the first run measures it:
 
 | Part | GiB |
 |---|---:|
@@ -202,7 +203,8 @@ model. What it takes, by arithmetic until the first run measures it:
 | **Total** | **about 80–83** |
 
 So `free -g` should show about 34–37 GiB available once it's loaded. **Stop the server if
-available falls under 28 GiB**, the brake's warn line. Each further 32K of context costs about
+available falls under 28 GiB**, the brake's warn line *(21 from the next deploy, Dan's decision of
+2026-11-09; `make flash-next` keeps 28 for now)*. Each further 32K of context costs about
 0.8 GiB more, so there's room to raise `--ctx-size` once the first run shows the real numbers.
 
 *(Added 2026-10-15, the first run, measured as how far available memory fell from 117 GiB: at 32K,
@@ -263,7 +265,8 @@ free -g
 ```
 
 While llama-swap is stopped, **the brake keeps running but can't unload this server**: it unloads
-only through llama-swap. If available falls under 20 GiB it writes its hold, which blocks the
+only through llama-swap. If available falls under 20 GiB *(14 from the next deploy, Dan's decision
+of 2026-11-09)* it writes its hold, which blocks the
 stack's loads after the restore until you release it. earlyoom is the last net, at 12 GiB, and
 kills `llama-server` first.
 

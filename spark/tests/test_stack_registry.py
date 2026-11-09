@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from spark.budget import free_for_a_load
 from spark.registry import ClientKey, load_keys, load_registry
 from spark.versions import load_versions
 
@@ -197,6 +198,30 @@ def test_qwen36_is_the_always_loaded_chat_model_and_gemma_goes_on_demand():
     assert not gemma.resident and gemma.used_by is None
     assert gemma.args == ("--load-mode", "none", "--ubatch-size", "2048", "--image-max-tokens", "1120",
                           "--ctx-checkpoints", "4", "--slot-prompt-similarity", "0.5")
+
+
+def test_the_memory_lines_are_dans_of_2026_11_09():
+    # Dan's decision, 2026-11-09, replacing his of 2026-10-07 to keep 24 until 2a had measured the footprints: the reserve
+    # at 17, the brake at 14 and the warn line at 21, unmeasured until Tasks 45 and 47; earlyoom stays at 12 and 9. His
+    # reason: every Qwen3-ASR model then fits beside SGLang, which holds about 45 outside the stack.
+    registry = load_registry(STACK_REGISTRY)
+    assert (registry.budget.reserve_gib, registry.brake.brake_gib, registry.brake.warn_gib) == (17, 14, 21)
+    models = registry.models
+    residents = sum(m.footprint_gib for m in models.values() if m.resident)
+    asr = [m for name, m in models.items() if name.startswith("qwen3-asr-")]
+    assert len(asr) == 4
+
+    def free(*, committed, outside=0):
+        return free_for_a_load(available=registry.budget.idle_available_gib - committed - outside, reserve=17, owed=0,
+                               ceiling=registry.budget.allocatable_gib, committed=committed, starting=0, held=0)
+
+    assert free(committed=residents) == 56  # beside the always-loaded models
+    coder = residents + models["qwen3.8-27b"].footprint_gib
+    assert free(committed=coder) == 15  # and the coder: all four fit
+    assert free(committed=residents, outside=45) == 11  # beside SGLang: the 1.7B at 64K only just
+    for model in asr:
+        assert model.footprint_gib <= free(committed=coder), model.name
+        assert model.footprint_gib <= free(committed=residents, outside=45), model.name
 
 
 def test_the_budget_records_idle_memavailable():

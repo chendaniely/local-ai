@@ -550,7 +550,9 @@ the plan it would come in, and what was left out and why.
   Runbook: [Updates](website/how-to/updates.md).
 - **Nothing loads unless it fits, and a change that restarts llama-swap goes through `make apply`**
   (added 2026-10-16, at Phase 2a's cutover, which built and deployed what these rules rest on). The
-  gate admits every load, one at a time, keeping the 24 GiB reserve free and holding back the growth
+  gate admits every load, one at a time, keeping the ~~24~~ 17 GiB reserve free *(17, with the brake's
+  line at 14 and the warn line at 21, from the next deploy: Dan's decision, 2026-11-09, unmeasured
+  until Tasks 45 and 47; earlyoom stays at 12 and 9)* and holding back the growth
   the loaded models are still owed. The brake stays a unit of its own, unloading idle models first,
   and the gate lifts its hold only within bounds (built; its pause seen in the journal twice in October, outside any drill;
   its timings and drill still to come: Tasks 47 and 48). A

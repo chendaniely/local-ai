@@ -11,7 +11,9 @@ been reported to freeze.
 **What happens.** A warning fires at 28 GiB available. At 20 GiB the brake unloads a loading
 engine first, then idle models of any class, then the least recently used, and holds them
 there. earlyoom is the last resort. Phase 1 ships a minimal brake that unloads the on-demand
-coder first, then the always-loaded models.
+coder first, then the always-loaded models. *(2026-11-09, Dan's decision: from the next deploy the
+warning fires at 21 and the brake's line is 14, unmeasured until Tasks 45 and 47; earlyoom stays at
+12 and 9.)*
 
 **What I see.** A high-priority "brake" notification, and a hold shown in `spark status`. *(The
 notification from Phase 5, since 2026-10-14: the note at the foot.)*
@@ -75,7 +77,8 @@ that was loading when the brake fired doesn't reload by itself: my own request, 
 or the web UI, or `spark load`, loads it if it fits, while `agent`'s requests for it wait, then are
 refused with `footprint_suspect`, until I have loaded it once. While the gate is down, the brake
 sends its own alert, and the gate, once back, doesn't send it again. `make brake-release` stays.
-Admission keeps 24 GiB free.
+Admission keeps 24 GiB free. *(2026-11-09, Dan's decision: from the next deploy 17, and the hold lifts
+after 5 minutes above 21.)*
 
 In the plan's words: a silent *Memory is getting low on brightroar: 27.4 GiB available, under the
 28 GiB warning line. The brake acts at 20.*; then a high-priority *Brake on brightroar at 03:12:
@@ -106,7 +109,9 @@ resume once the gate is back and memory has stayed above 28 GiB available for 5 
 
 *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6 is the always-loaded chat model and
 Gemma loads when asked. So the words above name Qwen3.6 where they name Gemma, and a Gemma the brake
-unloads doesn't reload by itself.)*
+unloads doesn't reload by itself. Their memory figures, the 20 and 28 GiB lines among them, are as of
+when they were written: from the next deploy, the same day's decision, the warn line is 21 and the
+brake's 14.)*
 
 *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
 NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of

@@ -533,16 +533,22 @@ the caps' new number; the reconciliation's tolerance.
   folder, and how a renamed folder is treated, are left to that design: Pi's file names follow the folder (§7).
 - **The by-hand SGLang's tokens: a placeholder for the backfill** (added 2026-11-09, Dan: it is his default coder,
   running since 2026-10-26, and §7's sync is what can count it, until Phase 4a puts it behind the front). What the
-  backfill needs, none of it checked yet:
+  backfill needs, ~~none of it checked yet~~ *(the Mac's read-only check of 2026-11-09, reported by Dan, settled what's
+  marked below; still open: the provider filter, and restarting SGLang with `--enable-cache-report`)*:
   - the readers' provider filter takes `spark-sglang`, on `localhost:8990`, which isn't the `spark` provider, or they
-    skip it;
+    skip it *(still open)*;
   - the token counts have to be in the session files. SGLang reports usage in a stream only when asked, and the
     OpenCode provider block in [its runbook](../how-to/qwen3.8-27b-sglang.md) doesn't obviously ask, so a harness may
-    have recorded zeros;
+    have recorded zeros *(checked 2026-11-09: OpenCode is the only harness that used it, from 2026-10-15 to 2026-11-09,
+    and nearly every assistant message holds input and output counts; the few that don't are errors and one possibly in
+    progress. `includeUsage` isn't set in its provider block, and the counts arrived anyway. The counts themselves stay
+    out of this repo: CLAUDE.md, on live figures)*;
   - the cached counts are lost for any run started without `--enable-cache-report`, the run of 2026-10-26 among them:
-    those rows are "cache unknown", as §1 has it;
+    those rows are "cache unknown", as §1 has it *(checked 2026-11-09: cache read and write are 0 on every row, so a
+    reader treats them as unknown, not as zero; restarting SGLang with the flag is still open)*;
   - the Mac's snapshot of 2026-10-23 predates it, and Hermes deletes ended sessions after 90 days, so a fresh snapshot
-    of every Mac source is taken before that window closes.
+    of every Mac source is taken before that window closes *(checked 2026-11-09: neither OpenCode 2.2.5 nor Pi 1.4.0
+    was found to prune sessions)*.
 - **SGLang's streaming usage** (Phase 4a): it reports usage in a stream only when asked, or with a
   server flag that changes what every client gets.
 - **The poll's own key,** decided when spark-menu moves here.

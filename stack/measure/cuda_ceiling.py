@@ -14,7 +14,8 @@ box cleared and someone watching (Task 41, Step 3):
 - First it prints cudaMemGetInfo's free and total, with nothing allocated. That call starts CUDA, whose context takes
   memory of its own, so MemAvailable's start is read after it.
 - Before each step it reads MemAvailable, and stops when that, less a step, would pass under --reserve (24 GiB by
-  default, the reserve every load keeps free). It never allocates "until failure". There it prints its result, while
+  default, the drills' own floor, above the stack's reserve of 17). It never allocates "until failure". There it prints
+  its result, while
   CUDA still holds every step, so a signal during the free that follows can't lose it (exit 0).
 - A step is cudaMalloc'd, cudaMemset over all of it, so every page is touched, and synchronized, so the touch is done
   and an error from it is seen at that step. It prints what CUDA holds, MemAvailable, the shortfall (what CUDA holds
@@ -70,8 +71,9 @@ KIB_PER_GIB = 1024 * 1024
 GIB = 1024**3
 LIB = "/opt/local-ai/bin/llama.cpp/b11146/libcudart.so.13"
 
-# The reserve every admitted load keeps free (plan.md, rule 9), 4 above the brake's line, 20: the default, and the
-# lowest it may be set, as the hog's floor (stack/measure/hog.py; the controller's ruling, 2026-10-16).
+# The drills' own floor: the default, and the lowest it may be set, as the hog's floor (stack/measure/hog.py; the
+# controller's ruling, 2026-10-16). Until 2026-11-09 it was also the reserve every admitted load keeps free, 4 above the
+# brake's line, 20; Dan's decision that day took those to 17 and 14, and this script keeps the wider 24.
 RESERVE_GIB = 24.0
 # The pace: the hog's, 0.25 GiB every 2.5 s, 0.1 GiB/s. The brake's rate-of-fall watch (spark/src/spark/brake.py, Task
 # 23) acts only on a fall of MIN_FALL_GIB, 1.5 GiB, within its FALL_WINDOW_S, 2 s. At this pace a 2 s window holds one
@@ -266,9 +268,9 @@ def read_available_gib(meminfo: Path = MEMINFO) -> float:
 
 
 def _the_reserve(reserve_gib: float) -> str:
-    """The reserve in words: the reserve when it is the default, and the one given when it was raised."""
+    """The floor in words: the drills' own when it is the default, and the reserve given when it was raised."""
     if reserve_gib == RESERVE_GIB:
-        return f"the reserve, {reserve_gib:g} GiB"
+        return f"the drills' floor, {reserve_gib:g} GiB"
     return f"the reserve you set, --reserve {reserve_gib:g} GiB"
 
 
@@ -559,7 +561,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reserve", type=_above_zero, default=RESERVE_GIB, metavar="GIB",
                         help="it stops before MemAvailable passes under this, and a reading under it while CUDA holds "
                              f"anything frees everything at once. It can only be raised (default {RESERVE_GIB:g}, the "
-                             "reserve every load keeps free)")
+                             "drills' own floor, above the stack's reserve of 17)")
     parser.add_argument("--step-gib", type=_above_zero, default=STEP_GIB, metavar="GIB",
                         help=f"how much each step asks for; it can only be made smaller (default {STEP_GIB:g})")
     parser.add_argument("--pause-s", type=_zero_or_more, default=PAUSE_S, metavar="S",
@@ -571,8 +573,8 @@ def _refusal(args: argparse.Namespace) -> str | None:
     """Why the script won't start, in words, or None. The reserve can only be raised, and the pace only slowed, as the
     hog's floor and pace (the controller's rulings, 2026-10-16)."""
     if args.reserve < RESERVE_GIB:
-        return (f"--reserve {args.reserve:g} is under {RESERVE_GIB:g} GiB, the reserve every load keeps free and the "
-                f"least this script may ever leave (the brake's line is 20); nothing allocated. Leave --reserve out, "
+        return (f"--reserve {args.reserve:g} is under {RESERVE_GIB:g} GiB, the drills' own floor, above the stack's "
+                f"reserve of 17, and the least this script may ever leave; nothing allocated. Leave --reserve out, "
                 f"or give {RESERVE_GIB:g} or more.")
     faster = []
     if args.step_gib > STEP_GIB:

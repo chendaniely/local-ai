@@ -15,7 +15,7 @@ frees everything and exits 0. On the Spark, from the repo's root:
   at least 90% of all the hog holds. If it hasn't, the reading isn't following what the hog takes, so the hog frees
   everything and stops (exit 3).
 - While it holds anything it reads MemAvailable at least every 250 ms, through every pause and the whole hold, and a
-  reading under --floor (24 GiB by default, the reserve every load keeps free, 4 above the brake's line) frees
+  reading under --floor (24 GiB by default, the drills' own floor, above the stack's reserve of 17) frees
   everything at once and stops (exit 3).
 - The floor can only be raised, and the pace only slowed: a --floor under 24, a --leave under the floor, a --step-gib
   over 0.25 or a --pause-s under 2.5 is refused, with nothing taken (exit 2).
@@ -45,9 +45,9 @@ MEMINFO = Path("/proc/meminfo")
 KIB_PER_GIB = 1024 * 1024
 GIB = 1024**3
 
-# The reserve every admitted load keeps free (plan.md, rule 9), 4 above the brake's line, 20: the floor's default, and
-# the lowest it may be set, so the hog never leaves less (the controller's ruling, 2026-10-16). Every drill leaves 24
-# or more.
+# The drills' own floor: the default, and the lowest it may be set, so the hog never leaves less (the controller's ruling,
+# 2026-10-16). Every drill leaves 24 or more. Until 2026-11-09 it was also the reserve every admitted load keeps free, 4
+# above the brake's line, 20; Dan's decision that day took those to 17 and 14, and the drills keep the wider 24.
 FLOOR_GIB = 24.0
 # The pace: 0.25 GiB every 2.5 s, 0.1 GiB/s. The brake's rate-of-fall watch (spark/src/spark/brake.py, Task 23) acts
 # only on a fall of MIN_FALL_GIB, 1.5 GiB, within its FALL_WINDOW_S, 2 s. At this pace a 2 s window holds one step at
@@ -162,9 +162,9 @@ def _stop(signum: int, frame: object) -> None:
 
 
 def _the_floor(floor_gib: float) -> str:
-    """The floor in words: the reserve when it is the default, and the floor given when it was raised."""
+    """The floor in words: the drills' own when it is the default, and the floor given when it was raised."""
     if floor_gib == FLOOR_GIB:
-        return f"the floor, {floor_gib:g} GiB, the reserve every load keeps free"
+        return f"the floor, {floor_gib:g} GiB, the drills' own, above the stack's reserve"
     return f"the floor you set, --floor {floor_gib:g} GiB"
 
 
@@ -296,7 +296,7 @@ def _parser() -> argparse.ArgumentParser:
                              "dip")
     parser.add_argument("--floor", type=_above_zero, default=FLOOR_GIB, metavar="GIB",
                         help=f"while it holds anything, a reading under this frees everything at once. It can only be "
-                             f"raised, and a --leave under it is refused (default {FLOOR_GIB:g}, the reserve)")
+                             f"raised, and a --leave under it is refused (default {FLOOR_GIB:g}, the drills' own floor)")
     parser.add_argument("--step-gib", type=_above_zero, default=STEP_GIB, metavar="GIB",
                         help=f"how much each step takes; it can only be made smaller (default {STEP_GIB:g})")
     parser.add_argument("--pause-s", type=_zero_or_more, default=PAUSE_S, metavar="S",
@@ -311,8 +311,8 @@ def _refusal(args: argparse.Namespace) -> str | None:
     """Why the hog won't start, in words, or None. The floor can only be raised, and the pace only slowed (the
     controller's rulings, 2026-10-16)."""
     if args.floor < FLOOR_GIB:
-        return (f"--floor {args.floor:g} is under {FLOOR_GIB:g} GiB, the reserve every load keeps free and the lowest "
-                f"the hog may ever leave (the brake's line is 20); nothing taken. Leave --floor out, or give "
+        return (f"--floor {args.floor:g} is under {FLOOR_GIB:g} GiB, the drills' own, above the stack's reserve of 17, "
+                f"and the lowest the hog may ever leave; nothing taken. Leave --floor out, or give "
                 f"{FLOOR_GIB:g} or more.")
     if args.leave < args.floor:
         return (f"--leave {args.leave:g} is under {_the_floor(args.floor)}; nothing taken. Give a --leave of "

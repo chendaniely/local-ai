@@ -58,8 +58,10 @@ in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
 *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, 33 GiB, replaces Gemma, 32, as the
 always-loaded chat model, and Gemma loads when asked. So this page's list puts the coder and Qwen3.6
-first, and every model is named by what the registry lists. Beside the always-loaded models and the
-coder 8 GiB is free for a load, 49 once the coder is gone, and 82 with Qwen3.6 gone too.)*
+first, and every model is named by what the registry lists. With the reserve at 17, the same day's
+decision, beside the always-loaded models and the coder 15 GiB is free for a load, 56 once the coder
+is gone, and 89 with Qwen3.6 gone too. This page's 24 GiB reserve, here and in its example messages,
+is as of when it was written.)*
 
 *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
 NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of

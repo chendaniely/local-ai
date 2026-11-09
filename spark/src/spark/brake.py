@@ -74,6 +74,8 @@ GRACE_S = 15.0
 # 0.5. At 0.5, one Gemma checkpoint allocated during a slow stop ends the wait, and the brake unloads a second model,
 # a resident, though nothing says the first unload failed. 1.0 clears one checkpoint and is still only 1/8 of the 8
 # GiB between the brake line (20) and earlyoom's (12). The cost: the brake waits through a real fall of up to 1 GiB.
+# (Since 2026-11-09, Dan's decision: the brake's line is 14, so 2 GiB lie between it and earlyoom's. Task 47 re-checks
+# this tolerance against that smaller gap.)
 # Not yet measured: how long after an engine leaves /running its memory shows in MemAvailable. settle() drops the
 # credit the moment it leaves, so if that lags, the brake unloads a second model. Phase 2's drill measures it.
 FLOOR_TOLERANCE_GIB = 1.0
@@ -82,7 +84,8 @@ FLOOR_TOLERANCE_GIB = 1.0
 # saw it in is a new engine.
 STAGES = {"starting": 0, "ready": 1, "stopping": 2}
 
-# The plan's starting thresholds (Admission and memory rules, 5), for when the registry won't load.
+# The plan's starting thresholds (Admission and memory rules, 5), for when the registry won't load. They stay 28 and 20
+# though the registry's are 21 and 14 since 2026-11-09 (Dan's decision): a brake that can't read its registry errs early.
 FALLBACK = BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250)
 
 # The start check (Phase 1's council, 2026-09-28). The brake asks llama-swap nothing while memory is above the warn
@@ -104,7 +107,8 @@ FALL_WINDOW_S = 2.0  # the fall is read over this long: a least-squares slope of
 UNLOAD_LEAD_S = 10.0  # and carried this far ahead
 LOAD_FLOOR_MARGIN_GIB = 2.0  # below where the loads in progress should leave memory, before a fall is past them
 # The watch acts only when memory has actually fallen this much within its window, the window's highest reading less the
-# latest (the controller's ruling at Task 23's review, I2). Near the 24 GiB reserve, where memory sits after an admitted
+# latest (the controller's ruling at Task 23's review, I2). Near the reserve (24 GiB then; 17 since 2026-11-09, Dan's
+# decision), where memory sits after an admitted
 # load, noise of ±0.5 GiB, a 1 GiB step, the drills' 0.1 GiB/s hog and a context checkpoint of ~0.6 GiB, each carried 10
 # s ahead, would pass the line; none falls 1.5 GiB in 2 s, and a runaway faster than ~0.75 GiB/s does. Task 47 sets it
 # from the measured noise and the soak's growth bursts.
@@ -484,8 +488,9 @@ def predict_breach(readings: deque[tuple[float, float]], *, brake_gib: float, le
                    floor_gib: float | None, min_fall_gib: float = MIN_FALL_GIB) -> bool:
     """Whether the fall over the last `window_s`, carried `lead_s` ahead, passes under `brake_gib` (projected_gib). A
     rise, a flat line, or a fall of less than `min_fall_gib` within the window is false. Since admission leaves the
-    reserve (24) and the growth owed free, an admitted load's floor is above the brake line (20), so an ordinary load
-    never trips it; a load that runs past its floor does."""
+    reserve and the growth owed free, an admitted load's floor, LOAD_FLOOR_MARGIN_GIB below that, is above the brake
+    line (the registry's reserve and line are 17 and 14 since 2026-11-09, Dan's decision, so 1 GiB above it; they were
+    24 and 20, so 2 above), so an ordinary load never trips it; a load that runs past its floor does."""
     ahead = projected_gib(readings, lead_s=lead_s, window_s=window_s, floor_gib=floor_gib, min_fall_gib=min_fall_gib)
     return ahead is not None and ahead < brake_gib
 
