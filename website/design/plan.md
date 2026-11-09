@@ -2083,6 +2083,10 @@ huggingface_hub with network access, matters most.)*
   audio pipeline, runs on the Mac, is built on Pixeltable, and has its design in a private repo of
   its own. Until this phase it uses the Mac's own speech models; here it moves to the Spark's
   endpoints, with its own key, by changing a base URL.
+- *Python demo apps (added 2026-11-09, Dan's decision):* they don't wait for this phase. On the Mac
+  they reach the front over `make tunnel` with a client key, which needs no LiteLLM
+  ([Python apps and the API key](../how-to/python-apps.md)). Whatever this phase settles on, moving
+  one is a change of base URL and key.
 - *The front and LiteLLM (noted 2026-10-07, from Phase 2a's design):* from 2a the front already
   checks keys, holds a request for its key's wait and returns refusals inline, so LiteLLM, itself a
   proxy in front with per-key limits, overlaps it. This phase decides whether LiteLLM replaces the
@@ -4328,6 +4332,12 @@ Each item gets its own design pass when its turn comes.
   2a* says. #32, the usage meter's counter, was left to the Spark's session: its hand-off is the
   last section of `usage-meter-counter.md`. The `spark/` Dependabot bumps, #37 to #39, wait for the
   phase's merge.
+- **2026-11-09** — Python demo apps reach the front ahead of Phase 3, Dan's decision: "we need to
+  prioritize this so i can actually make some demo app examples that plug into the spark models".
+  On the Mac, `openai`, chatlas and querychat use `make tunnel` with the key Pi uses, or a key of
+  their own by the steps in *A new client key, after 2a*. Phase 3 still decides how later apps
+  connect. A new runbook, [Python apps and the API key](../how-to/python-apps.md), holds the setup;
+  the Architecture page's diagrams, its definition of a client and the overview gain them.
 
 ## Sources
 

@@ -59,4 +59,7 @@ and the rest of [the harnesses](../architecture.qmd#harnesses):
 [OpenCode and Hermes Agent on the Mac](opencode-hermes.md), and
 [Posit Assistant on the Mac](posit-assistant.md) — the Spark's models in `pa` and Positron.
 
+For your own code on the Mac: [Python apps and the API key](python-apps.md) — where the key lives,
+and worked examples with `openai`, chatlas and querychat.
+
 ## Every runbook
