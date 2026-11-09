@@ -4309,7 +4309,8 @@ Each item gets its own design pass when its turn comes.
 - **2026-10-15** — `make fast-coder` and `make flash-next`, temporary, Dan's decision (*Phases*,
   Phase 4a, gains the item that removes them; both by-hand pages' *Run it again* gain a note). Each
   runs its page's repeat run in one command, on the Spark only: the fast coder refuses while the
-  llama.cpp coder is loaded or under 79 GiB is available; Flash-Next stops llama-swap, or from the
+  llama.cpp coder is loaded or under 79 GiB is available *(72 since 2026-11-09, Dan's decision;
+  the Revisions line of that date)*; Flash-Next stops llama-swap, or from the
   cutover holds it down, and starts only once 110 GiB is available; and its `DO=stop` restores the
   stack in the page's order. They go when Phase 4a puts both models in the registry.
 - **2026-10-16** — Phase 2a's cutover, its Task 38, on `brightroar` (*Open items and risks*:
@@ -4472,6 +4473,13 @@ Each item gets its own design pass when its turn comes.
   the Qwen3-ASR entries that fit there only just. The tests of the code's behaviour now read a
   frozen registry, so a change of models touches only the tests about the shipped file. Each page
   this touches has a dated note; README's *Current state* and `changelog.md` wait for the deploy.
+- **2026-11-09** — `make fast-coder` starts at 72 GiB available, not 79 (Dan's decision): the
+  container's 45, the 24 GiB reserve and 3 of margin. With Qwen3.6 always loaded, Phase 1's cold loads
+  leave about 78 GiB available (arithmetic, not measured), under the old 79, which added about 10 the
+  always-loaded models could still grow into. 72 no longer covers all the growth they're still owed,
+  about 5–6 GiB with Qwen3.6. That is how it has been running since 2026-10-26, with 30–32 GiB left,
+  and it's temporary until Phase 4a puts the fast coder in the registry. The script's refusal, its
+  test and [the runbook](../how-to/qwen3.8-27b-sglang.md) say so.
 
 ## Sources
 
