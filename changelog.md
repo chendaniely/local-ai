@@ -8,6 +8,22 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-09 — What the box had been doing for three weeks (read, nothing changed)
+
+Read by the Spark session, on the box and from its journal, after three weeks away from Phase 2a. It
+is up since Task 39's cold boot, on the deploy of 2026-10-16, with five models, and the front, gate,
+brake and llama-swap report OK. Times by the Spark's clock.
+- **The by-hand SGLang coder** has run since 2026-10-26 at 14:55:27, in its container, and is
+  Dan's default. `spark status` counts about 42 GiB as other processes. It's outside the stack, so the
+  gate and the brake can't manage it.
+- **Gemma isn't loaded,** though it is always-loaded; last used 2026-10-23 at 16:12. Qwen3.6 is
+  pinned, with no end set. About 30 GiB is available, so nothing else can load.
+- **The brake paused new loads twice:** 2026-10-23 at 09:57:38, and 2026-10-26 at 14:55:43, 16 s
+  after SGLang started. Its journal says only that it paused them, so what it unloaded isn't
+  recorded. No alert left the box, ntfy not being set up.
+
+---
+
 ## 2026-10-19 — Posit Assistant, the TUI `pa` and Positron, as Mac clients (Dan's decision)
 
 **On the Mac; nothing changes on the Spark.** The front already serves the OpenAI-compatible

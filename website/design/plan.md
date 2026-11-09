@@ -2063,6 +2063,8 @@ moved.
   reconciliation window, then the sync, whose first run is the lifetime baseline; spark-menu's usage
   section, after it moves here; Pi's line, then OpenCode's; the shared key's retirement from the
   Spark's runbooks; then the lines for Posit Assistant (`pa`) and Hermes Agent when their turn comes.
+  *(2026-11-09, Dan's requirements: the sync also carries each session's project, and the by-hand SGLang's tokens are
+  backfilled from the Mac's session files: the design's* Open for later*.)*
   `agent`'s line waits for a view of its own numbers, and the metering plug is a task of its own,
   whenever Dan buys one. With them, a **cap per key group** on waiting requests: today's caps are per
   key, so more of Dan's keys could queue more, and each key's cap stays where it is in 2a rather than
@@ -2512,7 +2514,8 @@ Each item gets its own design pass when its turn comes.
   setup later.
 - **Dev and learning:** FIM autocomplete · a private eval suite (growing from the bake-off tasks) ·
   LoRA fine-tuning and serving · overnight batch inference · speculative-decoding tuning · a class mode.
-- **Ops:** a usage and utilization dashboard · weights on the Synology (measure NAS read throughput
+- **Ops:** a usage and utilization dashboard *(2026-11-09, Dan: Spark model usage and project usage, as agentsview
+  shows a machine's sessions)* · weights on the Synology (measure NAS read throughput
   first; and a model's `models--…` folder doesn't hold its bytes — huggingface_hub 1.32 and 1.33
   keep Xet-stored files in a store shared across repos, under `hf/hub/blobs`, unless
   `HF_HUB_DISABLE_SHARED_BLOBS` is set, and the repo's files are links into it, so moving one
@@ -4429,6 +4432,11 @@ Each item gets its own design pass when its turn comes.
   takes the usage folder to mode `000`, since a front can still append to an existing month's file
   in a folder at `0500`. `CLAUDE.md` and README §Conventions gain two rules: a client key's name is
   never reused, and no live figure from the meter goes in the repo.
+- **2026-11-09** — What the usage meter counts, Dan's decisions and requirements ([the
+  Q&A](usage-meter-qa.md)). Posit Assistant stays on the shared key for now. The counter is for what
+  goes through the Spark, with the model list free to change. Usage by project joins Phase 2b's sync,
+  and a placeholder holds what backfilling the by-hand SGLang's tokens needs (the design's *Open for
+  later*, nothing of it checked yet). The dashboard stays its own project, now with project usage.
 
 ## Sources
 

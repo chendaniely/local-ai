@@ -326,3 +326,26 @@ brightroar session is from 2026-10-09 (derived, not checked in Hermes).
 **Dan: A.** Taken on 2026-10-23, in `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the Mac,
 `0700`, its files Dan's alone; both databases pass SQLite's integrity check. Hermes's request dumps,
 which hold an Authorization header, and Posit Assistant's developer request logs were left out.
+
+## What counts, projects, and the by-hand SGLang (2026-11-09)
+
+**Posit Assistant's key. Dan:** "i'm not paying for posit assistant right now. just doign that through
+the spark, so we can count those as spark tokens for now." So it stays on the shared key, and its
+tokens count under Pi's key name for now: right in total, blended by harness.
+
+**What the counter is for. Dan:** "Some of these harnesses will allow me to plug into other models
+and other providers so I do wanna make sure that the token counter is really just for the models
+that are going through the spark, and the list of models may change in the future so I do want to
+be able to track all of that and potentially create a dashboard around spark model usage really
+similar to how the KENN .io agentsView is able to look at model token usage, and project usage." The
+front's rows already hold to the first two: a request sent to another provider never reaches the
+front, and each row names the registry's model. The dashboard stays the project of its own it was.
+**Project usage isn't designed yet:** the front can't see a project, and the sync's rows carry
+session, parent, harness and response id, not the working folder. The design's *Open for later*
+holds it for 2b.
+
+**The by-hand SGLang. Dan:** "we should put a placeholder since right now all my tokens are coming
+from the mac, we should be able to go back into the mac and backfill all the SGLang tokens for
+measuring? i'm currently using the SGLang model as the default right nwo." The design's §7 already
+makes the harness's files the record for the by-hand engines; *Open for later* holds what the
+backfill needs.

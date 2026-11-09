@@ -289,6 +289,9 @@ when that file was retired on 2026-09-23.
   comes back by itself from a power cycle, under llama-swap's sandbox. `nvidia-uvm` is loaded at
   boot by udev's rule from `nvidia-kernel-common-580`, before llama-swap starts, so the engines
   need no setuid helper, and every engine runs on the GPU. Nothing in bootstrap had to change.)*
+  *(As read on 2026-11-09: the by-hand SGLang coder has run since 2026-10-26 and is Dan's default, in a container outside
+  the stack, which `spark status` counts as other processes, about 42 GiB. So Gemma, though always-loaded, isn't
+  loaded, not since 2026-10-23, and Qwen3.6 is pinned with no end set. The changelog has it.)*
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). Pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for
@@ -549,7 +552,8 @@ the plan it would come in, and what was left out and why.
   (added 2026-10-16, at Phase 2a's cutover, which built and deployed what these rules rest on). The
   gate admits every load, one at a time, keeping the 24 GiB reserve free and holding back the growth
   the loaded models are still owed. The brake stays a unit of its own, unloading idle models first,
-  and the gate lifts its hold only within bounds (built; not yet seen acting: Tasks 47 and 48). A
+  and the gate lifts its hold only within bounds (built; its pause seen in the journal twice in October, outside any drill;
+  its timings and drill still to come: Tasks 47 and 48). A
   llama-swap restart stops every model, so `make apply` restarts it only once a minute has passed
   with nothing in flight; after 15 minutes without one it offers to drain now, and `make apply-now`
   restarts at once, cutting off what's in flight, after asking when the gate lists any (built; the

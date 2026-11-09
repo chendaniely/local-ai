@@ -363,7 +363,8 @@ Spark is already Pi's; OpenCode and Hermes get keys of their own in Phase 2a, an
 when its branch merges (its key name there is `OPENAI_COMPATIBLE_API_KEY`, with Positron's secret
 store). *(2026-11-09, at this page's merge into `phase-2a`: Posit Assistant's branch merged on 2026-10-19 (#30),
 and Tasks 44a–44l give it no key of its own, so it still sends `SPARK_API_KEY`'s value and its usage counts
-under Pi's key. Giving it one is Dan's decision, and not yet planned.)* **Nothing is retired in 2a:** Task 38's rollback runs Phase 1's llama-swap from
+under Pi's key. Giving it one is Dan's decision, and not yet planned.)* *(2026-11-09, Dan's decision: it stays on
+the shared key for now, and counts as the Spark's tokens under Pi's key name: [the Q&A](usage-meter-qa.md).)* **Nothing is retired in 2a:** Task 38's rollback runs Phase 1's llama-swap from
 `llama-swap.env`, which holds Phase 1's client keys until Task 51, so a retired key would turn the
 Mac's harnesses away in a rollback. The Spark's own copy of the shared key, which its runbooks'
 `curl`s use, gets a key of its own after Task 51.
@@ -524,7 +525,24 @@ the caps' new number; the reconciliation's tolerance.
 
 ## Open for later
 
-- **The dashboard,** its own project (the Backlog's item).
+- **The dashboard,** its own project (the Backlog's item). *(2026-11-09, Dan: model usage and project usage on the
+  Spark's models, as agentsview shows them for a machine's sessions.)*
+- **Usage by project** (added 2026-11-09, Dan's requirement; for Phase 2b's sync). The front can't see a project: it
+  knows the key, the model and the tokens. Only a harness knows the folder a session ran in, so the sync's rows gain
+  it, and the readers fill it for the past as long as the session files are kept. Which name a dashboard shows for a
+  folder, and how a renamed folder is treated, are left to that design: Pi's file names follow the folder (§7).
+- **The by-hand SGLang's tokens: a placeholder for the backfill** (added 2026-11-09, Dan: it is his default coder,
+  running since 2026-10-26, and §7's sync is what can count it, until Phase 4a puts it behind the front). What the
+  backfill needs, none of it checked yet:
+  - the readers' provider filter takes `spark-sglang`, on `localhost:8990`, which isn't the `spark` provider, or they
+    skip it;
+  - the token counts have to be in the session files. SGLang reports usage in a stream only when asked, and the
+    OpenCode provider block in [its runbook](../how-to/qwen3.8-27b-sglang.md) doesn't obviously ask, so a harness may
+    have recorded zeros;
+  - the cached counts are lost for any run started without `--enable-cache-report`, the run of 2026-10-26 among them:
+    those rows are "cache unknown", as §1 has it;
+  - the Mac's snapshot of 2026-10-23 predates it, and Hermes deletes ended sessions after 90 days, so a fresh snapshot
+    of every Mac source is taken before that window closes.
 - **SGLang's streaming usage** (Phase 4a): it reports usage in a stream only when asked, or with a
   server flag that changes what every client gets.
 - **The poll's own key,** decided when spark-menu moves here.

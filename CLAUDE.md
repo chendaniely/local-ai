@@ -200,7 +200,8 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   stays a unit of its own. The plan's rule 5.)* *(2026-10-16, at Phase 2a's cutover, its Task 38:
   built and running, the release in the gate, and in the brake its idle-first order and its watch on
   the rate of fall. Not yet seen acting on the box: Task 47 measures its timings, and Task 48's
-  drill, S05, checks it.)*
+  drill, S05, checks it.)* *(2026-11-09: its journal shows it pausing new loads on 2026-10-23 and 2026-10-26, outside any
+  drill; what it unloaded isn't recorded there. Tasks 47 and 48 still stand.)*
 - ~~**Never reload llama-swap while models are loaded**~~ **A llama-swap restart stops every model**
   *(heading changed 2026-10-16, at Phase 2a's cutover: 2a's `make apply` restarts it with models
   loaded, as the last note below says)* — in v257 a config reload stops every engine.
