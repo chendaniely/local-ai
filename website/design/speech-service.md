@@ -6,8 +6,9 @@ date: 2026-11-09
 
 # The speech service — design
 
-*Status: written 2026-11-09, for Dan's review. Nothing here is built. Stage 1 is a by-hand exception to
-"nothing loads around the gate", which Dan approved the same day, as he did for the by-hand fast coder.*
+*Status: written 2026-11-09, revised the same day after a six-member council (five Claude reviewers and the local
+Qwen3.6), for Dan's review. Nothing here is built. Stage 1 is a by-hand exception to "nothing loads around the gate",
+which Dan approved the same day, as he did for the by-hand fast coder.*
 
 ## The goal
 
@@ -18,123 +19,191 @@ with no timings.
 
 **Done (Dan, 2026-11-09):** a real Mandarin or Cantonese episode runs through vid2sub on the Spark, start to finish,
 with correct word timings, while he keeps coding on the by-hand SGLang coder, and with no change to vid2sub's parser.
+"Correct" means: no cue flagged `est`, the share of segments with words reported, three places spot-checked by ear,
+and the times compared with the Mac's result if one is kept for that episode.
 
 ## Constraints
 
 1. **vid2sub's parser doesn't change.** It sends one `POST /v1/audio/transcriptions` per chunk, multipart, with
-   `model`, `response_format=verbose_json`, the `language` and `prompt` when it has them, and
-   `timestamp_granularities`, the audio being a FLAC of at most 180 s. Its `parse_openai` requires a `segments` list
+   `model`, `response_format=verbose_json`, `language` and `prompt` when it has them, and `timestamp_granularities[]`
+   twice, which this service ignores. The audio is a FLAC of at most 180 s. `parse_openai` requires a `segments` list
    of objects with `start`, `end` and `text`, reads a top-level `words` list of `word`, `start` and `end`, and a
-   `language`. It rejoins each segment's words to its text, restoring punctuation; a segment whose words don't spell
-   its text keeps no word timings.
-2. **It fits beside SGLang.** With the lines of 2026-11-09 (reserve 17, brake 14), about 11 GiB is left beside the
-   always-loaded models and a 45 GiB SGLang.
+   `language`. It rejoins each segment's words to its text. A segment whose words don't spell its text keeps no word
+   timings.
+2. **Memory.** The box has no room for it as things stand. Read on 2026-11-09 beside SGLang, Qwen3.6 pinned, the
+   embeddings and whisper: 30 GiB available, 6 GiB of it owed to the loaded models' growth, so about 7 GiB free for a
+   load even at the reserve of 17. The service needs an estimated 10 to 14 GiB at its peak, and a load from there
+   would set off the brake's watch on the rate of fall, which could only unload always-loaded models. So **Qwen3.6
+   is unloaded for each transcription run** (Dan, 2026-11-09), which frees about 30 GiB, and the load starts from
+   about 58 GiB free, far from the brake. Requests for Qwen3.6, the web UI's background tasks included, are refused
+   with the reason until it is loaded again.
 3. **The original weights,** since Qwen's published accuracy, which puts the model first for these languages, is
    theirs and not a quantized copy's.
-4. **Nothing disturbs Phase 2a's soak,** which measures the registry's models.
+4. **Nothing disturbs Phase 2a's measurements.** Tasks 41, 43, 44, 45 and 47 to 50 run with this service stopped.
 5. **In the long run nothing loads around the gate,** and diarization has to fit the same shape.
 
 ## The choice
 
-One Python service that runs Qwen3-ASR and the aligner together and answers under one model name. A wrapper over
-llama.cpp's model would need two loads per request and would transcribe with the Q8 copy. Two separate calls would
-change vid2sub. vLLM can't start under llama-swap's sandbox (Phase 4).
+One Python service that runs Qwen3-ASR and the aligner together and answers under one model name. It is the only
+option meeting constraints 1 and 3. A wrapper over llama.cpp's model transcribes with the Q8 copy. Two separate calls
+change vid2sub. vLLM's and CrispASR's servers document no word timings on their transcription routes.
 
-Behind the gate it needs a new engine kind in the registry, the launcher and the gate's engine scan, and multi-file
-downloads, which shouldn't land just before the soak. So it comes in two stages, with the same service code in both.
+Behind the gate it needs an engine kind, a start route and multi-file downloads that shouldn't land just before the
+soak. So it comes in two stages.
 
 ## Stage 1: by hand
 
-Like `make fast-coder`: temporary, started by Dan, outside the registry, and stopped for Phase 2a's drills and soak.
-The gate sees it only as *other processes*, and the brake can't unload it.
+Like `make fast-coder`: temporary, started by Dan, outside the registry. The gate sees it only as *other processes*,
+and the brake can't unload it.
 
 ### The service
 
-`stack/speech/serve.py`, with its dependencies in `stack/speech/pyproject.toml` and `uv.lock` (Python 3.12, wheels
-only, `exclude-newer = "7 days"`). Starlette and uvicorn, as the gate uses.
+`stack/speech/serve.py`, with its dependencies in `stack/speech/pyproject.toml` and `uv.lock`: Python 3.12,
+uv's own interpreters, `exclude-newer = "7 days"`, wheels only, no build system. Starlette and uvicorn, as the gate
+uses, and `python-multipart`. Dependabot doesn't watch this folder.
 
 | Piece | Pinned at |
 |---|---|
-| `qwen-asr-dgxspark` | 0.1.1, a third party's fork of `qwen-asr` for aarch64 and CUDA 13, Apache-2.0 |
-| torch | the newest `+cu130` aarch64 wheel the seven-day rule allows |
-| `Qwen/Qwen3-ASR-1.7B` | `7278e1e70fe206f11671096ffdd38061171dd6e5`, Apache-2.0 |
-| `Qwen/Qwen3-ForcedAligner-0.6B` | `c7cbfc2048c462b0d63a45797104fc9db3ad62b7`, Apache-2.0 |
+| `qwen-asr-dgxspark` | 0.1.1, a third party's fork of `qwen-asr` for aarch64 and CUDA 13, Apache-2.0, its wheel's hash in the lock |
+| transformers | 5.14.x, within what the fork's release says it supports |
+| torch | 2.13.0+cu130, from an explicit PyTorch index used for torch only; `torchaudio` overridden out, since nothing imports it |
+| `Qwen/Qwen3-ASR-1.7B` | `7278e1e70fe206f11671096ffdd38061171dd6e5`, Apache-2.0, safetensors |
+| `Qwen/Qwen3-ForcedAligner-0.6B` | `c7cbfc2048c462b0d63a45797104fc9db3ad62b7`, Apache-2.0, safetensors |
+| `ubuntu:24.04` | by digest |
 
-The weights, about 6.1 GiB, live in `~/speech/hf`, as SGLang's do in `~/sglang/hf`. They are fetched once, then the
-service runs offline.
+The weights, about 6.1 GiB, live in `~/speech/hf`. The two snapshots hold no code: `make speech` refuses to start if
+either holds a `*.py`, `*.bin`, `*.pt` or `*.pkl`.
 
-**Routes.**
-- `POST /v1/audio/transcriptions`, the shape in constraint 1.
-- `GET /v1/models`, naming one model, `qwen3-asr-1.7b`.
-- `GET /health`.
+**Loading.** Once, at startup: `Qwen3ASRModel.from_pretrained` on `cuda:0` in bfloat16, the aligner given its own
+device and dtype, or it stays on the CPU, `max_inference_batch_size=1` and **`max_new_tokens=4096`**. The default of
+512 can silently cut a fast 180 s chunk, and the aligner would then spread the partial text over the whole audio. An
+answer that reaches the limit is logged. `/health` answers 200 only once both models are loaded.
 
-**The answer.** `language`, as `zh`, `yue`, `en`, `ja` or `ko` where it is one of those; `text`; `duration`;
-`segments`; `words`. `prompt` goes to the model as its context. The text is split into segments at sentence-ending
-punctuation. Each aligner unit belongs to the sentence whose characters it spells, and a segment's `start` and `end`
-are its first and last unit's. If the units can't be matched to the text, the whole chunk is one segment with no
-`words`, so vid2sub still gets the text.
+**Routes.** `POST /v1/audio/transcriptions`; `GET /v1/models`, as `{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}`;
+`GET /health`. The models run in one worker thread, so `/health`, `/v1/models` and a 429 answer at once during a
+chunk: vid2sub's five-second probe would otherwise move on to another model.
 
-**Refusals**, as JSON with a plain message:
+**The answer.** `language`, `text`, `duration`, `segments`, `words`.
 
-| Status | When |
-|---|---|
-| 400 | not a readable audio file |
-| 404 | any other model name |
-| 413 | audio over 300 s, the aligner's limit, or a body over 100 MiB |
-| 429 | one is already running: one request at a time, none queued |
-| 503 | `MemAvailable` under 17 GiB when a request starts |
+- **One segment per chunk,** the text whole, its `start` the first word's start and its `end` the last word's end.
+  vid2sub's own Qwen parser takes one segment per chunk, and a sentence splitter loses a following sentence's words
+  to a zero-length unit.
+- **Each `word` is a literal span of the text,** not the aligner's unit. The aligner drops punctuation inside a
+  token (`3.5` becomes `35`, `COVID-19` becomes `COVID19`), and one such unit costs the whole chunk its timings. The
+  service walks the text with the aligner's kept-character test and cuts each word from the unit's first kept
+  character to its last, with the unit's times. Whitespace runs become one ASCII space. Only if the walk can't consume
+  every kept character does the chunk go back with no `words`, and the service logs it.
+- **A zero-length word** is widened by a millisecond or two, so its midpoint lies inside its segment.
+- **`language`** goes out lower-cased as `zh`, `yue`, `en`, `ja` or `ko` where it is one of those, the first of a
+  comma list if the package returns several. Coming in, those five map to the package's names. Anything else is a 400.
+- **`prompt`,** at most 4 KiB, goes to the model as its context.
+- **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
-Every request is logged with its length, time taken and status, never its audio or text.
+**Refusals**, all as `{"error":{"code":"…","message":"…","retry_after_s":…}}`. vid2sub waits on a `no_fit` and a
+429; a bare 503 would fail the input after six seconds.
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file |
+| 404 | `model_not_found` | any other model name |
+| 413 | `too_long` | decoded audio over 300 s, this service's own bound, or a body over 100 MiB, counted as it arrives |
+| 429 | `busy` | one is already running, taken after the upload is read: one at a time, none queued |
+| 503 | `no_fit` | `MemAvailable`, less the request growth step 3 measures, under 15 GiB; or CUDA ran out of memory |
+
+The audio is decoded with `soundfile`, read at most 300 s plus one frame, and passed as `(array, rate)`, never as a
+string, since the package's loader fetches URLs and opens paths. A request with an `Origin` header, or a `Host`
+other than `127.0.0.1:58991` or `localhost:58991`, is refused. Logs hold length, time taken and status, never the
+audio, its file name, the text or the prompt, and uvicorn's access log is off.
+
+### Guards while it runs
+
+A watchdog thread reads `MemAvailable` every 0.25 s while the models are loaded and ends the process, with
+`os._exit`, if it goes under 15 GiB, one above the brake's line of 14 after the next deploy. A process's exit frees
+its CUDA memory. It doesn't wait on the main thread, so a hung CUDA call can't stop it, as with the ceiling script.
 
 ### Isolation
 
-`qwen-asr-dgxspark` is a small third-party package, so it never runs as Dan with his environment. The service runs
-as SGLang's does: `sudo docker run` of a digest-pinned `ubuntu:24.04` with `--gpus all`, `--user` Dan's uid,
-`--cap-drop ALL`, `--security-opt no-new-privileges`, `--read-only` with a small `/tmp` tmpfs, and
-**`--network none`**. Its mounts are the virtual environment and uv's Python, read-only, the weights, read-only, and
-the socket's folder. The virtual environment is built on the host with `uv sync --no-build`, so nothing from the
-packages runs outside the container.
+`qwen-asr-dgxspark` is a small third-party package, so it never runs as Dan with his environment. A review of the
+wheel found only transformers-5 compatibility changes, and no new network, exec or pickle code. The service runs as
+SGLang's does: `sudo docker run --init --name local-ai-speech --gpus all --user 1000:1000 --cap-drop ALL
+--security-opt no-new-privileges --read-only --network none --memory 16g --memory-swap 16g --pids-limit 1024
+--oom-score-adj 1000 --log-driver none`, with `/tmp` a `noexec` tmpfs of 256 MiB. Step 1 sizes the memory cap and
+reads whether it binds on CUDA's allocations at all. `HOME`, the caches, `NUMBA_CACHE_DIR` and `CUDA_CACHE_PATH` are
+under `/tmp`, and Hugging Face is offline.
+
+Mounted read-only: the virtual environment, uv's Python at its identical host path, since the environment's links
+are absolute, `stack/speech/serve.py` alone and never the clone, and the weights. Writable: the socket's folder. The
+environment is built on the host with `uv sync --frozen --no-build --no-install-project`, and nothing on the host runs
+it.
+
+What this leaves: `--gpus all` exposes the NVIDIA driver's device nodes, which every account already has, and a
+denial of service to the GPU. The service sees all audio and transcripts, and with `--network none` its replies and
+the socket's folder are its only ways out.
 
 ### Reaching it
 
-It listens on a Unix socket, `/run/user/1000/local-ai-speech/speech.sock`, in a folder only Dan's account can open,
-so no local account can reach it or take its place, and it needs no key. `make tunnel` gains
-`-L 58991:/run/user/1000/local-ai-speech/speech.sock`, the 5-prefix port of Dan's decision of 2026-10-22. It forwards
-only while the socket exists; otherwise a connection fails and the rest of the tunnel is unaffected.
+On the Spark it listens on a Unix socket, `/run/user/1000/local-ai-speech/speech.sock`, in a folder made `0700` by
+Dan at each start and emptied at start and stop, so no other account there can reach it or take its place. The
+folder goes when Dan's last session ends, so it runs in tmux. The container can replace the socket with a link, which
+would need a second actor on the Mac to use: accepted for Stage 1, and Stage 2's front must not connect through a
+folder the container can write.
 
-vid2sub needs only a config entry, in its own repo: an endpoint at `http://127.0.0.1:58991/v1`, and a `spark-qwen`
-model on it with `catalog = "qwen3-asr-1.7b"`, `model = "qwen3-asr-1.7b"` and `parser = "openai"`.
+On the Mac, `make tunnel` gains `-L 127.0.0.1:58991:/run/user/1000/local-ai-speech/speech.sock`, beside its existing
+forward. Any process on the Mac can reach that port, which is why it needs the `Origin` and `Host` checks above. It
+carries no key.
+
+vid2sub needs no code change. Its entry lives in a TOML of its own, passed with `--config` only while the service
+runs, since an unreachable entry stalls other runs. An endpoint at `http://127.0.0.1:58991/v1` and a `spark-qwen`
+model on it, with `catalog = "qwen3-asr-1.7b"`, `model = "qwen3-asr-1.7b"`, `parser = "openai"` and `local = true`.
+A run passes `--from zh` or `--from yue`, because vid2sub's auto-detection skips Mandarin on this kind of endpoint.
 
 ### The target
 
-`make speech`, `make speech DO=wait` and `make speech DO=stop`, from `stack/host/by-hand-speech`, listed as temporary
-in `test_by_hand.py` as the other by-hand targets are. It refuses to start under the memory the first run measures
-plus the reserve of 17 GiB; 27 GiB, for an estimated 10, until then.
+**On the Spark**, in the clone, in tmux: `make speech` runs it in the foreground, and `make speech DO=stop` stops it,
+from `stack/host/by-hand-speech`. It refuses to start if `spark status --json`'s `free_for_a_load_gib` is under
+the peak step 3 measures, or the gate doesn't answer, or Dan's uid isn't 1000. It has its own test file and removal
+list, since it goes at Stage 2, not with the other by-hand targets at Phase 4a. Its help says to stop it for Phase
+2a's drills.
 
 ### Tests
 
-In `spark/tests/`, loading `serve.py` by its path with a stand-in model, so they need neither torch nor a GPU: the
-answer's shape against constraint 1, including a segment's words spelling its text after punctuation is restored;
-the sentence split for Chinese and English; each refusal; one request at a time; `language` in both directions; a
-transcript the aligner can't match. The container's flags are checked as `test_by_hand.py` checks SGLang's.
+`spark/tests/test_speech.py` loads `serve.py` by path with a stand-in model and parts already parsed: the answer
+against a verbatim copy of vid2sub's `parse_openai` and `attach_punctuation` at `ac29e7b`, asserting words kept equals
+units, for Mandarin, Cantonese, English, decimals, `COVID-19`, full-width punctuation and spaces; zero-length units;
+empty text; each refusal; one request at a time; the worker thread and the watchdog. The multipart and FLAC paths
+need `python-multipart` and `soundfile`, which `spark/`'s lock doesn't have, so they run from `stack/speech`'s
+environment under the 4 GiB cap. Container flags are checked as the by-hand tests check SGLang's.
 
 ### The order, and what stops it
 
-1. **The torch test,** after the next deploy, since it needs memory the current lines don't leave: in the container,
-   `torch.cuda.is_available()`, a small computation, then one real Mandarin clip through both models, reading the
-   memory and time.
-2. If torch can't use this GPU: the aligner and the model on the CPU, measured. If that is too slow to use, **stop and
-   ask Dan.**
-3. The service, its tests and its review.
-4. The done test.
+The service is written only after these pass, and steps 1 and 2 don't wait for the next deploy.
+
+1. In the container: import the package, `torch.cuda.is_available()`, a small computation.
+2. The aligner alone on a short clip.
+3. Qwen3.6 unloaded, then both models on the densest 180 s of a real episode while SGLang generates. Recorded: peak
+   memory after load and after the request, the chunk's time, SGLang's tokens a second, and the brake's log.
+4. That answer through vid2sub's real parser.
+5. The service, its tests and its review.
+6. The done test.
+
+**Stop and ask Dan** if the brake fires, if step 3's peak doesn't fit beside SGLang with Qwen3.6 unloaded, or if a chunk
+takes more than vid2sub's 900 s timeout. If torch can't use this GPU, the models go on the CPU and are measured
+against the same 900 s; if that's too slow, stop and ask.
+
+### What changes with Stage 1
+
+The Architecture page's diagrams and scenario table; `changelog.md` and README's *Current state* when it first runs;
+the plan's *Speech* section, with a link here, and its Revisions; dated notes on the plan's three sentences saying
+that captions run the aligner themselves until Phase 3, and on Task 41's precondition. `spark doctor` needs nothing, by
+SGLang's precedent.
 
 ## Stage 2: behind the front and the gate
 
-After the soak, in Phase 3's speech work, which this pulls forward. The service stays; a registry entry and a new
-engine kind replace `make speech`, so it starts with a ticket, counts in the gate's memory and goes through the
-front with a client key. Whisper-style clients and the usage meter then see it like any other model. Diarization and
-speaker embeddings for Dan's audio pipeline join the same service as further routes (the plan's *Speech*: pyannote
-community-1). That design, and the pipeline's route and key from the homelab, come later.
+After the soak, in Phase 3's speech work, which this pulls forward. Stage 2 keeps the routes, the answer and its tests.
+Its start route, a TCP listener for llama-swap, the pull of multi-file repos, the engine kind and long audio get a
+design of their own: `sudo docker` can't start under llama-swap's `NoNewPrivileges`, and dropping the container would
+run the third-party package as `spark`. Diarization and speaker embeddings for Dan's audio pipeline join the same
+service then, and that pipeline's route and key from the homelab come with that design.
 
 ## Not in Stage 1
 
