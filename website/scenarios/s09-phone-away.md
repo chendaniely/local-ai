@@ -19,7 +19,9 @@ That it installs as an app is not yet recorded as checked.)*
 2026-09-28.)*
 
 **How to override.** None needed. A chat can run to the model's full context, 262,144 tokens on
-Gemma, and a photo costs up to about 1,120 of them. *(2026-10-08: the registry's coder, now
+Gemma, and a photo costs up to about 1,120 of them. *(2026-11-09, Dan's decision, from the next
+deploy: Qwen3.6 is the always-loaded chat model, at the same 262,144 tokens, and a photo needs
+Gemma, on demand, until a real photo test of Qwen3.6's own vision file.)* *(2026-10-08: the registry's coder, now
 Qwen3.8-27B, is held at 163,840 of its 262,144 tokens until Phase 2a's Task 42, Dan's decision.)*
 *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the
 registry gives the coder all 262,144 tokens; the Spark serves them once that is deployed.)*

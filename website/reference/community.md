@@ -98,7 +98,8 @@ gpt-oss-120b, lighter Qwen3.6-35B-A3B, the resident vision model, and embeddings
   [JetBrains-Hardware/spark-setup](https://github.com/JetBrains-Hardware/spark-setup) — deploy
   scripts for Qwen, GPT-OSS 120B, Nemotron 3 NVFP4 and Gemma 4 on vLLM, with MTP holding 14.4
   tok/s at 200K context.
-- **Gemma 4 26B-A4B, the resident.**
+- **Gemma 4 26B-A4B, the resident** *(until the next deploy: from then Qwen3.6-35B-A3B is, and
+  Gemma loads on demand; Dan's decision, 2026-11-09)*.
   [nabe2030/gemma4-vs-qwen35-dgx-spark](https://github.com/nabe2030/gemma4-vs-qwen35-dgx-spark) —
   Gemma 4 26B-A4B against Qwen 3.5/3.6-35B-A3B on llama.cpp, 26.5 against 58 tok/s decode, with an
   F16 thinking-mode bug isolated: Phase 4's resident comparison, run by someone else on the same

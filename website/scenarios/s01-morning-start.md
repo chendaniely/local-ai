@@ -32,6 +32,8 @@ Task 30 review: this gave only the pin's sentence, but a pin that loads first sa
 starts, as plan.md's command table has since Task 10's re-review, and as `spark pin` does.)* When
 the pin runs out, a silent *The pin on the coder ended at 18:00; it unloads after 60 min idle.*
 arrives. `spark status` lists the coder as *loads when asked* and the others as *always loaded*.
+*(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, the embeddings and whisper are *always
+loaded*; Gemma, the other on-demand models and the coder *load when asked*.)*
 The plan's [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every
 message.
 

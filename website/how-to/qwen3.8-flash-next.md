@@ -166,6 +166,10 @@ at the ceiling, less the reserve), so llama-swap would refuse it even alone. So 
 with llama-swap stopped. Phase 4a (after Phase 2a) makes it a registry model that loads after
 `spark make-room` clears the others, which only Dan can run; this page retires then.
 
+*(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, 33 GiB, replaces Gemma, 32, among the
+always-loaded models, so that room is min(117 − 44 − 24, 102 − 44) = 49 GiB; the model still doesn't
+fit beside them.)*
+
 ## What fits
 
 File sizes from the model's repository, 2026-10-14. The budget is 93 GiB with the stack stopped,

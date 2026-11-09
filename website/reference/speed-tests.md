@@ -385,7 +385,8 @@ filesystem had 591 GiB free after (`df -h /`).
   runs at 163,840 as deployed. On a 69-token prompt the cache's size barely changes the speed.
 - **The fast coder ran alone.** Beside the always-loaded models, its memory and speed aren't
   measured yet. By the numbers it fits there: 43 GiB for them, 45 for it and the 24 GiB reserve
-  make 112, within the 117 available.
+  make 112, within the 117 available. *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6
+  always loaded in Gemma's place makes it 44 for them and 113 in all, still within the 117.)*
 - **Quality isn't compared.** SGLang also warned that the FP8 KV cache has no scaling factors, so
   it uses 1.0 for each.
 

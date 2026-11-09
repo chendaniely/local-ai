@@ -84,7 +84,7 @@ flowchart TB
     ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
-    engines["engines · 127.0.0.1:800 and up<br/>Gemma, embeddings, whisper, coder Qwen3.8-27B,<br/>Qwen3.6-35B-A3B on demand,<br/>Qwen3-ASR 1.7B and 0.6B on demand, 32K and 64K"]
+    engines["engines · 127.0.0.1:800 and up<br/>always loaded: embeddings, whisper, and Gemma,<br/>which Qwen3.6-35B-A3B replaces at the next deploy<br/>on demand: coder Qwen3.8-27B and Qwen3.6-35B-A3B,<br/>which Gemma replaces at the next deploy,<br/>Qwen3-ASR 1.7B and 0.6B, 32K and 64K"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -141,6 +141,10 @@ flowchart TB
   ntfy -.-> ntfy_phone
   agent_tmux -.-> shares
 ```
+
+*(2026-11-09, Dan's decision: the registry makes Qwen3.6-35B-A3B the always-loaded chat model, on two
+slots with the web UI's background tasks, and puts Gemma on demand, keeping only the vision role. The
+box is as drawn until the next deploy. Plan: the Revisions line of that date.)*
 
 - **Everything on the Spark listens on 127.0.0.1**, except SSH and `tailscale serve`'s port 443.
   The tailnet's rules let my own devices reach the Spark on those two ports only, and ufw allows

@@ -81,6 +81,9 @@ def test_the_notifications_page_is_generated_from_the_registry():
     assert "They reach Dan's phone, through ntfy, once ntfy is set up, in Phase 5" in prose
     assert "until then, what they report shows in `spark status` and `make doctor`, on the Spark" in prose
     assert "send these to Dan's phone" not in prose
+    # Its examples keep the plan's words, Gemma among them: a real message names whichever model the registry lists.
+    assert "name Gemma as the always-loaded chat model, as the plan's do" in prose
+    assert "a real message names whichever model the registry lists" in prose
     assert "| Type | Priority | When | Example |" in page
     rows = _rows(page)
     assert len(rows) == 20

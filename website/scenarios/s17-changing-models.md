@@ -56,7 +56,9 @@ isn't downloaded yet. On the Spark, `make pull` fetches it (16 GiB).*, and one f
 the Mac, `make clients` updates pi's list.* *(2026-10-16: Qwen3.6 is back, on demand, beside the coder
 (Dan's decision), so the old name now loads it; the example shows the message as it read from the swap of
 2026-10-08 until then, and as it reads for any name that has left.)* The plan's [*What you see in Phase
-2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
+2a*](../design/plan.md#what-you-see-in-phase-2a) has every message. *(2026-11-09, Dan's decision,
+from the next deploy: the always-loaded chat model is Qwen3.6, so the restart's words name Qwen3.6
+where they name Gemma, and the message for a name that has left lists Qwen3.6 too.)*
 
 *(2026-10-15, Phase 2a's Task 32: built, not yet deployed or verified; Task 50's drill checks it on
 the box.)* *(Deployed 2026-10-16, at the cutover, and `make doctor`'s `S17` line passed that day;

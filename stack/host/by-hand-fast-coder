@@ -15,7 +15,9 @@
 #   make fast-coder DO=wait   step 3: waits, up to about 10 minutes, for its /health, then shows the time and free -g
 #   make fast-coder DO=stop   step 5: stops the container, then shows free -g and the deployed spark status
 # Its commands are the runbook's, as written (test_by_hand.py compares them). It never loads Gemma, step 1's other
-# part: ask Open WebUI one question first, so the container's start sees Gemma's memory.
+# part: ask Open WebUI one question first, so the container's start sees Gemma's memory. (From the next deploy, Dan's
+# decision of 2026-11-09: Qwen3.6 is the always-loaded chat model, so ask it, or run `spark load small`, instead. The
+# 79 below is unchanged: lowering it, now that Qwen3.6 leaves about 78 available by Phase 1's cold loads, is Dan's.)
 #
 # BY_HAND_OPT, BY_HAND_MEMINFO and BY_HAND_UNIT_DIR are for the tests; each defaults to the box's own path.
 set -euo pipefail

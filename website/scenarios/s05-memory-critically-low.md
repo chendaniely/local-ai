@@ -104,6 +104,10 @@ own requests load it if it fits.* The brake's own alert, sent while the gate is 
 resume once the gate is back and memory has stayed above 28 GiB available for 5 min.* The plan's
 [*What you see in Phase 2a*](../design/plan.md#what-you-see-in-phase-2a) has every message.
 
+*(2026-11-09, Dan's decision, from the next deploy: Qwen3.6 is the always-loaded chat model and
+Gemma loads when asked. So the words above name Qwen3.6 where they name Gemma, and a Gemma the brake
+unloads doesn't reload by itself.)*
+
 *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the
 NAS phase now 5.)* ntfy is set up in Phase 5, with the NAS, not in 2a, so my phone gets none of
 the notifications above until then, the brake's own alert while the gate is down included: the

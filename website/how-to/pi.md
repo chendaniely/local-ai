@@ -269,7 +269,9 @@ deployed.)*
 Gemma has two slots, and they share its context, so one request can use all of it. Requests
 running at the same time share it too: a pi session near the end of Gemma's window and a long
 phone chat can't both fit, and llama-server makes room by dropping the cache of whichever is idle,
-which then has to be read again.
+which then has to be read again. *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, always
+loaded in Gemma's place, runs two slots sharing its 262,144 tokens the same way, and takes the web
+UI's background tasks. Pi's coder stays `qwen3.8-27b`. Gemma keeps its two slots, on demand.)*
 
 pi learns each model's window from `contextWindow` in `~/.pi/agent/models.json`, which
 `make clients` writes from the registry. So once a change to the registry's `ctx` is deployed on

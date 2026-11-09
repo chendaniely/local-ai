@@ -9642,6 +9642,12 @@ deploys during the soak. So the soak below runs with the counter on.
 
 ### Task 45 [Spark]: the soak — every footprint, and what RssAnon accounts for
 
+*(2026-11-09, Dan's decision; plan.md's Revisions: once the next deploy is on the box, the
+always-loaded chat model is Qwen3.6-35B-A3B, at two slots, and Gemma loads on demand. So Step 1's
+residents through the web UI mean Qwen3.6, and this soak measures its footprint at two slots and
+whether two slots work with `--spec-type draft-mtp` at b11146. Step 2's slot-choice counts read
+Qwen3.6's log, not Gemma's, as long as it's the task model.)*
+
 **Files:** `stack/models.yaml` (each footprint, `footprint_measured: true`, `cold_load_gib`;
 `gate.owed_reads_rss` as the evidence says), `spark/tests/test_stack_registry.py` (Task 4's
 `test_owed_reads_rss_stays_off_until_the_soak`, rewritten to the evidence), `website/design/plan.md`
@@ -9919,7 +9925,10 @@ its result in words, and `systemctl --failed` lists no notifier unit. That still
   on a stopped process until `TimeoutAbortSec=` (30 s, from `TimeoutStopSec=`) sends SIGKILL; its
   alert names it. A clean `sudo systemctl kill --signal=SIGTERM local-ai-llama-swap.service`: no
   alert, it comes back, and the residents reload. Gemma's engine killed, as earlyoom would: `sudo
-  kill -9 "$(pgrep -u spark -f 'llama-server.*--alias gemma')"` → Gemma reloads by itself. With
+  kill -9 "$(pgrep -u spark -f 'llama-server.*--alias gemma')"` → Gemma reloads by itself.
+  *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the always-loaded chat
+  model is Qwen3.6, so kill its engine instead, `--alias qwen3.6-35b-a3b`, for the same result; a
+  killed Gemma, on demand, doesn't reload by itself.)* With
   the gate made to fail at start (Task 48's block, put back after), a loaded model answers and a
   load reads `gate_down`'s words; with llama-swap stopped past a key's wait, `llama_swap_down`'s.
   Then `sudo -k`.
@@ -9999,10 +10008,12 @@ gate part), `s02-big-job.md`, `s03-doesnt-fit-interactive.md`, `s17-changing-mod
 - [ ] **Step 2: S02.** `spark make-room 70G`: the list, one question, the room held. `agent`'s
   request for the coder waits its 10 minutes and reads `no_fit`'s `agent` text, naming the hold; a
   request of Dan's loads into the hold and shrinks it; `spark make-room --done` reloads Gemma, or
-  sends `resident_waiting`.
+  sends `resident_waiting`. *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy
+  it reloads Qwen3.6, the always-loaded chat model.)*
 - [ ] **Step 3: S03, and the runtime check of *Before Task 1*.** Task 40's hog, as Dan, with
   `--leave 48`: S03's moment, 48 GiB available, whatever the hog has to take to get there (about
-  26 from the residents' 74). **[Dan, on the Mac]**, pi shows only its usual thinking for 30 s,
+  26 from the residents' 74; *from the next deploy, 2026-11-09's decision, 25 from their 73*). **[Dan, on
+  the Mac]**, pi shows only its usual thinking for 30 s,
   nothing added to the stream, then the refusal, `409: {"message":"The coder didn't load:
   …","code":"no_fit"}`, at 30 s and without retrying: `make logs s=front` shows one request from
   `dan-mac`, ending 409. **[Dan, on the phone]**, the web UI, asked the same, shows the sentence

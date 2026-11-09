@@ -62,7 +62,7 @@ In order of how much they constrain the design:
 | Endpoints | chat: a resident small vision model + **two coders (strongest, lighter) picked per session** · vision · embeddings · speech-to-text · **speaker labels** · self-hosted web search (SearXNG) for Open WebUI. PDF chat later. |
 | Speech | *"Optimize for English, but make room for other languages or be able to swap."* Vocabulary prompts, word timestamps, ~170 MB uploads (90 minutes of WAV). Works whether Dan's audio pipeline runs on the Mac or the Spark (decided later). |
 | Loading | *"If it fits just load it. If it doesn't, tell me what's happening so I can decide. Don't just auto-load a small model where it might seem like you are talking from a large model."* The same rule applies to unattended requests. Doesn't fit → **wait (per key), then refuse** with a reason. |
-| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(Corrected 2026-10-07: that budget counted the reserve twice, and Phase 2a corrects it (*Admission and memory rules*, rule 9). The whole set fits the CUDA-allocatable ceiling, 102, and with Phase 2a's coder, estimated at 41 (38 until the council raised it the same day), it comes to about 84, so about 18 GiB of the ceiling is left.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* |
+| Always loaded | Small vision chat + embeddings + interactive speech-to-text (~20–30 GB) — a setting Dan can change. *(Noted 2026-09-28, from Phase 1's council: at full context the residents measured 33.5 GiB cold that day, about 36 GB, and are budgeted at 43 GiB: Gemma 32, the embeddings 8, whisper 3. With the coder's 33, that leaves 2 GiB of the static budget, 78, for later phases' additions. The requirement stands; it is Dan's.)* *(Corrected 2026-10-07: that budget counted the reserve twice, and Phase 2a corrects it (*Admission and memory rules*, rule 9). The whole set fits the CUDA-allocatable ceiling, 102, and with Phase 2a's coder, estimated at 41 (38 until the council raised it the same day), it comes to about 84, so about 18 GiB of the ceiling is left.)* *(2026-10-08: the registry's coder is now Qwen3.8-27B, budgeted at 35 GiB at 163,840 tokens, so the set takes all 78 and leaves nothing for an addition; Revisions.)* *(Corrected the same day, Dan's decision: that static budget counted the reserve twice, and `spark render` on `main` now has Phase 2a's corrected check (Revisions). The residents, 43, fit idle `MemAvailable` (117) less the reserve; the coder at its full 262,144 tokens, estimated at 41, fits beside them with the reserve kept; and the whole set comes to 84, within the CUDA-allocatable ceiling, 102, so about 18 GiB of the ceiling is left.)* *(2026-11-09, Dan's decision; Revisions: from the next deploy Qwen3.6-35B-A3B replaces Gemma as the always-loaded chat model, because Gemma's thinking mode keeps ending in loops for him and he had stopped using it. The residents are then 44 GiB: Qwen3.6 33, the embeddings 8, whisper 3. Qwen3.6's 33 at two slots is still the one-slot estimate, and whether two slots work with MTP drafting at b11146 hasn't been run on this box. The chat model has no vision file for now, so this row's *vision* waits for a real photo test, and until then a photo goes to Gemma, on demand.)* |
 | Idle unload | ~30 min by default; in-flight work counts as use; **an active agent session keeps its model**; a "stay loaded while I work" pin; an optional scheduled weekday preload; one-click load; load progress shown. *(Changed 2026-10-07, Dan's decision for Phase 2a: **60 minutes**, for on-demand models only; residents never unload for being idle. The weekday preload, with a work-hours pin, is a setting that is off by default (Dan, 2026-10-05); rule 3.)* |
 | Memory conflicts | **Dan decides.** Before a big job, `spark make-room <size>` shows what would unload and unloads only what he confirms. The brake is the backstop: **idle models first**, whatever their class. Batch versus interactive: **Dan first**. *(Phase 2a, Dan's decision, 2026-10-07: make-room then holds the room it freed for him, so nothing automatic takes it back, and requests from his keys wait ahead of `agent`'s: rule 4 and *The front and the gate*.)* |
 | Visibility | A menu-bar status line (*"like Claude Code's… always see what model is being used"*) · ntfy on the Mac and an Android phone, including agent done / needs input / failed · `spark status` · the real model name on every reply. A web UI banner is in the backlog. *(2026-11-09, Task 44k: Dan's decision of 2026-10-22, in [the usage meter's design](usage-meter.md), since he shares his screen: "the menubar just needs a conection status dot". So the menu bar's title is that dot alone, and the model in use, with every other number, is one click away in its dropdown, no longer always in sight there.)* |
@@ -72,7 +72,7 @@ In order of how much they constrain the design:
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
 | Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
-| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by ~~Phase 5's~~ Phase 4's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* |
+| Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by ~~Phase 5's~~ Phase 4's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* *(2026-11-09, Dan's decision; Revisions: Gemma 4 26B-A4B goes on demand, kept for comparison and as the policy-safe option, and Qwen3.6-35B-A3B becomes the always-loaded chat model from the next deploy, ahead of the bake-off, which still compares them.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
 | Ops | Headless box. Hybrid runtime (Compose + systemd) behind a `Makefile` and the `spark` CLI (Python via uv); tidy repo root. **Weekly upgrade day**, on Saturdays (monthly until 2026-09-24; a skipped week is fine), from automated PRs (built for GitHub Actions and `spark/uv.lock`; `stack/versions.yaml` still by hand — see Backlog); vLLM from NGC unless a model needs newer. Nightly backups to the Synology. |
@@ -742,7 +742,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
    the reserve twice: it kept the reserve free under the CUDA ceiling, which is itself about 15 GiB
    below idle `MemAvailable` on this box (117 GiB), and then the launch check kept it free again at
    each load. With Phase 2a's coder the set comes to about ~~81~~ 84 GiB of the 102, and the
-   residents, 43, plus the reserve fit under both. ~~**The reserve goes from 24 to 22 GiB.**~~ It
+   residents, 43, plus the reserve fit under both. *(From the next deploy, Dan's decision of
+   2026-11-09: 85 and 44; Revisions.)* ~~**The reserve goes from 24 to 22 GiB.**~~ It
    has to exceed the brake line, 20, which the registry enforces, so that a fresh load never trips
    the brake~~, and 22 keeps a 2 GiB margin~~. The reserve exists for freeze protection —
    overcommitting can hard-freeze a GB10 with no OOM kill (NVIDIA's driver issue #1358) ~~— and Dan
@@ -794,7 +795,8 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
      formula becomes
      `footprint ≤ idle MemAvailable − reserve − the loaded models' footprints`, which is render's
      check below. The coder beside the residents: 117 − 43 − 24 leaves 50, against its ~41, cold
-     residents or grown. *(Corrected 2026-10-07, after the re-review: *owed* was first a model's
+     residents or grown. *(From the next deploy, Dan's decision of 2026-11-09: 117 − 44 − 24 leaves
+     49, with Qwen3.6 in Gemma's place; Revisions.)* *(Corrected 2026-10-07, after the re-review: *owed* was first a model's
      footprint less its load's fall alone, which counted growth that had already happened twice,
      once in `MemAvailable` and once in *owed*. It erred safe, but it would refuse the coder once
      memory outside the stack and the residents' growth passed 9 GiB together, with nothing else
@@ -1043,6 +1045,11 @@ reach the phone once ntfy is set up; the clause returns then.)*
 | The phone (ntfy) | what needs him, or happened while he wasn't looking | every notification type below *(from Phase 5, since 2026-10-14; until then `spark status` and `make doctor`)* |
 | `spark status`, on the Spark | the whole picture, at any time | the layout below |
 | The menu bar on the Mac | the picture without asking | Phase 2b |
+
+*(2026-11-09, Dan's decision; Revisions: from the next deploy the always-loaded chat model is Qwen3.6,
+33 GiB, not Gemma, 32, which loads when asked. This section's examples keep Gemma and its numbers as
+written: each message names the model the registry lists, so they'll name Qwen3.6, and the figures
+move with it: 44 GiB of residents, 49 free for a load beside them, and 8 beside the coder.)*
 
 **Plain words everywhere Dan reads.** Models by role first, as he knows them: *the coder*, *Gemma*,
 *the embeddings*, *whisper*; file names only in `spark status` and make-room's list, in brackets,
@@ -1897,7 +1904,10 @@ council, with Dan's fourteen decisions (Revisions).*
   Phase 1 saw go wrong; the paste case costs an idle second chat only when that chat's slot is the
   least recently used. If the soak shows harm, the levers are Gemma's `--cache-ram`, raised so that
   a chat with checkpoints can be saved, and Open WebUI's task model, moved off Gemma, which is the
-  clients phase's call.)*; a test
+  clients phase's call.)* *(2026-11-09, Dan's decision; Revisions: from the next deploy that task
+  model moves to Qwen3.6, with the always-loaded change. Its two slots set no
+  `--slot-prompt-similarity`, so b11146's default, 0.10, applies; whether it takes Gemma's 0.5 waits
+  for Dan, and the soak counts the picks in Qwen3.6's log.)*; a test
   that ties the code's version assumptions — the front's and the gate's on llama-swap v257 among
   them — to `stack/versions.yaml`; and, by Dan's decision after the council, the pull's own user,
   `spark-pull`, before the coder's pull, the secret files root-only, and llama-swap's sandboxing.
@@ -2167,7 +2177,12 @@ Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*
 - [Spark] coders: Qwen3.8-27B (its four routes, below; until 2026-10-05 this said "GGUF + MTP; vLLM
   FP8/NVFP4 only if needed"), Laguna-S-2.1, gpt-oss-120b
   (policy-safe); lighter: Qwen3.6-35B-A3B, gpt-oss-20b (policy-safe). Resident vision model: Gemma 4
-  26B-A4B (policy-safe) vs Qwen3.6-35B-A3B. Embeddings: Qwen3-Embedding-0.6B vs Granite embedding r2
+  26B-A4B (policy-safe) vs Qwen3.6-35B-A3B. *(2026-11-09, Dan's decision, ahead of this bake-off;
+  Revisions: Qwen3.6-35B-A3B becomes the always-loaded model from the next deploy, and Gemma 4 goes
+  on demand, policy-safe, still compared here. The `vision` role stays on Gemma until a real photo
+  test passes with Qwen3.6's own vision file, its `mmproj-F16.gguf`, and MTP drafting on; that file
+  isn't in the registry yet. Dan's loop check, the same real prompts on both models with thinking on
+  and a token cap, counting runaway thinking, is still to run.)* Embeddings: Qwen3-Embedding-0.6B vs Granite embedding r2
   (policy-safe); TEI only if llama.cpp falls short. Metrics: footprint (peak, steady), cold start,
   TTFT, prefill at 4K/32K/64K, decode at 1/2/4/8 streams, tool-call reliability, Dan's 3–5 real tasks
   via pi, memory left free · client configs for the picks, rendered by the `spark` CLI (pi pinned
@@ -2553,7 +2568,7 @@ Each item gets its own design pass when its turn comes.
   estimate): the embedding model's context back to 8,192 (about 3 GiB); a quantized KV cache
   (`--cache-type-k`/`-v q8_0` about halves it: roughly 2.5 GiB for Gemma and 2.8 for the coder at
   full context, at a quality cost to measure); Gemma on one slot (its task calls would then queue
-  behind a chat); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
+  behind a chat; *from the next deploy, 2026-11-09's decision, those go to Qwen3.6 on its two slots*); tighter checkpoint caps (about 0.6 GiB per Gemma checkpoint); smaller prompt
   caches (1 GiB for Gemma, 2 for the coder); a context below the maximum where a model never needs
   it; and fewer image tokens (`--image-max-tokens`, less detail). *(2026-10-08, Dan's decision: the
   registry's coder, now Qwen3.8-27B, is already set below its maximum, at 163,840 of its 262,144
@@ -4437,6 +4452,22 @@ Each item gets its own design pass when its turn comes.
   goes through the Spark, with the model list free to change. Usage by project joins Phase 2b's sync,
   and a placeholder holds what backfilling the by-hand SGLang's tokens needs (the design's *Open for
   later*, nothing of it checked yet). The dashboard stays its own project, now with project usage.
+- **2026-11-09** — Qwen3.6-35B-A3B replaces Gemma 4 26B-A4B as the always-loaded chat model, in the
+  registry from the next deploy (Dan's decision; the box is unchanged until then, and that deploy is
+  combined with the usage meter's and Qwen3-ASR's). Why: Gemma's thinking mode keeps ending in
+  thinking loops for him, he suspects the quantization (untested), and he had stopped using it, last
+  on 2026-10-23 against Qwen3.6 on 2026-11-05. Qwen3.6 gets `resident: true`, the `small` role (so
+  the web UI's background tasks, and its `used_by`), two slots sharing its 262,144 tokens through
+  render's `--kv-unified`, and `--ctx-checkpoints 4`, 8 in all as Gemma has. Gemma goes on demand,
+  with only the `vision` role and its `args` as they were, kept for comparison and as the
+  policy-safe option. No model file's pinned revision moves, and Qwen3.6's own vision file isn't
+  added: that waits for a real photo test. Unmeasured: Qwen3.6's footprint at two slots, still the
+  33 GiB estimate, and whether two slots work with `--spec-type draft-mtp` at b11146, which hasn't
+  been run on this box. The always-loaded set goes from 43 to 44 GiB, so an on-demand model gets 49
+  GiB beside it, not 50, and beside the coder only 8, which refuses `qwen3-asr-0.6b-64k`, the one of
+  the Qwen3-ASR entries that fit there only just. The tests of the code's behaviour now read a
+  frozen registry, so a change of models touches only the tests about the shipped file. Each page
+  this touches has a dated note; README's *Current state* and `changelog.md` wait for the deploy.
 
 ## Sources
 

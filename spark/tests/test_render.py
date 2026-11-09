@@ -462,9 +462,26 @@ def test_the_real_registry_renders():
     assert set(yaml.safe_load(files["llama-swap.yaml"])["models"]) == set(registry.models)
 
 
+def test_the_real_registrys_always_loaded_chat_model_shares_its_context_across_two_slots():
+    # Dan's decision, 2026-11-09: the web UI's background tasks and a chat run side by side on Qwen3.6, and either can
+    # use all 262,144 tokens, as on Gemma: one pool, and an idle slot keeps its cache (render's --kv-unified branch).
+    cfg = yaml.safe_load(real()["llama-swap.yaml"])
+    words = shlex.split(cfg["models"]["qwen3.6-35b-a3b"]["cmd"])
+    assert values(words, "--parallel") == ["2"] and values(words, "--ctx-size") == ["262144"]
+    assert "--kv-unified" in words and "--no-cache-idle-slots" in words
+    assert values(words, "--ctx-checkpoints") == ["4"] and values(words, "--spec-type") == ["draft-mtp"]
+
+
+def test_the_web_uis_background_tasks_go_to_qwen36():
+    # Dan's decision, 2026-11-09: the model with the small role is Open WebUI's task model (render's task_model).
+    assert "      TASK_MODEL_EXTERNAL: qwen3.6-35b-a3b\n" in real()["compose/compose.yaml"]
+
+
 def test_the_real_registry_warns_only_that_all_cant_load_at_once():
     # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
     # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.
+    # (Since 2026-11-09, Dan's decision, Qwen3.6 is always loaded and Gemma on demand: the coder's 41 and Gemma's 32 of
+    # 117 − 44 − 24 = 49.)
     # Since Qwen3-ASR's four entries (2026-10-23, Dan's decisions), every model at once, 150 GiB, passes even the 117
     # available at idle; until then it left memory under the warn line.
     warnings = spark.render.check_budget(load_registry(ROOT / "stack/models.yaml"))

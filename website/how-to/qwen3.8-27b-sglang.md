@@ -41,6 +41,10 @@ is loaded, saying how to unload it, or while under 79 GiB is available, and othe
 command in the foreground; `make fast-coder DO=wait` is step 3, and `make fast-coder DO=stop` step
 5. It's temporary: it goes when Phase 4a puts the fast coder in the registry.)*
 
+*(2026-11-09, Dan's decision, in the registry from the next deploy: Qwen3.6 becomes the
+always-loaded chat model and Gemma goes on demand, so "load Gemma" here and in step 1 becomes "load
+Qwen3.6". Step 1's note says how, and `make fast-coder` loads neither.)*
+
 *(Added 2026-10-23: the command holds `--enable-cache-report`, so the engine reports how many prompt tokens came from its cache and the usage meter's rows for this engine aren't read as all uncached. Step 5's command has it too.)*
 
 **Ask the Spark's build session first.** Most of Phase 2a's remaining tasks measure or drill the
@@ -50,7 +54,9 @@ The session's code and docs work doesn't conflict.
 
 **It runs beside the stack**, so Open WebUI, pi and `agent` keep their models. Alone it took about
 45 GiB, and by arithmetic that fits beside the everyday models: their 43, its 45 and the 24 GiB
-reserve make 112 of 117. The first repeat run is also the first measured beside them, so keep the
+reserve make 112 of 117. *(2026-11-09, Dan's decision, from the next deploy: their 44, which makes
+113 of 117; step 1's note has the rest.)* The first repeat run is also the first measured beside
+them, so keep the
 `free -g` readings for [Speed tests](../reference/speed-tests.md). Flash-Next can't run at the same
 time.
 
@@ -69,6 +75,14 @@ free -g
 - **Then load Gemma:** ask Open WebUI one question, so the container's start sees Gemma's memory.
 - **Start only if `free -g` shows at least 79 GiB available:** the container's 45, the 24 reserve,
   and about 10 the everyday models can still grow into.
+
+*(2026-11-09, Dan's decision, from the next deploy: Qwen3.6 is the always-loaded chat model, so this
+step's second part becomes "load Qwen3.6": ask it one question in Open WebUI, or run
+`/opt/local-ai/app/.venv/bin/spark load small`, **on the Spark**, so the container's start sees
+Qwen3.6's memory. Gemma, on demand, doesn't come into it. By Phase 1's cold loads, 29.8, 6.3 and
+about 2.5 GiB, the always-loaded set then leaves about 78 GiB available, under the 79 this step and
+`make fast-coder` ask for: arithmetic, not measured. The 79 is unchanged here; lowering it is
+Dan's to decide.)*
 
 **2. Start it, on the Spark**, in tmux or a terminal you'll keep open. It's step 5's command with
 the image's digest filled in, hasso5703's, checked on the Spark on 2026-10-14:
@@ -264,7 +278,8 @@ cutover, this step is unchanged.)*
 **Later runs: beside the always-loaded models**, once the first run's numbers are in:
 
 1. Load the always-loaded models first (a question in Open WebUI loads Gemma), so SGLang's start
-   sees them.
+   sees them. *(2026-11-09, Dan's decision, from the next deploy: Qwen3.6, not Gemma, is the one
+   a question loads, or `spark load small` **on the Spark**.)*
 2. Make sure the llama.cpp coder isn't loaded: `/opt/local-ai/app/.venv/bin/spark status`.
 3. Start only if `free -g` shows at least 77 GiB available: the container's 43, the 24 reserve, and
    about 10 the always-loaded models can still grow into. *(Corrected 2026-10-15: 79 GiB, since the

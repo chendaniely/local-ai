@@ -11,7 +11,8 @@ LLAMA_CPP_UBATCH_DEFAULT = 512  # and its --ubatch-size default
 # Each pinned GGUF's own context_length, read from its header on 2026-09-28, by (repo, revision, file). Every model runs
 # at its maximum (Dan's decision, 2026-09-28): a model added, swapped or moved to a new revision needs its entry here,
 # read the same way. Qwen3.8-27B's was read from its header by Phase 2a's council, on 2026-10-07. Qwen3.6-35B-A3B left
-# the registry on 2026-10-08, and its entry stays for the way back.
+# the registry on 2026-10-08, and its entry stays for the way back. (It came back on demand on 2026-10-16, and is
+# always loaded since 2026-11-09, Dan's decision.)
 NATIVE_CTX = {
     ("google/gemma-4-26B-A4B-it-qat-q4_0-gguf", "d1c082be9cf3c8a514acf63b8761f4b41935842e",
      "gemma-4-26B_q4_0-it.gguf"): 262144,
@@ -176,7 +177,26 @@ def test_the_stack_registrys_labels_are_the_plans_words():
         "qwen3-asr-0.6b-64k": "Qwen3-ASR 0.6B at 64K",
     }
     assert {name: m.used_by for name, m in models.items() if m.used_by} == {
-        "gemma-4-26b-a4b": "the web UI and photos use it"}
+        "qwen3.6-35b-a3b": "the web UI uses it for its background tasks"}  # Gemma's until 2026-11-09 (Dan's decision)
+
+
+def test_qwen36_is_the_always_loaded_chat_model_and_gemma_goes_on_demand():
+    # Dan's decision, 2026-11-09: Gemma's thinking mode kept ending in loops for him, and he had stopped using it. Qwen3.6
+    # takes its place, the web UI's background tasks included; Gemma stays, on demand, keeping the vision role until a
+    # real photo test of Qwen3.6's own vision file. Its two slots share its one context (render's --kv-unified), and 4
+    # context checkpoints a slot are its 8 in all, the number its footprint's estimate counts. The footprint at two
+    # slots isn't measured yet, so it stays unmeasured here.
+    models = load_registry(STACK_REGISTRY).models
+    assert {name for name, m in models.items() if m.resident} == {
+        "qwen3.6-35b-a3b", "qwen3-embedding-0.6b", "whisper-large-v3-turbo"}
+    assert sum(m.footprint_gib for m in models.values() if m.resident) == 44
+    qwen, gemma = models["qwen3.6-35b-a3b"], models["gemma-4-26b-a4b"]
+    assert qwen.roles == ("small",) and gemma.roles == ("vision",)
+    assert (qwen.ctx, qwen.parallel, qwen.footprint_measured) == (262144, 2, False)
+    assert flag(qwen.args, "--ctx-checkpoints") == 4
+    assert not gemma.resident and gemma.used_by is None
+    assert gemma.args == ("--load-mode", "none", "--ubatch-size", "2048", "--image-max-tokens", "1120",
+                          "--ctx-checkpoints", "4", "--slot-prompt-similarity", "0.5")
 
 
 def test_the_budget_records_idle_memavailable():
