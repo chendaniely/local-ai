@@ -25,6 +25,7 @@ import anyio
 import pytest
 
 from fake_llamaswap import _envelope
+from frozen_registry import FROZEN_REGISTRY
 from spark import gateproto, messages, tickets
 from spark.gate.admission import LOAD_FALL_MARGIN_GIB, Admitted, Admitter, AdmitRequest, Privileges, privileges
 from spark.gate.ledger import Ledger
@@ -39,8 +40,7 @@ from spark.registry import ClientKey, KeyGroup, load_registry
 from spark.render import HF_HOME, HEALTH_CHECK_TIMEOUT_S, model_path
 from test_gate_ledger import Rows as LedgerRows
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-STACK = load_registry(STACK_REGISTRY)
+STACK = load_registry(FROZEN_REGISTRY)
 TZ = "PDT+7"  # the tests' own zone, seven hours behind UTC, as test_messages.py has it
 ZONE = timezone(timedelta(hours=-7))
 BOUND_S = 5  # every async test's bound
@@ -114,7 +114,7 @@ PYTHON = Holder("python3 (chendaniely)", 32, True)
 
 
 def make_registry(*, coder_cold: float | None = 33.0, owed_reads_rss: bool = False):
-    """The stack's registry with the coder at Qwen3.8-27B's estimate, 41 (Task 42's swap), its cold load as given,
+    """The frozen registry with the coder at Qwen3.8-27B's estimate, 41 (Task 42's swap), its cold load as given,
     the extra models, and the two test groups."""
     models = dict(STACK.models)
     models[CODER] = replace(models[CODER], footprint_gib=41.0, cold_load_gib=coder_cold)

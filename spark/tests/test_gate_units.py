@@ -7,7 +7,6 @@ import socket
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -16,8 +15,9 @@ from spark.gate.state import ApplyHold, GateState, load_state
 from spark.gate.units import BackUpWatch, LlamaSwapWatch, UnitState, UnitStateError, unit_state
 from spark.gateproto import BACK_UP_AFTER_S, LLAMA_SWAP_HUNG_S
 from spark.registry import load_registry
+from frozen_registry import FROZEN_REGISTRY
 
-REGISTRY = load_registry(Path(__file__).resolve().parents[2] / "stack" / "models.yaml")
+REGISTRY = load_registry(FROZEN_REGISTRY)
 T = datetime(2026, 10, 8, 9, 14, tzinfo=timezone(timedelta(hours=-7))).timestamp()
 
 

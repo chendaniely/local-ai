@@ -23,16 +23,16 @@ from spark.gateproto import (AUTO_RELEASE_EVERY_S, NOTIFIED_KEEP_S, NTFY_LATE_KE
 from spark.hold import Hold, read_hold, release_hold, release_waits_for_dan, write_hold
 from spark.llamaswap import Running
 from spark.registry import load_registry
+from frozen_registry import FROZEN_REGISTRY
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-REGISTRY = load_registry(STACK_REGISTRY)
+REGISTRY = load_registry(FROZEN_REGISTRY)
 T = 1_800_000_000.0
 BOOT, NEXT_BOOT = "b1", "b2"
 DAN, AGENT = 1000, 1002  # stand-in uids
 
 
 def by_role(role: str) -> str:
-    """The model that has `role` in the stack's registry, so these tests follow the coder's swap (Task 42)."""
+    """The model that has `role` in the frozen registry, so these tests follow the coder's swap (Task 42)."""
     return next(name for name, model in REGISTRY.models.items() if role in model.roles)
 
 

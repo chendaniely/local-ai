@@ -24,6 +24,7 @@ import anyio
 import pytest
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
+from frozen_registry import FROZEN_REGISTRY
 from spark import brakeevents, gateproto, messages, procs, tickets
 from spark.brakeevents import BrakeEvent, append_event
 from spark.gate.admission import AdmitRequest, Admitted
@@ -43,8 +44,7 @@ from spark.render import HF_HOME, model_path
 from test_gate_ledger import Rows as LedgerRows
 from test_procs import gib, process, start_of
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-REGISTRY = load_registry(STACK_REGISTRY)
+REGISTRY = load_registry(FROZEN_REGISTRY)
 TZ = "PDT+7"  # the tests' own zone, seven hours behind UTC, as test_messages.py has it
 ZONE = timezone(timedelta(hours=-7))
 BOUND_S = 5  # every async test's bound
@@ -283,7 +283,7 @@ class Gate:
         self.tmp = tmp_path
         self.clock = Clock(T)
         self.registry_path = tmp_path / "models.yaml"
-        self.registry_path.write_text(STACK_REGISTRY.read_text())
+        self.registry_path.write_text(FROZEN_REGISTRY.read_text())
         self.state_dir = tmp_path / "gate"
         self.state_dir.mkdir()
         self.brake = tmp_path / "brake"

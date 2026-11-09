@@ -8,7 +8,8 @@ import re
 import anyio
 import pytest
 
-from front_helpers import (BOUNDARY, CONTENT_TYPE, DIGESTS, GROUPS, KEYS, MODELS, ROOT, field, file_part, form_body,
+from frozen_registry import FROZEN_REGISTRY
+from front_helpers import (BOUNDARY, CONTENT_TYPE, DIGESTS, GROUPS, KEYS, MODELS, field, file_part, form_body,
                            receiver)
 from spark import messages
 from spark.front import parse
@@ -476,7 +477,7 @@ def test_the_model_list_is_replaced_whole_and_checked():
 
 
 def test_the_first_model_list_is_the_registrys():
-    registry = load_registry(ROOT / "stack" / "models.yaml")
+    registry = load_registry(FROZEN_REGISTRY)
     models = parse.ModelList.from_registry(registry)
     assert [e["name"] for e in models] == list(registry.models)
     coder = next(m for m in registry.models.values() if m.label == "the coder")
@@ -485,7 +486,7 @@ def test_the_first_model_list_is_the_registrys():
 
 
 def test_the_model_list_carries_each_models_engine():
-    registry = load_registry(ROOT / "stack" / "models.yaml")
+    registry = load_registry(FROZEN_REGISTRY)
     models = parse.ModelList.from_registry(registry)
     assert {e["name"]: e["engine"] for e in models} == {m.name: m.engine for m in registry.models.values()}
     models.replace(list(models))  # the gate's own list, replaced whole, keeps it

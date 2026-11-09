@@ -7,6 +7,7 @@ from pathlib import Path
 from spark import cli, docs
 from spark.docs import check_scenarios
 from spark.registry import NOTIFICATION_TYPES, load_registry
+from frozen_registry import FROZEN_REGISTRY
 
 REPO = Path(__file__).resolve().parents[2]
 STACK_REGISTRY = REPO / "stack" / "models.yaml"
@@ -67,7 +68,7 @@ def _rows(page: str) -> list[list[str]]:
 
 
 def test_the_notifications_page_is_generated_from_the_registry():
-    registry = load_registry(STACK_REGISTRY)
+    registry = load_registry(FROZEN_REGISTRY)
     page = docs.render_notifications_page(registry)
     assert page.startswith('---\ntitle: "Notifications"\n')
     assert "generated from `stack/models.yaml` by `spark docs notifications --write`" in page
@@ -99,10 +100,10 @@ def test_the_notifications_page_is_generated_from_the_registry():
 def test_spark_docs_notifications_check_finds_a_stale_page(tmp_path, monkeypatch, capsys):
     page = tmp_path / "notifications.md"
     monkeypatch.setattr(docs, "NOTIFICATIONS_PAGE", page)
-    monkeypatch.setattr(docs, "REGISTRY_FILE", STACK_REGISTRY)
+    monkeypatch.setattr(docs, "REGISTRY_FILE", FROZEN_REGISTRY)
     assert cli.main(["docs", "notifications", "--check"]) == 1  # no page yet
     assert cli.main(["docs", "notifications", "--write"]) == 0
-    assert page.read_text() == docs.render_notifications_page(load_registry(STACK_REGISTRY))
+    assert page.read_text() == docs.render_notifications_page(load_registry(FROZEN_REGISTRY))
     assert cli.main(["docs", "notifications", "--check"]) == 0
     page.write_text(page.read_text().replace("| low |", "| high |", 1))
     capsys.readouterr()

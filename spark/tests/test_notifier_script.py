@@ -19,11 +19,12 @@ import pytest
 
 from spark import gateproto, messages
 from spark.registry import load_registry
+from frozen_registry import FROZEN_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "stack" / "host" / "local-ai-notify"
 UNIT_TEMPLATE = ROOT / "stack" / "templates" / "local-ai-notify@.service"
-REGISTRY = load_registry(ROOT / "stack" / "models.yaml")
+REGISTRY = load_registry(FROZEN_REGISTRY)
 CURL_ARGS = ["-q", "--fail", "--silent", "--max-time", "10", "--config", "-"]
 
 # Stand-in values, none of them a secret: ntfy's address, the notifier's topic and its token's header line.

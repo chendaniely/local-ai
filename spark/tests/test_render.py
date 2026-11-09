@@ -16,6 +16,7 @@ from spark.registry import load_registry
 from spark.render import (COMPOSE_DIR, HF_HOME, SPARK_BIN, UNIT_DIR, RenderError, engine_cmd, installed_path, render,
                           write_tree)
 from spark.versions import load_versions
+from frozen_registry import FROZEN_REGISTRY
 
 FIX = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[2]
@@ -441,8 +442,9 @@ def test_the_2a_set_renders_where_phase_1s_check_refused_it(tmp_path):
     # ceiling, and the coder fits beside the residents with the reserve kept: 41 of 117 − 43 − 24 = 50.
     # The set is the residents and the coder: Qwen3.6, back on demand beside it since 2026-10-16 (Dan's decision),
     # is left out here, since every model at once then passes the ceiling, which render only warns of
-    # (test_the_real_registry_warns_only_that_all_cant_load_at_once).
-    data = yaml.safe_load((ROOT / "stack/models.yaml").read_text())
+    # (test_the_real_registry_warns_only_that_all_cant_load_at_once). These are the frozen registry's numbers, Gemma
+    # the resident.
+    data = yaml.safe_load(FROZEN_REGISTRY.read_text())
     coder = next(name for name, m in data["models"].items() if "coder" in m.get("roles", []))
     data["models"] = {name: m for name, m in data["models"].items() if m["resident"] or name == coder}
     data["models"][coder]["footprint_gib"] = 41

@@ -1,0 +1,303 @@
+# A frozen copy of stack/models.yaml as it stood on 2026-11-09, at commit 1b49479: the registry the tests of the
+# code's behaviour read, through spark/tests/frozen_registry.py, so a change of models doesn't touch them. Don't
+# edit it for a change of models: a test whose point is the shipped file reads stack/models.yaml itself.
+# The one file to edit to add, swap or retire a model. `spark render` refuses anything invalid,
+# including always-loaded models that don't fit idle MemAvailable less the reserve, within the
+# CUDA-allocatable ceiling, and an on-demand model that can't load beside them with the reserve
+# kept (plan.md's rule 9); it warns when every model loaded at once would pass the ceiling, or
+# leave memory under the brake's warn line. That is Phase 2a's corrected check, on main since
+# 2026-10-08 (Dan's decision; plan.md's Revisions). Until then render refused a set whose
+# footprints together passed allocatable − reserve, 78 GiB, which counted the reserve twice.
+# A model's `args` may set only the engine options on render's list, ALLOWED in
+# spark/src/spark/render.py, and never one render sets itself; render refuses any other, naming it.
+# An option goes on the list only once what it does is checked (Dan's decision, 2026-09-28).
+# Phase 2a's sections, after the models, are for its gate and its front:
+#   key_groups     what each group of client keys may do: how long a request may wait, from when the front
+#                  receives it, for its model's load to start before it is refused (wait_s), its place in the
+#                  gate's queue (queue, lower goes first), whether it may load into make-room's hold (uses_hold) or
+#                  load the model the brake marked (reloads_marked), whose wording its refusals use (words: dan or
+#                  agent), whether its refusals and status name Dan's processes (names_processes), and its caps per
+#                  key: requests waiting (max_waiting, below llama-swap's 10 per model) and open connections
+#                  (max_open). The keys themselves, each with its group, the label messages name it by and the
+#                  account that owns it, are in the private key list, /etc/local-ai/keys.yaml, on the Spark only
+#                  and never in this repo; stack/keys.example.yaml shows its shape.
+#   notifications  each notification type's priority on Dan's phone: high, default, low, or "off" (quoted, since
+#                  YAML reads a bare off as false) to send none.
+#   gate           how many minutes an on-demand model stays loaded with no request and no session
+#                  (idle_unload_min), and, per engine kind, whether the gate counts an engine's RssAnon growth as
+#                  memory its model already holds (owed_reads_rss).
+# Each model has a label, its plain-words name in messages; a resident may say what uses it (used_by), for
+# make-room's list; and an on-demand model that loads only after make-room frees room for it sets needs_room, and
+# render checks it against idle MemAvailable less the reserve, within the ceiling, not beside the always-loaded ones.
+budget:
+  allocatable_gib: 102   # CUDA-allocatable ceiling — reported, not yet measured on this box
+  allocatable_measured: false  # true once the ceiling above is measured on this box (plan.md, rule 9)
+  reserve_gib: 24        # a load must leave this much MemAvailable free
+  # MemAvailable with no model loaded: 117.8 GiB before Phase 1's first load (changelog.md, 2026-09-28), rounded down.
+  idle_available_gib: 117
+brake:
+  warn_gib: 28
+  brake_gib: 20
+  poll_ms: 250
+engines:
+  llama.cpp: /opt/local-ai/bin/llama.cpp/b11146/llama-server
+  whisper.cpp: /opt/local-ai/bin/whisper.cpp/v1.9.4/whisper-server
+models:
+  gemma-4-26b-a4b:
+    label: Gemma
+    capability: chat
+    roles: [small, vision]
+    resident: true
+    used_by: the web UI and photos use it
+    engine: llama.cpp
+    source:
+      repo: google/gemma-4-26B-A4B-it-qat-q4_0-gguf
+      revision: "d1c082be9cf3c8a514acf63b8761f4b41935842e"
+      file: gemma-4-26B_q4_0-it.gguf
+      mmproj: gemma-4-26B-it-mmproj.gguf
+    # Every model at its full context (Dan's decision, 2026-09-28); Gemma's two slots share it (render's --kv-unified).
+    # Footprint: what it holds at its most after admission, not only once loaded (Phase 1's council, 2026-09-28). A
+    # cold load at full context took 24.7 GiB (2026-09-28); a long request kept ~0.7 more, probably one checkpoint; the
+    # other 7 of its 8 context checkpoints take ~4.1 (~0.59 each); its prompt cache 1; its first image's buffer ~1.2
+    # (Task 14, at 32768). ~31.7 in all: an estimate, until a soak at full context measures it (plan.md, rule 6).
+    ctx: 262144
+    parallel: 2
+    cache_ram_mib: 1024
+    footprint_gib: 32
+    footprint_measured: false
+    # An image's tokens are decoded in one micro-batch, and one too big for it aborts the engine: pin Gemma 4's
+    # own maximum per image, 1120 tokens (about 2.6 MP), and a micro-batch that holds it (default 512).
+    # A context checkpoint (its sliding-window cache, ~0.6 GiB, in host memory) is added a few per chat turn, and a
+    # slot's are thinned only once it holds the cap: at the default 32 per slot, one long chat could keep ~19 GiB,
+    # whatever the context. A continuing chat restores its latest (an edit further back re-reads the whole prompt), so
+    # cap them at 4 per slot, 8 in all (~5 GiB).
+    # A new prompt takes an idle slot only when that slot's cache holds more than half of it, else the least recently
+    # used slot: at the default, 0.10, a short prompt can take a long chat's slot, and a chat with two checkpoints is
+    # too big for the 1 GiB --cache-ram, so it re-reads whole. Set by the controller on 2026-10-14, at Task 24; what
+    # 0.5 costs in its turn is in plan.md's dated note, in the Phase 2a line, and the soak (Task 45) checks it.
+    args: [--load-mode, none, --ubatch-size, "2048", --image-max-tokens, "1120", --ctx-checkpoints, "4",
+           --slot-prompt-similarity, "0.5"]
+  qwen3-embedding-0.6b:
+    label: the embeddings
+    capability: embeddings
+    roles: [embed]
+    resident: true
+    engine: llama.cpp
+    source:
+      repo: Qwen/Qwen3-Embedding-0.6B-GGUF
+      revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
+      file: Qwen3-Embedding-0.6B-Q8_0.gguf
+    # Footprint, at its most after admission (Phase 1's council, 2026-09-28): a cold load at full context took 6.3 GiB
+    # (6.25, 2026-09-28), and its long-input buffer ~1.2 more, kept after a 26,710-token input. ~7.5 in all: an
+    # estimate, until a soak at full context measures it.
+    ctx: 32768
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 8
+    footprint_measured: false
+    # It pools its last token, so llama-server splits a long input across micro-batches, and the micro-batch is
+    # llama-server's batch size, 2048, which caps --ubatch-size. (This said 8192 until 2026-09-28, capped the same way.)
+    args: [--pooling, last, --ubatch-size, "2048"]
+  whisper-large-v3-turbo:
+    label: whisper
+    capability: transcription
+    roles: [stt]
+    resident: true
+    engine: whisper.cpp
+    source:
+      repo: ggerganov/whisper.cpp
+      revision: "5359861c739e955e79d9a303bcbc70fb988958b1"
+      file: ggml-large-v3-turbo.bin
+    ctx: 1
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 3
+    footprint_measured: false
+    # Its temporary files go to a folder of its own, which llama-swap's sandbox opens (ReadWritePaths=); the Hugging
+    # Face cache stays read-only there.
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
+  qwen3.8-27b:
+    label: the coder
+    capability: chat
+    roles: [coder]
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: unsloth/Qwen3.8-27B-GGUF
+      revision: "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+      file: Qwen3.8-27B-UD-Q4_K_XL.gguf
+    # The early swap (Dan's decision, 2026-10-08), at its full 262,144 tokens since render's corrected budget check
+    # reached main the same day (Dan's decision): the residents' 43 GiB and its 41 come to 84, within the ceiling, and
+    # it fits beside the residents with the reserve kept, 41 of 117 − 43 − 24 = 50. Until then the registry held it at
+    # 163,840, with a footprint of 35, because Phase 1's check summed every listed model against allocatable − reserve,
+    # 78 GiB.
+    # Qwen3.6-35B-A3B, the coder before it, left the registry when it came; its files stay on disk.
+    # Footprint, at its most after admission, estimated from the file's header (Phase 2a's council, 2026-10-07) and not
+    # yet measured: weights ~16.4 GiB (the file); the KV cache ~17.0 at 68 KiB a token, 64 for its 16 attention layers
+    # and 4 for its MTP layer; and ~7.5 for the rest: the compute and long-input buffers, its 2 GiB prompt cache and 8
+    # context checkpoints of ~150 MiB (its 48 recurrent layers' state). ~41 in all, until a soak measures it. A cold
+    # load at 163,840 tokens took 30.6 GiB (2026-10-08); none at 262,144 is measured yet.
+    ctx: 262144
+    parallel: 1
+    cache_ram_mib: 2048
+    footprint_gib: 41
+    footprint_measured: false
+    # --spec-type draft-mtp drafts with the MTP layer in the main file (its header's nextn_predict_layers = 1), as the
+    # coder before it did, and the draft length is carried over from it. By b11146's source, as Phase 2a's council read
+    # it (2026-10-07), the engine loads the file's architecture (qwen35) and drafts from its MTP layer; neither has run
+    # here yet. Context checkpoints default to 32 per slot, so cap them at 8, counted in the footprint: an edit or a
+    # regenerate further back in a pi session re-reads the prompt.
+    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]
+  qwen3.6-35b-a3b:
+    label: Qwen3.6
+    capability: chat
+    # No role: pi's coder stays qwen3.8-27b, and a client asks for this one by name.
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: unsloth/Qwen3.6-35B-A3B-MTP-GGUF
+      revision: "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
+      file: Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+    # Back on demand, beside the coder (Dan's decision, 2026-10-16): a fast model to compare with Gemma, for jobs such
+    # as finding text in a day's email. It was Phase 1's coder until the early swap of 2026-10-08, which kept its files
+    # on disk; Phase 1's first loads measured it at 93 tokens/s against Gemma's 78 (changelog, 2026-09-28). Its entry
+    # is Phase 1's. It and the coder don't fit at once beside the residents (33 + 41 against 117 − 43 − 24 = 50), so
+    # the gate refuses whichever is asked for second, until the other unloads.
+    # Footprint, at its most after admission (Phase 1's council, 2026-09-28): a cold load at full context took 29.8 GiB
+    # (2026-09-28); a long request kept ~0.7 more; its prompt cache 2; its 8 context checkpoints ~0.5, their recurrent
+    # part (the MTP draft's isn't estimated). ~33 in all: an estimate, until a soak at full context measures it, a
+    # checkpoint's size first.
+    ctx: 262144
+    parallel: 1
+    cache_ram_mib: 2048
+    footprint_gib: 33
+    footprint_measured: false
+    # A checkpoint holds its recurrent layers' state, ~63 MiB by arithmetic, and its MTP draft's state, which that
+    # leaves out (b11146 saves both: server-context.cpp, update_dft and data_spec); neither is measured. At the
+    # default, 32 per slot, the recurrent part alone would be ~2 GiB, so cap them at 8 (~0.5 GiB of it), counted in the
+    # footprint.
+    args: [--load-mode, none, --spec-type, draft-mtp, --spec-draft-n-max, "3", --ctx-checkpoints, "8"]
+  # Qwen3-ASR, on demand (Dan's decisions, 2026-10-23): 1.7B for multi-language transcription, 0.6B for Chinese,
+  # Japanese and English. Each is listed twice over one set of files: -32k fits beside the coder, for when other work is
+  # running, and -64k, its full 65,536, for when the box is otherwise free or a batch runs overnight. No role: whisper
+  # keeps stt, and the web UI's speech-to-text with it, and a client asks for these by name. llama-server b11146 serves
+  # them on /v1/audio/transcriptions (its audio projector the mmproj), as text in its `json` only, each transcript
+  # starting `language <name><asr_text>` for the client to strip; no timestamps (plan.md, Revisions). A request is
+  # held to the model's own limit, 20 minutes of audio at 12.5 tokens a second, by the client, at either context.
+  # Footprint, at its most after admission, estimated and not yet measured: the two files (1.7B 2.35 GiB, 0.6B
+  # 0.95); the KV cache at 112 KiB a token, both models' 28 layers of 8 KV heads of 128 (3.5 GiB at 32K, 7.0 at 64K);
+  # ~1 for the compute buffers. No prompt cache: each request is new audio. Beside the coder 9 GiB are left, so the
+  # -32k entries fit with it, qwen3-asr-0.6b-64k only just (9 of 9, so live memory may refuse it), and the gate refuses
+  # qwen3-asr-1.7b-64k until the coder unloads.
+  qwen3-asr-1.7b-32k:
+    label: Qwen3-ASR 1.7B at 32K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-1.7B-GGUF
+      revision: "36a678687ba7d07a74ca70ccb0e36902e005fb80"
+      file: Qwen3-ASR-1.7B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+    ctx: 32768
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 7
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-1.7b-64k:
+    label: Qwen3-ASR 1.7B at 64K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-1.7B-GGUF
+      revision: "36a678687ba7d07a74ca70ccb0e36902e005fb80"
+      file: Qwen3-ASR-1.7B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+    ctx: 65536
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 11
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-0.6b-32k:
+    label: Qwen3-ASR 0.6B at 32K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-0.6B-GGUF
+      revision: "928ab958557df9aa2ef1c93e0e83c7ad0933fae2"
+      file: Qwen3-ASR-0.6B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+    ctx: 32768
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 6
+    footprint_measured: false
+    args: [--load-mode, none]
+  qwen3-asr-0.6b-64k:
+    label: Qwen3-ASR 0.6B at 64K
+    capability: transcription
+    resident: false
+    engine: llama.cpp
+    source:
+      repo: ggml-org/Qwen3-ASR-0.6B-GGUF
+      revision: "928ab958557df9aa2ef1c93e0e83c7ad0933fae2"
+      file: Qwen3-ASR-0.6B-Q8_0.gguf
+      mmproj: mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+    ctx: 65536
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 9
+    footprint_measured: false
+    args: [--load-mode, none]
+key_groups:
+  dan:                   # Dan's keys, such as pi on the Mac's and the web UI's
+    wait_s: 30
+    queue: 0
+    uses_hold: true
+    reloads_marked: true
+    words: dan
+    names_processes: true
+    max_waiting: 8
+    max_open: 32
+  agent:                 # agent's key
+    wait_s: 600
+    queue: 1
+    uses_hold: false
+    reloads_marked: false
+    words: agent
+    names_processes: false
+    max_waiting: 4
+    max_open: 32
+notifications:
+  brake_fired: high
+  brake_needs_release: high
+  gate_down: high
+  front_down: high
+  llama_swap_down: high
+  brake_down: high
+  back_up: default
+  refused: default
+  footprint_suspect: default
+  load_failed: default
+  brake_released: default
+  room_hold_ended: default
+  resident_waiting: default
+  apply_restarted: default
+  load_started: low
+  loaded: low
+  unloaded: low
+  waiting: low
+  pin_ended: low
+  memory_warning: low
+gate:
+  idle_unload_min: 60
+  # Off for each engine until 2a's soak shows that RssAnon follows that engine's growth (plan.md, rule 9). Until then,
+  # what a model is still owed is its footprint less what its load took, however much it has grown since: that errs
+  # safe.
+  owed_reads_rss:
+    llama.cpp: false
+    whisper.cpp: false

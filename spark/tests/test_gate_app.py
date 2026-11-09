@@ -40,6 +40,7 @@ import pytest
 import uvicorn
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
+from frozen_registry import FROZEN_REGISTRY
 from spark import brake, gateproto, messages, protocols, serve
 from spark.brake import KeyCheck, write_key_check
 from spark.gate import app as gate_app
@@ -53,8 +54,8 @@ from spark.messages import Holder, Moment
 from spark.registry import ClientKey
 # anyio_backend and local_zone are test_gate_core's fixtures, imported so they apply here as there.
 from test_gate_core import (AGENT, BOOT, BOUND_S, CODER, DAN, EMBED, FOOTPRINT, GEMMA, KEY, KEYS, RESIDENTS, SPARK,
-                            STACK_REGISTRY, USERS, WHISPER, Front, Gate, _check_at, anyio_backend, at, loaded,
-                            local_zone, record, settle, this_boots_hold)
+                            USERS, WHISPER, Front, Gate, _check_at, anyio_backend, at, loaded, local_zone, record,
+                            settle, this_boots_hold)
 from test_gate_ledger import Rows as LedgerRows
 from test_protocols import LINUX_ONLY
 from test_sockets import LAUNCHER
@@ -1702,7 +1703,7 @@ async def test_spark_gate_takes_its_two_sockets_from_systemd(tmp_path, sockdir):
     (credentials / "ntfy-token").write_text("Authorization: Bearer tk_standin\n")
     (credentials / "keys").write_text(EXAMPLE_KEYS.read_text())
     registry = tmp_path / "models.yaml"
-    registry.write_text(STACK_REGISTRY.read_text())
+    registry.write_text(FROZEN_REGISTRY.read_text())
     state_dir, brake, launch, ledger = tmp_path / "gate", tmp_path / "brake", tmp_path / "launch", tmp_path / "ledger"
     for folder in (state_dir, brake, launch, ledger):
         folder.mkdir()
@@ -1771,7 +1772,7 @@ def test_spark_gate_refuses_to_start_without_its_sockets_or_its_key_list(tmp_pat
     (credentials / "llamaswap-key").write_text("KEY-STANDIN-NEVER-SHOWN\n")
     (credentials / "keys").write_text("keys:\n  dan-mac: {group: dan, label: pi on the 503}\n")
     registry = tmp_path / "models.yaml"
-    registry.write_text(STACK_REGISTRY.read_text())
+    registry.write_text(FROZEN_REGISTRY.read_text())
     listeners = []
     for name in ("status", "control"):
         each = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

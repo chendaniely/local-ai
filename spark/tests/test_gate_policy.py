@@ -32,10 +32,10 @@ from spark.llamaswap_async import LlamaSwapNotSent, LoadOutcome
 from spark.memory import MemInfo
 from spark.registry import load_registry
 from spark.render import HF_HOME, model_path
+from frozen_registry import FROZEN_REGISTRY
 from test_gate_ledger import Rows as LedgerRows
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-REGISTRY = load_registry(STACK_REGISTRY)
+REGISTRY = load_registry(FROZEN_REGISTRY)
 TZ = "PDT+7"  # the tests' own zone, seven hours behind UTC, as test_messages.py has it
 ZONE = timezone(timedelta(hours=-7))
 BOUND_S = 5  # every async test's bound

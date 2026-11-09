@@ -6,9 +6,9 @@ import hashlib
 from pathlib import Path
 
 from spark.registry import load_registry, parse_keys
+from frozen_registry import FROZEN_REGISTRY
 
-ROOT = Path(__file__).resolve().parents[2]
-GROUPS = load_registry(ROOT / "stack" / "models.yaml").key_groups
+GROUPS = load_registry(FROZEN_REGISTRY).key_groups
 KEYS_TEXT = (Path(__file__).parent / "fixtures" / "keys.yaml").read_text()
 KEYS = parse_keys(KEYS_TEXT, GROUPS)
 # Stand-in client keys, each with its digest as the front holds it.

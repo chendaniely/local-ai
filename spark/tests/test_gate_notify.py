@@ -27,9 +27,9 @@ from spark.gateproto import FIRED_ALONE_S, NTFY_LATE_KEEP_S, NTFY_LATE_RETRY_S, 
 from spark.hold import Hold, release_hold, write_hold
 from spark.messages import Moment, Notification
 from spark.registry import NOTIFICATION_TYPES, load_registry
+from frozen_registry import FROZEN_REGISTRY
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-REGISTRY = load_registry(STACK_REGISTRY)
+REGISTRY = load_registry(FROZEN_REGISTRY)
 # The tests' own time zone, seven hours behind UTC, as test_messages.py has it.
 TZ = "PDT+7"
 ZONE = timezone(timedelta(hours=-7))
@@ -150,7 +150,7 @@ SENT_BY_THE_GATE = {
     "pin_ended": {"label": "the coder", "at": at(18, 0), "idle_min": 60},
     "memory_warning": {"available_gib": 27.4, "warn_gib": 28, "brake_gib": 20},
 }
-# Every type at a priority the stack's registry doesn't give it, so a priority the notifier fixed itself shows.
+# Every type at a priority the frozen registry doesn't give it, so a priority the notifier fixed itself shows.
 _OTHER = {"high": "low", "default": "high", "low": "default"}
 ROTATED = replace(REGISTRY, notifications={kind: _OTHER[REGISTRY.notifications[kind]] for kind in NOTIFICATION_TYPES})
 

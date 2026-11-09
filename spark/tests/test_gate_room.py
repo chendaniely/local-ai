@@ -25,6 +25,7 @@ import anyio
 import pytest
 
 from fake_llamaswap import FakeLlamaSwap, serve_fake
+from frozen_registry import FROZEN_REGISTRY
 from spark import gateproto, hold, messages, tickets
 from spark.budget import ALL, Candidate
 from spark.gate.admission import Admitted, Admitter, AdmitRequest
@@ -43,8 +44,7 @@ from spark.registry import load_registry
 from spark.render import HF_HOME, model_path
 from test_gate_ledger import Rows as LedgerRows
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
-STACK = load_registry(STACK_REGISTRY)
+STACK = load_registry(FROZEN_REGISTRY)
 TZ = "PDT+7"  # the tests' own zone, seven hours behind UTC, as test_messages.py has it
 ZONE = timezone(timedelta(hours=-7))
 BOUND_S = 5  # every async test's bound
@@ -68,7 +68,7 @@ def name_of(label: str) -> str:
 
 CODER, GEMMA, EMBED, WHISPER = name_of("the coder"), name_of("Gemma"), name_of("the embeddings"), name_of("whisper")
 RESIDENTS = [GEMMA, EMBED, WHISPER]
-# The stack's registry with the coder at Qwen3.8-27B's estimate, 41 GiB (Task 42's swap), as plan.md's examples have it.
+# The frozen registry with the coder at Qwen3.8-27B's estimate, 41 GiB (Task 42's swap), as plan.md's examples have it.
 REGISTRY = replace(STACK, models={**STACK.models, CODER: replace(STACK.models[CODER], footprint_gib=41.0)})
 FOOTPRINT = {name: model.footprint_gib for name, model in REGISTRY.models.items()}
 

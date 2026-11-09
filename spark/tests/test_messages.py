@@ -21,8 +21,8 @@ from spark.budget import Candidate
 from spark.messages import (CODES_409, CODES_503, FRONT_CODES, PI_RETRY_PATTERNS, RETRY_AFTER_S, UNKNOWN_KEY, Holder,
                             Moment, Refusal, duration, pi_retry_match, refusal)
 from spark.registry import NOTIFICATION_TYPES, load_registry
+from frozen_registry import FROZEN_REGISTRY
 
-STACK_REGISTRY = Path(__file__).resolve().parents[2] / "stack" / "models.yaml"
 
 # The tests' own time zone, seven hours behind UTC: POSIX's TZ writes it "PDT+7", its sign the other way round.
 TZ = "PDT+7"
@@ -659,8 +659,8 @@ def test_the_unknown_key_text_is_the_rulings():
 
 
 # The notifications, on Dan's phone (plan.md, *Notifications, on the phone*), and what each command says (*Each command
-# says what it did, and how to undo it*). The stack's registry gives each type's priority, the warn line and the labels.
-REGISTRY = load_registry(STACK_REGISTRY)
+# says what it did, and how to undo it*). The frozen registry gives each type's priority, the warn line and the labels.
+REGISTRY = load_registry(FROZEN_REGISTRY)
 
 
 def at(hour: int, minute: int) -> datetime:

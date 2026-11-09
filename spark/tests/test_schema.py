@@ -10,6 +10,7 @@ from spark import schema
 from spark.registry import load_registry
 from spark.render import RenderError, llama_swap_config, render
 from spark.versions import load_versions
+from frozen_registry import FROZEN_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[2]
 FIX = Path(__file__).parent / "fixtures"
@@ -21,7 +22,7 @@ V257_SHA256 = "d75ebf1e18806194ce674ebd59cb70b6f8bf93cb6ec65c2392e0e17fc9d0b076"
 V257 = json.loads(SCHEMA_FILE.read_text())
 
 
-def config_of(path=ROOT / "stack/models.yaml"):
+def config_of(path=FROZEN_REGISTRY):
     return llama_swap_config(load_registry(path))
 
 

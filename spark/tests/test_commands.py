@@ -35,9 +35,9 @@ from spark.budget import Candidate, make_room_plan
 from spark.gate import app as gate_app
 from spark.gateclient import GateClient
 from spark.registry import load_registry
+from frozen_registry import FROZEN_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[2]
-STACK = ROOT / "stack" / "models.yaml"
 PLAN = ROOT / "website" / "design" / "plan.md"
 CODER, GEMMA, EMBED, WHISPER = "qwen3.8-27b", "gemma-4-26b-a4b", "qwen3-embedding-0.6b", "whisper-large-v3-turbo"
 NOW = datetime(2026, 10, 14, 10, 0).timestamp()  # when the commands run: 10:00, local time
@@ -47,9 +47,9 @@ MARKER = "CREDENTIAL-MARKER"  # stands for a key, wherever one might travel
 
 
 def registry_text() -> str:
-    """The stack's registry, whose coder is the plan's Qwen3.8-27B (its first role `coder`). Until Qwen3.6 came back
+    """The frozen registry, whose coder is the plan's Qwen3.8-27B (its first role `coder`). Until Qwen3.6 came back
     beside it (2026-10-16), this renamed Qwen3.6's entry to the coder's, a no-op since the swap reached this branch."""
-    return STACK.read_text()
+    return FROZEN_REGISTRY.read_text()
 
 
 # The gate's stand-in.
@@ -263,7 +263,7 @@ class _Stdin(io.StringIO):
 
 @pytest.fixture
 def box(monkeypatch, capsys):
-    """`spark <command>` against the stand-in: the gate's two sockets in a short folder, the stack's registry with the
+    """`spark <command>` against the stand-in: the gate's two sockets in a short folder, the frozen registry with the
     plan's coder, a login in spark-admin (Dan's words), the clock at 10:00, and every GateClient made kept, with its
     socket, its timeout and each stream's `then_s`. `box(*argv, stdin=, tty=)` gives (exit code, stdout, stderr)."""
     folder = Path(tempfile.mkdtemp(prefix="cm", dir="/tmp"))

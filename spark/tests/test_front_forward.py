@@ -32,6 +32,7 @@ import pytest
 
 import spark.front
 from fake_llamaswap import FakeLlamaSwap, serve_fake
+from frozen_registry import FROZEN_REGISTRY
 from front_helpers import DIGESTS, GROUPS, KEYS, KEYS_TEXT, MODELS, field, file_part, form_body
 from gate_standin import GateStandIn
 from spark import messages, serve
@@ -47,8 +48,6 @@ INTERNAL = "internal-key-standin"  # the front's own key for llama-swap, a stand
 NAMES = [entry["name"] for entry in MODELS]
 CODER, GEMMA, EMBED, WHISPER = "qwen3.8-27b", "gemma-4-26b-a4b", "qwen3-embedding-0.6b", "whisper-large-v3-turbo"
 T = 1000.0
-ROOT = Path(__file__).resolve().parents[2]
-STACK_REGISTRY = ROOT / "stack" / "models.yaml"
 CLIENT_KEYS = {"dan-mac": "k1", "agent": "k2", "open-webui": "k3"}  # front_helpers.DIGESTS' stand-in keys
 
 
@@ -1317,7 +1316,7 @@ async def test_spark_front_takes_9100_from_systemd(tmp_path, sockdir):
     # status socket (Task 22's GateLink), where the gate stand-in shows Gemma ready.
     credentials = _credentials(tmp_path / "credentials")
     registry = tmp_path / "models.yaml"
-    registry.write_text(STACK_REGISTRY.read_text())
+    registry.write_text(FROZEN_REGISTRY.read_text())
     from spark.registry import load_registry
 
     loaded = load_registry(registry)
@@ -1395,7 +1394,7 @@ async def test_spark_front_serves_whatever_its_usage_folder_and_a_stream_cut_at_
         usage_dir.mkdir(mode=0o500 if folder == "read-only" else 0o700)
     credentials = _credentials(tmp_path / "credentials")
     registry = tmp_path / "models.yaml"
-    registry.write_text(STACK_REGISTRY.read_text())
+    registry.write_text(FROZEN_REGISTRY.read_text())
     from spark.registry import load_registry
 
     loaded = load_registry(registry)
@@ -1465,7 +1464,7 @@ def test_spark_front_refuses_to_start_without_its_socket_or_with_keys_that_disag
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     registry = tmp_path / "models.yaml"
-    registry.write_text(STACK_REGISTRY.read_text())
+    registry.write_text(FROZEN_REGISTRY.read_text())
     credentials = _credentials(tmp_path / "credentials")
     # llama-swap's address on a closed port, so a refusal that stopped refusing could reach nothing live.
     # The gate's socket, a path nothing listens on, so a refusal that stopped refusing could reach no gate either.
