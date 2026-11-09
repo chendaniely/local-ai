@@ -555,9 +555,13 @@ fresh reviewer, then a whole-branch review and one fix wave. Nothing is pushed o
    subprocess tests among them), so a full `make test` on the Spark comes before the merge. On the Mac, the failures
    in `test_bootstrap` (68), `test_brake` (14), `test_tested_against`, `test_tickets`, `test_launch`,
    `test_notifier_script` and `test_ntfy_records` are the Mac's environment: the same tests fail at the plan's base
-   commit.
-2. **[Spark] Task 44f's Ubuntu 24.04 check,** which needed Docker the Mac doesn't have. *Not yet run*: the Spark
-   session runs each step before relying on it. In a throwaway `ubuntu:24.04` container with the clone mounted
+   commit. *(Done 2026-11-09, on the merge of this branch into `phase-2a`, `6df98b9`: 3496 passed, none skipped.)*
+2. **[Spark] Task 44f's Ubuntu 24.04 check,** which needed Docker the Mac doesn't have. ~~*Not yet run*: the Spark
+   session runs each step before relying on it.~~ *(Run 2026-11-09, at `6df98b9`, and it passed. `systemd-analyze verify`
+   ran on the Spark itself, systemd 255 on Ubuntu 24.04, not in a container, and found nothing in the three units; a
+   copy with a bad directive and a bad `UMask` was reported, so the check can fail. Dan ran the rest in a throwaway
+   `ubuntu:24.04` container, with bootstrap's own two `install -d` lines: every line below held, and the `agent`
+   stand-in was refused with `Permission denied`.)* In a throwaway `ubuntu:24.04` container with the clone mounted
    read-only and `systemd` installed: `systemd-analyze verify` on the rendered `local-ai-front.service`,
    `local-ai-gate.service` and `local-ai-llama-swap.service`, seen to run, not skip; then, as root with stand-in
    users (`spark-front`, `spark`, one in `spark-admin`, an `agent`), bootstrap's two `install -d` lines, after which
