@@ -176,6 +176,7 @@ def test_the_stack_registrys_labels_are_the_plans_words():
         "qwen3-asr-1.7b-64k": "Qwen3-ASR 1.7B at 64K",
         "qwen3-asr-0.6b-32k": "Qwen3-ASR 0.6B at 32K",
         "qwen3-asr-0.6b-64k": "Qwen3-ASR 0.6B at 64K",
+        "whisper-large-v3": "whisper large-v3",  # on demand, no role (Dan's decision, 2026-11-09; issue #35)
     }
     assert {name: m.used_by for name, m in models.items() if m.used_by} == {
         "qwen3.6-35b-a3b": "the web UI uses it for its background tasks"}  # Gemma's until 2026-11-09 (Dan's decision)
@@ -198,6 +199,21 @@ def test_qwen36_is_the_always_loaded_chat_model_and_gemma_goes_on_demand():
     assert not gemma.resident and gemma.used_by is None
     assert gemma.args == ("--load-mode", "none", "--ubatch-size", "2048", "--image-max-tokens", "1120",
                           "--ctx-checkpoints", "4", "--slot-prompt-similarity", "0.5")
+
+
+def test_whisper_large_v3_is_on_demand_with_turbos_files_and_args():
+    # Dan's decision, 2026-11-09 (GitHub issue #35): vid2sub's first choice for Japanese and Korean. On demand, with no
+    # role: stt stays on the turbo model, so the web UI and doctor are unchanged. The same pinned repo revision and args
+    # as turbo's; its footprint is an estimate scaled from turbo's, not measured, and it isn't downloaded yet.
+    models = load_registry(STACK_REGISTRY).models
+    large, turbo = models["whisper-large-v3"], models["whisper-large-v3-turbo"]
+    assert (large.capability, large.engine, large.resident) == ("transcription", "whisper.cpp", False)
+    assert large.roles == () and turbo.roles == ("stt",)
+    assert large.source.file == "ggml-large-v3.bin"
+    assert (large.source.repo, large.source.revision) == (turbo.source.repo, turbo.source.revision)
+    assert (large.ctx, large.parallel, large.cache_ram_mib) == (1, 1, 0)
+    assert (large.footprint_gib, large.footprint_measured) == (5, False)
+    assert large.args == turbo.args
 
 
 def test_the_memory_lines_are_dans_of_2026_11_09():

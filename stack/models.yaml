@@ -122,6 +122,27 @@ models:
     # Its temporary files go to a folder of its own, which llama-swap's sandbox opens (ReadWritePaths=); the Hugging
     # Face cache stays read-only there.
     args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
+  whisper-large-v3:
+    label: whisper large-v3
+    capability: transcription
+    # On demand (Dan's decision, 2026-11-09, GitHub issue #35): vid2sub's first choice for Japanese and Korean. No role:
+    # the turbo model keeps stt, so the web UI and doctor are unchanged, and a client asks for this one by name. It
+    # hasn't run on this box: its file isn't downloaded yet, and `make pull` at the next deploy fetches it. llama-swap
+    # numbers the engines' ports by sorted name, so this one takes the port before the turbo model's.
+    resident: false
+    engine: whisper.cpp
+    source:
+      repo: ggerganov/whisper.cpp
+      revision: "5359861c739e955e79d9a303bcbc70fb988958b1"
+      file: ggml-large-v3.bin
+    # Footprint: an estimate scaled from the turbo model's, whose 1.51 GiB file measured 2.5 GiB and is budgeted at 3.
+    # This file is 2.88 GiB (read from the repo's tree at that revision, 2026-11-09); not measured.
+    ctx: 1
+    parallel: 1
+    cache_ram_mib: 0
+    footprint_gib: 5
+    footprint_measured: false
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
   qwen3.8-27b:
     label: the coder
     capability: chat

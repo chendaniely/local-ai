@@ -485,12 +485,23 @@ def test_the_web_uis_background_tasks_go_to_qwen36():
     assert "      TASK_MODEL_EXTERNAL: qwen3.6-35b-a3b\n" in real()["compose/compose.yaml"]
 
 
+def test_whisper_large_v3_gets_the_port_before_turbos_and_stt_stays_on_turbo():
+    # llama-swap numbers ports by sorted name, so large-v3, a prefix of turbo's name, sorts first (Dan's decision,
+    # 2026-11-09). The web UI's speech-to-text stays the turbo model: stt is its role.
+    cfg = yaml.safe_load(real()["llama-swap.yaml"])
+    names = sorted(cfg["models"])
+    assert names.index("whisper-large-v3") + 1 == names.index("whisper-large-v3-turbo")
+    assert cfg["models"]["whisper-large-v3"]["aliases"] == []
+    assert "      AUDIO_STT_MODEL: whisper-large-v3-turbo\n" in real()["compose/compose.yaml"]
+
+
 def test_the_real_registry_warns_only_that_all_cant_load_at_once():
     # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
     # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.
     # (Since 2026-11-09, Dan's decision, Qwen3.6 is always loaded and Gemma on demand: the coder's 41 and Gemma's 32 of
     # 117 − 44 − 17 = 56, with the reserve at 17.)
-    # Since Qwen3-ASR's four entries (2026-10-23, Dan's decisions), every model at once, 150 GiB, passes even the 117
+    # Since Qwen3-ASR's four entries (2026-10-23, Dan's decisions), every model at once, 150 GiB (155 with Whisper
+    # large-v3, 2026-11-09), passes even the 117
     # available at idle; until then it left memory under the warn line.
     warnings = spark.render.check_budget(load_registry(ROOT / "stack/models.yaml"))
     assert len(warnings) == 2

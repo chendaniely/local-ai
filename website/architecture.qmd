@@ -84,7 +84,7 @@ flowchart TB
     ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
-    engines["engines · 127.0.0.1:800 and up<br/>always loaded: embeddings, whisper, and Gemma,<br/>which Qwen3.6-35B-A3B replaces at the next deploy<br/>on demand: coder Qwen3.8-27B and Qwen3.6-35B-A3B,<br/>which Gemma replaces at the next deploy,<br/>Qwen3-ASR 1.7B and 0.6B, 32K and 64K"]
+    engines["engines · 127.0.0.1:800 and up<br/>always loaded: embeddings, whisper, and Gemma,<br/>which Qwen3.6-35B-A3B replaces at the next deploy<br/>on demand: coder Qwen3.8-27B and Qwen3.6-35B-A3B,<br/>which Gemma replaces at the next deploy,<br/>Qwen3-ASR 1.7B and 0.6B, 32K and 64K,<br/>whisper large-v3 from the next deploy"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -321,7 +321,9 @@ place, or isn't used at all, the front growing what Phase 3 needs.
 Since 2026-10-23 (my decisions), Qwen3-ASR transcribes too, on llama.cpp, on the same
 `/v1/audio/transcriptions`, asked for by name: `qwen3-asr-1.7b-32k` and `qwen3-asr-0.6b-32k` fit
 beside the coder, and `qwen3-asr-1.7b-64k` and `qwen3-asr-0.6b-64k` take the full context, for
-when the box is otherwise free or overnight. Whisper stays the web UI's speech-to-text. Qwen3-ASR
+when the box is otherwise free or overnight. Whisper stays the web UI's speech-to-text. *(2026-11-09,
+Dan's decision: Whisper large-v3 joins on demand at the next deploy, with no role, so that stays true.
+It isn't downloaded yet and hasn't run on this box.)* Qwen3-ASR
 returns text only: captions' timestamps need its aligner, which the stack doesn't serve yet, and
 Phase 3's speech comparison picks a served one.
 
