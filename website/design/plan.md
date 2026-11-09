@@ -4319,6 +4319,16 @@ Each item gets its own design pass when its turn comes.
    about 250 mentions in 30 files, in one commit after `phase-2a` merges (Backlog), chosen over
    renaming it all now, against the phase's own edits to the same files.
 
+- **2026-11-09** — The Mac's sync of the branches, Dan's choices. #30 (Posit Assistant) and #31 (the
+  harness names) merged into `phase-2a`. #29 (`make tunnel` also forwards SearXNG) and #36
+  (`setup-uv` 10.3.3) went to `main`, so Phase 2a's closing merge of `main` conflicts in `CLAUDE.md`,
+  `Makefile`, `website/architecture.qmd`, `website/design/plan.md`, `website/how-to/deploy.md` and
+  `website/how-to/pi.md` (a trial merge of `phase-2a` at `7116f2a` with `main` at `10ecaa7`). #36
+  changes a workflow, which the Spark's token can't push, so that merge goes on the Mac, as *Closing
+  2a* says. #32, the usage meter's counter, was left to the Spark's session: its hand-off is the
+  last section of `usage-meter-counter.md`. The `spark/` Dependabot bumps, #37 to #39, wait for the
+  phase's merge.
+
 ## Sources
 
 Three research passes (serving components; clients, DGX OS and operations; models per slot) and a
