@@ -9743,7 +9743,10 @@ below 28" becomes "how far above 21"; swap is measured down to 24 only, so the 1
 unmeasured; and the hog can't reach the warn line or the brake at all. Reaching them needs one of two
 things, and which is Dan's to decide: a raised line for the drill, as Task 48 already does for the
 brake, or the hog taking a lower floor under a flag. `FLOOR_TOLERANCE_GIB`, too, is re-checked against
-the 2 GiB now between the brake's line and earlyoom's. Everything in Step 2 stands.)*
+the 2 GiB now between the brake's line and earlyoom's. Everything in Step 2 stands.)* *(Added the same
+day, at the set's review:)* this task also measures how long memory takes to come back after an unload,
+not only that tolerance: a load overrunning its footprint at 2.5 GiB/s now has 1.2 s from its floor, 15,
+to earlyoom, 12, against 4 s before, from 22.
 
 **Files:**
 

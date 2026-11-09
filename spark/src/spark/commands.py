@@ -140,7 +140,7 @@ def _label(registry: Any | None, name: str) -> str:
 
 
 def _warn_gib(registry: Any | None) -> float:
-    """The brake's warn line, which its waiting words name: the registry's, or the plan's when it won't load."""
+    """The brake's warn line, which its waiting words name: the registry's, or the fallback's when it won't load."""
     if registry is not None:
         return registry.brake.warn_gib
     from spark.brake import FALLBACK

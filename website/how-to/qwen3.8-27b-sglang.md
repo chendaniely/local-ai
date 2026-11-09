@@ -134,7 +134,9 @@ free -g
 ```
 
 If the first terminal shows an error and returns to its prompt, press Ctrl-C here: the loop waits
-for an answer that won't come. **Stop it if available is under 28.**
+for an answer that won't come. **Stop it if available is under 28.** *(21 from the next deploy, the
+brake's warn line then, as `make fast-coder` stops at 21: the controller's ruling of 2026-11-09,
+following Dan's memory lines.)*
 
 **4. Connect from the Mac.** One tunnel serves both by-hand models; leave it running, **on the
 Mac**:
@@ -192,8 +194,10 @@ from SGLang's source, until the first run measures it:
 
 So `free -g` available should fall by about 43 GiB once it's up. **Stop it (`sudo docker stop -t
 20 qwen38-coder`) if available goes under 28 GiB**, the brake's warn line *(21 from the next deploy,
-Dan's decision of 2026-11-09; this step and `make fast-coder` keep 28 for now)*. Beside the always-loaded
-models the room is 50 GiB (rule 9), so it fits there too, with little to spare.
+Dan's decision of 2026-11-09; ~~this step and `make fast-coder` keep 28 for now~~ this step and `make
+fast-coder` stop at 21 then too, the controller's ruling the same day)*. Beside the always-loaded
+models the room is 50 GiB (rule 9) *(56 from the next deploy, Dan's decisions of 2026-11-09)*, so it
+fits there too, with little to spare.
 
 ## 1. Before you start
 
@@ -371,7 +375,8 @@ watch -n 2 free -g
 
 - The first prints `200` once it's up; `/health` needs no key.
 - The second checks the key: `agent`, with none, must get `401`. Anything else, stop the container.
-- Keep the third open, and stop the container if available goes under 28.
+- Keep the third open, and stop the container if available goes under 28 *(21 from the next deploy;
+  the same ruling)*.
 
 ## 6. Connect from the Mac
 

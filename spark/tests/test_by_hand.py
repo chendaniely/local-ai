@@ -39,6 +39,7 @@ TEMPORARY = {
     # They name the by-hand targets on purpose: change them when Phase 4a retires the by-hand engines.
     "website/design/usage-meter.md": "the sentences naming the by-hand targets, when Phase 4a retires them",
     "website/design/usage-meter-counter.md": "the sentences naming the by-hand targets, when Phase 4a retires them",
+    "website/design/speech-service.md": "the sentence naming make fast-coder, when Phase 4a retires it",
     "website/design/plan.md": "nothing: Phase 4a's removal item is marked done, and its Revisions line stays",
 }
 NAMES = ("make fast-coder", "make flash-next", "by-hand-fast-coder", "by-hand-flash-next")
@@ -342,12 +343,18 @@ def test_fast_coder_wait_gives_up_after_about_10_minutes(tmp_path):
     assert "10 minutes" in result.stderr and "make fast-coder DO=stop" in result.stderr
 
 
-def test_fast_coder_wait_says_stop_it_under_the_warn_line(tmp_path):
-    box = Box(tmp_path, gib=27)
+# The brake's warn line from the next deploy, 21 (the controller's ruling, 2026-11-09, following Dan's memory lines), so
+# a start the 68 limit admits, 23 left once the container's 45 is in, isn't told to stop.
+@pytest.mark.parametrize(("gib", "stops"), [(20, True), (21, False), (23, False)],
+                         ids=["under the line", "at the line", "a start at 68 less its 45"])
+def test_fast_coder_wait_says_stop_it_under_the_warn_line(tmp_path, gib, stops):
+    box = Box(tmp_path, gib=gib)
     result = box.run(FAST_CODER, "wait")
-    assert result.returncode == 1
+    assert result.returncode == (1 if stops else 0), result.stderr
     assert box.calls() == ["curl -sf http://127.0.0.1:990/health", "free -g"]
-    assert "27 GiB available" in result.stderr and "make fast-coder DO=stop" in result.stderr
+    assert ("make fast-coder DO=stop" in result.stderr) == stops
+    if stops:
+        assert f"{gib} GiB available, under the brake's 21 GiB warn line" in result.stderr
 
 
 def test_fast_coder_stop_stops_the_container_and_shows_memory_and_status(tmp_path):
@@ -445,11 +452,14 @@ def test_flash_next_wait_gives_up_after_about_10_minutes(tmp_path):
     assert "10 minutes" in result.stderr and "make flash-next DO=stop" in result.stderr
 
 
-def test_flash_next_wait_says_stop_it_under_the_warn_line(tmp_path):
-    box = Box(tmp_path, gib=27)
+@pytest.mark.parametrize(("gib", "stops"), [(20, True), (21, False)], ids=["under the line", "at the line"])
+def test_flash_next_wait_says_stop_it_under_the_warn_line(tmp_path, gib, stops):
+    box = Box(tmp_path, gib=gib)
     result = box.run(FLASH_NEXT, "wait")
-    assert result.returncode == 1
-    assert "27 GiB available" in result.stderr and "make flash-next DO=stop" in result.stderr
+    assert result.returncode == (1 if stops else 0), result.stderr
+    assert ("make flash-next DO=stop" in result.stderr) == stops
+    if stops:
+        assert f"{gib} GiB available, under the brake's 21 GiB warn line" in result.stderr
 
 
 PKILL = "pkill -INT -f alias qwen3.8-flash-next"

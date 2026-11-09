@@ -407,7 +407,7 @@ def test_a_memory_read_that_fails_is_logged_once_and_tried_again(tmp_path):
 @pytest.mark.parametrize("error", [FileNotFoundError(2, "No such file or directory"),
                                    RegistryError("brake: warn_gib must be above brake_gib")])
 def test_a_registry_that_wont_load_still_leaves_a_brake(tmp_path, monkeypatch, capsys, error):
-    # No registry must not mean no brake: the plan's thresholds, and /running's order with no model table (M4).
+    # No registry must not mean no brake: the fallback thresholds, and /running's order with no model table (M4).
     real_run_brake, seen = brake.run_brake, {}
 
     def wont_load(path):
@@ -418,6 +418,7 @@ def test_a_registry_that_wont_load_still_leaves_a_brake(tmp_path, monkeypatch, c
     assert brake.run(argparse.Namespace(release=False, once=True, key_env="SPARK_API_KEY")) == 0
     out = capsys.readouterr().out
     assert "ALERT" in out and "didn't load" in out and str(brake.paths.REGISTRY) in out
+    assert "Braking on the fallback thresholds" in out
     registry = seen["registry"]
     assert registry.brake == BrakeThresholds(warn_gib=28, brake_gib=20, poll_ms=250) and registry.models == {}
     box = Box(18, ["stt", "coder"], registry=registry)

@@ -17,8 +17,8 @@ the moments of the plan's [*What you see in
 Phase 2a*](../design/plan.md#what-you-see-in-phase-2a). The examples name Gemma as the always-loaded
 chat model, as the plan's do; a real message names whichever model the registry lists: Qwen3.6, from
 the next deploy (Dan's decision, 2026-11-09). Their memory figures, the 24 GiB reserve and the 20 and 28 GiB
-lines among them, are as of when they were written: from the next deploy the registry's are 17, 14 and 21
-(Dan's decision, 2026-11-09).
+lines among them, are as of when they were written; the registry's own are a 17 GiB reserve,
+a 14 GiB brake line and a 21 GiB warn line.
 
 | Type | Priority | When | Example |
 |---|---|---|---|

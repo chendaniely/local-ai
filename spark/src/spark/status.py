@@ -422,7 +422,7 @@ def _down(err: GateError, registry: Any, registry_problem: str | None, words: st
         header = f"{host} · memory can't be read"
         problems.append(f"can't read memory: {error}")
     if registry_problem is not None:
-        problems.append(f"{registry_problem}; the brake's line is the plan's, {_plain(_d(FALLBACK.brake_gib))} GiB")
+        problems.append(f"{registry_problem}; the brake's line is the fallback's, {_plain(_d(FALLBACK.brake_gib))} GiB")
     if isinstance(err, GateUnavailable):
         gate = "not answering"
         said = f"not answering: what's loaded, waiting, held or paused is unknown until it's back · {_STEP[words]}"

@@ -4329,7 +4329,8 @@ Each item gets its own design pass when its turn comes.
   Phase 4a, gains the item that removes them; both by-hand pages' *Run it again* gain a note). Each
   runs its page's repeat run in one command, on the Spark only: the fast coder refuses while the
   llama.cpp coder is loaded or under 79 GiB is available *(72 since 2026-11-09, Dan's decision;
-  the Revisions line of that date)*; Flash-Next stops llama-swap, or from the
+  the Revisions line of that date)* *(68 later that day, Dan's decisions: the Revisions line after
+  it)*; Flash-Next stops llama-swap, or from the
   cutover holds it down, and starts only once 110 GiB is available; and its `DO=stop` restores the
   stack in the page's order. They go when Phase 4a puts both models in the registry.
 - **2026-10-16** — Phase 2a's cutover, its Task 38, on `brightroar` (*Open items and risks*:

@@ -245,7 +245,7 @@ def _now() -> str:
 
 @dataclass(frozen=True)
 class _NoRegistry:
-    """The brake's registry when the real one won't load: the plan's thresholds and no model table, so models go
+    """The brake's registry when the real one won't load: the fallback thresholds and no model table, so models go
     in the order /running lists them."""
 
     brake: BrakeThresholds = FALLBACK
@@ -1489,7 +1489,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         registry = load_registry(paths.REGISTRY)
     except Exception as err:  # whatever stops the registry loading, the brake must still run
-        log(f"brake: ALERT — the registry {paths.REGISTRY} didn't load ({err}). Braking on the plan's thresholds "
+        log(f"brake: ALERT — the registry {paths.REGISTRY} didn't load ({err}). Braking on the fallback thresholds "
             f"(warn below {FALLBACK.warn_gib:g} GiB, brake below {FALLBACK.brake_gib:g} GiB, every {FALLBACK.poll_ms} "
             "ms) with no model table: models go in the order /running lists them")
         registry = _NoRegistry()

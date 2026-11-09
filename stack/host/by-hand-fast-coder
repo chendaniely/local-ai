@@ -4,7 +4,8 @@
 # spark/tests/test_by_hand.py, the Makefile's two targets with their comment, .PHONY names and lint entries,
 # spark/tests/test_makefile.py's tests of them, and the notes naming them in
 # website/how-to/qwen3.8-27b-sglang.md and website/how-to/qwen3.8-flash-next.md, and the sentences naming them in
-# website/design/usage-meter.md and website/design/usage-meter-counter.md. plan.md's Phase 4a lists the same, and
+# website/design/usage-meter.md, website/design/usage-meter-counter.md and website/design/speech-service.md. plan.md's
+# Phase 4a lists the same, and
 # test_by_hand.py's TEMPORARY.
 #
 # make fast-coder: the fast coder, Qwen3.8-27B on SGLang, beside the stack, as the Run it again section of
@@ -34,9 +35,10 @@ SPARK="$OPT/app/.venv/bin/spark"
 # so the growth is covered (Dan's decisions, 2026-11-09). It was 79 until then: 45, the 24 reserve and about 10 of that
 # growth, with Gemma. It's temporary until Phase 4a.
 NEED_GIB=68
-# Step 3: stop it if available is under this: the brake's warn line until the next deploy, which makes that 21 (Dan's
-# decision, 2026-11-09). This stays 28 for now, the wider margin; lowering it is Dan's to decide.
-WARN_GIB=28
+# Step 3: stop it if available is under this: the brake's warn line from the next deploy, 21 (the controller's ruling,
+# 2026-11-09, following Dan's memory lines). It was 28, at which a start the 68 limit admits, 23 left with its 45 in, was
+# always told to stop.
+WARN_GIB=21
 HEALTH_TRIES=60 # step 3's loop asks every 10 s: about 10 minutes
 # The llama.cpp coder's engine runs as spark. While it starts, its command line is `spark launch qwen3.8-27b --
 # …/llama-server … --model …`; once launch has exec'd the engine, it's the engine's own, without `launch`. Its

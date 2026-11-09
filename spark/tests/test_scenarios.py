@@ -85,6 +85,12 @@ def test_the_notifications_page_is_generated_from_the_registry():
     assert "name Gemma as the always-loaded chat model, as the plan's do" in prose
     assert "a real message names whichever model the registry lists" in prose
     assert "Their memory figures, the 24 GiB reserve and the 20 and 28 GiB lines among them, are as of when they were written" in prose
+    # Read from the registry, so a page generated from a change of lines names the new ones.
+    assert "the registry's own are a 24 GiB reserve, a 20 GiB brake line and a 28 GiB warn line" in prose
+    moved = replace(registry, budget=replace(registry.budget, reserve_gib=17),
+                    brake=replace(registry.brake, brake_gib=14, warn_gib=21))
+    assert ("the registry's own are a 17 GiB reserve, a 14 GiB brake line and a 21 GiB warn line"
+            in " ".join(docs.render_notifications_page(moved).split()))
     assert "| Type | Priority | When | Example |" in page
     rows = _rows(page)
     assert len(rows) == 20

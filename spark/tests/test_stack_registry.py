@@ -1,5 +1,7 @@
+import re
 from pathlib import Path
 
+from spark import brake
 from spark.budget import free_for_a_load
 from spark.registry import ClientKey, load_keys, load_registry
 from spark.versions import load_versions
@@ -221,6 +223,11 @@ def test_the_memory_lines_are_dans_of_2026_11_09():
     # at 17, the brake at 14 and the warn line at 21, unmeasured until Tasks 45 and 47; earlyoom stays at 12 and 9. His
     # reason: every Qwen3-ASR model then fits beside SGLang, which holds about 45 outside the stack.
     registry = load_registry(STACK_REGISTRY)
+    # Guards first, so a wrong shipped value fails on what it breaks: an admitted load's floor stays at or above the
+    # brake's line, and the brake acts before earlyoom's first signal.
+    assert registry.budget.reserve_gib - brake.LOAD_FLOOR_MARGIN_GIB >= registry.brake.brake_gib
+    earlyoom = re.search(r"-M (\d+),", (STACK_REGISTRY.parents[1] / "stack/host/earlyoom.default").read_text())
+    assert registry.brake.brake_gib > int(earlyoom.group(1)) / 1024**2  # -M takes KiB
     assert (registry.budget.reserve_gib, registry.brake.brake_gib, registry.brake.warn_gib) == (17, 14, 21)
     models = registry.models
     residents = sum(m.footprint_gib for m in models.values() if m.resident)

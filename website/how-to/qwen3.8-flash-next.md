@@ -78,7 +78,9 @@ line, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says.
   ```
 
 - **For faster writing: MTP at 64K.** About 41.7 tokens a second. At 128K, MTP left 27 GiB
-  available, under the brake's 28 GiB warn line, so this run halves the context. 64K hasn't run
+  available, under the brake's 28 GiB warn line, so this run halves the context *(from the next
+  deploy the warn line is 21, Dan's decision of 2026-11-09, so 27 is above it; `make flash-next` stops
+  at 21 too, the controller's ruling the same day, and this run still halves the context)*. 64K hasn't run
   yet: its first run measures it, and it should leave about 29–30. It answers as
   `qwen3.8-flash-next-mtp`, opencode's 64K entry.
 
@@ -103,7 +105,7 @@ free -g
 ```
 
 If the first terminal shows an error and returns to its prompt, press Ctrl-C here. **Stop it if
-available is under 28:** Ctrl-C in its terminal, or `pkill -INT -f 'alias qwen3.8-flash-next'` from
+available is under 28:** *(21 from the next deploy; the note on the warn line above.)* Ctrl-C in its terminal, or `pkill -INT -f 'alias qwen3.8-flash-next'` from
 this one, which stops either run.
 
 **4. Connect from the Mac**, with the one tunnel both by-hand models use, left running, **on the
@@ -204,7 +206,8 @@ model. *(From the next deploy, Dan's decision of 2026-11-09: the reserve keeps 1
 
 So `free -g` should show about 34–37 GiB available once it's loaded. **Stop the server if
 available falls under 28 GiB**, the brake's warn line *(21 from the next deploy, Dan's decision of
-2026-11-09; `make flash-next` keeps 28 for now)*. Each further 32K of context costs about
+2026-11-09; ~~`make flash-next` keeps 28 for now~~ `make flash-next` stops at 21 then too, the
+controller's ruling the same day)*. Each further 32K of context costs about
 0.8 GiB more, so there's room to raise `--ctx-size` once the first run shows the real numbers.
 
 *(Added 2026-10-15, the first run, measured as how far available memory fell from 117 GiB: at 32K,
@@ -326,7 +329,7 @@ watch -n 2 free -g
 ```
 
 The first prints `qwen3.8-flash-next`. Keep the second open while you use the model, and stop the
-server (Ctrl-C in its window) if available goes under 28.
+server (Ctrl-C in its window) if available goes under 28 *(21 from the next deploy)*.
 
 *(Added 2026-10-15, the first run: to know when the load is done, the run waited on the server's
 health check instead, **on the Spark**, in the second window, then read memory once:
@@ -447,7 +450,8 @@ pinned one, and these three lines added before the `2>&1`:
 - The head is the self-contained 3.9 GiB one, downloaded in step 1. Mainline can't use the smaller
   "shared" heads, which borrow the model's own embeddings.
 - `--spec-draft-n-max 3` is what PR #29761 measured with, and what the stack's coder uses.
-- The head adds about 4 GiB, so available should settle near 30–33. If it goes under 28, use
+- The head adds about 4 GiB, so available should settle near 30–33. If it goes under 28 *(21 from
+  the next deploy)*, use
   `UD-Q2_K_XL` for MTP runs, or a shorter context.
 
 *(Corrected 2026-10-15, the first run: "these three lines" are the two shown, and the `2>&1 | tee …`

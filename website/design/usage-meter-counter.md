@@ -533,6 +533,11 @@ tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
   --short -- Makefile stack/host` is empty; `make install-units`, reading the `ReadWritePaths`, `UMask` and
   `InaccessiblePaths` diffs; `make apply` again: llama-swap's unit changed, so every model stops and the residents
   reload. Then `make status` and `make doctor`, which passes the three new checks.
+  *(Added 2026-11-09, at the review of the deploy this step now carries:)* The first `make apply` stages four files, not the
+  three units: `compose/compose.yaml` changes too, with the web UI's task model, and `make install-units` takes them
+  all. `make pull` comes after the second `make apply`, or Qwen3-ASR and Whisper large-v3 refuse `not_downloaded`. If
+  Qwen3.6 fails to load at two slots with MTP drafting, in `stack/models.yaml` set its `parallel: 1`, drop its
+  `--slot-prompt-similarity`, set its `--ctx-checkpoints 8`, and, **on the Spark, in tmux**, `make apply`.
 - [ ] **Step 6 [Spark], on the Spark:** after one request from Pi on the Mac, the newest row's field names only:
   `tail -n 1 /var/lib/local-ai/usage/usage-$(date -u +%Y-%m).jsonl | jq -c keys`, showing `p`, `o` and `from`.
 - [ ] **Step 7 [Spark]:** `changelog.md`, README §Current state, the Architecture page's two stores solid, S26's `status:

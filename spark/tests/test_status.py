@@ -417,7 +417,7 @@ def test_with_the_gate_down_status_says_so_and_shows_memory(box, monkeypatch):
     assert lines[1].startswith("gate        not answering: ")
     assert lines[2] == "problem     can't read memory: [Errno 2] No such file or directory"
     assert lines[3].startswith(f"problem     the registry {registry} won't load: ")
-    assert lines[3].endswith("; the brake's line is the plan's, 20 GiB")
+    assert lines[3].endswith("; the brake's line is the fallback's, 20 GiB")
     code, out = box("--json")
     assert code == 0 and standard(out)["memory"] == {"total_gib": None, "available_gib": None, "brake_gib": 20}
 
