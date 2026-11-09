@@ -7,10 +7,11 @@ flowchart TB
 
   subgraph mine["my Mac and phone"]
     harness["the harnesses<br/>Pi, OpenCode, Posit Assistant (pa),<br/>Hermes Agent<br/>in a terminal, Orca or Positron"]
+    pyapps["my Python apps<br/>openai, chatlas, querychat"]
     browser["web UI<br/>in a browser or as an app"]
   end
 
-  later["my apps · Phase 3<br/>family and guests · Phase 6"]:::planned
+  later["my other apps · Phase 3<br/>family and guests · Phase 6"]:::planned
   claude["Claude Code and<br/>Claude Desktop<br/>wherever they run"]
   anthropic(("Anthropic"))
 
@@ -31,6 +32,7 @@ flowchart TB
   nas["Synology<br/>alerts, through ntfy · Phase 5<br/>backups · Phase 5"]:::planned
 
   harness -- "SSH tunnel, over Tailscale<br/>or the LAN" --> front
+  pyapps -- "same tunnel" --> front
   browser -- "HTTPS over Tailscale" --> owui
   later -.-> litellm
   claude -- "never through the Spark" --> anthropic

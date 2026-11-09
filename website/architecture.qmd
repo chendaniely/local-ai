@@ -32,8 +32,9 @@ then to the diagrams.
   as `agent`, in tmux, with `agent`'s own key and no tunnel. Orca isn't one: it starts harnesses
   in its panes ([Orca on the Mac](how-to/orca.md)).
 - **A client** is anything that sends the Spark's models a request with a key: the harnesses, the
-  web UI with its own key, and from Phase 3 my own pipelines and apps, each with a key of its own,
-  through the front or through LiteLLM, whichever Phase 3 settles on.
+  web UI with its own key, my Python apps on the Mac, over `make tunnel` since 2026-11-09
+  ([their runbook](how-to/python-apps.md)), and from Phase 3 my other pipelines and apps, each with
+  a key of its own, through the front or through LiteLLM, whichever Phase 3 settles on.
 - **Claude Code and Claude Desktop are neither.** They never use the Spark's models.
 
 ## Where everything sits
@@ -52,6 +53,7 @@ flowchart TB
       oc_mac["OpenCode, Hermes Agent"]
       posit_mac["Posit Assistant (pa),<br/>and in Positron"]
     end
+    pyapps_mac["my Python apps<br/>openai, chatlas, querychat"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
@@ -103,6 +105,7 @@ flowchart TB
   pi_mac -- "SSH tunnel, make tunnel" --> front
   oc_mac -- "same tunnel" --> front
   posit_mac -- "same tunnel" --> front
+  pyapps_mac -- "same tunnel" --> front
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -185,6 +188,7 @@ flowchart LR
   classDef planned stroke-dasharray: 5 5
 
   piT["the harnesses on the Mac<br/>Pi, OpenCode, Posit Assistant (pa), Hermes Agent<br/>in a terminal, Orca or Positron"]
+  py["my Python apps on the Mac<br/>openai, chatlas, querychat"]
   ui["web UI<br/>on the Mac or the phone"]
   piA["Pi as agent<br/>in tmux on the Spark"]
   cc["Claude Code<br/>anywhere"]
@@ -203,6 +207,7 @@ flowchart LR
   anthropic(("Anthropic"))
 
   piT --> tunnel --> front
+  py --> tunnel
   ui --> serve --> owui --> front
   owui --> searx
   piA --> front
@@ -234,8 +239,9 @@ and forwards to llama-swap on its new port with a key of its own; no client chan
 inference routes go through: llama-swap's admin routes stay out of every client's reach. *(Built
 2026-10-16, at Phase 2a's cutover: pi on the Mac answered through the tunnel that day, the web UI
 chatted, searched and transcribed from the phone, and `/unload` through 9100 got
-`route_not_served`.)* From Phase
-3, apps reach the models with a key of their own; Phase 3 decides whether LiteLLM sits ahead of the
+`route_not_served`.)* My Python apps on the Mac use the same tunnel since 2026-11-09, with Pi's key
+or one of their own ([their runbook](how-to/python-apps.md)). From Phase
+3, my other apps reach the models with a key of their own; Phase 3 decides whether LiteLLM sits ahead of the
 front, takes its place, or isn't used at all, the front growing what Phase 3 needs. From Phase 6,
 family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only
 the Spark, and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's
