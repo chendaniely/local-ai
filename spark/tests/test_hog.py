@@ -338,7 +338,7 @@ def test_a_second_signal_while_it_frees_changes_nothing(hog, capsys, first, seco
 def test_its_reader_reads_memavailable(monkeypatch, tmp_path):
     # The hog's own reader, the guard its floor rests on, unpatched (the fixture swaps it everywhere else), against a
     # meminfo in /proc/meminfo's own format, from the box (2026-10-16): MemFree before MemAvailable, every value in kB
-    # (added at Task 41's review, 2026-10-16).
+    # (the controller's ruling of 2026-10-16, at Task 41's review; written 2026-11-09).
     module = load_hog(monkeypatch)
     meminfo = tmp_path / "meminfo"
     text = ("MemTotal:       127533356 kB\nMemFree:        11041096 kB\nMemAvailable:   51839984 kB\n"

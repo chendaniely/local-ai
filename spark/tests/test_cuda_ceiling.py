@@ -351,7 +351,8 @@ def test_it_stops_when_memavailable_would_pass_the_reserve(cc, monkeypatch, lag_
     assert lines[1].endswith(f"Ctrl-C stops it and frees everything; a CUDA call that hangs ignores Ctrl-C, and "
                              f"kill -KILL {os.getpid()} from another pane ends it, and the driver frees CUDA's memory "
                              "as the process exits.")
-    assert "Each line's shortfall is what CUDA holds less MemAvailable's fall since the start" in lines[1]
+    assert ("Each line's shortfall is what CUDA holds less MemAvailable's fall since the start: it may be 10% of what "
+            "CUDA holds, at least 0.1 GiB and at most 1 GiB, and over that, 5 s after a step, it stops.") in lines[1]
     assert lines[2] == ("cuda_ceiling: CUDA holds 0.25 GiB; MemAvailable 116.75 GiB, a shortfall of 0.00 GiB; "
                         "cudaMemGetInfo's free 79.75 GiB.")
     last, held_then = out.lines[-1]
@@ -365,11 +366,13 @@ def test_it_stops_when_memavailable_would_pass_the_reserve(cc, monkeypatch, lag_
 @pytest.mark.parametrize("shows, steps", [
     (lambda n: 0.0 if n == 3 else 1.0, 3),
     (lambda n: 0.2 if n == 3 else 1.0, 3),
-    (lambda n: 0.89 if n == 1 else 1.0, 1),
-], ids=["flat", "a-fifth", "the-first-89%"])
+    (lambda n: 0.55 if n == 1 else 1.0, 1),
+    (lambda n: 0.0 if n == 8 else 1.0, 8),
+], ids=["flat", "a-fifth", "the-first-just-over-the-floor", "at-2-gib"])
 def test_a_step_that_doesnt_show_stops_it(cc, capsys, shows, steps):
-    # After the third step MemAvailable doesn't fall (flat), or falls a fifth of a step: 0.55 of 0.75 GiB held, under
-    # 90%; or the first step shows 89% of itself. Each time it re-reads for 5 s, then frees every pointer and stops.
+    # After the third step MemAvailable doesn't fall (flat), or falls a fifth of a step: 0.20 GiB short with 0.75 held,
+    # over the 0.1 GiB allowed; the first step shows 55% of itself, 0.11 GiB short, just over that; or, with 2 GiB held,
+    # 0.25 GiB short, over the 10% allowed there. Each time it re-reads for 5 s, then frees every pointer and stops.
     box = Box(117.0, shows=shows)
     result = measure(cc, box)
     assert result.stopped == "not_reflected" and result.allocated_gib == steps * 0.25
@@ -381,8 +384,18 @@ def test_a_step_that_doesnt_show_stops_it(cc, capsys, shows, steps):
     assert len(box.allocs) == steps and box.live == []
     words = capsys.readouterr().err
     assert f"short of the {steps * 0.25:.2f} GiB CUDA held, 5 s after its last step" in words
-    assert "it allows at most 10% of what CUDA holds, and at most 1 GiB" in words
+    assert "it allows 10% of what CUDA holds, at least 0.1 GiB and at most 1 GiB" in words
     assert "isn't following what CUDA takes" in words and "This run measures nothing: " + SECOND_STOP in words
+
+
+def test_a_small_shortfall_at_the_start_is_only_noise(cc):
+    # 10% of a first step is 0.025 GiB, tighter than MemAvailable's own noise (a 0.029 GiB rise over 5 s, at the
+    # script's re-review), so the allowed shortfall never goes under 0.1 GiB (the controller's ruling, 2026-11-09). A
+    # first step that shows 89% of itself, 0.0275 GiB short, is noise, and the run goes on to the reserve.
+    box = Box(30.0, shows=lambda n: 0.89 if n == 1 else 1.0)
+    result = measure(cc, box)
+    assert (result.stopped, len(box.allocs)) == ("reserve", 24) and box.live == []
+    assert box.now == pytest.approx(23 * 2.5 + 2.5)  # and it never waited for a step to show
 
 
 def test_a_shortfall_over_1_gib_stops_it(cc, capsys):
@@ -560,6 +573,14 @@ def test_a_signal_as_the_watchdog_stops_changes_nothing(cc):
     assert len(box.allocs) == 5 and box.live == []
 
 
+def second_run(given, free):
+    return (f"CUDA gave {given} GiB and refused more with {free} GiB free by its own count, so this isn't the page "
+            f"cache's signature: Task 41's Step 4 asks for a second run before it records {given} GiB.")
+
+
+NOTHING_GIVEN = f"CUDA refused the first step, with nothing allocated, so this run measures nothing. {DANS_CALL}"
+
+
 def _fail_at(call, n, code, *, memgetinfo_after=False):
     """A stand-in's `fail`: `call` at step `n` returns `code`; with `memgetinfo_after`, so does every cudaMemGetInfo
     after it."""
@@ -577,15 +598,14 @@ def _fail_at(call, n, code, *, memgetinfo_after=False):
 
 
 @pytest.mark.parametrize("start, call, n, code, cuda_free_gib, memgetinfo_after, allocated, taken, verdict", [
-    (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 80.0, False, 2.25, 9,
-     "CUDA gave 2.25 GiB, every page touched, and refused more with 77.75 GiB free by its own count: that's a "
-     "ceiling, and Task 41's Step 4 records it as it is."),
-    (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 3.25, False, 2.25, 9,
-     "CUDA gave 2.25 GiB, every page touched, and refused more with 1.00 GiB free by its own count: that's a "
-     "ceiling, and Task 41's Step 4 records it as it is."),
+    (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 80.0, False, 2.25, 9, second_run("2.25", "77.75")),
+    (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 3.25, False, 2.25, 9, second_run("2.25", "1.00")),
+    (117.0, "cudaMalloc", 1, OUT_OF_MEMORY, 80.0, False, 0.0, 0, NOTHING_GIVEN),
+    (117.0, "cudaMalloc", 1, OUT_OF_MEMORY, 0.5, False, 0.0, 0, NOTHING_GIVEN),
     (26.5, "cudaMalloc", 10, OUT_OF_MEMORY, 3.0, False, 2.25, 9,
-     "CUDA gave 2.25 GiB, every page touched, and refused more with 0.75 GiB free by its own count: that's a "
-     "ceiling, and Task 41's Step 4 records it as it is."),
+     "MemAvailable was still 0.25 GiB above the reserve, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
+     "page cache, was 0.75 GiB: CUDA didn't take the memory the page cache held, so this isn't the ceiling. "
+     + DANS_CALL),
     (117.0, "cudaMalloc", 10, OUT_OF_MEMORY, 3.0, False, 2.25, 9,
      "MemAvailable was still 90.75 GiB above the reserve, 24 GiB, but cudaMemGetInfo's free, which leaves out the "
      "page cache, was 0.75 GiB: CUDA didn't take the memory the page cache held, so this isn't the ceiling. "
@@ -603,16 +623,19 @@ def _fail_at(call, n, code, *, memgetinfo_after=False):
     (117.0, "cudaMemGetInfo", 0, 100, 80.0, False, 0.0, 0,
      "Nothing allocated, nothing measured. Check that the GPU answers (llama-server --list-devices, from the folder "
      "--lib is in); this needs Dan's decision before any rerun (Task 41, Step 4)."),
-], ids=["malloc-a-ceiling", "malloc-a-ceiling-at-1-gib-free", "malloc-a-ceiling-a-step-above-the-reserve",
+], ids=["malloc-a-second-run", "malloc-a-second-run-at-1-gib-free", "malloc-nothing-allocated",
+        "malloc-nothing-allocated-under-1-gib-free", "malloc-the-page-cache-a-step-above-the-reserve",
         "malloc-the-page-cache", "malloc-memgetinfo-silent", "malloc-another-error", "memset", "synchronize",
         "memgetinfo-after-a-step", "memgetinfo-first"])
 def test_it_stops_at_the_first_cuda_error(cc, capsys, start, call, n, code, cuda_free_gib, memgetinfo_after,
                                           allocated, taken, verdict):
-    # It stops at the first CUDA error, frees everything and exits 4. Only cudaMalloc's out of memory can be a ceiling
-    # (the controller's ruling, 2026-10-16), and not when MemAvailable is still more than a step above the reserve
-    # while cudaMemGetInfo's free, which leaves out the page cache, is under 1 GiB: that is the page cache. A failed
-    # cudaMemset or synchronize leaves step 10 untouched, and its pointer is freed too; a cudaMemGetInfo that fails
-    # after step 10, which was touched, counts it. One failing first, before anything is allocated, measures nothing.
+    # It stops at the first CUDA error, frees everything and exits 4. Only cudaMalloc's out of memory can be a ceiling,
+    # and the script can't know that it is one (the controller's rulings, 2026-11-09): with nothing allocated it
+    # measures nothing; with cudaMemGetInfo's free, which leaves out the page cache, under 1 GiB it is the page cache's
+    # signature; otherwise that signature is absent, and Task 41's Step 4 wants a second run. cudaMalloc runs only with
+    # MemAvailable at least a step above the reserve, so a run that gets there exactly, 26.5 less 2.25, is the page
+    # cache's too. A failed cudaMemset or synchronize leaves step 10 untouched, and its pointer is freed too; a
+    # cudaMemGetInfo that fails after step 10, which was touched, counts it. One failing first measures nothing.
     def a_box():
         return Box(start, cuda_free=int(cuda_free_gib * GIB), fail=_fail_at(call, n, code,
                                                                           memgetinfo_after=memgetinfo_after))
@@ -727,7 +750,7 @@ def test_a_fall_under_the_reserve_while_it_holds_frees_everything(cc, capsys, ca
     assert f"MemAvailable {drop_to:.2f} GiB, a shortfall" not in out
     last_fall = 29.5 - drop_to  # since the reading before the third step, 29.5
     assert (f"MemAvailable read {drop_to:.2f} GiB, under the reserve, 24 GiB, while CUDA held 0.75 GiB, so it freed "
-            f"everything at once and stopped. Since its last step MemAvailable fell {last_fall:.2f} GiB, "
+            f"everything at once and stopped. Since just before its last step MemAvailable fell {last_fall:.2f} GiB, "
             f"{last_fall - 0.25:.2f} GiB more than the step's 0.25 GiB: something else took memory meanwhile.") in err
     assert "This run measures nothing: " + SECOND_STOP in err
     box = a_box()
@@ -765,12 +788,12 @@ def test_under_the_reserve_it_says_whose_fall_it_was(cc, capsys, last_shows, own
     assert (29.66 - box.reads[-1][1]) - result.allocated_gib > 0.25
     words = capsys.readouterr().err
     if own:
-        assert ("Since its last step MemAvailable fell 0.27 GiB, within a tenth of the step's 0.25 GiB: its own last "
-                "step took it under.") in words
+        assert ("Since just before its last step MemAvailable fell 0.27 GiB, within a tenth of the step's 0.25 GiB: "
+                "its own last step took it under.") in words
         assert "something else" not in words
     else:
-        assert ("Since its last step MemAvailable fell 0.30 GiB, 0.05 GiB more than the step's 0.25 GiB: something "
-                "else took memory meanwhile.") in words
+        assert ("Since just before its last step MemAvailable fell 0.30 GiB, 0.05 GiB more than the step's 0.25 GiB: "
+                "something else took memory meanwhile.") in words
         assert "its own last step" not in words
 
 
@@ -801,7 +824,7 @@ def test_its_help_lists_every_exit_code(cc, capsys):
     assert "it can only be made longer" in words
     assert "a --reserve under 24, or a bigger step or a shorter pause" in words and "faster" not in words
     assert "or a cudaFree that failed" in words and "the watchdog's too" in words
-    assert "Only an out-of-memory cudaMalloc can be a ceiling" in words
+    assert "Only an out-of-memory cudaMalloc can be a ceiling, and only once a second run agrees" in words
 
 
 @pytest.mark.parametrize("second", ["sigint", "sighup", "sigterm"])
@@ -1022,9 +1045,9 @@ def test_the_watchdog_ends_the_process_within_250_ms_of_a_drop(cc, drop_at):
     assert first_under - drop_at <= 0.25 and exits == [3] and clock.now == first_under
     assert said == ["cuda_ceiling: the watchdog read MemAvailable 23.99 GiB, under the reserve, 24 GiB, while CUDA "
                     "held memory, so it ended the process at once (exit 3); a process's exit frees its CUDA memory. "
-                    "The main thread's words were skipped. This run measures nothing. Check that MemAvailable came "
-                    "back (grep MemAvailable /proc/meminfo), and what else is using memory (spark status for the "
-                    "models, top -o %MEM for the rest).\n"]
+                    "The main thread's words were skipped. If a result line is printed above, it stands; if not, this "
+                    "run measures nothing. Check that MemAvailable came back (grep MemAvailable /proc/meminfo), and "
+                    "what else is using memory (spark status for the models, top -o %MEM for the rest).\n"]
 
 
 @pytest.mark.parametrize("holding", [True, False], ids=["holding", "nothing-held"])
@@ -1037,6 +1060,34 @@ def test_the_watchdog_never_fires_above_the_reserve_or_with_nothing_held(cc, hol
     watchdog.run()
     assert exits == [] and said == [] and clock.now == 100.0 and len(seen) == 400
     assert max(b - a for (a, _), (b, _) in zip(seen, seen[1:])) == 0.25
+
+
+def test_the_watchdog_ends_the_process_even_if_its_words_fail(cc):
+    # Its one line is best effort: a writer thread that can't start mustn't leave the watchdog dead and the process
+    # alive, so the exit runs whatever the words do.
+    clock, exits = Clock(), []
+
+    def no_words(text):
+        raise RuntimeError("can't start new thread")
+
+    watchdog = cc.Watchdog(lambda: 23.99, reserve_gib=24.0, holding=lambda: True, sleep=clock.sleep, exit=exits.append,
+                           write=no_words)
+    with pytest.raises(RuntimeError):  # a real exit never returns, so a stand-in's lets the failure show
+        watchdog.run()
+    assert exits == [3]
+
+
+def test_the_watchdog_outlives_a_reading_that_fails(cc):
+    # A reading that raises is skipped, not fatal: the watchdog goes on, and the next reading under the reserve fires.
+    def readings(now):
+        if now < 0.5:
+            raise OSError("/proc/meminfo: a stand-in's unreadable file")
+        return 23.99
+
+    clock = Clock()
+    watchdog, seen, exits, said = a_watchdog(cc, clock, readings)
+    watchdog.run()
+    assert exits == [3] and clock.now == 0.5 and seen == [(0.5, 23.99)] and len(said) == 1
 
 
 def test_the_watchdog_stops_when_the_run_ends(cc):
