@@ -257,16 +257,18 @@ def test_under_48_gib_available_is_refused_at_a_free_figure_that_passes(tmp_path
     assert "spark unload qwen3.6-35b-a3b" in result.stderr
 
 
-@pytest.mark.parametrize("holding", [
-    {"paused": {"since": 1.0, "available_gib": 19.6, "releases_at": None, "waits_for_dan": False, "problem": None}},
-    {"held": {"size_gib": 40.0, "until": None}},
+@pytest.mark.parametrize(("holding", "cause", "next_step", "not_this"), [
+    ({"paused": {"since": 1.0, "available_gib": 19.6, "releases_at": None, "waits_for_dan": False, "problem": None}},
+     "the brake has paused new loads", "spark status says why", "make-room"),
+    ({"held": {"size_gib": 40.0, "until": None}},
+     "a make-room hold is keeping memory back for you", "spark make-room --done ends it", "brake"),
 ], ids=["paused", "held"])
-def test_it_is_refused_while_new_loads_are_held(tmp_path, holding):
+def test_each_hold_is_refused_in_its_own_words(tmp_path, holding, cause, next_step, not_this):
     box = Box(tmp_path)
     box.set_status(status(58.0, **holding))
     result = box.run()
-    refused(result, box, "holding new loads")
-    assert "spark status says why" in result.stderr
+    refused(result, box, cause)
+    assert next_step in result.stderr and not_this not in result.stderr
 
 
 @pytest.mark.parametrize("state", ["running", "paused", "restarting"])
@@ -288,7 +290,7 @@ def test_a_container_left_behind_is_refused_naming_docker_rm(tmp_path, state):
     socket = box.live_socket()
     result = box.run()
     refused(result, box, "sudo docker rm local-ai-speech")
-    assert state in result.stderr
+    assert f"in state {state}:" in result.stderr
     assert socket.exists() and not box.built()
 
 

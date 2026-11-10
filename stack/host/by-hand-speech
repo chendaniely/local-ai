@@ -30,8 +30,8 @@ ALIGNER_REVISION=c7cbfc2048c462b0d63a45797104fc9db3ad62b7
 # What a load and a chunk took from MemAvailable in step 3 of the design's order: 11.9 GiB (Dan's clip, 2026-11-09).
 NEED_GIB=12
 # A load from about 35 GiB available fired the brake twice, and one from 67 stayed quiet (steps 2 and 3 of that order).
-# The brake carries a fall 10 s ahead, so at 2.6 GiB/s, the fastest load measured, that's 26 GiB past its deployed line
-# of 20, plus 2.
+# The brake carries a fall 10 s ahead, so at 2.6 GiB/s, the top of the range the brake's watch was set from, that's
+# 26 GiB past its deployed line of 20 (14 from the next deploy), plus 2.
 NEED_AVAILABLE_GIB=48
 
 refuse() {
@@ -53,7 +53,7 @@ check_snapshot() {
   [ "$recorded" = "$revision" ] || refuse "$folder isn't at revision $revision"
 }
 
-# The gate's figures as they came, unrounded, and whether new loads are held: "free available clear|holding", with
+# The gate's figures as they came, unrounded, and what's holding new loads: "free available clear|paused|held", with
 # none for a figure the gate didn't give. One that can't be compared makes it fail, as an unreadable status does.
 read_status() {
   "$SPARK" status --json | "$SPARK_PYTHON" -I -c '
@@ -72,8 +72,8 @@ def figure(name):
     return value
 
 
-holding = view.get("paused") is not None or view.get("held") is not None
-print(figure("free_for_a_load_gib"), figure("available_gib"), "holding" if holding else "clear")' 2> /dev/null
+hold = "paused" if view.get("paused") is not None else "held" if view.get("held") is not None else "clear"
+print(figure("free_for_a_load_gib"), figure("available_gib"), hold)' 2> /dev/null
 }
 
 enough() {
@@ -95,19 +95,23 @@ start() {
   case "$state" in
     '') ;;
     running | paused | restarting) refuse "it's already running: make speech DO=stop stops it" ;;
-    *) refuse "a $state container is left behind: sudo docker rm $CONTAINER removes it, then run make speech again" ;;
+    *) refuse "its container was left behind, in state $state: sudo docker rm $CONTAINER removes it, then run make speech again" ;;
   esac
 
   check_snapshot Qwen3-ASR-1.7B "$ASR_REVISION"
   check_snapshot Qwen3-ForcedAligner-0.6B "$ALIGNER_REVISION"
 
-  local figures free available holding
+  local figures free available hold
   figures="$(read_status)" || refuse "spark status --json gave something it can't read, so nothing says there's room"
-  read -r free available holding <<< "$figures"
+  read -r free available hold <<< "$figures"
   if [ "$free" = none ] || [ "$available" = none ]; then
     refuse "the gate isn't answering, so nothing says there's room: start it first"
   fi
-  [ "$holding" = clear ] || refuse "the brake or a pause is holding new loads: spark status says why"
+  # A make-room hold refuses too: the memory it keeps back is what this load would take.
+  case "$hold" in
+    paused) refuse "the brake has paused new loads: $SPARK status says why" ;;
+    held) refuse "a make-room hold is keeping memory back for you: $SPARK make-room --done ends it" ;;
+  esac
   enough "$free" "$NEED_GIB" || refuse "$(shown "$free") GiB free for a load, under the $NEED_GIB it needs: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
   enough "$available" "$NEED_AVAILABLE_GIB" || refuse "$(shown "$available") GiB available, under the $NEED_AVAILABLE_GIB that keeps the load clear of the brake: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
 
