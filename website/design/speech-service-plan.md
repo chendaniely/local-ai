@@ -2324,7 +2324,7 @@ if __name__ == "__main__":
 
 ### Task 3 [Spark]: the docs that change with it
 
-*(Corrected 2026-11-09: the runbook and `docs-edits.py` below are as first written. The tree's versions also list the refusals Task 2's review added.)*
+*(Corrected 2026-11-09: the runbook and `docs-edits.py` below are as first written. The tree's versions also list the refusals Task 2's review added, and correct two things this listing has wrong: a request for Qwen3.6 loads it again if it fits, and `--to none` is there because the run's file names no translation model.)*
 
 **Files:**
 
