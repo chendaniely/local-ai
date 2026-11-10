@@ -21,14 +21,22 @@ it as *other processes* and the brake can't unload it.
 
 ## Start it
 
-**On the Spark**, as yourself, in the clone at `~/git/hub/local-ai` on the `phase-2a` branch, in
-tmux, so its socket's folder stays when you log out. It asks for your `sudo` password once.
+**On the Spark**, as yourself, open a tmux window, so its socket's folder stays when you log out:
 
 ```bash
 tmux new -As speech
+```
+
+**On the Spark**, inside that tmux window, with the clone at `~/git/hub/local-ai` on the `phase-2a` branch. Paste
+this as a block of its own: pasted with `tmux new`, its later lines can run in the outer shell when tmux exits.
+
+```bash
+cd ~/git/hub/local-ai
 /opt/local-ai/app/.venv/bin/spark unload qwen3.6-35b-a3b
 make speech
 ```
+
+If `spark unload` says it isn't loaded, that's fine. `make speech` asks for your `sudo` password once.
 
 It refuses to start if there's less than 12 GiB free for a load or less than 48 GiB available, which
 keeps the load clear of the brake's watch on the rate of fall; while the brake has paused loads or a
@@ -47,8 +55,9 @@ It prints `{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}`.
 
 ## Run an episode from the Mac
 
-**On the Mac**, in your clone of this repo on the `phase-2a` branch, leave the tunnel open in a spare
-terminal. It also carries the model API, as before.
+**On the Mac**, in your clone of this repo on the `phase-2a` branch, close any tunnel already open first: one
+opened before you pulled this branch has no forward to the service, and a second `make tunnel` can't bind 9100.
+Then leave the tunnel open in a spare terminal. It also carries the model API, as before.
 
 ```bash
 make tunnel
@@ -70,9 +79,17 @@ parser = "openai"
 local = true
 ```
 
-**On the Mac**, where you run vid2sub, give it the spoken language, `zh` or `yue`, because its
-auto-detection skips Mandarin on this kind of endpoint. `--to none` makes captions in the spoken
-language only, since this file names no translation model:
+**On the Mac**, where you run vid2sub, use a copy of the episode in a new, empty folder, because vid2sub reuses
+a sidecar it finds beside the video and doesn't transcribe again. Give it the spoken language, `zh` or `yue`,
+because its auto-detection skips Mandarin on this kind of endpoint. `--to none` makes captions in the spoken
+language only, since this file names no translation model. In that folder, check with `--dry-run` first:
+
+```bash
+vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from zh --to none --dry-run
+```
+
+If it says `transcribe: reuse the sidecar`, stop: the run wouldn't touch the Spark. If not, **on the Mac**, in the
+same folder:
 
 ```bash
 vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from zh --to none
@@ -91,11 +108,13 @@ vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from
 | 503 | `no_fit` | too little memory for the chunk, or CUDA ran out; vid2sub waits and tries again |
 
 If memory falls under 15 GiB available at any point, the service ends itself, and vid2sub pauses
-with a connection error. `make speech` starts it again.
+with a connection error. Until the next deploy the brake's line is 20, above that 15, so the brake acts first.
+`make speech` starts the service again.
 
 ## Stop it
 
-Press Ctrl-C in its tmux window. Or, **on the Spark**, from the clone at `~/git/hub/local-ai`:
+Press Ctrl-C in its tmux window; during a load or a chunk it waits for that work to end. Or, **on the Spark**,
+from the clone at `~/git/hub/local-ai`, this stops it within 20 s:
 
 ```bash
 make speech DO=stop

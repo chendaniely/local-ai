@@ -275,8 +275,9 @@ def language_in(code: str | None) -> str | None:
 
 
 def out_of_memory(error: Exception) -> bool:
-    """torch.cuda.OutOfMemoryError, recognised by name, as torch may not be importable where this runs."""
-    return type(error).__name__ == "OutOfMemoryError" or "CUDA out of memory" in str(error)
+    """torch.cuda.OutOfMemoryError, recognised by name, as torch may not be importable where this runs, or torch's
+    words for it, which also come as `CUDA error: out of memory`. The message is only tested here and never logged."""
+    return type(error).__name__ == "OutOfMemoryError" or "out of memory" in str(error).lower()
 
 
 def empty_cuda_cache() -> None:
@@ -407,7 +408,7 @@ def start_watchdog(mem_available: Callable[[], float], *, end: Callable[[int], N
         while True:
             try:
                 available = mem_available()
-            except (OSError, ValueError) as error:
+            except Exception as error:  # only this thread bounds CUDA memory, so nothing may end it silently
                 log.error("the watchdog can't read MemAvailable (%s), so it ends the service", type(error).__name__)
                 end(WATCHDOG_EXIT)
                 return

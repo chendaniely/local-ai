@@ -296,6 +296,12 @@ def two_files_are_a_400(serve):
     assert (status, code_of(body)) == (400, "bad_request")
 
 
+@check
+def no_pth_file_runs(_serve):
+    """site.py is what runs an environment's .pth files, and `make test` runs this environment's Python as Dan."""
+    assert "site" not in sys.modules
+
+
 class UnixConnection(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__("127.0.0.1", 58991, timeout=30)
@@ -357,6 +363,9 @@ def main(argv):
     if argv[1:] == ["--list"]:
         print("\n".join(CHECKS))
         return 0
+    # -S keeps every .pth file from running as Dan, and it also leaves this environment's site-packages off the path.
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    sys.path.append(str(Path(sys.executable).parent.parent / "lib" / version / "site-packages"))
     CHECKS[argv[1]](load(argv[2]))
     print(f"ok {argv[1]}")
     return 0

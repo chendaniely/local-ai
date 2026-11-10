@@ -1,5 +1,7 @@
 # The speech service's own environment (website/design/speech-service.md). `make speech` builds it on the Spark with
-# `uv sync --frozen --no-build --no-install-project`, and only the container runs it: never as Dan, never on the host.
+# `uv sync --frozen --no-build --no-install-project`. Only the container runs the service. `make test` runs this
+# environment's Python on the host, with no .pth files, for soundfile, python-multipart and uvicorn, and never imports
+# the third-party package.
 [project]
 name = "local-ai-speech"
 version = "0"

@@ -145,8 +145,8 @@ under `/tmp`, and Hugging Face is offline.
 
 Mounted read-only: the virtual environment, uv's Python at its identical host path, since the environment's links
 are absolute, `stack/speech/serve.py` alone and never the clone, and the weights. Writable: the socket's folder. The
-environment is built on the host, at `~/speech/venv`, with `uv sync --frozen --no-build --no-install-project`, and
-nothing on the host runs it.
+environment is built on the host, at `~/speech/venv`, with `uv sync --frozen --no-build --no-install-project`~~, and
+nothing on the host runs it~~. *(Corrected 2026-11-09, at the final review: only the container runs the service. `make test` runs this environment's Python on the host, with no `.pth` files, for soundfile, python-multipart and uvicorn, and never imports the third-party package.)*
 
 What this leaves: `--gpus all` exposes the NVIDIA driver's device nodes, which every account already has, and a
 denial of service to the GPU. The service sees all audio and transcripts, and with `--network none` its replies and
@@ -156,9 +156,9 @@ the socket's folder are its only ways out.
 
 On the Spark it listens on a Unix socket, `/run/user/1000/local-ai-speech/speech.sock`, in a folder made `0700` by
 Dan at each start and emptied at start and stop, so no other account there can reach it or take its place. The
-folder goes when Dan's last session ends, so it runs in tmux. The container can replace the socket with a link, which
-would need a second actor on the Mac to use: accepted for Stage 1, and Stage 2's front must not connect through a
-folder the container can write.
+folder goes when Dan's last session ends, so it runs in tmux. The container can replace the socket with a link~~, which
+would need a second actor on the Mac to use~~: accepted for Stage 1, and Stage 2's front must not connect through a
+folder the container can write. *(Corrected 2026-11-09, at the final review: a malicious uploader is already on the Mac, so one process could do both halves, and a linked socket reaches whatever Unix sockets Dan can, the gate's control socket among them. A process running as Dan on the Mac already has his ssh, so what this adds is only for a sandboxed process or another account. It stays accepted for Stage 1.)*
 
 On the Mac, `make tunnel` gains `-L 127.0.0.1:58991:/run/user/1000/local-ai-speech/speech.sock`, beside its existing
 forward. Any process on the Mac can reach that port, which is why it needs the `Origin` and `Host` checks above. It

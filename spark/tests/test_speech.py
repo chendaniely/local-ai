@@ -327,8 +327,9 @@ class OutOfMemoryError(RuntimeError):
     pass
 
 
-@pytest.mark.parametrize("error", [OutOfMemoryError("no"), RuntimeError("CUDA out of memory. Tried to allocate 2 GiB")],
-                         ids=["the type", "the words"])
+@pytest.mark.parametrize("error", [OutOfMemoryError("no"), RuntimeError("CUDA out of memory. Tried to allocate 2 GiB"),
+                                   RuntimeError("CUDA error: out of memory")],
+                         ids=["the type", "the words", "torch's other words"])
 def test_cuda_running_out_is_a_no_fit_and_the_next_chunk_is_served(serve, error):
     model = Model(error=error)
     client = client_for(serve, model)
@@ -480,7 +481,8 @@ def test_the_watchdog_lets_15_gib_pass(serve):
     assert run_watchdog(serve, [15.0, 15.0]) == []
 
 
-@pytest.mark.parametrize("error", [OSError("gone"), ValueError("no line")], ids=["unreadable", "no line"])
+@pytest.mark.parametrize("error", [OSError("gone"), ValueError("no line"), IndexError("list index out of range")],
+                         ids=["unreadable", "no line", "a line with no figure"])
 def test_the_watchdog_ends_the_process_when_it_cant_read_memory(serve, error):
     assert run_watchdog(serve, [40.0, error]) == [serve.WATCHDOG_EXIT]
 
@@ -570,7 +572,7 @@ speech_names = subprocess.run([sys.executable, "-IB", str(CHECKS), "--list"], ca
 @pytest.mark.skipif(not SPEECH_PYTHON.exists(), reason="stack/speech's environment isn't built here")
 @pytest.mark.parametrize("name", speech_names)
 def test_in_the_speech_environment(name):
-    run = subprocess.run([str(SPEECH_PYTHON), "-IB", str(CHECKS), name, str(SERVE)], capture_output=True, text=True,
+    run = subprocess.run([str(SPEECH_PYTHON), "-IBS", str(CHECKS), name, str(SERVE)], capture_output=True, text=True,
                          timeout=120, stdin=subprocess.DEVNULL)
     assert run.returncode == 0, run.stdout + run.stderr
     assert run.stdout.strip() == f"ok {name}"

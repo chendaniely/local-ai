@@ -112,8 +112,8 @@ start() {
     paused) refuse "the brake has paused new loads: $SPARK status says why" ;;
     held) refuse "a make-room hold is keeping memory back for you: $SPARK make-room --done ends it" ;;
   esac
-  enough "$free" "$NEED_GIB" || refuse "$(shown "$free") GiB free for a load, under the $NEED_GIB it needs: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
-  enough "$available" "$NEED_AVAILABLE_GIB" || refuse "$(shown "$available") GiB available, under the $NEED_AVAILABLE_GIB that keeps the load clear of the brake: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
+  enough "$free" "$NEED_GIB" || refuse "$(shown "$free") GiB free for a load, under the $NEED_GIB it needs: free some memory, for example unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
+  enough "$available" "$NEED_AVAILABLE_GIB" || refuse "$(shown "$available") GiB available, under the $NEED_AVAILABLE_GIB that keeps the load clear of the brake: free some memory, for example unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
 
   UV_PROJECT_ENVIRONMENT="$VENV" uv sync --quiet --frozen --no-build --no-install-project --project "$REPO/stack/speech"
 

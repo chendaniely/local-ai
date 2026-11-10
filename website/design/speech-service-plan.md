@@ -29,6 +29,8 @@ into the tree with this function rather than being retyped. **On the Spark**, in
 listing() { awk -v want="$1" '$0 == "<!-- listing: " want " -->" { armed = 1; next } armed && /^````/ { if (inside) exit; inside = 1; next } inside { print }' website/design/speech-service-plan.md > "${2:-$1}"; }
 ```
 
+*(Corrected 2026-11-09, at the final review: the listings stay as first tested, and the tree has moved on from them again: its `stack/speech/serve.py`, `stack/speech/pyproject.toml`, `spark/tests/test_speech.py`, `spark/tests/speech_env_checks.py`, `stack/host/by-hand-speech` and `website/how-to/speech-by-hand.md` hold the final review's fixes.)*
+
 ## Global Constraints
 
 Every task's requirements include these.
@@ -38,10 +40,10 @@ Every task's requirements include these.
 - **Tests only through `make test`,** one run at a time: `make test ARGS="spark/tests/test_x.py -q"`. A bare pytest is
   refused on the Spark.
 - **Nothing deploys.** No `make apply`, `make apply-now` or `make install-units` in this plan.
-- **The third-party package never runs as Dan or on the host.** `uv sync` only unpacks wheels; only the container runs
-  the environment.
+- **The third-party package never runs as Dan or on the host.** `uv sync` only unpacks wheels; ~~only the container runs
+  the environment~~. *(Corrected 2026-11-09, at the final review: only the container runs the service. `make test` runs this environment's Python on the host, with no `.pth` files, for soundfile, python-multipart and uvicorn, and never imports the third-party package.)*
 - **Nothing loads while Qwen3.6 is loaded.** Loading beside it set off the brake twice on 2026-11-09. `make speech`
-  refuses under 12 GiB free for a load.
+  refuses under 12 GiB free for a load. *(Corrected 2026-11-09, at the final review: what `make speech` checks is the room, 12 GiB free and 48 GiB available and no pause or hold, by Task 2's review. With SGLang up that means Qwen3.6 is out.)*
 - **Pins:** `qwen-asr-dgxspark` 0.1.1; transformers 5.14.x; torch 2.13.0+cu130; `Qwen/Qwen3-ASR-1.7B` at
   `7278e1e70fe206f11671096ffdd38061171dd6e5`; `Qwen/Qwen3-ForcedAligner-0.6B` at
   `c7cbfc2048c462b0d63a45797104fc9db3ad62b7`; `ubuntu:24.04` by digest; `exclude-newer = "7 days"`.
@@ -2630,16 +2632,23 @@ if __name__ == "__main__":
 Nothing above ran the real models through the service. This does. **Stop and ask Dan** if the brake fires, if the peak
 doesn't fit beside SGLang with Qwen3.6 unloaded, or if a chunk takes more than vid2sub's 900 s timeout.
 
-- [ ] **Step 1 [Dan]: start it.** **On the Spark**, as Dan, in the clone on `phase-2a`:
+- [ ] **Step 1 [Dan]: start it.** **On the Spark**, as Dan, open a tmux window:
 
 ```bash
 tmux new -As speech
+```
+
+**On the Spark**, inside that tmux window, with the clone on `phase-2a`. Paste this as a block of its own: pasted
+with `tmux new`, its later lines can run in the outer shell when tmux exits.
+
+```bash
+cd ~/git/hub/local-ai
 /opt/local-ai/app/.venv/bin/spark unload qwen3.6-35b-a3b
 free -g
 make speech
 ```
 
-Expected: it asks for the `sudo` password once, then within about a minute prints `loaded: listening on /run/speech/speech.sock`.
+If `spark unload` says it isn't loaded, that's fine. Expected: it asks for the `sudo` password once, then within about a minute prints `loaded: listening on /run/speech/speech.sock`.
 
 - [ ] **Step 2 [Spark]: the session checks it,** through the socket, with the 161 s clip from the spike. Record
 `MemAvailable` before and after, and the time.
@@ -2657,8 +2666,10 @@ journalctl -u local-ai-brake.service -n 5 --no-pager
 Expected: `{"status":"ok"}`; the model list; `200`, in about 12 s; `MemAvailable` falling by about 3.5 GiB for the
 request; nothing new from the brake.
 
-- [ ] **Step 3 [Spark]: compare it with vid2sub's real parser,** from the copy of vid2sub at `ac29e7b`. Words kept must
-equal the words sent, and the text must match. Expected: the 489 of 489 words the spike reached, give or take any
+- [ ] **Step 3 [Spark]: compare it with vid2sub's real parser.** The session runs the service's answer, Step 2's
+`service.json`, through `spark/tests/vid2sub_parser.py`, the lasting copy of vid2sub's parser from `ac29e7b`, from
+`make test`'s environment (`uv run --frozen --project spark python -I`, with that file on the path), and gives no
+other command for the comparison. Words kept must equal the words sent, and the text must match. Expected: the 489 of 489 words the spike reached, give or take any
 change in a re-run of the model. Then send the refusals their real paths: a `.wav` (400) and `Origin:` (403).
 
 - [ ] **Step 4 [Dan]: stop it,** Ctrl-C in its tmux window. Expected: back at the prompt, and the socket's folder gone.
@@ -2666,7 +2677,8 @@ change in a re-run of the model. Then send the refusals their real paths: a `.wa
 - [ ] **Step 5 [Spark]: record it.** `changelog.md` gains a dated entry and README's *Current state* gains the new current
 state (the speech service, by hand, off when not in use; `~/speech`), with this step's measured figures. The two brake
 firings of 2026-11-09 go in the same entry, as the design's step 2 records them. If a measured figure differs from
-`REQUEST_GROWTH_GIB` or `NEED_GIB`, say so and correct them, with the spec, in this commit.
+`REQUEST_GROWTH_GIB` or `NEED_GIB`, say so and correct them, with the spec, in this commit; the `git add` line then also takes
+`stack/speech/serve.py stack/host/by-hand-speech website/design/speech-service.md`.
 
 ```bash
 git add changelog.md README.md
@@ -2683,7 +2695,9 @@ correct word timings, while he keeps coding on the by-hand SGLang coder, and no 
 - [ ] **Step 1 [Spark]: push.** Dan's standing OK covers this. Run *Before every push* in `website/how-to/leak-guards.md`
 first, then `git push origin phase-2a`.
 
-- [ ] **Step 2 [Mac]: pull and open the tunnel.** **On the Mac**, in the clone on `phase-2a`:
+- [ ] **Step 2 [Mac]: pull and open the tunnel.** **On the Mac**, in the clone on `phase-2a`, close any tunnel already
+open first: one opened before this pull has no forward to the service, and a second `make tunnel` can't bind 9100.
+Then:
 
 ```bash
 git pull
@@ -2697,21 +2711,39 @@ Expected: it stays open, with no error. Then, in another terminal on the Mac, in
 - [ ] **Step 3 [Dan]: start it** as in Task 4's Step 1, on the Spark, beside SGLang.
 
 - [ ] **Step 4 [Mac]: the config and a dry run.** **On the Mac**, save the TOML from the runbook as `~/speech-spark.toml`,
-then:
+and copy the episode into a new, empty folder, because vid2sub reuses a sidecar it finds beside the video and doesn't
+transcribe again. Then, in that folder:
 
 ```bash
 vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from zh --to none --dry-run
 ```
 
-Expected: it says it would use `spark-qwen`, and writes nothing.
+Expected: it says it would use `spark-qwen`, and writes nothing. If it says `transcribe: reuse the sidecar`, stop: the
+run wouldn't touch the Spark.
 
-- [ ] **Step 5 [Dan]: the episode.** **On the Mac**, with SGLang in real use:
+- [ ] **Step 5 [Dan]: the episode.** **On the Mac**, in that folder, with SGLang in real use:
 
 ```bash
 vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from zh --to none
 ```
 
-Record: no cue flagged `est`, the share of segments with words, three places spot-checked by ear, and the times against
+While the episode runs, the session's job is a memory log. **On the Spark**, in a second terminal, started before
+the episode, noting the time it started, and ended with Ctrl-C once the episode is over:
+
+```bash
+while sleep 5; do date +%T; grep MemAvailable /proc/meminfo; done >> ~/speech/spike/out/episode-mem.log
+```
+
+After the episode, **on the Spark**, the lowest figure, then the brake's journal since the start:
+
+```bash
+grep MemAvailable ~/speech/spike/out/episode-mem.log | sort -k2 -n | head -n 1
+journalctl -u local-ai-brake.service --since "<the time it started>" --no-pager
+```
+
+Record both. If the brake fired, stop and ask Dan, as Task 4 says.
+
+Also record: no cue flagged `est`, the share of segments with words, three places spot-checked by ear, and the times against
 the Mac's result if one is kept for that episode. Also the slowest chunk's time while SGLang is generating, which the
 design's step 4 left unmeasured, and how the longest stretched units read in subtitles.
 
