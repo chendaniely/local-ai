@@ -10,9 +10,11 @@ hand, that gives vid2sub word timings for Mandarin and Cantonese with no change 
 It stays outside the front and the gate until its Stage 2, after the soak, so `spark status` counts
 it as *other processes* and the brake can't unload it.
 
-- **It needs Qwen3.6 unloaded,** which frees about 30 GiB. While it's out, requests for it are
-  refused with the reason, the web UI's background tasks included. The by-hand SGLang coder can keep
-  running.
+- **It needs Qwen3.6 unloaded,** which frees about 30 GiB. Nothing keeps it out while the service
+  runs: a request for it loads it again if it fits. With the by-hand SGLang coder up, it doesn't fit
+  at today's reserve, and the request is refused with the reason. From the next deploy, at the lower
+  reserve, it may fit, and the web UI's background tasks ask for it then. So don't use it during a
+  run. The by-hand SGLang coder can keep running.
 - **Stop it for Phase 2a's drills and measurements:** Tasks 41, 43, 44, 45 and 47 to 50.
 - **It has no key.** Its socket's folder is yours alone on the Spark, and on the Mac the tunnel's
   port takes requests only with its own `Host` and no `Origin`, so a web page can't reach it.
@@ -70,7 +72,7 @@ local = true
 
 **On the Mac**, where you run vid2sub, give it the spoken language, `zh` or `yue`, because its
 auto-detection skips Mandarin on this kind of endpoint. `--to none` makes captions in the spoken
-language only, since Qwen3.6, which would translate them, is unloaded:
+language only, since this file names no translation model:
 
 ```bash
 vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from zh --to none

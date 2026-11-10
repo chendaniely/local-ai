@@ -37,8 +37,11 @@ and the times compared with the Mac's result if one is kept for that episode.
    load even at the reserve of 17. The service takes about 12 GiB (step 3, below), and a load from there
    would set off the brake's watch on the rate of fall, which could only unload always-loaded models. So **Qwen3.6
    is unloaded for each transcription run** (Dan, 2026-11-09), which frees about 30 GiB, and the load starts from
-   about 58 GiB free, far from the brake. Requests for Qwen3.6, the web UI's background tasks included, are refused
-   with the reason until it is loaded again.
+   about 58 GiB free, far from the brake. ~~Requests for Qwen3.6, the web UI's background tasks included, are refused
+   with the reason until it is loaded again.~~ *(Corrected 2026-11-09, at the build's review: a request loads it again
+   if it fits, because the mark `spark unload` leaves stops only the gate's own reload. With SGLang up it doesn't fit at
+   the reserve deployed today, so it's refused with the reason. From the next deploy, at the reserve of 17, it may fit,
+   and the web UI's background tasks use it then, so a run shouldn't ask for it.)*
 3. **The original weights,** since Qwen's published accuracy, which puts the model first for these languages, is
    theirs and not a quantized copy's.
 4. **Nothing disturbs Phase 2a's measurements.** Tasks 41, 43, 44, 45 and 47 to 50 run with this service stopped.
@@ -174,9 +177,9 @@ GiB step 3 measured, or `MemAvailable` is under 48 GiB, or the brake has paused 
 gate doesn't answer, or Dan's uid isn't 1000, or outside tmux, or if it's already running or a stopped container is left
 behind, or if a snapshot isn't at its pinned revision. *(The 48 and the two holds were added at the build's review,
 2026-11-09: a load from about 35 GiB available fired the brake twice and one from 67 stayed quiet, and 12 GiB free alone
-admits about 29 to 35.)* It has its own test file and removal list, since it goes at Stage 2, not with the other by-hand
-targets at Phase 4a. Its help says to stop it for Phase 2a's drills. [Its runbook](../how-to/speech-by-hand.md) has the
-steps.
+admits about 29 to 35 at the reserve of 17 (36 to 42 at the 24 deployed today).)* It has its own test file and removal
+list, since it goes at Stage 2, not with the other by-hand targets at Phase 4a. Its help says to stop it for Phase 2a's
+drills. [Its runbook](../how-to/speech-by-hand.md) has the steps.
 
 ### Tests
 

@@ -4534,7 +4534,6 @@ Each item gets its own design pass when its turn comes.
   downloaded yet (`make pull` at the deploy fetches it), and it hasn't run on this box. Its footprint,
   5 GiB, is an estimate scaled from the turbo model's, not measured. llama-swap numbers ports by sorted
   name, so it takes the port before the turbo model's.
-
 - **2026-11-09** — The speech service's design, approved by Dan ("you can build"), and its Stage 1
   built on `phase-2a` (GitHub issue #35; [the design](speech-service.md), [the build
   plan](speech-service-plan.md)). vid2sub needs word timings for Mandarin and Cantonese, which

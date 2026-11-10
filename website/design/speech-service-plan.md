@@ -63,7 +63,7 @@ Each line is pinned by a test in the task that owns the code; a reviewer checks 
 2. **Spaced punctuation in a transcript,** such as `A - B`: the chunk keeps its timings
    (`test_any_mix_of_words_and_punctuation_keeps_every_word`, Task 1).
 3. **A damaged upload:** `fLaC` then garbage, a file cut short, a form with no audio, or a path sent as text: a refusal,
-   never a 500 (`speech_env_checks.py`, Task 1). *(Corrected 2026-11-09, at Task 1's review: a file cut inside a frame's audio is refused. One cut on a frame boundary, or within the next frame's six-byte header, isn't, because what's left is valid FLAC: as long as a whole frame remains, it's answered with the audio before the cut, and its `duration` shows the shorter length.)*
+   never a 500 (`speech_env_checks.py`, Task 1). *(Corrected 2026-11-09, at Task 1's review: a file cut inside a frame's audio is refused. One cut on a frame boundary, or within the next frame's header, isn't, because what's left is valid FLAC: as long as a whole frame remains, it's answered with the audio before the cut, and its `duration` shows the shorter length.)*
 4. **The model breaking or memory running out mid-chunk:** a refusal in vid2sub's shape, and the next chunk is served
    (`test_cuda_running_out_is_a_no_fit_and_the_next_chunk_is_served`, Task 1).
 5. **A second `make speech` while one runs:** it refuses and leaves the running one's socket alone
