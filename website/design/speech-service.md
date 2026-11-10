@@ -118,7 +118,8 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   *(Corrected later the same day, after the rerun: **the prompt was not the main cause.** With it left out, ~~the same
   chunks looped, 12 of 32 again~~ 12 of 32 chunks looped again, 11 of them the same ones *(wording corrected
   2026-11-10, from the service's log: one chunk differed each way)*, so the sentence above blaming it for those 12 was wrong. What the prompt does is shown
-  only by the clip. The episode's transcript came to about 2,700 characters for 47 minutes, most of its long chunks
+  only by the clip. The episode's transcript came to about 2,700 characters for ~~47~~ 45½ minutes *(corrected 2026-11-10: its audio
+  runs 45 min 35 s)*, most of its long chunks
   nearly empty, with the package's repeat-cleaner collapsing each loop. On 10 minutes of that episode with no prompt,
   in 30 s windows and Mandarin forced, 6 of 20 windows looped, and the text was unrelated to the audio: the same
   stretch came out as a textbook passage about the Zhou dynasty at one window size and a trip to the supermarket at
@@ -136,28 +137,28 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   a real repetition or a loop of its own. The Mac's engine on the same audio would still say whether Qwen3-ASR's
   failure is the model or this Spark's setup, but the done test no longer waits on it: it names no model, and
   vid2sub's `spark-turbo` is the next try.)*
-  *(2026-11-10, later: **Whisper looped too, and `max_context=0` stops it.** The done test's episode, about 45
-  minutes, ran through vid2sub's `spark-turbo`, the stack's Whisper through the front, in under a minute, but in
-  places the same line came back many times in place of the dialogue. Five runs of the same audio, counting the
-  30-second stretches where one line came 4 or more times: 11 at the server's defaults; 9 with vid2sub's prompt left
-  out; 2 with `max_context=64` and `carry_initial_prompt`; 4 with `beam_size=5`; and none with `max_context=0`, but for
-  one short word 5 times in one place, the same in the run without the prompt, so possibly real. The cause: whisper.cpp
-  carries the text it decoded in a request's earlier 30-second windows into the next as context (its `n_max_text_ctx`;
-  at the server's default, -1, whisper.cpp's own, half the decoder's 448-token text context), so one bad window feeds
-  the next. The prompt isn't the main cause: 9 without it. `max_context=0` decodes each window without the text before
-  it. Dan watched those subtitles against the video: the two former loop places are the right dialogue now; some lines
-  come early or late, and in one place a line's words are stretched over a 9-second silence, since word times without
-  DTW are rough. In his words: "i think this is already worlds better than before. the rest is fine tuning, but i'm
-  okay with somethig liek this as a homegrown project". So the done test's episode now runs through vid2sub on the
-  Spark with Whisper, which Dan judged "worlds better": so far from a scratch copy of vid2sub that sends
-  `max_context=0`, and the same through his own vid2sub follows once its change lands. Dan's decision: the fix lives in
-  both places, vid2sub sending `max_context=0` with each request, and the stack's whisper-server running with
-  `--max-context 0` by default from the next deploy, so every client gets it. The cost: with `max_context=0`
-  whisper.cpp drops a request's `prompt` too (`carry_initial_prompt=true` doesn't bring it back), so by default a
-  vocabulary prompt or vid2sub's glossary does nothing. A client that wants its prompt sends `max_context` itself, 64
-  for example, since whisper-server v1.9.4 starts each request from its defaults, at the risk of loops on hard audio.
-  DTW (`--dtw`) is untested, and not part of this change. Qwen3-ASR's failure on this audio stays as recorded
-  above.)*
+  *(2026-11-10, later: **Whisper looped too, and `max_context=0` stops it.** The done test's episode, its audio 45 min
+  35 s, ran through vid2sub's `spark-turbo`, the stack's Whisper through the front, in under a minute, but in places
+  the same line came back many times in place of the dialogue. Five runs of the same audio, counting the 30-second
+  stretches where one line came 4 or more times: 11 at the server's defaults; 9 with vid2sub's prompt left out, so the
+  prompt isn't the main cause; 2 with `max_context=64` and `carry_initial_prompt`; 4 with `beam_size=5`; and none with
+  `max_context=0`, but for one short word 5 times in one place, the same in the run without the prompt, so possibly
+  real. The cause: whisper.cpp carries the text it decoded in a request's earlier 30-second windows into the next as
+  context (its `n_max_text_ctx`; at the server's default, -1, whisper.cpp's own, which comes to half the decoder's
+  448-token text context), so one bad window feeds the next; `max_context=0` decodes each window without the text
+  before it. Dan watched those subtitles against the video: the two former loop places are the right dialogue now;
+  some lines come early or late, and in one place a line's words are stretched over several seconds of silence, since
+  word times without DTW are rough. In his words: "i think this is already worlds better than before. the rest is fine
+  tuning, but i'm okay with somethig liek this as a homegrown project". So the done test's episode now runs through
+  vid2sub on the Spark with Whisper, so far from a scratch copy of vid2sub that sends `max_context=0`; the same through
+  his own vid2sub follows once its change lands. Dan's decision: the fix lives in both places, vid2sub sending
+  `max_context=0` with each request, and the stack's whisper-server running with `--max-context 0` by default from the
+  next deploy, so every client gets it. The cost: with `max_context=0` whisper.cpp drops a request's `prompt` too
+  (`carry_initial_prompt=true` doesn't bring it back), so by default a vocabulary prompt or vid2sub's glossary does
+  nothing. A client that wants its prompt sends `max_context` itself, 64 for example, since whisper-server v1.9.4
+  starts each request from its defaults, at the risk of loops on hard audio. DTW (`--dtw`) is untested, and not part of
+  this change. Qwen3-ASR's failure on this audio stays as recorded above. [The rounds side by
+  side](subtitle-rounds.md) has every run's numbers.)*
 - **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
 **Refusals**, all as `{"error":{"code":"…","message":"…","retry_after_s":…}}`. vid2sub waits on a `no_fit` and a

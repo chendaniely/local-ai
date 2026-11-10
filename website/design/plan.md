@@ -4567,10 +4567,11 @@ Each item gets its own design pass when its turn comes.
   only ([the design](speech-service.md), *The answer*).
 - **2026-11-10** — Whisper looped too: on the done test's episode through vid2sub's `spark-turbo`, one line repeated in
   place of the dialogue in 11 stretches of 30 seconds, because whisper.cpp carries a request's earlier text into each
-  next window as context. With `max_context=0` there were none, and Dan judged the subtitles "worlds better". So, Dan's
-  decision, vid2sub sends `max_context=0` with each request, and the stack's whisper-server runs with `--max-context 0`
-  from the next deploy, for every client. The cost: a request's `prompt` is dropped unless it sends `max_context`
-  itself; DTW is untested ([the design](speech-service.md), *The answer*).
+  next window as context. With `max_context=0` there were none, and Dan judged the subtitles "worlds better". Dan's
+  decision: the setting goes in vid2sub's requests (its change pending, in vid2sub's own repository) and in the stack's
+  whisper-server as `--max-context 0` from the next deploy, for every client, and a request's `prompt` is then dropped
+  unless it sends `max_context` itself ([the design](speech-service.md), *The answer*; [the rounds side by
+  side](subtitle-rounds.md)).
 
 ## Sources
 

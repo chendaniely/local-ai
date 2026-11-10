@@ -16,7 +16,8 @@ Times by the Spark's clock. Qwen3.6 was unloaded first; the by-hand SGLang coder
 - **First start, 21:09:** both models in about 45 s, `MemAvailable` from 65.0 GiB to 56.8.
 - **The 161 s test clip through it:** 12.2 s, 3.4 GiB more, and vid2sub's parser (the copy in the tests) kept 489 of 489
   words, with the text the same as the earlier test's.
-- **Two runs of a 47-minute TV-drama episode from vid2sub on the Mac:** 29:16 and 28:39. `MemAvailable` never fell below
+- **Two runs of a ~~47-minute~~ 45½-minute *(corrected 2026-11-10: its audio runs 45 min 35 s)* TV-drama episode from
+  vid2sub on the Mac:** 29:16 and 28:39. `MemAvailable` never fell below
   51.5 and 51.2 GiB, and the brake logged nothing in either. **The result isn't usable, and the done test isn't met:** 12
   of 32 chunks ran to the 4,096-token limit, ~~the same ones~~ 11 of them the same *(corrected 2026-11-10, from the service's log)* with and without vid2sub's prompt, and came back invented or
   nearly empty, so the transcript was about 2,700 characters. The design's *The answer* has what's known about the cause.
