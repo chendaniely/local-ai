@@ -292,6 +292,10 @@ when that file was retired on 2026-09-23.
   *(As read on 2026-11-09: the by-hand SGLang coder has run since 2026-10-26 and is Dan's default, in a container outside
   the stack, which `spark status` counts as other processes, about 42 GiB. So Gemma, though always-loaded, isn't
   loaded, not since 2026-10-23, and Qwen3.6 is pinned with no end set. The changelog has it.)*
+- **The speech service, by hand** (2026-11-09; [its runbook](website/how-to/speech-by-hand.md)). `make speech`, a
+  locked-down container outside the front and the gate, off unless Dan has started it, and it needs about 48 GiB
+  available, which means Qwen3.6 out while the SGLang coder is up. Its weights, environment and test clips are in
+  `~/speech`, 12G. It isn't yet reliable on TV drama; the changelog has what happened.
 - **`agent`'s tools** (2026-09-28, Phase 1 Task 15). Pi **0.85.1** and uv **0.12.19** in its
   `~/.local/bin`; its own llama-swap key, as `SPARK_API_KEY` in its `~/.secrets`, which its
   `~/.bashrc` loads first; and a clone of `phase-1` in `~/work/local-ai`, used only for

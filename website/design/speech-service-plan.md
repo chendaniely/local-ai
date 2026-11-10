@@ -29,7 +29,7 @@ into the tree with this function rather than being retyped. **On the Spark**, in
 listing() { awk -v want="$1" '$0 == "<!-- listing: " want " -->" { armed = 1; next } armed && /^````/ { if (inside) exit; inside = 1; next } inside { print }' website/design/speech-service-plan.md > "${2:-$1}"; }
 ```
 
-*(Corrected 2026-11-09, after Task 5's first attempt: the listing of `serve.py` passes vid2sub's `prompt` to the model, and the tree's ignores it, because it made the model loop.)*
+*(Corrected 2026-11-09, after Task 5's first attempt: the listing of `serve.py` passes vid2sub's `prompt` to the model, and the tree's ignores it, because as context it can make the model loop.)*
 
 *(Corrected 2026-11-09, at the final review: the listings stay as first tested, and the tree has moved on from them again: its `stack/speech/serve.py`, `stack/speech/pyproject.toml`, `spark/tests/test_speech.py`, `spark/tests/speech_env_checks.py`, `stack/host/by-hand-speech` and `website/how-to/speech-by-hand.md` hold the final review's fixes.)*
 
@@ -2694,6 +2694,10 @@ git commit -m "docs(changelog): 🤖 the speech service's first run on the box" 
 *(2026-11-09, the first attempt: the episode ran through, with the brake quiet and memory never under 51.5 GiB, but 12
 of its 32 chunks looped to the token limit because the service passed vid2sub's `prompt` to the model. Dan's decision:
 the service ignores `prompt` ([the design](speech-service.md), *The answer*), and the run is repeated.)*
+
+*(Corrected later that day: the rerun, with no prompt, looped on the same 12 chunks, so the "because" above is wrong.
+The done test isn't met: the transcript is mostly missing or invented on those chunks. The design's *The answer* has what's
+known. Steps 5 and 6 below stay open until the cause is settled.)*
 
 This is the design's step 6. Dan's definition of done: a real Mandarin or Cantonese episode, start to finish, with
 correct word timings, while he keeps coding on the by-hand SGLang coder, and no change to vid2sub's parser.

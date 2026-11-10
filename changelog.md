@@ -8,6 +8,25 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-09 — The speech service's first runs, by hand
+
+`make speech` ran for the first time, as Dan, in tmux, outside the gate (the design, `website/design/speech-service.md`).
+Times by the Spark's clock. Qwen3.6 was unloaded first; the by-hand SGLang coder stayed up.
+
+- **First start, 21:09:** both models in about 45 s, `MemAvailable` from 65.0 GiB to 56.8.
+- **The 161 s test clip through it:** 12.2 s, 3.4 GiB more, and vid2sub's parser (the copy in the tests) kept 489 of 489
+  words, with the text the same as the earlier test's.
+- **Two runs of a 47-minute TV-drama episode from vid2sub on the Mac:** 29:16 and 28:39. `MemAvailable` never fell below
+  51.5 and 51.2 GiB, and the brake logged nothing in either. **The result isn't usable, and the done test isn't met:** 12
+  of 32 chunks ran to the 4,096-token limit, the same ones with and without vid2sub's prompt, and came back invented or
+  nearly empty, so the transcript was about 2,700 characters. The design's *The answer* has what's known about the cause.
+- **The brake fired three times earlier that day,** before any of this, each time unloading a model and pausing new
+  loads: 15:46:59, the embeddings at 28.6 GiB available, its cause not looked into; 16:53:33, whisper at 32.4 GiB; and
+  16:55:17, Qwen3.6 at 34.6 GiB. The last two came from loading the aligner beside Qwen3.6 in a throwaway test, which is
+  why a run now starts only with 48 GiB available. Whisper came back by itself; Qwen3.6 stays out while the service runs.
+
+---
+
 ## 2026-11-09 — What the box had been doing for three weeks (read, nothing changed)
 
 Read by the Spark session, on the box and from its journal, after three weeks away from Phase 2a. It

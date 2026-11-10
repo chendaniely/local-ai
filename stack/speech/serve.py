@@ -343,8 +343,8 @@ class Speech:
             audio, rate = self._decode(data)
             seconds = audio.shape[0] / rate
             check_room(self._mem_available)
-            # vid2sub's `prompt`, the end of the chunk before, is left out: passed as the context, it made the model loop
-            # on 12 of a real episode's 32 chunks (2026-11-09; the design's *The answer*).
+            # vid2sub's `prompt`, the end of the chunk before, is left out: as context it can make the model loop, as a
+            # test clip showed (2026-11-09; the design's *The answer* says what that did and didn't explain).
             [result] = self._model.transcribe(audio=(audio, rate), context="", language=language,
                                               return_time_stamps=True)
             return answer_for(result, round(seconds, 3))

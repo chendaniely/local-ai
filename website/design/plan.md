@@ -1376,7 +1376,9 @@ the deadline it was given, so a drill's shorter one reads true.
   outside the front and the gate ([its runbook](../how-to/speech-by-hand.md)). Stage 2 moves it behind
   them after the soak, with diarization and speaker embeddings for Dan's own pipelines. *(2026-11-09, Dan's decision, at
   its done test; Revisions: the service ignores vid2sub's `prompt`, because passed as context it made Qwen3-ASR loop.
-  Stage 2 has to settle how to send vocabulary safely.)*
+  Stage 2 has to settle how to send vocabulary safely.)* *(Corrected later that day, after the rerun: the prompt wasn't
+  the main cause, since without it the same chunks looped. The design's *The answer* says what is and isn't known, and
+  the service isn't yet reliable on TV drama.)*
 - *(2026-11-09, Dan's decision, GitHub issue #35; Revisions.)* **Whisper large-v3**, on demand on
   whisper.cpp, in the registry from the next deploy, with no role, so `stt` stays on the turbo model
   and the web UI and doctor are unchanged. It's vid2sub's first choice for Japanese and Korean. Its
@@ -2163,7 +2165,8 @@ huggingface_hub with network access, matters most.)*
   *(2026-11-09, Dan's decisions: the speech service's Stage 2 is that served aligner unless this
   comparison finds a better one; its Stage 1 runs by hand until then; *Speech*)*
   *(2026-11-09, Dan's decision: and it has to find a safe way to send Qwen3-ASR vocabulary, since as context the prompt
-  made the model loop; *Speech*)* · the
+  made the model loop; *Speech*; corrected the same day: the looping on real episodes outlived the prompt, and this
+  comparison has to explain it)* · the
   endpoint reference page (chat + speech; the site render stays on the Mac until
   Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
@@ -4550,6 +4553,10 @@ Each item gets its own design pass when its turn comes.
   context, the end of the previous chunk's text made the model loop on 12 of an episode's 32 chunks, which is about 80 %
   of its speech ([the design](speech-service.md), *The answer*, has the numbers). Stage 2 and Phase 3's speech comparison
   inherit the question of how to send vocabulary to Qwen3-ASR safely.
+- **2026-11-09** — A correction to the line above, the same day: the prompt was not the main cause. With the service
+  ignoring it, the same 12 of the episode's 32 chunks looped again, and most of the dialogue in them was lost or invented.
+  The model loops on this TV drama at 30 s windows too. The done test for the speech service isn't met; the
+  comparison with the Mac's engine is next ([the design](speech-service.md), *The answer*).
 
 ## Sources
 

@@ -115,6 +115,17 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   changed; with its first 100, 5,822 words in 132 s. So a prompt can change the text even when it doesn't loop. The cost
   is that a glossary's vocabulary hints don't reach the model, though vid2sub's stamp still records them, until a safe way to send them is found. Whether the Mac's
   engine, which passes the same context, loops too isn't known.)*
+  *(Corrected later the same day, after the rerun: **the prompt was not the main cause.** With it left out, the same
+  chunks looped, 12 of 32 again, so the sentence above blaming it for those 12 was wrong. What the prompt does is shown
+  only by the clip. The episode's transcript came to about 2,700 characters for 47 minutes, most of its long chunks
+  nearly empty, with the package's repeat-cleaner collapsing each loop. On 10 minutes of that episode with no prompt,
+  in 30 s windows and Mandarin forced, 6 of 20 windows looped, and the text was unrelated to the audio: the same
+  stretch came out as a textbook passage about the Zhou dynasty at one window size and a trip to the supermarket at
+  another. Shorter windows and loudness don't explain it. Left to choose the language, the model answered "no speech"
+  on 10 of the 20 windows, 4 of the 6 looping ones among them, and still looped on 2. Whether that is the model on this
+  audio, perhaps music under the dialogue, or the Spark's torch setup isn't known; the same audio through the Mac's
+  engine would say. Until then the service isn't reliable on TV drama, and the done test isn't met. A chunk that looped
+  shows in its terminal as `an answer reached the 4096-token limit`.)*
 - **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
 **Refusals**, all as `{"error":{"code":"…","message":"…","retry_after_s":…}}`. vid2sub waits on a `no_fit` and a
@@ -233,7 +244,8 @@ SGLang's precedent.
 
 After the soak, in Phase 3's speech work, which this pulls forward. Stage 2 keeps the routes, the answer and its tests.
 *(2026-11-09, at the done test: Stage 2 also has to settle how to send vocabulary to the model. Forwarding vid2sub's
-`prompt` as context made it loop (*The answer*), so it isn't safe to turn back on as it was.)*
+`prompt` as context can make it loop (*The answer*), so it isn't safe to turn back on as it was. The looping on TV
+drama, which outlived the prompt, is Stage 2's to solve too, or a reason to choose another model.)*
 Its start route, a TCP listener for llama-swap, the pull of multi-file repos, the engine kind and long audio get a
 design of their own: `sudo docker` can't start under llama-swap's `NoNewPrivileges`, and dropping the container would
 run the third-party package as `spark`. Diarization and speaker embeddings for Dan's audio pipeline join the same
