@@ -113,7 +113,7 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   the repeated text over the audio, and those timings can't be right. The same happened on the 161 s clip from step 3:
   with no prompt, 489 words in 11 s; with its last 100 characters as the prompt, 502 words in 11.5 s and the text
   changed; with its first 100, 5,822 words in 132 s. So a prompt can change the text even when it doesn't loop. The cost
-  is that a glossary's vocabulary hints don't reach the model, until a safe way to send them is found. Whether the Mac's
+  is that a glossary's vocabulary hints don't reach the model, though vid2sub's stamp still records them, until a safe way to send them is found. Whether the Mac's
   engine, which passes the same context, loops too isn't known.)*
 - **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
@@ -122,7 +122,7 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file, ~~a prompt over 4 KiB,~~ a form with no audio |
+| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file, ~~a prompt over 4 KiB,~~ (struck 2026-11-09, at the done test) a form with no audio |
 | 403 | `forbidden` | an `Origin` header, or a `Host` other than the tunnel's (added at the build, 2026-11-09) |
 | 404 | `model_not_found` | any other model name |
 | 413 | `too_long` | decoded audio over 300 s, this service's own bound, or a body over 100 MiB, counted as it arrives |
@@ -232,6 +232,8 @@ SGLang's precedent.
 ## Stage 2: behind the front and the gate
 
 After the soak, in Phase 3's speech work, which this pulls forward. Stage 2 keeps the routes, the answer and its tests.
+*(2026-11-09, at the done test: Stage 2 also has to settle how to send vocabulary to the model. Forwarding vid2sub's
+`prompt` as context made it loop (*The answer*), so it isn't safe to turn back on as it was.)*
 Its start route, a TCP listener for llama-swap, the pull of multi-file repos, the engine kind and long audio get a
 design of their own: `sudo docker` can't start under llama-swap's `NoNewPrivileges`, and dropping the container would
 run the third-party package as `spark`. Diarization and speaker embeddings for Dan's audio pipeline join the same

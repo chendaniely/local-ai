@@ -29,6 +29,8 @@ into the tree with this function rather than being retyped. **On the Spark**, in
 listing() { awk -v want="$1" '$0 == "<!-- listing: " want " -->" { armed = 1; next } armed && /^````/ { if (inside) exit; inside = 1; next } inside { print }' website/design/speech-service-plan.md > "${2:-$1}"; }
 ```
 
+*(Corrected 2026-11-09, after Task 5's first attempt: the listing of `serve.py` passes vid2sub's `prompt` to the model, and the tree's ignores it, because it made the model loop.)*
+
 *(Corrected 2026-11-09, at the final review: the listings stay as first tested, and the tree has moved on from them again: its `stack/speech/serve.py`, `stack/speech/pyproject.toml`, `spark/tests/test_speech.py`, `spark/tests/speech_env_checks.py`, `stack/host/by-hand-speech` and `website/how-to/speech-by-hand.md` hold the final review's fixes.)*
 
 ## Global Constraints

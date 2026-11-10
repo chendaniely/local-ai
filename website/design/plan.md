@@ -1374,7 +1374,9 @@ the deadline it was given, so a drill's shorter one reads true.
   word timings in Mandarin and Cantonese. Stage 1 is by hand, like the by-hand SGLang coder:
   `make speech`, in a locked-down container, on a Unix socket of Dan's forwarded by `make tunnel`,
   outside the front and the gate ([its runbook](../how-to/speech-by-hand.md)). Stage 2 moves it behind
-  them after the soak, with diarization and speaker embeddings for Dan's own pipelines.
+  them after the soak, with diarization and speaker embeddings for Dan's own pipelines. *(2026-11-09, Dan's decision, at
+  its done test; Revisions: the service ignores vid2sub's `prompt`, because passed as context it made Qwen3-ASR loop.
+  Stage 2 has to settle how to send vocabulary safely.)*
 - *(2026-11-09, Dan's decision, GitHub issue #35; Revisions.)* **Whisper large-v3**, on demand on
   whisper.cpp, in the registry from the next deploy, with no role, so `stt` stays on the turbo model
   and the web UI and doctor are unchanged. It's vid2sub's first choice for Japanese and Korean. Its
@@ -2159,7 +2161,9 @@ huggingface_hub with network access, matters most.)*
   community-1 *(2026-10-23, Dan's decisions: Qwen3-ASR joins the candidates, already served on
   llama.cpp, with a served aligner for its timestamps, vLLM's or CrispASR's; *Speech*)*
   *(2026-11-09, Dan's decisions: the speech service's Stage 2 is that served aligner unless this
-  comparison finds a better one; its Stage 1 runs by hand until then; *Speech*)* · the
+  comparison finds a better one; its Stage 1 runs by hand until then; *Speech*)*
+  *(2026-11-09, Dan's decision: and it has to find a safe way to send Qwen3-ASR vocabulary, since as context the prompt
+  made the model loop; *Speech*)* · the
   endpoint reference page (chat + speech; the site render stays on the Mac until
   Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
