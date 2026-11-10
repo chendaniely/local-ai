@@ -495,6 +495,19 @@ def test_whisper_large_v3_gets_the_port_before_turbos_and_stt_stays_on_turbo():
     assert "      AUDIO_STT_MODEL: whisper-large-v3-turbo\n" in real()["compose/compose.yaml"]
 
 
+def test_every_whisper_engine_starts_with_max_context_0():
+    # Dan's decision, 2026-11-10: each 30 s window is decoded without the text before it, so a bad window can't feed
+    # the next (test_stack_registry.py has why). On the list once checked: v1.9.4's server.cpp parses -mc at :215 and
+    # sets n_max_text_ctx from it at :937.
+    assert ("-mc", "--max-context") in spark.render.ALLOWED["whisper.cpp"]
+    registry = load_registry(ROOT / "stack/models.yaml")
+    cfg = yaml.safe_load(real()["llama-swap.yaml"])
+    whisper = [name for name, model in registry.models.items() if model.engine == "whisper.cpp"]
+    assert whisper
+    for name in whisper:
+        assert values(shlex.split(cfg["models"][name]["cmd"]), "--max-context") == ["0"], name
+
+
 def test_the_real_registry_warns_only_that_all_cant_load_at_once():
     # Since Qwen3.6 came back beside the coder (Dan's decision, 2026-10-16), the two on-demand models don't fit at once
     # beside the residents: render warns, and refuses nothing. Each fits alone: 41 and 33 of 117 − 43 − 24 = 50.

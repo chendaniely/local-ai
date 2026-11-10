@@ -122,7 +122,13 @@ ALLOWED = {
         # recently used one is taken (b11146's tools/server/server-context.cpp:1561-1633); added 2026-10-14, at Task 24.
         ("-sps", "--slot-prompt-similarity"),
     ),
-    "whisper.cpp": (("-l", "--language"), ("--convert",), ("--tmp-dir",), ("-t", "--threads")),
+    "whisper.cpp": (
+        ("-l", "--language"), ("--convert",), ("--tmp-dir",), ("-t", "--threads"),
+        # How many tokens of a request's earlier text whisper.cpp keeps as context for its next 30 s window, its
+        # n_max_text_ctx (v1.9.4's examples/server/server.cpp parses it at 215 and applies it at 937); added
+        # 2026-11-10, checked there.
+        ("-mc", "--max-context"),
+    ),
 }
 _UNLISTED = ("render allows only the engine options on its list (ALLOWED, in spark/src/spark/render.py): check what "
              "it does before adding it there")

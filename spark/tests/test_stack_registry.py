@@ -269,3 +269,14 @@ def test_whisper_writes_its_temporary_files_outside_the_hf_cache():
     assert whisper
     for model in whisper:
         assert option(model.args, "--tmp-dir") == "/var/lib/local-ai/whisper-tmp", model.name
+
+
+def test_whisper_decodes_each_window_without_the_text_before_it():
+    # Dan's decision, 2026-11-10: by default whisper.cpp carries the text of a request's earlier 30 s windows into the
+    # next as context, so one bad window feeds the next. On about 45 minutes of TV drama the stretches where one line
+    # repeated came to 11 at the defaults and to none at 0. The cost: a request's prompt is dropped too, unless it
+    # sends max_context itself, since whisper-server v1.9.4 starts each request from these defaults.
+    whisper = [m for m in load_registry(STACK_REGISTRY).models.values() if m.engine == "whisper.cpp"]
+    assert whisper
+    for model in whisper:
+        assert option(model.args, "-mc", "--max-context") == "0", model.name

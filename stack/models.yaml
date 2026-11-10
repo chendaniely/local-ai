@@ -121,7 +121,13 @@ models:
     footprint_measured: false
     # Its temporary files go to a folder of its own, which llama-swap's sandbox opens (ReadWritePaths=); the Hugging
     # Face cache stays read-only there.
-    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
+    # --max-context 0 decodes each 30 s window of a request without the text of the windows before it, which whisper.cpp
+    # otherwise carries into the next as context, so one bad window feeds the next (Dan's decision, 2026-11-10; live
+    # from the next deploy). On a TV drama episode, Whisper looped, one line repeated in place of the dialogue: five
+    # runs of the same audio found 11 looping stretches at the defaults, 2 to 9 with the other settings tried, and none
+    # at 0. The cost: a request's prompt is dropped too, so a vocabulary prompt does nothing unless the request sends
+    # max_context itself (whisper-server v1.9.4 starts each request from these defaults).
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8", --max-context, "0"]
   whisper-large-v3:
     label: whisper large-v3
     capability: transcription
@@ -142,7 +148,8 @@ models:
     cache_ram_mib: 0
     footprint_gib: 5
     footprint_measured: false
-    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8"]
+    # The turbo model's args, --max-context 0 among them since 2026-11-10: its comment says why, and what it costs.
+    args: [--language, auto, --convert, --tmp-dir, /var/lib/local-ai/whisper-tmp, --threads, "8", --max-context, "0"]
   qwen3.8-27b:
     label: the coder
     capability: chat
