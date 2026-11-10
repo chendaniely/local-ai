@@ -47,14 +47,16 @@ class Model:
         return [Result("", "Chinese", [])]
 
 
-def flac(seconds=1.0, rate=16000, channels=1):
+def flac(seconds=1.0, rate=16000, channels=1, noise=False):
+    """Silence, or seeded noise, whose frames are kilobytes long as real audio's are (silence's are a few bytes)."""
     import numpy
     import soundfile
 
     frames = int(seconds * rate)
-    samples = numpy.zeros((frames, channels) if channels > 1 else frames, dtype="float32")
+    shape = (frames, channels) if channels > 1 else frames
+    samples = numpy.random.default_rng(0).uniform(-0.1, 0.1, shape) if noise else numpy.zeros(shape)
     buffer = io.BytesIO()
-    soundfile.write(buffer, samples, rate, format="FLAC", subtype="PCM_16")
+    soundfile.write(buffer, samples.astype("float32"), rate, format="FLAC", subtype="PCM_16")
     return buffer.getvalue()
 
 
@@ -65,6 +67,16 @@ def piped(data):
     data[21] &= 0xF0
     data[22:26] = bytes(4)
     return bytes(data)
+
+
+def frame_start(data, number):
+    """Where a frame starts (under 128, and not the last, whose block size differs): the first frame's four bytes, past
+    the metadata, then the frame's own number. The two-byte sync code alone could be noise that looks like one."""
+    at, last = 4, False
+    while not last:
+        last = bool(data[at] & 0x80)
+        at += 4 + int.from_bytes(data[at + 1:at + 4], "big")
+    return data.index(data[at:at + 4] + bytes([number]), at)
 
 
 def part(name, value):
@@ -192,9 +204,16 @@ def garbage_after_the_magic_is_a_400(serve):
 
 
 @check
-def a_flac_cut_short_is_answered_with_the_audio_it_holds(serve):
-    data = flac(seconds=5.0)
-    status, body, _, _ = post(serve, form(data[:len(data) // 2]))
+def a_flac_cut_inside_a_frame_is_a_400(serve):
+    data = piped(flac(seconds=5.0, noise=True))
+    status, body, _, model = post(serve, form(data[:(frame_start(data, 10) + frame_start(data, 11)) // 2]))
+    assert (status, code_of(body)) == (400, "bad_request") and model.calls == []
+
+
+@check
+def a_flac_cut_on_a_frame_boundary_is_answered_with_the_audio_before_it(serve):
+    data = piped(flac(seconds=5.0, noise=True))
+    status, body, _, _ = post(serve, form(data[:frame_start(data, 10)]))
     assert status == 200, body
     assert 0 < body["duration"] < 5.0, body
 
