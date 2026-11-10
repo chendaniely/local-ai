@@ -15,7 +15,7 @@ TEST_PYTEST  = uv run --frozen --project spark pytest $(if $(ARGS),$(ARGS),spark
 TEST_SCOPE   = systemd-run --user --scope --quiet -p MemoryMax=$(TEST_CAP_GIB)G -p MemorySwapMax=0 --
 TEST_MANAGER = systemctl --user show --property=Version --value >/dev/null 2>&1 || { echo "make test: your systemd user manager isn't answering, and on the Spark the tests run only under its $(TEST_CAP_GIB) GiB cap. Log in again, so the user manager starts, then run make test again." >&2; exit 1; }
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients clients-pi clients-opencode clients-hermes clients-posit doctor fast-coder flash-next
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients clients-pi clients-opencode clients-hermes clients-posit doctor fast-coder flash-next speech
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -32,7 +32,7 @@ hooks: ## Turn on the leak-check hooks in this clone (needs gitleaks 8.19+ and y
 	@echo "leak-check hooks on for this clone"
 
 lint: ## Shellcheck the hooks and host scripts
-	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh stack/host/local-ai-notify stack/host/local-ai-agent-oom stack/host/by-hand-fast-coder stack/host/by-hand-flash-next
+	shellcheck .githooks/pre-commit .githooks/commit-msg stack/host/bootstrap.sh stack/host/local-ai-notify stack/host/local-ai-agent-oom stack/host/by-hand-fast-coder stack/host/by-hand-flash-next stack/host/by-hand-speech
 
 docs: ## Regenerate the Stack and Notifications pages, check scenario pages, render the site (Quarto: on the Mac)
 	$(SPARK) docs stack --write
@@ -89,8 +89,8 @@ brake-release: ## On the Spark (spark-admin): lift the brake's hold through the 
 logs: ## On the Spark: make logs s=llama-swap|brake|pull|compose|open-webui|searxng|front|gate|notify
 	@case "$(s)" in "") echo "usage: make logs s=llama-swap|brake|pull|compose|open-webui|searxng|front|gate|notify" >&2; exit 2 ;; open-webui|searxng) journalctl CONTAINER_NAME=local-ai-$(s)-1 -n 100 --no-pager ;; notify) journalctl -u 'local-ai-notify@*' -n 100 --no-pager ;; *) journalctl -u local-ai-$(s).service -n 100 --no-pager ;; esac
 
-tunnel: ## On the Mac: forward the Spark's model API, 127.0.0.1:9100 (Ctrl-C closes it)
-	ssh -N -L 9100:127.0.0.1:9100 $${SPARK_SSH_HOST:-brightroar}
+tunnel: ## On the Mac: forward the Spark's model API, 127.0.0.1:9100, and the by-hand speech service, 127.0.0.1:58991 (Ctrl-C closes it)
+	ssh -N -L 9100:127.0.0.1:9100 -L 127.0.0.1:58991:/run/user/1000/local-ai-speech/speech.sock $${SPARK_SSH_HOST:-brightroar}
 
 clients: ## Add the Spark provider to every harness on this machine (pi, opencode, hermes, posit)
 	$(SPARK) clients pi --write
@@ -127,3 +127,10 @@ fast-coder: ## TEMPORARY, on the Spark: the fast coder on SGLang beside the stac
 
 flash-next: ## TEMPORARY, on the Spark: stops llama-swap and runs Flash-Next at 128K (MTP=1: 64K with MTP); DO=wait waits for it, DO=stop restores the stack
 	@BY_HAND_OPT='$(SPARK_OPT)' MTP='$(MTP)' bash stack/host/by-hand-flash-next '$(DO)'
+
+# TEMPORARY: remove at the speech service's Stage 2, when it moves behind the front and the gate (Dan's decision,
+# 2026-11-09; website/design/speech-service.md). Delete then: this target, this comment, its .PHONY name, its script in
+# lint's list and make tunnel's second forward; stack/host/by-hand-speech, spark/tests/test_speech_target.py and
+# website/how-to/speech-by-hand.md.
+speech: ## TEMPORARY, on the Spark in tmux: Qwen3-ASR with word timings for vid2sub, outside the gate; DO=stop stops it, as Phase 2a's drills need
+	@BY_HAND_OPT='$(SPARK_OPT)' bash stack/host/by-hand-speech '$(DO)'

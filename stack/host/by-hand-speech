@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# TEMPORARY: remove at the speech service's Stage 2, when it moves behind the front and the gate (Dan's decision,
+# 2026-11-09; website/design/speech-service.md).
+# Delete then: stack/host/by-hand-speech (this file), spark/tests/test_speech_target.py, the Makefile's speech target
+# with its comment, .PHONY name and lint entry, make tunnel's second forward, and website/how-to/speech-by-hand.md.
+#
+# make speech: Qwen3-ASR with its forced aligner in a locked-down container, outside the gate. On the Spark only, as
+# Dan, from the clone, in tmux. Stop it for Phase 2a's drills and measurements.
+#   make speech           the checks, then the container in the foreground; Ctrl-C stops it
+#   make speech DO=stop   stops it from another terminal, then shows free -g and the deployed spark status
+#
+# BY_HAND_OPT and BY_HAND_RUN_DIR are for the tests; each defaults to the box's own path.
+set -euo pipefail
+
+OPT="${BY_HAND_OPT:-/opt/local-ai}"
+if [ ! -d "$OPT" ]; then
+  echo "make speech: it runs on the Spark only, and this machine has no $OPT" >&2
+  exit 1
+fi
+SPARK="$OPT/app/.venv/bin/spark"
+SPARK_PYTHON="$OPT/app/.venv/bin/python"
+REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+HF="$HOME/speech/hf"
+VENV="$HOME/speech/venv"
+SOCKET_DIR="${BY_HAND_RUN_DIR:-/run/user/1000}/local-ai-speech"
+CONTAINER=local-ai-speech
+IMAGE="ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
+ASR_REVISION=7278e1e70fe206f11671096ffdd38061171dd6e5
+ALIGNER_REVISION=c7cbfc2048c462b0d63a45797104fc9db3ad62b7
+# What a load and a chunk took from MemAvailable in step 3 of the design's order: 11.9 GiB (Dan's clip, 2026-11-09).
+NEED_GIB=12
+
+refuse() {
+  echo "make speech: $1" >&2
+  exit 1
+}
+
+check_snapshot() {
+  local folder="$HF/$1" revision="$2" found recorded
+  [ -f "$folder/config.json" ] || refuse "no weights at $folder: the design's pins say what to download"
+  found="$(find "$folder" \( -name '*.py' -o -name '*.bin' -o -name '*.pt' -o -name '*.pkl' \) -print -quit)"
+  [ -z "$found" ] || refuse "$found is in the weights: a snapshot holds only safetensors and JSON, so it's not started"
+  recorded="$(head -n 1 "$folder/.cache/huggingface/download/config.json.metadata" 2>/dev/null || true)"
+  [ "$recorded" = "$revision" ] || refuse "$folder isn't at revision $revision"
+}
+
+free_for_a_load() {
+  "$SPARK" status --json | "$SPARK_PYTHON" -I -c '
+import json, sys
+
+free = json.load(sys.stdin).get("memory", {}).get("free_for_a_load_gib")
+print("" if free is None else format(free, ".1f"))' 2> /dev/null
+}
+
+start() {
+  [ "$(id -u)" = 1000 ] || refuse "the socket's folder is uid 1000's, Dan's, and this is uid $(id -u)"
+  [ -n "${TMUX:-}" ] || refuse "run it inside tmux (tmux new -As speech): its socket's folder goes when your last session ends"
+  check_snapshot Qwen3-ASR-1.7B "$ASR_REVISION"
+  check_snapshot Qwen3-ForcedAligner-0.6B "$ALIGNER_REVISION"
+
+  local free
+  free="$(free_for_a_load)" || refuse "spark status --json gave something it can't read, so nothing says there's room"
+  [ -n "$free" ] || refuse "the gate isn't answering, so nothing says there's room: start it first"
+  if ! awk -v free="$free" -v need="$NEED_GIB" 'BEGIN { exit !(free >= need) }'; then
+    refuse "$free GiB free for a load, under the $NEED_GIB it needs: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
+  fi
+
+  if sudo docker inspect "$CONTAINER" > /dev/null 2>&1; then
+    refuse "it's already running: make speech DO=stop stops it"
+  fi
+
+  UV_PROJECT_ENVIRONMENT="$VENV" uv sync --quiet --frozen --no-build --no-install-project --project "$REPO/stack/speech"
+
+  # Nothing here runs the environment's Python; these only read its links. uv makes it two links deep: the environment
+  # points at the minor-version folder, and that folder is a link to the real one. pyvenv.cfg names the minor-version
+  # folder, so the container has both paths, each holding the real folder.
+  local py_link py_real py_link_dir py_real_dir
+  py_link="$(readlink -- "$VENV/bin/python")"
+  py_real="$(readlink -f -- "$VENV/bin/python")"
+  case "$py_link" in
+    /*) ;;
+    *) refuse "expected an absolute link at $VENV/bin/python, found $py_link" ;;
+  esac
+  py_link_dir="$(dirname -- "$(dirname -- "$py_link")")"
+  py_real_dir="$(dirname -- "$(dirname -- "$py_real")")"
+
+  local mounts=(
+    -v "$VENV:/venv:ro"
+    -v "$py_real_dir:$py_real_dir:ro"
+    -v "$REPO/stack/speech/serve.py:/app/serve.py:ro"
+    -v "$HF:/hf:ro"
+    --mount "type=bind,source=$SOCKET_DIR,target=/run/speech"
+  )
+  if [ "$py_link_dir" != "$py_real_dir" ]; then
+    mounts+=(-v "$py_real_dir:$py_link_dir:ro")
+  fi
+
+  rm -rf -- "$SOCKET_DIR"
+  mkdir -m 0700 -- "$SOCKET_DIR"
+  trap 'rm -rf -- "$SOCKET_DIR"' EXIT
+
+  echo "make speech: loading, about a minute; stop it for Phase 2a's drills and measurements (Ctrl-C, or make speech DO=stop)"
+  local rc=0
+  sudo docker run --rm --init --name "$CONTAINER" \
+    --gpus all --user 1000:1000 \
+    --cap-drop ALL --security-opt no-new-privileges \
+    --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,mode=1777,size=256m \
+    --network none --memory 16g --memory-swap 16g --pids-limit 1024 \
+    --oom-score-adj 1000 --log-driver none \
+    -e HOME=/tmp -e USER=speech -e XDG_CACHE_HOME=/tmp/.cache \
+    -e NUMBA_CACHE_DIR=/tmp/numba -e CUDA_CACHE_PATH=/tmp/nv -e PYTHONDONTWRITEBYTECODE=1 \
+    -e HF_HOME=/tmp/hf -e HF_HUB_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1 \
+    "${mounts[@]}" \
+    "$IMAGE" \
+    /venv/bin/python /app/serve.py || rc=$?
+  return "$rc"
+}
+
+stop() {
+  local rc=0
+  sudo docker stop -t 20 "$CONTAINER" || rc=$?
+  rm -rf -- "$SOCKET_DIR"
+  free -g
+  "$SPARK" status
+  return "$rc"
+}
+
+case "${1:-}" in
+  '') start ;;
+  stop) stop ;;
+  *)
+    echo "usage: make speech [DO=stop]" >&2
+    exit 2
+    ;;
+esac
