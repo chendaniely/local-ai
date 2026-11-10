@@ -9244,6 +9244,9 @@ git commit -m "docs(machine): 🤖 agent's processes carry a root-set OOM score"
 
 ### Task 41 [Spark]: the CUDA-allocatable ceiling, carefully
 
+*(2026-11-09, Dan's decisions; [the speech service's design](speech-service.md), constraint 4: this
+task runs with `make speech` stopped, as do Tasks 43, 44, 45 and 47 to 50.)*
+
 *(2026-11-09, Dan's decision; plan.md's Revisions: from the next deploy the stack's reserve is 17, the
 brake's line 14 and the warn line 21. This script keeps its own floor of 24, so it still stops about
 93 GiB in, and the *at least* in Step 4 stands. Its default is the drills' floor now, not the stack's

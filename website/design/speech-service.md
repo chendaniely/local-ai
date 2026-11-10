@@ -7,7 +7,9 @@ date: 2026-11-09
 # The speech service — design
 
 *Status: written 2026-11-09, revised the same day after a six-member council (five Claude reviewers and the local
-Qwen3.6), for Dan's review. Nothing here is built. Stage 1 is a by-hand exception to "nothing loads around the gate",
+Qwen3.6), and approved by Dan that day ("you can build"). Stage 1's service, target and tests are built on
+`phase-2a`; [the build plan](speech-service-plan.md) has them. It hadn't yet run as a service on the box when this
+was written; `changelog.md` records its first run. Stage 1 is a by-hand exception to "nothing loads around the gate",
 which Dan approved the same day, as he did for the by-hand fast coder.*
 
 ## The goal
@@ -94,7 +96,10 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   token (`3.5` becomes `35`, `COVID-19` becomes `COVID19`), and one such unit costs the whole chunk its timings. The
   service walks the text with the aligner's kept-character test and cuts each word from the unit's first kept
   character to its last, with the unit's times. Whitespace runs become one ASCII space. Only if the walk can't consume
-  every kept character does the chunk go back with no `words`, and the service logs it.
+  every kept character does the chunk go back with no `words`, and the service logs it. *(Found while building it,
+  2026-11-09: vid2sub's `attach_punctuation` rebuilds a gap between two words from at most one space, so `A - B` would
+  come back as `A -B` and cost the chunk its timings. A word therefore takes in all but the last space of the gap after
+  it, and the first word all but the first space of the gap before it: there `A -` is one word.)*
 - **A zero-length word** is widened by a millisecond or two, so its midpoint lies inside its segment.
 - **`language`** goes out lower-cased as `zh`, `yue`, `en`, `ja` or `ko` where it is one of those, the first of a
   comma list if the package returns several. Coming in, those five map to the package's names. Anything else is a 400.
@@ -106,11 +111,13 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file |
+| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file, a prompt over 4 KiB, a form with no audio |
+| 403 | `forbidden` | an `Origin` header, or a `Host` other than the tunnel's (added at the build, 2026-11-09) |
 | 404 | `model_not_found` | any other model name |
 | 413 | `too_long` | decoded audio over 300 s, this service's own bound, or a body over 100 MiB, counted as it arrives |
 | 429 | `busy` | one is already running, taken after the upload is read: one at a time, none queued |
-| 503 | `no_fit` | `MemAvailable`, less the request growth step 3 measures, under 15 GiB; or CUDA ran out of memory |
+| 503 | `no_fit` | `MemAvailable`, less the 3.5 GiB of request growth step 3 measured, under 15 GiB; or CUDA ran out of memory |
+| 500 | `failed` | anything else that fails a chunk, which vid2sub retries twice; the log has the exception's type and place, never its message (added at the build, 2026-11-09) |
 
 The audio is decoded with `soundfile`, read at most 300 s plus one frame, and passed as `(array, rate)`, never as a
 string, since the package's loader fetches URLs and opens paths. *(Found at the build's review, 2026-11-09: FLAC written to a pipe, as vid2sub's ffmpeg does, has no sample count in its header, and `soundfile`'s seek after a read to the end fails on the length libsndfile then reports. So the audio is read forward only, and an empty read is a 400.)* A request with an `Origin` header, or a `Host`
@@ -127,7 +134,7 @@ its CUDA memory. It doesn't wait on the main thread, so a hung CUDA call can't s
 
 `qwen-asr-dgxspark` is a small third-party package, so it never runs as Dan with his environment. A review of the
 wheel found only transformers-5 compatibility changes, and no new network, exec or pickle code. The service runs as
-SGLang's does: `sudo docker run --init --name local-ai-speech --gpus all --user 1000:1000 --cap-drop ALL
+SGLang's does: `sudo docker run --rm --init --name local-ai-speech --gpus all --user 1000:1000 --cap-drop ALL
 --security-opt no-new-privileges --read-only --network none --memory 16g --memory-swap 16g --pids-limit 1024
 --oom-score-adj 1000 --log-driver none`, with `/tmp` a `noexec` tmpfs of 256 MiB. Step 1 sizes the memory cap and
 reads whether it binds on CUDA's allocations at all. `HOME`, the caches, `NUMBA_CACHE_DIR` and `CUDA_CACHE_PATH` are
@@ -135,8 +142,8 @@ under `/tmp`, and Hugging Face is offline.
 
 Mounted read-only: the virtual environment, uv's Python at its identical host path, since the environment's links
 are absolute, `stack/speech/serve.py` alone and never the clone, and the weights. Writable: the socket's folder. The
-environment is built on the host with `uv sync --frozen --no-build --no-install-project`, and nothing on the host runs
-it.
+environment is built on the host, at `~/speech/venv`, with `uv sync --frozen --no-build --no-install-project`, and
+nothing on the host runs it.
 
 What this leaves: `--gpus all` exposes the NVIDIA driver's device nodes, which every account already has, and a
 denial of service to the GPU. The service sees all audio and transcripts, and with `--network none` its replies and
@@ -162,10 +169,14 @@ A run passes `--from zh` or `--from yue`, because vid2sub's auto-detection skips
 ### The target
 
 **On the Spark**, in the clone, in tmux: `make speech` runs it in the foreground, and `make speech DO=stop` stops it,
-from `stack/host/by-hand-speech`. It refuses to start if `spark status --json`'s `free_for_a_load_gib` is under
-the peak step 3 measures, or the gate doesn't answer, or Dan's uid isn't 1000. It has its own test file and removal
-list, since it goes at Stage 2, not with the other by-hand targets at Phase 4a. Its help says to stop it for Phase
-2a's drills.
+from `stack/host/by-hand-speech`. It refuses to start if `spark status --json`'s `free_for_a_load_gib` is under the 12
+GiB step 3 measured, or `MemAvailable` is under 48 GiB, or the brake has paused loads or a make-room hold stands, or the
+gate doesn't answer, or Dan's uid isn't 1000, or outside tmux, or if it's already running or a stopped container is left
+behind, or if a snapshot isn't at its pinned revision. *(The 48 and the two holds were added at the build's review,
+2026-11-09: a load from about 35 GiB available fired the brake twice and one from 67 stayed quiet, and 12 GiB free alone
+admits about 29 to 35.)* It has its own test file and removal list, since it goes at Stage 2, not with the other by-hand
+targets at Phase 4a. Its help says to stop it for Phase 2a's drills. [Its runbook](../how-to/speech-by-hand.md) has the
+steps.
 
 ### Tests
 

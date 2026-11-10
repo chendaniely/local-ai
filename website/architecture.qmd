@@ -54,6 +54,7 @@ flowchart TB
       posit_mac["Posit Assistant (pa),<br/>and in Positron"]
     end
     pyapps_mac["my Python apps<br/>openai, chatlas, querychat"]
+    vid2sub_mac["vid2sub"]
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
@@ -88,6 +89,7 @@ flowchart TB
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
+    speech["the speech service, by hand · make speech<br/>Qwen3-ASR and its aligner in Docker<br/>a socket of Dan's, outside the gate"]
   end
 
   subgraph nas["Synology"]
@@ -106,6 +108,8 @@ flowchart TB
   oc_mac -- "same tunnel" --> front
   posit_mac -- "same tunnel" --> front
   pyapps_mac -- "same tunnel" --> front
+  vid2sub_mac -- "same tunnel" --> front
+  vid2sub_mac -- "same tunnel, port 58991, while it runs" --> speech
   term -- "ssh brightroar-agent" --> agent_tmux
   tss --> owui
   owui --> searx
@@ -308,6 +312,7 @@ flowchart LR
   swap --> stt["whisper, interactive"]
   swap --> asr["Qwen3-ASR 1.7B and 0.6B, on demand<br/>llama.cpp, text without timestamps"]
   swap -.-> batch["whisper, batch"]:::planned
+  vid2sub["vid2sub on the Mac"] -- "make tunnel, port 58991,<br/>no key" --> speechsvc["the speech service, by hand · make speech<br/>Qwen3-ASR 1.7B and its forced aligner, word timings<br/>outside the front and the gate until its Stage 2"]
   swap -.-> diar["speaker labels"]:::planned
 ```
 
@@ -325,7 +330,11 @@ when the box is otherwise free or overnight. Whisper stays the web UI's speech-t
 Dan's decision: Whisper large-v3 joins on demand at the next deploy, with no role, so that stays true.
 It isn't downloaded yet and hasn't run on this box.)* Qwen3-ASR
 returns text only: captions' timestamps need its aligner, which the stack doesn't serve yet, and
-Phase 3's speech comparison picks a served one.
+Phase 3's speech comparison picks a served one. *(2026-11-09, Dan's decisions: [the speech
+service](design/speech-service.md) gives Qwen3-ASR its word timings, by hand for now ([its
+runbook](how-to/speech-by-hand.md)), in a container of its own, on a Unix socket of Dan's that
+`make tunnel` forwards to 127.0.0.1:58991. It stays outside the front and the gate until its Stage
+2, after the soak, which takes this part of Phase 3 early. Qwen3.6 is unloaded for each run.)*
 
 ## When something breaks, and upkeep
 
@@ -363,4 +372,5 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S23 · Upgrade day](scenarios/s23-upgrade-day.md) | Upkeep |
 | [S24 · The fast coder won't start](scenarios/s24-fast-coder-down.md) | Loading a model: Phase 4a's fast coder |
 | [S25 · Sub-agents on the fast coder](scenarios/s25-subagents-fast-coder.md) | Loading a model: Phase 4a's fast coder |
+| [Word timings by hand](how-to/speech-by-hand.md) (a runbook, no numbered scenario) | Apps and speech: the by-hand speech service, until its Stage 2 |
 | [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records and the gate's ledger, planned (dashed) until Task 44l deploys them |

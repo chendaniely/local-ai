@@ -1365,7 +1365,16 @@ the deadline it was given, so a drill's shorter one reads true.
   beside the coder) and at its full 65,536 (when the box is otherwise free, or overnight). Text only:
   timestamps for captions need Qwen3-ForcedAligner-0.6B, which the stack doesn't serve, so the
   Phase 3 speech comparison adds Qwen3-ASR and a served aligner (vLLM's or CrispASR's) to its
-  candidates. Whisper keeps the `stt` role and the web UI's speech-to-text.
+  candidates. Whisper keeps the `stt` role and the web UI's speech-to-text. *(2026-11-09, Dan's
+  decisions: captions get their timings from the speech service, the bullet below, ahead of Phase 3's
+  comparison.)*
+- *(2026-11-09, Dan's decisions, GitHub issue #35; Revisions.)* **The speech service**
+  ([its design](speech-service.md)): the original Qwen3-ASR 1.7B and its forced aligner in one
+  Python service that answers `/v1/audio/transcriptions` as OpenAI's `verbose_json`, for vid2sub's
+  word timings in Mandarin and Cantonese. Stage 1 is by hand, like the by-hand SGLang coder:
+  `make speech`, in a locked-down container, on a Unix socket of Dan's forwarded by `make tunnel`,
+  outside the front and the gate ([its runbook](../how-to/speech-by-hand.md)). Stage 2 moves it behind
+  them after the soak, with diarization and speaker embeddings for Dan's own pipelines.
 - *(2026-11-09, Dan's decision, GitHub issue #35; Revisions.)* **Whisper large-v3**, on demand on
   whisper.cpp, in the registry from the next deploy, with no role, so `stt` stays on the turbo model
   and the web UI and doctor are unchanged. It's vid2sub's first choice for Japanese and Korean. Its
@@ -2148,7 +2157,9 @@ huggingface_hub with network access, matters most.)*
   51.6-minute lecture against the Mac baseline: Whisper large-v3-turbo vs Parakeet TDT v3 GGUF vs
   NeMo Parakeet with boosting, plus non-English, language-switching and two-speaker samples; pyannote
   community-1 *(2026-10-23, Dan's decisions: Qwen3-ASR joins the candidates, already served on
-  llama.cpp, with a served aligner for its timestamps, vLLM's or CrispASR's; *Speech*)* · the
+  llama.cpp, with a served aligner for its timestamps, vLLM's or CrispASR's; *Speech*)*
+  *(2026-11-09, Dan's decisions: the speech service's Stage 2 is that served aligner unless this
+  comparison finds a better one; its Stage 1 runs by hand until then; *Speech*)* · the
   endpoint reference page (chat + speech; the site render stays on the Mac until
   Quarto is on the Spark).
 - [Dan] `spark keys create` for the audio pipeline, whose own changes happen in its repo.
@@ -4391,7 +4402,8 @@ Each item gets its own design pass when its turn comes.
   only server found that returns SRT or VTT. They return text only, in llama-server's `json`, each
   transcript starting `language <name><asr_text>` (llama.cpp issue #26749, closed not planned): no
   timestamps, which come from Qwen3-ForcedAligner-0.6B, which no engine in the stack serves. The
-  captions project runs the aligner itself until Phase 3's speech comparison picks a served one. Each
+  captions project runs the aligner itself until Phase 3's speech comparison picks a served one.
+  *(2026-11-09, Dan's decisions: until then it can use the by-hand speech service; *Speech*.)* Each
   model is listed twice, as `-32k` at 32,768 tokens and `-64k` at its full 65,536: Dan first chose the
   full context only, then both, so he can "use the full larger context when I'm not doing anything
   else or batch overnight. and I can use the smaller [context] if I'm doing other parallel work". The
@@ -4522,6 +4534,15 @@ Each item gets its own design pass when its turn comes.
   downloaded yet (`make pull` at the deploy fetches it), and it hasn't run on this box. Its footprint,
   5 GiB, is an estimate scaled from the turbo model's, not measured. llama-swap numbers ports by sorted
   name, so it takes the port before the turbo model's.
+
+- **2026-11-09** — The speech service's design, approved by Dan ("you can build"), and its Stage 1
+  built on `phase-2a` (GitHub issue #35; [the design](speech-service.md), [the build
+  plan](speech-service-plan.md)). vid2sub needs word timings for Mandarin and Cantonese, which
+  llama.cpp's Qwen3-ASR can't give. So one Python service runs the original 1.7B and its forced
+  aligner, in a locked-down container, started by hand with `make speech`, outside the front and the
+  gate, as the by-hand SGLang coder is, which Dan approved. *Speech* and Phase 3 gain dated notes,
+  the Architecture page shows it, and Tasks 41, 43, 44, 45 and 47 to 50 run with it stopped. Each
+  run unloads Qwen3.6. Its Stage 2 moves it behind the front and the gate after the soak.
 
 ## Sources
 
