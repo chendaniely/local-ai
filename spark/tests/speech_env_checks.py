@@ -192,10 +192,11 @@ def garbage_after_the_magic_is_a_400(serve):
 
 
 @check
-def a_flac_cut_short_is_answered_and_never_a_500(serve):
+def a_flac_cut_short_is_answered_with_the_audio_it_holds(serve):
     data = flac(seconds=5.0)
     status, body, _, _ = post(serve, form(data[:len(data) // 2]))
-    assert status in (200, 400), (status, body)
+    assert status == 200, body
+    assert 0 < body["duration"] < 5.0, body
 
 
 @check
