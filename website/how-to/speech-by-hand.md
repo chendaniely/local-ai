@@ -22,6 +22,7 @@ it as *other processes* and the brake can't unload it.
   came back invented or nearly empty, with no prompt too, though every chunk still got word timings and no cue was
   flagged `est` ([the design](../design/speech-service.md#the-service) has the numbers). In its tmux window, a line
   `an answer reached the 4096-token limit` marks each such chunk. Spoken word with no music, a stand-up clip, was clean.
+  The stack's Whisper, vid2sub's `spark-turbo`, got dialogue out of the same audio (2026-11-10).
 - **It has no key.** Its socket's folder is yours alone on the Spark, and on the Mac the tunnel's
   port takes requests only with its own `Host` and no `Origin`, so a web page can't reach it.
 

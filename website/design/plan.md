@@ -1377,7 +1377,7 @@ the deadline it was given, so a drill's shorter one reads true.
   them after the soak, with diarization and speaker embeddings for Dan's own pipelines. *(2026-11-09, Dan's decision, at
   its done test; Revisions: the service ignores vid2sub's `prompt`, because passed as context it made Qwen3-ASR loop.
   Stage 2 has to settle how to send vocabulary safely.)* *(Corrected later that day, after the rerun: the prompt wasn't
-  the main cause, since without it the same chunks looped. The design's *The answer* says what is and isn't known, and
+  the main cause, since without it ~~the same chunks~~ 12 chunks looped again, 11 of them the same *(corrected 2026-11-10)*. The design's *The answer* says what is and isn't known, and
   the service isn't yet reliable on TV drama.)*
 - *(2026-11-09, Dan's decision, GitHub issue #35; Revisions.)* **Whisper large-v3**, on demand on
   whisper.cpp, in the registry from the next deploy, with no role, so `stt` stays on the turbo model
@@ -4554,9 +4554,14 @@ Each item gets its own design pass when its turn comes.
   of its speech ([the design](speech-service.md), *The answer*, has the numbers). Stage 2 and Phase 3's speech comparison
   inherit the question of how to send vocabulary to Qwen3-ASR safely.
 - **2026-11-09** — A correction to the line above, the same day: the prompt was not the main cause. With the service
-  ignoring it, the same 12 of the episode's 32 chunks looped again, and most of the dialogue in them was lost or invented.
+  ignoring it, ~~the same 12~~ 12 *(corrected 2026-11-10, from the service's log: 11 were the same chunks, one differed each
+  way)* of the episode's 32 chunks looped again, and most of the dialogue in them was lost or invented.
   The model loops on this TV drama at 30 s windows too. The done test for the speech service isn't met; the
   comparison with the Mac's engine is next ([the design](speech-service.md), *The answer*).
+- **2026-11-10** — On the same 20 test windows, the deployed Whisper returned speech on every one, including the 11 where
+  Qwen3-ASR answered "no speech" and the 2 where it still looped, so that audio does have dialogue. The done test names
+  no model, so vid2sub's `spark-turbo` is its next try. The comparison with the Mac's engine stays open, for Qwen3-ASR
+  only ([the design](speech-service.md), *The answer*).
 
 ## Sources
 

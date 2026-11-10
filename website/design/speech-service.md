@@ -115,17 +115,27 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   changed; with its first 100, 5,822 words in 132 s. So a prompt can change the text even when it doesn't loop. The cost
   is that a glossary's vocabulary hints don't reach the model, though vid2sub's stamp still records them, until a safe way to send them is found. Whether the Mac's
   engine, which passes the same context, loops too isn't known.)*
-  *(Corrected later the same day, after the rerun: **the prompt was not the main cause.** With it left out, the same
-  chunks looped, 12 of 32 again, so the sentence above blaming it for those 12 was wrong. What the prompt does is shown
+  *(Corrected later the same day, after the rerun: **the prompt was not the main cause.** With it left out, ~~the same
+  chunks looped, 12 of 32 again~~ 12 of 32 chunks looped again, 11 of them the same ones *(wording corrected
+  2026-11-10, from the service's log: one chunk differed each way)*, so the sentence above blaming it for those 12 was wrong. What the prompt does is shown
   only by the clip. The episode's transcript came to about 2,700 characters for 47 minutes, most of its long chunks
   nearly empty, with the package's repeat-cleaner collapsing each loop. On 10 minutes of that episode with no prompt,
   in 30 s windows and Mandarin forced, 6 of 20 windows looped, and the text was unrelated to the audio: the same
   stretch came out as a textbook passage about the Zhou dynasty at one window size and a trip to the supermarket at
   another. Shorter windows and loudness don't explain it. Left to choose the language, the model answered "no speech"
-  on 10 of the 20 windows, 4 of the 6 looping ones among them, and still looped on 2. Whether that is the model on this
+  on ~~10~~ 11 of the 20 windows *(corrected 2026-11-10: a miscount)*, 4 of the 6 looping ones among them, and still looped on 2. Whether that is the model on this
   audio, perhaps music under the dialogue, or the Spark's torch setup isn't known; the same audio through the Mac's
   engine would say. Until then the service isn't reliable on TV drama, and the done test isn't met. A chunk that looped
   shows in its terminal as `an answer reached the 4096-token limit`.)*
+  *(2026-11-10: **those windows do have dialogue.** The Spark's deployed Whisper, large-v3-turbo through the front
+  with Mandarin forced and no prompt, returned lines of speech on all 20 windows, in 0.4 to 1.6 s each, the 11 "no
+  speech" ones and the 2 that still looped included. So "no speech" here is Qwen3-ASR missing dialogue, not silence.
+  Those answers went through vid2sub's own whisper.cpp parser: 1,403 words, every one timed and in order, 156 of them
+  zero-length. Those are the tokens' own times, because the server doesn't run with DTW. Whisper's text hasn't been
+  checked by ear: it writes one character's name several ways, and has one line 9 times in one window, which may be
+  a real repetition or a loop of its own. The Mac's engine on the same audio would still say whether Qwen3-ASR's
+  failure is the model or this Spark's setup, but the done test no longer waits on it: it names no model, and
+  vid2sub's `spark-turbo` is the next try.)*
 - **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
 **Refusals**, all as `{"error":{"code":"…","message":"…","retry_after_s":…}}`. vid2sub waits on a `no_fit` and a

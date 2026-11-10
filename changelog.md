@@ -18,7 +18,7 @@ Times by the Spark's clock. Qwen3.6 was unloaded first; the by-hand SGLang coder
   words, with the text the same as the earlier test's.
 - **Two runs of a 47-minute TV-drama episode from vid2sub on the Mac:** 29:16 and 28:39. `MemAvailable` never fell below
   51.5 and 51.2 GiB, and the brake logged nothing in either. **The result isn't usable, and the done test isn't met:** 12
-  of 32 chunks ran to the 4,096-token limit, the same ones with and without vid2sub's prompt, and came back invented or
+  of 32 chunks ran to the 4,096-token limit, ~~the same ones~~ 11 of them the same *(corrected 2026-11-10, from the service's log)* with and without vid2sub's prompt, and came back invented or
   nearly empty, so the transcript was about 2,700 characters. The design's *The answer* has what's known about the cause.
 - **The brake fired three times earlier that day,** before any of this, each time unloading a model and pausing new
   loads: 15:46:59, the embeddings at 28.6 GiB available, its cause not looked into; 16:53:33, whisper at 32.4 GiB; and

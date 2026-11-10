@@ -2695,7 +2695,7 @@ git commit -m "docs(changelog): 🤖 the speech service's first run on the box" 
 of its 32 chunks looped to the token limit because the service passed vid2sub's `prompt` to the model. Dan's decision:
 the service ignores `prompt` ([the design](speech-service.md), *The answer*), and the run is repeated.)*
 
-*(Corrected later that day: the rerun, with no prompt, looped on the same 12 chunks, so the "because" above is wrong.
+*(Corrected later that day: the rerun, with no prompt, looped on ~~the same 12 chunks~~ 12 chunks again, 11 of them the same ones *(corrected 2026-11-10, from the service's log)*, so the "because" above is wrong.
 The done test isn't met: the transcript is mostly missing or invented on those chunks. The design's *The answer* has what's
 known. Steps 5 and 6 below stay open until the cause is settled.)*
 
