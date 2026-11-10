@@ -73,6 +73,8 @@ Each line is pinned by a test in the task that owns the code; a reviewer checks 
 
 ### Task 1 [Spark]: the service
 
+*(Corrected 2026-11-09, at this task's review: the listing of `decode_flac` below refused every chunk vid2sub sends, because FLAC from a pipe has no sample count in its header. The listings below are as first tested; the tree's `stack/speech/serve.py` and `spark/tests/speech_env_checks.py` hold the fix and its checks, and Step 5's count grows with them. The steps' `-q` also hides the count line, since addopts already passes one: leave it out. And `stack/speech/uv.lock`'s two `nvidia-curand` lines carry `# leakcheck: allow`, because its version number reads as a private address to the leak check.)*
+
 **Files:**
 
 - Create: `stack/speech/pyproject.toml`, `stack/speech/uv.lock`, `stack/speech/serve.py`

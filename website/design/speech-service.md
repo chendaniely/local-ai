@@ -113,7 +113,7 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
 | 503 | `no_fit` | `MemAvailable`, less the request growth step 3 measures, under 15 GiB; or CUDA ran out of memory |
 
 The audio is decoded with `soundfile`, read at most 300 s plus one frame, and passed as `(array, rate)`, never as a
-string, since the package's loader fetches URLs and opens paths. A request with an `Origin` header, or a `Host`
+string, since the package's loader fetches URLs and opens paths. *(Found at the build's review, 2026-11-09: FLAC written to a pipe, as vid2sub's ffmpeg does, has no sample count in its header, and `soundfile`'s seek after a read fails on the length libsndfile then reports. So the audio is read forward only, and an empty read is a 400.)* A request with an `Origin` header, or a `Host`
 other than `127.0.0.1:58991` or `localhost:58991`, is refused. Logs hold length, time taken and status, never the
 audio, its file name, the text or the prompt, and uvicorn's access log is off.
 

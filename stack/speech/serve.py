@@ -230,8 +230,15 @@ def decode_flac(data: bytes) -> tuple[Any, int]:
     paths. Read to at most 300 s and one frame, whatever length the file claims."""
     import soundfile
 
+    class ForwardOnly(soundfile.SoundFile):
+        """FLAC written to a pipe, as vid2sub's ffmpeg does, has no sample count in its header. libsndfile then reports
+        a length of 2^63-1, and the seek that `read` makes after reaching the end fails, so this reads forward only."""
+
+        def seekable(self) -> bool:
+            return False
+
     try:
-        with soundfile.SoundFile(io.BytesIO(data)) as flac:
+        with ForwardOnly(io.BytesIO(data)) as flac:
             if flac.format != "FLAC":
                 raise bad_request("the audio isn't FLAC")
             rate, channels = flac.samplerate, flac.channels
@@ -240,6 +247,9 @@ def decode_flac(data: bytes) -> tuple[Any, int]:
             audio = flac.read(frames=MAX_SECONDS * rate + 1, dtype="float32", always_2d=False)
     except soundfile.LibsndfileError:
         raise bad_request("the audio can't be read") from None
+    # Read forward only, a file holding just its header gives no audio and no error.
+    if audio.shape[0] == 0:
+        raise bad_request("the audio holds no samples")
     if audio.shape[0] > MAX_SECONDS * rate:
         raise too_long(f"the audio is over this service's {MAX_SECONDS} s")
     return audio, rate

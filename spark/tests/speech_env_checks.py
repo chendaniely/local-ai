@@ -58,6 +58,15 @@ def flac(seconds=1.0, rate=16000, channels=1):
     return buffer.getvalue()
 
 
+def piped(data):
+    """A FLAC as vid2sub's encode_flac gets it from ffmpeg's pipe:1: ffmpeg can't go back and fill in STREAMINFO's
+    36-bit sample count on a pipe, so it stays 0."""
+    data = bytearray(data)
+    data[21] &= 0xF0
+    data[22:26] = bytes(4)
+    return bytes(data)
+
+
 def part(name, value):
     return f'--{BOUNDARY}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
 
@@ -130,13 +139,20 @@ def code_of(answer):
 
 @check
 def a_chunk_as_vid2sub_sends_it_is_decoded_and_transcribed(serve):
-    status, body, _, model = post(serve, form(flac(seconds=2.0)))
+    status, body, _, model = post(serve, form(piped(flac(seconds=2.0))))
     assert status == 200, body
     assert body["duration"] == 2.0 and body["segments"] == [] and body["words"] == [] and body["language"] == "zh"
     [call] = model.calls
     samples, rate = call["audio"]
     assert rate == 16000 and samples.shape == (32000,) and str(samples.dtype) == "float32"
     assert call["language"] == "Chinese" and call["context"] == "词汇"
+
+
+@check
+def a_flac_written_to_a_file_is_taken_too(serve):
+    status, body, _, model = post(serve, form(flac(seconds=2.0)))
+    assert status == 200, body
+    assert body["duration"] == 2.0 and model.calls[0]["audio"][0].shape == (32000,)
 
 
 @check
@@ -191,6 +207,13 @@ def a_flac_holding_only_its_header_is_a_400(serve):
 @check
 def over_300_seconds_is_a_413(serve):
     status, body, _, model = post(serve, form(flac(seconds=300.5, rate=8000)))
+    assert (status, code_of(body)) == (413, "too_long") and model.calls == []
+
+
+@check
+def over_300_seconds_from_a_pipe_is_a_413(serve):
+    """Its header gives no length, so only the read's own bound can find this."""
+    status, body, _, model = post(serve, form(piped(flac(seconds=300.5, rate=8000))))
     assert (status, code_of(body)) == (413, "too_long") and model.calls == []
 
 
