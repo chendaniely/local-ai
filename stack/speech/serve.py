@@ -50,7 +50,6 @@ MAX_BODY_BYTES = 100 * 1024 * 1024
 MAX_SECONDS = 300  # this service's own bound; vid2sub sends at most 180
 MAX_RATE = 48_000
 MAX_CHANNELS = 2
-MAX_PROMPT_BYTES = 4096
 MAX_FIELDS = 16
 
 # One above the brake's line of 14 after the next deploy.
@@ -188,7 +187,6 @@ class Upload:
     audio: bytes
     model: str | None
     language: str | None
-    prompt: str | None
 
 
 def text_field(form: Any, name: str) -> str | None:
@@ -222,7 +220,7 @@ async def read_upload(request: Request) -> Upload:
         raise bad_request("the upload has no `file` part")
     audio = await file.read()
     await file.close()
-    return Upload(audio, text_field(form, "model"), text_field(form, "language"), text_field(form, "prompt"))
+    return Upload(audio, text_field(form, "model"), text_field(form, "language"))
 
 
 def decode_flac(data: bytes) -> tuple[Any, int]:
@@ -324,23 +322,20 @@ class Speech:
             upload = await self._upload(request)
             if upload.model != MODEL_ID:
                 raise Refusal(404, "model_not_found", f"this service serves only {MODEL_ID}")
-            prompt = upload.prompt or ""
-            if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
-                raise bad_request(f"the prompt is over {MAX_PROMPT_BYTES // 1024} KiB")
             language = language_in(upload.language)
             if not upload.audio.startswith(b"fLaC"):
                 raise bad_request("the audio isn't FLAC")
             if self._busy:
                 raise Refusal(429, "busy", "another chunk is running, and none wait", retry_after_s=BUSY_RETRY_S)
             self._busy = True
-            future = self._worker.submit(self._run, upload.audio, language, prompt)
+            future = self._worker.submit(self._run, upload.audio, language)
             future.add_done_callback(self._free)
             return JSONResponse(await asyncio.wrap_future(future))
         except Refusal as refusal:
             log.info("refused: status %d, %s", refusal.status, refusal.code)
             return refusal.response()
 
-    def _run(self, data: bytes, language: str | None, prompt: str) -> dict[str, Any]:
+    def _run(self, data: bytes, language: str | None) -> dict[str, Any]:
         """On the worker thread: decode, check the room, transcribe."""
         started = time.monotonic()
         seconds, status = 0.0, 200
@@ -348,7 +343,9 @@ class Speech:
             audio, rate = self._decode(data)
             seconds = audio.shape[0] / rate
             check_room(self._mem_available)
-            [result] = self._model.transcribe(audio=(audio, rate), context=prompt, language=language,
+            # vid2sub's `prompt`, the end of the chunk before, is left out: passed as the context, it made the model loop
+            # on 12 of a real episode's 32 chunks (2026-11-09; the design's *The answer*).
+            [result] = self._model.transcribe(audio=(audio, rate), context="", language=language,
                                               return_time_stamps=True)
             return answer_for(result, round(seconds, 3))
         except Refusal as refusal:

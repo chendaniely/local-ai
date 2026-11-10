@@ -16,6 +16,9 @@ it as *other processes* and the brake can't unload it.
   reserve, it may fit, and the web UI's background tasks ask for it then. So don't use it during a
   run. The by-hand SGLang coder can keep running.
 - **Stop it for Phase 2a's drills and measurements:** Tasks 41, 43, 44, 45 and 47 to 50.
+- **It ignores vid2sub's `prompt`,** so a glossary's vocabulary hints don't reach the model. Passed as context, the
+  prompt made the model loop on most of an episode's speech ([the design](../design/speech-service.md#the-service) has
+  the numbers).
 - **It has no key.** Its socket's folder is yours alone on the Spark, and on the Mac the tunnel's
   port takes requests only with its own `Host` and no `Origin`, so a web page can't reach it.
 

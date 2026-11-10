@@ -157,7 +157,7 @@ def a_chunk_as_vid2sub_sends_it_is_decoded_and_transcribed(serve):
     [call] = model.calls
     samples, rate = call["audio"]
     assert rate == 16000 and samples.shape == (32000,) and str(samples.dtype) == "float32"
-    assert call["language"] == "Chinese" and call["context"] == "词汇"
+    assert call["language"] == "Chinese" and call["context"] == ""
 
 
 @check

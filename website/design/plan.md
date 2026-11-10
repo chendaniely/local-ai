@@ -4542,6 +4542,10 @@ Each item gets its own design pass when its turn comes.
   gate, as the by-hand SGLang coder is, which Dan approved. *Speech* and Phase 3 gain dated notes,
   the Architecture page shows it, and Tasks 41, 43, 44, 45 and 47 to 50 run with it stopped. Each
   run unloads Qwen3.6. Its Stage 2 moves it behind the front and the gate after the soak.
+- **2026-11-09** — The speech service ignores vid2sub's `prompt` (Dan's decision, at its done test). Passed as Qwen3-ASR's
+  context, the end of the previous chunk's text made the model loop on 12 of an episode's 32 chunks, which is about 80 %
+  of its speech ([the design](speech-service.md), *The answer*, has the numbers). Stage 2 and Phase 3's speech comparison
+  inherit the question of how to send vocabulary to Qwen3-ASR safely.
 
 ## Sources
 

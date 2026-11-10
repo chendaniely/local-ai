@@ -2689,6 +2689,10 @@ git commit -m "docs(changelog): 🤖 the speech service's first run on the box" 
 
 ### Task 5 [Mac] and [Dan]: the done test
 
+*(2026-11-09, the first attempt: the episode ran through, with the brake quiet and memory never under 51.5 GiB, but 12
+of its 32 chunks looped to the token limit because the service passed vid2sub's `prompt` to the model. Dan's decision:
+the service ignores `prompt` ([the design](speech-service.md), *The answer*), and the run is repeated.)*
+
 This is the design's step 6. Dan's definition of done: a real Mandarin or Cantonese episode, start to finish, with
 correct word timings, while he keeps coding on the by-hand SGLang coder, and no change to vid2sub's parser.
 

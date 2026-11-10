@@ -106,7 +106,15 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
 - **A zero-length word** is widened by a millisecond or two, so its midpoint lies inside its segment.
 - **`language`** goes out lower-cased as `zh`, `yue`, `en`, `ja` or `ko` where it is one of those, the first of a
   comma list if the package returns several. Coming in, those five map to the package's names. Anything else is a 400.
-- **`prompt`,** at most 4 KiB, goes to the model as its context.
+- ~~**`prompt`,** at most 4 KiB, goes to the model as its context.~~ *(Corrected 2026-11-09, at the done test, Dan's
+  decision: **the service ignores `prompt`.** vid2sub sends the end of the previous chunk's text there, with a
+  glossary's terms when it has one. Passed as the model's context, it made 12 of a real episode's 32 chunks run to the
+  4,096-token limit: about 80 % of its speech, and 28.7 of the run's 29.3 minutes. The model loops, the aligner spreads
+  the repeated text over the audio, and those timings can't be right. The same happened on the 161 s clip from step 3:
+  with no prompt, 489 words in 11 s; with its last 100 characters as the prompt, 502 words in 11.5 s and the text
+  changed; with its first 100, 5,822 words in 132 s. So a prompt can change the text even when it doesn't loop. The cost
+  is that a glossary's vocabulary hints don't reach the model, until a safe way to send them is found. Whether the Mac's
+  engine, which passes the same context, loops too isn't known.)*
 - **No text, or no kept characters** (music, silence): `segments: []` and `words: []`, a success.
 
 **Refusals**, all as `{"error":{"code":"…","message":"…","retry_after_s":…}}`. vid2sub waits on a `no_fit` and a
@@ -114,7 +122,7 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file, a prompt over 4 KiB, a form with no audio |
+| 400 | `bad_request` | not FLAC by its magic, over 48 kHz or 2 channels, an unsupported language, an unreadable file, ~~a prompt over 4 KiB,~~ a form with no audio |
 | 403 | `forbidden` | an `Origin` header, or a `Host` other than the tunnel's (added at the build, 2026-11-09) |
 | 404 | `model_not_found` | any other model name |
 | 413 | `too_long` | decoded audio over 300 s, this service's own bound, or a body over 100 MiB, counted as it arrives |
@@ -232,4 +240,5 @@ service then, and that pipeline's route and key from the homelab come with that 
 ## Not in Stage 1
 
 The 0.6B model, which needs only another pair of weights once the 1.7B works; diarization; a queue, since vid2sub
-sends one chunk at a time; a served aligner for clients other than vid2sub.
+sends one chunk at a time; a served aligner for clients other than vid2sub; vid2sub's `prompt`, which the service has
+ignored since the done test (*The answer*).

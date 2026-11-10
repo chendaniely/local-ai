@@ -225,7 +225,7 @@ def fixture_app(serve, model, **overrides):
     worker = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="speech-worker")
 
     async def upload(_request):
-        return overrides.get("parts") or serve.Upload(b"fLaC audio", serve.MODEL_ID, "zh", "词汇")
+        return overrides.get("parts") or serve.Upload(b"fLaC audio", serve.MODEL_ID, "zh")
 
     options = {"upload": upload, "decode": lambda _data: (Samples(), 16000), "mem_available": lambda: 60.0}
     options.update({key: value for key, value in overrides.items() if key != "parts"})
@@ -243,20 +243,20 @@ def test_health_and_models_answer_as_the_design_says(serve):
     assert answer.status_code == 200 and answer.json() == {"object": "list", "data": [{"id": "qwen3-asr-1.7b"}]}
 
 
-def test_a_chunk_reaches_the_model_as_samples_with_its_context_and_language_name(serve):
+def test_a_chunk_reaches_the_model_as_samples_with_no_context_and_its_language_name(serve):
     model = Model()
     answer = client_for(serve, model).post(ROUTE)
     assert answer.status_code == 200
     [call] = model.calls
     assert isinstance(call["audio"], tuple) and isinstance(call["audio"][0], Samples) and call["audio"][1] == 16000
-    assert call["context"] == "词汇" and call["language"] == "Chinese" and call["return_time_stamps"] is True
+    assert call["context"] == "" and call["language"] == "Chinese" and call["return_time_stamps"] is True
     body = answer.json()
     assert body["duration"] == 10.0 and [word["word"] for word in body["words"]] == ["你", "好"]
 
 
 def test_no_language_leaves_the_package_to_detect_it(serve):
     model = Model()
-    client_for(serve, model, parts=serve.Upload(b"fLaC", serve.MODEL_ID, None, None)).post(ROUTE)
+    client_for(serve, model, parts=serve.Upload(b"fLaC", serve.MODEL_ID, None)).post(ROUTE)
     assert model.calls[0]["language"] is None and model.calls[0]["context"] == ""
 
 
@@ -268,25 +268,18 @@ def assert_refused(answer, status, code, *, retry=None):
         assert answer.headers["retry-after"] == str(retry)
 
 
-@pytest.mark.parametrize(("audio", "model_name", "language", "prompt", "status", "code"), [
-    (b"RIFF", "qwen3-asr-1.7b", "zh", "", 400, "bad_request"),
-    (b"", "qwen3-asr-1.7b", "zh", "", 400, "bad_request"),
-    (b"fLaC", "whisper-1", "zh", "", 404, "model_not_found"),
-    (b"fLaC", None, "zh", "", 404, "model_not_found"),
-    (b"fLaC", "qwen3-asr-1.7b", "de", "", 400, "bad_request"),
-    (b"fLaC", "qwen3-asr-1.7b", "zh", "字" * 1366, 400, "bad_request"),
-], ids=["not flac", "empty audio", "another model", "no model", "another language", "a long prompt"])
-def test_each_early_refusal_never_reaches_the_model(serve, audio, model_name, language, prompt, status, code):
+@pytest.mark.parametrize(("audio", "model_name", "language", "status", "code"), [
+    (b"RIFF", "qwen3-asr-1.7b", "zh", 400, "bad_request"),
+    (b"", "qwen3-asr-1.7b", "zh", 400, "bad_request"),
+    (b"fLaC", "whisper-1", "zh", 404, "model_not_found"),
+    (b"fLaC", None, "zh", 404, "model_not_found"),
+    (b"fLaC", "qwen3-asr-1.7b", "de", 400, "bad_request"),
+], ids=["not flac", "empty audio", "another model", "no model", "another language"])
+def test_each_early_refusal_never_reaches_the_model(serve, audio, model_name, language, status, code):
     model = Model()
-    answer = client_for(serve, model, parts=serve.Upload(audio, model_name, language, prompt)).post(ROUTE)
+    answer = client_for(serve, model, parts=serve.Upload(audio, model_name, language)).post(ROUTE)
     assert_refused(answer, status, code)
     assert model.calls == []
-
-
-def test_a_prompt_of_exactly_4_kib_is_taken(serve):
-    model = Model()
-    answer = client_for(serve, model, parts=serve.Upload(b"fLaC", serve.MODEL_ID, "zh", "a" * 4096)).post(ROUTE)
-    assert answer.status_code == 200
 
 
 @pytest.mark.parametrize(("status", "code", "maker"), [
@@ -344,7 +337,7 @@ def test_any_other_failure_is_a_refusal_that_logs_no_text(serve, caplog):
     with caplog.at_level(logging.INFO, logger="speech"):
         answer = client.post(ROUTE)
     assert_refused(answer, 500, "failed")
-    assert "ValueError" in caplog.text and SECRET not in caplog.text and "词汇" not in caplog.text
+    assert "ValueError" in caplog.text and SECRET not in caplog.text
     assert SECRET not in answer.text
     model.error = None
     assert client.post(ROUTE).status_code == 200
@@ -355,7 +348,7 @@ def test_the_log_holds_lengths_and_status_and_never_the_text(serve, caplog):
     with caplog.at_level(logging.INFO, logger="speech"):
         assert client_for(serve, model).post(ROUTE).status_code == 200
     assert "10.0 s of audio" in caplog.text and "status 200" in caplog.text
-    assert SECRET not in caplog.text and "词汇" not in caplog.text
+    assert SECRET not in caplog.text
 
 
 def in_the_background(call):
@@ -397,14 +390,17 @@ def test_a_cancelled_handler_keeps_the_chunk_counted_until_the_worker_is_done(se
     worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     async def upload(_request):
-        return serve.Upload(b"fLaC", serve.MODEL_ID, "zh", "")
+        return serve.Upload(b"fLaC", serve.MODEL_ID, "zh")
 
     speech = serve.Speech(model, worker, upload=upload, decode=lambda _d: (Samples(), 16000), mem_available=lambda: 60.0)
 
     async def run():
         task = asyncio.create_task(speech.transcriptions(None))
-        while not model.started.is_set():
+        for _ in range(1000):
+            if model.started.is_set():
+                break
             await asyncio.sleep(0.01)
+        assert model.started.is_set()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
