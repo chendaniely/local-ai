@@ -1,0 +1,33 @@
+# The speech service's own environment (website/design/speech-service.md). `make speech` builds it on the Spark with
+# `uv sync --frozen --no-build --no-install-project`, and only the container runs it: never as Dan, never on the host.
+[project]
+name = "local-ai-speech"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+  "qwen-asr-dgxspark==0.1.1",
+  "torch==2.13.0",
+  "transformers>=5.14,<5.15",
+  "soundfile>=0.13,<1",
+  "numpy>=2,<3",
+  "starlette==1.7.0",
+  "uvicorn==0.54.0",
+  "python-multipart>=0.0.20,<1",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'"]
+python-preference = "only-managed"
+exclude-newer = "7 days"
+no-build = true
+# The fork depends on torchaudio, and nothing imports it (a review of the wheel, 2026-11-09).
+override-dependencies = ["torchaudio; sys_platform == 'never'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
