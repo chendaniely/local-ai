@@ -42,13 +42,24 @@ PIECES = {
 NAMES = ("make speech", "by-hand-speech", "speech-by-hand")
 
 STANDINS = {
+    # $BOX/container is the container: it holds its state, and its absence means there is none.
     "sudo": ('case "$1 $2" in\n'
-             '  "docker inspect") exit "${INSPECT_EXIT:-1}" ;;\n'
-             '  "docker stop") exit "${STOP_EXIT:-0}" ;;\n'
+             '  "docker ps")\n'
+             '    if [ "${PS_EXIT:-0}" != 0 ]; then echo "sudo: 3 incorrect password attempts" >&2; exit "$PS_EXIT"; fi\n'
+             '    if [ -f "$BOX/container" ]; then cat "$BOX/container"; fi\n'
+             '    exit 0 ;;\n'
+             '  "docker stop")\n'
+             '    if [ ! -f "$BOX/container" ]; then echo "Error response from daemon: No such container" >&2; exit 1; fi\n'
+             '    if [ "${STOP_EXIT:-0}" != 0 ]; then exit "$STOP_EXIT"; fi\n'
+             '    rm -f "$BOX/container"\n'
+             '    exit 0 ;;\n'
              '  "docker run")\n'
+             '    if [ -f "$BOX/container" ]; then echo "docker: the name is already in use" >&2; exit 125; fi\n'
+             '    echo running > "$BOX/container"\n'
              '    ls -ld "$BY_HAND_RUN_DIR/local-ai-speech" | cut -c1-10 > "$BOX/mode-at-run"\n'
              '    ls -A "$BY_HAND_RUN_DIR/local-ai-speech" > "$BOX/listing-at-run"\n'
              '    echo "speech: the server says it is up"\n'
+             '    rm -f "$BOX/container"\n'
              '    exit "${RUN_EXIT:-0}" ;;\n'
              'esac'),
     "uv": 'echo "UV_PROJECT_ENVIRONMENT=$UV_PROJECT_ENVIRONMENT" >> "$CALLS"\nexit "${UV_EXIT:-0}"',
@@ -57,8 +68,9 @@ STANDINS = {
 }
 
 
-def status(free) -> str:
-    return json.dumps({"memory": {"available_gib": 60.0, "free_for_a_load_gib": free}, "gate": "ok"})
+def status(free, available=60.0, paused=None, held=None) -> str:
+    return json.dumps({"memory": {"available_gib": available, "free_for_a_load_gib": free}, "paused": paused, "held": held,
+                       "gate": "ok"})
 
 
 class Box:
@@ -107,6 +119,15 @@ class Box:
     def set_status(self, text: str) -> None:
         (self.root / "status").write_text(text)
 
+    def container(self, state: str) -> None:
+        (self.root / "container").write_text(f"{state}\n")
+
+    def live_socket(self) -> Path:
+        self.socket_dir.mkdir(mode=0o700)
+        socket = self.socket_dir / "speech.sock"
+        socket.write_text("")
+        return socket
+
     def env(self, **extra: str) -> dict[str, str]:
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.home), "CALLS": str(self.root / "calls"),
                "BOX": str(self.root), "BY_HAND_OPT": str(self.opt), "BY_HAND_RUN_DIR": str(self.run_dir),
@@ -127,6 +148,9 @@ class Box:
 
     def ran(self) -> bool:
         return any(call.startswith("sudo docker run") for call in self.calls())
+
+    def built(self) -> bool:
+        return any(call.startswith("uv ") for call in self.calls())
 
 
 def refused(result, box, words: str) -> None:
@@ -175,7 +199,8 @@ def test_a_missing_snapshot_is_refused(tmp_path):
     refused(box.run(), box, "no weights at")
 
 
-@pytest.mark.parametrize(("free", "starts"), [(12.0, True), (11.95, False), (0.0, False), (58.0, True)], ids=str)
+@pytest.mark.parametrize(("free", "starts"), [(12.0, True), (11.96, False), (11.95, False), (0.0, False), (58.0, True)],
+                         ids=str)
 def test_it_starts_only_with_12_gib_free_for_a_load(tmp_path, free, starts):
     box = Box(tmp_path)
     box.set_status(status(free))
@@ -186,13 +211,16 @@ def test_it_starts_only_with_12_gib_free_for_a_load(tmp_path, free, starts):
     else:
         refused(result, box, "unload Qwen3.6")
         assert "under the 12 it needs" in result.stderr
+        assert "12.0 GiB free" not in result.stderr  # a message rounds down, so it can't say the line it's under
         assert "spark unload qwen3.6-35b-a3b" in result.stderr
 
 
 @pytest.mark.parametrize("shape", [
     json.dumps({"memory": {"total_gib": 121, "available_gib": 60, "brake_gib": 20}, "gate": "not answering"}),
     status(None),
-], ids=["the gate is down", "the gate has no figure"])
+    status(58.0, available=None),
+    json.dumps({"memory": {"free_for_a_load_gib": 58.0}, "paused": None, "held": None, "gate": "ok"}),
+], ids=["the gate is down", "the gate has no figure", "available is null", "available is missing"])
 def test_it_is_refused_when_the_gate_gives_no_figure(tmp_path, shape):
     box = Box(tmp_path)
     box.set_status(shape)
@@ -205,12 +233,82 @@ def test_it_is_refused_when_the_status_cant_be_read(tmp_path):
     refused(box.run(), box, "can't read")
 
 
-def test_a_second_start_is_refused_and_leaves_the_running_ones_socket(tmp_path):
+@pytest.mark.parametrize("figure", ["58", float("nan")], ids=["a string", "not a number"])
+def test_a_figure_that_cant_be_compared_is_unreadable(tmp_path, figure):
     box = Box(tmp_path)
-    box.socket_dir.mkdir(mode=0o700)
-    (box.socket_dir / "speech.sock").write_text("")
-    refused(box.run(INSPECT_EXIT="0"), box, "already running")
-    assert (box.socket_dir / "speech.sock").exists()
+    box.set_status(status(figure))
+    refused(box.run(), box, "can't read")
+
+
+def test_48_gib_available_is_enough(tmp_path):
+    box = Box(tmp_path)
+    box.set_status(status(58.0, available=48.0))
+    result = box.run()
+    assert result.returncode == 0, result.stderr
+    assert box.ran()
+
+
+@pytest.mark.parametrize(("available", "shown"), [(47.96, "47.9"), (35.0, "35.0")], ids=str)
+def test_under_48_gib_available_is_refused_at_a_free_figure_that_passes(tmp_path, available, shown):
+    box = Box(tmp_path)
+    box.set_status(status(58.0, available=available))
+    result = box.run()
+    refused(result, box, f"{shown} GiB available, under the 48")
+    assert "spark unload qwen3.6-35b-a3b" in result.stderr
+
+
+@pytest.mark.parametrize("holding", [
+    {"paused": {"since": 1.0, "available_gib": 19.6, "releases_at": None, "waits_for_dan": False, "problem": None}},
+    {"held": {"size_gib": 40.0, "until": None}},
+], ids=["paused", "held"])
+def test_it_is_refused_while_new_loads_are_held(tmp_path, holding):
+    box = Box(tmp_path)
+    box.set_status(status(58.0, **holding))
+    result = box.run()
+    refused(result, box, "holding new loads")
+    assert "spark status says why" in result.stderr
+
+
+@pytest.mark.parametrize("state", ["running", "paused", "restarting"])
+def test_a_second_start_is_refused_and_leaves_the_running_ones_socket(tmp_path, state):
+    box = Box(tmp_path)
+    box.container(state)
+    socket = box.live_socket()
+    # Asked before the weights and the memory, so a live service is never told to unload Qwen3.6.
+    shutil.rmtree(box.hf / "Qwen3-ASR-1.7B")
+    box.set_status(status(0.0))
+    refused(box.run(), box, "already running")
+    assert socket.exists() and not box.built()
+
+
+@pytest.mark.parametrize("state", ["exited", "dead", "created"])
+def test_a_container_left_behind_is_refused_naming_docker_rm(tmp_path, state):
+    box = Box(tmp_path)
+    box.container(state)
+    socket = box.live_socket()
+    result = box.run()
+    refused(result, box, "sudo docker rm local-ai-speech")
+    assert state in result.stderr
+    assert socket.exists() and not box.built()
+
+
+def test_a_query_that_fails_is_refused_and_touches_nothing(tmp_path):
+    box = Box(tmp_path)
+    box.container("running")
+    socket = box.live_socket()
+    result = box.run(PS_EXIT="1")
+    assert result.returncode == 1 and not box.ran() and not box.built()
+    assert socket.exists()
+    [theirs, ours] = result.stderr.splitlines()  # sudo's own error stays on the screen, above the refusal's one line
+    assert theirs.startswith("sudo:") and "can't tell whether one is already running" in ours
+
+
+def test_it_asks_docker_about_exactly_its_own_name_and_before_the_memory(tmp_path):
+    box = Box(tmp_path)
+    assert box.run().returncode == 0
+    calls = box.calls()
+    query = "sudo docker ps -a --filter name=^/local-ai-speech$ --format {{.State}}"
+    assert calls.index(query) < calls.index("spark status --json")
 
 
 def test_it_starts_the_container_with_the_designs_flags_and_mounts_exactly(tmp_path):
@@ -272,7 +370,8 @@ def test_a_container_that_fails_gives_its_status_and_still_empties_the_folder(tm
 
 def test_stop_stops_it_empties_the_folder_and_shows_the_memory(tmp_path):
     box = Box(tmp_path)
-    box.socket_dir.mkdir(mode=0o700)
+    box.container("running")
+    box.live_socket()
     result = box.run("stop")
     assert result.returncode == 0, result.stderr
     assert box.calls() == ["sudo docker stop -t 20 local-ai-speech", "free -g", "spark status"]
@@ -281,9 +380,33 @@ def test_stop_stops_it_empties_the_folder_and_shows_the_memory(tmp_path):
 
 def test_stop_with_nothing_running_says_so_and_still_empties_the_folder(tmp_path):
     box = Box(tmp_path)
-    box.socket_dir.mkdir(mode=0o700)
-    assert box.run("stop", STOP_EXIT="1").returncode == 1
+    box.live_socket()
+    result = box.run("stop")
+    assert result.returncode == 1 and "No such container" in result.stderr
     assert not box.socket_dir.exists()
+
+
+def test_a_stop_that_fails_with_the_container_up_keeps_the_folder_and_says_so(tmp_path):
+    box = Box(tmp_path)
+    box.container("running")
+    socket = box.live_socket()
+    result = box.run("stop", STOP_EXIT="7")
+    assert result.returncode == 7  # docker stop's
+    assert socket.exists()
+    assert result.stderr.count("\n") == 1 and "stays" in result.stderr
+    assert box.calls()[-2:] == ["free -g", "spark status"]
+
+
+@pytest.mark.parametrize("up", [True, False], ids=["up", "gone"])
+def test_a_failed_query_never_counts_as_absent_when_the_stop_failed(tmp_path, up):
+    box = Box(tmp_path)
+    if up:
+        box.container("running")
+    socket = box.live_socket()
+    result = box.run("stop", STOP_EXIT="7", PS_EXIT="1")
+    assert result.returncode != 0
+    assert socket.exists()
+    assert "stays" in result.stderr
 
 
 def test_it_says_its_usage_for_any_other_do(tmp_path):

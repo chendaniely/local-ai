@@ -29,10 +29,19 @@ ASR_REVISION=7278e1e70fe206f11671096ffdd38061171dd6e5
 ALIGNER_REVISION=c7cbfc2048c462b0d63a45797104fc9db3ad62b7
 # What a load and a chunk took from MemAvailable in step 3 of the design's order: 11.9 GiB (Dan's clip, 2026-11-09).
 NEED_GIB=12
+# A load from about 35 GiB available fired the brake twice, and one from 67 stayed quiet (steps 2 and 3 of that order).
+# The brake carries a fall 10 s ahead, so at 2.6 GiB/s, the fastest load measured, that's 26 GiB past its deployed line
+# of 20, plus 2.
+NEED_AVAILABLE_GIB=48
 
 refuse() {
   echo "make speech: $1" >&2
   exit 1
+}
+
+# Empty output means there's no such container; a failure means nothing is known, so it never counts as absent.
+container_state() {
+  sudo docker ps -a --filter "name=^/$CONTAINER\$" --format '{{.State}}'
 }
 
 check_snapshot() {
@@ -44,30 +53,63 @@ check_snapshot() {
   [ "$recorded" = "$revision" ] || refuse "$folder isn't at revision $revision"
 }
 
-free_for_a_load() {
+# The gate's figures as they came, unrounded, and whether new loads are held: "free available clear|holding", with
+# none for a figure the gate didn't give. One that can't be compared makes it fail, as an unreadable status does.
+read_status() {
   "$SPARK" status --json | "$SPARK_PYTHON" -I -c '
-import json, sys
+import json, math, sys
 
-free = json.load(sys.stdin).get("memory", {}).get("free_for_a_load_gib")
-print("" if free is None else format(free, ".1f"))' 2> /dev/null
+view = json.load(sys.stdin)
+memory = view.get("memory", {})
+
+
+def figure(name):
+    value = memory.get(name)
+    if value is None:
+        return "none"
+    if not math.isfinite(value):  # a string raises here too
+        raise ValueError(name)
+    return value
+
+
+holding = view.get("paused") is not None or view.get("held") is not None
+print(figure("free_for_a_load_gib"), figure("available_gib"), "holding" if holding else "clear")' 2> /dev/null
+}
+
+enough() {
+  awk -v have="$1" -v need="$2" 'BEGIN { exit !(have >= need) }'
+}
+
+# For a message only: rounded down, so a figure under a line can't read as the line.
+shown() {
+  awk -v gib="$1" 'BEGIN { printf "%.1f", int(gib * 10) / 10 }'
 }
 
 start() {
   [ "$(id -u)" = 1000 ] || refuse "the socket's folder is uid 1000's, Dan's, and this is uid $(id -u)"
   [ -n "${TMUX:-}" ] || refuse "run it inside tmux (tmux new -As speech): its socket's folder goes when your last session ends"
+
+  # Before the weights and the memory, so a live service is never told to unload Qwen3.6.
+  local state
+  state="$(container_state)" || refuse "docker ps failed, so it can't tell whether one is already running, and nothing is touched"
+  case "$state" in
+    '') ;;
+    running | paused | restarting) refuse "it's already running: make speech DO=stop stops it" ;;
+    *) refuse "a $state container is left behind: sudo docker rm $CONTAINER removes it, then run make speech again" ;;
+  esac
+
   check_snapshot Qwen3-ASR-1.7B "$ASR_REVISION"
   check_snapshot Qwen3-ForcedAligner-0.6B "$ALIGNER_REVISION"
 
-  local free
-  free="$(free_for_a_load)" || refuse "spark status --json gave something it can't read, so nothing says there's room"
-  [ -n "$free" ] || refuse "the gate isn't answering, so nothing says there's room: start it first"
-  if ! awk -v free="$free" -v need="$NEED_GIB" 'BEGIN { exit !(free >= need) }'; then
-    refuse "$free GiB free for a load, under the $NEED_GIB it needs: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
+  local figures free available holding
+  figures="$(read_status)" || refuse "spark status --json gave something it can't read, so nothing says there's room"
+  read -r free available holding <<< "$figures"
+  if [ "$free" = none ] || [ "$available" = none ]; then
+    refuse "the gate isn't answering, so nothing says there's room: start it first"
   fi
-
-  if sudo docker inspect "$CONTAINER" > /dev/null 2>&1; then
-    refuse "it's already running: make speech DO=stop stops it"
-  fi
+  [ "$holding" = clear ] || refuse "the brake or a pause is holding new loads: spark status says why"
+  enough "$free" "$NEED_GIB" || refuse "$(shown "$free") GiB free for a load, under the $NEED_GIB it needs: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
+  enough "$available" "$NEED_AVAILABLE_GIB" || refuse "$(shown "$available") GiB available, under the $NEED_AVAILABLE_GIB that keeps the load clear of the brake: unload Qwen3.6 ($SPARK unload qwen3.6-35b-a3b), then run make speech again"
 
   UV_PROJECT_ENVIRONMENT="$VENV" uv sync --quiet --frozen --no-build --no-install-project --project "$REPO/stack/speech"
 
@@ -117,9 +159,13 @@ start() {
 }
 
 stop() {
-  local rc=0
+  local rc=0 state
   sudo docker stop -t 20 "$CONTAINER" || rc=$?
-  rm -rf -- "$SOCKET_DIR"
+  if [ "$rc" = 0 ] || { state="$(container_state)" && [ -z "$state" ]; }; then
+    rm -rf -- "$SOCKET_DIR"
+  else
+    echo "make speech: $SOCKET_DIR stays: docker stop failed and nothing says the container is gone" >&2
+  fi
   free -g
   "$SPARK" status
   return "$rc"

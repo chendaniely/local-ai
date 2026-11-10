@@ -1733,6 +1733,8 @@ def parse_openai(data: Any) -> ParsedChunk:
 
 ### Task 2 [Spark]: `make speech` and the tunnel's second forward
 
+*(Corrected 2026-11-09, at this task's review: `stack/host/by-hand-speech` and its tests below are as first tested. The tree's versions also refuse under 48 GiB available or while the brake holds or pauses loads, ask `docker ps` for the container's state so that a failed query can't remove a live socket's folder, and check that first. Step 4's test count grows with them.)*
+
 **Files:**
 
 - Create: `stack/host/by-hand-speech`
