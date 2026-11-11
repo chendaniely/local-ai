@@ -3035,7 +3035,7 @@ Each item gets its own design pass when its turn comes.
   2b's build, and reach the projects as one notice. Until then an open notice under every project's
   label says to keep the base URL and the refusal handling in config or one module. If LiteLLM is
   chosen, it is still built in Phase 3. *(2026-11-11: agent-chat's way to the models joins this
-  decision, below. So does the tailnet's route to the whole home LAN, which Dan keeps: a port the
+  decision, below, and so does a vid2sub batch from another machine at home. So does the tailnet's route to the whole home LAN, which Dan keeps: a port the
   Spark opens to the LAN, for homelab apps, opens to the tailnet too, under the policy's home-LAN
   grant rather than the Spark's (the Network bullet under Users, access and security).)*
 - **agent-chat's requests** (added 2026-11-11). Dan's new project, private and not yet built, in
@@ -3048,21 +3048,27 @@ Each item gets its own design pass when its turn comes.
   gateway off the Spark, reaching the front by the way in that *The projects' base URL* settles.
   Either way it is decided here before agent-chat's first spike runs a chat room against the
   Spark. Reading recordings' results doesn't involve the stack.
-- **vid2sub on the Spark, over a folder of videos** (added 2026-11-11). Dan, in his words: "we
-  should prioritize the spark models over the mac models now for all those transcription and
-  translation needs. i should also be able to mount a drive on the spark and have the spark run the
-  transcription translation srt creation on a folder of videos". Two changes. vid2sub routes to the
-  Spark's models first and to the Mac's only as a fallback: vid2sub's change, under its notices.
-  And vid2sub itself runs on the Spark, over a folder on a mounted drive, writing the subtitles
-  there: a new client on the box, reaching the front and the speech service on loopback, with no
-  tunnel. Still to decide, here:
-  - which drive: a USB drive on the Spark, or one of the NAS's shares (*NAS* under *Users, access
-    and security*: the data share is read-only, a named work folder is read-write);
-  - which account runs it, and with which key;
+- **vid2sub's batches without the Mac** (added 2026-11-11). Dan, in his words: "we should
+  prioritize the spark models over the mac models now for all those transcription and translation
+  needs. i should also be able to mount a drive on the spark and have the spark run the
+  transcription translation srt creation on a folder of videos", and then: "the spark can also run
+  vid2sub on a network mounted folder. or another machine on my network ... so i can batch run
+  translations when my mac is on the road". Three changes. vid2sub routes to the Spark's models
+  first and to the Mac's only as a fallback: vid2sub's change, under its notices. vid2sub runs on
+  the Spark, over a network-mounted folder, writing the subtitles there: a new client on the box,
+  reaching the front and the speech service on loopback, with no tunnel. Or it runs on another
+  Linux machine at home, against the Spark: that machine reaches the Spark today only by an SSH
+  tunnel, as the Mac does, and a lasting way in is *The projects' base URL*'s to settle. Still to
+  decide, here:
+  - which folder: one of the NAS's shares (*NAS* under *Users, access and security*: the data
+    share is read-only, a named work folder is read-write), mounted on whichever machine runs it;
+  - which account runs it on the Spark, and with which key; the other machine gets a key of its
+    own;
   - whether ffmpeg is on the box (unchecked);
-  - where its working files go, with weights filling the 1 TB disk;
+  - where its working files go on the Spark, with weights filling the 1 TB disk;
   - Mandarin and Cantonese word timings come only from the speech service, which is up only while
-    `make speech` runs, so a batch over such a folder needs it up for its length.
+    `make speech` runs and answers only on the Spark's loopback, so a batch over such a folder
+    needs it up for its length, and a batch from another machine needs a way to it as well.
 
   A batch shares the box with the coder as any client does: the gate refuses what doesn't fit, and
   vid2sub waits.
@@ -4685,9 +4691,9 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   `website/how-to/tailscale.md`, the README, the changelog and Phase 0's retrospective are
   corrected.
 - **2026-11-11** — Dan: vid2sub uses the Spark's models first and the Mac's as a fallback, and
-  vid2sub should also run on the Spark over a folder of videos on a mounted drive. *Open items and
-  risks* gains *vid2sub on the Spark, over a folder of videos*, and vid2sub's row on [Projects that
-  use the stack](../reference/projects.md) says so.
+  batches run without the Mac: vid2sub on the Spark over a network-mounted folder, or on another
+  machine at home against the Spark. *Open items and risks* gains *vid2sub's batches without the
+  Mac*, and vid2sub's row on [Projects that use the stack](../reference/projects.md) says so.
 
 ## Sources
 
