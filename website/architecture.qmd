@@ -34,7 +34,9 @@ then to the diagrams.
 - **A client** is anything that sends the Spark's models a request with a key: the harnesses, the
   web UI with its own key, my Python apps on the Mac, over `make tunnel` since 2026-11-09
   ([their runbook](how-to/python-apps.md)), and from Phase 3 my other pipelines and apps, each with
-  a key of its own, through the front or through LiteLLM, whichever Phase 3 settles on. Every
+  a key of its own, through the front or through LiteLLM, whichever Phase 3 settles on *(decided
+  before Phase 2b's build instead, with the move from 9100: Dan's decision, 2026-11-10, [the
+  plan's](design/plan.md#open-items-and-risks) *The projects' base URL*)*. Every
   project of mine that uses the stack, and what it relies on, is on [Projects that use the
   stack](reference/projects.md).
 - **Claude Code and Claude Desktop are neither.** They never use the Spark's models.
@@ -252,7 +254,9 @@ chatted, searched and transcribed from the phone, and `/unload` through 9100 got
 `route_not_served`.)* My Python apps on the Mac use the same tunnel since 2026-11-09, with Pi's key
 or one of their own ([their runbook](how-to/python-apps.md)). From Phase
 3, my other apps reach the models with a key of their own; Phase 3 decides whether LiteLLM sits ahead of the
-front, takes its place, or isn't used at all, the front growing what Phase 3 needs. From Phase 6,
+front, takes its place, or isn't used at all, the front growing what Phase 3 needs *(decided before
+Phase 2b's build instead: Dan's decision, 2026-11-10, [the plan's](design/plan.md#open-items-and-risks)
+*The projects' base URL*)*. From Phase 6,
 family and friends reach the web UI and LiteLLM over a shared Tailscale node that shows them only
 the Spark, and guests at an event reach LiteLLM and a guest web UI of their own, on the venue's
 network only.
@@ -323,7 +327,9 @@ reach the front instead, with the same keys, and it already waits per key and re
 *(Since 2026-10-16, Phase 2a's cutover, they do, and llama-swap takes only the internal keys.)* From
 Phase 3, my own pipelines and homelab apps come in through LiteLLM, each with a key of its own; it
 never logs what they send. Phase 3 decides whether LiteLLM sits ahead of the front, takes its
-place, or isn't used at all, the front growing what Phase 3 needs.
+place, or isn't used at all, the front growing what Phase 3 needs. *(Decided before Phase 2b's build
+instead: Dan's decision, 2026-11-10, [the plan's](design/plan.md#open-items-and-risks) *The projects'
+base URL*.)*
 
 Since 2026-10-23 (my decisions), Qwen3-ASR transcribes too, on llama.cpp, on the same
 `/v1/audio/transcriptions`, asked for by name: `qwen3-asr-1.7b-32k` and `qwen3-asr-0.6b-32k` fit

@@ -71,7 +71,7 @@ In order of how much they constrain the design:
 | Posit Assistant (decided 2026-10-19) | Posit Assistant, Posit's data analysis assistant — the TUI `pa` and Positron — is a client on the Mac, like pi and OpenCode: it reaches the Spark's models over `make tunnel` through the front's OpenAI-compatible routes, with no change on the Spark (verified end-to-end with Gemma, 2026-10-19). Its provider is the built-in `openai-compatible` entry in `~/.posit/ai/providers.json`, written by `spark clients posit` from the registry, with the non-chat models kept out of its picker. A custom entry was tested and set aside: a custom `openai-compatible` entry has no key path that works in both the TUI and Positron — its only key mechanism, `apiKeyHelper`, breaks Positron, which reads the same file. The key is `OPENAI_COMPATIBLE_API_KEY` for the TUI and Positron's credential store; the file never holds it. Full treatment, in PR #30: the subcommand, `make clients-posit`, the runbook [Posit Assistant on the Mac](../how-to/posit-assistant.md), the diagrams and *Current state*. |
 | Reach | **Tailscale is primary.** The home LAN serves homelab apps. **WireGuard** into the LAN covers a device logged into a different tailnet — pi and the API work then; the web UI waits. The Spark joins the tailnet. |
 | Freeze while away | *"Tell me, I'll fix it at home"* → an off-Spark watchdog on the Synology. A GPU clock cap only if freezes unrelated to memory occur. Remote power via Home Assistant later. |
-| Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* |
+| Gateway | llama-swap's own keys in Phases 1–2; **LiteLLM, locked down, arrives in Phase 3 with Dan's audio pipeline — the first app that needs its own key** — with agreed swap triggers. *(Changed 2026-10-07, Dan's decision for Phase 2a: from 2a the front checks the same client keys on 127.0.0.1:9100, holding only their digests, and llama-swap takes only internal keys (*The front and the gate*). Phase 3 decides whether LiteLLM replaces the front or sits ahead of it.)* *(Noted 2026-10-07, Dan's decision after the implementation plan's forward-and-back council: a third option, no LiteLLM, the front growing what Phase 3 needs, is Phase 3's too; Phase 3's line says what each costs after 2a.)* *(2026-11-10, Dan's decision, from the coordination survey's direction review: this is decided before Phase 2b's build instead, together with the move from 9100 and recordings' way in, as one change for the projects that use the stack; *Open items and risks*, *The projects' base URL*.)* |
 | Models | Keep a mix: the best that fits, plus a policy-safe option (US/EU origin, permissive licence) per slot. Bake-off: speed + **3–5 real tasks via pi** + memory left free. New models: **`spark try` first**, promoted after the bake-off. **Starter coder: Qwen3.6-35B-A3B.** *(Changed 2026-10-07, Dan's decision: "get Qwen3.8 up and working this round … a default coder". In Phase 2a **Qwen3.8-27B replaces it as the coder**, by ~~Phase 5's~~ Phase 4's route A *(2026-10-14, Dan's decision: Phases 4 and 5 swapped, the bake-off now 4 and the NAS 5)*, ahead of the bake-off, which still runs. Qwen3.6-35B-A3B leaves the registry, and its files stay on disk, so it can come back as a trial in 2c or as a fallback.)* *(Since 2026-10-08, Dan's decision, the registry's coder is Qwen3.8-27B, by ~~Phase 5's~~ Phase 4's route A, at 163,840 of its 262,144 tokens until Phase 2a's Task 42 gives it all of them; Qwen3.6-35B-A3B left the registry, and its files stay on disk. Revisions.)* *(Changed the same day, Dan's decision: with render's corrected budget check on `main`, the registry gives the coder all 262,144 tokens now, not from Task 42; Revisions.)* *(2026-10-14, Dan's decisions: Phase 4a brings Phase 4's route D and Qwen3.8-Flash-Next into the registry after 2a. `qwen3.8-27b` becomes Qwen3.8-27B on SGLang with NVFP4 and a DFlash2 drafter, today's llama.cpp coder stays as `qwen3.8-27b-gguf`, and Flash-Next joins as a model that loads after `spark make-room`; both are tested by hand first. Phases, Phase 4a.)* *(2026-11-09, Dan's decision; Revisions: Gemma 4 26B-A4B goes on demand, kept for comparison and as the policy-safe option, and Qwen3.6-35B-A3B becomes the always-loaded chat model from the next deploy, ahead of the bake-off, which still compares them.)* |
 | Docs and findings | Findings go to the private vault (`zettelkasten/local-ai/`). **`website/` holds only the stack's documentation** (Quarto → GitHub Pages via Actions); Dan blogs on chendaniely.github.io. **Scenarios are living docs.** |
 | Claude Code elsewhere | A user-level skill in github.com/chendaniely/skills points at the endpoint docs. |
@@ -104,7 +104,7 @@ Architecture page now, and git history keeps the drawing.)*
   *(Noted 2026-10-07: the front makes refusals inline and applies the per-key waits from Phase 2a,
   so LiteLLM overlaps it. Phase 3 decides whether LiteLLM replaces the front or sits ahead of it, or
   isn't used at all: Dan's decision, 2026-10-07, after the implementation plan's forward-and-back
-  council.)*
+  council.)* *(2026-11-10, Dan's decision, from the coordination survey's direction review: this is decided before Phase 2b's build instead, together with the move from 9100 and recordings' way in, as one change for the projects that use the stack; *Open items and risks*, *The projects' base URL*.)*
 - **Orca (2026-09-28)** is a client on the Mac, not a hop: pi started from it reaches llama-swap
   over the same tunnel as pi in a terminal, and Claude Code started from it talks straight to
   Anthropic.
@@ -441,7 +441,7 @@ research's option (d), unverified on this box); it stays in view for Phase 3's d
 reach the engines. **For Phase 3:** the front overlaps LiteLLM, which is itself a proxy in front
 with per-key limits; Phase 3 decides whether LiteLLM replaces the front or sits ahead of it, or
 isn't used at all (Dan's decision, 2026-10-07, after the implementation plan's forward-and-back
-council; Phase 3's line).
+council; Phase 3's line). *(2026-11-10, Dan's decision, from the coordination survey's direction review: this is decided before Phase 2b's build instead, together with the move from 9100 and recordings' way in, as one change for the projects that use the stack; *Open items and risks*, *The projects' base URL*.)*
 
 **A request that needs a load** (revised 2026-10-07 after the council). The front asks the gate
 once, *admit this model for this key*, and the gate answers when the model is ready, or with a
@@ -2189,7 +2189,9 @@ huggingface_hub with network access, matters most.)*
   server in Docker, not on the Mac, and isn't built on Pixeltable. Its spec asked for this
   correction. It reaches the Spark from its stage 4, with `RECORDINGS_SPARK_API_KEY`. Its config
   expects the tailnet, while this phase plans the LAN for homelab apps; this phase settles which
-  ([Projects that use the stack](../reference/projects.md)).)*
+  ([Projects that use the stack](../reference/projects.md)).)* *(2026-11-10, Dan's decision, from the
+  direction review: the way in is settled before Phase 2b's build, with the move from 9100 and
+  LiteLLM; *Open items and risks*, *The projects' base URL*.)*
 - *Python demo apps (added 2026-11-09, Dan's decision):* they don't wait for this phase. On the Mac
   they reach the front over `make tunnel` with a client key, which needs no LiteLLM
   ([Python apps and the API key](../how-to/python-apps.md)). Whatever this phase settles on, moving
@@ -2213,6 +2215,8 @@ huggingface_hub with network access, matters most.)*
   front writes its rows. LiteLLM in the front's place rebuilds the counter as well; LiteLLM ahead of
   it leaves the front one key, so the rows can't say which app asked, unless the front trusts an
   identity header from LiteLLM's key only. With no LiteLLM, the counter stands as built.)*
+  *(2026-11-10, Dan's decision, from the coordination survey's direction review: this is decided before Phase 2b's build instead, together with the move from 9100 and recordings' way in, as one change for the projects that use the stack; *Open items and risks*, *The projects' base URL*.)* If LiteLLM is chosen, it is
+  still built in this phase.
 - *Done when:* S04, S07, S08, S10, S16 and S22 are verified and the privacy canary passes.
   *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped,
   the NAS phase now 5: ntfy now comes after this phase, so S04's, S10's and S16's notifications
@@ -3003,12 +3007,29 @@ Each item gets its own design pass when its turn comes.
 - **recordings' requests** (added 2026-11-10, from the coordination survey). recordings' spec, §3,
   asks Phase 3 for `diarize` returning speaker embeddings, taking a minimum and maximum speaker
   count, and for an `embed` call by spans. It also needs a way in: its config expects the tailnet,
-  this plan the LAN. Phase 3 settles both before recordings' stage 4 can call the Spark.
+  this plan the LAN. Phase 3 settles both before recordings' stage 4 can call the Spark. *(The way
+  in is settled before Phase 2b's build instead, Dan's decision of the same day: *The projects'
+  base URL*, below. `diarize` and `embed` stay Phase 3's.)*
 - **44l changes what projects rely on** (added 2026-11-10, from the coordination survey). Its
   deploy moves the always-loaded set (Qwen3.6 in, Gemma on demand), gives OpenCode and Hermes their
-  own keys, and gives Qwen3.6 two slots. The notices for vid2sub and skills are already under their
-  rows on [Projects that use the stack](../reference/projects.md). 44l's deploy marks each one
-  done, or says what still waits.
+  own keys, and gives Qwen3.6 two slots. Its notices to vid2sub, recordings and skills are issues in
+  this repo, labelled by project ([Projects that use the stack](../reference/projects.md#notices));
+  44l's deploy comments on each that its change is live, and each project's session closes its own.
+  **A contract test comes first** (Dan's decision, 2026-11-10, from the direction review: "yes all
+  your recommendations look good"): a Phase 2a task that the Spark session writes and builds before
+  44l's deploy. It pins the parts of the contract the projects rely on — the refusal codes, their
+  body and `RETRY_AFTER_S`, the always-loaded set, `make tunnel`'s forwards, the speech service's
+  hosts, `make clients`' key defaults and `STATUS_SCHEMA` — and fails with "update Projects that
+  use the stack and open its notices" when one changes. Whether it also writes a fixtures file the
+  projects test against is the Spark session's call when it writes the task.
+- **The projects' base URL, decided once** (added 2026-11-10, Dan's decision, from the direction
+  review). Three changes would each move every project's base URL or the way its refusals arrive:
+  `main`'s plan moves the front from 9100 to 59100 "in one change"; Phase 3 was to decide whether
+  LiteLLM sits ahead of the front, takes its place or isn't used; and recordings' config expects
+  the tailnet while this plan has homelab apps on the LAN. They are decided together, before Phase
+  2b's build, and reach the projects as one notice. Until then an open notice under every project's
+  label says to keep the base URL and the refusal handling in config or one module. If LiteLLM is
+  chosen, it is still built in Phase 3.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until ~~Phase 4~~ Phase 5 (the NAS
   phase, renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped); the web UI is out of
@@ -4606,6 +4627,14 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   decisions: of his audio projects, only recordings is named here, since it is the one that will
   call the Spark. Each project gets a pointer block in its own `AGENTS.md` or `CLAUDE.md` and pulls
   its notices from that page.
+- **2026-11-10** — The coordination survey's direction review, by a reviewer on another model
+  ([its record](multi-repo-coordination.md#the-direction-review)). Dan's answers ("yes all your
+  recommendations look good"): a contract test, a Phase 2a task before 44l; the notices to other
+  projects become issues in this repo, one label per project, each closed by the project's own
+  session; and the move from 9100, LiteLLM and recordings' way in are decided together before Phase
+  2b's build, as one notice. *Open items and risks* gains *The projects' base URL*; the
+  Requirements' gateway row, *Request flow*, *The front and the gate*, Phase 3 and *recordings'
+  requests* are annotated, as are the Architecture page and the community page.
 
 ## Sources
 

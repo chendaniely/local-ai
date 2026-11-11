@@ -189,7 +189,8 @@ and the open item on GB10 hard freezes ([Open items and risks](../design/plan.md
   [mARTin-B78/dgx-spark_lite-llm_llama-swap_vllm_llama-cpp_ollama](https://github.com/mARTin-B78/dgx-spark_lite-llm_llama-swap_vllm_llama-cpp_ollama)
   — llama-swap with idle eviction behind a LiteLLM gateway, over vLLM, llama.cpp and Ollama: the
   closest on the list to this stack, which has llama-swap since Phase 1, and Phase 3 decides
-  whether LiteLLM joins it.
+  whether LiteLLM joins it *(decided before Phase 2b's build instead, since 2026-11-10: the plan's
+  open items)*.
   The plan's gate never evicts one model to load another: a model too big to load beside the
   others waits for Dan's `spark make-room` (rule 4), so compare how each decides.
   [robbiemu/dgx-spark-inference](https://github.com/robbiemu/dgx-spark-inference) — SGLang services

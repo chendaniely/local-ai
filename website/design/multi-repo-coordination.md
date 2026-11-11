@@ -62,6 +62,10 @@ routes Claude Code or Claude Desktop through the Spark.
   block in each project's own `AGENTS.md` or `CLAUDE.md`. Projects pull their notices from the
   page rather than having issues pushed to them. The Spark session's GitHub token reaches only this
   repository, and a notice here works from either machine (Dan's answer: "A", 2026-11-10).
+  *(Changed the same day, Dan's answer to [the direction review](#the-direction-review): the
+  notices are issues in this repository, one label per project, and each project's own session
+  closes its own. They are still pulled, from this repository, which the Spark's token reaches;
+  the page keeps the contract and the rows.)*
 - **Of Dan's audio projects, only recordings is named here,** since it is the one that will call
   the Spark (Dan's answer: "A", 2026-11-10).
 - **spark-menu moves at Phase 2a's close, not now.** It isn't private: its tree and history carry
@@ -80,5 +84,33 @@ routes Claude Code or Claude Desktop through the Spark.
   refusal codes and body, the resident set, the tunnel's forwards, the speech service's hosts, the
   key defaults, `STATUS_SCHEMA`). It would fail with "update the projects page and its notices"
   when any of these changes. It is code and tests, so it is the Spark session's to build, if Dan
-  wants it.
+  wants it. *(He does: a Phase 2a task before 44l, his answer to [the direction
+  review](#the-direction-review); the plan's open item *44l changes what projects rely on*.)*
 - **Merge this branch before 44l deploys,** so 44l's session sees the notices it changes.
+
+## The direction review
+
+After the council, at Dan's request, a reviewer on another model (Fable 5.2) read the survey, the
+projects page, the plan and the projects themselves for the overall direction and alignment, not
+for drift. Its read: the survey holds, but the mechanism records drift without preventing it, and
+every project codes against `phase-2a` while Phase 3 could still change what they rely on. The
+session checked its claims before acting on them. One caught a false claim of ours: the skills row
+said plan-driven-development's `setup.sh` writes the Spark providers, when `make clients` does;
+corrected the same day, here and in skills. Its points on private repositories went to Dan.
+
+Dan's answers to its three questions, 2026-11-10 ("yes all your recommendations look good"):
+
+1. **A contract test, before 44l:** a Phase 2a task the Spark session writes and builds before
+   44l's deploy (the plan's open item *44l changes what projects rely on*).
+2. **Notices become issues in this repository,** one label per project, each closed by the
+   project's own session when its change lands ([the projects page](../reference/projects.md),
+   *How it's used*).
+3. **The base URL is decided once.** The move from 9100 to 59100, LiteLLM, and recordings' way in
+   are decided together before Phase 2b's build, and a notice under every project's label says so
+   now (the plan's open item *The projects' base URL*).
+
+Its smaller points, taken the same day: a row for the Python apps, the contract's "as of" line, the
+rule that a security gap is never a public notice, and a note that waiting out a refusal is written
+more than once. Left open: Phase 2a keeps growing, which delays the merge every pointer waits on;
+the Phase 3 speech decisions (the shape of `diarize`, the Qwen3-ASR path) could be designed before
+their build; and a project's own phase end prompts no re-check here.

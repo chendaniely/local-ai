@@ -543,9 +543,10 @@ the plan it would come in, and what was left out and why.
   there; the overview among them is one file, `website/_overview.qmd`, that the home page includes
   too (2026-10-14). Full rule in [`CLAUDE.md`](CLAUDE.md).
 - **A change another project relies on leaves it a notice.** The projects that use the stack, the
-  contract they rely on and their notices are on
+  contract they rely on and where their notices are, is on
   [Projects that use the stack](website/reference/projects.md). A change to a part of that contract
-  updates its row and adds a dated notice under each project that relies on it, in the same commit;
+  updates its row and opens a notice, an issue labelled for each project that relies on it, in the
+  same change;
   each project's own `AGENTS.md` or `CLAUDE.md` points there (2026-11-10). Full rule, with the files
   that trigger it, in [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
