@@ -3056,19 +3056,21 @@ Each item gets its own design pass when its turn comes.
   translations when my mac is on the road". Three changes. vid2sub routes to the Spark's models
   first and to the Mac's only as a fallback: vid2sub's change, under its notices. vid2sub runs on
   the Spark, over a network-mounted folder, writing the subtitles there: a new client on the box,
-  reaching the front and the speech service on loopback, with no tunnel. Or it runs on another
+  reaching the front on loopback with no tunnel, and the speech service through its Unix socket,
+  which sits in Dan's own 0700 folder (*The speech service, by hand*). Or it runs on another
   Linux machine at home, against the Spark: that machine reaches the Spark today only by an SSH
   tunnel, as the Mac does, and a lasting way in is *The projects' base URL*'s to settle. Still to
   decide, here:
   - which folder: one of the NAS's shares (*NAS* under *Users, access and security*: the data
     share is read-only, a named work folder is read-write), mounted on whichever machine runs it;
-  - which account runs it on the Spark, and with which key; the other machine gets a key of its
-    own;
+  - which account runs it on the Spark, and with which key: only Dan's account reaches the speech
+    service's socket today; the other machine gets a key of its own;
   - whether ffmpeg is on the box (unchecked);
   - where its working files go on the Spark, with weights filling the 1 TB disk;
   - Mandarin and Cantonese word timings come only from the speech service, which is up only while
-    `make speech` runs and answers only on the Spark's loopback, so a batch over such a folder
-    needs it up for its length, and a batch from another machine needs a way to it as well.
+    `make speech` runs and answers only on that socket, so a batch over such a folder needs it up
+    for its length, and a batch from another machine needs a forward to it, as `make tunnel` gives
+    the Mac.
 
   A batch shares the box with the coder as any client does: the gate refuses what doesn't fit, and
   vid2sub waits.
