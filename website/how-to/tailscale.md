@@ -75,13 +75,29 @@ In the admin console, confirm how the tailnet reaches the home LAN — the subne
 advertised route — and record it in the vault. Never paste `tailscale status` output anywhere
 public.
 
-**Today there is none** (2026-09-24), by choice. Every device Dan uses runs Tailscale, so they reach
+~~**Today there is none** (2026-09-24), by choice. Every device Dan uses runs Tailscale, so they reach
 each other without one. The only gap is devices that can't run Tailscale, such as the home router's
-admin page, which is reachable only from home. The Spark doesn't need a route either way: it sits on
+admin page, which is reachable only from home.~~ The Spark doesn't need a route either way: it sits on
 the LAN.
 
-**When a device like that is needed from away**, add a subnet route for that device's address only,
-not the whole LAN, so nothing else on the home network becomes reachable through the tailnet:
+**There is one, to the whole home LAN, and Dan keeps it** (2026-11-11). An always-on home machine,
+not the Spark, advertises the home subnet; the vault records which. Dan's reason: "i like my
+tailscale connection to see the entire LAN. what's nice is looking at my router options when away
+when i need to find an IP or debug". When it was added isn't recorded: the policy above, written on
+2026-09-24, already granted the home subnet "as before". What it means:
+
+- Every device the policy's home-LAN grant lets in, today `autogroup:member`, which is only your own
+  devices, reaches every device and port on the home LAN from away.
+- That includes the Spark's LAN address. There the home-LAN grant applies, not the Spark's own (22
+  and 443), and ufw filters it. Today that changes nothing: ufw opens only SSH.
+- **A port the Spark opens to the LAN opens to the tailnet too**, through the route: LiteLLM's from
+  Phase 3, and Phase 6's guest web UI during an event. The plan's open item *The projects' base
+  URL* weighs this.
+
+~~**When a device like that is needed from away**, add a subnet route for that device's address only,
+not the whole LAN, so nothing else on the home network becomes reachable through the tailnet:~~
+**To narrow it to one device instead**, advertise a subnet route for that device's address only, so
+nothing else on the home network is reachable through the tailnet:
 
 1. **On that home Linux machine** (always-on, running Tailscale — not the Spark, which stays
    single-purpose), allow forwarding and advertise the one address:

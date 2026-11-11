@@ -789,7 +789,9 @@ agent names the GPU (`NVIDIA GB10`). `sudo docker ps -a` lists no containers.
 **Tailscale** installed and joined, following
 [`website/how-to/tailscale.md`](website/how-to/tailscale.md). In the admin console, MagicDNS and
 HTTPS certificates are on. The allow-all policy was replaced: Dan's devices reach each other, and
-reach `tag:spark` on 22 and 443. There is no route home, by choice. The Spark is tagged, so its
+reach `tag:spark` on 22 and 443. ~~There is no route home, by choice.~~ *(2026-11-11: there is one,
+to the whole home LAN, from a home machine that isn't the Spark, and Dan keeps it; when it was added
+isn't recorded. Nothing on the Spark changed.)* The Spark is tagged, so its
 key doesn't expire:
 
 ```bash

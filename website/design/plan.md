@@ -912,8 +912,13 @@ under *Visibility and notifications*; and `make apply`'s wait is under *Deploy w
   Clients reach the Spark by its tailnet name, at home and away: the SSH alias (and so pi's tunnel)
   and Open WebUI. The LAN address, from a private values file, serves the home LAN — homelab apps
   from Phase 3, devices on WireGuard, and SSH when Tailscale is down (`website/how-to/ssh.md`).
-  There is no tailnet route home, by choice: the Spark joins the tailnet itself and sits on the LAN,
-  so it needs none (`website/how-to/tailscale.md`). (Corrected 2026-09-25: this said client base
+  ~~There is no tailnet route home, by choice: the Spark joins the tailnet itself and sits on the LAN,
+  so it needs none (`website/how-to/tailscale.md`).~~ *(Corrected 2026-11-11: there is a route to the
+  whole home LAN, from a home machine that isn't the Spark, and Dan keeps it: "i like my tailscale
+  connection to see the entire LAN". The Spark still needs none. So a port the Spark opens to the
+  LAN, LiteLLM's from Phase 3 or Phase 6's guest web UI, opens to the tailnet too, under the policy's
+  home-LAN grant rather than the Spark's; the open item on the projects' base URL weighs this. See
+  Revisions.)* (Corrected 2026-09-25: this said client base
   URLs and the SSH alias use the LAN address "through the tailnet's route home", which Phase 0
   would confirm; on 2026-09-24 that route was settled as none.)
 - **NAS.** The Synology's NFS exports offer only the data and recordings shares (read-only) and named
@@ -2932,7 +2937,7 @@ Each item gets its own design pass when its turn comes.
   as `agent`, llama-server lists the GB10 as a CUDA device, without docker; see Revisions);
   Parakeet quality on whisper.cpp; NeMo boosting and pyannote on aarch64; that Open WebUI's embedding and speech-to-text
   base URLs are set explicitly (unset, they fall back to OpenAI's); pi's crash range; ~~the tailnet's route home~~ (resolved 2026-09-24: none, by choice; see
-  Revisions); the
+  Revisions; corrected 2026-11-11: a route to the whole home LAN, which Dan keeps); the
   UEFI AC-restore setting; Btrfs for immutable snapshots; the CUDA-allocatable ceiling (Phase 2a
   measures it, carefully, and the registry follows: rule 9; added 2026-10-07); from Phase 2a's
   council (2026-10-07), each checked in 2a: that `OnFailure=` fires on a crash that `Restart=`
@@ -3030,7 +3035,9 @@ Each item gets its own design pass when its turn comes.
   2b's build, and reach the projects as one notice. Until then an open notice under every project's
   label says to keep the base URL and the refusal handling in config or one module. If LiteLLM is
   chosen, it is still built in Phase 3. *(2026-11-11: agent-chat's way to the models joins this
-  decision, below.)*
+  decision, below. So does the tailnet's route to the whole home LAN, which Dan keeps: a port the
+  Spark opens to the LAN, for homelab apps, opens to the tailnet too, under the policy's home-LAN
+  grant rather than the Spark's (the Network bullet under Users, access and security).)*
 - **agent-chat's requests** (added 2026-11-11). Dan's new project, private and not yet built, in
   his words: "i am building a new project that will also need local-ai access but it just needs to
   talk to the model and maybe call my recordings processes and results". Its design runs Hermes
@@ -3078,6 +3085,7 @@ Each item gets its own design pass when its turn comes.
   is devices that can't run Tailscale, such as the router's admin page, which is reachable only from
   home for now. When one is needed from away, one always-on home machine (not the Spark) advertises
   that device's address alone, never the whole LAN. The steps are in `website/how-to/tailscale.md`.
+  *(Corrected 2026-11-11: see that day's entry.)*
 - **2026-09-25** — Phase 0's council review, where Phase 0 made the plan untrue. *Network*: clients
   reach the Spark by its tailnet name, and the LAN address serves the home LAN; there is no route
   home. Secret files are 0640 root:spark, not 0600. `make hooks`, not bootstrap, turns the hooks on
@@ -4650,6 +4658,14 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   Dan's request: a new private project, designed and not yet built, whose local-model bots chat
   with the models. *Open items and risks* gains *agent-chat's requests*: its design's Hermes Agent
   gateway on the Spark, or a gateway elsewhere by the way in that *The projects' base URL* settles.
+- **2026-11-11** — The tailnet's route home, corrected: there is one, to the whole home LAN, from an
+  always-on home machine that isn't the Spark, and Dan keeps it: "i like my tailscale connection to
+  see the entire LAN. what's nice is looking at my router options when away when i need to find an
+  IP or debug". When it was added isn't recorded; the policy written on 2026-09-24 already granted
+  the home subnet. Through it, a port the Spark opens to the LAN opens to the tailnet too, so
+  *The projects' base URL* weighs that for LiteLLM's port and Phase 6's guest web UI.
+  `website/how-to/tailscale.md`, the README, the changelog and Phase 0's retrospective are
+  corrected.
 
 ## Sources
 

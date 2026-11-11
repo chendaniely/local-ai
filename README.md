@@ -125,7 +125,9 @@ when that file was retired on 2026-09-23.
   holding an older pool address until then.
 - **On the tailnet** (2026-09-24), tagged `tag:spark`, so its key never expires, with MagicDNS and
   HTTPS certificates on. The ACL policy replaced the allow-all default: Dan's devices reach each
-  other, and reach the Spark on 22 and 443 only. There is no route home, by choice. Until then it
+  other, and reach the Spark on 22 and 443 only. ~~There is no route home, by choice.~~ *(2026-11-11: there is
+  one, to the whole home LAN, from a home machine that isn't the Spark, and Dan keeps it; see
+  [Tailscale](website/how-to/tailscale.md#confirm-the-route-home).)* Until then it
   was reachable only over the home LAN.
 - **Bootstrapped** (2026-09-24, and re-run cleanly; re-run again on 2026-09-27 by Phase 1's Task 12,
   for the changes listed under *Pending from Phase 0's close*). It boots to a console, and a desktop starts
