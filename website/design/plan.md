@@ -3029,7 +3029,18 @@ Each item gets its own design pass when its turn comes.
   the tailnet while this plan has homelab apps on the LAN. They are decided together, before Phase
   2b's build, and reach the projects as one notice. Until then an open notice under every project's
   label says to keep the base URL and the refusal handling in config or one module. If LiteLLM is
-  chosen, it is still built in Phase 3.
+  chosen, it is still built in Phase 3. *(2026-11-11: agent-chat's way to the models joins this
+  decision, below.)*
+- **agent-chat's requests** (added 2026-11-11). Dan's new project, private and not yet built, in
+  his words: "i am building a new project that will also need local-ai access but it just needs to
+  talk to the model and maybe call my recordings processes and results". Its design runs Hermes
+  Agent's gateway on the Spark as `agent`, with a client key of its own, serving its local-model
+  chat rooms with no files and no shell. That is a long-running service on the Spark, a new key, a
+  chat login held by `agent`, and a connection from the Spark to a chat server elsewhere on the home
+  network: each a change to this plan, made here, with its security review. The other way is a
+  gateway off the Spark, reaching the front by the way in that *The projects' base URL* settles.
+  Either way it is decided here before agent-chat's first spike runs a chat room against the
+  Spark. Reading recordings' results doesn't involve the stack.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until ~~Phase 4~~ Phase 5 (the NAS
   phase, renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped); the web UI is out of
@@ -4635,6 +4646,10 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   2b's build, as one notice. *Open items and risks* gains *The projects' base URL*; the
   Requirements' gateway row, *Request flow*, *The front and the gate*, Phase 3 and *recordings'
   requests* are annotated, as are the Architecture page and the community page.
+- **2026-11-11** — agent-chat joins [Projects that use the stack](../reference/projects.md), at
+  Dan's request: a new private project, designed and not yet built, whose local-model bots chat
+  with the models. *Open items and risks* gains *agent-chat's requests*: its design's Hermes Agent
+  gateway on the Spark, or a gateway elsewhere by the way in that *The projects' base URL* settles.
 
 ## Sources
 

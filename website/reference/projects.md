@@ -50,6 +50,7 @@ its date and the commit it was made on.
 | **recordings** | [chendaniely/recordings](https://github.com/chendaniely/recordings) | a homelab server, in Docker | nothing yet. From its stage 4: the front (transcription, a small model, summaries); later `diarize` and `embed`, which it has asked for (the plan's open item *recordings' requests*) | `RECORDINGS_SPARK_API_KEY`, planned |
 | **skills** | [chendaniely/skills](https://github.com/chendaniely/skills) | the Mac | class-notes: the front's models and the by-hand SGLang coder. plan-driven-development: its portability runs drive Pi and OpenCode on the Spark, through the `spark` provider that `make clients` writes, and its leak check reads the same denylist as this repo. capture-conversation transcribes on the Mac today. | `SPARK_API_KEY`, `SPARK_SGLANG_KEY` |
 | **spark-menu** (SwiftBar) | my dotfiles (private) | the Mac | SSH to `brightroar`: `spark status --json`, the CLI's verbs, health checks on the Spark's own ports, and `make -n tunnel`'s forwards. It moves into this repo at Phase 2a's close. | none; it goes over SSH |
+| **agent-chat** | private | the Mac, then a homelab server; its design adds a Hermes Agent gateway on the Spark | nothing yet: designed, not built. Its local-model bots chat with the models, nothing more, and it may read recordings' results. Its design's gateway on the Spark is the plan's open item *agent-chat's requests*. | one of its own, planned |
 | **My Python apps** | none: scripts written from [Python apps and the API key](../how-to/python-apps.md) | the Mac | the front, through `make tunnel`: chat, and the model names. They have no label: a change to the contract corrects that runbook in the same change. | `SPARK_API_KEY`, or one of their own |
 
 ## Between the projects
@@ -62,6 +63,9 @@ its date and the commit it was made on.
 - **Waiting out a refusal is written more than once.** vid2sub has it, class-notes has a stub (the
   docstring of its `run_local`, which recordings follows too), and recordings and the Python apps
   plan it. No one owns a shared one yet.
+- **agent-chat may read recordings' results,** through recordings' own interface, not through the
+  stack. If it does, recordings' interface becomes something agent-chat relies on, and the two
+  repositories keep it in step between themselves.
 
 ## Notices
 
@@ -75,6 +79,7 @@ done ones.
 | recordings | [`notice/recordings`](https://github.com/chendaniely/local-ai/issues?q=is%3Aissue+label%3Anotice%2Frecordings) |
 | skills | [`notice/skills`](https://github.com/chendaniely/local-ai/issues?q=is%3Aissue+label%3Anotice%2Fskills) |
 | spark-menu | [`notice/spark-menu`](https://github.com/chendaniely/local-ai/issues?q=is%3Aissue+label%3Anotice%2Fspark-menu) |
+| agent-chat | [`notice/agent-chat`](https://github.com/chendaniely/local-ai/issues?q=is%3Aissue+label%3Anotice%2Fagent-chat) |
 
 The coordination survey of 2026-11-10 opened the first ones ([its record](../design/multi-repo-coordination.md)).
 One of them, under every label, says the base URL and the way refusals arrive may change before
