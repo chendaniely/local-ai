@@ -37,7 +37,7 @@ truth; this table says only what a project must not miss.
 |---|---|---|---|---|
 | **vid2sub** | [chendaniely/vid2sub](https://github.com/chendaniely/vid2sub) | the Mac | the front (transcription and translation), refusals, the speech service through my own config | `SPARK_API_KEY` |
 | **recordings** | [chendaniely/recordings](https://github.com/chendaniely/recordings) | a homelab server, in Docker | nothing yet. From its stage 4: the front (transcription, a small model, summaries); later `diarize` and `embed`, which it has asked for (the plan's open item *recordings' requests*) | `RECORDINGS_SPARK_API_KEY`, planned |
-| **skills** | [chendaniely/skills](https://github.com/chendaniely/skills) | the Mac | class-notes: the front's models and the by-hand SGLang coder. plan-driven-development: its portability runs drive Pi and OpenCode on the Spark, its `setup.sh` writes their providers, and its leak check reads the same denylist as this repo. capture-conversation transcribes on the Mac today. | `SPARK_API_KEY`, `SPARK_SGLANG_KEY` |
+| **skills** | [chendaniely/skills](https://github.com/chendaniely/skills) | the Mac | class-notes: the front's models and the by-hand SGLang coder. plan-driven-development: its portability runs drive Pi and OpenCode on the Spark, through the `spark` provider that `make clients` writes, and its leak check reads the same denylist as this repo. capture-conversation transcribes on the Mac today. | `SPARK_API_KEY`, `SPARK_SGLANG_KEY` |
 | **spark-menu** (SwiftBar) | my dotfiles (private) | the Mac | SSH to `brightroar`: `spark status --json`, the CLI's verbs, health checks on the Spark's own ports, and `make -n tunnel`'s forwards. It moves into this repo at Phase 2a's close. | none; it goes over SSH |
 
 ## Between the projects
