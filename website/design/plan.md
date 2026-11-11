@@ -131,7 +131,7 @@ Architecture page now, and git history keeps the drawing.)*
 | **LiteLLM** (Phase 3) | Compose; Docker image pinned by digest, checked with `cosign verify` | admin UI, MCP, JWT and guardrails off; `NO_DOCS`; `turn_off_message_logging`, `disable_error_logs`; no fallbacks, `num_retries: 0`, cooldowns off; readiness health only (`/health` would load every model); keys by access groups generated from the registry; per-key `max_parallel_requests` (batch keys low); a dependency-free hook that checks every call carrying a `model`; Postgres healthy first; Postgres down → fail closed + alert. **Swap triggers:** another critical auth bug · a needed feature moves to Enterprise · the hook breaks on upgrade. |
 | **ntfy + watchdog** (Phase 2) | the Synology (Compose in `stack/synology/`) | deny-all + tokens; priorities + quiet hours; the watchdog pings the Spark and its health endpoints. *(Split 2026-10-07: ntfy arrives in Phase 2a, set up by Dan at its start (Dan, 2026-10-05), and the watchdog in 2b. ntfy is reached over the tailnet or the home LAN only, with no public relay: out of reach means no alerts, for now (Dan, 2026-10-07). Quiet hours run 00:00–05:00. Revised the same day after the council: ntfy's server has no quiet hours, so they are set on Dan's phone (*Visibility and notifications*); its image is pinned at **v2.28.0** by its index digest, `sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da`, since v2.29.0 came out on 2026-10-07, inside the seven-day window (the session's ruling); the server sets no `upstream-base-url` and no Firebase key, so nothing leaves for a public relay; and each publisher has a publish-only token of its own.)* *(2026-10-14, Dan's decision: ntfy optional, moving with the NAS phase; Phases 4 and 5 swapped, the NAS phase now 5. Both now arrive in Phase 5, NAS and backups, when Dan sets up his Synology homelab: ntfy's set-up (2a's implementation plan, Task 2) moves there, with the Compose file and runbook 2a already built (its Task 1), and the watchdog moves there from 2b with it. The stack runs without ntfy until then (*Visibility and notifications*).)* |
 | **Host** | `stack/host/` | earlyoom (`-s 100,100`, `--prefer` engine process names — note the 15-character truncation, e.g. `VLLM::EngineCor` — and `--avoid` systemd, `sshd.*` (which covers OpenSSH's `sshd-session`) and tmux); `spark-drop-caches` (root-owned, exact-arguments sudo, local filesystems only, with a deadline); apt holds on the GPU set (kernel, NVIDIA modules, driver, CUDA), moved as one on upgrade day; a needrestart override that leaves the `local-ai-*` units alone (Phase 1); ufw SSH only (+ LiteLLM from Phase 3); one secret file per service, 0640 root:spark. *(Phase 2a, Dan's decision, 2026-10-07: the secret files become 0600 root:root, since nothing reads them as `spark` (*Users, access and security*). `spark-drop-caches` isn't built: 2a's page-cache drill decides whether it is (rule 1).)* *(Phase 2a's Task 28, the controller's ruling, 2026-10-14; built, not yet deployed, which Task 36's bootstrap does (it did, 2026-10-15, as the changelog records): earlyoom has no `--prefer`. It added 300 to an engine's score, worth 450 points of `oom_score_adj`, which no score of `agent`'s could pass. The engines' own `oom_score_adj`, 1000 on demand and 900 resident, keeps them before every process at 0. Root gives `agent`'s processes 1000, which `agent` can't lower: at its SSH logins, through a `pam_exec` hook whose line goes before sshd's first session line, and for its user manager, through a drop-in. `/etc/cron.deny` names `agent`.)* |
-| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* *(2026-11-09, Task 44k: the plugin's title is a connection-status dot alone, every number in its dropdown (Dan's decision of 2026-10-22, in [the usage meter's design](usage-meter.md)), and the plugin is spark-menu, which moves here from Dan's dotfiles once its build is done.)* |
+| **Mac and agent clients** | `clients/` (Phase 1: none yet, see *Repo layout*) | SwiftBar plugin (`ssh brightroar spark status --json`; actions over SSH as Dan); pi and OpenCode configs rendered from the registry (real model names, pinned versions — pi outside its llama-server crash range (`agent`'s; the Mac's follows Homebrew, Dan's decision, 2026-09-28), OpenCode 1.18.x — compat flags, `$VAR` keys); harness hooks (~~session pins~~ sessions + ntfy; pins are Dan's alone since 2a's design) for Claude Code, pi and OpenCode on the Mac and as `agent`. *(Phase 2a, Dan's decision, 2026-10-07: `spark clients` also sets `agent`'s pi to wait about 15 minutes for a response, above its 10-minute wait for a load (*The front and the gate*).)* *(2026-10-14, Dan's request: Hermes too. `spark clients` writes pi's, OpenCode's and Hermes's providers, and `make clients` all three, each key by reference (PR #7, ready to merge into `main`).)* *(2026-11-09, Task 44k: the plugin's title is a connection-status dot alone, every number in its dropdown (Dan's decision of 2026-10-22, in [the usage meter's design](usage-meter.md)), and the plugin is spark-menu, which moves here from Dan's dotfiles once its build is done.)* *(2026-11-10: it moves at Phase 2a's close, by Dan's ruling of 2026-10-23, kept in the dotfiles until now ([the coordination survey](multi-repo-coordination.md)). As built, it sends one probe script over an SSH ControlMaster and calls `spark` by its absolute path.)* |
 | **Orca** (2026-09-28; `website/how-to/orca.md`) | the Mac, in its local mode; nothing of Orca's on the Spark | Agent Permissions → Manual, so no agent it starts or resumes gets its no-prompt flag (`--dangerously-skip-permissions` for Claude), and Orca's per-agent environment for Claude stays empty; telemetry off. Its status hooks in Dan's `~/.claude/settings.json`, which it rewrites at each start, and its extensions in the Mac's `~/.pi/agent/extensions/` are Orca's own. Recorded in `README.md` §Current state, and not in `stack/versions.yaml`: Dan takes its updates as they come, so a version there would be neither a week old (`CLAUDE.md`'s seven-day rule) nor current for long. `website/how-to/orca.md`'s checks follow each update. |
 
 ### The front and the gate (Phase 2a)
@@ -1390,7 +1390,9 @@ the deadline it was given, so a drill's shorter one reads true.
 - `verbose_json` word timestamps, language detection, and ~170 MB uploads allowed through every hop.
 - Speaker labels come from the diarization service in OpenAI's `diarized_json` shape; whether it also
   returns speaker embeddings (for speaker identification in Dan's pipeline) gets confirmed against
-  that pipeline.
+  that pipeline. *(2026-11-10: confirmed as a request. recordings, the pipeline's successor, asks
+  for `diarize` with speaker embeddings and an `embed` call by spans: [Open items and
+  risks](#open-items-and-risks), *recordings' requests*.)*
 - Dan's audio pipeline changes in its own repo. Its current Mac baseline — on a 51.6-minute lecture,
   mlx-whisper 253 s, parakeet 80 s, pyannote ~180 s — is the yardstick for the speech comparison.
 
@@ -2060,7 +2062,12 @@ moved.
   2026-09-28). *(2026-11-09, Task 44k: Dan's decision of 2026-10-22, in [the usage meter's
   design](usage-meter.md): the menu bar's title is a connection-status dot alone, and the models, the
   free room and every other number are in its dropdown. The plugin is spark-menu, which moves here
-  from Dan's dotfiles once its build is done.)*
+  from Dan's dotfiles once its build is done.)* *(2026-11-10: not before Phase 2a's close. Dan ruled
+  on 2026-10-23 to keep it in the dotfiles until Phase 2a finishes, so it moves as this phase's
+  first Mac step, into `clients/swiftbar/`. Until then nothing deploys from `main`, and the Mac's
+  clone switches branches. skills' class-notes calls its `spark-tunnel menu`, and it reads `make -n
+  tunnel`'s forwards, so the move keeps both working ([Projects that use the
+  stack](../reference/projects.md)).)*
 - [Spark] harness hooks for `agent` · a pi session started from Orca counts as an active agent
   session and keeps its model until its pi process exits (Dan's decision, 2026-09-28), and SwiftBar
   lists those sessions *(2a builds `spark session hold`, which the Mac's hook runs over SSH, since
@@ -2176,7 +2183,13 @@ huggingface_hub with network access, matters most.)*
 - *Dan's audio host (decided 2026-10-05; designed at this phase, not before):* it succeeds the
   audio pipeline, runs on the Mac, is built on Pixeltable, and has its design in a private repo of
   its own. Until this phase it uses the Mac's own speech models; here it moves to the Spark's
-  endpoints, with its own key, by changing a base URL.
+  endpoints, with its own key, by changing a base URL. *(Corrected 2026-11-10, from the
+  coordination survey: the audio host is
+  [recordings](https://github.com/chendaniely/recordings), a public repository. It runs on a homelab
+  server in Docker, not on the Mac, and isn't built on Pixeltable. Its spec asked for this
+  correction. It reaches the Spark from its stage 4, with `RECORDINGS_SPARK_API_KEY`. Its config
+  expects the tailnet, while this phase plans the LAN for homelab apps; this phase settles which
+  ([Projects that use the stack](../reference/projects.md)).)*
 - *Python demo apps (added 2026-11-09, Dan's decision):* they don't wait for this phase. On the Mac
   they reach the front over `make tunnel` with a client key, which needs no LiteLLM
   ([Python apps and the API key](../how-to/python-apps.md)). Whatever this phase settles on, moving
@@ -2987,6 +3000,15 @@ Each item gets its own design pass when its turn comes.
   journal keeps boots, which the electricity estimate's hours on need. And the prices still to check
   against Anthropic's pricing page: the cache-write rates, Haiku's cache-read rate and every start
   date.
+- **recordings' requests** (added 2026-11-10, from the coordination survey). recordings' spec, §3,
+  asks Phase 3 for `diarize` returning speaker embeddings, taking a minimum and maximum speaker
+  count, and for an `embed` call by spans. It also needs a way in: its config expects the tailnet,
+  this plan the LAN. Phase 3 settles both before recordings' stage 4 can call the Spark.
+- **44l changes what projects rely on** (added 2026-11-10, from the coordination survey). Its
+  deploy moves the always-loaded set (Qwen3.6 in, Gemma on demand), gives OpenCode and Hermes their
+  own keys, and gives Qwen3.6 two slots. The notices for vid2sub and skills are already under their
+  rows on [Projects that use the stack](../reference/projects.md). 44l's deploy marks each one
+  done, or says what still waits.
 - **Accepted gaps:** homelab apps reach the Spark only from Phase 3 (nothing listens on the LAN until
   per-app keys exist); Open WebUI chat history isn't backed up until ~~Phase 4~~ Phase 5 (the NAS
   phase, renumbered 2026-10-14, Dan's decision: Phases 4 and 5 swapped); the web UI is out of
@@ -4568,10 +4590,22 @@ Each item gets its own design pass when its turn comes.
 - **2026-11-10** — Whisper looped too: on the done test's episode through vid2sub's `spark-turbo`, one line repeated in
   place of the dialogue in 11 stretches of 30 seconds, because whisper.cpp carries a request's earlier text into each
   next window as context. With `max_context=0` there were none, and Dan judged the subtitles "worlds better". Dan's
-  decision: the setting goes in vid2sub's requests (its change pending, in vid2sub's own repository) and in the stack's
+  decision: the setting goes in vid2sub's requests (its change pending, in vid2sub's own repository; *it landed on
+vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in the stack's
   whisper-server as `--max-context 0` from the next deploy, for every client, and a request's `prompt` is then dropped
   unless it sends `max_context` itself ([the design](speech-service.md), *The answer*; [the rounds side by
   side](subtitle-rounds.md)).
+- **2026-11-10** — The coordination survey ([its record](multi-repo-coordination.md); Dan's request:
+  "make sure all projects are aligned, and know of each other so changes do not break other
+  things"). It checked every project that uses the stack against `phase-2a`. A new page,
+  [Projects that use the stack](../reference/projects.md), holds the contract they rely on, a row per
+  project and dated notices. `CLAUDE.md`'s sync table gains its row. Corrected here: the audio host
+  is recordings, on a homelab server, not the Mac or Pixeltable; recordings' requests are an open
+  item; spark-menu moves at Phase 2a's close (Dan's ruling of 2026-10-23); vid2sub's `max_context`
+  change landed on its `phase-2`. A new open item: 44l changes what projects rely on. Dan's
+  decisions: of his audio projects, only recordings is named here, since it is the one that will
+  call the Spark. Each project gets a pointer block in its own `AGENTS.md` or `CLAUDE.md` and pulls
+  its notices from that page.
 
 ## Sources
 

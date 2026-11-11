@@ -151,7 +151,8 @@ chunk: vid2sub's five-second probe would otherwise move on to another model.
   word times without DTW are rough. In his words: "i think this is already worlds better than before. the rest is fine
   tuning, but i'm okay with somethig liek this as a homegrown project". So the done test's episode now runs through
   vid2sub on the Spark with Whisper, so far from a scratch copy of vid2sub that sends `max_context=0`; the same through
-  his own vid2sub follows once its change lands. Dan's decision: the fix lives in both places, vid2sub sending
+  his own vid2sub follows once its change lands. *(2026-11-10: it landed on vid2sub's `phase-2`, at
+  `cb29cf8`, not yet on its `main`; the run through Dan's own vid2sub is still to do.)* Dan's decision: the fix lives in both places, vid2sub sending
   `max_context=0` with each request, and the stack's whisper-server running with `--max-context 0` by default from the
   next deploy, so every client gets it. The cost: with `max_context=0` whisper.cpp drops a request's `prompt` too
   (`carry_initial_prompt=true` doesn't bring it back), so by default a vocabulary prompt or vid2sub's glossary does
