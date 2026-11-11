@@ -31,6 +31,7 @@ PIECES = {
     "stack/speech/serve.py": "the words naming it, when Stage 2 changes what starts the service",
     "stack/speech/pyproject.toml": "the words naming it, when Stage 2 changes what builds the environment",
     "website/how-to/speech-by-hand.md": "the file",
+    "website/reference/projects.md": "the speech service's contract row, when Stage 2 moves it behind the front and the gate",
     "website/architecture.qmd": "the by-hand speech service, when Stage 2 moves it behind the front and the gate",
     "website/design/plan.md": "nothing: its dated notes and Revisions lines stay",
     "website/design/phase-2a.md": "nothing: a dated note",
