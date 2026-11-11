@@ -34,7 +34,9 @@ then to the diagrams.
 - **A client** is anything that sends the Spark's models a request with a key: the harnesses, the
   web UI with its own key, my Python apps on the Mac, over `make tunnel` since 2026-11-09
   ([their runbook](how-to/python-apps.md)), and from Phase 3 my other pipelines and apps, each with
-  a key of its own, through the front or through LiteLLM, whichever Phase 3 settles on.
+  a key of its own, through the front or through LiteLLM, whichever Phase 3 settles on. Every
+  project of mine that uses the stack, and what it relies on, is on [Projects that use the
+  stack](reference/projects.md).
 - **Claude Code and Claude Desktop are neither.** They never use the Spark's models.
 
 ## Where everything sits

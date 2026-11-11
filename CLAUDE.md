@@ -140,6 +140,7 @@ These files are not independent. Known sync obligations:
 | Something learned affects a later phase | the plan and its Revisions, the affected scenario pages, **and** `changelog.md` if the box changed |
 | A claim gets measured on this box | `cosmicbboy-local-ai.md` `[adapted]` → `[verified]` — never without the actual measurement |
 | A harness is added or removed | `website/architecture.qmd`'s *Harnesses and clients* first, then its diagrams and the overview, this file's first constraint, **and** `README.md` §Design in one line — other pages say "the harnesses" and link there (Dan's decision, 2026-10-23) |
+| Something another project relies on: the refusals in `spark/src/spark/messages.py`, the `Makefile`'s `tunnel` or `clients`, the names, roles or `resident` flags in `stack/models.yaml`, the key defaults in `spark/src/spark/clients.py`, the speech service's port or hosts in `stack/speech/serve.py`, `STATUS_SCHEMA`, or a `spark` verb spark-menu calls | `website/reference/projects.md`: its contract row if that part changed, **and** a dated notice under each project that relies on it. A project that starts or stops relying on the stack gains or loses its row. Each phase end re-checks the page against the projects (Dan's decision, 2026-11-10: "make sure all projects are aligned, and know of each other so changes do not break other things") |
 | A rule changes | This file, **and** the `README.md` §Conventions summary of it |
 | Where private material lives | This file, `README.md` §My environment, and the vault's own entry note |
 
