@@ -109,3 +109,19 @@ def test_rows_verb_prints_json_lines(tmp_path, monkeypatch, capsys):
     assert len(capsys.readouterr().out.splitlines()) == 1
     with pytest.raises(SystemExit):
         cli.main(["usage", "rows", "--since", "yesterday"])
+
+
+def test_cache_over_prompt_is_no_counts():
+    priced = pricing.price(BOOK, row(p=100, c=101, o=1))
+    assert priced.usd is None and priced.why == "no_counts"
+    assert pricing.price(BOOK, row(p=100, c=100, o=1)).usd is not None
+
+
+def test_since_parsing():
+    from spark.meter import _since
+    import argparse
+    assert _since("20261101") == _since("2026-11-01") == at("2026-11-01T00:00:00Z")
+    assert _since("1793000000") == 1793000000.0
+    for bad in ("nan", "inf", "-inf", "yesterday"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _since(bad)

@@ -29,7 +29,7 @@ def price(book: PriceBook, row: Row) -> Priced:
     """The row's price at the line in effect at its t0, or why it has none, checked in WHYS' order."""
     if row.end != "done":
         return Priced(why="not_done")
-    if row.p is None or row.o is None:
+    if row.p is None or row.o is None or (row.c is not None and row.c > row.p):  # a cache read can't exceed P
         return Priced(why="no_counts")
     mapping = book.mapping.get(row.model) if row.model is not None else None
     if mapping is None:

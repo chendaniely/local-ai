@@ -6,19 +6,24 @@ imports only the standard library, `yaml` and `spark.paths`, since `build_parser
 
 import argparse
 import datetime as dt
+import math
 
 
 def _since(text: str) -> float:
-    """An ISO date, read as 00:00 UTC, or epoch seconds."""
-    try:
-        return float(text)
-    except ValueError:
-        pass
+    """An ISO date, read as 00:00 UTC, or finite epoch seconds. The date is tried first, so 20261101 is a day."""
     try:
         day = dt.date.fromisoformat(text)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"{text!r} is neither an ISO date like 2026-11-01 nor epoch seconds") from None
-    return dt.datetime(day.year, day.month, day.day, tzinfo=dt.timezone.utc).timestamp()
+        pass
+    else:
+        return dt.datetime(day.year, day.month, day.day, tzinfo=dt.timezone.utc).timestamp()
+    try:
+        epoch = float(text)
+    except ValueError:
+        epoch = math.nan
+    if not math.isfinite(epoch):
+        raise argparse.ArgumentTypeError(f"{text!r} is neither an ISO date like 2026-11-01 nor epoch seconds")
+    return epoch
 
 
 def _rows(args: argparse.Namespace) -> int:
