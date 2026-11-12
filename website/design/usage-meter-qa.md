@@ -387,3 +387,11 @@ so we dont' need more infraastructure from the mac, then plan local-ai like opti
 use the SGLang model". So the fast coder's tokens are read from the Mac's harness files now; the plan
 gains putting the fast coder behind the front, which ends that reading's window; and if Dan stops
 using SGLang, the Mac's reading is only needed for its past.
+
+**After the builder check: the fast coder's cache.** Its rows never report a cache, and priced as all
+uncached at Opus's rates they read about twenty times too high, since agent sessions send their whole
+history every turn. Offered: estimate the cached part as the previous message's prompt in the same
+session, worked out when read, shown apart and marked `~` (recommended); price it all as uncached,
+flagged; or leave those rows unpriced until the fast coder reports its cache. **Dan: estimate it.** He
+picked the recommended option, with no words of his own. [The first numbers' design](usage-meter-now.md),
+part 2, has the rule.
