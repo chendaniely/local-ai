@@ -3,6 +3,9 @@
 
 UV      := uv run --frozen --quiet --project spark
 SPARK   := $(UV) spark
+# Where make usage-push sends the harvest. make's sh has no pipefail, so the harvest goes through a file and is sent
+# only if it exited 0.
+USAGE_IMPORT := ssh brightroar /opt/local-ai/app/.venv/bin/spark usage import --source opencode
 
 # make test's memory cap (Dan's decision, 2026-10-15). On the Spark, where SPARK_OPT exists, pytest runs in a user scope
 # capped at TEST_CAP_GIB with no swap, so the kernel kills only a runaway run, never the models' memory; a session whose
@@ -117,7 +120,7 @@ usage: ## On the Spark: what the models would have cost at Claude's prices (toda
 	$(SPARK) usage summary
 
 usage-push: ## On the Mac: push OpenCode's rows for the by-hand engines to the Spark, by hand (read here, merged there)
-	$(SPARK) usage harvest --source opencode | ssh brightroar /opt/local-ai/app/.venv/bin/spark usage import --source opencode
+	f=$$(mktemp) || exit 1; $(SPARK) usage harvest --source opencode >"$$f"; s=$$?; if [ $$s -eq 0 ]; then $(USAGE_IMPORT) <"$$f"; s=$$?; fi; rm -f "$$f"; exit $$s
 
 # TEMPORARY: remove once Phase 4a puts the fast coder and Flash-Next in the registry (Dan's decision, 2026-10-15).
 # Delete then: in this Makefile, these two targets, this comment, their .PHONY names and their scripts in lint's list;

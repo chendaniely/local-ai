@@ -122,11 +122,32 @@ def test_help_says_what_tunnel_and_brake_release_reach():
 
 def test_make_usage_and_usage_push_run_the_summary_and_the_harvest_piped_to_the_spark():
     assert make("-n", "usage").stdout.splitlines() == ["uv run --frozen --quiet --project spark spark usage summary"]
-    assert make("-n", "usage-push").stdout.splitlines() == [
-        "uv run --frozen --quiet --project spark spark usage harvest --source opencode | "
-        "ssh brightroar /opt/local-ai/app/.venv/bin/spark usage import --source opencode"]
+    push = make("-n", "usage-push").stdout
+    assert "uv run --frozen --quiet --project spark spark usage harvest --source opencode >" in push
+    assert "ssh brightroar /opt/local-ai/app/.venv/bin/spark usage import --source opencode <" in push
     lines = {line.split()[0]: line for line in make("help").stdout.splitlines()}
     assert "On the Spark" in lines["usage"] and "On the Mac" in lines["usage-push"]
+
+
+@pytest.mark.parametrize("harvest_status, imported", [(0, True), (3, False)])
+def test_usage_push_imports_only_what_a_harvest_that_succeeded_wrote(tmp_path, harvest_status, imported):
+    # make's sh has no pipefail: a failed harvest must not leave the import running on its empty or cut-off output.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "harvest").write_text(f'#!/bin/sh\necho "harvest $*" >> "$CALLS"\necho row\nexit {harvest_status}\n')
+    (bindir / "importer").write_text('#!/bin/sh\necho "import $(cat)" >> "$CALLS"\n')
+    for name in ("harvest", "importer"):
+        (bindir / name).chmod(0o755)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    env = {**os.environ, "CALLS": str(tmp_path / "calls"), "TMPDIR": str(scratch)}
+    result = make("usage-push", f"SPARK={bindir}/harvest", f"USAGE_IMPORT={bindir}/importer", env=env)
+    # make itself exits 2 when a recipe fails, and names the recipe's own status.
+    assert result.returncode == (0 if harvest_status == 0 else 2)
+    assert (harvest_status == 0) or f"Error {harvest_status}" in result.stderr
+    assert calls(tmp_path) == (["harvest usage harvest --source opencode", "import row"] if imported
+                               else ["harvest usage harvest --source opencode"])
+    assert list(scratch.iterdir()) == []  # the temporary file is gone
 
 
 # make test's memory cap (Dan's decision, 2026-10-15): where /opt/local-ai exists, the Spark, pytest runs in a user

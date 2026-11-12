@@ -342,14 +342,20 @@ KEY_CHECKS = {"llama-swap", "front", "a model, end to end", "S03"}  # the checks
 
 
 @pytest.fixture(autouse=True)
-def mapped_fixture_models(monkeypatch):
-    """The real price files, with the fixture registry's models given mapping lines (it names its own, not the box's)."""
-    from spark.meter import prices
-    real = prices.load
-    book = real()
+def mapped_fixture_models(monkeypatch, tmp_path):
+    """The real price files, with the fixture registry's models given mapping lines (it names its own, not the box's);
+    "asr" is the model one test adds to the registry. The meter's readers see empty folders in tmp_path, never the box's
+    live data (doctor's own `paths` stays as is: its tests name the real folders)."""
+    from types import SimpleNamespace
+    from spark.meter import prices, store, summary
+    book = prices.load()
     mapping = book.mapping | {name: prices.Mapping("none", Decimal(1)) for name in (*REG.models, "asr")}
     monkeypatch.setattr(prices, "load", lambda folder=None: dataclasses.replace(book, mapping=mapping))
-    monkeypatch.setattr(doctor.paths, "USAGE_SESSIONS_DIR", doctor.paths.USAGE_SESSIONS_DIR)
+    own = SimpleNamespace(**{**vars(doctor.paths), "USAGE_DIR": tmp_path / "m-usage",
+                             "USAGE_SESSIONS_DIR": tmp_path / "m-sessions", "GATE_LEDGER_DIR": tmp_path / "m-ledger",
+                             "METER_PRIVATE": tmp_path / "m-private.yaml"})
+    monkeypatch.setattr(store, "paths", own)
+    monkeypatch.setattr(summary, "paths", own)
 
 
 def failures(probe, key=KEY, registry=REG, **kw):
