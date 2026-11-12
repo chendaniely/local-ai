@@ -363,7 +363,7 @@ The contract, the design's *The summary's JSON* with these settled:
   "usd", "requests", "p", "c", "o"}`, for the dashboard later.
 
 - [ ] **Step 1: Write the failing tests** (an invented `Store` built in the test; `now` fixed):
-  - `test_periods_follow_the_zone`: zone `America/Vancouver`; a row at 2026-10-31 23:30 local (UTC the next day)
+  - `test_periods_follow_the_zone`: zone `America/New_York`; a row at 2026-10-31 23:30 local (UTC the next day)
     counts in `last_month` when `now` is in November, not `this_month`; `today` holds only rows of the local date.
   - `test_dst`: rows either side of 2026-11-01's fall-back hour land on the right local dates.
   - `test_usd_includes_the_estimate`: one reported and one estimated row; `usd` is their sum, `usd_estimated` the
