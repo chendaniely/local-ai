@@ -66,6 +66,21 @@ def _count(value: Any) -> int | None:
     return value if _ok(value) else None
 
 
+_EARLIEST = 1_577_836_800.0  # 2020-01-01T00:00Z
+_LATEST = 4_102_444_800.0  # 2100-01-01T00:00Z
+
+
+def _time(value: Any) -> bool:
+    """A time the meter will read: epoch seconds from 2020 up to 2100. JSON's NaN and Infinity, which json.loads
+    accepts, and a millisecond stamp are refused here, before a summary places them on a calendar."""
+    return _number(value) and _EARLIEST <= value < _LATEST  # NaN fails both comparisons
+
+
+def _times(data: dict) -> bool:
+    """A row's t0 is a time, and its t1, when it has one, is too."""
+    return _time(data.get("t0")) and (data.get("t1") is None or _time(data["t1"]))
+
+
 FRONT_END = ("done", "cut", "gone", "error", "refused")
 IMPORTED_END = ("done", "error", "cut")
 
@@ -97,7 +112,7 @@ def _front_rows(folder: Path) -> tuple[list[Row], int]:
         data = _object(line)
         if (data is None or data.get("v") != 1 or isinstance(data.get("v"), bool)
                 or not isinstance(data.get("id"), str) or not _HEX16.fullmatch(data["id"])
-                or not _number(data.get("t0")) or data.get("end") not in FRONT_END
+                or not _times(data) or data.get("end") not in FRONT_END
                 or any(k in data and not _ok(data[k]) for k in ("p", "c", "o"))):
             bad += 1
             continue
@@ -120,7 +135,7 @@ def _imported_rows(book: PriceBook, folder: Path) -> tuple[list[Row], int]:
     for _, line in _lines(folder, re.compile(r"opencode\.jsonl")):
         data = _object(line)
         if (data is None or data.get("v") != 1 or not isinstance(data.get("mid"), str)
-                or not isinstance(data.get("sid"), str) or not _number(data.get("t0"))
+                or not isinstance(data.get("sid"), str) or not _times(data)
                 or not isinstance(data.get("prov"), str) or data.get("end") not in IMPORTED_END
                 or not all(_ok(data.get(k)) for k in ("in", "out", "reas", "cr", "cw"))):
             bad += 1

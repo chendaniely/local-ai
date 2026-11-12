@@ -28,6 +28,8 @@ SUMMARY_VERSION = 1
 # `none` is unpriced on purpose.
 UNPRICED = ("no_counts", "unmapped", "no_line", "cache_unknown")
 NOT_COUNTED = ("by-hand engines: counted from heartsbane's OpenCode only",)
+NO_MODEL = "(no model)"  # a row with none, in by_model and flags.unmapped alike, where null would print as null
+LOCALTIME = Path("/etc/localtime")
 _PLACES = Decimal("0.0001")
 
 
@@ -93,21 +95,24 @@ def read_private(path: Path | None = None) -> Private:
     return Private(_price_usd(path, data.get("price_usd")), _zone_name(path, data.get("zone")))
 
 
-def zone_of(private: Private, localtime: Path = Path("/etc/localtime")) -> tuple[dt.tzinfo, str, str]:
+def zone_of(private: Private, localtime: Path | None = None) -> tuple[dt.tzinfo | None, str, str]:
     """The zone days and months are counted in, its name, and "private_file" or "system". The system's is the name
-    after `zoneinfo/` in `localtime`'s link target, as macOS and Ubuntu link it; failing that, the fixed offset the
-    system has now, named "localtime"."""
+    after `zoneinfo/` in `localtime`'s link target (LOCALTIME, read when called), as macOS and Ubuntu link it.
+
+    Failing that it is None, named "localtime": the system's own rules, applied instant by instant, as
+    `datetime.fromtimestamp(t)` applies them. One offset taken now would shift every row from the other side of a
+    DST change by an hour, and a row near midnight onto the wrong day."""
     if private.zone is not None:
         return ZoneInfo(private.zone), private.zone, "private_file"
     try:
-        target = os.readlink(localtime)
+        target = os.readlink(LOCALTIME if localtime is None else localtime)
     except OSError:  # not a link, or not there
         target = ""
     _, found, name = target.partition("zoneinfo/")
     zone = _zone_info(name) if found and name else None
     if zone is not None:
         return zone, name, "system"
-    return dt.datetime.now().astimezone().tzinfo, "localtime", "system"
+    return None, "localtime", "system"
 
 
 def _money(amount: Decimal) -> float:
@@ -146,8 +151,10 @@ class _Sum:
 Item = tuple[Row, Priced]
 
 
-def _periods(items: list[Item], tz: dt.tzinfo, today: dt.date, private: Private) -> tuple[dict[str, Any], list[Item]]:
-    """The four periods, each row placed by its t0's date in the zone, and this month's rows for the flags."""
+def _periods(items: list[Item], tz: dt.tzinfo | None, today: dt.date,
+             private: Private) -> tuple[dict[str, Any], list[Item]]:
+    """The four periods, each row placed by its t0's date in the zone (None: the system's rules at that instant), and
+    this month's rows for the flags."""
     last = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
     sums = {name: _Sum() for name in ("today", "this_month", "last_month", "all_time")}
     month: list[Item] = []
@@ -170,16 +177,16 @@ def _periods(items: list[Item], tz: dt.tzinfo, today: dt.date, private: Private)
 
 
 def _by_model(book: PriceBook, month: list[Item], items: list[Item]) -> list[dict[str, Any]]:
-    """Each model's total this month, then all time, each the dearest first."""
+    """Each model's total this month, then all time, each the dearest first; rows with no model as NO_MODEL."""
     out = []
     for period, rows in (("this_month", month), ("all_time", items)):
         sums: dict[str | None, _Sum] = {}
         for row, priced in rows:
             sums.setdefault(row.model, _Sum()).add(row, priced)
-        for model, s in sorted(sums.items(), key=lambda kv: (-kv[1].usd, kv[0] or "")):
+        for model, s in sorted(sums.items(), key=lambda kv: (-kv[1].usd, kv[0] or NO_MODEL)):
             mapping = book.mapping.get(model) if model is not None else None
-            out.append({"model": model, "tier": None if mapping is None else mapping.tier, "period": period,
-                        **s.figures()})
+            out.append({"model": NO_MODEL if model is None else model,
+                        "tier": None if mapping is None else mapping.tier, "period": period, **s.figures()})
     return out
 
 
@@ -189,7 +196,7 @@ def _flags(month: list[Item], store: Store) -> dict[str, Any]:
     unmapped: dict[str, int] = {}
     for row, priced in month:
         if priced.why == "unmapped":
-            name = "(no model)" if row.model is None else row.model
+            name = NO_MODEL if row.model is None else row.model
             unmapped[name] = unmapped.get(name, 0) + 1
     return {"unmapped": dict(sorted(unmapped.items())),
             "interrupted": sum(row.end in ("cut", "gone") for row, _ in month),
@@ -226,7 +233,7 @@ def summarize(store: Store, book: PriceBook, private: Private, now: float, *, ho
     today = dt.datetime.fromtimestamp(now, tz).date()
     items = [(row, price(book, row)) for row in store.rows]
     periods, month = _periods(items, tz, today, private)
-    month_start = dt.datetime(today.year, today.month, 1, tzinfo=tz).timestamp()
+    month_start = dt.datetime(today.year, today.month, 1, tzinfo=tz).timestamp()  # naive, with None: the system's
     out: dict[str, Any] = {
         "v": SUMMARY_VERSION, "made_at": now, "zone": zone, "zone_from": zone_from,
         "counter_start": min((row.t0 for row in store.rows if row.source == "front"), default=None),

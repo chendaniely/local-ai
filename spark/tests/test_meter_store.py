@@ -149,3 +149,23 @@ def test_an_imported_row_with_a_bad_count_or_end_is_dropped_and_counted(bad, tmp
     write(tmp_path / "opencode.jsonl", [imp("m1", **bad), imp("m2")])
     rows, count = store._imported_rows(BOOK, tmp_path)
     assert [r.id for r in rows] == ["m2"] and count == 1
+
+
+BAD_TIMES = [{"t0": float("nan")}, {"t0": float("inf")}, {"t0": -float("inf")}, {"t0": 1.79e12},
+             {"t0": 1_577_836_799.0}, {"t0": 4_102_444_800.0}, {"t0": "1793000000"}, {"t0": True},
+             {"t1": float("nan")}, {"t1": float("inf")}, {"t1": 1.79e12}, {"t1": "soon"}]
+
+
+@pytest.mark.parametrize("bad", BAD_TIMES)
+def test_a_front_row_with_a_bad_time_is_dropped_and_counted(bad, tmp_path):
+    write(tmp_path / "usage-2026-11.jsonl", [{**front("0" * 16), **bad}, front("1" * 16), front("2" * 16, t1=None)])
+    rows, count = store._front_rows(tmp_path)
+    assert [r.id for r in rows] == ["1" * 16, "2" * 16] and count == 1  # NaN and Infinity as json.dumps writes them
+    assert rows[1].t1 is None
+
+
+@pytest.mark.parametrize("bad", BAD_TIMES)
+def test_an_imported_row_with_a_bad_time_is_dropped_and_counted(bad, tmp_path):
+    write(tmp_path / "opencode.jsonl", [{**imp("m1"), **bad}, imp("m2"), imp("m3", t1=None)])
+    rows, count = store._imported_rows(BOOK, tmp_path)
+    assert sorted(r.id for r in rows) == ["m2", "m3"] and count == 1

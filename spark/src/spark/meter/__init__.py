@@ -38,16 +38,20 @@ def _rows(args: argparse.Namespace) -> int:
     return 0
 
 
-def _summary(args: argparse.Namespace) -> int:
+def _summary(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     import json
     import time
 
     from spark.meter import prices, store, summary
 
+    if args.hours and not args.json:
+        parser.error("--hours needs --json: the hours are only in the JSON")
     private = summary.read_private()  # first, so a private file that can't be used prints nothing on stdout
     book = prices.load()
     made = summary.summarize(store.read(book), book, private, time.time(), hours=args.hours)
-    print(json.dumps(made) if args.json else summary.words(made))
+    # allow_nan=False: spark-menu reads strict JSON, so a NaN or Infinity from a file the store doesn't check (the
+    # ledger, the import's mark) is refused here, and spark-menu keeps its last good answer.
+    print(json.dumps(made, allow_nan=False) if args.json else summary.words(made))
     return 0
 
 
@@ -63,4 +67,4 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     summary.add_argument("--json", action="store_true", help="the summary spark-menu reads (its contract, v1), as one "
                                                              "JSON object")
     summary.add_argument("--hours", action="store_true", help="with --json, add the totals per UTC hour, key and model")
-    summary.set_defaults(func=_summary)
+    summary.set_defaults(func=lambda args: _summary(args, summary))

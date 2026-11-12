@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import time
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -17,8 +18,8 @@ from spark.meter import prices, summary
 from spark.meter.store import Row, Store
 
 BOOK = prices.load()
-VAN = "America/Vancouver"
-LA = "America/Los_Angeles"  # Vancouver has no fall-back in tzdata 2026e (BC keeps UTC-7); Los Angeles still does
+NY = "America/New_York"
+LA = "America/Los_Angeles"  # its fall-back is on 2026-11-01
 CONTRACT_KEYS = {"v", "made_at", "zone", "zone_from", "counter_start", "last_row_at", "periods", "by_model", "flags",
                  "coverage", "electricity", "break_even"}
 _ids = iter(range(1, 10_000))
@@ -28,7 +29,7 @@ def utc(text: str) -> float:
     return dt.datetime.fromisoformat(text).replace(tzinfo=dt.timezone.utc).timestamp()
 
 
-def local(text: str, zone: str = VAN) -> float:
+def local(text: str, zone: str = NY) -> float:
     """A wall-clock time in the zone, so a test doesn't depend on which tzdata release says what the offset is."""
     return dt.datetime.fromisoformat(text).replace(tzinfo=ZoneInfo(zone)).timestamp()
 
@@ -39,13 +40,13 @@ def row(t0: float, model: str | None = "qwen3.8-27b", p: int | None = 1_000_000,
     return Row("front", f"{next(_ids):016x}", t0, t0 + 5, model, p, c, o, end, key="demo", **more)
 
 
-def make(rows, now, zone=VAN, price=None, *, hours=False, **store) -> dict:
+def make(rows, now, zone=NY, price=None, *, hours=False, **store) -> dict:
     return summary.summarize(Store(list(rows), **store), BOOK, summary.Private(price, zone), now, hours=hours)
 
 
 def test_periods_follow_the_zone():
     now = local("2026-11-12T12:00")
-    rows = [row(local("2026-10-31T23:30")),  # 06:30 UTC on 2026-11-01
+    rows = [row(local("2026-10-31T23:30")),  # 03:30 UTC on 2026-11-01
             row(local("2026-11-11T23:30")), row(local("2026-11-12T00:30")), row(local("2026-09-30T12:00"))]
     out = make(rows, now)
     periods = out["periods"]
@@ -54,7 +55,7 @@ def test_periods_follow_the_zone():
     assert dt.datetime.fromtimestamp(rows[0].t0, dt.timezone.utc).day == 1  # the next day in UTC
     assert [periods[k]["label"] for k in ("today", "this_month", "last_month", "all_time")] == [
         "2026-11-12", "2026-11", "2026-10", "all"]
-    assert (out["zone"], out["zone_from"]) == (VAN, "private_file")
+    assert (out["zone"], out["zone_from"]) == (NY, "private_file")
 
 
 def test_last_month_of_january_is_december():
@@ -91,17 +92,20 @@ def test_usd_includes_the_estimate():
 def test_unpriced_and_flags():
     t = local("2026-11-05T10:00")
     rows = [row(t, end="error"), row(t, end="cut"), row(t, end="gone"), row(t, "made-up-model"),
-            row(t, "qwen3-embedding-0.6b", c=0, o=0), row(t, c=None, dropped=2),
+            row(t, "qwen3-embedding-0.6b", p=7_000, c=0, o=0), row(t, c=None, dropped=2),
             row(local("2026-10-05T10:00"), "made-up-model"), row(local("2026-10-05T10:00"), end="error")]
     out = make(rows, local("2026-11-06T10:00"), bad_lines=3)
     this = out["periods"]["this_month"]
     assert (this["requests"], this["unpriced"], this["usd"]) == (6, 2, 0.0)
+    assert (this["p"], this["c"], this["o"]) == (5_007_000, 3_600_000, 50_000)  # the embedding's 7,000 in p
     assert out["flags"] == {"unmapped": {"made-up-model": 1}, "interrupted": 2, "errors": 1, "cache_unknown": 1,
                             "dropped": 2, "bad_lines": 3}
-    without_embedding = make(rows[:4] + rows[5:], local("2026-11-06T10:00"), bad_lines=3)
-    assert without_embedding["flags"] == out["flags"]
-    assert without_embedding["periods"]["this_month"]["unpriced"] == this["unpriced"]
-    assert without_embedding["periods"]["this_month"]["requests"] == this["requests"] - 1
+    without = make(rows[:4] + rows[5:], local("2026-11-06T10:00"), bad_lines=3)
+    assert without["flags"] == out["flags"]
+    alone = without["periods"]["this_month"]
+    assert (alone["unpriced"], alone["usd"], alone["usd_estimated"]) == (this["unpriced"], this["usd"],
+                                                                          this["usd_estimated"])
+    assert (alone["requests"], alone["p"], alone["c"], alone["o"]) == (5, 5_000_000, 3_600_000, 50_000)
 
 
 def test_share_of_price(tmp_path):
@@ -142,6 +146,17 @@ def test_private_file_errors_never_show_values(tmp_path):
         assert err.value.__cause__ is None and context, text  # no traceback shows the YAML error's excerpt
 
 
+def test_a_private_file_that_cannot_be_read(tmp_path):
+    path = tmp_path / "meter.yaml"
+    path.mkdir()
+    (path / "price_usd").write_text("31415")
+    with pytest.raises(ValueError) as err:
+        summary.read_private(path)
+    message = str(err.value)
+    assert str(path) in message and "can't be read" in message
+    assert "31415" not in message.replace(str(path), "")
+
+
 def test_zone_of(tmp_path):
     link = tmp_path / "localtime"
     link.symlink_to("/usr/share/zoneinfo/Europe/Paris")  # never read: only the link's text is
@@ -151,11 +166,35 @@ def test_zone_of(tmp_path):
     for target in ("/nowhere/at/all", "/usr/share/zoneinfo/Mars/Olympus"):
         other = tmp_path / f"link{len(target)}"
         other.symlink_to(target)
-        zone, name, source = summary.zone_of(summary.Private(), other)
-        assert (name, source) == ("localtime", "system") and zone.utcoffset(None) is not None
+        assert summary.zone_of(summary.Private(), other) == (None, "localtime", "system")
     plain = tmp_path / "plain"
     plain.write_text("not a link")
-    assert summary.zone_of(summary.Private(), plain)[1] == "localtime"
+    assert summary.zone_of(summary.Private(), plain) == (None, "localtime", "system")
+
+
+def test_localtime_follows_the_system_instant_by_instant(tmp_path, monkeypatch):
+    """With no zone name to be had, each row is placed by the system's rules at its own instant: a row from summer
+    time, read in winter, keeps its date, and so does the month's start for counting's gaps."""
+    plain = tmp_path / "plain"
+    plain.write_text("not a link")
+    monkeypatch.setattr(summary, "LOCALTIME", plain)
+    rows = [row(utc("2026-11-01T06:59")),  # 23:59 PDT, 31 October
+            row(utc("2026-11-01T07:30"))]  # 00:30 PDT, 1 November: 23:30 on the 31st at PST's offset
+    spans = [(utc("2026-11-01T06:40"), utc("2026-11-01T06:50")),  # ends 23:50 PDT, 31 October
+             (utc("2026-11-01T07:00"), utc("2026-11-01T07:10"))]  # ends 00:10 PDT, 1 November
+    try:
+        with monkeypatch.context() as patch:
+            patch.setenv("TZ", LA)
+            time.tzset()
+            out = summary.summarize(Store(rows, counting_off=spans), BOOK, summary.Private(),
+                                    utc("2026-11-15T20:00"))  # noon PST
+    finally:
+        time.tzset()  # the context has put TZ back
+    assert (out["zone"], out["zone_from"]) == ("localtime", "system")
+    periods = out["periods"]
+    assert (periods["this_month"]["label"], periods["this_month"]["requests"]) == ("2026-11", 1)
+    assert (periods["last_month"]["requests"], periods["today"]["label"]) == (1, "2026-11-15")
+    assert out["coverage"]["counting_off"] == [[utc("2026-11-01T07:00"), utc("2026-11-01T07:10")]]
 
 
 def test_by_model_sorted():
@@ -171,6 +210,16 @@ def test_by_model_sorted():
     assert by_model[:2] == month
     unmapped = make([row(t, "made-up-model")], local("2026-11-06T10:00"))["by_model"][0]
     assert unmapped["tier"] is None and unmapped["usd"] == 0.0
+
+
+def test_no_model_is_spelled_out():
+    t = local("2026-11-05T10:00")
+    out = make([row(t, None), row(t, None, end="refused"), row(t)], local("2026-11-06T10:00"))
+    month = [m for m in out["by_model"] if m["period"] == "this_month"]
+    assert [(m["model"], m["tier"], m["requests"]) for m in month] == [("qwen3.8-27b", "opus", 1),
+                                                                       ("(no model)", None, 2)]
+    assert out["flags"]["unmapped"] == {"(no model)": 1}  # the refused row would never have been priced
+    assert None not in {m["model"] for m in out["by_model"]}
 
 
 def test_hours_only_when_asked():
@@ -229,7 +278,9 @@ def test_summary_verb(tmp_path, monkeypatch, capsys):
     usage.mkdir()
     lines = [{"v": 1, "id": f"{i:016x}", "t0": t, "t1": t + 5, "key": "demo", "model": "qwen3.8-27b", "end": "done",
               "p": 1000, "c": 500, "o": 10} for i, t in enumerate([utc("2026-10-30T00:00"), utc("2026-11-02T00:00")])]
-    (usage / "usage-2026-11.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    bad_times = [{**lines[0], "id": f"{9 - i:016x}", "t0": t0} for i, t0 in enumerate([float("nan"), float("inf"),
+                                                                                         1.79e12])]  # a ms stamp
+    (usage / "usage-2026-11.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines + bad_times))
     monkeypatch.setattr(paths, "USAGE_DIR", usage)
     monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path / "s")
     monkeypatch.setattr(paths, "GATE_LEDGER_DIR", tmp_path / "l")
@@ -237,10 +288,14 @@ def test_summary_verb(tmp_path, monkeypatch, capsys):
     assert cli.main(["usage", "summary", "--json"]) == 0
     printed = capsys.readouterr().out
     assert len(printed.strip().splitlines()) == 1
-    out = json.loads(printed)
+    out = json.loads(printed, parse_constant=pytest.fail)  # strict JSON: no NaN or Infinity
     assert out["v"] == 1 and set(out) == CONTRACT_KEYS and out["periods"]["all_time"]["requests"] == 2
+    assert out["flags"]["bad_lines"] == 3
     assert cli.main(["usage", "summary", "--json", "--hours"]) == 0
     assert len(json.loads(capsys.readouterr().out)["hours"]) == 2
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["usage", "summary", "--hours"])
+    assert stopped.value.code == 2 and "--hours" in capsys.readouterr().err
     assert cli.main(["usage", "summary"]) == 0
     starts = [line.split("  ")[0] for line in capsys.readouterr().out.splitlines()]
     assert {"This month", "Today", "Last month", "All time"} <= set(starts)
