@@ -55,6 +55,16 @@ def _summary(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
+def _import(args: argparse.Namespace) -> int:
+    import sys
+    import time
+
+    from spark.meter import importer
+
+    print(importer.run(sys.stdin, time.time()).line())
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     usage = subparsers.add_parser("usage", help="the usage meter: what the models would have cost at Claude's prices")
     verbs = usage.add_subparsers(dest="usage_command", required=True)
@@ -68,3 +78,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
                                                              "JSON object")
     summary.add_argument("--hours", action="store_true", help="with --json, add the totals per UTC hour, key and model")
     summary.set_defaults(func=lambda args: _summary(args, summary))
+    imp = verbs.add_parser("import", help="merge the Mac's per-message rows for the by-hand engines, read from stdin")
+    imp.add_argument("--source", required=True, choices=["opencode"], help="whose rows are on stdin")
+    imp.set_defaults(func=_import)
