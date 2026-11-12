@@ -402,3 +402,8 @@ with the app, and remaps wait for the soak's end, losing nothing since a remap r
 (recommended); a restart-free path, with a written exception to the soak rule; or the live files kept
 in Dan's home on the Spark, edited in place. **Dan: wait for the soak's end.** He picked the
 recommended option, with no words of his own.
+
+**The design approved.** Dan, 2026-11-12, after reading [the first numbers' design](usage-meter-now.md):
+"plan look sgood. just let me know what commands on what computer and what branch need to be run". So
+the Mac's half gets built on this branch and in the dotfiles, and Dan gets the commands for the Spark's
+half, each with its machine and branch.

@@ -6,7 +6,7 @@ date: 2026-11-12
 
 # The usage meter's first numbers — design
 
-**Status: a draft for Dan's approval (2026-11-12).** It amends [the usage meter's design](usage-meter.md),
+**Status: approved by Dan on 2026-11-12** ("plan look sgood"); being built. It amends [the usage meter's design](usage-meter.md),
 which stays the reference for everything not named here. Dan's words and the questions they answered
 are in [its questions and answers](usage-meter-qa.md), *The menu's numbers now*. What this page adds
 beyond his answers is marked *(my call)* and listed at the end for checking.
