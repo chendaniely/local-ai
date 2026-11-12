@@ -122,3 +122,30 @@ def test_a_provider_that_is_not_by_hand_is_dropped_and_counted(tmp_path):
                                         imp("m3", prov="spark-sglang")])
     rows, bad = store._imported_rows(BOOK, tmp_path)
     assert [r.id for r in rows] == ["m3"] and bad == 2
+
+
+def test_estimate_sorts_by_session_and_time_and_skips_rows_without_p():
+    shuffled = [row("s1", 3, 400), row("s2", 1, 700), row("s1", 1, 1000), row("s1", 2, 1500)]
+    out = {(r.session, r.t0): r.c for r in store.with_estimates(shuffled)}
+    assert out == {("s1", 1): 0, ("s1", 2): 1000, ("s1", 3): 0, ("s2", 1): 0}
+    gap = store.Row("opencode", "g", 2, 3, "m", None, None, 1, "done", None, "spark-sglang", "s1")
+    first, middle, last = sorted(store.with_estimates([row("s1", 3, 1600), gap, row("s1", 1, 1000)]),
+                                 key=lambda r: r.t0)
+    assert middle.c is None and not middle.c_estimated
+    assert last.c == 1000  # the row with no P neither got an estimate nor reset the session's previous P
+
+
+@pytest.mark.parametrize("bad", [{"p": -1}, {"c": 1.5}, {"o": True}, {"p": "10"}, {"o": 2**53}, {"end": None},
+                                 {"end": "weird"}])
+def test_a_front_row_with_a_bad_count_or_end_is_dropped_and_counted(bad, tmp_path):
+    write(tmp_path / "usage-2026-11.jsonl", [front("0" * 16, **bad), front("1" * 16)])
+    rows, count = store._front_rows(tmp_path)
+    assert [r.id for r in rows] == ["1" * 16] and count == 1
+
+
+@pytest.mark.parametrize("bad", [{"in": -1}, {"out": 1.5}, {"reas": True}, {"cr": "9"}, {"cw": 2**53}, {"end": None},
+                                 {"end": "refused"}])
+def test_an_imported_row_with_a_bad_count_or_end_is_dropped_and_counted(bad, tmp_path):
+    write(tmp_path / "opencode.jsonl", [imp("m1", **bad), imp("m2")])
+    rows, count = store._imported_rows(BOOK, tmp_path)
+    assert [r.id for r in rows] == ["m2"] and count == 1

@@ -57,8 +57,17 @@ def _number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _ok(value: Any) -> bool:
+    """A count the meter will read: a whole number, never a bool, with 0 <= n < 2**53."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**53
+
+
 def _count(value: Any) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+    return value if _ok(value) else None
+
+
+FRONT_END = ("done", "cut", "gone", "error", "refused")
+IMPORTED_END = ("done", "error", "cut")
 
 
 def _lines(folder: Path, pattern: re.Pattern[str]) -> list[tuple[Path, str]]:
@@ -88,13 +97,14 @@ def _front_rows(folder: Path) -> tuple[list[Row], int]:
         data = _object(line)
         if (data is None or data.get("v") != 1 or isinstance(data.get("v"), bool)
                 or not isinstance(data.get("id"), str) or not _HEX16.fullmatch(data["id"])
-                or not _number(data.get("t0"))):
+                or not _number(data.get("t0")) or data.get("end") not in FRONT_END
+                or any(k in data and not _ok(data[k]) for k in ("p", "c", "o"))):
             bad += 1
             continue
         t1, model, key = data.get("t1"), data.get("model"), data.get("key")
         rows.append(Row("front", data["id"], float(data["t0"]), float(t1) if _number(t1) else None,
                         model if isinstance(model, str) else None, _count(data.get("p")), _count(data.get("c")),
-                        _count(data.get("o")), str(data.get("end", "")), key if isinstance(key, str) else None,
+                        _count(data.get("o")), data["end"], key if isinstance(key, str) else None,
                         dropped=_count(data.get("dropped")) or 0))
     return rows, bad
 
@@ -111,7 +121,8 @@ def _imported_rows(book: PriceBook, folder: Path) -> tuple[list[Row], int]:
         data = _object(line)
         if (data is None or data.get("v") != 1 or not isinstance(data.get("mid"), str)
                 or not isinstance(data.get("sid"), str) or not _number(data.get("t0"))
-                or not isinstance(data.get("prov"), str)):
+                or not isinstance(data.get("prov"), str) or data.get("end") not in IMPORTED_END
+                or not all(_ok(data.get(k)) for k in ("in", "out", "reas", "cr", "cw"))):
             bad += 1
             continue
         last[data["mid"]] = data  # the last line of a message id wins
@@ -124,12 +135,12 @@ def _imported_rows(book: PriceBook, folder: Path) -> tuple[list[Row], int]:
             continue
         if not any((p.start is None or p.start <= t0) and (p.end is None or t0 < p.end) for p in windows):
             continue
-        counts = {k: _count(data.get(k)) or 0 for k in ("in", "out", "reas", "cr", "cw")}
+        counts = {k: data[k] for k in ("in", "out", "reas", "cr", "cw")}
         t1, model = data.get("t1"), data.get("model")
         rows.append(Row("opencode", mid, t0, float(t1) if _number(t1) else None,
                         model if isinstance(model, str) else None,
                         counts["in"] + counts["cr"] + counts["cw"], counts["cr"] if cache_reported(book, prov, t0) else None,
-                        counts["out"] + counts["reas"], str(data.get("end", "")), None, prov, data["sid"]))
+                        counts["out"] + counts["reas"], data["end"], None, prov, data["sid"]))
     return rows, bad
 
 
