@@ -21,3 +21,5 @@ GATE_CONTROL_SOCKET = Path(os.environ.get("SPARK_GATE_CONTROL", "/run/local-ai/g
 # From Phase 2a's cutover the front holds 9100, where clients reach the models, and llama-swap moves behind it to 900.
 FRONT_URL = os.environ.get("SPARK_FRONT_URL", "http://127.0.0.1:9100")
 LLAMASWAP_URL = os.environ.get("SPARK_LLAMASWAP_URL", "http://127.0.0.1:900")
+# The meter's price files (spark.meter.prices): shipped beside the code, so a price edit deploys with it.
+METER_DIR = Path(os.environ.get("SPARK_METER_DIR", Path(__file__).parent / "meter"))

@@ -1,0 +1,22 @@
+# Which Claude tier each model of the registry is priced at, and how the meter treats it (the design's part 1).
+# A model with no line here is unpriced and flagged; `none` is unpriced on purpose.
+v: 1
+tiers:               # per tier: charge uncached prompt tokens at the 5-minute cache-write rate (§3's switch)
+  opus: {uncached_as_writes: false}
+  sonnet: {uncached_as_writes: false}
+  haiku: {uncached_as_writes: false}
+  fable: {uncached_as_writes: false}
+models:              # tier: opus | sonnet | haiku | fable | none; factor: optional, default 1
+  gemma-4-26b-a4b: {tier: opus}
+  qwen3.8-27b: {tier: opus}
+  qwen3.6-35b-a3b: {tier: opus}
+  qwen3.8-27b-sglang: {tier: opus}
+  qwen3.8-flash-next: {tier: opus}
+  qwen3.8-flash-next-mtp: {tier: opus}
+  qwen3-embedding-0.6b: {tier: none}
+  whisper-large-v3-turbo: {tier: none}
+  whisper-large-v3: {tier: none}
+  qwen3-asr-1.7b-32k: {tier: none}
+  qwen3-asr-1.7b-64k: {tier: none}
+  qwen3-asr-0.6b-32k: {tier: none}
+  qwen3-asr-0.6b-64k: {tier: none}
