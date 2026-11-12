@@ -51,6 +51,9 @@ def _number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+_REFUSED: dict = {}
+
+
 def _row(raw: tuple, windows: dict[str, Provider]) -> dict | None:
     mid, sid, kind, prov, model, created, completed, *counts, error = raw
     if not (_number(created) and isinstance(prov, str) and prov in windows):
@@ -67,44 +70,49 @@ def _row(raw: tuple, windows: dict[str, Provider]) -> dict | None:
     window = windows[prov]
     if (window.start is not None and t0 < window.start) or (window.end is not None and t0 >= window.end):
         return None
-    inp, out, reas, cr, cw = (0 if c is None else c for c in counts)
+    if any(c is None for c in counts):
+        return _REFUSED  # a missing count is absent, never 0
+    inp, out, reas, cr, cw = counts
     return {"v": 1, "src": "opencode", "mid": mid, "sid": hashlib.sha256(str(sid).encode()).hexdigest()[:16],
             "prov": prov, "model": model, "t0": t0, "t1": t1, "in": inp, "out": out, "reas": reas, "cr": cr,
             "cw": cw, "end": "done" if error is None else "cut" if error == "aborted" else "error"}
 
 
 def harvest(db: Path, providers: list[Provider], since: float | None, stats: dict | None = None) -> Iterator[dict]:
-    """One row per message, in importer.FIELDS. A message that can't be a row (still running, no counts, outside
-    its provider's window, or refused by the importer's own check) is left out; `stats["skipped"]`, when given,
-    counts the ones the check refused."""
-    words = f"{db} isn't an OpenCode {TESTED_WITH} database ({{}}); this reader was written against {TESTED_WITH}"
+    """One row per message, in importer.FIELDS. A message that can't be a row is left out: still running, no counts
+    at all, outside its provider's window (all uncounted), or with a count missing or refused by the importer's own
+    check (`stats["skipped"]`, when given, counts these). Every result is fetched and the connection closed before
+    the first row is yielded, so a stalled reader never holds OpenCode's read snapshot open."""
     if not db.is_file():  # mode=ro would not create it, but say so in words
-        raise HarvestError(words.format("no such file"))
+        raise HarvestError(f"{db} doesn't exist; this reader was tested with OpenCode {TESTED_WITH}")
     if not providers:
         return
     windows = {p.provider: p for p in providers}
     sql = _SQL.format(marks=", ".join("?" for _ in windows))
-    now = time.time()
+    params = (*windows, 0 if since is None else since * 1000)
+    changed = f"{db} isn't an OpenCode database (tested with {TESTED_WITH})"
     try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    except sqlite3.Error as err:
-        raise HarvestError(words.format(f"can't be opened: {err}")) from err
-    try:
+        conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)  # as_uri escapes #, ? and %
         try:
             found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_message'")
             if found.fetchone() is None:
-                raise HarvestError(words.format("no session_message table"))
-            cursor = conn.execute(sql, (*windows, 0 if since is None else since * 1000))
-            for raw in cursor:
-                row = _row(raw, windows)
-                if row is None:
-                    continue
-                if importer.check(row, now) is not None:
-                    if stats is not None:
-                        stats["skipped"] = stats.get("skipped", 0) + 1
-                    continue
-                yield row
-        except sqlite3.Error as err:
-            raise HarvestError(words.format(f"can't be read: {err}")) from err
-    finally:
-        conn.close()
+                raise HarvestError(f"{changed}: no session_message table")
+            fetched = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as err:
+        if "locked" in str(err) or "busy" in str(err):
+            raise HarvestError(f"{db} couldn't be read just now (it is busy); try again") from err
+        raise HarvestError(f"{changed}: {err}") from err
+    except sqlite3.DatabaseError as err:  # not a SQLite file
+        raise HarvestError(f"{changed}: {err}") from err
+    now = time.time()
+    for raw in fetched:
+        row = _row(raw, windows)
+        if row is None:
+            continue
+        if row is _REFUSED or importer.check(row, now) is not None:
+            if stats is not None:
+                stats["skipped"] = stats.get("skipped", 0) + 1
+            continue
+        yield row

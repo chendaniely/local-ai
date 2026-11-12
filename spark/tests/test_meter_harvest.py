@@ -78,6 +78,8 @@ def test_rows_from_an_invented_database(tmp_path):
     assert [r["mid"] for r in rows] == ["m1", "m2", "m3"]
     a, b, c = rows
     assert (a["in"], a["out"], a["reas"], a["cr"], a["cw"]) == (100, 20, 5, 7, 3)
+    assert (b["in"], b["out"], b["reas"], b["cr"], b["cw"]) == (50, 10, 0, 40, 0)
+    assert (c["in"], c["out"], c["reas"], c["cr"], c["cw"]) == (9, 8, 0, 0, 0)
     assert (a["t0"], a["t1"]) == (T0_MS / 1000, (T0_MS + 5000) / 1000)
     assert (a["prov"], a["model"], a["v"], a["src"]) == ("spark-sglang", "qwen3.8-27b", 1, "opencode")
     assert [r["end"] for r in rows] == ["done", "done", "cut"]
@@ -91,11 +93,14 @@ def test_other_error_is_error(tmp_path):
     assert [r["end"] for r in harvest.harvest(db, providers(), None)] == ["error"]
 
 
-def test_nothing_but_numbers_and_ids_leaves(tmp_path):
+def test_nothing_but_numbers_and_ids_leaves(tmp_path, capsys, monkeypatch):
     db = tmp_path / "o.db"
     build(db, [("m1", "assistant", msg(error="provider.internal"), T0_MS)])
     rows = list(harvest.harvest(db, providers(), None))
-    text = json.dumps(rows)
+    monkeypatch.setenv("SPARK_OPENCODE_DB", str(db))
+    assert cli.main(["usage", "harvest", "--source", "opencode"]) == 0
+    out, err = capsys.readouterr()
+    text = json.dumps(rows) + out + err
     for mark in (CONTENT_MARK, ERROR_MARK, TITLE_MARK, SESSION):
         assert mark not in text
     assert rows[0]["sid"] == hashlib.sha256(SESSION.encode()).hexdigest()[:16]
@@ -107,10 +112,83 @@ def test_running_and_tokenless_and_outside_window_skipped(tmp_path):
     build(db, [
         ("run", "assistant", msg(completed=None), T0_MS),
         ("notok", "assistant", msg(tokens=None), T0_MS),
-        ("early", "assistant", msg(created=1_760_000_000_000, completed=1_760_000_001_000), T0_MS),
+        ("early", "assistant", msg(created=1_770_000_000_000, completed=1_770_000_001_000), T0_MS),
         ("ok", "assistant", msg(), T0_MS),
     ])
-    assert [r["mid"] for r in harvest.harvest(db, providers(), None)] == ["ok"]
+    stats: dict = {}
+    assert [r["mid"] for r in harvest.harvest(db, providers(), None, stats)] == ["ok"]
+    assert "skipped" not in stats  # left out by the window, not refused by the check
+
+
+def test_provider_end_is_a_window(tmp_path):
+    db = tmp_path / "o.db"
+    build(db, [("in", "assistant", msg(), T0_MS), ("late", "assistant", msg(created=T0_MS + 10_000_000,
+                                                                              completed=T0_MS + 10_001_000), T0_MS)])
+    ended = [prices.Provider("opencode", "spark-sglang", False, None, T0_MS / 1000 + 1000, None)]
+    stats: dict = {}
+    assert [r["mid"] for r in harvest.harvest(db, ended, None, stats)] == ["in"]
+    assert "skipped" not in stats
+
+
+def test_missing_count_is_skipped_and_counted(tmp_path):
+    db = tmp_path / "o.db"
+    gap = msg()
+    del gap["tokens"]["cache"]["read"]
+    build(db, [("gap", "assistant", gap, T0_MS), ("ok", "assistant", msg(), T0_MS)])
+    stats: dict = {}
+    assert [r["mid"] for r in harvest.harvest(db, providers(), None, stats)] == ["ok"]
+    assert stats["skipped"] == 1
+
+
+def test_odd_characters_in_the_path_stay_read_only(tmp_path):
+    folder = tmp_path / "d"
+    folder.mkdir()
+    db = folder / "a#b?c%d.db"
+    standard(db)
+    before = sorted(p.name for p in folder.iterdir())
+    assert len(list(harvest.harvest(db, providers(), None))) == 3
+    assert sorted(p.name for p in folder.iterdir()) == before
+
+
+def test_connection_is_read_only_and_closed_before_rows(tmp_path, monkeypatch):
+    db = tmp_path / "o.db"
+    standard(db)
+    seen = []
+    real = sqlite3.connect
+
+    def spy(target, *args, **kwargs):
+        seen.append((target, kwargs))
+        conn = real(target, *args, **kwargs)
+        seen.append(conn)
+        return conn
+
+    monkeypatch.setattr(harvest.sqlite3, "connect", spy)
+    rows = harvest.harvest(db, providers(), None)
+    next(rows)
+    target, kwargs = seen[0]
+    assert target.endswith("?mode=ro") and kwargs.get("uri") is True
+    with pytest.raises(sqlite3.ProgrammingError):  # closed already, with rows still to come
+        seen[1].execute("SELECT 1")
+
+
+def test_a_busy_database_is_not_called_a_schema_change(tmp_path, monkeypatch):
+    db = tmp_path / "o.db"
+    standard(db)
+
+    def busy(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(harvest.sqlite3, "connect", busy)
+    with pytest.raises(harvest.HarvestError, match="busy") as err:
+        list(harvest.harvest(db, providers(), None))
+    assert "isn't an OpenCode" not in str(err.value)
+
+
+def test_not_a_sqlite_file(tmp_path):
+    db = tmp_path / "junk.db"
+    db.write_bytes(b"this is not a database at all" * 20)
+    with pytest.raises(harvest.HarvestError, match=r"isn't an OpenCode database \(tested with 2\.2\.7\)"):
+        list(harvest.harvest(db, providers(), None))
 
 
 def test_since(tmp_path):
@@ -152,7 +230,7 @@ def test_read_only(tmp_path):
 
 def test_missing_and_changed_database(tmp_path, capsys, monkeypatch):
     missing = tmp_path / "none.db"
-    with pytest.raises(harvest.HarvestError, match="OpenCode 2.2.7"):
+    with pytest.raises(harvest.HarvestError, match=r"2\.2\.7"):
         list(harvest.harvest(missing, providers(), None))
     assert not missing.exists()
     other = tmp_path / "other.db"
@@ -160,11 +238,11 @@ def test_missing_and_changed_database(tmp_path, capsys, monkeypatch):
     conn.execute("CREATE TABLE message (id text)")
     conn.commit()
     conn.close()
-    with pytest.raises(harvest.HarvestError, match="OpenCode 2.2.7"):
+    with pytest.raises(harvest.HarvestError, match=r"2\.2\.7"):
         list(harvest.harvest(other, providers(), None))
     for path in (missing, other):
         assert cli.main(["usage", "harvest", "--source", "opencode", "--db", str(path)]) == 1
-        assert "OpenCode 2.2.7" in capsys.readouterr().err
+        assert capsys.readouterr().err.count("2.2.7") == 1
 
 
 def test_default_db_resolves_when_called(tmp_path, monkeypatch):
@@ -183,4 +261,8 @@ def test_rows_pass_the_import_check(tmp_path):
 def test_no_by_hand_providers_prints_nothing(tmp_path, capsys, monkeypatch):
     db = tmp_path / "o.db"
     standard(db)
-    assert list(harvest.harvest(db, [], None)) == []
+    monkeypatch.setenv("SPARK_OPENCODE_DB", str(db))
+    monkeypatch.setattr(prices, "by_hand", lambda book, harness: [])
+    assert cli.main(["usage", "harvest", "--source", "opencode"]) == 0
+    out, err = capsys.readouterr()
+    assert out == "" and err.strip() == "harvest: 0 rows"
