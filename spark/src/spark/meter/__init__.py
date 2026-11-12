@@ -38,6 +38,19 @@ def _rows(args: argparse.Namespace) -> int:
     return 0
 
 
+def _summary(args: argparse.Namespace) -> int:
+    import json
+    import time
+
+    from spark.meter import prices, store, summary
+
+    private = summary.read_private()  # first, so a private file that can't be used prints nothing on stdout
+    book = prices.load()
+    made = summary.summarize(store.read(book), book, private, time.time(), hours=args.hours)
+    print(json.dumps(made) if args.json else summary.words(made))
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     usage = subparsers.add_parser("usage", help="the usage meter: what the models would have cost at Claude's prices")
     verbs = usage.add_subparsers(dest="usage_command", required=True)
@@ -45,3 +58,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     rows.add_argument("--since", type=_since, default=None, metavar="DATE|EPOCH",
                       help="only rows from this ISO date (00:00 UTC) or epoch second on")
     rows.set_defaults(func=_rows)
+    summary = verbs.add_parser("summary", help="today, this month, last month and all time at Claude's prices, in "
+                                               "Dan's zone")
+    summary.add_argument("--json", action="store_true", help="the summary spark-menu reads (its contract, v1), as one "
+                                                             "JSON object")
+    summary.add_argument("--hours", action="store_true", help="with --json, add the totals per UTC hour, key and model")
+    summary.set_defaults(func=_summary)

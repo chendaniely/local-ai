@@ -1,0 +1,250 @@
+"""spark.meter.summary and `spark usage summary`: the spend at Claude's prices by day, month and all time, in Dan's
+zone. Every row, price and file here is invented."""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime as dt
+import json
+from decimal import Decimal
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from spark import cli, paths
+from spark.meter import prices, summary
+from spark.meter.store import Row, Store
+
+BOOK = prices.load()
+VAN = "America/Vancouver"
+LA = "America/Los_Angeles"  # Vancouver has no fall-back in tzdata 2026e (BC keeps UTC-7); Los Angeles still does
+CONTRACT_KEYS = {"v", "made_at", "zone", "zone_from", "counter_start", "last_row_at", "periods", "by_model", "flags",
+                 "coverage", "electricity", "break_even"}
+_ids = iter(range(1, 10_000))
+
+
+def utc(text: str) -> float:
+    return dt.datetime.fromisoformat(text).replace(tzinfo=dt.timezone.utc).timestamp()
+
+
+def local(text: str, zone: str = VAN) -> float:
+    """A wall-clock time in the zone, so a test doesn't depend on which tzdata release says what the offset is."""
+    return dt.datetime.fromisoformat(text).replace(tzinfo=ZoneInfo(zone)).timestamp()
+
+
+def row(t0: float, model: str | None = "qwen3.8-27b", p: int | None = 1_000_000, c: int | None = 900_000,
+        o: int | None = 10_000, end: str = "done", **more) -> Row:
+    """A front row; at Opus's line, the defaults cost $0.78."""
+    return Row("front", f"{next(_ids):016x}", t0, t0 + 5, model, p, c, o, end, key="demo", **more)
+
+
+def make(rows, now, zone=VAN, price=None, *, hours=False, **store) -> dict:
+    return summary.summarize(Store(list(rows), **store), BOOK, summary.Private(price, zone), now, hours=hours)
+
+
+def test_periods_follow_the_zone():
+    now = local("2026-11-12T12:00")
+    rows = [row(local("2026-10-31T23:30")),  # 06:30 UTC on 2026-11-01
+            row(local("2026-11-11T23:30")), row(local("2026-11-12T00:30")), row(local("2026-09-30T12:00"))]
+    out = make(rows, now)
+    periods = out["periods"]
+    assert (periods["last_month"]["requests"], periods["this_month"]["requests"]) == (1, 2)
+    assert (periods["today"]["requests"], periods["all_time"]["requests"]) == (1, 4)
+    assert dt.datetime.fromtimestamp(rows[0].t0, dt.timezone.utc).day == 1  # the next day in UTC
+    assert [periods[k]["label"] for k in ("today", "this_month", "last_month", "all_time")] == [
+        "2026-11-12", "2026-11", "2026-10", "all"]
+    assert (out["zone"], out["zone_from"]) == (VAN, "private_file")
+
+
+def test_last_month_of_january_is_december():
+    out = make([row(local("2026-12-31T23:00")), row(local("2027-01-01T01:00"))], local("2027-01-15T12:00"))
+    assert out["periods"]["last_month"]["label"] == "2026-12"
+    assert out["periods"]["last_month"]["requests"] == out["periods"]["this_month"]["requests"] == 1
+
+
+def test_dst():
+    z = ZoneInfo(LA)
+    assert z.utcoffset(dt.datetime(2026, 10, 31)) != z.utcoffset(dt.datetime(2026, 11, 2))  # the fall-back is there
+    rows = [row(utc("2026-11-01T06:59")),  # 23:59 PDT, 31 October
+            row(utc("2026-11-01T07:30")),  # 00:30 PDT, 1 November
+            row(utc("2026-11-01T08:30")), row(utc("2026-11-01T09:30")),  # 01:30 PDT, then 01:30 PST again
+            row(utc("2026-11-02T07:30"))]  # 23:30 PST, still 1 November (00:30 the 2nd at PDT's offset)
+    periods = make(rows, utc("2026-11-02T07:45"), LA)["periods"]
+    assert periods["today"]["label"] == "2026-11-01" and periods["today"]["requests"] == 4
+    assert (periods["this_month"]["requests"], periods["last_month"]["requests"]) == (4, 1)
+    later = make(rows + [row(utc("2026-11-02T08:30"))], utc("2026-11-02T09:00"), LA)["periods"]
+    assert (later["today"]["label"], later["today"]["requests"]) == ("2026-11-02", 1)
+
+
+def test_usd_includes_the_estimate():
+    t = local("2026-11-05T10:00")
+    reported = row(t)  # $0.78
+    estimated = dataclasses.replace(row(t + 60, p=500_000, c=400_000, o=5_000), source="opencode", key=None,
+                                    provider="spark-sglang", session="a" * 16, c_estimated=True)  # $0.58
+    this = make([reported, estimated], local("2026-11-06T10:00"))["periods"]["this_month"]
+    assert (this["usd"], this["usd_estimated"]) == (1.36, 0.58)
+    assert (this["requests"], this["p"], this["c"], this["o"], this["unpriced"]) == (2, 1_500_000, 1_300_000, 15_000, 0)
+    assert isinstance(this["usd"], float)
+
+
+def test_unpriced_and_flags():
+    t = local("2026-11-05T10:00")
+    rows = [row(t, end="error"), row(t, end="cut"), row(t, end="gone"), row(t, "made-up-model"),
+            row(t, "qwen3-embedding-0.6b", c=0, o=0), row(t, c=None, dropped=2),
+            row(local("2026-10-05T10:00"), "made-up-model"), row(local("2026-10-05T10:00"), end="error")]
+    out = make(rows, local("2026-11-06T10:00"), bad_lines=3)
+    this = out["periods"]["this_month"]
+    assert (this["requests"], this["unpriced"], this["usd"]) == (6, 2, 0.0)
+    assert out["flags"] == {"unmapped": {"made-up-model": 1}, "interrupted": 2, "errors": 1, "cache_unknown": 1,
+                            "dropped": 2, "bad_lines": 3}
+    without_embedding = make(rows[:4] + rows[5:], local("2026-11-06T10:00"), bad_lines=3)
+    assert without_embedding["flags"] == out["flags"]
+    assert without_embedding["periods"]["this_month"]["unpriced"] == this["unpriced"]
+    assert without_embedding["periods"]["this_month"]["requests"] == this["requests"] - 1
+
+
+def test_share_of_price(tmp_path):
+    rows = [row(local("2026-10-05T10:00"), p=0, c=0, o=1_000_000), row(local("2026-11-05T10:00"), p=0, c=0,
+                                                                         o=1_000_000)]  # $20 each
+    out = make(rows, local("2026-11-06T10:00"), price=Decimal("4000"))
+    assert (out["periods"]["all_time"]["usd"], out["periods"]["all_time"]["share_of_price"]) == (40.0, 0.01)
+    assert "share_of_price" not in out["periods"]["this_month"]
+    private = summary.read_private(tmp_path / "absent.yaml")
+    assert private == summary.Private(None, None)
+    bare = summary.summarize(Store(rows), BOOK, private, local("2026-11-06T10:00"))
+    assert bare["periods"]["all_time"]["share_of_price"] is None and bare["zone_from"] == "system"
+
+
+def test_read_private(tmp_path):
+    path = tmp_path / "meter.yaml"
+    path.write_text("price_usd: 1234.5\nzone: Europe/Paris\nkwh_usd: 0.2\n")
+    assert summary.read_private(path) == summary.Private(Decimal("1234.5"), "Europe/Paris")
+    path.write_text("")
+    assert summary.read_private(path) == summary.Private(None, None)
+
+
+def test_private_file_errors_never_show_values(tmp_path):
+    path = tmp_path / "meter.yaml"
+    cases = [("price_usd: -5\n", "price_usd", "-5"), ("price_usd: 0\n", "price_usd", None),
+             ("price_usd: lots\n", "price_usd", "lots"), ("price_usd: true\n", "price_usd", "True"),
+             ("zone: Mars/Olympus\n", "zone", "Mars"), ("zone: 7\n", "zone", None),
+             ("price_usd: [98765.4\n", "YAML", "98765"), ("- 98765.4\n", "mapping", "98765")]
+    for text, named, hidden in cases:
+        path.write_text(text)
+        with pytest.raises(ValueError) as err:
+            summary.read_private(path)
+        message = str(err.value)
+        assert named in message and str(path) in message, text
+        if hidden is not None:
+            assert hidden not in message.replace(str(path), ""), text
+        context = err.value.__context__ is None or err.value.__suppress_context__
+        assert err.value.__cause__ is None and context, text  # no traceback shows the YAML error's excerpt
+
+
+def test_zone_of(tmp_path):
+    link = tmp_path / "localtime"
+    link.symlink_to("/usr/share/zoneinfo/Europe/Paris")  # never read: only the link's text is
+    zone, name, source = summary.zone_of(summary.Private(), link)
+    assert (name, source) == ("Europe/Paris", "system") and zone == ZoneInfo("Europe/Paris")
+    assert summary.zone_of(summary.Private(zone=LA), link)[1:] == (LA, "private_file")
+    for target in ("/nowhere/at/all", "/usr/share/zoneinfo/Mars/Olympus"):
+        other = tmp_path / f"link{len(target)}"
+        other.symlink_to(target)
+        zone, name, source = summary.zone_of(summary.Private(), other)
+        assert (name, source) == ("localtime", "system") and zone.utcoffset(None) is not None
+    plain = tmp_path / "plain"
+    plain.write_text("not a link")
+    assert summary.zone_of(summary.Private(), plain)[1] == "localtime"
+
+
+def test_by_model_sorted():
+    t = local("2026-11-05T10:00")
+    rows = [row(t, "gemma-4-26b-a4b", o=1_000), row(t, "qwen3.8-27b", o=500_000), row(t, "gemma-4-26b-a4b", o=1_000),
+            row(local("2026-10-05T10:00"), "gemma-4-26b-a4b", p=0, c=0, o=10_000_000)]
+    by_model = make(rows, local("2026-11-06T10:00"))["by_model"]
+    month = [m for m in by_model if m["period"] == "this_month"]
+    assert [m["model"] for m in month] == ["qwen3.8-27b", "gemma-4-26b-a4b"]
+    assert month[0]["usd"] > month[1]["usd"] and month[1]["requests"] == 2 and month[1]["tier"] == "opus"
+    assert set(month[0]) == {"model", "tier", "period", "usd", "usd_estimated", "requests", "p", "c", "o"}
+    assert [m["model"] for m in by_model if m["period"] == "all_time"] == ["gemma-4-26b-a4b", "qwen3.8-27b"]
+    assert by_model[:2] == month
+    unmapped = make([row(t, "made-up-model")], local("2026-11-06T10:00"))["by_model"][0]
+    assert unmapped["tier"] is None and unmapped["usd"] == 0.0
+
+
+def test_hours_only_when_asked():
+    t = utc("2026-11-05T10:05")
+    rows = [row(t), row(t + 600), row(t + 3600), row(t, "gemma-4-26b-a4b")]
+    assert "hours" not in make(rows, utc("2026-11-06T10:00"))
+    hours = make(rows, utc("2026-11-06T10:00"), hours=True)["hours"]
+    first = hours[0]
+    assert first == {"hour": int(utc("2026-11-05T10:00")), "source": "front", "key": "demo", "provider": None,
+                     "model": "gemma-4-26b-a4b", "usd": 0.78, "requests": 1, "p": 1_000_000, "c": 900_000,
+                     "o": 10_000}
+    pair = hours[1]
+    assert (pair["model"], pair["requests"], pair["usd"], pair["p"], pair["o"]) == (
+        "qwen3.8-27b", 2, 1.56, 2_000_000, 20_000)
+    assert [h["hour"] for h in hours] == sorted(h["hour"] for h in hours) and len(hours) == 3
+
+
+def test_coverage_and_times():
+    month_start = local("2026-11-01T00:00")
+    spans = [(month_start - 100, month_start - 50), (month_start - 10, month_start + 10), (month_start + 500, None)]
+    rows = [row(local("2026-11-05T10:00")),
+            dataclasses.replace(row(local("2026-10-03T10:00")), source="opencode", key=None, provider="spark-sglang"),
+            row(local("2026-10-04T10:00"))]
+    out = make(rows, local("2026-11-06T10:00"), counting_off=spans, last_import=month_start + 7, imported=12)
+    assert out["coverage"] == {"counting_off": [[month_start - 10, month_start + 10], [month_start + 500, None]],
+                               "imported": {"opencode": {"last_import": month_start + 7, "rows": 12}},
+                               "not_counted": ["by-hand engines: counted from heartsbane's OpenCode only"]}
+    assert (out["counter_start"], out["last_row_at"]) == (rows[2].t0, rows[0].t0)
+    assert (out["made_at"], out["v"], out["electricity"], out["break_even"]) == (local("2026-11-06T10:00"), 1, None,
+                                                                                 None)
+
+
+def test_empty_store():
+    out = summary.summarize(Store(), BOOK, summary.Private(), utc("2026-11-06T10:00"))
+    assert set(out) == CONTRACT_KEYS
+    for period in out["periods"].values():
+        assert {k: period[k] for k in ("usd", "usd_estimated", "requests", "p", "c", "o", "unpriced")} == {
+            "usd": 0.0, "usd_estimated": 0.0, "requests": 0, "p": 0, "c": 0, "o": 0, "unpriced": 0}
+    assert (out["counter_start"], out["last_row_at"], out["by_model"]) == (None, None, [])
+    assert out["flags"] == {"unmapped": {}, "interrupted": 0, "errors": 0, "cache_unknown": 0, "dropped": 0,
+                            "bad_lines": 0}
+    assert summary.words(out).splitlines()[1].startswith("This month")
+
+
+def test_words():
+    out = make([row(local("2026-11-05T10:00"))], local("2026-11-06T10:00"), price=Decimal("78"))
+    text = summary.words(out)
+    lines = {line.split("  ")[0]: line for line in text.splitlines()}
+    assert "$0.78" in lines["This month"] and "1.0M in" in lines["This month"] and "10.0k out" in lines["This month"]
+    assert "1.0 %" in lines["All time"]
+    assert "—" in summary.words(make([], local("2026-11-06T10:00"))).splitlines()[-1]
+
+
+def test_summary_verb(tmp_path, monkeypatch, capsys):
+    usage = tmp_path / "u"
+    usage.mkdir()
+    lines = [{"v": 1, "id": f"{i:016x}", "t0": t, "t1": t + 5, "key": "demo", "model": "qwen3.8-27b", "end": "done",
+              "p": 1000, "c": 500, "o": 10} for i, t in enumerate([utc("2026-10-30T00:00"), utc("2026-11-02T00:00")])]
+    (usage / "usage-2026-11.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    monkeypatch.setattr(paths, "USAGE_DIR", usage)
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path / "s")
+    monkeypatch.setattr(paths, "GATE_LEDGER_DIR", tmp_path / "l")
+    monkeypatch.setattr(paths, "METER_PRIVATE", tmp_path / "meter.yaml")
+    assert cli.main(["usage", "summary", "--json"]) == 0
+    printed = capsys.readouterr().out
+    assert len(printed.strip().splitlines()) == 1
+    out = json.loads(printed)
+    assert out["v"] == 1 and set(out) == CONTRACT_KEYS and out["periods"]["all_time"]["requests"] == 2
+    assert cli.main(["usage", "summary", "--json", "--hours"]) == 0
+    assert len(json.loads(capsys.readouterr().out)["hours"]) == 2
+    assert cli.main(["usage", "summary"]) == 0
+    starts = [line.split("  ")[0] for line in capsys.readouterr().out.splitlines()]
+    assert {"This month", "Today", "Last month", "All time"} <= set(starts)
+    (tmp_path / "meter.yaml").write_text("price_usd: -31415\n")
+    assert cli.main(["usage", "summary", "--json"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and "price_usd" in captured.err and "31415" not in captured.err

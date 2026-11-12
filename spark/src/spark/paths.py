@@ -26,3 +26,6 @@ FRONT_URL = os.environ.get("SPARK_FRONT_URL", "http://127.0.0.1:9100")
 LLAMASWAP_URL = os.environ.get("SPARK_LLAMASWAP_URL", "http://127.0.0.1:900")
 # The meter's price files (spark.meter.prices): shipped beside the code, so a price edit deploys with it.
 METER_DIR = Path(os.environ.get("SPARK_METER_DIR", Path(__file__).parent / "meter"))
+# The meter's private file (the design's part 2): the Spark's all-in price and Dan's zone, in Dan's own home on the
+# Spark, never in the repo. spark.meter.summary reads it, and its errors name the field, never a value.
+METER_PRIVATE = Path(os.environ.get("SPARK_METER_PRIVATE", Path.home() / ".config/local-ai/meter.yaml"))
