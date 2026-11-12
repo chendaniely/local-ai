@@ -119,8 +119,10 @@ def _imported_rows(book: PriceBook, folder: Path) -> tuple[list[Row], int]:
     for mid, data in last.items():
         t0, prov = float(data["t0"]), data["prov"]
         windows = [p for p in by_hand(book, "opencode") if p.provider == prov]
-        if windows and not any((p.start is None or p.start <= t0) and (p.end is None or t0 < p.end)
-                               for p in windows):
+        if not windows:  # the front already counted a front provider's rows; counting them again would double them
+            bad += 1
+            continue
+        if not any((p.start is None or p.start <= t0) and (p.end is None or t0 < p.end) for p in windows):
             continue
         counts = {k: _count(data.get(k)) or 0 for k in ("in", "out", "reas", "cr", "cw")}
         t1, model = data.get("t1"), data.get("model")
@@ -134,7 +136,7 @@ def _imported_rows(book: PriceBook, folder: Path) -> tuple[list[Row], int]:
 def imported_rows(book: PriceBook, folder: Path | None = None) -> list[Row]:
     """The imported rows of `folder` (paths.USAGE_SESSIONS_DIR, read when called): P = in + cr + cw, O = out + reas,
     C = cr only where the provider's engine reported a cache by then. A by-hand provider's rows from outside its
-    window are left out."""
+    window are left out, and a provider that isn't a by-hand one of OpenCode's is dropped, counted as a bad line."""
     return _imported_rows(book, paths.USAGE_SESSIONS_DIR if folder is None else folder)[0]
 
 

@@ -115,3 +115,10 @@ def test_read_joins_all_three(tmp_path, monkeypatch):
     assert result.bad_lines == 1 and result.imported == 2 and result.last_import == 1793000100.0
     assert result.counting_off == [(9.0, None)] and len(result.rows) == 3
     assert [r.c for r in result.rows if r.source == "opencode"] == [0, 100]
+
+
+def test_a_provider_that_is_not_by_hand_is_dropped_and_counted(tmp_path):
+    write(tmp_path / "opencode.jsonl", [imp("m1", prov="spark"), imp("m2", prov="made-up-provider"),
+                                        imp("m3", prov="spark-sglang")])
+    rows, bad = store._imported_rows(BOOK, tmp_path)
+    assert [r.id for r in rows] == ["m3"] and bad == 2
