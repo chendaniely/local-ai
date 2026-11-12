@@ -407,3 +407,8 @@ recommended option, with no words of his own.
 "plan look sgood. just let me know what commands on what computer and what branch need to be run". So
 the Mac's half gets built on this branch and in the dotfiles, and Dan gets the commands for the Spark's
 half, each with its machine and branch.
+
+**How it gets built.** Offered, with [the implementation plan](usage-meter-now-plan.md) written: a fresh
+implementer and reviewer per task, then a whole-branch review, as Tasks 44a–44j were built (recommended);
+every task in one session, with one review at the end; or only the local-ai half now. **Dan: a subagent
+per task.** He picked the recommended option, with no words of his own.
