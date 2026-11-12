@@ -2608,6 +2608,12 @@ Each item gets its own design pass when its turn comes.
   other machines — which could take in the Spark through a small role that runs this repo's `make
   bootstrap` and `make apply`, never replacing them; not for the Spark now (Dan, 2026-10-07: "later";
   the [Q&A](phase-2a-qa.md) has the reasons).
+- **Tests that need Linux skip elsewhere** (Dan, 2026-11-11, "ok your rec A"): on the Mac, 62
+  tests of code that runs only on the Spark fail by design, as [Tools each machine
+  needs](../how-to/tools.md#what-fails-on-the-mac-by-design) lists. A **[Spark]** task marks each
+  to skip off Linux, with its reason (GNU find's `-perm /`, Linux's `/proc`), as `test_hog.py`
+  already does for `/proc/self/status`, so a Mac run shows only real failures; the page's table
+  then says so. Small, any time.
 - **Provider naming** (Dan, 2026-10-19): the provider pointing at the Spark's front, `spark`
   in pi, opencode and Hermes, is to carry a machine-specific name — `brightroar - spark`, or
   `Brightroar (spark)` — because Dan has a second Spark as a work machine, so `spark` alone is
@@ -4696,6 +4702,10 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   batches run without the Mac: vid2sub on the Spark over a network-mounted folder, or on another
   machine at home against the Spark. *Open items and risks* gains *vid2sub's batches without the
   Mac*, and vid2sub's row on [Projects that use the stack](../reference/projects.md) says so.
+- **2026-11-11** — How-to gains [Tools each machine needs](../how-to/tools.md), at Dan's request:
+  the install commands for the Mac, the Spark and CI, after a Mac test run failed for want of
+  coreutils' `timeout`. It lists the 62 tests that fail on the Mac by design, and the Backlog gains
+  *Tests that need Linux skip elsewhere*, a **[Spark]** task.
 
 ## Sources
 

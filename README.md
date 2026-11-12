@@ -363,7 +363,9 @@ when that file was retired on 2026-09-23.
   **0.12.18**; Quarto **1.10.3**, for `make docs`; gh **2.101.0** (all as of 2026-09-24).
   Homebrew's coreutils **9.12** (2026-09-29): the install-units tests run its `timeout`, and fail
   on a Mac without it. gh's login carries the `workflow` scope (2026-09-29), which a push that
-  changes `.github/workflows/` needs; without it GitHub refuses the push.
+  changes `.github/workflows/` needs; without it GitHub refuses the push. [Tools each machine
+  needs](website/how-to/tools.md) gives the install commands for the Mac, the Spark and CI, and
+  the tests that pass only on Linux (2026-11-11).
 - **Pi** (2026-09-28, Phase 1 Task 15) **0.87.1**, from Homebrew and unpinned, by Dan's decision
   that day. `make clients` wrote its `spark` provider, with Gemma and the coder at 262,144 tokens
   each, and `make tunnel` carries it to the Spark's llama-swap. Task 15 first ran it at the pin,
