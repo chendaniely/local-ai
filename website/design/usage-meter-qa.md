@@ -356,3 +356,34 @@ to break down by other dates and models". The design's §4 already holds that, i
 shows this month, last month, today and all time. A monthly figure needs the sync as well, since the
 by-hand SGLang doesn't pass through the front. The separate dashboard stays the project of its own
 it was.
+
+## The menu's numbers now (2026-11-12)
+
+**What Dan asked.** "the swiftbar application is located in the docfiles repo. i want to implmeent the
+spark model token cost into it so that data is aviable on the spark dashboard and is constnatly
+updated (doesn't need to be realtime a delay is okay)". The counter (Tasks 44a–44j) is merged into
+`phase-2a` but not deployed (Task 44l), and `spark usage summary`, the mapping and the prices are
+Phase 2b's, so the menu had nothing to show.
+
+**Q: When does the Spark's half get built: the summary, the mapping and the prices?** Offered: with
+the counter's deploy, in Phase 2a, before the soak (recommended); the menu now against invented data,
+with the Spark's half kept for 2b; or the Mac pricing the raw rows itself.
+
+**Dan: with the counter's deploy, in Phase 2a.** "i want to go with option 1, i want to get the token
+cost estimates now. base it off of claude pricing. i should have some notes in the past plan on what
+i want the data to be formatted like so it can be changed as models and pricing changes over time and
+i want the data in enough granuar form that they can be aggregated and viewed in different ways for a
+larger spark dashboard application". The notes are the design's §3: a mapping of each local model to
+a Claude tier, dated price lines, rows that keep tokens and never dollars, and a summary that totals
+by UTC hour, key and model.
+
+**Q: The by-hand SGLang coder, Dan's default, doesn't pass through the front, so the counter can't
+see its tokens. What does the menu do about it?** Offered: a placeholder line, with its tokens read
+back from the Mac's harness files later (recommended, from Dan's words of 2026-11-09); a Mac reader
+for them now; or the fast coder put behind the front now.
+
+**Dan: read them on the Mac now, and plan the front for later.** "calculate the data from the mac now.
+so we dont' need more infraastructure from the mac, then plan local-ai like option 3. OR i can just not
+use the SGLang model". So the fast coder's tokens are read from the Mac's harness files now; the plan
+gains putting the fast coder behind the front, which ends that reading's window; and if Dan stops
+using SGLang, the Mac's reading is only needed for its past.
