@@ -120,13 +120,20 @@ sends no effort at all, and the template then uses its own default, `xhigh`, the
 with opencode 2.0.25 against a stand-in server that recorded what each choice sent: `high` is now
 refused inside opencode, before anything is sent.)*
 
-## If opencode says Unauthorized
+## If opencode says Unauthorized, or that the Spark doesn't know the key
 
 opencode 2 runs one **background service**, and every opencode window you open hands its requests
 to it. The service has the environment it started with. A key you added to `~/.secrets` after it
 started isn't in it, so opencode sends an empty key, and the Spark answers 401: opencode shows
 `Error: Unauthorized`. A new terminal doesn't help, because the new window uses the same old
 service. Restarting the service from a shell that has the key does.
+
+*(Added 2026-11-12.)* Since the front (2026-10-16) the 401 reads `Error: That API key isn't one the
+Spark knows.`, then which key to check, not `Unauthorized`. And the key needn't be new: when the
+service stops answering, opencode starts another, and if the process that starts it lacks the key, as
+an app opened from the Dock does, the new service lacks it too. Seen 2026-11-12 with opencode 2.2.7:
+the service stopped answering at 14:40, the one that replaced it had no `SPARK_API_KEY`, and opencode
+got the 401 while the same key worked from a terminal. The same restart fixes it.
 
 **On the Mac**, in a terminal opened after the key went into `~/.secrets`:
 
