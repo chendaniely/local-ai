@@ -271,7 +271,7 @@ in them is private, so `git log` is the history of every remap:
   `spark/src/spark/meter/prices.yaml`, dated lines each starting at 00:00 UTC on the day the notes give. These
   first lines were right for 2026-10-06, but Sonnet 5.5's cache reads fell to $0.10 on 2026-10-07, when Haiku 5.5
   arrived (Haiku 4.5 before it), and Fable 5.2 replaced 5.1 on 2026-11-09 at $8/$40. The dated table is in
-  [the first numbers' design](usage-meter-now.md#1-the-price-files-spark). The mapping is `mapping.yaml` beside it, and
+  [the first numbers' design](usage-meter-now.md#the-price-files-spark). The mapping is `mapping.yaml` beside it, and
   the providers' list `providers.yaml`. Built on the `swiftbar-costs` branch, not yet deployed: Task 44l.)*
 
 **The price of a row:** ((*P* − *C*) × input + *C* × cache read + *O* × output) × factor, at the

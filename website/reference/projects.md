@@ -29,8 +29,8 @@ Spark session's GitHub token needs permission to open issues for this; that is n
 What the stack offers its projects, and the file that defines each part. The file is the source of
 truth; this table says only what a project must not miss.
 
-**As of 2026-11-10**, checked against `phase-2a` at `3d314bd`; the `usage` rows are of 2026-11-12, on the
-`swiftbar-costs` branch. A change to a row sets this line to
+**As of 2026-11-10**, checked against `phase-2a` at `3d314bd`; the `usage` rows are of 2026-11-12, made on the
+`swiftbar-costs` branch after `3cec636`. A change to a row sets this line to
 its date and the commit it was made on.
 
 | Part | Defined in | What a project must not miss |

@@ -87,7 +87,7 @@ flowchart TB
     swap["llama-swap · 127.0.0.1:900<br/>as spark, internal keys only"]
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
     usage[("the front's usage records<br/>/var/lib/local-ai/usage · Dan reads<br/>Task 44l deploys")]:::planned
-    sessions[("the Mac's rows for the by-hand engines<br/>/var/lib/local-ai/usage-sessions · Dan reads<br/>Task 44l deploys")]:::planned
+    sessions[("the Mac's rows for the by-hand engines<br/>/var/lib/local-ai/usage-sessions · Dan reads and writes (spark usage import)<br/>Task 44l deploys")]:::planned
     ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]

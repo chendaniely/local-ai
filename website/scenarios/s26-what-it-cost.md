@@ -54,7 +54,7 @@ Two more doctor lines come with the first numbers *(built 2026-11-12, not yet de
 - `meter prices` passes when the price files load, every model of the deployed registry has a line in the mapping, and
   a summary over the live folders runs. It fails naming the models with no line (add one, or `none` for a model left
   unpriced on purpose), or only the error's class when a file or the summary fails; it never prints a figure, a row
-  or a private value. The private file isn't checked: without it the summary shows no share of the Spark's price.
+  or a private value. An absent private file passes (the share shows as a dash); a malformed or unreadable one fails the check, naming the error's class and never the file's contents.
 
 On the Spark, `make usage` prints the summary: what the models would have cost at Claude's prices today, this month,
 last month and all time, with all time as a share of the Spark's price, and flags for a model with no mapping line
