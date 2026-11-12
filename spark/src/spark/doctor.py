@@ -36,6 +36,7 @@ prints a verdict only, never a file's content, a row or a key name.
 from __future__ import annotations
 
 import argparse
+import getpass
 import grp
 import http.client
 import json
@@ -1383,6 +1384,32 @@ def gate_ledger(probe: Probe) -> Check:
     return _meter_folder(probe, "gate ledger", paths.GATE_LEDGER_DIR, LEDGER_OWNER, "gate")
 
 
+def usage_sessions(probe: Probe) -> Check:
+    """The Mac's imported rows: Dan writes them over ssh, so his account owns the folder."""
+    return _meter_folder(probe, "usage sessions", paths.USAGE_SESSIONS_DIR, (getpass.getuser(), "spark-admin"),
+                         "importer")
+
+
+def meter_prices(registry: Registry | None, problem: str | None) -> Check:
+    """The price files load, every model of the deployed registry has a mapping line, and a summary over the live
+    folders runs. The verdict names models, or the error's class: never a figure, a row or a private value."""
+    from spark.meter import prices, store, summary  # here, not at module level: build_parser imports this module
+    name = "meter prices"
+    if registry is None:
+        return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
+    try:
+        book = prices.load()
+        missing = sorted(m for m in registry.models if m not in book.mapping)
+        if missing:
+            return Check(name, False, f"mapping.yaml has no line for {_and(missing)}: add each (`none` if it is "
+                                      "unpriced on purpose), or its tokens go unpriced and flagged")
+        summary.summarize(store.read(book), book, summary.read_private(), time.time())
+    except Exception as err:  # a verdict only: the class, never the message, which may quote a row or a value
+        return Check(name, False, f"the price files or the summary failed ({type(err).__name__}): "
+                                  "`spark usage summary` shows it")
+    return Check(name, True, "the price files load, every registry model has a mapping line, and a summary runs")
+
+
 def counting(probe: Probe, view: dict | None, began: float) -> Check:
     """The meter counts (Task 44g): this month's usage file holds a row whose `t0` is after doctor began (the end-to-end
     check's own request, counted: nothing is printed of it), the gate's ledger has this month's file, and the gate's
@@ -1762,12 +1789,13 @@ def checks(probe: Probe, key: str | None, registry: Registry | None, problem: st
     results = [
         hooks(probe), gpu_set(probe), running_modules(probe), driver(probe), earlyoom(probe), agent_oom(probe),
         firewall(probe), secrets_folder(probe), spark_folders(probe), usage_records(probe), gate_ledger(probe),
+        usage_sessions(probe),
         root_copies(probe), needrestart(probe),
         engine_config(probe), units(probe), sockets(probe), key_list(probe, registry, problem),
         version_drift(probe, registry, problem), llama_swap_config(probe), llama_swap(probe, key, key_env),
         front(probe, key, key_env, not_front=not_front), gate(view, why), ntfy(view), bypass(view, registry),
         web(probe), model(probe, key, registry, view, problem, key_env, not_front=not_front),
-        counting(probe, view, began),
+        counting(probe, view, began), meter_prices(registry, problem),
         s01(registry, problem, view), s02(probe), s03(probe, key, key_env, not_front=not_front), s05(probe, view),
         s14(probe), s17(probe),
     ]

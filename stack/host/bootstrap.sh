@@ -513,6 +513,9 @@ directories() {
   # from the engines. spark-front exists by now (users_and_groups).
   run install -d -o spark-front -g spark-admin -m 2750 /var/lib/local-ai/usage
   run install -d -o spark -g spark-admin -m 2750 /var/lib/local-ai/gate-ledger
+  # The Mac's imported rows for the by-hand engines (`make usage-push`): written over ssh as Dan, so Dan owns it; the
+  # same beside-not-inside rule, and nothing in the stack's units reaches it.
+  run install -d -o "$ADMIN_USER" -g spark-admin -m 2750 /var/lib/local-ai/usage-sessions
   # The pull's own cache (XDG_CACHE_HOME in its unit): hf_xet and huggingface_hub keep more than
   # the model files.
   run install -d -o spark-pull -g spark-pull -m 0750 /var/lib/local-ai/pull-cache

@@ -1259,6 +1259,17 @@ def test_root_makes_the_usage_and_ledger_folders_beside_sparks_never_inside(  # 
     assert lines.index(usage) > index("useradd --system --gid spark-front")
 
 
+def test_root_makes_the_imported_rows_folder_for_dan_to_write(  # Task U7
+):
+    # The Mac's pushed rows land there over ssh as Dan (the admin user), who owns it; spark-admin reads (2750). Beside
+    # spark's folders, never inside.
+    lines = dry_run()
+    line = install_d_line("/var/lib/local-ai/usage-sessions")
+    assert "-g spark-admin -m 2750" in line
+    assert re.search(r"-o \S+ -g spark-admin", line) and "runuser" not in line
+    assert lines.index(line) > lines.index(install_d_line("/var/lib/local-ai/gate-ledger"))
+
+
 def test_spark_gets_its_cache_folders_from_root():
     # spark can't write its home, so the units that run engines or pull models set XDG_CACHE_HOME
     # and CUDA_CACHE_PATH to these. Root creates them directly under its own parent, never inside a

@@ -120,6 +120,15 @@ def test_help_says_what_tunnel_and_brake_release_reach():
     assert "through the gate" in lines["brake-release"] and "directly" in lines["brake-release"]
 
 
+def test_make_usage_and_usage_push_run_the_summary_and_the_harvest_piped_to_the_spark():
+    assert make("-n", "usage").stdout.splitlines() == ["uv run --frozen --quiet --project spark spark usage summary"]
+    assert make("-n", "usage-push").stdout.splitlines() == [
+        "uv run --frozen --quiet --project spark spark usage harvest --source opencode | "
+        "ssh brightroar /opt/local-ai/app/.venv/bin/spark usage import --source opencode"]
+    lines = {line.split()[0]: line for line in make("help").stdout.splitlines()}
+    assert "On the Spark" in lines["usage"] and "On the Mac" in lines["usage-push"]
+
+
 # make test's memory cap (Dan's decision, 2026-10-15): where /opt/local-ai exists, the Spark, pytest runs in a user
 # scope capped at memory_cap.CAP_GIB with no swap, after a check that the user manager answers; elsewhere (the Mac, CI's
 # runners) as before. SPARK_OPT on make's command line stands in for that folder, there or not.
