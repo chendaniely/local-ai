@@ -12,6 +12,9 @@ LAUNCH = Path(os.environ.get("SPARK_LAUNCH", "/var/lib/local-ai/launch"))  # adm
 WHISPER_TMP = Path(os.environ.get("SPARK_WHISPER_TMP", "/var/lib/local-ai/whisper-tmp"))  # whisper's --tmp-dir
 # The front's usage rows, one file a UTC month (spark.rowfile), which only spark-admin reads.
 USAGE_DIR = Path(os.environ.get("SPARK_USAGE_DIR", "/var/lib/local-ai/usage"))
+# The rows imported from a harness's own session store (the meter's design, part 3): usage-sessions/opencode.jsonl and
+# opencode.imported, written by the import, read by spark.meter.store.
+USAGE_SESSIONS_DIR = Path(os.environ.get("SPARK_USAGE_SESSIONS", "/var/lib/local-ai/usage-sessions"))
 # The gate's ledger (gate.ledger), the same way: beside the gate's own folder, never inside it.
 GATE_LEDGER_DIR = Path(os.environ.get("SPARK_GATE_LEDGER", "/var/lib/local-ai/gate-ledger"))
 # The gate's two sockets, which systemd holds: the status socket for group spark-users, the control socket for
