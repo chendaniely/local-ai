@@ -7,6 +7,7 @@ date: 2026-10-22
 # The usage meter — design
 
 **Status: approved; ~~a draft for Dan's approval (2026-10-22),~~ revised after its design council.**
+*(2026-11-12: Dan brought §3's `spark usage`, its prices and §4's usage section forward, and one slice of §7, ahead of Phase 2b: [the first numbers' design](usage-meter-now.md). Where it changes a section below, that section says so, dated.)*
 *(Recorded 2026-11-09, at the counter's Task 44k. No note records the day Dan approved it: this page
 said it would merge into `phase-2a` once he had, and it merged on 2026-11-09, #32.)* Every
 decision here comes from [its questions and answers](usage-meter-qa.md), which keep Dan's words and
@@ -266,6 +267,12 @@ in them is private, so `git log` is the history of every remap:
   $0.10/$0.50 up to 100K and $0.50/$2.50 above; Fable 5.1 $10/$50, $0.25. Cache-write rates, Haiku's
   cache-read rate and every start date are checked against Anthropic's pricing page by the builder;
   the cache-read rate matters most, since cache reads are most of the tokens.
+  *(2026-11-12, checked against Anthropic's pricing page and release notes, and built: the prices are
+  `spark/src/spark/meter/prices.yaml`, dated lines each starting at 00:00 UTC on the day the notes give. These
+  first lines were right for 2026-10-06, but Sonnet 5.5's cache reads fell to $0.10 on 2026-10-07, when Haiku 5.5
+  arrived (Haiku 4.5 before it), and Fable 5.2 replaced 5.1 on 2026-11-09 at $8/$40. The dated table is in
+  [the first numbers' design](usage-meter-now.md#1-the-price-files-spark). The mapping is `mapping.yaml` beside it, and
+  the providers' list `providers.yaml`. Built on the `swiftbar-costs` branch, not yet deployed: Task 44l.)*
 
 **The price of a row:** ((*P* − *C*) × input + *C* × cache read + *O* × output) × factor, at the
 line in effect at the row's start; Haiku's band tested on the whole prompt, switching every rate for
@@ -304,6 +311,11 @@ presence only, never reading them into a transcript.
   when it is negligible.
 
 ### 4. spark-menu reads it **[Mac]**
+
+*(2026-11-12: the poll described next is built differently, by [the first numbers' design](usage-meter-now.md), part 4:
+the summary is a call of its own every 60 seconds, not part of the 10-second probe, kept whole in `usage.json`; the
+section has no electricity or break-even line until Phase 2b's estimate lands. Built in Dan's dotfiles, not yet
+deployed.)*
 
 spark-menu already keeps one SSH master to the Spark and a poller that makes one remote call every
 10 s, writing a reading to its state folder (`~/.local/state/spark-tunnel/`), which its plugin only
@@ -384,6 +396,11 @@ words in `messages.py` and the refusal tables, `clients.py`, `brake.py`, and the
 opencode-hermes, secret-files, updates and speed-tests runbooks) change where a key changes.
 
 ### 7. The sync, and the lifetime baseline **[Mac]** **[Spark]** **[Dan]**
+
+*(2026-11-12: one slice of the sync is built ahead of Phase 2b, [the first numbers' design](usage-meter-now.md), part 3:
+`spark usage harvest --source opencode` reads OpenCode's rows for the by-hand engines on the Mac, spark-menu pipes
+them every 5 minutes to `spark usage import`, and they land in `/var/lib/local-ai/usage-sessions`. It stops reading
+the fast coder when that moves behind the front. Not yet deployed: Task 44l.)*
 
 **The sync** (Dan's decision). The front sees each request, but only a harness knows the session it
 belonged to, its subagents, and what the by-hand engines served. So the readers below run every
@@ -504,8 +521,12 @@ leaves `gone`)*, and an unwritable folder never stopping the front; Task 50 sees
 a `cut` row and refusals give rows with their codes. Both done-when lists gain the meter; Task 51's
 file lists and Task 52's Mac check (`make clients`) gain its files.
 
-**Phase 2b:** `spark usage`, the mapping, the prices, the providers' list, the summary and the
-private file; the readers, the reconciliation window, then the sync, whose first run is the
+*(2026-11-12: `spark usage`, the mapping, the prices, the providers' list, the summary and the private file, and
+spark-menu's usage section, moved forward to deploy with Task 44l, before the soak, with one slice of the sync; the rest
+of this list stays Phase 2b's. [The first numbers' design](usage-meter-now.md), "Non-goals" and "Where the work runs".)*
+
+**Phase 2b:** ~~`spark usage`, the mapping, the prices, the providers' list, the summary and the
+private file;~~ *(moved forward, as above)* the readers, the reconciliation window, then the sync, whose first run is the
 baseline; spark-menu's usage section, after it moves here; Pi's line, then OpenCode's; the shared
 key's retirement from the Spark's runbooks; then Posit Assistant's and Hermes's lines when their
 turn comes. `agent`'s line waits for a view of its own numbers. The plug is a task of its own,
@@ -546,6 +567,10 @@ the caps' new number; the reconciliation's tolerance.
   - the cached counts are lost for any run started without `--enable-cache-report`, the run of 2026-10-26 among them:
     those rows are "cache unknown", as §1 has it *(checked 2026-11-09: cache read and write are 0 on every row, so a
     reader treats them as unknown, not as zero; restarting SGLang with the flag is still open)*;
+  - *(2026-11-12: the by-hand SGLang's tokens are counted from now by the first numbers' slice, [its design](usage-meter-now.md),
+    part 3, which reads `spark-sglang` and `spark-flash-next` from the Mac's OpenCode and estimates the cache while
+    the engine reports none. This item stays open for what that slice doesn't do: restarting SGLang with
+    `--enable-cache-report`, and the fast coder behind the front, planned in part 5 there.)*
   - the Mac's snapshot of 2026-10-23 predates it, and Hermes deletes ended sessions after 90 days, so a fresh snapshot
     of every Mac source is taken before that window closes *(checked 2026-11-09: neither OpenCode 2.2.5 nor Pi 1.4.0
     was found to prune sessions)*.

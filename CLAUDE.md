@@ -94,6 +94,11 @@ private but not secret, and never in this repo. The usage meter adds a snapshot 
 harness session stores (2026-10-23), `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the
 Mac, `0700`: where the meter's lifetime baseline reads everything from before its counter started
 (the design's §7). It holds full chat text, so nothing from it enters this repo but numbers.
+The meter's first numbers add two more, on the Spark (2026-11-12, built, deployed with Task 44l):
+the private file `~/.config/local-ai/meter.yaml`, `0600`, holding the Spark's all-in price and Dan's time
+zone, never in this repo and checked by presence only; and `/var/lib/local-ai/usage-sessions`, Dan's,
+group `spark-admin`, `2750`, the rows imported from the Mac's OpenCode. Nothing from either enters this
+repo but a verdict.
 
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value

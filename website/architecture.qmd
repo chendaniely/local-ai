@@ -62,6 +62,7 @@ flowchart TB
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
+    menu_mac["spark-menu, SwiftBar<br/>usage section · Task 44l deploys"]:::planned
   end
 
   subgraph phone["Android phone"]
@@ -86,6 +87,7 @@ flowchart TB
     swap["llama-swap · 127.0.0.1:900<br/>as spark, internal keys only"]
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
     usage[("the front's usage records<br/>/var/lib/local-ai/usage · Dan reads<br/>Task 44l deploys")]:::planned
+    sessions[("the Mac's rows for the by-hand engines<br/>/var/lib/local-ai/usage-sessions · Dan reads<br/>Task 44l deploys")]:::planned
     ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
@@ -125,6 +127,8 @@ flowchart TB
   front -- "asks before a load" --> gate
   front -. "a row per request" .-> usage
   gate -. "a row per decision" .-> ledger
+  menu_mac -. "every 5 min over SSH: OpenCode's harvest, spark usage import" .-> sessions
+  menu_mac -. "every 60 s over SSH: spark usage summary, reads all three folders" .-> usage
   gate -- "loads, unloads" --> swap
   gate -- "reads and lifts its hold" --> brake
   sockets --> front
@@ -381,4 +385,4 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S24 · The fast coder won't start](scenarios/s24-fast-coder-down.md) | Loading a model: Phase 4a's fast coder |
 | [S25 · Sub-agents on the fast coder](scenarios/s25-subagents-fast-coder.md) | Loading a model: Phase 4a's fast coder |
 | [Word timings by hand](how-to/speech-by-hand.md) (a runbook, no numbered scenario) | Apps and speech: the by-hand speech service, until its Stage 2 |
-| [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records and the gate's ledger, planned (dashed) until Task 44l deploys them |
+| [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records and the gate's ledger, planned (dashed) until Task 44l deploys them; spark-menu's usage section, its summary over SSH, and the Mac's harvest into `usage-sessions`, dashed until then too *(2026-11-12)* |
