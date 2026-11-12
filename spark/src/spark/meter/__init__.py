@@ -65,6 +65,24 @@ def _import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _harvest(args: argparse.Namespace) -> int:
+    import json
+    import sys
+    from pathlib import Path
+
+    from spark.meter import harvest, prices
+
+    db = Path(args.db) if args.db else harvest.default_db()
+    stats: dict = {}
+    count = 0
+    for row in harvest.harvest(db, prices.by_hand(prices.load(), "opencode"), args.since, stats):
+        print(json.dumps(row, sort_keys=True, allow_nan=False))
+        count += 1
+    skipped = stats.get("skipped", 0)
+    print(f"harvest: {count} rows" + (f", skipped {skipped}" if skipped else ""), file=sys.stderr)
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     usage = subparsers.add_parser("usage", help="the usage meter: what the models would have cost at Claude's prices")
     verbs = usage.add_subparsers(dest="usage_command", required=True)
@@ -81,3 +99,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     imp = verbs.add_parser("import", help="merge the Mac's per-message rows for the by-hand engines, read from stdin")
     imp.add_argument("--source", required=True, choices=["opencode"], help="whose rows are on stdin")
     imp.set_defaults(func=_import)
+    har = verbs.add_parser("harvest", help="on the Mac: OpenCode's per-message token rows for the by-hand engines, "
+                                           "as JSON lines, for `spark usage import`")
+    har.add_argument("--source", required=True, choices=["opencode"], help="whose database to read")
+    har.add_argument("--db", default=None, metavar="PATH", help="OpenCode's database (default: its own place)")
+    har.add_argument("--since", type=_since, default=None, metavar="DATE|EPOCH",
+                     help="only messages updated from this ISO date (00:00 UTC) or epoch second on")
+    har.set_defaults(func=_harvest)
