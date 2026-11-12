@@ -57,8 +57,8 @@ Also seen: `compaction` messages carry tokens and a model too, with only `time.c
 
 - No stored row holds a dollar. Prices are applied when read, so a remap or a corrected price line reprices the past.
 - spark-menu prices nothing and adds no two numbers: it prints the summary's figures, formatted.
-- The harvest's SQL extracts only the fields in Task U6's listing. Never `content`, `text`, `title`, `directory`,
-  `error.message` or a session's own id: the session id leaves the Mac only as a hash.
+- The harvest's SQL extracts only the fields in Task U6's listing. Never `content`, `text`, `title`, `directory` or
+  `error.message`; the session id is read only to hash it, and leaves the Mac only as that hash.
 - An imported row's strings match `[A-Za-z0-9_.:-]{1,64}`; `sid` is 16 lowercase hex; every count is an int with
   0 ≤ n < 2**53. Anything else is refused, never stored.
 - The cached count is absent, never 0, when its engine doesn't report one; an imported row keeps OpenCode's raw counts
@@ -120,6 +120,8 @@ Also seen: `compaction` messages carry tokens and a model too, with only `time.c
   - `cache_reported(book: PriceBook, provider: str, t: float) -> bool`: its line's `cache_from` is set and `<= t`.
   - `by_hand(book: PriceBook, harness: str) -> list[Provider]`: the harness's providers with `front: false`.
 - `paths.METER_DIR = Path(os.environ.get("SPARK_METER_DIR", Path(__file__).parent / "meter"))`.
+- Every `folder` or `path` default in `spark.meter` is resolved when called (`folder: Path | None = None`, then
+  `paths.X`), never bound when the module is imported, so a test's `monkeypatch.setattr(paths, …)` reaches it.
 
 The files' text, as the design's part 1 fixes it (comments say what each field means and that a line applies from
 00:00 UTC on its day):
@@ -296,7 +298,7 @@ has one and `p × f > above_over`, else `base`; uncached = `(p − c) × f`, cha
 `uncached_as_writes`, else `input`; `usd = (uncached × in + c × f × cache_read + o × f × output) / 1_000_000`.
 
 - [ ] **Step 1: Write the failing tests:**
-  - `test_opus_row`: `p=1_000_000, c=900_000, o=10_000` at 2026-11-01 gives `usd == Decimal("0.58")`
+  - `test_opus_row`: `p=1_000_000, c=900_000, o=10_000` at 2026-11-01 gives `usd == Decimal("0.78")`
     (0.1M × 4 + 0.9M × 0.20 + 0.01M × 20 = 0.40 + 0.18 + 0.20), `line == "opus@2026-09-22"`.
   - `test_sonnet_cache_read_changes_on_its_day`: the same counts at 2026-10-06T23:59:59Z and 2026-10-07T00:00:00Z
     differ by exactly `0.9 × (0.20 − 0.10) = 0.09`.
