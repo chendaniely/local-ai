@@ -497,9 +497,12 @@ in milliseconds.
 - [ ] **Step 2: Run** `make test ARGS="spark/tests/test_meter_harvest.py"`. Expected: FAIL.
 - [ ] **Step 3: Implement** `harvest.py` and the verb.
 - [ ] **Step 4: Run** it. Then the real check, which prints only a verdict, **on the Mac**:
-  `uv run --frozen --project spark spark usage harvest --source opencode 2>&1 >/dev/null | tail -1` shows
-  `harvest: N rows`; and piping the harvest to a local import into a tmp folder
+  `bash -c 'uv run --frozen --project spark spark usage harvest --source opencode 2>&1 >/dev/null | tail -1'`
+  shows `harvest: N rows`; and piping the harvest to a local import into a tmp folder
   (`SPARK_USAGE_SESSIONS=$(mktemp -d)`) gives `0 refused`. Neither output goes into the repo or a commit.
+  *(Corrected 2026-11-12, after Task U6 ran it: written without `bash -c`, the Mac's zsh sends stdout to the pipe
+  as well as to `/dev/null` (its `MULTIOS` option), so one harvested row (numbers and ids, no text) reached the
+  session's context. Nothing was written from it.)*
 - [ ] **Step 5: Commit** `feat(spark): 🤖 spark usage harvest: the fast coder's and Flash-Next's tokens from OpenCode,
   read on the Mac`.
 
