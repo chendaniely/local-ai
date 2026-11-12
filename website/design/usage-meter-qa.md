@@ -395,3 +395,10 @@ session, worked out when read, shown apart and marked `~` (recommended); price i
 flagged; or leave those rows unpriced until the fast coder reports its cache. **Dan: estimate it.** He
 picked the recommended option, with no words of his own. [The first numbers' design](usage-meter-now.md),
 part 2, has the rule.
+
+**After the builder check: price edits during the soak.** Nothing deploys during Phase 2a's soak, and
+`make apply` restarts the gate and the brake for any change to the app. Offered: the price files ship
+with the app, and remaps wait for the soak's end, losing nothing since a remap reprices the past
+(recommended); a restart-free path, with a written exception to the soak rule; or the live files kept
+in Dan's home on the Spark, edited in place. **Dan: wait for the soak's end.** He picked the
+recommended option, with no words of his own.

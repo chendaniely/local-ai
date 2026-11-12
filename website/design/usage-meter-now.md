@@ -64,14 +64,18 @@ path. And:
   file path or folder name, and the Mac reads only the fields it sends.
 - **Contacting the Spark while spark-menu is off,** as its README already rules out.
 - **A price edit that restarts the front or llama-swap.** Editing a price must never cut a request.
+  (Shipped with the app, an edit restarts only the gate and the brake: part 1.)
 
 ## The parts
 
 ### 1. The price files **[Spark]**
 
 Three files in the repo, since nothing in them is private: `git log` is the history of every remap
-and every price. Where they live in the repo, and how they reach the Spark, is the builder's, with one
-requirement: changing one never restarts a unit (the anti-goal above).
+and every price. **They ship with the app** (Dan's decision, 2026-11-12): they live in the `spark`
+project, so `make apply` deploys them like any other file of it, which restarts the gate and the brake
+and never the front or llama-swap. So a remap or a price edit waits for the soak to end, like every
+deploy, and loses nothing, since a remap reprices the past. Where in the project they sit is the
+builder's.
 
 **The mapping.** Each model to a Claude tier (`opus`, `sonnet`, `haiku`, `fable`) with an optional
 factor, default 1, as §3 has it; `none` marks a model left unpriced on purpose, so it doesn't raise
@@ -278,8 +282,8 @@ README and rulings.
 4. `none` in the mapping for models left unpriced on purpose; embeddings and speech at `none`.
 5. The private file at `~/.config/local-ai/meter.yaml`; without it, the Spark's own time zone and no
    share of price.
-6. **The fast coder's cache estimated** from the previous message in its session, shown apart and
-   marked `~`, rather than left unpriced. The one call that most changes the numbers Dan sees.
+6. ~~**The fast coder's cache estimated** from the previous message in its session, shown apart and
+   marked `~`, rather than left unpriced.~~ *(Dan's decision since, 2026-11-12: "estimate it".)*
 7. The harvest's row and its fields; the SQL selecting only those fields.
 8. spark-menu running the harvest every 5 minutes and the summary every 60 seconds; the section's
    layout; greyed after 3 minutes.
