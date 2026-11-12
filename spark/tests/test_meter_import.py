@@ -85,9 +85,35 @@ def test_refusal_words_hold_no_value(tmp_path):
     assert verdict.refused == 1 and "secretproj" not in verdict.line()
 
 
-def test_oversize_line_refused(tmp_path):
-    verdict = importer.import_rows(["x" * 5000], tmp_path, NOW)
-    assert verdict.refused == 1
+def test_oversize_line_through_the_reader(tmp_path):
+    good = (json.dumps(make("m1")) + "\n").encode()
+    raw = good + b"x" * 3_000_000 + b"\n" + good.replace(b"m1", b"m2") + b"y" * 9000  # last: no newline
+    verdict = importer.import_rows(importer.read_lines(io.BytesIO(raw)), tmp_path, NOW)
+    assert (verdict.new, verdict.refused, verdict.reasons) == (2, 2, {"field": 2})
+
+
+def test_undecodable_line_is_text(tmp_path):
+    raw = b"\xff\xfe not utf8\n" + (json.dumps(make("m1")) + "\n").encode()
+    verdict = importer.import_rows(importer.read_lines(io.BytesIO(raw)), tmp_path, NOW)
+    assert verdict.line() == "import: 1 new, 0 changed, 0 unchanged, 1 refused (text 1)"
+
+
+def test_too_many_lines_refuses_the_batch(tmp_path):
+    verdict = importer.import_rows(lines(make("m1"), make("m2"), make("m3")), tmp_path, NOW, max_lines=2)
+    assert verdict.line() == "import: 0 new, 0 changed, 0 unchanged, 1 refused (batch 1)"
+    assert stored(tmp_path) == [] and not (tmp_path / "opencode.imported").exists()
+
+
+def test_mark_only_without_refusals(tmp_path):
+    importer.import_rows(lines(make("m1"), make("m2", end="stop")), tmp_path, NOW)
+    assert len(stored(tmp_path)) == 1 and not (tmp_path / "opencode.imported").exists()
+    importer.import_rows([], tmp_path, NOW)
+    assert (tmp_path / "opencode.imported").exists()
+
+
+@pytest.mark.parametrize("v", [1.0, True])
+def test_v_must_be_an_int(tmp_path, v):
+    assert importer.check(make("m1", v=v), NOW) == "version"
 
 
 def test_file_mode(tmp_path):
@@ -101,6 +127,6 @@ def test_file_mode(tmp_path):
 
 def test_import_verb(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path)
-    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(lines(make("m1"))) + "\n"))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(("\n".join(lines(make("m1"))) + "\n").encode())))
     assert cli.main(["usage", "import", "--source", "opencode"]) == 0
     assert "import: 1 new, 0 changed, 0 unchanged, 0 refused" in capsys.readouterr().out

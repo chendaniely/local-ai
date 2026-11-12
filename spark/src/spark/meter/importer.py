@@ -11,9 +11,10 @@ import os
 import re
 import tempfile
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from spark import paths
 
@@ -24,7 +25,7 @@ MAX_LINES = 200_000
 _EARLIEST = 1_767_225_600.0  # 2026-01-01T00:00Z
 _TEXT = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _HEX16 = re.compile(r"[0-9a-f]{16}")
-_REASONS = ("field", "text", "count", "time", "end", "version", "source")
+_REASONS = ("field", "text", "count", "time", "end", "version", "source", "batch")
 
 
 def _count(value: object) -> bool:
@@ -39,7 +40,7 @@ def check(obj: object, now: float) -> str | None:
     """None for a good row, else the reason in fixed words, never the value."""
     if not isinstance(obj, dict) or set(obj) != set(FIELDS):
         return "field"
-    if obj["v"] != 1 or isinstance(obj["v"], bool):
+    if not isinstance(obj["v"], int) or isinstance(obj["v"], bool) or obj["v"] != 1:
         return "version"
     if obj["src"] != "opencode":
         return "source"
@@ -94,13 +95,43 @@ def _stored(path: Path) -> tuple[dict[str, dict], bool]:
     return last, bool(data) and not data.endswith(b"\n")
 
 
-def import_rows(lines: Iterable[str], folder: Path, now: float) -> Verdict:
-    """Check every line, then merge the good ones under a lock: a new or changed row is appended, an unchanged one
-    isn't. The whole batch is read before anything is written."""
+def read_lines(stream: BinaryIO) -> Iterator[bytes | None]:
+    """The stream's lines as bytes, none longer than MAX_LINE bytes held in memory: an over-long line is skipped in
+    bounded chunks and yields None, once."""
+    while True:
+        raw = stream.readline(MAX_LINE + 1)
+        if not raw:
+            return
+        if len(raw) > MAX_LINE and not raw.endswith(b"\n"):
+            while True:
+                rest = stream.readline(MAX_LINE + 1)
+                if not rest or rest.endswith(b"\n"):
+                    break
+            yield None
+        else:
+            yield raw
+
+
+def import_rows(lines: Iterable[str | bytes | None], folder: Path, now: float, max_lines: int = MAX_LINES) -> Verdict:
+    """Check every line (None is an over-long one, bytes are decoded here), then merge the good ones under a lock: a
+    new or changed row is appended, an unchanged one isn't. The whole batch is read before anything is written. A
+    batch of more than `max_lines` lines is refused whole, and `opencode.imported` is written only when nothing was
+    refused."""
     good: list[dict] = []
     refused: Counter[str] = Counter()
     for number, line in enumerate(lines, 1):
-        if number > MAX_LINES or len(line.encode("utf-8", errors="replace")) > MAX_LINE:
+        if number > max_lines:
+            return Verdict(0, 0, 0, 1, {"batch": 1})
+        if line is None:
+            refused["field"] += 1
+            continue
+        if isinstance(line, bytes):
+            try:
+                line = line.decode("utf-8")
+            except UnicodeDecodeError:
+                refused["text"] += 1
+                continue
+        if len(line.encode("utf-8", errors="replace").rstrip(b"\r\n")) > MAX_LINE:
             refused["field"] += 1
             continue
         if not line.strip():
@@ -139,6 +170,8 @@ def import_rows(lines: Iterable[str], folder: Path, now: float) -> Verdict:
                     raise OSError("short write to the imported rows' file")
             finally:
                 os.close(fd)
+        if refused:
+            return Verdict(new, changed, unchanged, sum(refused.values()), dict(refused))
         handle, temp = tempfile.mkstemp(dir=folder, prefix=".imported-")
         try:
             with os.fdopen(handle, "w") as stream:
@@ -156,6 +189,6 @@ def import_rows(lines: Iterable[str], folder: Path, now: float) -> Verdict:
     return Verdict(new, changed, unchanged, sum(refused.values()), dict(refused))
 
 
-def run(stream: Iterable[str], now: float, folder: Path | None = None) -> Verdict:
+def run(stream: BinaryIO, now: float, folder: Path | None = None) -> Verdict:
     """The verb's work."""
-    return import_rows(stream, paths.USAGE_SESSIONS_DIR if folder is None else folder, now)
+    return import_rows(read_lines(stream), paths.USAGE_SESSIONS_DIR if folder is None else folder, now)

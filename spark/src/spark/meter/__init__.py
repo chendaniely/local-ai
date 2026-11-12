@@ -61,7 +61,7 @@ def _import(args: argparse.Namespace) -> int:
 
     from spark.meter import importer
 
-    print(importer.run(sys.stdin, time.time()).line())
+    print(importer.run(sys.stdin.buffer, time.time()).line())
     return 0
 
 
