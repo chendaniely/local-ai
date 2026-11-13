@@ -136,6 +136,13 @@ wherever rows are tested, `test_doctor.py`.
   doctor check. `projects.md`: the transcription contract row says answers are unchanged, and the summary's
   periods gain `audio_s` (contract `v` stays 1).
 
+*(2026-11-13, at the task's reviews: past the 16 MiB cap or the body budget, an answer the front doesn't convert
+(`verbose_json`, `srt`, `vtt`) goes on unheld, with no length, and only a converted one ends as `error`, with the
+front's own 502. `json` and `text` are converted whatever the upload's size, so doctor `--full`'s 170 MB `json` upload
+has its length on its row. The converted form also asks for no language probabilities, and whisper's answers are never
+scanned for counts. Answers are unchanged but for the cases `projects.md` names: that 502, `text`'s U+FFFD where
+whisper's segment bytes aren't UTF-8, and an unknown `language`, which gets whisper's 500.)*
+
 - [ ] **Step 1: Tests** for each case above, with whisper answers shaped as v1.9.4 sends them (invented text), the
   converted bytes compared exactly; the cap; the budget charge; a Qwen3-ASR answer's counts; a chat stream unaffected.
 - [ ] **Step 2:** fail. **Step 3:** implement. **Step 4:** `spark/tests/test_front_*.py`, `test_doctor.py` and the

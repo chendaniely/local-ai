@@ -17,8 +17,8 @@ recording's length*). whisper.cpp v1.9.4's server (examples/server/server.cpp) g
 `verbose_json`, its `duration`. For a transcription by whisper.cpp, whisper_plan reads the form as whisper does (the
 first of a field given twice, as its httplib's multimap gives it) and decides:
 - `verbose_json`: the answer is held and read for `duration`, and goes on as it came.
-- `json`, no format, or `text`, with no `detect_language` field (json's answer then gains `language`), for an upload of
-  at most CONVERT_UPLOAD_MAX: the form goes on asking for `verbose_json` (verbose_fields), with
+- `json`, no format, or `text`, with no `detect_language` field (json's answer then gains `language`), whatever the
+  upload's size: the form goes on asking for `verbose_json` (verbose_fields), with
   `no_language_probabilities=true`, since json and text never carry them and they cost whisper another encoder pass
   (server.cpp, 1076-1088); and the answer is held, read, and sent as whisper's own `json` or `text` for it, byte for
   byte (hear): `{"text": …}` dumped as its nlohmann::ordered_json dumps it, compact and in UTF-8 with
@@ -35,14 +35,16 @@ first of a field given twice, as its httplib's multimap gives it) and decides:
 - `srt` or `vtt`: held, the last cue's end read as an estimate of the length (`audio_est`), and sent as it came. Only a
   cue's own timing line is read: one that opens the answer or follows a blank line, in srt after its cue's number.
 - Anything else (a format whisper doesn't name, which it answers as json; a form with a file part named like a field
-  this reads; a `max_len` whisper can't read, which it answers 500 whatever the format; json or text for an upload
-  over CONVERT_UPLOAD_MAX): as it came, unheld, no length.
+  this reads; a `max_len` whisper can't read, which it answers 500 whatever the format): as it came, unheld, no
+  length.
 Where a converted answer differs from whisper's own: segment text whisper.cpp leaves as bytes that aren't UTF-8
 reaches verbose_json, as json, with U+FFFD in their place, while whisper's `text` sends the bytes themselves, so the
 rebuilt json is whisper's own and the rebuilt text has U+FFFD there. An unknown `language` code makes whisper's
 verbose_json fail (its `language` field is a null C string, server.cpp 1070; whisper.cpp's whisper_lang_str_full),
-which json would have answered, so the client gets whisper's 500. And an answer the front can't use (app.py, step
-11a) gets the front's own 502."""
+which json would have answered, so the client gets whisper's 500. And a converted answer the front can't use (app.py,
+step 11a: past HELD_MAX or the body budget, or unreadable) gets the front's own 502. Past HELD_MAX takes a recording of
+several hours at least sent as json or text (an estimate, not measured: verbose_json runs to a few hundred bytes a
+second of speech); vid2sub asks for verbose_json, which goes on unheld past the cap at any length."""
 
 from __future__ import annotations
 
@@ -295,9 +297,6 @@ def scan_for(path: str, status: int, headers: Iterable[tuple[bytes, bytes]]) -> 
 
 WHISPER_ENGINE = "whisper.cpp"  # the registry's engine whose transcriptions are held
 HELD_MAX = 16 << 20  # a held answer's most, in bytes: a JSON body's cap, so its parse is within the memory bound
-# The largest upload, in file bytes, whose answer is converted: its transcript can't come near HELD_MAX. A larger one
-# asking for json or text goes as it came, its length estimated from its size when the meter reads its row.
-CONVERT_UPLOAD_MAX = 16 << 20
 WHISPER_TYPES = {"json": b"application/json", "text": b"text/html; charset=utf-8"}  # server.cpp's, for each format
 _SLICE = 1 << 20  # the characters of a rebuilt json's text escaped and encoded at a time (_json_text)
 # The fields whisper-server v1.9.4 reads (get_req_parameters) that decide its answer's format, or the text it gives
@@ -353,10 +352,9 @@ def _stoi(text: str) -> int | None:
     return value if value in _INT32 else None
 
 
-def whisper_plan(form: parse.Form, upload_bytes: int | None) -> Whisper | None:
-    """What the front does with this form's answer, when whisper.cpp transcribes it, its file parts `upload_bytes` in
-    all; None to send it as it came and pass its answer on unheld (the module's docstring). A form asking for json or
-    text is converted only when its upload is known and at most CONVERT_UPLOAD_MAX."""
+def whisper_plan(form: parse.Form) -> Whisper | None:
+    """What the front does with this form's answer, when whisper.cpp transcribes it, whatever the upload's size; None
+    to send it as it came and pass its answer on unheld (the module's docstring)."""
     if any(part.name in _READ for part in form.files):
         return None
     first: dict[str, str] = {}
@@ -366,8 +364,6 @@ def whisper_plan(form: parse.Form, upload_bytes: int | None) -> Whisper | None:
     if asked in ("verbose_json", "srt", "vtt"):
         return Whisper(asked, convert=False)
     if asked not in WHISPER_TYPES or "detect_language" in first:
-        return None
-    if upload_bytes is None or upload_bytes > CONVERT_UPLOAD_MAX:
         return None
     if "token_timestamps" in first:  # whisper uses the form's own, whatever the format
         return Whisper(asked, convert=True)

@@ -71,12 +71,14 @@ A form whose `max_len` whisper can't read, which it answers 500 whatever the for
 a field whisper reads, goes as it came.)*
 
 *(2026-11-13, at Task E3's review: a converted form also asks for no language probabilities, which cost whisper another
-encoder pass and which `json` and `text` never carry; only an upload of at most 16 MiB is converted, so a transcript
-can't come near the cap; an answer that goes as it came and passes the cap or the front's memory budget goes on
-unheld, with no length, and only a converted one ends as the front's own 502 `front_error`; and whisper's answers are
-never scanned for token counts, since a transcript could hold one. A converted answer is whisper's own but in two
-cases: `text`, where whisper leaves segment bytes that aren't UTF-8 (U+FFFD in their place), and an unknown
-`language` code, which fails whisper's `verbose_json` (500) where `json` or `text` would have answered.)*
+encoder pass and which `json` and `text` never carry; ~~only an upload of at most 16 MiB is converted, so a transcript
+can't come near the cap~~ (corrected the same day: an upload is converted whatever its size, as doctor's 170 MB `json`
+upload needs); an answer that goes as it came and passes the cap or the front's memory budget goes on unheld, with no
+length, and only a converted one ends as the front's own 502 `front_error`, which past the cap takes a recording of
+several hours at least asked for as `json` or `text` (`verbose_json`, which vid2sub asks for, goes on at any length);
+and whisper's answers are never scanned for token counts, since a transcript could hold one. A converted answer is
+whisper's own but in two cases: `text`, where whisper leaves segment bytes that aren't UTF-8 (U+FFFD in their place),
+and an unknown `language` code, which fails whisper's `verbose_json` (500) where `json` or `text` would have answered.)*
 
 The row gains `audio_s`, the length in seconds, and `audio_est: true` when it is an estimate. A
 transcription row with no `audio_s` (rows from before this, and the cases above) is estimated when

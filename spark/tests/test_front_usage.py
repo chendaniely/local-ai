@@ -277,9 +277,6 @@ def test_the_transcription_keys_count_only_on_the_transcriptions_route():
 # `text` the segments' text, each followed by a line break; srt and vtt as its to_timestamp writes their cues. Every
 # text, number and name here is invented.
 
-UPLOAD = 1 << 20  # an upload's file bytes, well under what the front converts
-
-
 def form(*fields: tuple[str, str], files: tuple[str, ...] = ("file",)) -> parse.Form:
     return parse.Form("stt", [("model", "stt"), *fields],
                       [parse.FilePart(name, "talk.wav", "audio/wav", b"RIFF") for name in files])
@@ -311,7 +308,7 @@ def form(*fields: tuple[str, str], files: tuple[str, ...] = ("file",)) -> parse.
     ((("max_len", "42"), ("no_timestamps", "1")), usage.Whisper("json", convert=True, token_timestamps="false")),
 ])
 def test_whisper_plan_by_the_format_whisper_reads(fields, plan):
-    assert usage.whisper_plan(form(*fields), UPLOAD) == plan
+    assert usage.whisper_plan(form(*fields)) == plan
 
 
 @pytest.mark.parametrize("fields", [
@@ -324,26 +321,13 @@ def test_whisper_plan_by_the_format_whisper_reads(fields, plan):
     (("max_len", "99999999999"),),  # past an int: the same
 ])
 def test_whisper_plan_leaves_any_other_request_as_it_came(fields):
-    assert usage.whisper_plan(form(*fields), UPLOAD) is None
+    assert usage.whisper_plan(form(*fields)) is None
 
 
 @pytest.mark.parametrize("name", ["response_format", "detect_language", "token_timestamps", "no_timestamps", "max_len",
                                   "split_on_word"])
 def test_whisper_plan_leaves_a_form_alone_when_a_file_part_has_a_name_whisper_reads(name):
-    assert usage.whisper_plan(form(("response_format", "srt"), files=("file", name)), UPLOAD) is None
-
-
-@pytest.mark.parametrize("asked", ["json", "text"])
-def test_only_an_upload_of_at_most_16_mib_is_converted(asked):
-    # Its transcript then can't come near the held answer's cap; a larger one goes as it came, its length estimated
-    # from its size when the meter reads its row.
-    assert usage.CONVERT_UPLOAD_MAX == 16 * 2**20
-    assert usage.whisper_plan(form(("response_format", asked)), usage.CONVERT_UPLOAD_MAX).convert
-    assert usage.whisper_plan(form(("response_format", asked)), usage.CONVERT_UPLOAD_MAX + 1) is None
-    assert usage.whisper_plan(form(("response_format", asked)), None) is None  # its size unread: never converted
-    # The formats that go as they came are held whatever the upload's size.
-    for kept in ("verbose_json", "srt", "vtt"):
-        assert usage.whisper_plan(form(("response_format", kept)), 200 * 2**20) == usage.Whisper(kept, convert=False)
+    assert usage.whisper_plan(form(("response_format", "srt"), files=("file", name))) is None
 
 
 def test_a_converted_form_asks_for_verbose_json_once_with_its_token_timestamps_and_no_language_probabilities():

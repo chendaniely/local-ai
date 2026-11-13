@@ -191,10 +191,12 @@ def _with_more(chunks):
 
 async def call(app, method: str, path: str, *, key: str | None = "k1", body: bytes | None = None, chunks=None,
                content_type: bytes | None = b"application/json", length: int | bool | None = None,
-               headers: list[tuple[bytes, bytes]] = (), query: bytes = b"", sent_to: list | None = None) -> Answer:
+               headers: list[tuple[bytes, bytes]] = (), query: bytes = b"", sent_to: list | None = None,
+               leave: asyncio.Event | None = None) -> Answer:
     """One request, as uvicorn's h11 protocol makes it: the key as a bearer key, the body in one message or in
     `chunks`, its Content-Length counted unless `length` gives one or is False (a chunked body); then nothing until
-    the answer ends, when the client goes. With `sent_to`, each message the app sends is put there as it is sent."""
+    the answer ends, when the client goes. With `sent_to`, each message the app sends is put there as it is sent; with
+    `leave`, the client goes when it is set instead."""
     if chunks is None:
         chunks = [] if body is None else [body]
     raw = [(b"host", b"spark")]
@@ -225,7 +227,7 @@ async def call(app, method: str, path: str, *, key: str | None = "k1", body: byt
             return {"type": "http.request", "body": step[0], "more_body": step[1]}
         if calls == 1:
             return {"type": "http.request", "body": b"", "more_body": False}
-        await done.wait()
+        await (done if leave is None else leave).wait()
         return {"type": "http.disconnect"}
 
     async def send(message):
@@ -1102,26 +1104,85 @@ async def test_an_unconverted_answer_past_the_cap_goes_on_unheld_with_no_length(
 
 
 @pytest.mark.anyio
-async def test_an_upload_over_16_mib_asking_json_or_text_goes_as_it_came_and_is_never_scanned(tmp_path, monkeypatch):
-    # Converting it could make an answer past the held cap. Its transcript, unheld, is never scanned for counts: it is
-    # the model's own text, which may hold anything, a usage object among it.
-    monkeypatch.setattr(usage, "CONVERT_UPLOAD_MAX", 10)  # 16 MiB in the stack; the stand-in upload is 18 bytes
+async def test_a_large_upload_asking_json_is_converted_and_its_row_has_its_length(tmp_path):
+    # Whatever the upload's size, as doctor --full's 170 MB WAV asked as json: its answer, verbose_json, is small, and
+    # only a converted answer past the held cap (a recording many hours long) is the front's own 502.
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(VERBOSE)]
+    audio = b"RIFF" + bytes(17 * MIB)
+    answer = await call(front.app, "POST", TRANSCRIBE, content_type=FORM_TYPE,
+                        body=form_body([field("model", "stt"), field("response_format", "json"), file_part(audio)]))
+    assert (answer.status, answer.body) == (200, CONVERTED["json"])
+    assert dict(fields_sent(front.upstream.seen[0]))["response_format"] == "verbose_json"
+    [row] = front.rows.rows
+    assert (row["bytes_in"], row["audio_s"]) == (len(audio), 12.345)
+
+
+@pytest.mark.anyio
+async def test_a_text_transcript_that_goes_as_it_came_is_never_scanned(tmp_path):
+    # With detect_language, text goes as it came, unheld; its transcript is never scanned for counts: it is the model's
+    # own text, which may hold anything, a usage object among it.
     front = whisper_front(tmp_path)
     transcript = b' He said "usage":{"input_tokens":9,"output_tokens":9} twice.\n'
     paused = Paused((transcript[:20], transcript[20:]), b"text/html; charset=utf-8")
     front.upstream.next = [paused]
     sent: list[dict] = []
-    task = asyncio.create_task(call(front.app, "POST", TRANSCRIBE, body=upload(("response_format", "text")),
-                                    content_type=FORM_TYPE, sent_to=sent))
+    fields = (("response_format", "text"), ("detect_language", "true"))
+    task = asyncio.create_task(call(front.app, "POST", TRANSCRIBE, body=upload(*fields), content_type=FORM_TYPE,
+                                    sent_to=sent))
     with anyio.fail_after(BOUND_S):
         await paused.paused.wait()
     assert any(message.get("body") == transcript[:20] for message in sent)  # unheld
     paused.go.set()
     answer = await task
     assert (answer.status, answer.body) == (200, transcript)
-    assert fields_sent(front.upstream.seen[0]) == [("model", "stt"), ("response_format", "text")]
+    assert fields_sent(front.upstream.seen[0]) == [("model", "stt"), *fields]
     [row] = front.rows.rows
     assert row["from"] == "none" and not {"p", "c", "o", "audio_s"} & set(row)
+
+
+class PastTheCap(Response):
+    """An answer of 50-byte pieces that passes a 100-byte cap at its third, then, once the front asks for its fourth,
+    sets `paused` and either waits for ever (`breaks` false) or breaks off."""
+
+    def __init__(self, breaks: bool):
+        super().__init__(200, tuple(bytes([65 + n]) * 50 for n in range(4)),
+                         [(b"content-type", b"application/x-subrip"), (b"content-length", b"400")])
+        self.breaks, self.paused = breaks, asyncio.Event()
+
+    async def aiter_raw(self):
+        for piece in self._chunks[:3]:
+            yield piece
+        self.paused.set()
+        if self.breaks:
+            raise upstream.Broken("llama-swap's answer broke off before its end")
+        await asyncio.Event().wait()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("way", ["client gone", "cut upstream"])
+async def test_an_answer_going_on_unheld_that_ends_early_sends_nothing_more_and_gives_its_charge_back(tmp_path,
+                                                                                                       monkeypatch,
+                                                                                                       way):
+    monkeypatch.setattr(usage, "HELD_MAX", 100)
+    front = whisper_front(tmp_path)
+    answer_upstream = PastTheCap(breaks=way == "cut upstream")
+    front.upstream.next = [answer_upstream]
+    sent: list[dict] = []
+    leave = asyncio.Event()
+    task = asyncio.create_task(call(front.app, "POST", TRANSCRIBE, body=upload(("response_format", "srt")),
+                                    content_type=FORM_TYPE, sent_to=sent, leave=leave))
+    with anyio.fail_after(BOUND_S):
+        await answer_upstream.paused.wait()
+        await until(lambda: len(sent) == 4)  # its head and the three pieces
+        assert front.app.budget.held == parse.FORM_IN_MEMORY  # the pieces' charge given back once they were sent
+        leave.set()
+        await task
+    assert [message.get("body") for message in sent[1:]] == [bytes([65 + n]) * 50 for n in range(3)]
+    assert all(message.get("more_body") for message in sent[1:])  # never its last chunk
+    assert answer_upstream.closed and front.app.budget.held == 0
+    [row] = front.rows.rows
+    assert row["end"] == {"client gone": "gone", "cut upstream": "cut"}[way] and "audio_s" not in row
 
 
 @pytest.mark.anyio

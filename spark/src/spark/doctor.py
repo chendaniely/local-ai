@@ -1680,8 +1680,8 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     v257 passes on still chunked (Task 21): this is the check that whisper-server takes a chunked body (Task 21's
     note). llama-swap reads a POST body whole into memory, so with memory under the warn line, or unreadable, it isn't
     sent (Task 33's review, I1). Answered, its row in this month's usage file must have the recording's length, within
-    1 % of the WAV's own (_upload_row): the front asks whisper for verbose_json to learn it, and answers in the format
-    asked for, json here (Task E3)."""
+    1 % of the WAV's own (_upload_row): the front asks whisper for verbose_json to learn it, whatever the upload's
+    size, and answers in the format asked for, json here (Task E3)."""
     name = "a 170 MB upload"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")

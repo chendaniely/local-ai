@@ -28,9 +28,10 @@ doesn't come in time.
    - **Memory** (the controller's rulings, at Task 20's review). Every body held in memory is charged to one budget
      for the whole front, BODY_BUDGET_BYTES (parse.BodyBudget). A JSON body is charged by its Content-Length before
      any of it is read, or as it comes, and then as the bytes it goes on as. A form is charged parse.FORM_IN_MEMORY,
-     what it may hold in memory, and a whisper answer it holds (step 11a), as it comes. A request that would pass the
-     budget gets 429 `front_busy` (one holding an answer, the front's own 502 instead, step 11a), and gives back what
-     it holds when it ends, however it ends.
+     what it may hold in memory, and a whisper answer it holds (step 11a), as it comes. A request whose body would pass
+     the budget gets 429 `front_busy`. A held answer that would pass it, or usage.HELD_MAX, is the front's own 502 when
+     the front converts it, and otherwise goes on unheld from there (step 11a). Each gives back what it holds when it
+     ends, however it ends.
    - **What that bounds, measured on the Spark at Task 20's review.** Parsing is synchronous, so at most one body, or
      one held answer (step 11a), is parsed at a time.
      - The worst parse measured grew the process by 192 MiB at its peak, the bytes the budget counts for it included:
@@ -48,10 +49,10 @@ doesn't come in time.
    `model_not_found` naming the models, on-demand first, then the residents, each in the list's order.
 7a. **Whisper's format** (Task E3; usage.py's docstring). For a transcription by whisper.cpp, by the model list's
    `engine`, usage.whisper_plan reads the form as whisper does and decides what becomes of its answer (step 11a). A
-   form asking for `json` (or for no format) or `text`, with no `detect_language` field and an upload of at most
-   usage.CONVERT_UPLOAD_MAX (16 MiB), goes on asking for `verbose_json` instead, with the `token_timestamps` whisper
-   would give the format asked for and no language probabilities (usage.verbose_fields), so the front learns the
-   recording's length. Any other request goes on as it came.
+   form asking for `json` (or for no format) or `text`, with no `detect_language` field, whatever the upload's size,
+   goes on asking for `verbose_json` instead, with the `token_timestamps` whisper would give the format asked for and
+   no language probabilities (usage.verbose_fields), so the front learns the recording's length. Any other request
+   goes on as it came.
 8. **An upload** (a form) goes on only while fewer than UPLOADS_AT_ONCE are forwarded or waiting for a load,
    front-wide; past that, 429 `uploads_busy`, never forwarded. It takes its slot here, before the gate is asked, so
    one the cap refuses never waits for a load first (the controller's ruling, at Task 21's review). llama-swap v257
@@ -88,7 +89,9 @@ doesn't come in time.
    passes the cap or the budget goes on unheld from there (_unheld): what was held at once, the rest as it comes, and
    no length on its row. A converted answer past them, or without a readable `text` and `duration`, gets the front's
    own 502 in BROKE's words (`front_error`, `x-should-retry: false`) instead, its journal line saying why: never the
-   verbose_json the client didn't ask for. One that breaks off while held is a cut: its head goes without a length,
+   verbose_json the client didn't ask for. Past the cap takes a recording of several hours at least sent as `json` or
+   `text` (usage.py's docstring has the estimate); vid2sub asks for `verbose_json`, which goes on at any length. One
+   that breaks off while held is a cut: its head goes without a length,
    and of a converted one nothing of its body. Only these are held; chat, embeddings, Qwen3-ASR's transcriptions,
    whisper's other formats, every stream and every answer that isn't 2xx go back as they come, as above. No whisper
    answer is scanned for counts (usage.scan_for): its transcript is the model's own text.
@@ -709,9 +712,10 @@ class FrontApp:
     async def _held(self, send, request: _Request, response: Any, chunks: AsyncIterator[bytes]) -> None:
         """A whisper.cpp transcription's 2xx answer, held whole (step 11a): each piece charged to the body budget as it
         comes, at most usage.HELD_MAX in all; then read for the recording's length (usage.hear) and sent, as it came,
-        or as whisper's own json or text for it when the front asked whisper for verbose_json. Past the cap or the
-        budget, or a converted answer the front can't read, the front's own 502 instead (_unsent), never the
-        verbose_json the client didn't ask for; one that breaks off is a cut, as any answer's."""
+        or as whisper's own json or text for it when the front asked whisper for verbose_json. A converted answer past
+        the cap or the budget, or one the front can't read, gets the front's own 502 instead (_unsent), never the
+        verbose_json the client didn't ask for; an unconverted one past them goes on unheld from there (_unheld). One
+        that breaks off is a cut, as any answer's."""
         plan = request.whisper
         pieces: list[bytes] = []
         size = 0
@@ -815,7 +819,7 @@ class FrontApp:
         if request.entry.get("engine") != usage.WHISPER_ENGINE:
             return
         try:
-            plan = usage.whisper_plan(request.form, request.bytes_in)
+            plan = usage.whisper_plan(request.form)
             if plan is not None and plan.convert:
                 request.form.fields = usage.verbose_fields(request.form, plan)
             request.whisper = plan
