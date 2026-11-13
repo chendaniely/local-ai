@@ -28,7 +28,9 @@ def book(**models):
     return dataclasses.replace(BASE, mapping=mapping)
 
 
-BOOK = book(son=("sonnet", 1), hai=("haiku", 1), hai2=("haiku", 2), half=("opus", 0.5), nil=("none", 1))
+# The default row's model pinned at Opus, so Dan's remaps of the shipped mapping never move these sums.
+BOOK = book(**{"qwen3.8-27b": ("opus", 1)}, son=("sonnet", 1), hai=("haiku", 1), hai2=("haiku", 2), half=("opus", 0.5),
+            nil=("none", 1))
 
 
 def row(model="qwen3.8-27b", t="2026-11-01T00:00:00Z", p=1_000_000, c=900_000, o=10_000, end="done") -> Row:

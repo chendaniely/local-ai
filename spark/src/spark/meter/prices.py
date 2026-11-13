@@ -244,3 +244,32 @@ def cache_reported(book: PriceBook, provider: str, t: float) -> bool:
 def by_hand(book: PriceBook, harness: str) -> list[Provider]:
     """The harness's providers that bypassed the front (front: false)."""
     return [p for p in book.providers if p.harness == harness and not p.front]
+
+
+TABLE_HEAD = ("| Model | Priced as | Since | Fresh input | Cached input | Output |", "|---|---|---|---|---|---|")
+
+
+def table(book: PriceBook) -> str:
+    """Every model of the mapping, in its order, with the proxy it's priced as: its tier's newest line, in US dollars per
+    million tokens. A long prompt's rates follow `;`, since a request whose prompt is over that many tokens is priced at
+    them throughout. website/reference/model-prices.md holds this table, and a test keeps the two the same."""
+    rows = list(TABLE_HEAD)
+    for model, mapped in book.mapping.items():
+        if mapped.tier == "none":
+            rows.append(f"| `{model}` | not priced yet | — | — | — | — |")
+            continue
+        if not book.lines.get(mapped.tier):
+            rows.append(f"| `{model}` | {mapped.tier}, which has no price line | — | — | — | — |")
+            continue
+        line = book.lines[mapped.tier][-1]
+        factor = "" if mapped.factor == 1 else f" × {mapped.factor}"
+        cells = " | ".join(_rate(line, field) for field in ("input", "cache_read", "output"))
+        rows.append(f"| `{model}` | {line.name}{factor} | {line.day} | {cells} |")
+    return "\n".join(rows)
+
+
+def _rate(line: PriceLine, field: str) -> str:
+    text = f"${getattr(line.base, field):.2f}"
+    if line.above is not None and line.above_over is not None:
+        text += f"; ${getattr(line.above, field):.2f} above {line.above_over:,}"
+    return text
