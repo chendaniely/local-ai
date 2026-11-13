@@ -201,7 +201,7 @@ plan; a Backlog line: `make speech`'s requests counted when its Stage 2 puts it 
 - **Step 4 also [Spark]:** `spark doctor --full`, from the clone's root, next to `make doctor`: it is the only real
   test of the converted path and its 1 % length check.
 - **During that `--full` run [Spark]:** read the front unit's peak memory with
-  `systemctl show -p MemoryPeak local-ai-front.service` and record it in the changelog, since the app's step 6 says the
+  `systemctl show -p MemoryPeak local-ai-front.service` and record it in the changelog, since `spark/src/spark/front/app.py`'s step 6 says the
   held-answer bound isn't measured on the Spark.
 - **Step 5 also flips** every "built on the `meter-every-model` branch, not yet deployed" marker to deployed with the
   date: `grep -rn "meter-every-model" website README.md CLAUDE.md`, leaving `website/_site` alone.
