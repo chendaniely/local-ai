@@ -129,11 +129,13 @@ started isn't in it, so opencode sends an empty key, and the Spark answers 401: 
 service. Restarting the service from a shell that has the key does.
 
 *(Added 2026-11-12.)* Since the front (2026-10-16) the 401 reads `Error: That API key isn't one the
-Spark knows.`, then which key to check, not `Unauthorized`. And the key needn't be new: when the
-service stops answering, opencode starts another, and if the process that starts it lacks the key, as
-an app opened from the Dock does, the new service lacks it too. Seen 2026-11-12 with opencode 2.2.7:
-the service stopped answering at 14:40, the one that replaced it had no `SPARK_API_KEY`, and opencode
-got the 401 while the same key worked from a terminal. The same restart fixes it.
+Spark knows.`, then which key to check, not `Unauthorized`. And the key needn't be new: an opencode
+command that finds the service slow to answer starts another, and if an app opened from the Dock ran
+that command, the new service has no key. Seen 2026-11-12 with opencode 2.2.7: Obsidian's OpenCode
+plugin ran `opencode api get` about every 1.5 s and kept replacing the service with one that had no
+`SPARK_API_KEY`, once only 2½ minutes after a restart, while the same key worked from a terminal. So
+the restart holds only once nothing like that is running: the plugin was uninstalled, and the
+restart after that held.
 
 **On the Mac**, in a terminal opened after the key went into `~/.secrets`:
 
