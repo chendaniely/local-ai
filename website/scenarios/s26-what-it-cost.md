@@ -67,8 +67,10 @@ final review: until then `make usage` printed only the four periods' lines, thou
 flags.)* On the Mac, `make usage-push` harvests OpenCode's rows for the by-hand engines and sends them to the Spark by
 hand; spark-menu does the same by itself every 5 minutes. When the Spark refuses a row, its import stores the rest,
 says how many it refused in its verdict line and exits 3, so `make usage-push` fails and spark-menu keeps its place to
-send them again, with a note in the dropdown; and when OpenCode's messages stop holding a field the harvest reads, the
-harvest refuses, naming the field, rather than send nothing without a word *(both 2026-11-12, at the final review)*.
+send them again, with a note in the dropdown; and when no assistant message in OpenCode's database holds one of three paths, `$.model.providerID`,
+`$.time.completed` or `$.tokens.input`, the harvest refuses, naming the path, rather than send nothing without a word;
+any other field going missing shows as skipped rows instead: a message with a token count missing, or a row the
+importer's own check would refuse, is left out and counted in the harvest's `skipped` figure, not refused *(both 2026-11-12, at the final review)*.
 The fast coder's cache is estimated when the summary reads, since its engine reports none, and the summary shows how
 much of each total rests on that estimate. *(Built 2026-11-12, not yet deployed.)*
 
