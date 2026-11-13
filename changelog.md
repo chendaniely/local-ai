@@ -53,7 +53,8 @@ recorded here (CLAUDE.md).
   line of this date says how.
 - **A gap found after Step 1, fixed by hand on the Mac:** `spark clients hermes` set the `spark` provider's key to
   Hermes's own but left Hermes's own model block on `SPARK_API_KEY`. So Hermes's default model sent Pi's key, and its
-  requests until the fix count under Pi's key.
+  requests until the fix count under Pi's key. *(`spark clients hermes` now moves that block's key too, and says so:
+  [OpenCode and Hermes Agent](website/how-to/opencode-hermes.md).)*
 - **Unchanged:** the by-hand SGLang coder runs on, started 2026-10-26, without `--enable-cache-report`. Counted again
   that evening: five processes, none with the flag. The by-hand script gives it the flag at its next start.
 - **Not yet:** spark-menu's usage section, Task U14 on the Mac; the vault's entry note, Dan's. Two parts of the plan's

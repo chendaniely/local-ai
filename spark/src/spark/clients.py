@@ -11,6 +11,8 @@ import shutil
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -358,13 +360,34 @@ def _load_hermes(path: Path) -> dict:
     return data
 
 
+class HermesWrite(NamedTuple):
+    backup: Path | None  # the previous file, or None when there was none
+    model_key_was: str | None  # the variable Hermes's own model block named before it was given the provider's
+
+
+def _endpoint(url: object) -> tuple | None:
+    """A URL as the parts that say where it reaches: localhost and 127.0.0.1 are one host, and a trailing slash is
+    no part of the path. None for what isn't a URL string."""
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:  # a port that isn't a number
+        return None
+    host = "127.0.0.1" if parts.hostname == "localhost" else parts.hostname
+    return parts.scheme, host, port, parts.path.rstrip("/")
+
+
 def merge_hermes(path: Path, provider: dict, default: str | None = None,
-                 reasoning: dict[str, str] | None = None) -> Path | None:
+                 reasoning: dict[str, str] | None = None) -> HermesWrite:
     """Put `provider` under providers.spark in Hermes's config, keep everything else, and back up the old file, as
     merge_pi does. Hermes keeps the model it had, unless `default` names a Spark model for it: then its model's
-    provider and default are set, and the rest of its model settings stay. `reasoning` maps Spark models to the effort
-    Hermes sends them, in agent.reasoning_overrides, beside the overrides already there. The file is rewritten from
-    its data, so comments in it don't survive; the backup keeps them."""
+    provider and default are set, and the rest of its model settings stay. If its own model block reaches the Spark
+    too, at the provider's endpoint with a key_env of its own, that key_env becomes the provider's, or its default
+    model would go on sending the old key (seen 2026-11-12: Pi's); the old name comes back as model_key_was.
+    `reasoning` maps Spark models to the effort Hermes sends them, in agent.reasoning_overrides, beside the overrides
+    already there. The file is rewritten from its data, so comments in it don't survive; the backup keeps them."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _load_hermes(path) if path.exists() else None
     if default is not None and data is not None and not isinstance(data.get("model", {}), dict):
@@ -387,10 +410,16 @@ def merge_hermes(path: Path, provider: dict, default: str | None = None,
     data.setdefault("providers", {})["spark"] = provider
     if default is not None:
         data.setdefault("model", {}).update({"provider": "custom:spark", "default": default})
+    model_key_was = None
+    model = data.get("model")
+    if isinstance(model, dict) and "key_env" in model and model["key_env"] != provider.get("key_env"):
+        reaches = _endpoint(model.get("base_url"))
+        if reaches is not None and reaches == _endpoint(provider.get("api")):
+            model_key_was, model["key_env"] = model["key_env"], provider["key_env"]
     if reasoning:
         data.setdefault("agent", {}).setdefault("reasoning_overrides", {}).update(reasoning)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
-    return backup
+    return HermesWrite(backup, model_key_was)
 
 
 def hermes_placeholder_left(path: Path, key_env: str) -> str | None:
@@ -504,10 +533,13 @@ def run_hermes(args: argparse.Namespace) -> int:
                              sort_keys=False), end="")
         return 0
     path = HERMES_CONFIG.expanduser()
-    backup = merge_hermes(path, provider, args.default, reasoning)
+    backup, model_key_was = merge_hermes(path, provider, args.default, reasoning)
     kept = f"the previous file is {backup}" if backup else "there was no previous file"
     print(f"clients: wrote the 'spark' provider to {path} ({kept}), with reasoning effort {HERMES_REASONING} for its "
           "models")
+    if model_key_was is not None:
+        print(f"clients: Hermes's own model block is on the Spark too, and named {model_key_was}; it now names "
+              f"{args.key_env}, as the 'spark' provider does, so its default model sends the same key")
     if args.default is not None:
         print(f"clients: Hermes's default model is now {args.default}, on the Spark")
     elif chat:

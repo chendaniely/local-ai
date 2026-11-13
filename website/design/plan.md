@@ -4788,7 +4788,7 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   - **The first rows' keys.** A request carried whichever key its harness was set to. Hermes's own model block kept
     `SPARK_API_KEY` after `spark clients hermes` moved its `spark` provider, so until Dan fixed it by hand on the Mac
     its default model sent Pi's key, and those rows count under Pi's. So the reconciliation window starts after that
-    fix, not at the seam.
+    fix, not at the seam. `spark clients hermes` now moves that block's key too, and says so.
   - **Open WebUI and `agent`'s Pi** are read per message, so the seam splits them as designed, and their snapshots
     taken after it change nothing.
 

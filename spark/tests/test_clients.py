@@ -438,7 +438,7 @@ def test_hermes_merge_keeps_the_model_it_had_and_other_providers(tmp_path):
            "providers": {"work": {"api": "https://w/v1", "key_env": "W"}}, "terminal": {"backend": "local"}}
     path.write_text(yaml.safe_dump(old))
     path.chmod(0o600)
-    backup = merge_hermes(path, {"api": "u"})
+    backup = merge_hermes(path, {"api": "u"}).backup
     data = yaml.safe_load(path.read_text())
     assert data["model"] == old["model"] and data["terminal"] == old["terminal"]
     assert data["providers"] == {"work": old["providers"]["work"], "spark": {"api": "u"}}
@@ -455,7 +455,7 @@ def test_hermes_default_sets_its_model_and_keeps_its_other_model_settings(tmp_pa
 
 def test_a_first_hermes_write_sets_only_the_provider(tmp_path):
     path = tmp_path / ".hermes" / "config.yaml"
-    assert merge_hermes(path, {"api": "u"}) is None
+    assert merge_hermes(path, {"api": "u"}) == (None, None)
     assert yaml.safe_load(path.read_text()) == {"providers": {"spark": {"api": "u"}}}
 
 
@@ -541,6 +541,53 @@ def test_agent_settings_of_the_wrong_shape_are_refused(tmp_path, text, says):
         merge_hermes(path, {"api": "u"}, reasoning={"coder": "xhigh"})
     assert str(err.value) == f"Hermes's config {path}{says}"
     assert path.read_text() == text and not (tmp_path / "config.yaml.bak").exists()
+
+
+SPARK_URL = "http://127.0.0.1:9100/v1"
+
+
+@pytest.mark.parametrize("base_url", [SPARK_URL, SPARK_URL + "/", "http://localhost:9100/v1"])
+def test_hermes_merge_gives_its_own_model_block_the_new_key_when_it_points_at_the_spark(tmp_path, base_url):
+    # Seen 2026-11-12, at the usage meter's deploy: providers.spark moved to SPARK_HERMES_KEY, but Hermes's own model
+    # block, provider custom at the front's tunnel URL, kept SPARK_API_KEY, so its default model sent Pi's key and its
+    # rows counted under Pi's.
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"model": {"provider": "custom", "base_url": base_url, "key_env": "SPARK_API_KEY",
+                                              "default": "coder"}}))
+    written = merge_hermes(path, {"api": SPARK_URL, "key_env": "SPARK_HERMES_KEY"})
+    assert yaml.safe_load(path.read_text())["model"] == {"provider": "custom", "base_url": base_url,
+                                                         "key_env": "SPARK_HERMES_KEY", "default": "coder"}
+    assert written.model_key_was == "SPARK_API_KEY"
+
+
+@pytest.mark.parametrize("model", [
+    {"provider": "custom", "base_url": "https://openrouter.example/api/v1", "key_env": "OPENROUTER_API_KEY"},
+    {"provider": "custom", "base_url": "http://127.0.0.1:8990/v1", "key_env": "SPARK_SGLANG_KEY"},  # the by-hand coder
+    {"provider": "custom", "base_url": SPARK_URL, "key_env": "SPARK_HERMES_KEY"},
+    {"provider": "custom", "base_url": SPARK_URL},
+    {"provider": "custom", "base_url": 9100, "key_env": "SPARK_API_KEY"}])
+def test_hermes_merge_leaves_a_model_block_elsewhere_or_already_on_the_key(tmp_path, model):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"model": model}))
+    written = merge_hermes(path, {"api": SPARK_URL, "key_env": "SPARK_HERMES_KEY"})
+    assert yaml.safe_load(path.read_text())["model"] == model
+    assert written.model_key_was is None
+
+
+def test_hermes_write_says_when_it_gave_its_own_model_block_the_new_key(capsys):
+    config = Path(os.environ["HOME"]) / ".hermes" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text(yaml.safe_dump({"model": {"provider": "custom", "base_url": SPARK_URL,
+                                                "key_env": "SPARK_API_KEY"}}))
+    registry = Path(__file__).parent / "fixtures" / "models.yaml"
+    args = argparse.Namespace(registry=registry, base_url=SPARK_URL, key_env="SPARK_HERMES_KEY", write=True,
+                              default=None)
+    assert clients.run_hermes(args) == 0
+    said = ("clients: Hermes's own model block is on the Spark too, and named SPARK_API_KEY; it now names "
+            "SPARK_HERMES_KEY, as the 'spark' provider does, so its default model sends the same key\n")
+    assert said in capsys.readouterr().out
+    assert clients.run_hermes(args) == 0
+    assert "own model block" not in capsys.readouterr().out
 
 
 def test_hermes_write_sets_xhigh_for_the_chat_models_only(capsys):
