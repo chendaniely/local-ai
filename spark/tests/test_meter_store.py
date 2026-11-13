@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -183,3 +185,40 @@ def test_an_imported_row_with_a_bad_time_is_dropped_and_counted(bad, tmp_path):
     write(tmp_path / "opencode.jsonl", [{**imp("m1"), **bad}, imp("m2"), imp("m3", t1=None)])
     rows, count = store._imported_rows(BOOK, tmp_path)
     assert sorted(r.id for r in rows) == ["m2", "m3"] and count == 1
+
+
+def _whisper_book():
+    return dataclasses.replace(BOOK, mapping={**BOOK.mapping, "spark-whisper": prices.Mapping("whisper-1", Decimal(1))})
+
+
+def test_a_front_row_reads_audio_fields_and_refuses_nothing_for_them(tmp_path):
+    write(tmp_path / "usage-2026-11.jsonl", [
+        front("a" * 16, audio_s=90.5, audio_est=True, bytes_in=1600),
+        front("b" * 16, audio_s=-1, audio_est="yes", bytes_in=1.5),
+        front("c" * 16, audio_s=float("nan"), bytes_in=True),
+        front("d" * 16, audio_s="9", audio_est=1)])
+    rows = {r.id: r for r in store.front_rows(tmp_path)}
+    assert len(rows) == 4
+    assert (rows["a" * 16].audio_s, rows["a" * 16].audio_est, rows["a" * 16].bytes_in) == (90.5, True, 1600)
+    for key in "bcd":
+        r = rows[key * 16]
+        assert (r.audio_s, r.audio_est) == (None, False)
+    assert rows["b" * 16].bytes_in is None and rows["c" * 16].bytes_in is None
+
+
+def test_read_estimates_a_length_from_the_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "USAGE_DIR", tmp_path / "u")
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path / "s")
+    monkeypatch.setattr(paths, "GATE_LEDGER_DIR", tmp_path / "g")
+    write(tmp_path / "u" / "usage-2026-11.jsonl", [
+        front("a" * 16, model="spark-whisper", bytes_in=1_600_000),
+        front("b" * 16, model="spark-whisper", bytes_in=1_600_000, audio_s=12.0),
+        front("c" * 16, model="spark-whisper"),
+        front("d" * 16, model="spark-whisper", bytes_in=1_600_000, end="error"),
+        front("e" * 16, model="spark-fast", bytes_in=1_600_000)])
+    got = {r.id: r for r in store.read(_whisper_book()).rows}
+    assert (got["a" * 16].audio_s, got["a" * 16].audio_est) == (100.0, True)
+    assert (got["b" * 16].audio_s, got["b" * 16].audio_est) == (12.0, False)
+    assert got["c" * 16].audio_s is None
+    assert got["d" * 16].audio_s is None
+    assert got["e" * 16].audio_s is None

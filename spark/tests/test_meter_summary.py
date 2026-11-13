@@ -221,7 +221,8 @@ def test_by_model_sorted():
     month = [m for m in by_model if m["period"] == "this_month"]
     assert [m["model"] for m in month] == ["qwen3.8-27b", "gemma-4-26b-a4b"]
     assert month[0]["usd"] > month[1]["usd"] and month[1]["requests"] == 2 and month[1]["tier"] == "opus"
-    assert set(month[0]) == {"model", "tier", "period", "usd", "usd_estimated", "requests", "p", "c", "o"}
+    assert set(month[0]) == {"model", "tier", "period", "usd", "usd_estimated", "requests", "p", "c", "o",
+                           "audio_s"}
     assert [m["model"] for m in by_model if m["period"] == "all_time"] == ["gemma-4-26b-a4b", "qwen3.8-27b"]
     assert by_model[:2] == month
     unmapped = make([row(t, "made-up-model")], local("2026-11-06T10:00"))["by_model"][0]
@@ -373,3 +374,40 @@ def test_summary_verb(tmp_path, monkeypatch, capsys):
     assert cli.main(["usage", "summary", "--json"]) == 1
     captured = capsys.readouterr()
     assert captured.out == "" and "price_usd" in captured.err and "31415" not in captured.err
+
+
+WHISPER = dataclasses.replace(BOOK, mapping={**BOOK.mapping, "whisper-large-v3-turbo": prices.Mapping(
+    "whisper-1", Decimal(1))})
+
+
+def speech_rows():
+    t = local("2026-11-05T10:00")
+    return [Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "done",
+                key="demo", **more) for more in ({"audio_s": 90.0}, {"audio_s": 100.0, "audio_est": True},
+                                                  {}, {"audio_s": 30.0}) ] + [row(t)]
+
+
+def test_audio_is_summed_priced_or_not_and_estimates_are_counted():
+    out = summary.summarize(Store(speech_rows()), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    month = out["periods"]["this_month"]
+    assert month["audio_s"] == 220.0 and out["periods"]["last_month"]["audio_s"] == 0.0
+    # 90 s + 100 s + 30 s = 220 s at 0.006 a minute is 0.022; the 100 s row is the estimated one
+    assert month["usd"] == pytest.approx(0.78 + 0.022, abs=1e-4)
+    assert month["usd_estimated"] == pytest.approx(0.01, abs=1e-4)
+    assert month["unpriced"] == 0
+    assert out["flags"]["unmapped"] == {}
+
+
+def test_a_row_with_both_estimates_counts_once():
+    t = local("2026-11-05T10:00")
+    both = row(t, c=900_000, c_estimated=True, audio_s=60.0, audio_est=True)
+    assert make([both], local("2026-11-06T10:00"))["periods"]["this_month"]["usd_estimated"] == 0.78
+
+
+def test_words_show_audio_minutes_and_name_both_estimates():
+    out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
+    assert "1.5 min audio" in lines["This month"] and "audio" not in lines["Today"].replace("This month", "")
+    est = summary.summarize(Store(speech_rows()[1:2]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    assert "of it estimated" in summary.words(est) and "estimated cache" not in summary.words(est)
+    assert "audio" not in summary.words(make([row(local("2026-11-05T10:00"))], local("2026-11-06T10:00")))

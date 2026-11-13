@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -27,7 +28,9 @@ _LEDGER_FILE = re.compile(r"ledger-\d{4}-\d{2}\.jsonl")
 @dataclass(frozen=True)
 class Row:
     """One request or one model call. `c` is None when its engine reported no cache; `c_estimated` marks one the
-    meter estimated (with_estimates). A front row has `key`; an imported row has `provider` and `session`."""
+    meter estimated (with_estimates). `audio_s` is a speech row's audio length in seconds, None when unknown, and
+    `audio_est` marks one the meter estimated from `bytes_in`, the size of the upload (read). A front row has `key`;
+    an imported row has `provider` and `session`."""
     source: str  # "front" or "opencode"
     id: str
     t0: float
@@ -42,6 +45,9 @@ class Row:
     session: str | None = None
     c_estimated: bool = False
     dropped: int = 0
+    audio_s: float | None = None
+    audio_est: bool = False
+    bytes_in: int | None = None
 
 
 @dataclass
@@ -74,6 +80,12 @@ def _time(value: Any) -> bool:
     """A time the meter will read: epoch seconds from 2020 up to 2100. JSON's NaN and Infinity, which json.loads
     accepts, and a millisecond stamp are refused here, before a summary places them on a calendar."""
     return _number(value) and _EARLIEST <= value < _LATEST  # NaN fails both comparisons
+
+
+def _audio(value: Any) -> float | None:
+    """A length the meter will read: a non-negative finite number of seconds, else None. A bad one never refuses
+    the row."""
+    return float(value) if _number(value) and math.isfinite(value) and value >= 0 else None
 
 
 def _times(data: dict) -> bool:
@@ -120,7 +132,8 @@ def _front_rows(folder: Path) -> tuple[list[Row], int]:
         rows.append(Row("front", data["id"], float(data["t0"]), float(t1) if _number(t1) else None,
                         model if isinstance(model, str) else None, _count(data.get("p")), _count(data.get("c")),
                         _count(data.get("o")), data["end"], key if isinstance(key, str) else None,
-                        dropped=_count(data.get("dropped")) or 0))
+                        dropped=_count(data.get("dropped")) or 0, audio_s=_audio(data.get("audio_s")),
+                        audio_est=data.get("audio_est") is True, bytes_in=_count(data.get("bytes_in"))))
     return rows, bad
 
 
@@ -214,8 +227,24 @@ def with_estimates(rows: list[Row]) -> list[Row]:
     return out
 
 
+AUDIO_BYTES_PER_SECOND = 16_000  # the length estimate: 16 kHz, 16-bit mono, the size of a plain WAV a second
+
+
+def with_audio_estimates(rows: list[Row], book: PriceBook) -> list[Row]:
+    """The length estimate for a finished row whose model maps to a per-minute proxy, which has no `audio_s` but has
+    `bytes_in`: bytes_in / AUDIO_BYTES_PER_SECOND seconds, marked estimated."""
+    out = []
+    for row in rows:
+        mapping = book.mapping.get(row.model) if row.model is not None else None
+        if (row.end == "done" and mapping is not None and row.audio_s is None and row.bytes_in is not None
+                and any(line.per_minute is not None for line in book.lines.get(mapping.tier, []))):
+            row = dataclasses.replace(row, audio_s=row.bytes_in / AUDIO_BYTES_PER_SECOND, audio_est=True)
+        out.append(row)
+    return out
+
+
 def read(book: PriceBook) -> Store:
-    """All three folders (read when called), with the estimates applied."""
+    """All three folders (read when called), with the estimates applied: the cache's and the audio length's."""
     fronts, bad = _front_rows(paths.USAGE_DIR)
     imported, bad_imported = _imported_rows(book, paths.USAGE_SESSIONS_DIR)
     last_import = None
@@ -225,4 +254,4 @@ def read(book: PriceBook) -> Store:
         pass
     except ValueError:
         pass
-    return Store(with_estimates(fronts + imported), counting_off(), bad + bad_imported, last_import, len(imported))
+    return Store(with_audio_estimates(with_estimates(fronts + imported), book), counting_off(), bad + bad_imported, last_import, len(imported))

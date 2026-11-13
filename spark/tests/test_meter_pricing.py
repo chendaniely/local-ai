@@ -156,3 +156,32 @@ def test_a_per_minute_row_waits_for_its_length():
                                                                       "no_audio_length")
     assert "no_audio_length" in pricing.WHYS and pricing.WHYS[-1] == "no_audio_length"
     assert pricing.price(BASE, row("whisper-large-v3", end="error")).why == "not_done"
+
+
+WHISPER = dataclasses.replace(BOOK, mapping={**BOOK.mapping, "speech": Mapping("whisper-1", Decimal(1)),
+                                             "speech2": Mapping("whisper-1", Decimal(2))})
+
+
+def speech(audio_s, model="speech", end="done", **more) -> Row:
+    return Row("front", "0" * 16, at("2026-11-01T00:00:00Z"), None, model, None, None, None, end,
+               audio_s=audio_s, **more)
+
+
+def test_a_per_minute_row_is_priced_by_its_audio():
+    priced = pricing.price(WHISPER, speech(90.0))
+    assert priced.usd == Decimal("0.009") and priced.why is None
+    assert (priced.tier, priced.line) == ("whisper-1", "whisper-1@2026-09-01")
+    assert pricing.price(WHISPER, speech(90.5)).usd == Decimal("90.5") / 60 * Decimal("0.006")
+    assert pricing.price(WHISPER, speech(90.0, "speech2")).usd == Decimal("0.018")
+
+
+def test_a_per_minute_row_with_no_length_says_so_and_a_refused_one_is_not_done():
+    assert pricing.price(WHISPER, speech(None)).why == "no_audio_length"
+    assert pricing.price(WHISPER, speech(None, end="refused")).why == "not_done"
+
+
+def test_row_json_carries_the_audio_fields():
+    out = pricing.row_json(speech(90.0, audio_est=True), pricing.price(WHISPER, speech(90.0)))
+    assert out["audio_s"] == 90.0 and out["a_est"] is True and "audio_est" not in out
+    plain = pricing.row_json(speech(None), pricing.price(WHISPER, speech(None)))
+    assert "audio_s" not in plain and "a_est" not in plain and "bytes_in" not in plain

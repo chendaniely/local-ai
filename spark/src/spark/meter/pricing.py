@@ -37,8 +37,10 @@ def price(book: PriceBook, row: Row) -> Priced:
         return Priced(tier="none", why="none")
     line = line_at(book, mapping.tier, row.t0) if mapping is not None else None
     if line is not None and line.per_minute is not None:
-        # Priced by the audio minute: Task E2 gives rows a length; until then there is nothing to multiply.
-        return Priced(tier=mapping.tier, line=line.label, why="no_audio_length")
+        if row.audio_s is None:  # priced by the audio minute, and this row has no length
+            return Priced(tier=mapping.tier, line=line.label, why="no_audio_length")
+        usd = Decimal(str(row.audio_s)) / 60 * line.per_minute * mapping.factor
+        return Priced(usd, mapping.tier, line.label, "base")
     if row.p is None or row.o is None or (row.c is not None and row.c > row.p):  # a cache read can't exceed P
         return Priced(why="no_counts")
     if mapping is None:
@@ -60,11 +62,11 @@ def price(book: PriceBook, row: Row) -> Priced:
 
 
 def row_json(row: Row, priced: Priced) -> dict[str, Any]:
-    """The row's fields (`c_est` for c_estimated) and the four priced fields, `usd` a float rounded to 6 places;
+    """The row's fields (`c_est` for c_estimated, `a_est` for audio_est, left out unless true) and the four priced fields, `usd` a float rounded to 6 places;
     None values are left out."""
     out: dict[str, Any] = {}
     for f in dataclasses.fields(row):
-        out["c_est" if f.name == "c_estimated" else f.name] = getattr(row, f.name)
+        out[{"c_estimated": "c_est", "audio_est": "a_est"}.get(f.name, f.name)] = getattr(row, f.name)
     out.update(usd=None if priced.usd is None else round(float(priced.usd), 6), tier=priced.tier, line=priced.line,
                band=priced.band, why=priced.why)
-    return {k: v for k, v in out.items() if v is not None}
+    return {k: v for k, v in out.items() if v is not None and not (k == "a_est" and v is False)}

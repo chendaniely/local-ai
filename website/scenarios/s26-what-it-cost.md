@@ -75,6 +75,9 @@ send nothing without a word; a message with a token count missing, or a row the 
 left out and counted in the harvest's `skipped` figure instead *(both 2026-11-12, at the final review)*.
 The fast coder's cache is estimated when the summary reads, since its engine reports none, and the summary shows how
 much of each total rests on that estimate. *(Built 2026-11-12, ~~not yet deployed~~ deployed the same day.)*
+*(2026-11-12: speech is priced by the audio minute (Whisper) or by the token (Qwen3-ASR), and embeddings by the token,
+each at a hosted proxy's price; a period's line adds its audio minutes, and an estimated length or cache is marked `~`
+in the share that rests on it.)*
 
 In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
 behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
