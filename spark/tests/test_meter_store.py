@@ -222,3 +222,24 @@ def test_read_estimates_a_length_from_the_size(tmp_path, monkeypatch):
     assert got["c" * 16].audio_s is None
     assert got["d" * 16].audio_s is None
     assert got["e" * 16].audio_s is None
+
+
+def test_a_huge_audio_or_size_reads_as_none_and_the_row_stays(tmp_path):
+    (tmp_path).mkdir(exist_ok=True)
+    line = ('{"v":1,"id":"' + "a" * 16 + '","t0":1793000000,"model":"spark-fast","end":"done",'
+            '"audio_s":1' + "0" * 400 + ',"bytes_in":1' + "0" * 400 + "}")
+    write(tmp_path / "usage-2026-11.jsonl", [line])
+    (r,) = store.front_rows(tmp_path)
+    assert r.audio_s is None and r.bytes_in is None
+
+
+def test_the_estimate_follows_the_line_in_effect_and_rounds_to_three_places(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "USAGE_DIR", tmp_path / "u")
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path / "s")
+    monkeypatch.setattr(paths, "GATE_LEDGER_DIR", tmp_path / "g")
+    write(tmp_path / "u" / "usage-2026-11.jsonl", [
+        front("a" * 16, model="spark-whisper", bytes_in=12_345),
+        front("b" * 16, model="spark-whisper", t0=1_700_000_000.0, bytes_in=1_600_000)])  # before the line begins
+    got = {r.id: r for r in store.read(_whisper_book()).rows}
+    assert got["a" * 16].audio_s == 0.772  # 12345 / 16000 = 0.7715625
+    assert got["b" * 16].audio_s is None

@@ -185,3 +185,7 @@ def test_row_json_carries_the_audio_fields():
     assert out["audio_s"] == 90.0 and out["a_est"] is True and "audio_est" not in out
     plain = pricing.row_json(speech(None), pricing.price(WHISPER, speech(None)))
     assert "audio_s" not in plain and "a_est" not in plain and "bytes_in" not in plain
+
+
+def test_row_json_may_carry_bytes_in():
+    assert pricing.row_json(speech(None, bytes_in=5), pricing.price(WHISPER, speech(None)))["bytes_in"] == 5

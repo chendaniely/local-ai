@@ -394,7 +394,7 @@ def test_audio_is_summed_priced_or_not_and_estimates_are_counted():
     # 90 s + 100 s + 30 s = 220 s at 0.006 a minute is 0.022; the 100 s row is the estimated one
     assert month["usd"] == pytest.approx(0.78 + 0.022, abs=1e-4)
     assert month["usd_estimated"] == pytest.approx(0.01, abs=1e-4)
-    assert month["unpriced"] == 0
+    assert month["unpriced"] == 1  # the row with no length
     assert out["flags"]["unmapped"] == {}
 
 
@@ -411,3 +411,26 @@ def test_words_show_audio_minutes_and_name_both_estimates():
     est = summary.summarize(Store(speech_rows()[1:2]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
     assert "of it estimated" in summary.words(est) and "estimated cache" not in summary.words(est)
     assert "audio" not in summary.words(make([row(local("2026-11-05T10:00"))], local("2026-11-06T10:00")))
+
+
+def test_an_unlengthed_speech_row_counts_as_unpriced_and_an_error_row_adds_no_audio():
+    t = local("2026-11-05T10:00")
+    rows = [Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "done"),
+            Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "error",
+                audio_s=600.0)]
+    month = summary.summarize(Store(rows), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))[
+        "periods"]["this_month"]
+    assert month["unpriced"] == 1 and month["audio_s"] == 0.0
+
+
+def test_an_estimated_length_on_a_per_token_line_is_not_an_estimated_dollar():
+    t = local("2026-11-05T10:00")
+    odd = row(t, audio_s=60.0, audio_est=True)  # Opus's per-token line, a length that prices nothing
+    assert make([odd], local("2026-11-06T10:00"))["periods"]["this_month"]["usd_estimated"] == 0.0
+
+
+def test_words_leave_audio_out_of_a_period_with_none():
+    t = local("2026-11-05T10:00")
+    out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
+    assert "min audio" in lines["This month"] and "min audio" not in lines["Last month"]

@@ -23,6 +23,7 @@ class Priced:
     line: str | None = None  # the PriceLine's label
     band: str | None = None  # "base" or "above"
     why: str | None = None  # one of WHYS when unpriced
+    by_audio: bool = False  # priced by the audio minute, on a per-minute line
 
 
 def price(book: PriceBook, row: Row) -> Priced:
@@ -40,7 +41,7 @@ def price(book: PriceBook, row: Row) -> Priced:
         if row.audio_s is None:  # priced by the audio minute, and this row has no length
             return Priced(tier=mapping.tier, line=line.label, why="no_audio_length")
         usd = Decimal(str(row.audio_s)) / 60 * line.per_minute * mapping.factor
-        return Priced(usd, mapping.tier, line.label, "base")
+        return Priced(usd, mapping.tier, line.label, "base", by_audio=True)
     if row.p is None or row.o is None or (row.c is not None and row.c > row.p):  # a cache read can't exceed P
         return Priced(why="no_counts")
     if mapping is None:
@@ -62,8 +63,9 @@ def price(book: PriceBook, row: Row) -> Priced:
 
 
 def row_json(row: Row, priced: Priced) -> dict[str, Any]:
-    """The row's fields (`c_est` for c_estimated, `a_est` for audio_est, left out unless true) and the four priced fields, `usd` a float rounded to 6 places;
-    None values are left out."""
+    """The row's fields (`c_est` for c_estimated, `a_est` for audio_est, left out unless true; `audio_s` and
+    `bytes_in` when it has them) and the four priced fields, `usd` a float rounded to 6 places; None values are left
+    out."""
     out: dict[str, Any] = {}
     for f in dataclasses.fields(row):
         out[{"c_estimated": "c_est", "audio_est": "a_est"}.get(f.name, f.name)] = getattr(row, f.name)

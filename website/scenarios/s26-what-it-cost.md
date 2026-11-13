@@ -60,7 +60,7 @@ Task 44l, and passing)*:
 
 On the Spark, `make usage` prints the summary: a line each for this month, today, last month and all time, with what
 the models would have cost at Claude's prices, the tokens in and out and, when there are any, how much of it rests on
-an estimated cache and how many rows couldn't be priced; all time also as a share of the Spark's price. Under them,
+an estimated cache or audio length, the audio minutes, and how many rows couldn't be priced; all time also as a share of the Spark's price. Under them,
 only when one is set, a line of this month's flags in the menu's words, joined by `·`: `⚠map` and the models with no
 mapping line, then the interrupted rows, the errors, the rows left unpriced, the unknown cache counts and the rows the
 front dropped. Then a line for each span with counting off that ends this month or is still open, with its date:

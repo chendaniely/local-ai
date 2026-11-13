@@ -26,7 +26,7 @@ from spark.meter.store import Row, Store
 SUMMARY_VERSION = 1
 # The whys that leave a row unpriced by a gap someone can close. not_done rows are counted in the flags instead, and
 # `none` is unpriced on purpose.
-UNPRICED = ("no_counts", "unmapped", "no_line", "cache_unknown")
+UNPRICED = ("no_counts", "unmapped", "no_line", "cache_unknown", "no_audio_length")
 NOT_COUNTED = ("by-hand engines: counted from heartsbane's OpenCode only",)
 NO_MODEL = "(no model)"  # a row with none, in by_model and flags.unmapped alike, where null would print as null
 LOCALTIME = Path("/etc/localtime")
@@ -141,7 +141,7 @@ class _Sum:
             self.audio_s += row.audio_s
         if priced.usd is not None:
             self.usd += priced.usd
-            if row.c_estimated or row.audio_est:
+            if row.c_estimated or (row.audio_est and priced.by_audio):
                 self.usd_estimated += priced.usd
         if priced.why in UNPRICED:
             self.unpriced += 1

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from spark import paths
-from spark.meter.prices import PriceBook, by_hand, cache_reported
+from spark.meter.prices import PriceBook, by_hand, cache_reported, line_at
 
 _HEX16 = re.compile(r"[0-9a-f]{16}")
 _FRONT_FILE = re.compile(r"usage-\d{4}-\d{2}\.jsonl")
@@ -85,7 +85,10 @@ def _time(value: Any) -> bool:
 def _audio(value: Any) -> float | None:
     """A length the meter will read: a non-negative finite number of seconds, else None. A bad one never refuses
     the row."""
-    return float(value) if _number(value) and math.isfinite(value) and value >= 0 else None
+    try:
+        return float(value) if _number(value) and math.isfinite(value) and value >= 0 else None
+    except (OverflowError, ValueError):  # an integer too big for a float
+        return None
 
 
 def _times(data: dict) -> bool:
@@ -232,13 +235,15 @@ AUDIO_BYTES_PER_SECOND = 16_000  # the length estimate: 16 kHz, 16-bit mono, the
 
 def with_audio_estimates(rows: list[Row], book: PriceBook) -> list[Row]:
     """The length estimate for a finished row whose model maps to a per-minute proxy, which has no `audio_s` but has
-    `bytes_in`: bytes_in / AUDIO_BYTES_PER_SECOND seconds, marked estimated."""
+    `bytes_in`: bytes_in / AUDIO_BYTES_PER_SECOND seconds to 3 places, marked estimated. The line in effect at the
+    row's t0 has to be the per-minute one: a row from before it, or on a per-token line, gets no length."""
     out = []
     for row in rows:
         mapping = book.mapping.get(row.model) if row.model is not None else None
-        if (row.end == "done" and mapping is not None and row.audio_s is None and row.bytes_in is not None
-                and any(line.per_minute is not None for line in book.lines.get(mapping.tier, []))):
-            row = dataclasses.replace(row, audio_s=row.bytes_in / AUDIO_BYTES_PER_SECOND, audio_est=True)
+        line = line_at(book, mapping.tier, row.t0) if mapping is not None else None
+        if (row.end == "done" and line is not None and line.per_minute is not None and row.audio_s is None
+                and row.bytes_in is not None):
+            row = dataclasses.replace(row, audio_s=round(row.bytes_in / AUDIO_BYTES_PER_SECOND, 3), audio_est=True)
         out.append(row)
     return out
 
@@ -254,4 +259,5 @@ def read(book: PriceBook) -> Store:
         pass
     except ValueError:
         pass
-    return Store(with_audio_estimates(with_estimates(fronts + imported), book), counting_off(), bad + bad_imported, last_import, len(imported))
+    rows = with_audio_estimates(with_estimates(fronts + imported), book)
+    return Store(rows, counting_off(), bad + bad_imported, last_import, len(imported))
