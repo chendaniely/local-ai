@@ -1,4 +1,4 @@
-"""spark.meter.summary and `spark usage summary`: the spend at Claude's prices by day, month and all time, in Dan's
+"""spark.meter.summary and `spark usage summary`: the spend at hosted prices by day, month and all time, in Dan's
 zone. Every row, price and file here is invented."""
 
 from __future__ import annotations

@@ -304,7 +304,7 @@ when that file was retired on 2026-09-23.
   front writes a row of numbers per request into `/var/lib/local-ai/usage`, `spark-front:spark-admin 2750`. The gate
   writes a row per decision into `/var/lib/local-ai/gate-ledger`, `spark:spark-admin 2750`. The rows the Mac imports
   for the by-hand engines go into `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`, which has
-  none yet. `make usage` prints the summary at Claude's prices; the Spark's price and Dan's time zone are in a private
+  none yet. `make usage` prints the summary at hosted prices (Claude's for chat, OpenAI's and Voyage's for speech and embeddings); the Spark's price and Dan's time zone are in a private
   file in his home. Each model is priced as the Claude model [Model prices](website/reference/model-prices.md) names:
   since a second deploy the same evening, the chat models by size, the coder, the fast coder and Flash-Next as Sonnet
   and Qwen3.6 and Gemma as Haiku, where at first they were all Opus. OpenCode and Hermes Agent have their own client keys, so the front's key list holds five.

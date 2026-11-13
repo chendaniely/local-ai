@@ -102,7 +102,7 @@ Dan's decisions, each with its reason in [the questions and answers](usage-meter
 
 | Question | Decision |
 |---|---|
-| Priced at | Claude's prices |
+| Priced at | Claude's prices *(2026-11-13: hosted prices — Claude's for chat; OpenAI's and Voyage's for speech and embeddings; see [Model prices](../reference/model-prices.md))* |
 | Which Claude model | a mapping Dan edits, local model → Claude model; tokens are stored, never dollars |
 | When the mapping or a price changes | a remap reprices the past; prices are dated |
 | Which harnesses | any: Pi, OpenCode, Posit Assistant (`pa`), Hermes Agent, more later |

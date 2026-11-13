@@ -26,7 +26,7 @@ front says counting is off, from when. Totals may lag by minutes. (The design is
 [the usage meter](../design/usage-meter.md), and [its first numbers](../design/usage-meter-now.md);
 this page is what I see of it.)
 
-*(2026-11-12: the summary of what it would have cost at Claude's prices is built on the `swiftbar-costs` branch, ~~not
+*(2026-11-12: the summary of what it would have cost at hosted prices is built on the `swiftbar-costs` branch, ~~not
 yet deployed: it deploys with Task 44l~~ deployed with Task 44l the same day. The fast coder and Flash-Next, which the front can't see, are counted from the
 Mac's OpenCode: `spark usage harvest` reads their rows there, and `spark usage import` merges them into
 `/var/lib/local-ai/usage-sessions`, a folder of Dan's, group `spark-admin`, mode `2750`, whose only writer is that
@@ -59,7 +59,7 @@ Task 44l, and passing)*:
   or a private value. An absent private file passes (the share shows as a dash); a malformed or unreadable one fails the check, naming the error's class and never the file's contents.
 
 On the Spark, `make usage` prints the summary: a line each for this month, today, last month and all time, with what
-the models would have cost at Claude's prices, the tokens in and out and, when there are any, how much of it rests on
+the models would have cost at hosted prices, the tokens in and out and, when there are any, how much of it rests on
 an estimated cache or audio length, the audio minutes, and how many rows couldn't be priced; all time also as a share of the Spark's price. Under them,
 only when one is set, a line of this month's flags in the menu's words, joined by `·`: `⚠map` and the models with no
 mapping line, then the interrupted rows, the errors, the rows left unpriced, the unknown cache counts and the rows the

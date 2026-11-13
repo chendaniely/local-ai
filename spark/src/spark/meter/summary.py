@@ -1,4 +1,4 @@
-"""`spark usage summary` (website/design/usage-meter-now.md, *The summary's JSON*): the spend at Claude's prices today,
+"""`spark usage summary` (website/design/usage-meter-now.md, *The summary's JSON*): the spend at hosted prices today,
 this month, last month and all time, by model, with what couldn't be priced and what isn't counted. spark-menu prints
 this JSON and adds no two numbers, so every figure it shows is made here.
 

@@ -97,7 +97,8 @@ def test_the_suggestion_reproduces_every_registry_models_line():
 
 
 @pytest.mark.parametrize("name,size", [("x-27b", 27), ("x-35b-a3b", 3), ("x-26B-A4B", 4), ("x-0.6b", "0.6"),
-                                       ("qwen3-x", None), ("x-a3b-q4", 3)])
+                                       ("qwen3-x", None), ("x-a3b-q4", 3),
+                                       ("qwen3b-x", None), ("x-q3b", None), ("x-a3bx", None)])
 def test_parameters_used(name, size):
     found = prices.parameters_used(_stand_in(name))
     assert found == (None if size is None else Decimal(str(size)))
@@ -108,6 +109,7 @@ def test_suggest_by_size_with_the_file_and_repo_as_fallbacks():
     assert prices.suggest("m", _stand_in("m", repo="org/Foo-4B")) == "m: {tier: haiku}"
     assert prices.suggest("m", _stand_in("m-6b")) == "m: {tier: sonnet}"
     assert prices.suggest("m", _stand_in("m-0.6b")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m-5.5b")) == "m: {tier: haiku}"
     assert prices.suggest("m", _stand_in("m")) is None
 
 
