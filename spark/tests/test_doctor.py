@@ -1,5 +1,6 @@
 import argparse
 import dataclasses
+import getpass
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -150,8 +152,10 @@ class FakeProbe:
         # The meter's two folders (Task 44g), and the files in each, as the front and the gate leave them: a listing is
         # a list of (name, owner, group, st_mode), or the error it raises.
         self.entries |= {doctor.paths.USAGE_DIR: (*doctor.USAGE_OWNER, 0o2750, "folder"),
+                         doctor.paths.USAGE_SESSIONS_DIR: (getpass.getuser(), "spark-admin", 0o2750, "folder"),
                          doctor.paths.GATE_LEDGER_DIR: (*doctor.LEDGER_OWNER, 0o2750, "folder")}
-        self.listing = {doctor.paths.USAGE_DIR: [("usage-2026-10.jsonl", *doctor.USAGE_OWNER, 0o100640)],
+        self.listing = {doctor.paths.USAGE_SESSIONS_DIR: [],
+                        doctor.paths.USAGE_DIR: [("usage-2026-10.jsonl", *doctor.USAGE_OWNER, 0o100640)],
                         doctor.paths.GATE_LEDGER_DIR: [("ledger-2026-10.jsonl", *doctor.LEDGER_OWNER, 0o100640)]}
         # The moment of the newest row in this month's usage file (None: no row), later than doctor's start; and the
         # paths whose rows would hold anything sent through the front (holds answers from what was sent, as the journal).
@@ -330,11 +334,28 @@ def gate_canary(probe, body):
 NO_KEY_REMEDY = " — set it as website/how-to/deploy.md's *Before the first deploy* says, then log in afresh"
 # Every check, in order, without --full; --full adds the two last.
 NAMES = ["leak hooks", "GPU set", "running kernel's modules", "GPU driver", "earlyoom", "agent's OOM score", "firewall",
-         "secrets folder", "spark's folders", "usage records", "gate ledger", "root's copies", "needrestart", "engine config files", "stack units",
+         "secrets folder", "spark's folders", "usage records", "gate ledger", "usage sessions", "root's copies", "needrestart", "engine config files", "stack units",
          "sockets", "key list", "version drift", "llama-swap config", "llama-swap", "front", "gate", "ntfy", "bypass",
-         "web services", "a model, end to end", "counting", "S01", "S02", "S03", "S05", "S14", "S17"]
+         "web services", "a model, end to end", "counting", "meter prices", "S01", "S02", "S03", "S05", "S14", "S17"]
 FULL = ["a 170 MB upload", "privacy canary"]
 KEY_CHECKS = {"llama-swap", "front", "a model, end to end", "S03"}  # the checks that send your key
+
+
+@pytest.fixture(autouse=True)
+def mapped_fixture_models(monkeypatch, tmp_path):
+    """The real price files, with the fixture registry's models given mapping lines (it names its own, not the box's);
+    "asr" is the model one test adds to the registry. The meter's readers see empty folders in tmp_path, never the box's
+    live data (doctor's own `paths` stays as is: its tests name the real folders)."""
+    from types import SimpleNamespace
+    from spark.meter import prices, store, summary
+    book = prices.load()
+    mapping = book.mapping | {name: prices.Mapping("none", Decimal(1)) for name in (*REG.models, "asr")}
+    monkeypatch.setattr(prices, "load", lambda folder=None: dataclasses.replace(book, mapping=mapping))
+    own = SimpleNamespace(**{**vars(doctor.paths), "USAGE_DIR": tmp_path / "m-usage",
+                             "USAGE_SESSIONS_DIR": tmp_path / "m-sessions", "GATE_LEDGER_DIR": tmp_path / "m-ledger",
+                             "METER_PRIVATE": tmp_path / "m-private.yaml"})
+    monkeypatch.setattr(store, "paths", own)
+    monkeypatch.setattr(summary, "paths", own)
 
 
 def failures(probe, key=KEY, registry=REG, **kw):
@@ -953,7 +974,7 @@ def test_a_deployed_registry_that_wont_load_is_a_fail_line_not_a_traceback(tmp_p
         assert registry is None and kind in problem
         failed = failures(FakeProbe(), registry=None, problem=problem)
         said = f"can't load the deployed registry: {problem} — `make apply`"
-        assert failed == {name: said for name in ("key list", "version drift", "a model, end to end", "S01")}
+        assert failed == {name: said for name in ("key list", "version drift", "meter prices", "a model, end to end", "S01")}
 
 
 def test_stack_units_skips_the_oneshots():
@@ -2176,3 +2197,47 @@ def test_an_upload_streams_a_multipart_form_of_its_length():
                             "Content-Type: audio/wav"]
     assert got["last"] == "--\r\n"
     assert REACHED == [("form", None, f"Bearer {KEY}")]
+
+
+# The imported rows' folder and the price files (Task U7).
+
+def test_a_missing_usage_sessions_folder_fails_with_make_bootstrap():
+    probe = FakeProbe()
+    del probe.entries[doctor.paths.USAGE_SESSIONS_DIR]
+    assert failures(probe) == {"usage sessions": f"{doctor.paths.USAGE_SESSIONS_DIR} is missing, or out of your "
+                                                 "account's reach: `make bootstrap` creates it"}
+    assert detail(FakeProbe(), "usage sessions")[0]
+
+
+def test_meter_prices_pass_on_good_fixtures():
+    ok, said = detail(FakeProbe(), "meter prices")
+    assert ok, said
+
+
+def test_a_registry_model_with_no_mapping_line_fails_meter_prices_naming_it(monkeypatch):
+    from spark.meter import prices
+    book = prices.load()
+    mapping = {k: v for k, v in book.mapping.items() if k != "coder"}
+    monkeypatch.setattr(prices, "load", lambda folder=None: dataclasses.replace(book, mapping=mapping))
+    ok, said = detail(FakeProbe(), "meter prices")
+    assert not ok and "coder" in said and "mapping.yaml" in said
+
+
+def test_a_summary_that_raises_fails_meter_prices_naming_the_class_only(monkeypatch):
+    from spark.meter import summary
+
+    def boom(*a, **k):
+        raise KeyError("secret-figure-123")
+    monkeypatch.setattr(summary, "summarize", boom)
+    ok, said = detail(FakeProbe(), "meter prices")
+    assert not ok and "KeyError" in said and "secret-figure-123" not in said
+
+
+def test_price_files_that_do_not_load_fail_meter_prices(monkeypatch):
+    from spark.meter import prices
+
+    def bad(folder=None):
+        raise prices.PriceError("prices.yaml: broken")
+    monkeypatch.setattr(prices, "load", bad)
+    ok, said = detail(FakeProbe(), "meter prices")
+    assert not ok and "PriceError" in said

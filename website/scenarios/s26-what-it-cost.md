@@ -23,10 +23,18 @@ Both folders are mine to read and no one else's: owned by the front or the gate,
 mode `2750` with setgid, and every file `0640`, so `agent`, the engines and a guest can't read them.
 Counting never gets in a request's way: if a row can't be written, the request goes through and the
 front says counting is off, from when. Totals may lag by minutes. (The design is
-[the usage meter](../design/usage-meter.md); this page is what I see of it.)
+[the usage meter](../design/usage-meter.md), and [its first numbers](../design/usage-meter-now.md);
+this page is what I see of it.)
 
-**What I see.** On the Spark, `make doctor` has three lines for it. *(Built 2026-10-23, Task 44g of
-the meter's counter; not yet deployed, so these lines first run at its deploy.)*
+*(2026-11-12: the summary of what it would have cost at Claude's prices is built on the `swiftbar-costs` branch, not
+yet deployed: it deploys with Task 44l. The fast coder and Flash-Next, which the front can't see, are counted from the
+Mac's OpenCode: `spark usage harvest` reads their rows there, and `spark usage import` merges them into
+`/var/lib/local-ai/usage-sessions`, a folder of Dan's, group `spark-admin`, mode `2750`, whose only writer is that
+import. No row holds a dollar: prices are applied when the summary reads, from the price files in the `spark` project,
+so a corrected price or a remapped model reprices the past.)*
+
+**What I see.** On the Spark, `make doctor` has three lines for the counter. *(Built 2026-10-23, Task 44g of
+the meter's counter; not yet deployed, so these lines first run at its deploy. Two more are built 2026-11-12, below.)*
 
 - `usage records` and `gate ledger` pass when each folder is as bootstrap makes it: the right owner
   and group, mode `2750` with the setgid bit, no file in it readable by others, and no link. They
@@ -38,6 +46,39 @@ the meter's counter; not yet deployed, so these lines first run at its deploy.)*
   file, and the gate's health shows neither the front's counting nor the ledger's off. A gate older
   than the meter says nothing of counting, which doctor reports as *unknown*, a failure: nothing says
   it is on.
+
+Two more doctor lines come with the first numbers *(built 2026-11-12, not yet deployed)*:
+
+- `usage sessions` passes when `/var/lib/local-ai/usage-sessions` is as bootstrap makes it, by the same checks as the
+  other two folders, with Dan as its owner.
+- `meter prices` passes when the price files load, every model of the deployed registry has a line in the mapping, and
+  a summary over the live folders runs. It fails naming the models with no line (add one, or `none` for a model left
+  unpriced on purpose), or only the error's class when a file or the summary fails; it never prints a figure, a row
+  or a private value. An absent private file passes (the share shows as a dash); a malformed or unreadable one fails the check, naming the error's class and never the file's contents.
+
+On the Spark, `make usage` prints the summary: a line each for this month, today, last month and all time, with what
+the models would have cost at Claude's prices, the tokens in and out and, when there are any, how much of it rests on
+an estimated cache and how many rows couldn't be priced; all time also as a share of the Spark's price. Under them,
+only when one is set, a line of this month's flags in the menu's words, joined by `·`: `⚠map` and the models with no
+mapping line, then the interrupted rows, the errors, the rows left unpriced, the unknown cache counts and the rows the
+front dropped. Then a line for each span with counting off that ends this month or is still open, with its date:
+`counting off 2026-11-02 13:58–14:01`, or `counting off since` and when, while it is still off. *(2026-11-12, at the
+final review: until then `make usage` printed only the four periods' lines, though this page already named the
+flags.)* On the Mac, `make usage-push` harvests OpenCode's rows for the by-hand engines and sends them to the Spark by
+hand; spark-menu does the same by itself every 5 minutes. When the Spark refuses a row, its import stores the rest,
+says how many it refused in its verdict line and exits 3, so `make usage-push` fails and spark-menu keeps its place to
+send them again, with a note in the dropdown; and when no assistant message in OpenCode's database holds one of three
+paths, `$.model.providerID`, `$.time.completed` or `$.tokens.input`, the harvest refuses, naming the path, rather than
+send nothing without a word; a message with a token count missing, or a row the importer's own check would refuse, is
+left out and counted in the harvest's `skipped` figure instead *(both 2026-11-12, at the final review)*.
+The fast coder's cache is estimated when the summary reads, since its engine reports none, and the summary shows how
+much of each total rests on that estimate. *(Built 2026-11-12, not yet deployed.)*
+
+In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
+behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
+flags, and a by-model list. It prints the summary's figures as given and prices nothing; when the summary is more than
+3 minutes old it greys and says how old, and it is never blanked. The menu bar's title stays the dot. *(Built next, in
+Dan's dotfiles, 2026-11-12; not yet deployed. spark-menu never contacts the Spark while it is off.)*
 
 On the Spark, `make status` adds a line under *health* for each side that has stopped, *counting off
 since 08:52 (the front's usage rows)*, or *(the gate's ledger)*, on the control socket's view only.
@@ -57,6 +98,10 @@ never fixed by dropping the request. If a folder fails, **On the Spark:** run `m
 makes both with their owners, groups and modes. If a listing is refused, log in again, so the
 `spark-admin` group applies. If `counting` says the front's rows stopped, **On the Spark:** run
 `make status` for since when, and `make logs s=front` for why (below 20 GiB free on the disk,
-counting turns itself off rather than take the room the weights need). If the canary finds either
+counting turns itself off rather than take the room the weights need). If `meter prices` fails naming a
+model, **On the Spark:** add its line to `spark/src/spark/meter/mapping.yaml` and deploy; a price changes by a new dated
+line in `prices.yaml`, and no deploy of either restarts the front or llama-swap. If `usage sessions` fails, run `make
+bootstrap`. The private file, `meter.yaml` in `~/.config/local-ai/` on the Spark, holds the Spark's price and my time
+zone; without it the summary uses the Spark's own zone and shows no share. If the canary finds either
 string in either folder, stop: something is writing what a client sent, and nothing private goes
 through the Spark until it is found.

@@ -12,6 +12,9 @@ LAUNCH = Path(os.environ.get("SPARK_LAUNCH", "/var/lib/local-ai/launch"))  # adm
 WHISPER_TMP = Path(os.environ.get("SPARK_WHISPER_TMP", "/var/lib/local-ai/whisper-tmp"))  # whisper's --tmp-dir
 # The front's usage rows, one file a UTC month (spark.rowfile), which only spark-admin reads.
 USAGE_DIR = Path(os.environ.get("SPARK_USAGE_DIR", "/var/lib/local-ai/usage"))
+# The rows imported from a harness's own session store (the meter's design, part 3): usage-sessions/opencode.jsonl and
+# opencode.imported, written by the import, read by spark.meter.store.
+USAGE_SESSIONS_DIR = Path(os.environ.get("SPARK_USAGE_SESSIONS", "/var/lib/local-ai/usage-sessions"))
 # The gate's ledger (gate.ledger), the same way: beside the gate's own folder, never inside it.
 GATE_LEDGER_DIR = Path(os.environ.get("SPARK_GATE_LEDGER", "/var/lib/local-ai/gate-ledger"))
 # The gate's two sockets, which systemd holds: the status socket for group spark-users, the control socket for
@@ -21,3 +24,8 @@ GATE_CONTROL_SOCKET = Path(os.environ.get("SPARK_GATE_CONTROL", "/run/local-ai/g
 # From Phase 2a's cutover the front holds 9100, where clients reach the models, and llama-swap moves behind it to 900.
 FRONT_URL = os.environ.get("SPARK_FRONT_URL", "http://127.0.0.1:9100")
 LLAMASWAP_URL = os.environ.get("SPARK_LLAMASWAP_URL", "http://127.0.0.1:900")
+# The meter's price files (spark.meter.prices): shipped beside the code, so a price edit deploys with it.
+METER_DIR = Path(os.environ.get("SPARK_METER_DIR", Path(__file__).parent / "meter"))
+# The meter's private file (the design's part 2): the Spark's all-in price and Dan's zone, in Dan's own home on the
+# Spark, never in the repo. spark.meter.summary reads it, and its errors name the field, never a value.
+METER_PRIVATE = Path(os.environ.get("SPARK_METER_PRIVATE", Path.home() / ".config/local-ai/meter.yaml"))

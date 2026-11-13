@@ -646,4 +646,7 @@ where the meter's lifetime baseline reads anything from before its counter start
 harnesses prune their own files (Hermes after 90 days). It holds full chat text, so it never
 syncs anywhere without a decision. The design's §7 ([`usage-meter.md`](website/design/usage-meter.md))
 says how it is read; the vault's entry note records it, and will record the meter's folders on the
-Spark as they are made.
+Spark as they are made. *(2026-11-12, the meter's first numbers, built; it deploys with Task 44l (not yet
+deployed): two more private things on the Spark. The private file `~/.config/local-ai/meter.yaml`, mode `0600`, holds the Spark's all-in price and
+my time zone, never goes in this repo, and sessions check it by presence only. `/var/lib/local-ai/usage-sessions`,
+mine, group `spark-admin`, `2750`, holds the rows imported from the Mac's OpenCode. The vault's entry note records both.)*

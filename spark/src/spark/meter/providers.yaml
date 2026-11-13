@@ -1,0 +1,11 @@
+# providers.yaml: the provider names that reached brightroar, per harness (the meter's design, §3).
+# front: false is a provider that bypassed the front, so its rows are imported by hand: `from` is the day (00:00 UTC)
+# it started, and `cache_from` the day its engine began reporting a cache (null: not yet).
+v: 1
+providers:
+  - {harness: pi, provider: spark, front: true}
+  - {harness: opencode, provider: spark, front: true}
+  - {harness: hermes, provider: spark, front: true}
+  - {harness: posit-assistant, provider: spark, front: true}
+  - {harness: opencode, provider: spark-sglang, front: false, from: 2026-10-15, cache_from: null}
+  - {harness: opencode, provider: spark-flash-next, front: false, from: 2026-10-15, cache_from: 2026-10-15}
