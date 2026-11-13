@@ -407,7 +407,7 @@ def test_a_row_with_both_estimates_counts_once():
 def test_words_show_audio_minutes_and_name_both_estimates():
     out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
     lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
-    assert "1.5 min audio" in lines["This month"] and "audio" not in lines["Today"].replace("This month", "")
+    assert "1.5 min audio" in lines["This month"] and "min audio" not in lines["Today"]
     est = summary.summarize(Store(speech_rows()[1:2]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
     assert "of it estimated" in summary.words(est) and "estimated cache" not in summary.words(est)
     assert "audio" not in summary.words(make([row(local("2026-11-05T10:00"))], local("2026-11-06T10:00")))
@@ -430,7 +430,6 @@ def test_an_estimated_length_on_a_per_token_line_is_not_an_estimated_dollar():
 
 
 def test_words_leave_audio_out_of_a_period_with_none():
-    t = local("2026-11-05T10:00")
     out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
     lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
     assert "min audio" in lines["This month"] and "min audio" not in lines["Last month"]

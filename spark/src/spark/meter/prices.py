@@ -264,9 +264,10 @@ TABLE_HEAD = ("| Model | Priced as | Since | Fresh input | Cached input | Output
 
 
 def table(book: PriceBook) -> str:
-    """Every model of the mapping, in its order, with the proxy it's priced as: its tier's newest line, in US dollars per
-    million tokens. A long prompt's rates follow `;`, since a request whose prompt is over that many tokens is priced at
-    them throughout. website/reference/model-prices.md holds this table, and a test keeps the two the same."""
+    """Every model of the mapping, in its order, with the proxy it's priced as: its tier's newest line, in US dollars
+    per million tokens or per audio minute. A long prompt's rates follow `;`, since a request whose prompt is over that
+    many tokens is priced at them throughout. website/reference/model-prices.md holds this table, and a test keeps the
+    two the same."""
     rows = list(TABLE_HEAD)
     for model, mapped in book.mapping.items():
         if mapped.tier == "none":
