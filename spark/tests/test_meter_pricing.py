@@ -84,7 +84,7 @@ def test_a_none_row_with_no_counts_is_none():
     # A transcription row has no token counts; `none` means unpriced on purpose, so it must never read as no_counts,
     # which the summary counts as unpriced (the final review's I1).
     for r in (row("nil", p=None, c=None, o=None), row("nil", o=None), row("nil", p=100, c=101, o=1),
-              row("whisper-large-v3-turbo", p=None, c=None, o=None)):
+              row("nil", p=None, c=None, o=None)):
         priced = pricing.price(BOOK, r)
         assert (priced.why, priced.tier, priced.usd) == ("none", "none", None)
     assert pricing.price(BOOK, row("nil", end="error")).why == "not_done"  # not_done still comes first
@@ -138,3 +138,26 @@ def test_since_parsing():
     for bad in ("nan", "inf", "-inf", "yesterday"):
         with pytest.raises(argparse.ArgumentTypeError):
             _since(bad)
+
+
+def test_embeddings_and_asr_rows_price_without_a_cache_count():
+    shipped = BASE
+    emb = pricing.price(shipped, row("qwen3-embedding-0.6b", p=1_000_000, c=None, o=0))
+    assert emb.usd == Decimal("0.02") and emb.why is None and emb.tier == "voyage-4-lite"
+    asr = pricing.price(shipped, row("qwen3-asr-1.7b-32k", p=1_000_000, c=0, o=1_000_000))
+    assert asr.usd == Decimal("6.25")
+    asr_no_cache = pricing.price(shipped, row("qwen3-asr-1.7b-32k", p=1_000_000, c=None, o=1_000_000))
+    assert asr_no_cache.usd == Decimal("6.25")
+
+
+def test_a_per_minute_row_waits_for_its_length():
+    for r in (row("whisper-large-v3", p=None, c=None, o=None), row("whisper-large-v3-turbo")):
+        priced = pricing.price(shipped_book(), r)
+        assert (priced.usd, priced.tier, priced.line, priced.why) == (None, "whisper-1", "whisper-1@2026-09-01",
+                                                                      "no_audio_length")
+    assert "no_audio_length" in pricing.WHYS and pricing.WHYS[-1] == "no_audio_length"
+    assert pricing.price(BASE, row("whisper-large-v3", end="error")).why == "not_done"
+
+
+def shipped_book():
+    return BASE

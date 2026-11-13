@@ -29,13 +29,13 @@ day that price began; the meter prices each request at the price of its own day.
 | `qwen3.8-27b-sglang` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
 | `qwen3.8-flash-next` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
 | `qwen3.8-flash-next-mtp` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
-| `qwen3-embedding-0.6b` | not priced yet | — | — | — | — |
-| `whisper-large-v3-turbo` | not priced yet | — | — | — | — |
-| `whisper-large-v3` | not priced yet | — | — | — | — |
-| `qwen3-asr-1.7b-32k` | not priced yet | — | — | — | — |
-| `qwen3-asr-1.7b-64k` | not priced yet | — | — | — | — |
-| `qwen3-asr-0.6b-32k` | not priced yet | — | — | — | — |
-| `qwen3-asr-0.6b-64k` | not priced yet | — | — | — | — |
+| `qwen3-embedding-0.6b` | Voyage voyage-4-lite | 2026-09-01 | $0.02 | $0.02 | $0.00 |
+| `whisper-large-v3-turbo` | OpenAI whisper-1 | 2026-09-01 | $0.006 per audio minute | — | — |
+| `whisper-large-v3` | OpenAI whisper-1 | 2026-09-01 | $0.006 per audio minute | — | — |
+| `qwen3-asr-1.7b-32k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-1.7b-64k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-0.6b-32k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-0.6b-64k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
 <!-- end of the table -->
 
 The fast coder (`qwen3.8-27b-sglang`) and Flash-Next (`qwen3.8-flash-next`, and `-mtp` with its
@@ -46,16 +46,22 @@ marks that share `~` ([the first numbers' design](../design/usage-meter-now.md))
 ## Speech and embeddings
 
 Anthropic sells neither, so their proxies come from other vendors (Dan's decision, 2026-11-12:
-"we're just looking for a reasonable proxy for pricing"). They are chosen, not priced yet:
+"we're just looking for a reasonable proxy for pricing"). They are priced now, from each vendor's
+own page, read on 2026-11-12 (developers.openai.com/api/docs/pricing and
+docs.voyageai.com/docs/pricing), each line from 2026-09-01:
 
-| Models | Proxy | Priced by |
+| Models | Proxy | Price |
 |---|---|---|
-| `whisper-large-v3`, `whisper-large-v3-turbo` and the four `qwen3-asr` models | OpenAI's `whisper-1`, for transcription and translation alike | the audio minute |
-| `qwen3-embedding-0.6b` | Voyage's lite embeddings model | the million tokens |
+| `whisper-large-v3`, `whisper-large-v3-turbo` | OpenAI `whisper-1` | $0.006 per audio minute |
+| the four `qwen3-asr` models | OpenAI `gpt-4o-mini-transcribe` | $1.25 per million tokens in, $5.00 out |
+| `qwen3-embedding-0.6b` | Voyage `voyage-4-lite` | $0.02 per million tokens |
 
-Speech waits on the front, whose rows keep each upload's size but not its length in minutes. The
-plan for both comes next, with their prices read from each vendor's own page; until it lands, the
-table above says *not priced yet* for them.
+Embeddings and the Qwen3-ASR models are priced by the token, and they report no cache count, which
+doesn't matter: their proxy's cached rate is its fresh rate. Whisper is priced by the audio minute,
+and a request's length in minutes comes with Task E3 of
+[the every-model plan](../design/usage-meter-every-model.md); until then its rows show as unpriced
+(`no_audio_length`). `make speech`'s requests are not counted until its Stage 2 puts it behind the
+front.
 
 ## Adding a model
 

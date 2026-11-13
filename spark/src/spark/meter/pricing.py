@@ -12,7 +12,7 @@ from typing import Any
 from spark.meter.prices import PriceBook, line_at
 from spark.meter.store import Row
 
-WHYS = ("not_done", "no_counts", "unmapped", "none", "no_line", "cache_unknown")
+WHYS = ("not_done", "no_counts", "unmapped", "none", "no_line", "cache_unknown", "no_audio_length")
 _MILLION = Decimal(1_000_000)
 
 
@@ -35,13 +35,19 @@ def price(book: PriceBook, row: Row) -> Priced:
     mapping = book.mapping.get(row.model) if row.model is not None else None
     if mapping is not None and mapping.tier == "none":
         return Priced(tier="none", why="none")
+    line = line_at(book, mapping.tier, row.t0) if mapping is not None else None
+    if line is not None and line.per_minute is not None:
+        # Priced by the audio minute: Task E2 gives rows a length; until then there is nothing to multiply.
+        return Priced(tier=mapping.tier, line=line.label, why="no_audio_length")
     if row.p is None or row.o is None or (row.c is not None and row.c > row.p):  # a cache read can't exceed P
         return Priced(why="no_counts")
     if mapping is None:
         return Priced(why="unmapped")
-    line = line_at(book, mapping.tier, row.t0)
     if line is None:
         return Priced(tier=mapping.tier, why="no_line")
+    assert line.base is not None
+    if row.c is None and line.base.cache_read == line.base.input:  # no cache count matters where the rates match
+        row = dataclasses.replace(row, c=0)
     if row.c is None:
         return Priced(tier=mapping.tier, line=line.label, why="cache_unknown")
     f = mapping.factor

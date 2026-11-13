@@ -8,6 +8,7 @@ imports only the standard library, `yaml` and `spark.paths`, and the front never
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -18,6 +19,7 @@ import yaml
 from spark import paths
 
 TIERS = ("opus", "sonnet", "haiku", "fable")
+PROXY_NAME = re.compile(r"[a-z0-9][a-z0-9.-]*")
 RATE_FIELDS = ("input", "output", "cache_read", "write_5m", "write_1h")
 
 
@@ -40,10 +42,11 @@ class PriceLine:
     tier: str
     start: float  # UTC epoch of 00:00 on its `from` day
     name: str
-    base: Rates
+    base: Rates | None  # None for a per-minute line
     above: Rates | None
     above_over: int | None
     day: str = ""  # its `from` day, ISO
+    per_minute: Decimal | None = None  # US dollars per audio minute; set only on a per-minute line
 
     @property
     def label(self) -> str:
@@ -52,7 +55,7 @@ class PriceLine:
 
 @dataclass(frozen=True)
 class Mapping:
-    tier: str  # one of TIERS, or "none"
+    tier: str  # a key of prices.yaml's tiers, or "none"
     factor: Decimal
 
 
@@ -140,6 +143,12 @@ def _line(file: str, tier: str, index: int, raw: Any) -> PriceLine:
     name = raw.get("name")
     if not isinstance(name, str) or not name:
         raise PriceError(f"{where}: name should be a string")
+    if "per_minute" in raw:
+        extra = sorted(set(raw) - {"from", "name", "per_minute"})
+        if extra:
+            raise PriceError(f"{where}: a per-minute line holds only from, name and per_minute, not {extra[0]}")
+        rate = _decimal(where, "per_minute", raw["per_minute"], positive=True)
+        return PriceLine(tier, start, name, None, None, None, day, rate)
     base = _rates(where, raw)
     above = above_over = None
     if "above" in raw:
@@ -156,8 +165,8 @@ def _prices(folder: Path) -> dict[str, list[PriceLine]]:
     tiers = _mapping_of("prices.yaml", data.get("tiers"), "tiers")
     lines: dict[str, list[PriceLine]] = {}
     for tier, raw_lines in tiers.items():
-        if tier not in TIERS:
-            raise PriceError(f"prices.yaml: {tier!r} isn't a tier (one of {', '.join(TIERS)})")
+        if not isinstance(tier, str) or not PROXY_NAME.fullmatch(tier):
+            raise PriceError(f"prices.yaml: {tier!r} isn't a proxy name (lowercase letters, digits, . and -)")
         if not isinstance(raw_lines, list) or not raw_lines:
             raise PriceError(f"prices.yaml: {tier} should be a list of lines")
         parsed = [_line("prices.yaml", tier, i, raw) for i, raw in enumerate(raw_lines)]
@@ -186,8 +195,8 @@ def _mappings(folder: Path) -> tuple[dict[str, Mapping], dict[str, bool]]:
         where = f"mapping.yaml: model {model}"
         raw = _mapping_of(where, raw, "its entry")
         tier = raw.get("tier")
-        if tier not in (*TIERS, "none"):
-            raise PriceError(f"{where}: tier should be one of {', '.join(TIERS)} or none, not {tier!r}")
+        if tier != "none" and not isinstance(tier, str):
+            raise PriceError(f"{where}: tier should be a key of prices.yaml or none, not {tier!r}")
         factor = _decimal(where, "factor", raw.get("factor", 1), positive=True)
         models[str(model)] = Mapping(tier, factor)
     return models, switches
@@ -222,7 +231,12 @@ def load(folder: Path | None = None) -> PriceBook:
     """The three files of `folder` (paths.METER_DIR, read when called), or a PriceError naming the one at fault."""
     folder = paths.METER_DIR if folder is None else folder
     models, switches = _mappings(folder)
-    return PriceBook(models, _prices(folder), switches, _providers(folder))
+    lines = _prices(folder)
+    for model, mapped in models.items():
+        if mapped.tier != "none" and mapped.tier not in lines:
+            raise PriceError(f"mapping.yaml: model {model}: tier {mapped.tier!r} is neither none nor a key of "
+                             f"prices.yaml ({', '.join(lines)})")
+    return PriceBook(models, lines, switches, _providers(folder))
 
 
 def line_at(book: PriceBook, tier: str, t: float) -> PriceLine | None:
@@ -263,12 +277,16 @@ def table(book: PriceBook) -> str:
             continue
         line = book.lines[mapped.tier][-1]
         factor = "" if mapped.factor == 1 else f" × {mapped.factor}"
-        cells = " | ".join(_rate(line, field) for field in ("input", "cache_read", "output"))
+        if line.per_minute is not None:
+            cells = f"${line.per_minute} per audio minute | — | —"
+        else:
+            cells = " | ".join(_rate(line, field) for field in ("input", "cache_read", "output"))
         rows.append(f"| `{model}` | {line.name}{factor} | {line.day} | {cells} |")
     return "\n".join(rows)
 
 
 def _rate(line: PriceLine, field: str) -> str:
+    assert line.base is not None
     text = f"${getattr(line.base, field):.2f}"
     if line.above is not None and line.above_over is not None:
         text += f"; ${getattr(line.above, field):.2f} above {line.above_over:,}"

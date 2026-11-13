@@ -6,7 +6,7 @@ tiers:               # per tier: charge uncached prompt tokens at the 5-minute c
   sonnet: {uncached_as_writes: false}
   haiku: {uncached_as_writes: false}
   fable: {uncached_as_writes: false}
-models:              # tier: opus | sonnet | haiku | fable | none; factor: optional, default 1
+models:              # tier: a key of prices.yaml, or none; factor: optional, default 1
   # The chat models by size (Dan's decision, 2026-11-12, website/design/usage-meter-qa.md): the coder, the fast coder
   # and Flash-Next as Sonnet, Qwen3.6 and Gemma (3-4B active) as Haiku. Until then every chat model was Opus.
   # website/reference/model-prices.md shows this file and prices.yaml as a table; a test keeps it the same.
@@ -16,10 +16,10 @@ models:              # tier: opus | sonnet | haiku | fable | none; factor: optio
   qwen3.8-27b-sglang: {tier: sonnet}
   qwen3.8-flash-next: {tier: sonnet}
   qwen3.8-flash-next-mtp: {tier: sonnet}
-  qwen3-embedding-0.6b: {tier: none}
-  whisper-large-v3-turbo: {tier: none}
-  whisper-large-v3: {tier: none}
-  qwen3-asr-1.7b-32k: {tier: none}
-  qwen3-asr-1.7b-64k: {tier: none}
-  qwen3-asr-0.6b-32k: {tier: none}
-  qwen3-asr-0.6b-64k: {tier: none}
+  qwen3-embedding-0.6b: {tier: voyage-4-lite}
+  whisper-large-v3-turbo: {tier: whisper-1}
+  whisper-large-v3: {tier: whisper-1}
+  qwen3-asr-1.7b-32k: {tier: gpt-4o-mini-transcribe}
+  qwen3-asr-1.7b-64k: {tier: gpt-4o-mini-transcribe}
+  qwen3-asr-0.6b-32k: {tier: gpt-4o-mini-transcribe}
+  qwen3-asr-0.6b-64k: {tier: gpt-4o-mini-transcribe}

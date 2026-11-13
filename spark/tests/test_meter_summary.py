@@ -20,7 +20,10 @@ from spark.meter.store import Row, Store
 # The models these rows use pinned at Opus, so Dan's remaps of the shipped mapping never move these sums.
 _SHIPPED = prices.load()
 BOOK = dataclasses.replace(_SHIPPED, mapping={**_SHIPPED.mapping, **{
-    name: prices.Mapping("opus", Decimal(1)) for name in ("qwen3.8-27b", "gemma-4-26b-a4b")}})
+    name: prices.Mapping("opus", Decimal(1)) for name in ("qwen3.8-27b", "gemma-4-26b-a4b")},
+    # unpriced on purpose here, so the shipped speech and embedding proxies never move these counts
+    **{name: prices.Mapping("none", Decimal(1)) for name in (
+        "qwen3-embedding-0.6b", "whisper-large-v3-turbo", "qwen3-asr-0.6b-32k")}})
 NY = "America/New_York"
 LA = "America/Los_Angeles"  # its fall-back is on 2026-11-01
 CONTRACT_KEYS = {"v", "made_at", "zone", "zone_from", "counter_start", "last_row_at", "periods", "by_model", "flags",
