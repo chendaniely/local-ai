@@ -8,6 +8,61 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-12 — The usage meter's counter and first numbers (Phase 2a, Tasks 44l and U13)
+
+**Deployed** by Dan, **on the Spark**, from the `phase-2a` clone at `cfc0c7d`, in the evening, as Task 44l of
+[the counter's plan](website/design/usage-meter-counter.md) and Task U13 of [the first numbers'
+plan](website/design/usage-meter-now-plan.md) give them. It was the first deploy since 2026-10-16's (`03d36b1`), so it
+carried everything `phase-2a` had built for the box since then, not only the meter. No figure from the meter is
+recorded here (CLAUDE.md).
+- **`make bootstrap`** made the meter's three folders, read afterwards with `stat` by the Spark session:
+  `/var/lib/local-ai/usage`, `spark-front:spark-admin 2750`; `/var/lib/local-ai/gate-ledger`, `spark:spark-admin
+  2750`; and `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`. Its apt step upgraded three
+  packages from Ubuntu's archive: git and git-man from `1:2.43.0-1ubuntu7.3` to `7.4`, and tmux from `3.4-1ubuntu0.1`
+  to `0.2`.
+- **`make apply`, `make install-units`, `make apply`, `make pull`, `make status`.** Root's units gained the meter's
+  paths (`ReadWritePaths`, `UMask`, `InaccessiblePaths`), and the Compose file the web UI's new task model. llama-swap's
+  unit changed, so every model stopped and the gate loaded the always-loaded ones again.
+- **The registry Dan decided on 2026-11-09 and 2026-11-10 is now on the box** (the plan's Revisions of those dates). Every
+  page's note that says "from the next deploy" about those decisions means this deploy. Qwen3.6-35B-A3B is always
+  loaded, on two slots with MTP drafting, and takes the web UI's background tasks; Gemma loads on demand, with the vision
+  role alone. Whisper large-v3 and Qwen3-ASR 1.7B and 0.6B, each at 32K and 64K, load on demand; Qwen3-ASR was decided
+  on 2026-10-23 and wasn't on the box until now. whisper-server runs with `--max-context 0`. The reserve is 17 GiB, the
+  brake's line 14 and the warn line 21; earlyoom stays at 12 and 9. Checked by the Spark session afterwards: `make
+  status` lists ten models, with the embeddings, whisper and Qwen3.6 loaded and nothing pinned. It reads the brake's
+  line as 14 and the reserve as 17. Counted without printing command lines: Qwen3.6's engine runs with `--parallel 2`
+  and MTP drafting, so Task 44l's fallback to one slot wasn't needed, and whisper-server runs with `--max-context 0`.
+- **The meter** counts from this deploy on. The front writes a row per request into `/var/lib/local-ai/usage`. The
+  gate writes a row per decision into `/var/lib/local-ai/gate-ledger`. `spark usage` reads them, with the imported rows
+  in `usage-sessions`, which has none yet. Dan wrote the private file, `~/.config/local-ai/meter.yaml`, mode `600`, and
+  checked its zone against tzdata. `make doctor`: 34 of 34, with one WARN, `ntfy: not set up (Task 2, Phase 5)`.
+  `make usage` printed the four periods, and its prices matched Dan's check by hand. A request each from Pi, OpenCode
+  and Hermes Agent left a row under each one's own key, checked by field names only (`p`, `o` and `from` among them).
+- **Out of order: Task 44l's Steps 1–3 ran after the deploy, so after counting had begun.** Step 1 gave OpenCode and
+  Hermes Agent their own keys: their digests in `client-keys.sha256` and their lines in the key list, then `make
+  restart-front`. Doctor's key list then loaded 5 keys, and `make clients` ran on the Mac. Steps 2 and 3 took the
+  snapshots, each in a folder dated 2026-11-13, the date by UTC:
+  - Open WebUI's database, as a root-only copy, `0600`, in `/var/backups/local-ai-usage`, `root:root 0700`;
+  - `agent`'s Pi sessions, as an archive, in Dan's `~/.local/state/local-ai/usage-snapshots/2026-11-13/` on the Spark,
+    `0700`;
+  - Hermes's `state.db`, a fresh read-only copy, in the Mac's `usage-snapshots/2026-11-13/`.
+
+  For Open WebUI and Pi this changes nothing: Phase 2b's baseline prices them per message, and the seam already splits
+  messages. Hermes keeps only session totals, which grow in place, so a session that ran across the seam has its later
+  growth in that copy too, growth the front also counted. Phase 2b's baseline has to allow for it; the plan's Revisions
+  line of this date says how.
+- **A gap found after Step 1, fixed by hand on the Mac:** `spark clients hermes` set the `spark` provider's key to
+  Hermes's own but left Hermes's own model block on `SPARK_API_KEY`. So Hermes's default model sent Pi's key, and its
+  requests until the fix count under Pi's key.
+- **Unchanged:** the by-hand SGLang coder runs on, started 2026-10-26, without `--enable-cache-report`. Counted again
+  that evening: five processes, none with the flag. The by-hand script gives it the flag at its next start.
+- **Not yet:** spark-menu's usage section, Task U14 on the Mac; the vault's entry note, Dan's. Two parts of the plan's
+  open item *44l changes what projects rely on* are still to do. Its contract test, which was to come before this
+  deploy, isn't written. 44l's deploy was also to comment on each project's notice that its change is live, which
+  waits for Dan's OK, since the repo is public.
+
+---
+
 ## 2026-11-09 — The speech service's first runs, by hand
 
 `make speech` ran for the first time, as Dan, in tmux, outside the gate (the design, `website/design/speech-service.md`).

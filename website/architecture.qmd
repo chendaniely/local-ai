@@ -62,7 +62,7 @@ flowchart TB
     webapp["web UI,<br/>Safari web app"]
     term["terminal"]
     ntfy_mac["ntfy alerts<br/>Phase 5"]:::planned
-    menu_mac["spark-menu, SwiftBar<br/>usage section · Task 44l deploys"]:::planned
+    menu_mac["spark-menu, SwiftBar<br/>usage section · Task U14, on the Mac"]:::planned
   end
 
   subgraph phone["Android phone"]
@@ -86,12 +86,12 @@ flowchart TB
     front["the front · 127.0.0.1:9100<br/>as spark-front, the same client keys"]
     swap["llama-swap · 127.0.0.1:900<br/>as spark, internal keys only"]
     gate["spark-gate · two Unix sockets<br/>as spark, decides every load"]
-    usage[("the front's usage records<br/>/var/lib/local-ai/usage · Dan reads<br/>Task 44l deploys")]:::planned
-    sessions[("the Mac's rows for the by-hand engines<br/>/var/lib/local-ai/usage-sessions · Dan reads and writes (spark usage import)<br/>Task 44l deploys")]:::planned
-    ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads<br/>Task 44l deploys")]:::planned
+    usage[("the front's usage records<br/>/var/lib/local-ai/usage · Dan reads")]
+    sessions[("the Mac's rows for the by-hand engines<br/>/var/lib/local-ai/usage-sessions · Dan reads and writes (spark usage import)")]
+    ledger[("the gate's ledger<br/>/var/lib/local-ai/gate-ledger · Dan reads")]
     brake["memory brake<br/>as spark, its own unit<br/>idle first, the gate lifts its hold"]
     notifier["failure notifier, OnFailure=<br/>front, gate, brake, llama-swap<br/>sends nothing until ntfy · Phase 5"]
-    engines["engines · 127.0.0.1:800 and up<br/>always loaded: embeddings, whisper, and Gemma,<br/>which Qwen3.6-35B-A3B replaces at the next deploy<br/>on demand: coder Qwen3.8-27B and Qwen3.6-35B-A3B,<br/>which Gemma replaces at the next deploy,<br/>Qwen3-ASR 1.7B and 0.6B, 32K and 64K,<br/>whisper large-v3 from the next deploy"]
+    engines["engines · 127.0.0.1:800 and up<br/>always loaded: embeddings, whisper, and Qwen3.6-35B-A3B,<br/>on two slots, Gemma's place since 2026-11-12<br/>on demand: coder Qwen3.8-27B, Gemma for vision,<br/>Qwen3-ASR 1.7B and 0.6B, 32K and 64K,<br/>whisper large-v3"]
     vllm["vLLM, for NVFP4<br/>Phase 4"]:::planned
     fast["the fast coder: SGLang in Docker<br/>root's unit, a key of its own · Phase 4a"]:::planned
     flash["Flash-Next, llama.cpp<br/>loads after make-room · Phase 4a"]:::planned
@@ -125,8 +125,8 @@ flowchart TB
   agent_tmux -- "its Claude Code" --> anthropic
   front -- "internal key" --> swap
   front -- "asks before a load" --> gate
-  front -. "a row per request" .-> usage
-  gate -. "a row per decision" .-> ledger
+  front -- "a row per request" --> usage
+  gate -- "a row per decision" --> ledger
   menu_mac -. "every 5 min over SSH: OpenCode's harvest, spark usage import" .-> sessions
   menu_mac -. "every 60 s over SSH: spark usage summary, reads all three folders" .-> usage
   gate -- "loads, unloads" --> swap
@@ -155,8 +155,11 @@ flowchart TB
 ```
 
 *(2026-11-09, Dan's decision: the registry makes Qwen3.6-35B-A3B the always-loaded chat model, on two
-slots with the web UI's background tasks, and puts Gemma on demand, keeping only the vision role. The
-box is as drawn until the next deploy. Plan: the Revisions line of that date.)*
+slots with the web UI's background tasks, and puts Gemma on demand, keeping only the vision role. ~~The
+box is as drawn until the next deploy.~~ Plan: the Revisions line of that date.)* *(Deployed 2026-11-12, with the
+usage meter's counter, Task 44l, and drawn so since: until then the engines' label had Gemma always loaded and Qwen3.6
+on demand. The same deploy made the meter's three stores solid. spark-menu's usage section, and its two paths over SSH,
+stay dashed until Task U14 on the Mac.)*
 
 - **Everything on the Spark listens on 127.0.0.1**, except SSH and `tailscale serve`'s port 443.
   The tailnet's rules let my own devices reach the Spark on those two ports only, and ufw allows
@@ -242,7 +245,9 @@ runs, since nothing on the Spark listens beyond 127.0.0.1 but SSH: Pi since Phas
 ~~the same key~~ a key each OpenCode and Hermes Agent (since 2026-10-14) *(corrected 2026-10-23: since
 2026-10-14 `make clients` set them all to one key. It now defaults to a key each: Pi `SPARK_API_KEY`, OpenCode
 `SPARK_OPENCODE_KEY`, Hermes `SPARK_HERMES_KEY`. But the box accepts the two new ones only from the usage meter's
-deploy, Task 44l; until then point all three at the one key with `--key-env SPARK_API_KEY`)*, and with Pi's key
+deploy, Task 44l; until then point all three at the one key with `--key-env SPARK_API_KEY`)* *(2026-11-12: the box
+takes both since Task 44l's Step 1, run just after its deploy, and `make clients` on the Mac points each at its own)*,
+and with Pi's key
 Posit Assistant, `pa` and Positron (since 2026-10-19), each set up by `make clients`. *(Added 2026-11-09, when the
 usage meter's key correction met Posit Assistant here: the meter's counter gave it no key of its own, so it still
 sends `SPARK_API_KEY`'s value, as `OPENAI_COMPATIBLE_API_KEY` and in Positron's credential store, and its usage
@@ -283,7 +288,7 @@ flowchart TD
   hold -- "time is up" --> inline
   low["free memory falls<br/>toward the freeze band"] --> brake["the brake warns, then holds new loads<br/>and unloads models, idle ones first,<br/>and acts on the rate of fall"]
   brake -- "holds new loads" --> ask
-  brake --> release["the gate lifts the hold after 5 minutes above 28 GiB (21 from the next deploy),<br/>if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]
+  brake --> release["the gate lifts the hold after 5 minutes above 21 GiB (28 until 2026-11-12),<br/>if the reloads fit,<br/>once an hour at most; a hold found at boot waits for me"]
   ask --- idle["the gate also unloads on-demand models idle for 60 minutes<br/>and runs make-room, which holds the room for me;<br/>both drain the model first, so neither cuts off a request in flight"]
 ```
 
@@ -307,7 +312,8 @@ nothing without the gate's ticket, and keeps ~~today's~~ Phase 1's checks *(rewo
 the cutover, when they stopped being today's path)* as backstops that never wait. The
 reserve stays 24 GiB: the design lowered it to 22, and it went back to 24 the same day. *(2026-11-09,
 Dan's decision: from the next deploy the reserve is 17 GiB, the brake's line 14 and the warn line 21,
-unmeasured until Tasks 45 and 47; earlyoom stays at 12 and 9. Plan: the Revisions line of that date.)*
+unmeasured until Tasks 45 and 47; earlyoom stays at 12 and 9. Plan: the Revisions line of that date.)* *(Deployed
+2026-11-12, Task 44l.)*
 
 ## Apps and speech (Phase 3, planned)
 
@@ -340,7 +346,8 @@ Since 2026-10-23 (my decisions), Qwen3-ASR transcribes too, on llama.cpp, on the
 beside the coder, and `qwen3-asr-1.7b-64k` and `qwen3-asr-0.6b-64k` take the full context, for
 when the box is otherwise free or overnight. Whisper stays the web UI's speech-to-text. *(2026-11-09,
 Dan's decision: Whisper large-v3 joins on demand at the next deploy, with no role, so that stays true.
-It isn't downloaded yet and hasn't run on this box.)* Qwen3-ASR
+~~It isn't downloaded yet and hasn't run on this box.~~)* *(In the deployed registry since 2026-11-12, and `make pull`
+ran after that deploy. It hadn't run on this box by then.)* Qwen3-ASR
 returns text only: captions' timestamps need its aligner, which the stack doesn't serve yet, and
 Phase 3's speech comparison picks a served one. *(2026-11-09, Dan's decisions: [the speech
 service](design/speech-service.md) gives Qwen3-ASR its word timings, by hand for now ([its
@@ -385,4 +392,4 @@ after a factory reset ([S18](scenarios/s18-rebuild.md)), and upgrade day
 | [S24 · The fast coder won't start](scenarios/s24-fast-coder-down.md) | Loading a model: Phase 4a's fast coder |
 | [S25 · Sub-agents on the fast coder](scenarios/s25-subagents-fast-coder.md) | Loading a model: Phase 4a's fast coder |
 | [Word timings by hand](how-to/speech-by-hand.md) (a runbook, no numbered scenario) | Apps and speech: the by-hand speech service, until its Stage 2 |
-| [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records and the gate's ledger, planned (dashed) until Task 44l deploys them; spark-menu's usage section, its summary over SSH, and the Mac's harvest into `usage-sessions`, dashed until then too *(2026-11-12)* |
+| [S26 · What it cost](scenarios/s26-what-it-cost.md) | The front's usage records, the gate's ledger and `usage-sessions`, ~~planned (dashed) until Task 44l deploys them~~ built and running since Task 44l's deploy, 2026-11-12; spark-menu's usage section, its summary over SSH, and the Mac's harvest into `usage-sessions`, ~~dashed until then too *(2026-11-12)*~~ dashed until Task U14 on the Mac |

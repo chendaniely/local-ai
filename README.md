@@ -294,6 +294,21 @@ when that file was retired on 2026-09-23.
   *(As read on 2026-11-09: the by-hand SGLang coder has run since 2026-10-26 and is Dan's default, in a container outside
   the stack, which `spark status` counts as other processes, about 42 GiB. So Gemma, though always-loaded, isn't
   loaded, not since 2026-10-23, and Qwen3.6 is pinned with no end set. The changelog has it.)*
+  *(Since 2026-11-12's deploy, from the `phase-2a` clone at `cfc0c7d`, with the usage meter's counter: ten models.
+  Qwen3.6 is always loaded, on two slots with MTP drafting, and takes the web UI's background tasks; Gemma loads on
+  demand, with the vision role alone. Whisper large-v3 and Qwen3-ASR 1.7B and 0.6B, each at 32K and 64K, load on
+  demand too. whisper-server runs with `--max-context 0`. The reserve is 17 GiB, the brake's line 14 and the warn line
+  21. Nothing is pinned, and the by-hand SGLang coder still runs. `make doctor`: 34 of 34, with one WARN, `ntfy: not
+  set up (Task 2, Phase 5)`. The changelog has the deploy.)*
+- **The usage meter** (2026-11-12, Phase 2a's Tasks 44l and U13; [S26](website/scenarios/s26-what-it-cost.md)). The
+  front writes a row of numbers per request into `/var/lib/local-ai/usage`, `spark-front:spark-admin 2750`. The gate
+  writes a row per decision into `/var/lib/local-ai/gate-ledger`, `spark:spark-admin 2750`. The rows the Mac imports
+  for the by-hand engines go into `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`, which has
+  none yet. `make usage` prints the summary at Claude's prices; the Spark's price and Dan's time zone are in a private
+  file in his home. OpenCode and Hermes Agent have their own client keys, so the front's key list holds five.
+  Snapshots of Open WebUI's database and `agent`'s Pi sessions are kept for Phase 2b's baseline, under *My environment*
+  below. They were taken just after counting began, not before; the changelog says why that matters for Hermes.
+  spark-menu's usage section isn't on the Mac yet (Task U14).
 - **The speech service, by hand** (2026-11-09; [its runbook](website/how-to/speech-by-hand.md)). `make speech`, a
   locked-down container outside the front and the gate, off unless Dan has started it, and it needs about 48 GiB
   available, which means Qwen3.6 out while the SGLang coder is up. Its weights, environment and test clips are in
@@ -566,7 +581,7 @@ the plan it would come in, and what was left out and why.
 - **Nothing loads unless it fits, and a change that restarts llama-swap goes through `make apply`**
   (added 2026-10-16, at Phase 2a's cutover, which built and deployed what these rules rest on). The
   gate admits every load, one at a time, keeping the ~~24~~ 17 GiB reserve free *(17, with the brake's
-  line at 14 and the warn line at 21, from the next deploy: Dan's decision, 2026-11-09, unmeasured
+  line at 14 and the warn line at 21, ~~from the next deploy~~ since 2026-11-12's deploy: Dan's decision, 2026-11-09, unmeasured
   until Tasks 45 and 47; earlyoom stays at 12 and 9)* and holding back the growth
   the loaded models are still owed. The brake stays a unit of its own, unloading idle models first,
   and the gate lifts its hold only within bounds (built; its pause seen in the journal twice in October, outside any drill;
@@ -646,7 +661,20 @@ where the meter's lifetime baseline reads anything from before its counter start
 harnesses prune their own files (Hermes after 90 days). It holds full chat text, so it never
 syncs anywhere without a decision. The design's §7 ([`usage-meter.md`](website/design/usage-meter.md))
 says how it is read; the vault's entry note records it, and will record the meter's folders on the
-Spark as they are made. *(2026-11-12, the meter's first numbers, built; it deploys with Task 44l (not yet
-deployed): two more private things on the Spark. The private file `~/.config/local-ai/meter.yaml`, mode `0600`, holds the Spark's all-in price and
+Spark as they are made. *(2026-11-12, the meter's first numbers, ~~built; it deploys with Task 44l (not yet
+deployed)~~ deployed with Task 44l the same day: two more private things on the Spark. The private file `~/.config/local-ai/meter.yaml`, mode `0600`, holds the Spark's all-in price and
 my time zone, never goes in this repo, and sessions check it by presence only. `/var/lib/local-ai/usage-sessions`,
 mine, group `spark-admin`, `2750`, holds the rows imported from the Mac's OpenCode. The vault's entry note records both.)*
+*(2026-11-12, the counter's own two folders, deployed with Task 44l: `/var/lib/local-ai/usage`, the front's rows,
+`spark-front:spark-admin 2750`, and `/var/lib/local-ai/gate-ledger`, the gate's, `spark:spark-admin 2750`. Their
+rows hold numbers, times, model names and, in the front's, the key's name: mine to read, and nothing from them goes in
+this repo but a verdict.)*
+*(2026-11-12, Task 44l's snapshots, taken just after counting began; their folders are dated 2026-11-13, by UTC.
+Each holds full chat text:*
+- *Open WebUI's database, a root-only copy, `0600`, in `/var/backups/local-ai-usage` on the Spark, `root:root 0700`.
+  It also holds password hashes and users' keys.*
+- *`agent`'s Pi sessions, as an archive, in my `~/.local/state/local-ai/usage-snapshots/2026-11-13/` on the Spark,
+  `0700`.*
+- *A fresh copy of Hermes's `state.db` in the Mac's `usage-snapshots/2026-11-13/`.*
+
+*The vault's entry note is to record them too.)*

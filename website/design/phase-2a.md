@@ -9661,6 +9661,10 @@ with the counter, and its steps gain U13's: its `make bootstrap` also makes
 `/var/lib/local-ai/usage-sessions`, Dan writes the private file, and `make doctor` also passes
 `usage sessions` and `meter prices`. So the soak runs with the summary on too.
 
+*(2026-11-12: Task 44l and U13 are deployed, from `cfc0c7d`, and doctor passed 34 of 34. Task 44l's Steps 1–3, the
+keys and the snapshots, ran just after the deploy, so after counting had begun. [The plan](plan.md)'s Revisions line
+of that date says what that means for Phase 2b. Still to come: spark-menu's section, Task U14 on the Mac.)*
+
 ***
 
 ### Task 45 [Spark]: the soak — every footprint, and what RssAnon accounts for

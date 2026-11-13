@@ -7,7 +7,7 @@ date: 2026-11-12
 # The usage meter's first numbers — design
 
 **Status: approved by Dan on 2026-11-12** ("plan look sgood"); being built. *(2026-11-12: the Spark's half is built on
-the `swiftbar-costs` branch, Tasks U1 to U8, not yet deployed: it deploys with Task 44l. spark-menu's half, in Dan's dotfiles,
+the `swiftbar-costs` branch, Tasks U1 to U8, ~~not yet deployed: it deploys with Task 44l~~ deployed with Task 44l the same day. spark-menu's half, in Dan's dotfiles,
 is built next. The docs below say "dashed" for what isn't deployed.)* It amends [the usage meter's design](usage-meter.md),
 which stays the reference for everything not named here. Dan's words and the questions they answered
 are in [its questions and answers](usage-meter-qa.md), *The menu's numbers now*. What this page adds
