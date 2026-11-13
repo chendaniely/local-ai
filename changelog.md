@@ -114,10 +114,13 @@ recorded here (CLAUDE.md).
   [OpenCode and Hermes Agent](website/how-to/opencode-hermes.md).)*
 - **Unchanged:** the by-hand SGLang coder runs on, started 2026-10-26, without `--enable-cache-report`. Counted again
   that evening: five processes, none with the flag. The by-hand script gives it the flag at its next start.
-- **Not yet:** spark-menu's usage section, Task U14 on the Mac; the vault's entry note, Dan's. Two parts of the plan's
-  open item *44l changes what projects rely on* are still to do. Its contract test, which was to come before this
-  deploy, isn't written. 44l's deploy was also to comment on each project's notice that its change is live, which
-  waits for Dan's OK, since the repo is public.
+- **Not yet:** ~~spark-menu's usage section, Task U14 on the Mac; the vault's entry note, Dan's. Two parts of the
+  plan's open item *44l changes what projects rely on* are still to do. Its contract test, which was to come before
+  this deploy, isn't written. 44l's deploy was also to comment on each project's notice that its change is live, which
+  waits for Dan's OK, since the repo is public.~~ *(All done by 2026-11-13. The same night: the usage section merged
+  into Dan's dotfiles and reloaded on the Mac, with #55 opened under `notice/spark-menu`; the vault's entry note; and
+  44l's comments, posted with Dan's OK on #43, #45 and #48. The next day: the contract test,
+  `spark/tests/test_contract.py`, pushed on `phase-2a` at `9ae3eac`, and the Spark's `make test` passed it.)*
 
 ---
 

@@ -728,8 +728,11 @@ scan, *Before every push*):
 
 ### Task U14 [Mac]: the menu shows numbers
 
-- [ ] **Step 1, on the Mac:** `git -C ~/git/hub/local-ai pull` on `phase-2a`, so the clone has `spark usage harvest`.
-- [ ] **Step 2, on the Mac:** in the dotfiles, `spark-menu-usage` merged into `main` (Dan's OK), then `make -C
-  ~/git/private/dotfiles/mac-heartsbane/spark-tunnel reload`.
-- [ ] **Step 3:** within five minutes the dropdown shows the section and no `fast coder's tokens:` note. A
-  `notice/spark-menu` issue in this repo records the new contract, once Dan OKs opening it (it is public).
+- [x] **Step 1, on the Mac:** `git -C ~/git/hub/local-ai pull` on `phase-2a`, so the clone has `spark usage harvest`.
+  *(Done 2026-11-12.)*
+- [x] **Step 2, on the Mac:** in the dotfiles, `spark-menu-usage` merged into `main` (Dan's OK), then `make -C
+  ~/git/private/dotfiles/mac-heartsbane/spark-tunnel reload`. *(Done 2026-11-12, by Dan.)*
+- [x] **Step 3:** within five minutes the dropdown shows the section and no `fast coder's tokens:` note. A
+  `notice/spark-menu` issue in this repo records the new contract, once Dan OKs opening it (it is public). *(Done
+  2026-11-12: the section showed, and the harvest pushed the fast coder's history; #55 opened with Dan's OK, and
+  spark-menu's session has closed it.)*

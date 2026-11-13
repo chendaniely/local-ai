@@ -4822,7 +4822,7 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   `make test`, naming the value and saying to update the projects page and open the notices; CLAUDE.md's sync table
   says so. Built on the Mac after the every-model deploy, not before 44l as first planned. Writing it found the
   projects page saying every 409 carries a wait, when four codes carry none, and naming none of the front's own
-  refusals; corrected the same day.
+  refusals; corrected the same day. Pushed on `phase-2a` at `9ae3eac`, and the Spark's `make test` passed it.
 
 ## Sources
 
