@@ -654,8 +654,8 @@ this month's `unpriced` as the summary gives it, after the errors; after `counti
 summary gives, not only the last, each `HH:MM–HH:MM`, with its date when not today (`Nov 2 13:58–14:01`), and
 `since HH:MM` for one still open, so an open span alone reads `counting off since HH:MM`; past 3, the last 3 and
 `+N more`. By model shows `—`, not `$0.00`, for a model whose tier is null or `none`. A summary whose `v` is a whole
-number above 1 is recorded by the poller as `newer (vN)` in `usage.error`, while any other `v` that isn't 1, a
-non-integer such as 1.5 included, stays `malformed`, from which the panel prints its v2 line; with no
+number above 1 is recorded by the poller as `newer (vN)` in `usage.error`, from which the panel prints its v2 line,
+while any other `v` that isn't 1, a non-integer such as 1.5 included, stays `malformed`; with no
 `usage.json`, any other `usage.error` but `not deployed` prints one grey line,
 `Spark usage: the summary failed (<reason>)`; and `usage.json` and `usage.error` are written under `umask 077`.)*
 `harvest.note`, when present, is a grey line `fast coder's tokens: <note>`; a `last_import` over 15 minutes old while
