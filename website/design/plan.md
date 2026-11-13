@@ -1989,6 +1989,21 @@ council, with Dan's fourteen decisions (Revisions).*
   as they are, a cap per group waiting for 2b. The by-hand SGLang gains `--enable-cache-report`;
   `spark doctor` gains three checks, with S26 as the scenario. The soak and the drills then cover
   it: Tasks 45, 49 and 50 of [the implementation plan](phase-2a.md).
+- *Added 2026-11-12; Dan's decision, in [the first numbers' design](usage-meter-now.md):* [Mac]
+  [Spark] [Dan] **the usage meter's first numbers**, Tasks U1–U14 of [a plan of their
+  own](usage-meter-now-plan.md), between Task 44k and Task 44l, and deployed with the counter by
+  Task 44l, before the soak. `spark usage` prices each row when it reads it, from three files that
+  ship with the app (a mapping of each model to a Claude tier, dated price lines, and the providers'
+  list), so no stored row holds a dollar and a remap reprices the past. `spark usage summary --json`
+  gives today, this month, last month and all time, all time as a share of the Spark's price, which
+  a private file in Dan's home on the Spark holds (`~/.config/local-ai/meter.yaml`, never in this
+  repo). The fast coder's tokens, which the front can't see, are read on the Mac from OpenCode's
+  database by `spark usage harvest`, numbers and ids only, and spark-menu sends them every 5
+  minutes to `spark usage import`, into `/var/lib/local-ai/usage-sessions`, with the cache
+  estimated while that engine reports none. spark-menu, still in Dan's dotfiles, shows the summary
+  in a usage section of its dropdown and works out no figure itself. A price edit restarts only the
+  gate and the brake, never the front or llama-swap, and waits for the soak's end. `spark doctor`
+  gains `usage sessions` and `meter prices`, under S26.
 - *Closing 2a (added 2026-10-14, Dan's decision):* `main` holds work this branch doesn't: the
   coder's early swap and render's corrected check (2026-10-08), the Phase 6 plan, and anything
   merged there since. Merging the two conflicts in about a dozen files, `plan.md` most. At 2a's
@@ -2050,7 +2065,8 @@ council, with Dan's fourteen decisions (Revisions).*
   through the soak: `make doctor` passes `usage records`, `gate ledger` and `counting`; Task 45 has
   recorded the front's peak memory with the scanner, under its 512M, with no rows dropped, and rows
   checked against Pi's own counts as a verdict only; and Tasks 49 and 50 have seen the rows and
-  ledger rows they name.
+  ledger rows they name. *(Added 2026-11-12:)* With it, the first numbers: `make doctor` also
+  passes `usage sessions` and `meter prices`, and `make usage` prints the four periods.
 
 **Phase 2b — Visibility**
 
@@ -2111,10 +2127,13 @@ moved.
   §Current state. The GPU is watched with `nvidia-smi` and `nvtop`, which need no daemon, and the
   rebuild's runbook leaves `dcgmi` out.)*
 - *Added 2026-11-09, Task 44k; Dan's decision, in [the usage meter's design](usage-meter.md):*
-  **the rest of the usage meter** opens this phase, on the counter Phase 2a deployed: `spark usage`,
-  the mapping, the prices, the providers' list, the summary and the private file; the readers, the
-  reconciliation window, then the sync, whose first run is the lifetime baseline; spark-menu's usage
-  section, after it moves here; Pi's line, then OpenCode's; the shared key's retirement from the
+  **the rest of the usage meter** opens this phase, on the counter Phase 2a deployed: ~~`spark usage`,
+  the mapping, the prices, the providers' list, the summary and the private file;~~ *(moved forward
+  to Phase 2a, 2026-11-12, Dan's decision: [the first numbers' design](usage-meter-now.md))* the readers, the
+  reconciliation window, then the sync, whose first run is the lifetime baseline *(one slice of it
+  moved forward too: the by-hand engines' rows, read from the Mac's OpenCode)*; spark-menu's usage
+  section, after it moves here *(built in 2a, in spark-menu while it is still in Dan's dotfiles, so
+  it arrives with spark-menu)*; Pi's line, then OpenCode's; the shared key's retirement from the
   Spark's runbooks; then the lines for Posit Assistant (`pa`) and Hermes Agent when their turn comes.
   *(2026-11-09, Dan's requirements: the sync also carries each session's project, and the by-hand SGLang's tokens are
   backfilled from the Mac's session files: the design's* Open for later*.)*
@@ -2460,6 +2479,15 @@ the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains it
   usage reaches the front. Putting the fast coder and Flash-Next behind the front ends the by-hand
   window (the design's §7), in which the sync's rows stay the spend for `make fast-coder` and
   `make flash-next`.
+- *Added 2026-11-12, from [the first numbers' design](usage-meter-now.md), part 5 (Dan: "then plan
+  local-ai like option 3"):* **the fast coder behind the front ends the Mac's reading of it.** Until
+  then its tokens are read from the Mac's OpenCode by `spark usage harvest`, which spark-menu sends
+  to the Spark every 5 minutes, with the cache estimated while the engine reports none. Once the
+  front serves the fast coder, as an upstream its rows name, the counter sees it, and on that day
+  `providers.yaml`'s `spark-sglang` line gains its end date (`to:`), so the harvest stops reading it
+  and no message is counted twice; the registry's launch with `--enable-cache-report` gives its
+  rows real cache counts. `spark-flash-next`'s line ends the same way when Flash-Next joins the
+  registry.
 - Its implementation plan, `phase-4a.md`, is written at 4a's start, from the by-hand runs' numbers.
 - *Scenarios:* S02 (make-room, for Flash-Next), S24, S25.
 - *Done when:* Flash-Next loads after `spark make-room --all`, answers in opencode on the Mac, and
@@ -2614,6 +2642,16 @@ Each item gets its own design pass when its turn comes.
   to skip off Linux, with its reason (GNU find's `-perm /`, Linux's `/proc`), as `test_hog.py`
   already does for `/proc/self/status`, so a Mac run shows only real failures; the page's table
   then says so. Small, any time.
+- **The usage summary's cost as the rows grow** (2026-11-12, at the first numbers' final review):
+  `spark usage summary` re-reads and re-prices every row of every month each minute, when spark-menu
+  polls it. It needs a measured trigger: its run time on the Spark checked as the rows grow, and
+  work on it (a cache, or a month's totals kept once the month has closed) before it nears
+  spark-menu's 20-second bound.
+- **The fast coder's history after a rebuild of the Spark** (2026-11-12, at the first numbers'
+  final review): the Mac's `harvest.since` stays when the Spark is rebuilt, so spark-menu's first
+  pushes send only the last hour or so. On the Mac, `make usage-push` once sends the fast coder's
+  whole history again: it sends every row, and the import merges rows by message id, so a row sent
+  twice changes nothing.
 - **Provider naming** (Dan, 2026-10-19): the provider pointing at the Spark's front, `spark`
   in pi, opencode and Hermes, is to carry a machine-specific name — `brightroar - spark`, or
   `Brightroar (spark)` — because Dan has a second Spark as a work machine, so `spark` alone is
@@ -4706,6 +4744,21 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   the install commands for the Mac, the Spark and CI, after a Mac test run failed for want of
   coreutils' `timeout`. It lists the 62 tests that fail on the Mac by design, and the Backlog gains
   *Tests that need Linux skip elsewhere*, a **[Spark]** task.
+- **2026-11-12** — The usage meter's first numbers join Phase 2a as Tasks U1–U14 ([their
+  plan](usage-meter-now-plan.md), from [their design](usage-meter-now.md), approved by Dan the same
+  day: "plan look sgood"), between Task 44k and Task 44l, and deploy with the counter, before the
+  soak. The summary, the price files (the mapping, the dated prices and the providers' list), the
+  private file and spark-menu's usage section come forward from 2b to 2a, with one slice of the
+  sync: the by-hand engines' rows, read from the Mac's OpenCode, since the front can't see them.
+  U1–U8 are merged into `phase-2a` (`24f53f3`) and nothing of them is deployed; U9–U11 are
+  spark-menu's part, in Dan's dotfiles. Phase 2a gains the task and a line of its done-when; 2b's item
+  is annotated with what moved; 4a gains the fast coder behind the front, which ends the Mac's
+  reading of it (the design's part 5); the Backlog gains the summary's cost as the rows grow and
+  the fast coder's history after a rebuild. [The implementation plan](phase-2a.md) gains a pointer
+  to the tasks and a line of its done-when, and [the counter's plan](usage-meter-counter.md) Task
+  44l gains U13's steps. The box fact the design left unverified, checked on the Spark by counts
+  only: the running SGLang, started 2026-10-26, has no `--enable-cache-report` on its command line,
+  so `spark-sglang`'s `cache_from` stays null and its cache stays estimated.
 
 ## Sources
 

@@ -699,6 +699,15 @@ scan, *Before every push*):
   (`pgrep -af sglang.launch_server | grep -c enable-cache-report`; not yet run on the box, so run once before relying
   on it). A count of 1 means `providers.yaml`'s `spark-sglang` line gains a `cache_from` date, after the soak. Commit
   `docs(plan): 🤖 the meter's first numbers join Phase 2a before the counter's deploy`.
+  *(Done 2026-11-12, the Spark session. The check as written was wrong twice: run from a shell, it counts that shell,
+  whose own command line holds both words (2 with no such process running); and a running SGLang is five processes,
+  `sudo` and the `docker` client among them, each holding the same arguments, so a count of 1 can't happen. The check
+  that works brackets one letter of each word, so the shell's line matches neither, and compares two counts:
+  `pgrep -fc '[s]glang.launch_server'` and `pgrep -af '[s]glang.launch_server' | grep -c -- '--[e]nable-cache-report'`,
+  the flag present when the two match and aren't 0. Seen to give 0 and 0 with nothing running and 2 and 1 for two
+  stand-in processes, one with the flag. On the box: 5 and 0, the run started 2026-10-26, so `spark-sglang`'s
+  `cache_from` stays null. The plan's edits went into `plan.md` and `phase-2a.md` as listed, and Task 44l's steps,
+  which are in [the counter's plan](usage-meter-counter.md), gained U13's there: its Step 4 and a Step 8.)*
 
 ### Task U13 [Spark] [Dan]: deploy with Task 44l, and the private file
 

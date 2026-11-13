@@ -114,7 +114,7 @@ its dates, whether it passes through the front, and from when its engine reports
 | Harness | Provider | Reaches | Front? | Cache reported |
 |---|---|---|---|---|
 | Pi, OpenCode, Hermes, Posit Assistant | `spark` | the front, 9100 | yes | as the row says |
-| OpenCode | `spark-sglang` | the fast coder, by hand, from 2026-10-15 | no | not yet: the running SGLang was started before its script gained `--enable-cache-report` *(unverified from the Mac; the Spark session checks its command line)* |
+| OpenCode | `spark-sglang` | the fast coder, by hand, from 2026-10-15 | no | not yet: the running SGLang was started before its script gained `--enable-cache-report` ~~*(unverified from the Mac; the Spark session checks its command line)*~~ *(checked 2026-11-12 on the Spark, by counts only: none of the running SGLang's five processes, started 2026-10-26, has the flag on its command line, so `cache_from` stays null; the plan's Task U12 has the check)* |
 | OpenCode | `spark-flash-next` | Flash-Next, by hand | no | unknown until checked (part 3): its zeros may be "not reported", as SGLang's are |
 
 Only the providers marked "no" are read from the Mac now. When the fast coder moves behind the front,

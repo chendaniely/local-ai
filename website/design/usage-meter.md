@@ -567,7 +567,8 @@ the caps' new number; the reconciliation's tolerance.
     out of this repo: CLAUDE.md, on live figures)*;
   - the cached counts are lost for any run started without `--enable-cache-report`, the run of 2026-10-26 among them:
     those rows are "cache unknown", as §1 has it *(checked 2026-11-09: cache read and write are 0 on every row, so a
-    reader treats them as unknown, not as zero; restarting SGLang with the flag is still open)*;
+    reader treats them as unknown, not as zero; restarting SGLang with the flag is still open)* *(checked again
+    2026-11-12, on the Spark, by counts only: the run started 2026-10-26 is still the one running, without the flag)*;
   - *(2026-11-12: the by-hand SGLang's tokens are counted from now by the first numbers' slice, [its design](usage-meter-now.md),
     part 3, which reads `spark-sglang` and `spark-flash-next` from the Mac's OpenCode and estimates the cache while
     the engine reports none. This item stays open for what that slice doesn't do: restarting SGLang with
