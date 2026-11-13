@@ -55,14 +55,20 @@ def _summary(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
+REFUSED_EXIT = 3  # `spark usage import` stored the good rows but refused some, or refused the batch whole
+
+
 def _import(args: argparse.Namespace) -> int:
+    """Exit 0 when nothing was refused, else REFUSED_EXIT after storing the good rows: a push with refusals fails
+    loudly, so the Mac keeps its watermark and sends them again (the final review's I2, 2026-11-12)."""
     import sys
     import time
 
     from spark.meter import importer
 
-    print(importer.run(sys.stdin.buffer, time.time()).line())
-    return 0
+    verdict = importer.run(sys.stdin.buffer, time.time())
+    print(verdict.line())
+    return REFUSED_EXIT if verdict.refused else 0
 
 
 def _harvest(args: argparse.Namespace) -> int:

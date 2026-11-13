@@ -26,16 +26,19 @@ class Priced:
 
 
 def price(book: PriceBook, row: Row) -> Priced:
-    """The row's price at the line in effect at its t0, or why it has none, checked in WHYS' order."""
+    """The row's price at the line in effect at its t0, or why it has none. WHYS names the reasons; they are checked
+    in its order but for `none`, which comes before the counts: a model unpriced on purpose (speech, whose rows carry
+    no counts) is `none`, never `no_counts`, which the summary counts as unpriced (the final review's I1, 2026-11-12).
+    An unmapped model with no counts stays `no_counts`, so it raises no ⚠map: a mapping line wouldn't price it."""
     if row.end != "done":
         return Priced(why="not_done")
+    mapping = book.mapping.get(row.model) if row.model is not None else None
+    if mapping is not None and mapping.tier == "none":
+        return Priced(tier="none", why="none")
     if row.p is None or row.o is None or (row.c is not None and row.c > row.p):  # a cache read can't exceed P
         return Priced(why="no_counts")
-    mapping = book.mapping.get(row.model) if row.model is not None else None
     if mapping is None:
         return Priced(why="unmapped")
-    if mapping.tier == "none":
-        return Priced(tier="none", why="none")
     line = line_at(book, mapping.tier, row.t0)
     if line is None:
         return Priced(tier=mapping.tier, why="no_line")

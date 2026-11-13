@@ -131,7 +131,9 @@ A module of the `spark` package, as §3 has it, with four verbs *(names my call)
 - **`spark usage import --source opencode`:** reads the fast coder's rows on standard input and merges
   them into the Spark's store, keyed on the message's id, so sending a row again changes nothing. It
   refuses any field outside the row's fixed set and any string that isn't from a short `[A-Za-z0-9._:-]`
-  pattern. It prints one verdict line: rows new, unchanged and refused.
+  pattern. It prints one verdict line: rows new, unchanged and refused. *(2026-11-12, at the final review: it exits 3
+  when it refused anything, after storing the rest, so a push with refusals fails loudly and the Mac sends them
+  again.)*
 - **`spark usage harvest --source opencode`:** runs on the Mac (part 3).
 
 **Its inputs on the Spark:** the front's rows (`/var/lib/local-ai/usage`); the gate's ledger, for the
@@ -184,9 +186,10 @@ counts and verdicts, never content, and records the answers in the plan. The har
 database anyway, so the build reads nothing the finished harvest wouldn't.
 
 **Who runs it: spark-menu**, so the Mac gains no job of its own (Dan: "so we dont' need more
-infraastructure from the mac"). Every 5 minutes while connected, its poller runs the harvest and pipes
-the rows to `spark usage import` over its SSH master, bounded, in the background, the way it measures
-the disk now. It never runs while spark-menu is off. If the clone has no `spark usage harvest` (an
+infraastructure from the mac"). Every 5 minutes while connected, its poller runs the harvest and ~~pipes~~
+sends the rows to `spark usage import` over its SSH master, bounded, in the background, the way it measures
+the disk now. *(2026-11-12, at the final review: through a `0600` temp file, sent only when the harvest exited 0,
+never a pipe, so a harvest cut short never sends a truncated batch.)* It never runs while spark-menu is off. If the clone has no `spark usage harvest` (an
 older branch checked out), the panel says so once.
 
 ### 4. spark-menu's usage section **[Mac]**, in Dan's dotfiles
@@ -242,7 +245,7 @@ The contract spark-menu reads, and the projects page records. A version, so a ch
                 "usd_estimated": 0.0, "requests": 5, "p": 1000, "c": 800, "o": 100}],
   "hours": "only with --hours: totals per UTC hour, key and model, for the dashboard",
   "flags": {"unmapped": {"model-name": 3}, "interrupted": 2, "errors": 1, "cache_unknown": 0,
-            "dropped": 0},
+            "dropped": 0, "bad_lines": 0},
   "coverage": {"counting_off": [[1794460000.0, 1794460180.0]],
                "imported": {"opencode": {"last_import": 1794469800.0, "rows": 123}},
                "not_counted": ["by-hand engines: counted from heartsbane's OpenCode only"]},
@@ -252,7 +255,10 @@ The contract spark-menu reads, and the projects page records. A version, so a ch
 
 The figures are invented, as every example here is. Months and days are in `zone`. `share_of_price`
 is all time's spend over the private file's price, null without it; it becomes §3's payback once the
-electricity estimate lands. `usd` includes `usd_estimated`.
+electricity estimate lands. `usd` includes `usd_estimated`. *(2026-11-12, at the final review: the example gained
+`flags.bad_lines`, which the summary has given since it was built: the stored lines it couldn't read as rows, and the
+imported rows of a provider that isn't a by-hand one. `coverage.counting_off` holds only the front's usage rows'
+spans, not the gate ledger's own.)*
 
 ## Where the work runs, and its order
 

@@ -108,6 +108,16 @@ def test_unpriced_and_flags():
     assert (alone["requests"], alone["p"], alone["c"], alone["o"]) == (5, 5_000_000, 3_600_000, 50_000)
 
 
+def test_a_transcription_is_not_unpriced():
+    # Speech rows carry no token counts, and their models are `none`: unpriced on purpose, never "N unpriced"; a chat
+    # row with no counts (a route the front doesn't scan) is unpriced (the final review's I1).
+    t = local("2026-11-05T10:00")
+    rows = [row(t, "whisper-large-v3-turbo", p=None, c=None, o=None),
+            row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None), row(t, p=None, c=None, o=None)]
+    this = make(rows, local("2026-11-06T10:00"))["periods"]["this_month"]
+    assert (this["requests"], this["unpriced"], this["usd"]) == (3, 1, 0.0)
+
+
 def test_share_of_price(tmp_path):
     rows = [row(local("2026-10-05T10:00"), p=0, c=0, o=1_000_000), row(local("2026-11-05T10:00"), p=0, c=0,
                                                                          o=1_000_000)]  # $20 each
@@ -271,6 +281,60 @@ def test_words():
     assert "$0.78" in lines["This month"] and "1.0M in" in lines["This month"] and "10.0k out" in lines["This month"]
     assert "1.0 %" in lines["All time"]
     assert "—" in summary.words(make([], local("2026-11-06T10:00"))).splitlines()[-1]
+
+
+def test_words_print_the_flags_and_counting_off():
+    # make usage prints this month's flags in the menu's words and every counting-off span with its date, in the
+    # summary's zone (the final review's I4): S26 says so.
+    t = local("2026-11-05T10:00")
+    rows = [row(t, end="cut"), row(t, end="gone"), row(t, end="error"), row(t, "made-up-model"),
+            row(t, "other-model"), row(t, c=None, dropped=2), row(t, p=None)]
+    spans = [(local("2026-11-02T13:58"), local("2026-11-02T14:01")),
+             (local("2026-11-03T23:58"), local("2026-11-04T00:01")), (local("2026-11-12T08:52"), None)]
+    out = make(rows, local("2026-11-12T12:00"), counting_off=spans)
+    lines = summary.words(out).splitlines()
+    assert lines[5:] == [
+        "⚠map made-up-model, other-model · 2 interrupted · 1 errors · 4 unpriced · 1 cache unknown · 2 dropped",
+        "counting off 2026-11-02 13:58–14:01",
+        "counting off 2026-11-03 23:58–2026-11-04 00:01",
+        "counting off since 2026-11-12 08:52"]
+    quiet = make([row(t)], local("2026-11-12T12:00"))
+    assert len(summary.words(quiet).splitlines()) == 5  # nothing set: no flags line, no span
+    only_span = make([row(t)], local("2026-11-12T12:00"), counting_off=spans[2:])
+    assert summary.words(only_span).splitlines()[5:] == ["counting off since 2026-11-12 08:52"]
+
+
+# Every key spark-menu reads from the summary (its lib/usage.sh's poller and lib/panel.sh's panel_usage, in Dan's
+# dotfiles), with the JSON type it expects: a rename or a retype here must fail in this repo, not in the menu (the final
+# review's recommendation 2). A change to this list is a contract change: website/reference/projects.md's row, and a
+# notice/spark-menu issue, by CLAUDE.md's sync table.
+MENU_READS = [
+    (("v",), int), (("zone",), str), (("made_at",), float),
+    *[(("periods", k, f), t) for k in ("this_month", "today", "last_month", "all_time")
+      for f, t in (("label", str), ("usd", float), ("p", int), ("o", int), ("usd_estimated", float))],
+    (("periods", "all_time", "share_of_price"), float), (("periods", "this_month", "unpriced"), int),
+    (("flags", "unmapped"), dict), (("flags", "interrupted"), int), (("flags", "errors"), int),
+    (("flags", "cache_unknown"), int), (("flags", "dropped"), int),
+    (("coverage", "counting_off"), list), (("coverage", "imported", "opencode", "last_import"), float),
+]
+MENU_READS_BY_MODEL = {"period": str, "model": str, "tier": str, "usd": float, "p": int, "o": int}
+
+
+def test_every_key_spark_menu_reads():
+    t = local("2026-11-05T10:00")
+    out = json.loads(json.dumps(make([row(t)], local("2026-11-06T10:00"), price=Decimal("78"),
+                                     counting_off=[(t - 60, t - 30), (t, None)], last_import=t + 1, imported=1)))
+    for path, kind in MENU_READS:
+        value = out
+        for key in path:
+            assert isinstance(value, dict) and key in value, path
+            value = value[key]
+        assert isinstance(value, kind) and not isinstance(value, bool), path
+    assert out["v"] == 1
+    assert out["coverage"]["counting_off"] == [[t - 60, t - 30], [t, None]]  # [start, end], end null while off
+    entry = next(m for m in out["by_model"] if m["period"] == "this_month")
+    for key, kind in MENU_READS_BY_MODEL.items():
+        assert isinstance(entry.get(key), kind), key
 
 
 def test_summary_verb(tmp_path, monkeypatch, capsys):

@@ -76,12 +76,26 @@ def test_estimate_follows_the_session():
 def test_counting_off_spans(tmp_path):
     write(tmp_path / "ledger-2026-11.jsonl", [
         {"v": 1, "kind": "counting_on", "t": 200.0, "who": "front", "seconds": 50.0},
-        {"v": 1, "kind": "counting_off", "t": 100.0, "who": "gate"},
-        {"v": 1, "kind": "counting_on", "t": 130.0, "who": "gate", "seconds": 30.0},
-        {"v": 1, "kind": "counting_off", "t": 300.0, "who": "gate"},
+        {"v": 1, "kind": "counting_off", "t": 100.0, "who": "front"},
+        {"v": 1, "kind": "counting_on", "t": 130.0, "who": "front", "seconds": 30.0},
+        {"v": 1, "kind": "counting_off", "t": 300.0, "who": "front"},
         {"v": 1, "kind": "load", "t": 5.0},
     ])
     assert store.counting_off(tmp_path) == [(100.0, 130.0), (150.0, 200.0), (300.0, None)]
+
+
+def test_counting_off_is_the_front_writers_only(tmp_path):
+    # Only the front's writer bears on the usage rows; the gate's ledger turning on must not close the front's off, and
+    # its own off is no gap in the usage rows (the final review's M6). The gate writes who "front" for the front's
+    # usage rows (gate/core.py) and "gate" for its own ledger.
+    write(tmp_path / "ledger-2026-11.jsonl", [
+        {"v": 1, "kind": "counting_off", "t": 100.0, "who": "front"},
+        {"v": 1, "kind": "counting_off", "t": 110.0, "who": "gate"},
+        {"v": 1, "kind": "counting_on", "t": 120.0, "who": "gate", "seconds": 10.0},
+        {"v": 1, "kind": "counting_on", "t": 400.0, "who": "gate", "seconds": 30.0},
+        {"v": 1, "kind": "counting_off", "t": 500.0},  # no writer named: not the front's
+    ])
+    assert store.counting_off(tmp_path) == [(100.0, None)]
 
 
 def test_a_provider_outside_its_window_is_left_out(tmp_path):
@@ -110,7 +124,7 @@ def test_read_joins_all_three(tmp_path, monkeypatch):
     write(tmp_path / "s" / "opencode.jsonl", [imp("m1", prov="spark-sglang"), imp("m1", prov="spark-sglang"),
                                               imp("m2", prov="spark-sglang", t0=T + 10)])
     (tmp_path / "s" / "opencode.imported").write_text("1793000100\n")
-    write(tmp_path / "g" / "ledger-2026-11.jsonl", [{"v": 1, "kind": "counting_off", "t": 9.0, "who": "gate"}])
+    write(tmp_path / "g" / "ledger-2026-11.jsonl", [{"v": 1, "kind": "counting_off", "t": 9.0, "who": "front"}])
     result = store.read(BOOK)
     assert result.bad_lines == 1 and result.imported == 2 and result.last_import == 1793000100.0
     assert result.counting_off == [(9.0, None)] and len(result.rows) == 3

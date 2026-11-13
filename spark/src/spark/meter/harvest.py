@@ -1,7 +1,8 @@
 """`spark usage harvest`, run on the Mac: OpenCode's database, opened read-only, as one row of numbers per message to
 the by-hand engines, for `spark usage import` on the Spark (the design's part 3).
 
-Only the fields in QUERY are extracted, never a message's content, text or error message, nor a title or directory.
+Only the fields in _SQL are extracted, never a message's content, text or error message, nor a title or directory;
+the table check and the canary's queries return only 1.
 The session id is read only to hash it. At module level this imports only the standard library and `spark.meter`'s
 own modules, which import only the standard library, `yaml` and `spark.paths`."""
 
@@ -45,6 +46,24 @@ WHERE type IN ('assistant', 'compaction')
   AND json_extract(data, '$.model.providerID') IN ({marks})
   AND time_updated >= ?
 ORDER BY time_created"""
+
+
+# The canary (the final review's U6 triage, 2026-11-12): OpenCode updates itself, and a message format that no longer
+# holds one of these paths would read as "0 rows", or as every message still running or without counts. So when there
+# are assistant messages at all, at least one must hold each path, or the harvest refuses, naming the path. Each query
+# stops at its first match and returns only 1, never a value from the database.
+CANARY_PATHS = ("$.model.providerID", "$.time.completed", "$.tokens.input")
+_ANY_ASSISTANT = "SELECT 1 FROM session_message WHERE type = 'assistant' LIMIT 1"
+_HOLDS = "SELECT 1 FROM session_message WHERE type = 'assistant' AND json_extract(data, ?) IS NOT NULL LIMIT 1"
+
+
+def _canary(conn: sqlite3.Connection, db: Path) -> None:
+    if conn.execute(_ANY_ASSISTANT).fetchone() is None:
+        return  # a new install, or one that only holds user messages: nothing to read, and nothing wrong
+    for path in CANARY_PATHS:
+        if conn.execute(_HOLDS, (path,)).fetchone() is None:
+            raise HarvestError(f"{db}: no assistant message holds {path}, so OpenCode's message format may have "
+                               f"changed; this reader was tested with OpenCode {TESTED_WITH}")
 
 
 def _number(value: object) -> bool:
@@ -97,6 +116,7 @@ def harvest(db: Path, providers: list[Provider], since: float | None, stats: dic
             found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_message'")
             if found.fetchone() is None:
                 raise HarvestError(f"{changed}: no session_message table")
+            _canary(conn, db)
             fetched = conn.execute(sql, params).fetchall()
         finally:
             conn.close()

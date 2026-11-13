@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 
 import pytest
@@ -256,6 +257,54 @@ def test_rows_pass_the_import_check(tmp_path):
     rows = list(harvest.harvest(db, providers(), None))
     assert rows
     assert all(importer.check(r, NOW) is None for r in rows)
+
+
+def _moved(data: dict, path: str) -> dict:
+    """The message with one JSON path renamed, as an OpenCode update that moved a field would leave it."""
+    if path == "$.model.providerID":
+        data["model"]["provider"] = data["model"].pop("providerID")
+    elif path == "$.time.completed":
+        data["time"]["done"] = data["time"].pop("completed")
+    else:
+        data["tokens"]["in"] = data["tokens"].pop("input")
+    return data
+
+
+@pytest.mark.parametrize("path", ["$.model.providerID", "$.time.completed", "$.tokens.input"])
+def test_a_moved_field_is_refused_not_read_as_no_rows(tmp_path, capsys, path):
+    # OpenCode updates itself; if its assistant messages stop holding a path the harvest reads, zero rows must not hide
+    # it (the final review's U6 canary). The words name the path and hold nothing from the database.
+    db = tmp_path / "o.db"
+    build(db, [("m1", "assistant", _moved(msg(), path), T0_MS),
+               ("m2", "assistant", _moved(msg(provider="spark", model="secretmodel"), path), T0_MS),
+               ("m3", "user", {"time": {"created": T0_MS}, "content": CONTENT_MARK}, T0_MS)])
+    with pytest.raises(harvest.HarvestError, match=re.escape(path)):
+        list(harvest.harvest(db, providers(), None))
+    assert cli.main(["usage", "harvest", "--source", "opencode", "--db", str(db)]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and path in err and "2.2.7" in err
+    for mark in (CONTENT_MARK, SESSION, "secretmodel", "spark-sglang", "m1"):
+        assert mark not in err.replace(str(db), "")
+
+
+def test_one_message_holding_each_field_is_enough(tmp_path):
+    # Older messages from before a field existed don't trip the canary, so long as some assistant message holds it.
+    db = tmp_path / "o.db"
+    build(db, [("old", "assistant", _moved(_moved(msg(), "$.time.completed"), "$.tokens.input"), T0_MS),
+               ("ok", "assistant", msg(), T0_MS)])
+    assert [r["mid"] for r in harvest.harvest(db, providers(), None)] == ["ok"]
+
+
+def test_no_assistant_messages_is_no_rows(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "o.db"
+    build(db, [("u1", "user", {"time": {"created": T0_MS}, "content": CONTENT_MARK}, T0_MS)])
+    monkeypatch.setenv("SPARK_OPENCODE_DB", str(db))
+    assert cli.main(["usage", "harvest", "--source", "opencode"]) == 0
+    out, err = capsys.readouterr()
+    assert out == "" and err.strip() == "harvest: 0 rows"
+    empty = tmp_path / "e.db"
+    build(empty, [])
+    assert list(harvest.harvest(empty, providers(), None)) == []
 
 
 def test_no_by_hand_providers_prints_nothing(tmp_path, capsys, monkeypatch):

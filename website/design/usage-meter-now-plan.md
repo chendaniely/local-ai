@@ -17,8 +17,9 @@ by-hand fast coder's tokens included, every figure worked out on the Spark.
 Mac, prices each row when read from three YAML files in the package (mapping, prices, providers), and prints a
 summary (`spark usage summary --json`) and every priced row (`spark usage rows`). On the Mac, `spark usage harvest`
 reads OpenCode's database read-only and prints one row of numbers per message to the by-hand engines; spark-menu
-pipes it to `spark usage import` over its SSH master every 5 minutes, and fetches the summary every 60 seconds into
-`usage.json`, which its panel draws.
+~~pipes it to~~ sends it to `spark usage import` over its SSH master every 5 minutes *(2026-11-12, at the final review:
+through a `0600` temp file, sent only when the harvest exited 0, never a pipe; Task U10's ruling)*, and fetches the
+summary every 60 seconds into `usage.json`, which its panel draws.
 
 **Tech Stack:** Python 3 (the `spark` uv project: standard library, `pyyaml`, `zoneinfo`, `sqlite3`), pytest; bash 3.2
 and `jq` for spark-menu, with its fake-ssh test harness.
@@ -229,7 +230,9 @@ providers:
     doesn't hold `t0` are left out.
   - `counting_off(folder: Path = paths.GATE_LEDGER_DIR) -> list[tuple[float, float | None]]`: from the ledger's
     `counting_off` and `counting_on` rows, each span `(start, end)`; a `counting_on` with `seconds` makes
-    `(t - seconds, t)` even when its `counting_off` row is missing; an off with no on after it ends None.
+    `(t - seconds, t)` even when its `counting_off` row is missing; an off with no on after it ends None. *(2026-11-12,
+    at the final review: only the rows whose `who` is `front`, the front's usage rows' writer; the gate's own ledger,
+    `who` `gate`, is left out, since its on would otherwise close the front's off.)*
   - `with_estimates(rows: list[Row]) -> list[Row]`: the design's cache estimate, below.
   - `@dataclass class Store`: `rows: list[Row]`, `counting_off: list[tuple[float, float | None]]`, `bad_lines: int`,
     `last_import: float | None` (from `opencode.imported`, Task U5), `imported: int`.
@@ -286,8 +289,11 @@ def with_estimates(rows):
   - `@dataclass(frozen=True) class Priced`: `usd: Decimal | None`, `tier: str | None`, `line: str | None`
     (`PriceLine.label`), `band: str | None` (`"base"` or `"above"`), `why: str | None`, one of `WHYS`.
   - `WHYS = ("not_done", "no_counts", "unmapped", "none", "no_line", "cache_unknown")`
-  - `price(book: PriceBook, row: Row) -> Priced`, checked in `WHYS`' order: `end != "done"`; `p` or `o` None; no
-    mapping line; tier `none`; no line at `t0`; `c` None.
+  - `price(book: PriceBook, row: Row) -> Priced`, checked in ~~`WHYS`' order: `end != "done"`; `p` or `o` None; no
+    mapping line; tier `none`; no line at `t0`; `c` None.~~ this order: `end != "done"`; tier `none`; `p` or `o`
+    None; no mapping line; no line at `t0`; `c` None. *(2026-11-12, at the final review: tier `none` moved before
+    the counts, so a speech row, which carries no counts, is `none`, unpriced on purpose, and never `no_counts`,
+    which the summary counts as unpriced. `WHYS` names the reasons, not their order.)*
   - `row_json(row: Row, priced: Priced) -> dict`: the row's fields, `c_est` for `c_estimated`, and the four priced
     fields, `usd` a float rounded to 6 places; None values left out.
 - `spark.meter.register(subparsers)` adds `usage` with sub-verbs; this task's is `rows [--since DATE|EPOCH]`, one
@@ -405,15 +411,19 @@ The contract, the design's *The summary's JSON* with these settled:
     `line() -> str`, e.g. `import: 12 new, 0 changed, 340 unchanged, 1 refused (text 1)`.
   - `import_rows(lines: Iterable[str], folder: Path, now: float) -> Verdict`.
 - The verb: `spark usage import --source opencode`, rows on stdin; prints `Verdict.line()`; exit 0 when the batch was
-  read and stored, 1 when the folder can't be written (cli.main's `OSError` words).
+  read and stored, 1 when the folder can't be written (cli.main's `OSError` words). *(2026-11-12, at the final review:
+  and exit 3 when anything was refused, a batch refused whole included, after the good rows are stored; the verdict
+  line is unchanged. A push with refusals then fails loudly: `make usage-push` exits non-zero, and spark-menu keeps
+  its watermark and says the Spark refused rows, so they are sent again rather than lost.)*
 
 Rules: `v == 1`; `src == "opencode"`; strings `mid`, `prov`, `model` match `[A-Za-z0-9_.:-]{1,64}`; `sid` is
 `[0-9a-f]{16}`; counts are `int` (never `bool`), 0 ≤ n < 2**53; `t0` and `t1` numbers with 2026-01-01T00:00Z ≤ t0 ≤
 t1 ≤ `now` + 86400; no other field. A line over 4096 bytes, or the batch past 200,000 lines, is refused. The whole
 batch is read and checked before anything is written, so a cut pipe's torn last line is one refusal and the rest go
 in. New and changed rows are appended to `opencode.jsonl` (created `0640`) as one `write()` under an `fcntl.flock` on
-`.import.lock` in the folder; an unchanged row is not written. Every run that stores writes `opencode.imported`, the
-time, through a temp file and `os.replace`.
+`.import.lock` in the folder; an unchanged row is not written. ~~Every run that stores writes `opencode.imported`, the
+time,~~ A run whose batch had no refusals, an empty one included, writes `opencode.imported`, the time, through a temp
+file and `os.replace`. *(2026-11-12, at the final review: written only when nothing was refused, Task U5's ruling.)*
 
 - [ ] **Step 1: Write the failing tests:**
   - `test_new_then_unchanged`: two invented rows imported twice; the first verdict `2 new`, the second `2 unchanged`,
@@ -453,10 +463,14 @@ time, through a temp file and `os.replace`.
     `importer.FIELDS`.
 - The verb: `spark usage harvest --source opencode [--db PATH] [--since EPOCH]`, rows to stdout as JSON lines and one
   line to stderr, `harvest: N rows`; exit 1 with `HarvestError`'s words for a missing file or a database without
-  `session_message`.
+  `session_message`. *(2026-11-12, at the final review: also exit 1 when OpenCode has assistant messages but none of
+  them holds `$.model.providerID`, `$.time.completed` or `$.tokens.input`, the words naming the path and nothing from
+  the database, so a format change never reads as "0 rows". No assistant messages at all is still 0 rows, exit 0.)*
 
-The query, the only one it runs, on `sqlite3.connect(f"file:{db}?mode=ro", uri=True)`; the provider list is bound as
-parameters, one `?` each, from `by_hand(book, "opencode")`:
+The query, ~~the only one it runs~~ the only one that extracts a field *(2026-11-12, at the final review: a table
+check and the canary's `LIMIT 1` queries, one for any assistant message and one per path, run before it, and each
+returns only 1)*, on `sqlite3.connect(f"file:{db}?mode=ro", uri=True)`; the provider list is bound as parameters, one
+`?` each, from `by_hand(book, "opencode")`:
 
 ```sql
 SELECT id, session_id, type,
@@ -518,8 +532,10 @@ in milliseconds.
 - Produces: doctor checks `usage sessions` (`_meter_folder` with owner `(getpass.getuser(), "spark-admin")`) and `meter
   prices` (the files load, every registry model has a mapping line, and a summary over the live folders runs: its
   verdict names missing models or the error's class, never a figure); `make usage` (**on the Spark**: `spark usage
-  summary`) and `make usage-push` (**on the Mac**: the harvest piped to `ssh brightroar
-  /opt/local-ai/app/.venv/bin/spark usage import --source opencode`, for a push by hand).
+  summary`) and `make usage-push` (**on the Mac**: the harvest ~~piped to~~ sent to `ssh brightroar
+  /opt/local-ai/app/.venv/bin/spark usage import --source opencode`, for a push by hand). *(2026-11-12, at the final
+  review: through a temp file, sent only when the harvest exited 0, never a pipe, since make's sh has no `pipefail`;
+  Task U7's ruling. The target exits non-zero when either side fails, the import's refusals included.)*
 
 - [ ] **Step 1: Write the failing tests:** `test_bootstrap.py`: `install_d_line("/var/lib/local-ai/usage-sessions")`
   holds `-g spark-admin -m 2750` and `-o` the dry run's user; `test_doctor.py`, with `FakeProbe`: a missing
@@ -586,16 +602,24 @@ an object with `v == 1` is written with `at` through a temp file and `mv`, and `
 **Files:** Modify `lib/usage.sh`; Test `tests/test_usage.sh`, a fake `uv` in `tests/fakebin/`.
 
 **Interfaces:**
-- Produces: `SPARK_TUNNEL_UV` (default `/opt/homebrew/bin/uv`: launchd's PATH has no Homebrew), `SPARK_TUNNEL_LOCAL_AI`
-  (default `$HOME/git/hub/local-ai`), `HARVEST_EVERY=300`, `HARVEST_BOUND=90`, `HARVEST_SINCE="$STATE_DIR/harvest.since"`,
+- Produces: `SPARK_TUNNEL_UV` (default `/opt/homebrew/bin/uv`: launchd's PATH has no Homebrew), ~~`SPARK_TUNNEL_LOCAL_AI`
+  (default `$HOME/git/hub/local-ai`)~~ *(2026-11-12, at the final review: no new variable; the push reuses spark-menu's
+  existing `LOCALAI_DIR`, overridden by `SPARK_LOCALAI_DIR` and read when called, as `lib/forwards.sh` does; Task
+  U10's ruling)*, `HARVEST_EVERY=300`, `HARVEST_BOUND=90`, `HARVEST_SINCE="$STATE_DIR/harvest.since"`,
   `HARVEST_LAST="$STATE_DIR/harvest.last"` (the time and the import's verdict line), `HARVEST_NOTE="$STATE_DIR/harvest.note"`
   (why the last push failed, in words), `usage_push_start` (called beside `usage_poll_start`).
 
-The push: `"$UV" run --frozen --project "$LOCAL_AI/spark" spark usage harvest --source opencode [--since S]` piped to
+The push: `"$UV" run --frozen --project "$LOCAL_AI/spark" spark usage harvest --source opencode [--since S]` ~~piped to
 `on_spark -i "$SPARK_BIN" usage import --source opencode`, the whole pipeline under one `with_timeout
-"$HARVEST_BOUND"`. On success `harvest.since` becomes the push's start less 3600 and `harvest.note` goes; on failure
-`harvest.note` says which side failed (`the Mac's clone has no spark usage harvest`, `the Spark has no spark usage
-import yet`, `OpenCode's database: <the harvest's last stderr line>`), and `note` logs it once per kind.
+"$HARVEST_BOUND"`~~ into a `0600` temp file, which `on_spark -i "$SPARK_BIN" usage import --source opencode` reads
+only when the harvest exited 0, both steps under one `with_timeout "$HARVEST_BOUND"` *(2026-11-12, at the final
+review: never a pipe, Task U10's ruling; `$LOCAL_AI` is `LOCALAI_DIR`, above)*. On success `harvest.since` becomes
+the push's start less 3600 and `harvest.note` goes; on failure `harvest.note` says which side failed (`the Mac's clone
+has no spark usage harvest`, `the Spark has no spark usage import yet`, `OpenCode's database: <the harvest's last
+stderr line>`), and `note` logs it once per kind. *(2026-11-12, at the final review: every failure keeps
+`harvest.since`, so the next push sends the same rows again; when the import exits 3, as it does when the Spark
+refused any row, the note reads `the Spark refused N rows`, N from its verdict line, or `the Spark refused the batch`
+for a batch refused whole or a verdict that can't be read.)*
 
 - [ ] **Step 1: Write the failing tests:** a fake `uv` printing two invented rows and a fake `spark` whose `usage
   import` saves its stdin and prints a verdict; one push saves both rows and writes `harvest.last` and
@@ -621,17 +645,24 @@ on: the 60-s call of its own, the 5-min push, greyed after 3 minutes, the month-
   `12.3K`, `4.5M`, `1.2B`).
 
 The section, as the design's part 4 draws it: a header `Spark usage at Claude prices` with `as of HH:MM`; `This month`
-with `usd` and `p` in · `o` out; `Today`; `Last month`; `All time` with `share_of_price` as `N.N % of the Spark
-(before electricity)` or `—`; `~$X of it estimates the fast coder's cache` when all time's `usd_estimated` > 0; one
-flags line (`⚠map` and up to two model names then `+N`, interrupted, errors, cache unknown, dropped, the last
-counting-off span as `HH:MM–HH:MM`), amber unless old; `By model ▸` with this month's entries as `--` rows
-(model, tier, `usd`, tokens). `harvest.note`, when present, is a grey line `fast coder's tokens: <note>`; a
-`last_import` over 15 minutes old while the tunnel is on is a grey line `fast coder's tokens last sent Nm ago`.
-`usage.json` older than 180 s greys the section and the header says how old. When the summary's `this_month.label`
-isn't the Mac's month in the summary's `zone` (`TZ=<zone> date +%Y-%m`), each line names its period's `label` instead
-of "This month", "Today" and "Last month". No `usage.json` and `usage.error` `not deployed`: one grey line `Spark usage:
-not on the Spark yet`. Every string from the summary goes through `spark_item` with control characters stripped
-(`tr -d '\000-\037\177'`).
+with `usd` and `p` in · `o` out; `Today`; `Last month`; `All time` with `share_of_price` as
+`N.N % of the Spark (before electricity)` or `—`; `~$X of it estimates the fast coder's cache` when all time's
+`usd_estimated` > 0; one flags line (`⚠map` and up to two model names then `+N`, interrupted, errors, cache unknown,
+dropped, ~~the last counting-off span as `HH:MM–HH:MM`~~), amber unless old; `By model ▸` with this month's entries as
+`--` rows (model, tier, `usd`, tokens). *(2026-11-12, at the final review: the flags line also gives `N unpriced`,
+this month's `unpriced` as the summary gives it, after the errors; after `counting off` it lists every span the
+summary gives, not only the last, each `HH:MM–HH:MM`, with its date when not today (`Nov 2 13:58–14:01`), and
+`since HH:MM` for one still open, so an open span alone reads `counting off since HH:MM`; past 3, the last 3 and
+`+N more`. By model shows `—`, not `$0.00`, for a model whose tier is null or `none`. A summary whose `v` is above 1
+is recorded by the poller as `newer (vN)` in `usage.error`, from which the panel prints its v2 line; with no
+`usage.json`, any other `usage.error` but `not deployed` prints one grey line,
+`Spark usage: the summary failed (<reason>)`; and `usage.json` and `usage.error` are written under `umask 077`.)*
+`harvest.note`, when present, is a grey line `fast coder's tokens: <note>`; a `last_import` over 15 minutes old while
+the tunnel is on is a grey line `fast coder's tokens last sent Nm ago`. `usage.json` older than 180 s greys the
+section and the header says how old. When the summary's `this_month.label` isn't the Mac's month in the summary's
+`zone` (`TZ=<zone> date +%Y-%m`), each line names its period's `label` instead of "This month", "Today" and "Last
+month". No `usage.json` and `usage.error` `not deployed`: one grey line `Spark usage: not on the Spark yet`. Every
+string from the summary goes through `spark_item` with control characters stripped (`tr -d '\000-\037\177'`).
 
 - [ ] **Step 1: Write the failing tests** in `test_panel.sh`, from `usage-summary.json`: every line above appears in
   `status` (plain) with the fixture's figures formatted; an `at` 200 s old greys every line of the section; a
@@ -655,8 +686,14 @@ scan, *Before every push*):
 - [ ] **Step 2 [Dan's OK]:** `git switch phase-2a && git merge --no-ff swiftbar-costs`.
 - [ ] **Step 3:** the plan's edits, as Task 44k's were: `website/design/plan.md` (a Revisions line: the summary, the
   price files and spark-menu's section come forward from 2b to 2a; Phase 4a's line gains the fast coder behind the
-  front, the design's part 5), `website/design/phase-2a.md` (a pointer to this plan for Tasks U1–U14 between 44k and
-  44l; Task 44l's steps gain U13's), and the box fact the design left unverified: whether the running SGLang has
+  front, the design's part 5; *(2026-11-12, at the final review)* and two Backlog lines: **the summary re-reads and
+  re-prices every row of every month each minute**, so it needs a measured trigger, its run time on the Spark checked
+  as the rows grow, and work on it (a cache, or a month's totals kept once the month has closed) before it nears
+  spark-menu's 20-second bound; and **after a rebuild of the Spark, the Mac's `harvest.since` stays**, so the first
+  pushes send only the last hour or so: run `make usage-push` on the Mac once to send the fast coder's whole history
+  again; it sends every row, which the import merges by message id, so sending one twice changes nothing),
+  `website/design/phase-2a.md` (a pointer to this plan for Tasks U1–U14 between 44k and 44l; Task 44l's steps gain
+  U13's), and the box fact the design left unverified: whether the running SGLang has
   `--enable-cache-report` on its command line, by a count only, since its command line may hold its key
   (`pgrep -af sglang.launch_server | grep -c enable-cache-report`; not yet run on the box, so run once before relying
   on it). A count of 1 means `providers.yaml`'s `spark-sglang` line gains a `cache_from` date, after the soak. Commit

@@ -252,8 +252,34 @@ def _tokens(n: int) -> str:
     return str(n)
 
 
+def _flag_words(summary: dict[str, Any]) -> str:
+    """This month's flags in the menu's words, joined by " · ": "⚠map <names>", then "N interrupted", "N errors",
+    "N unpriced" (this month's), "N cache unknown" and "N dropped", each only when set; "" when none is."""
+    flags = summary["flags"]
+    out = [f"⚠map {', '.join(flags['unmapped'])}"] if flags["unmapped"] else []
+    for word, n in (("interrupted", flags["interrupted"]), ("errors", flags["errors"]),
+                    ("unpriced", summary["periods"]["this_month"]["unpriced"]),
+                    ("cache unknown", flags["cache_unknown"]), ("dropped", flags["dropped"])):
+        if n:
+            out.append(f"{n} {word}")
+    return " · ".join(out)
+
+
+def _span_words(start: float, end: float | None, tz: dt.tzinfo | None) -> str:
+    """A span with counting off, in the summary's zone: "counting off 2026-11-02 13:58–14:01", the end's date too when
+    it is another day, or "counting off since 2026-11-12 08:52" while it is still off."""
+    first = dt.datetime.fromtimestamp(start, tz)
+    if end is None:
+        return f"counting off since {first:%Y-%m-%d %H:%M}"
+    last = dt.datetime.fromtimestamp(end, tz)
+    until = last.strftime("%H:%M" if last.date() == first.date() else "%Y-%m-%d %H:%M")
+    return f"counting off {first:%Y-%m-%d %H:%M}–{until}"
+
+
 def words(summary: dict[str, Any]) -> str:
-    """The summary in plain words, as `spark usage summary` prints it without --json: a line a period."""
+    """The summary in plain words, as `spark usage summary` (`make usage`) prints it without --json: a line a period,
+    then this month's flags on one line in the menu's words when any is set, then a line for each span with counting off
+    that ends this month or is still open, with its date (the final review's I4, 2026-11-12)."""
     lines = [f"At Claude's prices; days and months in {summary['zone']}"]
     for name, key in (("This month", "this_month"), ("Today", "today"), ("Last month", "last_month"),
                       ("All time", "all_time")):
@@ -269,4 +295,9 @@ def words(summary: dict[str, Any]) -> str:
             share = "—" if period["share_of_price"] is None else f"{period['share_of_price'] * 100:.1f} %"
             line += f" · {share} of the Spark's price (before electricity)"
         lines.append(line)
+    flags = _flag_words(summary)
+    if flags:
+        lines.append(flags)
+    tz = None if summary["zone"] == "localtime" else _zone_info(summary["zone"])  # None: the system's own rules
+    lines.extend(_span_words(start, end, tz) for start, end in summary["coverage"]["counting_off"])
     return "\n".join(lines)

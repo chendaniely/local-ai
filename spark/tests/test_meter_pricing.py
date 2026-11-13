@@ -78,6 +78,17 @@ def test_why_each():
         assert priced.why == why and priced.usd is None and why in pricing.WHYS
 
 
+def test_a_none_row_with_no_counts_is_none():
+    # A transcription row has no token counts; `none` means unpriced on purpose, so it must never read as no_counts,
+    # which the summary counts as unpriced (the final review's I1).
+    for r in (row("nil", p=None, c=None, o=None), row("nil", o=None), row("nil", p=100, c=101, o=1),
+              row("whisper-large-v3-turbo", p=None, c=None, o=None)):
+        priced = pricing.price(BOOK, r)
+        assert (priced.why, priced.tier, priced.usd) == ("none", "none", None)
+    assert pricing.price(BOOK, row("nil", end="error")).why == "not_done"  # not_done still comes first
+    assert pricing.price(BOOK, row("nope", p=None)).why == "no_counts"  # an unmapped row with no counts: no ⚠map
+
+
 def test_row_json_leaves_out_none_and_rounds():
     r = dataclasses.replace(row(), key="demo", c_estimated=True)
     out = pricing.row_json(r, pricing.price(BOOK, r))

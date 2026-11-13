@@ -130,3 +130,36 @@ def test_import_verb(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(("\n".join(lines(make("m1"))) + "\n").encode())))
     assert cli.main(["usage", "import", "--source", "opencode"]) == 0
     assert "import: 1 new, 0 changed, 0 unchanged, 0 refused" in capsys.readouterr().out
+
+
+def _verb(monkeypatch, text: str) -> int:
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(text.encode())))
+    return cli.main(["usage", "import", "--source", "opencode"])
+
+
+def test_import_verb_exits_3_when_anything_was_refused(tmp_path, monkeypatch, capsys):
+    # A refused row must fail the push loudly, so the Mac keeps its watermark and sends it again (the final review's
+    # I2); the good rows are stored all the same, and the verdict line is unchanged.
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path)
+    batch = "\n".join(lines(make("m1"), make("m2", end="stop"), make("m3"))) + "\n"
+    assert _verb(monkeypatch, batch) == 3
+    assert capsys.readouterr().out.strip() == "import: 2 new, 0 changed, 0 unchanged, 1 refused (end 1)"
+    assert [r["mid"] for r in stored(tmp_path)] == ["m1", "m3"]
+    assert not (tmp_path / "opencode.imported").exists()
+
+
+def test_import_verb_exits_3_for_a_batch_refused_whole(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(importer, "MAX_LINES", 2)
+    real = importer.import_rows
+    monkeypatch.setattr(importer, "import_rows", lambda ls, folder, now: real(ls, folder, now, importer.MAX_LINES))
+    assert _verb(monkeypatch, "\n".join(lines(make("m1"), make("m2"), make("m3"))) + "\n") == 3
+    assert capsys.readouterr().out.strip() == "import: 0 new, 0 changed, 0 unchanged, 1 refused (batch 1)"
+    assert stored(tmp_path) == []
+
+
+def test_import_verb_exits_0_for_a_clean_batch_and_an_empty_one(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(paths, "USAGE_SESSIONS_DIR", tmp_path)
+    assert _verb(monkeypatch, "\n".join(lines(make("m1"), make("m2"))) + "\n") == 0
+    assert _verb(monkeypatch, "") == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "import: 0 new, 0 changed, 0 unchanged, 0 refused"

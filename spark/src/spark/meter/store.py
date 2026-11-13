@@ -166,14 +166,20 @@ def imported_rows(book: PriceBook, folder: Path | None = None) -> list[Row]:
     return _imported_rows(book, paths.USAGE_SESSIONS_DIR if folder is None else folder)[0]
 
 
+COUNTING_WHO = "front"  # the ledger's writer name for the front's usage rows (gate/core.py's ledger.counting call)
+
+
 def counting_off(folder: Path | None = None) -> list[tuple[float, float | None]]:
-    """The spans when counting was off, from the ledger's counting_off and counting_on rows in time order. An on with
+    """The spans when the front's usage rows weren't written, from the ledger's counting_off and counting_on rows whose
+    `who` is COUNTING_WHO, in time order. The gate's own ledger (`who` "gate") is left out: its gaps aren't gaps in the
+    usage rows, and mixed in, its on would close the front's off (the final review's M6, 2026-11-12). An on with
     `seconds` and no off before it still gives (t - seconds, t); an off with no on after it ends None."""
     folder = paths.GATE_LEDGER_DIR if folder is None else folder
     events = []
     for _, line in _lines(folder, _LEDGER_FILE):
         data = _object(line)
-        if data and data.get("kind") in ("counting_off", "counting_on") and _number(data.get("t")):
+        if (data and data.get("kind") in ("counting_off", "counting_on") and data.get("who") == COUNTING_WHO
+                and _number(data.get("t"))):
             events.append((float(data["t"]), data["kind"], data.get("seconds")))
     spans: list[tuple[float, float | None]] = []
     start: float | None = None

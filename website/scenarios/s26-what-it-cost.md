@@ -56,12 +56,21 @@ Two more doctor lines come with the first numbers *(built 2026-11-12, not yet de
   unpriced on purpose), or only the error's class when a file or the summary fails; it never prints a figure, a row
   or a private value. An absent private file passes (the share shows as a dash); a malformed or unreadable one fails the check, naming the error's class and never the file's contents.
 
-On the Spark, `make usage` prints the summary: what the models would have cost at Claude's prices today, this month,
-last month and all time, with all time as a share of the Spark's price, and flags for a model with no mapping line
-(`⚠map`), interrupted and error rows, unknown cache counts, and the spans with counting off. On the Mac, `make
-usage-push` harvests OpenCode's rows for the by-hand engines and sends them to the Spark by hand; spark-menu does the
-same by itself every 5 minutes. The fast coder's cache is estimated when the summary reads, since its engine reports
-none, and the summary shows how much of each total rests on that estimate. *(Built 2026-11-12, not yet deployed.)*
+On the Spark, `make usage` prints the summary: a line each for this month, today, last month and all time, with what
+the models would have cost at Claude's prices, the tokens in and out and, when there are any, how much of it rests on
+an estimated cache and how many rows couldn't be priced; all time also as a share of the Spark's price. Under them,
+only when one is set, a line of this month's flags in the menu's words, joined by `·`: `⚠map` and the models with no
+mapping line, then the interrupted rows, the errors, the rows left unpriced, the unknown cache counts and the rows the
+front dropped. Then a line for each span with counting off that ends this month or is still open, with its date:
+`counting off 2026-11-02 13:58–14:01`, or `counting off since` and when, while it is still off. *(2026-11-12, at the
+final review: until then `make usage` printed only the four periods' lines, though this page already named the
+flags.)* On the Mac, `make usage-push` harvests OpenCode's rows for the by-hand engines and sends them to the Spark by
+hand; spark-menu does the same by itself every 5 minutes. When the Spark refuses a row, its import stores the rest,
+says how many it refused in its verdict line and exits 3, so `make usage-push` fails and spark-menu keeps its place to
+send them again, with a note in the dropdown; and when OpenCode's messages stop holding a field the harvest reads, the
+harvest refuses, naming the field, rather than send nothing without a word *(both 2026-11-12, at the final review)*.
+The fast coder's cache is estimated when the summary reads, since its engine reports none, and the summary shows how
+much of each total rests on that estimate. *(Built 2026-11-12, not yet deployed.)*
 
 In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
 behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
