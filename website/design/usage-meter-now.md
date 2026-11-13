@@ -85,7 +85,9 @@ factor, default 1, as §3 has it; `none` marks a model left unpriced on purpose,
 by-hand engines' served names. *The starting mapping* (§3's call): every chat model at `opus`
 (`gemma-4-26b-a4b`, `qwen3.8-27b`, `qwen3.6-35b-a3b`, `qwen3.8-27b-sglang`, `qwen3.8-flash-next`,
 `qwen3.8-flash-next-mtp`); the embedding, whisper and Qwen3-ASR models at `none`. Dan lowers any he
-thinks isn't Opus-level.
+thinks isn't Opus-level. *(2026-11-12, Dan's decision, deployed the same evening: the chat models by size, the coder,
+the fast coder and Flash-Next at `sonnet`, Qwen3.6 and Gemma at `haiku`. [Model prices](../reference/model-prices.md)
+has the table, and [the meter's decisions](usage-meter-qa.md) the reasons.)*
 
 **The prices.** Per tier, dated lines, in US dollars per million tokens: input, output, cache reads,
 5-minute and 1-hour cache writes, and Haiku's second band. A line starts at 00:00 UTC on the day

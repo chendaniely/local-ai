@@ -8,6 +8,23 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-12 — The meter prices the chat models by size
+
+**Deployed** by Dan, **on the Spark**, in tmux, with `make apply` from the `phase-2a` clone at `1a816fa`, the merge of
+`meter-proxies`, a little after the meter's own deploy that evening. The meter's mapping changed, by Dan's decision
+recorded in [the meter's decisions](website/design/usage-meter-qa.md): the coder, the fast coder and Flash-Next are
+priced as Sonnet, and Qwen3.6 and Gemma as Haiku. Until then every chat model was priced as Opus. The meter stores
+tokens, never dollars, so the change reprices every row already counted too. [Model prices](website/reference/model-prices.md)
+shows the mapping and the prices as a table.
+- **What restarted:** the gate and the brake only, at 22:13 by the Spark's clock. The front and llama-swap kept
+  running, so no model unloaded. The sync also brought the deployed `spark clients` its Hermes fix from earlier that
+  evening.
+- **Checked** by the Spark session afterwards: the deployed `mapping.yaml` is the repo's; `make apply-dry-run` has
+  nothing to change; `make doctor` 34 of 34, with one WARN, `ntfy: not set up (Task 2, Phase 5)`, its `meter prices`
+  line among the passes.
+
+---
+
 ## 2026-11-12 — The usage meter's counter and first numbers (Phase 2a, Tasks 44l and U13)
 
 **Deployed** by Dan, **on the Spark**, from the `phase-2a` clone at `cfc0c7d`, in the evening, as Task 44l of
