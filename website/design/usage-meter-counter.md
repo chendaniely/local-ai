@@ -528,7 +528,10 @@ tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
 - [ ] **Step 4 [Dan], on the Spark:** `make bootstrap-dry-run`, read for the two `install -d` lines; then, with a
   second SSH session open, `make bootstrap`; then
   `stat -c '%U:%G %a %n' /var/lib/local-ai/usage /var/lib/local-ai/gate-ledger` shows `spark-front:spark-admin 2750`
-  and `spark:spark-admin 2750`. Any apt change goes in `changelog.md`.
+  and `spark:spark-admin 2750`. Any apt change goes in `changelog.md`. *(Added 2026-11-12, from [the first
+  numbers' plan](usage-meter-now-plan.md), Task U13:)* bootstrap also makes `/var/lib/local-ai/usage-sessions`, so the
+  dry run shows three `install -d` lines, and `stat -c '%U:%G %a' /var/lib/local-ai/usage-sessions` shows
+  `<Dan's login>:spark-admin 2750`.
 - [ ] **Step 5 [Dan], on the Spark, in tmux:** `make apply`, which stages the three units and stops; `git status
   --short -- Makefile stack/host` is empty; `make install-units`, reading the `ReadWritePaths`, `UMask` and
   `InaccessiblePaths` diffs; `make apply` again: llama-swap's unit changed, so every model stops and the residents
@@ -544,6 +547,13 @@ tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
   built`, `CLAUDE.md`'s private-material paragraph and README §My environment (the two folders, the Spark's
   snapshots in `/var/backups/local-ai-usage` and Dan's `usage-snapshots`), and the vault's note (Dan): commit
   `docs(machine): 🤖 the usage meter's counter is running`.
+- [ ] **Step 8 [Dan] [Spark]: the first numbers** *(added 2026-11-12, from [their plan](usage-meter-now-plan.md),
+  Task U13, which deploys with this task)*. **[Dan], on the Spark:** the private file, its values typed by Dan, never
+  pasted into a session, as U13's Step 2 gives it; `stat -c '%a' ~/.config/local-ai/meter.yaml` shows `600`, and its
+  line goes in the vault's entry note. **[Spark], on the Spark:** `make doctor` passes `usage sessions` and `meter
+  prices`, and `make usage` prints the four periods, read by Dan and never copied into the repo. Then U13's Step 4:
+  `changelog.md`, README §Current state, the Architecture page's new paths solid and S26's `status: built`, in the
+  commit `docs(machine): 🤖 the meter's first numbers are running`.
 
 **If counting misbehaves:** revert Tasks 44a–44e on `phase-2a` and `make apply`, which restarts only the front and the
 gate; the units' `-` paths are inert and stay. For a disk problem alone nothing is needed: the front serves with

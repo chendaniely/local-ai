@@ -49,6 +49,13 @@ date: 2026-10-07
 > (#32, `6df98b9`), ahead of Tasks 41–44, and 44k was made the same day. Nothing of it is deployed
 > until Task 44l, which waits for Task 44.
 
+> **The usage meter's first numbers are Tasks U1–U14** *(added 2026-11-12, their Task U12)*, in a
+> plan of their own, [the first numbers](usage-meter-now-plan.md): `spark usage` with its price
+> files and summary, the Mac's harvest of the by-hand engines' rows, and spark-menu's usage section.
+> They come between Tasks 44k and 44l. U1–U8 were built on the Mac and merged into this branch on
+> 2026-11-12 (`24f53f3`); U9–U11 are spark-menu's, in Dan's dotfiles; U13 deploys with Task 44l,
+> whose steps gain its own. Nothing of it is deployed until then.
+
 **Goal:** Requests reach a new front on 127.0.0.1:9100, which checks the same client keys (held
 only as digests), counts the requests in flight and forwards to llama-swap on 127.0.0.1:900 with an
 internal key. For a model that isn't loaded it asks a gate on two Unix sockets, which admits one
@@ -9647,6 +9654,13 @@ folders, doctor's checks and S26, OpenCode's and Hermes Agent's own keys, and th
 after Task 44 and are finished, Task 44l's deploy included, before Task 45 starts, because nothing
 deploys during the soak. So the soak below runs with the counter on.
 
+*(Added 2026-11-12, the first numbers' Task U12.)* Between 44k and 44l come Tasks U1–U14 of [the
+first numbers' plan](usage-meter-now-plan.md): `spark usage`, its price files and the summary, the
+Mac's harvest of the by-hand engines' rows, and spark-menu's usage section. Task 44l deploys them
+with the counter, and its steps gain U13's: its `make bootstrap` also makes
+`/var/lib/local-ai/usage-sessions`, Dan writes the private file, and `make doctor` also passes
+`usage sessions` and `meter prices`. So the soak runs with the summary on too.
+
 ***
 
 ### Task 45 [Spark]: the soak — every footprint, and what RssAnon accounts for
@@ -10242,7 +10256,9 @@ git merge --no-ff phase-2a -m "chore(repo): 🤖 merge phase 2a" -m "Co-Authored
   and `counting`; Task 45 has recorded the front's peak memory with the scanner, under its 512M, with
   no rows dropped, and rows checked against Pi's own counts as a verdict only; Tasks 49 and 50 have
   seen the rows and ledger rows they name; and Task 52's `make clients` gives OpenCode and Hermes
-  Agent their own keys.
+  Agent their own keys. *(Added 2026-11-12, the first numbers' Task U12:)* With it, Tasks U1–U14's
+  summary: `make doctor` also passes `usage sessions` and `meter prices`, and `make usage` prints
+  the four periods.
 - [ ] `make test lint` is clean on the Spark and `make test lint docs` on the Mac, and CI is green;
   README §Current state, the changelog and the architecture page are true; the council review is
   done and the forward look applied; `phase-2a` is merged to `main` with Dan's OK.
