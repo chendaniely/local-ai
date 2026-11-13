@@ -436,3 +436,12 @@ prices are read from each vendor's own page when they go in, not from a tracker.
 
 A remap reprices the past, but the menu reads the deployed app's copy of the price files, so it shows
 only after `make apply`, which waits for the soak's end once the soak has begun (the decision above).
+
+**Q: A model added to the registry next month: how does it get its proxy?** Offered: a choice that is
+enforced, the one table (`mapping.yaml`) listing every model's proxy, with `make test`, CI and `make
+doctor` failing on a model that has no line (recommended); picked by a rule from each model's size,
+written into the registry, with the table only for exceptions; or chosen in each model's own registry
+entry. **Dan: enforced, with a suggestion.** "1, but you can suggest/recommend by size so it's almost
+automatic". So a model with no line still fails, and the failure suggests the line by-size would give
+it (its capability, and for a chat model its size), for Dan to accept or change; nothing is priced by
+a guess.
