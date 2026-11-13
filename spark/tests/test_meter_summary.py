@@ -336,7 +336,7 @@ MENU_READS = [
     (("flags", "cache_unknown"), int), (("flags", "dropped"), int),
     (("coverage", "counting_off"), list), (("coverage", "imported", "opencode", "last_import"), float),
 ]
-MENU_READS_BY_MODEL = {"period": str, "model": str, "tier": str, "usd": float, "p": int, "o": int}
+MENU_READS_BY_MODEL = {"period": str, "model": str, "tier": str, "usd": float, "p": int, "o": int, "audio_s": float}
 
 
 def test_every_key_spark_menu_reads():

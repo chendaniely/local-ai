@@ -88,7 +88,7 @@ the fast coder's cache estimate is. Qwen3-ASR's answers are scanned for their to
 
 **Pricing and the summary.** A per-minute row costs its seconds ÷ 60 × the line's price × the
 mapping's factor. The summary's sums gain audio seconds, its periods gain `audio_s` (a new field, so
-the contract stays `v` 1; spark-menu's `MENU_READS` is unchanged), and `make usage`'s line adds the
+the contract stays `v` 1; spark-menu's `MENU_READS` is unchanged *(2026-11-13, after the deploy: spark-menu's by-model list now reads `by_model`'s `audio_s`, so `MENU_READS_BY_MODEL` gained it; the menu treats a missing one as 0)*), and `make usage`'s line adds the
 minutes of audio when there are any. What rests on an estimate counts in `usd_estimated`, as now.
 
 **The suggestion.** For a registry model with no line, the by-size rule *(Dan: "suggest/recommend by
