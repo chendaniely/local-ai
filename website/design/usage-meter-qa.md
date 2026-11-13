@@ -412,3 +412,27 @@ half, each with its machine and branch.
 implementer and reviewer per task, then a whole-branch review, as Tasks 44a–44j were built (recommended);
 every task in one session, with one review at the end; or only the local-ai half now. **Dan: a subagent
 per task.** He picked the recommended option, with no words of his own.
+
+## Every model priced by a proxy, chosen by size (2026-11-12)
+
+After the deploy, Dan, reading the menu's first all-time figure: "not every model is an "opus"
+equlivilant. can you list all the models i have and then give it a anthropic corresponding model? this
+should also be automatic whenever we want to add a new model it should tie in an anthropic model for
+pricing." Then: "i have a few models i'm using for transcription and translation and embedding those
+should also have correspdoning model prices. and we should keep a simple table of those values".
+
+**Q: Which hosted model is each local chat model priced as?** Offered: by size, the coder, the fast
+coder and Flash-Next at Sonnet 5.5's prices and Qwen3.6 and Gemma at Haiku 5.5's (recommended); one step
+up, Opus 5.5 and Sonnet 5.5; or every one at Opus 5.5's, as the mapping had it since the first numbers.
+**Dan: by size.** "let's do it by size for now. that seems most accurate". The totals drop: what the
+counter has priced so far is mostly Qwen3.6, at a fortieth of Opus's input price.
+
+**Q: Anthropic sells no embeddings or transcription, so what prices those?** Offered: Voyage's lite
+embeddings model, the provider Anthropic's documentation points to, and OpenAI's `whisper-1` per audio
+minute, the hosted form of the Whisper models the Spark runs. **Dan: any reasonable proxy.** "yeah we can
+use openai prices if needed as well. we're just looking for a reasonable proxy for pricing". So the
+mapping names a proxy model for every model the Spark serves, Claude's where Anthropic sells one; the
+prices are read from each vendor's own page when they go in, not from a tracker.
+
+A remap reprices the past, but the menu reads the deployed app's copy of the price files, so it shows
+only after `make apply`, which waits for the soak's end once the soak has begun (the decision above).
