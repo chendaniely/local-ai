@@ -277,6 +277,9 @@ def test_the_transcription_keys_count_only_on_the_transcriptions_route():
 # `text` the segments' text, each followed by a line break; srt and vtt as its to_timestamp writes their cues. Every
 # text, number and name here is invented.
 
+UPLOAD = 1 << 20  # an upload's file bytes, well under what the front converts
+
+
 def form(*fields: tuple[str, str], files: tuple[str, ...] = ("file",)) -> parse.Form:
     return parse.Form("stt", [("model", "stt"), *fields],
                       [parse.FilePart(name, "talk.wav", "audio/wav", b"RIFF") for name in files])
@@ -308,7 +311,7 @@ def form(*fields: tuple[str, str], files: tuple[str, ...] = ("file",)) -> parse.
     ((("max_len", "42"), ("no_timestamps", "1")), usage.Whisper("json", convert=True, token_timestamps="false")),
 ])
 def test_whisper_plan_by_the_format_whisper_reads(fields, plan):
-    assert usage.whisper_plan(form(*fields)) == plan
+    assert usage.whisper_plan(form(*fields), UPLOAD) == plan
 
 
 @pytest.mark.parametrize("fields", [
@@ -321,22 +324,40 @@ def test_whisper_plan_by_the_format_whisper_reads(fields, plan):
     (("max_len", "99999999999"),),  # past an int: the same
 ])
 def test_whisper_plan_leaves_any_other_request_as_it_came(fields):
-    assert usage.whisper_plan(form(*fields)) is None
+    assert usage.whisper_plan(form(*fields), UPLOAD) is None
 
 
 @pytest.mark.parametrize("name", ["response_format", "detect_language", "token_timestamps", "no_timestamps", "max_len",
                                   "split_on_word"])
 def test_whisper_plan_leaves_a_form_alone_when_a_file_part_has_a_name_whisper_reads(name):
-    assert usage.whisper_plan(form(("response_format", "srt"), files=("file", name))) is None
+    assert usage.whisper_plan(form(("response_format", "srt"), files=("file", name)), UPLOAD) is None
 
 
-def test_a_converted_form_asks_for_verbose_json_once_with_its_token_timestamps():
-    asked = form(("language", "en"), ("response_format", "json"), ("prompt", "hi"), ("response_format", "srt"))
+@pytest.mark.parametrize("asked", ["json", "text"])
+def test_only_an_upload_of_at_most_16_mib_is_converted(asked):
+    # Its transcript then can't come near the held answer's cap; a larger one goes as it came, its length estimated
+    # from its size when the meter reads its row.
+    assert usage.CONVERT_UPLOAD_MAX == 16 * 2**20
+    assert usage.whisper_plan(form(("response_format", asked)), usage.CONVERT_UPLOAD_MAX).convert
+    assert usage.whisper_plan(form(("response_format", asked)), usage.CONVERT_UPLOAD_MAX + 1) is None
+    assert usage.whisper_plan(form(("response_format", asked)), None) is None  # its size unread: never converted
+    # The formats that go as they came are held whatever the upload's size.
+    for kept in ("verbose_json", "srt", "vtt"):
+        assert usage.whisper_plan(form(("response_format", kept)), 200 * 2**20) == usage.Whisper(kept, convert=False)
+
+
+def test_a_converted_form_asks_for_verbose_json_once_with_its_token_timestamps_and_no_language_probabilities():
+    # Language probabilities cost whisper another encoder pass (server.cpp, 1076-1088), and json and text never
+    # carry them: a converted form asks for none, whatever the client's form said.
+    asked = form(("language", "en"), ("response_format", "json"), ("prompt", "hi"), ("response_format", "srt"),
+                 ("no_language_probabilities", "false"))
     plan = usage.Whisper("json", convert=True, token_timestamps="false")
     assert usage.verbose_fields(asked, plan) == [("model", "stt"), ("language", "en"), ("prompt", "hi"),
-                                                 ("response_format", "verbose_json"), ("token_timestamps", "false")]
+                                                 ("response_format", "verbose_json"), ("token_timestamps", "false"),
+                                                 ("no_language_probabilities", "true")]
     assert usage.verbose_fields(form(("token_timestamps", "1")), usage.Whisper("json", convert=True)) == [
-        ("model", "stt"), ("token_timestamps", "1"), ("response_format", "verbose_json")]
+        ("model", "stt"), ("token_timestamps", "1"), ("response_format", "verbose_json"),
+        ("no_language_probabilities", "true")]
 
 
 JSON_PLAN = usage.Whisper("json", convert=True, token_timestamps="false")
@@ -426,6 +447,21 @@ def test_srt_and_vtt_go_unchanged_with_their_last_cues_end_as_an_estimate():
     for body in (b"", b"WEBVTT\n\n", b"\xff\xfe", b'{"error":"x"}'):
         heard = usage.hear(usage.Whisper("vtt", convert=False), body)
         assert (heard.body, heard.audio_s, heard.audio_est) == (body, None, False)
+
+
+def test_only_a_cues_own_timing_line_is_read():
+    # A transcript line that looks like a timing line isn't one: a timing line follows a blank line, or opens the
+    # answer, and in srt comes after its cue's number (whisper's own, offset_n added, so it can be negative).
+    srt = ("1\n00:00:00,000 --> 00:00:05,120\n Hello there.\n00:00:00,000 --> 99:59:59,999\n\n"
+           "-2\n00:00:05,120 --> 00:01:02,345\n Ça va?\n12:00:00,000 --> 99:00:00,000\n\n").encode()
+    assert usage.hear(usage.Whisper("srt", convert=False), srt).audio_s == 62.345
+    vtt = ("WEBVTT\n\n00:00:00.000 --> 00:00:05.120\n Hello there.\n\n00:00:05.120 --> 00:01:02.345\n"
+           "12:00:00.000 --> 99:00:00.000\n\n").encode()
+    assert usage.hear(usage.Whisper("vtt", convert=False), vtt).audio_s == 62.345
+    assert usage.hear(usage.Whisper("srt", convert=False), b"00:00:00,000 --> 00:00:05,120\n x\n\n").audio_s is None
+    # A length past usage.LIMIT is none.
+    huge = b"1\n00:00:00,000 --> 9999999999999:00:00,000\n x\n\n"  # 13 digits of hours: past 2**53 seconds
+    assert usage.hear(usage.Whisper("srt", convert=False), huge).audio_s is None
 
 
 def test_a_converted_answers_headers_are_whispers_own_for_its_format():

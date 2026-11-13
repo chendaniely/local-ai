@@ -70,6 +70,14 @@ and `text`, since it turns them on for `verbose_json`, and with them on its serv
 A form whose `max_len` whisper can't read, which it answers 500 whatever the format, or one with a file part named like
 a field whisper reads, goes as it came.)*
 
+*(2026-11-13, at Task E3's review: a converted form also asks for no language probabilities, which cost whisper another
+encoder pass and which `json` and `text` never carry; only an upload of at most 16 MiB is converted, so a transcript
+can't come near the cap; an answer that goes as it came and passes the cap or the front's memory budget goes on
+unheld, with no length, and only a converted one ends as the front's own 502 `front_error`; and whisper's answers are
+never scanned for token counts, since a transcript could hold one. A converted answer is whisper's own but in two
+cases: `text`, where whisper leaves segment bytes that aren't UTF-8 (U+FFFD in their place), and an unknown
+`language` code, which fails whisper's `verbose_json` (500) where `json` or `text` would have answered.)*
+
 The row gains `audio_s`, the length in seconds, and `audio_est: true` when it is an estimate. A
 transcription row with no `audio_s` (rows from before this, and the cases above) is estimated when
 read, from its upload's size at 16,000 bytes a second (a 128 kbit/s file) *(my call)*, marked `~` as

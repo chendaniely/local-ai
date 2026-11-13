@@ -48,9 +48,10 @@ doesn't come in time.
    `model_not_found` naming the models, on-demand first, then the residents, each in the list's order.
 7a. **Whisper's format** (Task E3; usage.py's docstring). For a transcription by whisper.cpp, by the model list's
    `engine`, usage.whisper_plan reads the form as whisper does and decides what becomes of its answer (step 11a). A
-   form asking for `json` (or for no format) or `text`, with no `detect_language` field, goes on asking for
-   `verbose_json` instead, with the `token_timestamps` whisper would give the format asked for (usage.verbose_fields),
-   so the front learns the recording's length. Any other request goes on as it came.
+   form asking for `json` (or for no format) or `text`, with no `detect_language` field and an upload of at most
+   usage.CONVERT_UPLOAD_MAX (16 MiB), goes on asking for `verbose_json` instead, with the `token_timestamps` whisper
+   would give the format asked for and no language probabilities (usage.verbose_fields), so the front learns the
+   recording's length. Any other request goes on as it came.
 8. **An upload** (a form) goes on only while fewer than UPLOADS_AT_ONCE are forwarded or waiting for a load,
    front-wide; past that, 429 `uploads_busy`, never forwarded. It takes its slot here, before the gate is asked, so
    one the cap refuses never waits for a load first (the controller's ruling, at Task 21's review). llama-swap v257
@@ -83,12 +84,14 @@ doesn't come in time.
    instead (_held): charged to the body budget as it comes (step 6), at most usage.HELD_MAX, 16 MiB; then read for the
    recording's length (usage.hear), which its row keeps, and sent whole. It goes as it came (`verbose_json`, `srt`,
    `vtt`), or, for a form that went on asking for `verbose_json`, as whisper's own `json` or `text` for it, byte for
-   byte, with whisper's Content-Type for that format and a Content-Length of its own. Past the cap or the budget, or a
-   converted answer without a readable `text` and `duration`, the front answers its own 502 in BROKE's words
-   (`front_error`, `x-should-retry: false`), its journal line saying why: never the verbose_json the client didn't ask
-   for. One that breaks off while held is a cut: its head goes without a length, and of a converted one nothing of its
-   body. Only these are held: chat, embeddings, Qwen3-ASR's transcriptions, whisper's other formats, every stream and
-   every answer that isn't 2xx go back as they come, as above.
+   byte, with whisper's Content-Type for that format and a Content-Length of its own. One that goes as it came and
+   passes the cap or the budget goes on unheld from there (_unheld): what was held at once, the rest as it comes, and
+   no length on its row. A converted answer past them, or without a readable `text` and `duration`, gets the front's
+   own 502 in BROKE's words (`front_error`, `x-should-retry: false`) instead, its journal line saying why: never the
+   verbose_json the client didn't ask for. One that breaks off while held is a cut: its head goes without a length,
+   and of a converted one nothing of its body. Only these are held; chat, embeddings, Qwen3-ASR's transcriptions,
+   whisper's other formats, every stream and every answer that isn't 2xx go back as they come, as above. No whisper
+   answer is scanned for counts (usage.scan_for): its transcript is the model's own text.
 12. **Sent again, before any of an answer has gone** (Task 22). llama-swap's 500 `upstream command exited prematurely`
    (`spark launch` refused the start for want of a ticket, so the front's view was stale, or the model crashed) goes
    through admission once, then is sent again from the body the front holds; a second one reaches the client as 409
@@ -662,7 +665,8 @@ class FrontApp:
                 await self._held(send, request, response, chunks)
                 return None
             end = StreamEnd.watching(path, response.status, response.headers)
-            request.scan = self._scanning(request, usage.scan_for, path, response.status, response.headers)
+            if request.entry.get("engine") != usage.WHISPER_ENGINE:  # a transcript is the model's own text: never read
+                request.scan = self._scanning(request, usage.scan_for, path, response.status, response.headers)
             sent_back = response.headers
             if end is not None:  # chunked to the client, so a cut shows in its framing, which a length would hide
                 sent_back = [(name, value) for name, value in sent_back if name != b"content-length"]
@@ -715,17 +719,23 @@ class FrontApp:
             async for chunk in chunks:
                 if not chunk:
                     continue
-                size += len(chunk)
-                if size > usage.HELD_MAX:
-                    await self._unsent(send, request, f"whisper's answer passed {usage.HELD_MAX >> 20} MiB, the most "
-                                                      "the front holds to read it")
+                past = None
+                if size + len(chunk) > usage.HELD_MAX:
+                    past = f"whisper's answer passed {usage.HELD_MAX >> 20} MiB, the most the front holds to read it"
+                else:
+                    try:
+                        request.held.take(len(chunk))
+                    except parse.Refused:  # the budget has no room for this piece (parse.Held.take)
+                        past = HELD_NO_ROOM
+                if past is not None:
+                    if plan.convert:
+                        await self._unsent(send, request, past)
+                    else:
+                        await self._unheld(send, request, response, pieces, chunk, chunks, size)
                     return
-                request.held.take(len(chunk))
+                size += len(chunk)
                 pieces.append(chunk)
                 self._mark_first(request, chunk)
-        except parse.Refused:  # the budget had no room for this piece (parse.Held.take)
-            await self._unsent(send, request, HELD_NO_ROOM)
-            return
         except Broken:
             # Its head without a length, so the cut shows in the client's framing; of an answer that goes as it came,
             # what came; of a converted one, nothing, since what came is verbose_json. Then no last chunk.
@@ -742,6 +752,7 @@ class FrontApp:
         body = b"".join(pieces)
         pieces.clear()
         heard = self._hear(request, body)
+        del body  # a converted answer's own bytes, done with; one that goes as it came is heard.body
         if heard is None:
             await self._unsent(send, request, HELD_UNREAD)
             return
@@ -752,6 +763,29 @@ class FrontApp:
         await send({"type": "http.response.start", "status": response.status, "headers": headers})
         request.status = response.status
         await send({"type": "http.response.body", "body": heard.body})
+        request.complete = True
+
+    async def _unheld(self, send, request: _Request, response: Any, pieces: list[bytes], chunk: bytes,
+                      chunks: AsyncIterator[bytes], charged: int) -> None:
+        """An answer that goes as it came (verbose_json, srt, vtt) past what the front holds (step 11a): its head as it
+        came, the pieces held and the one that passed the limit at once, their `charged` bytes given back to the
+        budget, then the rest as it comes, unheld; no length, so the meter estimates one from the upload's size. One
+        that breaks off is a cut."""
+        await send({"type": "http.response.start", "status": response.status, "headers": response.headers})
+        request.status = response.status
+        self._mark_first(request, chunk)
+        for piece in (*pieces, chunk):
+            await send({"type": "http.response.body", "body": piece, "more_body": True})
+        pieces.clear()
+        request.held.give(charged)
+        try:
+            async for more in chunks:
+                if more:
+                    await send({"type": "http.response.body", "body": more, "more_body": True})
+        except Broken:
+            request.ended = "cut"
+            return  # without the last chunk: uvicorn closes the connection, and the client sees a cut
+        await send({"type": "http.response.body", "body": b""})
         request.complete = True
 
     @staticmethod
@@ -781,7 +815,7 @@ class FrontApp:
         if request.entry.get("engine") != usage.WHISPER_ENGINE:
             return
         try:
-            plan = usage.whisper_plan(request.form)
+            plan = usage.whisper_plan(request.form, request.bytes_in)
             if plan is not None and plan.convert:
                 request.form.fields = usage.verbose_fields(request.form, plan)
             request.whisper = plan

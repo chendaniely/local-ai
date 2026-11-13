@@ -256,8 +256,8 @@ class FakeProbe:
             raise self.newest
         return self.newest
 
-    def audio_length(self, path, since, model):
-        self.audio_asks.append((Path(path), since, model))
+    def audio_length(self, path, since, model, bytes_in):
+        self.audio_asks.append((Path(path), since, model, bytes_in))
         if isinstance(self.audio, Exception):
             raise self.audio
         return self.audio
@@ -502,37 +502,43 @@ def test_the_real_probe_searches_and_dates_rows_without_returning_them(tmp_path)
 
 def test_the_real_probe_reads_a_transcription_rows_length_without_returning_the_row(tmp_path):
     rows = tmp_path / "usage-2026-10.jsonl"
-    lines = [{"t0": 5.0, "route": "transcriptions", "model": "stt", "audio_s": 1.0},  # before `since`
-             {"t0": 20.0, "route": "transcriptions", "model": "stt", "audio_s": 885.416, "key": "k"},
-             {"t0": 21.0, "route": "chat", "model": "stt", "audio_s": 3.0},  # another route
-             {"t0": 22.0, "route": "transcriptions", "model": "other", "audio_s": 4.0}]  # another model
+    size = doctor.UPLOAD_BYTES
+    lines = [{"t0": 5.0, "route": "transcriptions", "model": "stt", "audio_s": 1.0, "bytes_in": size},  # too early
+             {"t0": 20.0, "route": "transcriptions", "model": "stt", "audio_s": 885.416, "key": "k", "bytes_in": size},
+             {"t0": 21.0, "route": "chat", "model": "stt", "audio_s": 3.0, "bytes_in": size},  # another route
+             {"t0": 22.0, "route": "transcriptions", "model": "other", "audio_s": 4.0, "bytes_in": size},  # model
+             {"t0": 23.0, "route": "transcriptions", "model": "stt", "audio_s": 5.0, "bytes_in": 48044},  # its size
+             {"t0": 24.0, "route": "transcriptions", "model": "stt", "audio_s": 6.0}]  # no size
     rows.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n[]\n")
     probe = Probe(ROOT)
-    assert probe.audio_length(rows, 10.0, "stt") == (True, 885.416)
-    assert probe.audio_length(rows, 30.0, "stt") == (False, None)
-    assert probe.audio_length(tmp_path / "missing.jsonl", 0.0, "stt") == (False, None)
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, 885.416)
+    assert probe.audio_length(rows, 30.0, "stt", size) == (False, None)
+    assert probe.audio_length(tmp_path / "missing.jsonl", 0.0, "stt", size) == (False, None)
     # The newest such row decides, and a length that isn't a number of seconds is none.
     for newest in ({}, {"audio_s": True}, {"audio_s": "885"}, {"audio_s": -1.0}, {"audio_s": 10**400}):
         with rows.open("a") as file:
-            file.write(json.dumps({"t0": 40.0, "route": "transcriptions", "model": "stt", **newest}) + "\n")
-        assert probe.audio_length(rows, 10.0, "stt") == (True, None), newest
+            file.write(json.dumps({"t0": 40.0, "route": "transcriptions", "model": "stt", "bytes_in": size, **newest})
+                       + "\n")
+        assert probe.audio_length(rows, 10.0, "stt", size) == (True, None), newest
     # What Python's reader takes and JSON doesn't write, and a huge t0: never a crash.
     with rows.open("a") as file:
-        file.write('{"t0": 41.0, "route": "transcriptions", "model": "stt", "audio_s": NaN}\n')
-    assert probe.audio_length(rows, 10.0, "stt") == (True, None)
+        file.write('{"t0": 41.0, "route": "transcriptions", "model": "stt", "audio_s": NaN, "bytes_in": %d}\n' % size)
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, None)
     with rows.open("a") as file:
-        file.write('{"t0": 1' + "0" * 400 + ', "route": "transcriptions", "model": "stt", "audio_s": 1.5}\n')
-    assert probe.audio_length(rows, 10.0, "stt") == (True, 1.5)
+        file.write('{"t0": 1' + "0" * 400 + ', "route": "transcriptions", "model": "stt", "audio_s": 1.5, '
+                   f'"bytes_in": {size}}}\n')
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, 1.5)
     (tmp_path / "link.jsonl").symlink_to(rows)
-    assert probe.audio_length(tmp_path / "link.jsonl", 10.0, "stt") == (False, None)  # never follows a link
+    assert probe.audio_length(tmp_path / "link.jsonl", 10.0, "stt", size) == (False, None)  # never follows a link
 
 
 def test_the_uploads_row_must_have_the_recordings_length():
     uploaded = "whisper took the 170 MB upload through the front and answered, but"
     probe = FakeProbe()
     assert detail(probe, "a 170 MB upload", full=True)[0]
-    [(path, since, model)] = probe.audio_asks
-    assert (path, since, model) == (doctor.paths.USAGE_DIR / "usage-2026-10.jsonl", NOW - 1, "stt")
+    [(path, since, model, size)] = probe.audio_asks
+    assert (path, since, model, size) == (doctor.paths.USAGE_DIR / "usage-2026-10.jsonl", NOW - 1, "stt",
+                                          doctor.UPLOAD_BYTES)
     # No row for it yet: it waits a moment for the front's thread, then fails.
     probe = FakeProbe()
     probe.audio = (False, None)

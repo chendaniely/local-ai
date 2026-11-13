@@ -17,7 +17,11 @@ each request, at the risk of loops on hard audio.)* *(2026-11-12, built on the `
 deployed: so that each recording's length goes on its usage row, the front asks Whisper for `verbose_json` when a
 request asks for `json`, `text` or no format, and answers in the format asked for, byte for byte as Whisper would have
 and with its content type; `verbose_json`, `srt` and `vtt` go as they came. `spark doctor --full` checks that its
-170 MB upload's row has the recording's length.)*
+170 MB upload's row has the recording's length.)* *(2026-11-13, at the task's review: byte for byte but in three
+cases. Where Whisper leaves segment text that isn't UTF-8, the `text` answer has U+FFFD in place of those bytes; an
+unknown `language` code, which Whisper's `verbose_json` fails on, gets Whisper's 500 where `json` or `text` would have
+answered; and an answer the front can't use gets the front's own 502 `front_error`, with `x-should-retry: false`. An
+upload over 16 MiB isn't converted, so its row's length is estimated from its size.)*
 
 **What I see.** The pipeline's output.
 

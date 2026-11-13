@@ -350,18 +350,19 @@ class Probe:
                 newest = float(t0)
         return newest
 
-    def audio_length(self, path: Path, since: float, model: str) -> tuple[bool, float | None]:
-        """Whether a row file's last bytes hold a transcription row of `model` that the front received after `since`,
-        and the newest one's `audio_s` (a number of seconds, else None): a number doctor compares and never prints, not
-        a row's content. (False, None) for a file that isn't there. A length outside 0 to AUDIO_MAX_S (a huge number,
-        NaN or an infinity included) is None."""
+    def audio_length(self, path: Path, since: float, model: str, bytes_in: int) -> tuple[bool, float | None]:
+        """Whether a row file's last bytes hold a transcription row of `model`, its upload `bytes_in` bytes, that the
+        front received after `since`, and the newest one's `audio_s` (a number of seconds, else None): a number doctor
+        compares and never prints, not a row's content. (False, None) for a file that isn't there. A length outside 0
+        to AUDIO_MAX_S (a huge number, NaN or an infinity included) is None."""
         newest: tuple[int | float, float | None] | None = None
         for line in (self._tail(path) or b"").splitlines():
             try:
                 row = json.loads(line)
             except (ValueError, RecursionError):
                 continue
-            if not isinstance(row, dict) or row.get("route") != "transcriptions" or row.get("model") != model:
+            if not isinstance(row, dict) or row.get("route") != "transcriptions" or row.get("model") != model \
+                    or row.get("bytes_in") != bytes_in or isinstance(row.get("bytes_in"), bool):
                 continue
             t0, length = row.get("t0"), row.get("audio_s")
             if isinstance(t0, bool) or not isinstance(t0, (int, float)) or not t0 > since:
@@ -1645,16 +1646,18 @@ def _ready_one(view: dict | None, models: list) -> tuple[Any, str | None]:
 
 def _upload_row(probe: Probe, since: float, model: str, megabytes: int, label: str) -> str | None:
     """Why the upload's row, in this month's usage file, doesn't have the recording's length within LENGTH_WITHIN of the
-    WAV's own, or None when it does: a verdict only, never the length (Task E3). A row not there yet is waited for a
-    moment, as `counting` waits for its own: the front puts it as the request ends, from a thread."""
+    WAV's own, or None when it does: a verdict only, never the length (Task E3). Its row is the newest transcription of
+    `model` since `since` whose upload is UPLOAD_BYTES, so the canary's or anyone's other upload isn't taken for it. A
+    row not there yet is waited for a moment, as `counting` waits for its own: the front puts it as the request ends,
+    from a thread."""
     usage = _month_file(paths.USAGE_DIR, USAGE_PREFIX, probe.now())
     try:
-        found, length = probe.audio_length(usage, since, model)
+        found, length = probe.audio_length(usage, since, model, UPLOAD_BYTES)
         for _ in range(COUNTING_TRIES - 1):
             if found:
                 break
             probe.pause(COUNTING_STEP_S)
-            found, length = probe.audio_length(usage, since, model)
+            found, length = probe.audio_length(usage, since, model, UPLOAD_BYTES)
     except PermissionError:
         return f"your account can't read {usage}: log in again, so spark-admin's group applies"
     uploaded = f"{label} took the {megabytes} MB upload through the front and answered, but"

@@ -9,32 +9,40 @@ object. llama-server b11146 puts them at the end of the last chunk, and at the e
 Nothing from a client or from the model's text becomes a counted field: the numbers are checked ints, and the
 response's id passes `safe_text`. A transcription's usage (Task E3) is llama-server's for Qwen3-ASR
 (server-task.cpp, to_json_oaicompat_asr): `input_tokens`, `output_tokens` and `input_tokens_details.cached_tokens`,
-read on that route alone, so chat's rows never take them.
+read on that route alone, so chat's rows never take them. The front never scans whisper.cpp's answers (app.py, step
+11a): a transcript is the model's own text, and one could hold anything that looks like a usage object.
 
 **Whisper's recording length** (Task E3; website/design/usage-meter-every-model.md, *The front learns each Whisper
 recording's length*). whisper.cpp v1.9.4's server (examples/server/server.cpp) gives a recording's length only in
 `verbose_json`, its `duration`. For a transcription by whisper.cpp, whisper_plan reads the form as whisper does (the
 first of a field given twice, as its httplib's multimap gives it) and decides:
 - `verbose_json`: the answer is held and read for `duration`, and goes on as it came.
-- `json`, no format, or `text`, with no `detect_language` field (json's answer then gains `language`): the form goes on
-  asking for `verbose_json` (verbose_fields), and the answer is held, read, and sent as whisper's own `json` or `text`
-  for it, byte for byte (hear): `{"text": …}` dumped as its nlohmann::ordered_json dumps it, compact and in UTF-8 with
+- `json`, no format, or `text`, with no `detect_language` field (json's answer then gains `language`), for an upload of
+  at most CONVERT_UPLOAD_MAX: the form goes on asking for `verbose_json` (verbose_fields), with
+  `no_language_probabilities=true`, since json and text never carry them and they cost whisper another encoder pass
+  (server.cpp, 1076-1088); and the answer is held, read, and sent as whisper's own `json` or `text` for it, byte for
+  byte (hear): `{"text": …}` dumped as its nlohmann::ordered_json dumps it, compact and in UTF-8 with
   only `"`, `\\` and the control characters escaped (`\\b \\t \\n \\f \\r` short, the rest `\\u00xx` in lower case), as
   `application/json`; or the text itself up to its first NUL (a std::string made of a C string), as `text/html;
   charset=utf-8` (server.cpp, 1017-1021 and 1161-1173). Whisper writes verbose_json's `text` with the same escaper, so
   json's is verbose_json's, byte for byte. A converted form also pins `token_timestamps` to what whisper would give the
   client's format: whisper turns token timestamps on for verbose_json, unless the form says otherwise, and with them on
   its server wraps every segment at 60 characters, which changes the text's line breaks (server.cpp, 627-636 and 942;
-  src/whisper.cpp, 7789-7795); for
-  `json` and `text` it turns them on only with `max_len` above 0 or `split_on_word`, and never with `no_timestamps`.
+  src/whisper.cpp, 7789-7795); for `json` and `text` it turns them on only with `max_len` above 0 or `split_on_word`,
+  and never with `no_timestamps`.
   That reckoning starts from whisper-server's own defaults, so the stack's whisper-servers run none of
   WHISPER_FLAGS_ASSUMED_OFF (test_front_usage.py checks stack/models.yaml).
-- `srt` or `vtt`: held, the last cue's end read as an estimate of the length (`audio_est`), and sent as it came.
+- `srt` or `vtt`: held, the last cue's end read as an estimate of the length (`audio_est`), and sent as it came. Only a
+  cue's own timing line is read: one that opens the answer or follows a blank line, in srt after its cue's number.
 - Anything else (a format whisper doesn't name, which it answers as json; a form with a file part named like a field
-  this reads; a `max_len` whisper can't read, which it answers 500 whatever the format): as it came, unheld, no length.
-One case can't be rebuilt exactly: segment text whisper.cpp leaves as bytes that aren't UTF-8 reaches verbose_json, as
-json, with U+FFFD in their place, while whisper's `text` sends the bytes themselves. The json rebuilt is still
-whisper's own; the text rebuilt has U+FFFD where whisper's would have those bytes."""
+  this reads; a `max_len` whisper can't read, which it answers 500 whatever the format; json or text for an upload
+  over CONVERT_UPLOAD_MAX): as it came, unheld, no length.
+Where a converted answer differs from whisper's own: segment text whisper.cpp leaves as bytes that aren't UTF-8
+reaches verbose_json, as json, with U+FFFD in their place, while whisper's `text` sends the bytes themselves, so the
+rebuilt json is whisper's own and the rebuilt text has U+FFFD there. An unknown `language` code makes whisper's
+verbose_json fail (its `language` field is a null C string, server.cpp 1070; whisper.cpp's whisper_lang_str_full),
+which json would have answered, so the client gets whisper's 500. And an answer the front can't use (app.py, step
+11a) gets the front's own 502."""
 
 from __future__ import annotations
 
@@ -287,6 +295,9 @@ def scan_for(path: str, status: int, headers: Iterable[tuple[bytes, bytes]]) -> 
 
 WHISPER_ENGINE = "whisper.cpp"  # the registry's engine whose transcriptions are held
 HELD_MAX = 16 << 20  # a held answer's most, in bytes: a JSON body's cap, so its parse is within the memory bound
+# The largest upload, in file bytes, whose answer is converted: its transcript can't come near HELD_MAX. A larger one
+# asking for json or text goes as it came, its length estimated from its size when the meter reads its row.
+CONVERT_UPLOAD_MAX = 16 << 20
 WHISPER_TYPES = {"json": b"application/json", "text": b"text/html; charset=utf-8"}  # server.cpp's, for each format
 _SLICE = 1 << 20  # the characters of a rebuilt json's text escaped and encoded at a time (_json_text)
 # The fields whisper-server v1.9.4 reads (get_req_parameters) that decide its answer's format, or the text it gives
@@ -300,10 +311,14 @@ WHISPER_FLAGS_ASSUMED_OFF = frozenset({"-ml", "--max-len", "-sow", "--split-on-w
 _TRUE = frozenset({"true", "1", "yes", "y"})  # server.cpp's parse_str_to_bool
 _STOI = re.compile(r"[ \t\n\v\f\r]*([+-]?[0-9]+)")  # std::stoi's: C's spaces, a sign, base-10 digits, then anything
 _INT32 = range(-(2**31), 2**31)  # past it, std::stoi throws
-# Each cue's timing line, as common-whisper.cpp's to_timestamp writes it, `%02d:%02d:%02d%s%03d`: its end's parts.
-_CUE_END = {kind: re.compile(rb"^\d{2,9}:\d{2}:\d{2}" + mark + rb"\d{3} --> (\d{2,9}):(\d{2}):(\d{2})" + mark
-                             + rb"(\d{3})$", re.MULTILINE)
-            for kind, mark in (("srt", rb","), ("vtt", rb"\."))}
+# Each cue's timing line, as server.cpp writes it (1022-1064) with common-whisper.cpp's to_timestamp,
+# `%02d:%02d:%02d%s%03d`: a line of only `start --> end`, opening the answer or after a blank line, and in srt after its
+# cue's number (whisper's own, offset_n added, so it can be negative). Its end's parts are read; a transcript line that
+# looks like one isn't.
+_STAMP = rb"(\d{2,20}):(\d{2}):(\d{2})%s(\d{3})"
+_CUE_END = {kind: re.compile(rb"(?:\A|\n\n)" + number + rb"\d{2,20}:\d{2}:\d{2}" + mark + rb"\d{3} --> "
+                             + _STAMP % mark + rb"\n")
+            for kind, number, mark in (("srt", rb"-?\d+\n", rb","), ("vtt", rb"", rb"\."))}
 
 
 @dataclass(frozen=True)
@@ -338,9 +353,10 @@ def _stoi(text: str) -> int | None:
     return value if value in _INT32 else None
 
 
-def whisper_plan(form: parse.Form) -> Whisper | None:
-    """What the front does with this form's answer, when whisper.cpp transcribes it; None to send it as it came and
-    pass its answer on unheld (the module's docstring)."""
+def whisper_plan(form: parse.Form, upload_bytes: int | None) -> Whisper | None:
+    """What the front does with this form's answer, when whisper.cpp transcribes it, its file parts `upload_bytes` in
+    all; None to send it as it came and pass its answer on unheld (the module's docstring). A form asking for json or
+    text is converted only when its upload is known and at most CONVERT_UPLOAD_MAX."""
     if any(part.name in _READ for part in form.files):
         return None
     first: dict[str, str] = {}
@@ -350,6 +366,8 @@ def whisper_plan(form: parse.Form) -> Whisper | None:
     if asked in ("verbose_json", "srt", "vtt"):
         return Whisper(asked, convert=False)
     if asked not in WHISPER_TYPES or "detect_language" in first:
+        return None
+    if upload_bytes is None or upload_bytes > CONVERT_UPLOAD_MAX:
         return None
     if "token_timestamps" in first:  # whisper uses the form's own, whatever the format
         return Whisper(asked, convert=True)
@@ -361,12 +379,16 @@ def whisper_plan(form: parse.Form) -> Whisper | None:
 
 
 def verbose_fields(form: parse.Form, plan: Whisper) -> list[tuple[str, str]]:
-    """A converted form's fields: its own in order but `response_format`, then one `response_format=verbose_json`, and
-    the plan's `token_timestamps` when it has one."""
-    fields = [(name, value) for name, value in form.fields if name != "response_format"]
+    """A converted form's fields: its own in order but `response_format` and `no_language_probabilities`, then one
+    `response_format=verbose_json`, the plan's `token_timestamps` when it has one, and
+    `no_language_probabilities=true`: the probabilities cost whisper another encoder pass (server.cpp, 1076-1088), and
+    json and text never carry them."""
+    fields = [(name, value) for name, value in form.fields
+              if name not in ("response_format", "no_language_probabilities")]
     fields.append(("response_format", "verbose_json"))
     if plan.token_timestamps is not None:
         fields.append(("token_timestamps", plan.token_timestamps))
+    fields.append(("no_language_probabilities", "true"))
     return fields
 
 
@@ -399,7 +421,7 @@ def _last_cue_end(asked: str, body: bytes) -> float | None:
     if found is None:
         return None
     hours, minutes, seconds, millis = (int(part) for part in found.groups())
-    return round(hours * 3600 + minutes * 60 + seconds + millis / 1000, 3)
+    return _seconds(hours * 3600 + minutes * 60 + seconds + millis / 1000)
 
 
 def hear(plan: Whisper, body: bytes) -> Heard | None:
