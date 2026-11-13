@@ -575,8 +575,9 @@ the plan it would come in, and what was left out and why.
   [Projects that use the stack](website/reference/projects.md). A change to a part of that contract
   updates its row and opens a notice, an issue labelled for each project that relies on it, in the
   same change;
-  each project's own `AGENTS.md` or `CLAUDE.md` points there (2026-11-10). Full rule, with the files
-  that trigger it, in [`CLAUDE.md`](CLAUDE.md).
+  each project's own `AGENTS.md` or `CLAUDE.md` points there (2026-11-10). `spark/tests/test_contract.py`
+  fails `make test` when a part of the contract changes, until the test, the page and the notices are
+  updated (2026-11-13). Full rule, with the files that trigger it, in [`CLAUDE.md`](CLAUDE.md).
 - **Every command in the docs says where it runs**, in bold in the paragraph right above its block:
   **On the Mac:** or **On the Spark:**. Never as a `#` comment inside the block, which the Mac's
   zsh tries to run as a command; and no `#` comment at all in a shell block that runs on the Mac,

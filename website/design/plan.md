@@ -3071,7 +3071,8 @@ Each item gets its own design pass when its turn comes.
   this plan the LAN. Phase 3 settles both before recordings' stage 4 can call the Spark. *(The way
   in is settled before Phase 2b's build instead, Dan's decision of the same day: *The projects'
   base URL*, below. `diarize` and `embed` stay Phase 3's.)*
-- **44l changes what projects rely on** (added 2026-11-10, from the coordination survey). Its
+- ~~**44l changes what projects rely on**~~ **Resolved 2026-11-13: both halves done (the last note).** (added
+  2026-11-10, from the coordination survey). Its
   deploy moves the always-loaded set (Qwen3.6 in, Gemma on demand), gives OpenCode and Hermes their
   own keys, and gives Qwen3.6 two slots. Its notices to vid2sub, recordings and skills are issues in
   this repo, labelled by project ([Projects that use the stack](../reference/projects.md#notices));
@@ -3086,6 +3087,9 @@ Each item gets its own design pass when its turn comes.
   *(2026-11-12: 44l is deployed, and both halves of this item are still to do. The contract test wasn't written
   before the deploy, so it comes after it. 44l's comments on the notices, saying its change is live, wait for Dan's OK,
   since the repo is public.)*
+  *(2026-11-13: both done. 44l's comments were posted with Dan's OK (#43, #45, #48). The contract test is
+  `spark/tests/test_contract.py`, built on the Mac after the every-model deploy; it writes no fixtures file for the
+  projects, since none of them has a test that would read one (the session's call). Revisions has it.)*
 - **The projects' base URL, decided once** (added 2026-11-10, Dan's decision, from the direction
   review). Three changes would each move every project's base URL or the way its refusals arrive:
   `main`'s plan moves the front from 9100 to 59100 "in one change"; Phase 3 was to decide whether
@@ -4809,6 +4813,16 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   E6, from the `phase-2a` clone at `88dc874`, the branch's merge (the changelog has it). The entry
   above's "not yet done": 44l's comments on the notices were posted with Dan's OK the same night (#43, #45, #48), with
   #55 opened for spark-menu's contract; the contract test is still to do. Backlog gains `make speech`'s requests.
+- **2026-11-13** — The contract test is built, and the open item *44l changes what projects rely on* is resolved:
+  `spark/tests/test_contract.py` pins what [the projects](../reference/projects.md) rely on. That is the front's
+  address, routes and upload caps; every refusal's code, the gate's and the front's own, and for each but the 401 its
+  status, body keys, headers and wait; the models' names, roles and `resident` flags; the key groups' waits and caps;
+  `make tunnel`'s forwards; the speech service's hosts and longest recording; `make clients`' harnesses, base URL and
+  key names; `STATUS_SCHEMA`; the summary's version; and the `spark` calls spark-menu makes. A change to one fails
+  `make test`, naming the value and saying to update the projects page and open the notices; CLAUDE.md's sync table
+  says so. Built on the Mac after the every-model deploy, not before 44l as first planned. Writing it found the
+  projects page saying every 409 carries a wait, when four codes carry none, and naming none of the front's own
+  refusals; corrected the same day.
 
 ## Sources
 

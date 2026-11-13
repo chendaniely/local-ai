@@ -85,7 +85,8 @@ routes Claude Code or Claude Desktop through the Spark.
   key defaults, `STATUS_SCHEMA`). It would fail with "update the projects page and its notices"
   when any of these changes. It is code and tests, so it is the Spark session's to build, if Dan
   wants it. *(He does: a Phase 2a task before 44l, his answer to [the direction
-  review](#the-direction-review); the plan's open item *44l changes what projects rely on*.)*
+  review](#the-direction-review); the plan's open item *44l changes what projects rely on*.)* *(Built
+  2026-11-13, after 44l rather than before it: `spark/tests/test_contract.py`; the plan's Revisions has it.)*
 - **Merge this branch before 44l deploys,** so 44l's session sees the notices it changes.
 
 ## The direction review
