@@ -303,14 +303,21 @@ when that file was retired on 2026-09-23.
 - **The usage meter** (2026-11-12, Phase 2a's Tasks 44l and U13; [S26](website/scenarios/s26-what-it-cost.md)). The
   front writes a row of numbers per request into `/var/lib/local-ai/usage`, `spark-front:spark-admin 2750`. The gate
   writes a row per decision into `/var/lib/local-ai/gate-ledger`, `spark:spark-admin 2750`. The rows the Mac imports
-  for the by-hand engines go into `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`, which has
-  none yet. `make usage` prints the summary at hosted prices (Claude's for chat, OpenAI's and Voyage's for speech and embeddings); the Spark's price and Dan's time zone are in a private
+  for the by-hand engines go into `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`, ~~which has
+  none yet~~ which holds OpenCode's rows now (seen 2026-11-13). `make usage` prints the summary at hosted prices (Claude's for chat, OpenAI's and Voyage's for speech and embeddings); the Spark's price and Dan's time zone are in a private
   file in his home. Each model is priced as the proxy [Model prices](website/reference/model-prices.md) names (a Claude model for chat, OpenAI's or Voyage's for speech and embeddings): for chat, since a second deploy
   the same evening, the models by size, the coder, the fast coder and Flash-Next as Sonnet
   and Qwen3.6 and Gemma as Haiku, where at first they were all Opus. OpenCode and Hermes Agent have their own client keys, so the front's key list holds five.
   Snapshots of Open WebUI's database and `agent`'s Pi sessions are kept for Phase 2b's baseline, under *My environment*
   below. They were taken just after counting began, not before; the changelog says why that matters for Hermes.
-  spark-menu's usage section isn't on the Mac yet (Task U14).
+  ~~spark-menu's usage section isn't on the Mac yet (Task U14).~~ spark-menu's usage section is on the Mac since the
+  same night (Task U14; S26 has it).
+  *(Since 2026-11-13's deploy, from the `phase-2a` clone at `88dc874`, the merge of `meter-every-model`: every model
+  is priced, speech and embeddings too, and `make prices` lists each model's proxy and price. On a transcription by
+  Whisper the front asks for `verbose_json`, so the row has the recording's length, and answers `json` and `text` as
+  Whisper would have. The front, the gate and the brake restarted; llama-swap kept running, so no model unloaded.
+  `make doctor`: 34 of 34, and `spark doctor --full` 36 of 36, each with the one ntfy WARN. The changelog has the
+  deploy.)*
 - **The speech service, by hand** (2026-11-09; [its runbook](website/how-to/speech-by-hand.md)). `make speech`, a
   locked-down container outside the front and the gate, off unless Dan has started it, and it needs about 48 GiB
   available, which means Qwen3.6 out while the SGLang coder is up. Its weights, environment and test clips are in

@@ -13,8 +13,8 @@ timestamps — plus speaker labels from the diarization endpoint. Batch work yie
 interactive use, and no content is logged. *(2026-11-10, Dan's decision, from the next deploy:
 the stack's whisper-server runs with `--max-context 0`, against loops on long audio, and so drops a
 request's prompt by default. A pipeline that wants its vocabulary prompt sends `max_context` with
-each request, at the risk of loops on hard audio.)* *(2026-11-12, built on the `meter-every-model` branch, not yet
-deployed: so that each recording's length goes on its usage row, the front asks Whisper for `verbose_json` when a
+each request, at the risk of loops on hard audio.)* *(2026-11-12, built on the `meter-every-model` branch, ~~not yet
+deployed~~ deployed 2026-11-13 with its Task E6: so that each recording's length goes on its usage row, the front asks Whisper for `verbose_json` when a
 request asks for `json`, `text` or no format, and answers in the format asked for, byte for byte as Whisper would have
 and with its content type; `verbose_json`, `srt` and `vtt` go as they came. `spark doctor --full` checks that its
 170 MB upload's row has the recording's length.)* *(2026-11-13, at the task's review: byte for byte but in three

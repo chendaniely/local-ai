@@ -170,8 +170,8 @@ routes** *(my call, from the skeptic)*: every client here sends chat completions
 `/v1/responses` and `/v1/audio/transcriptions` get a row with no counts, flagged, never $0, and
 their parsing comes when a client uses them: `/v1/messages` puts P less C and C on its *first*
 event, `/v1/responses`' last event repeats the whole answer, and whisper gives the audio's length
-only in `verbose_json`. *(2026-11-12, [every model priced](usage-meter-every-model.md), built on its branch, not yet
-deployed: `/v1/audio/transcriptions` is read too: Qwen3-ASR's token counts from its usage, and Whisper's length from
+only in `verbose_json`. *(2026-11-12, [every model priced](usage-meter-every-model.md), built on its branch, ~~not yet
+deployed~~ deployed 2026-11-13 with its Task E6: `/v1/audio/transcriptions` is read too: Qwen3-ASR's token counts from its usage, and Whisper's length from
 the `verbose_json` the front asks it for.)* Non-streamed `n > 1` reports only the first choice, so such a row is
 flagged.
 The front **never adds `stream_options.include_usage`** to a request: that adds a chunk the client

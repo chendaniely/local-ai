@@ -8,6 +8,44 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-13 — Every model priced
+
+**Deployed** by Dan, **on the Spark**, in tmux, with `make apply` from the `phase-2a` clone at `88dc874`, the merge of
+`meter-every-model`, as Task E6 of [its plan](website/design/usage-meter-every-model-plan.md). Speech and embeddings
+are priced now, each by a hosted proxy ([Model prices](website/reference/model-prices.md)): Whisper by the audio
+minute, Qwen3-ASR and the embeddings by the token. On a transcription by Whisper the front asks for `verbose_json`,
+so each row has the recording's length, and answers `json` and `text` as Whisper itself would have. `make prices`
+lists every model's proxy and price. The meter stores counts and lengths, never dollars, so the rows already counted
+are priced the same way. No figure from the meter is recorded here (CLAUDE.md).
+- **Before the deploy:** `make test` on the branch at `5e4e373`: 4286 passed, none skipped. Dan sent whisper.cpp's
+  11-second sample, `samples/jfk.wav`, through the front to `whisper-large-v3-turbo` three times, as `json`, as
+  `text`, and as `json` with `max_len=20`, and kept each answer's body and headers.
+- **What restarted:** the brake, the gate and the front, at 09:06 by the Spark's clock. llama-swap kept running, so no
+  model unloaded. `make apply-dry-run` afterwards has nothing to change.
+- **Checked** by the Spark session afterwards:
+  - The same three requests again: each body is identical to its saved one (`cmp`), and so is every header but
+    `date`, content type included. Times, one run each: 0.52, 0.46 and 0.46 s before; 0.30, 0.34 and 0.36 s after.
+    So at this length the conversion's cost is lost in the noise; this is not a benchmark.
+  - The three new transcription rows have `audio_s` (their field names read, `jq -c keys`), each within 1 % of the
+    file's length and none estimated: a verdict only.
+  - `make doctor`: 34 of 34, and `spark doctor --full` from the clone's root: 36 of 36, run twice, each with the one
+    WARN, `ntfy: not set up (Task 2, Phase 5)`. `--full`'s 170 MB upload, sent as `json` and so converted, has the
+    recording's length on its row, within 1 %.
+  - The front's memory during `--full` (`systemctl show -p MemoryPeak local-ai-front.service`): 211 MiB at its peak,
+    from 37 MiB before, within the unit's `MemoryMax=512M`. Sampled every half second through the second run, the
+    unit's `memory.stat` put all of the rise in file pages: anonymous memory stayed at 34 MiB, while file pages rose
+    by 162 MiB as the upload was spooled and fell back to 0 when the request ended. That run's Whisper answer was
+    small, so it doesn't measure the held-answer bound that `spark/src/spark/front/app.py`'s step 6 leaves
+    unmeasured on the Spark (144 MiB in the worst shape, by tracemalloc on the Mac).
+  - `make usage` runs and shows the audio minutes.
+  - Qwen3-ASR rows without counts, by a count-only `jq` check: none. No Qwen3-ASR row had been written before the
+    deploy, so none is left unpriced for want of counts.
+- **Not yet:** the notices to the projects that rely on the stack (a comment on #55 for spark-menu, and notices under
+  `notice/vid2sub`, `notice/skills` and `notice/recordings`), with Dan's OK; and spark-menu's `spark-menu-by-model`
+  branch, merged and reloaded on the Mac.
+
+---
+
 ## 2026-11-12 — The meter prices the chat models by size
 
 **Deployed** by Dan, **on the Spark**, in tmux, with `make apply` from the `phase-2a` clone at `1a816fa`, the merge of

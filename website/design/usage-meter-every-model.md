@@ -105,12 +105,17 @@ Nothing is priced by the suggestion until the line is written.
 
 - **A converted answer differs from whisper's own.** Tests compare the conversion with answers from
   whisper.cpp v1.9.4's own code; on the Spark, the deploy's check sends one file as `json` and `text`
-  before and after and compares the answers byte for byte.
+  before and after and compares the answers byte for byte. *(2026-11-13, at the deploy, Task E6: an
+  11-second recording sent as `json`, as `text`, and as `json` with `max_len` set came back
+  byte for byte the same after the deploy as before, content type included.)*
 - **The front holds an answer to convert it.** The answer is capped (the plan's number), and the
   front's memory bound counts it; past the cap the request ends as an error, as an answer the front
   can't send does now.
 - **Asking for `verbose_json` costs whisper a little more:** it also works out language
-  probabilities. Small next to transcription; the plan's deploy check times one file.
+  probabilities. Small next to transcription; the plan's deploy check times one file. *(2026-11-13,
+  at the deploy: the converted form asks for no language probabilities (the plan's Task E3 note), and
+  the 11-second file took no longer after the deploy than before; one run of each, not a benchmark,
+  so the changelog gives the times.)*
 - **Estimates read as facts.** Each is marked: `audio_est`, and `~` in the menu.
 
 ## Docs that change with it

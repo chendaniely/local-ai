@@ -4805,7 +4805,8 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   minute for Whisper, `gpt-4o-mini-transcribe` by the token for Qwen3-ASR, Voyage's `voyage-4-lite` for the embeddings.
   The front learns each Whisper recording's length by asking whisper for `verbose_json` and answering in the client's
   format; a new model's missing mapping line fails with a by-size suggestion; `make prices` prints every model's proxy.
-  Built on the Mac on `meter-every-model`, Tasks E1–E5; it deploys with Task E6, from the `phase-2a` clone. The entry
+  Built on the Mac on `meter-every-model`, Tasks E1–E5; ~~it deploys with Task E6~~ deployed the same day with Task
+  E6, from the `phase-2a` clone at `88dc874`, the branch's merge (the changelog has it). The entry
   above's "not yet done": 44l's comments on the notices were posted with Dan's OK the same night (#43, #45, #48), with
   #55 opened for spark-menu's contract; the contract test is still to do. Backlog gains `make speech`'s requests.
 
