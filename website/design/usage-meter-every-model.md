@@ -65,6 +65,11 @@ engine is whisper.cpp, by the format the client asked for (whisper.cpp v1.9.4's 
 - `srt` or `vtt`: passed through; the last cue's end time goes on the row, marked as an estimate.
 - Anything else, or an answer the front can't read: passed through unchanged, with no length.
 
+*(2026-11-12, at the build, Task E3: a converted form also pins `token_timestamps` to the value whisper gives `json`
+and `text`, since it turns them on for `verbose_json`, and with them on its server rewraps the text at 60 characters.
+A form whose `max_len` whisper can't read, which it answers 500 whatever the format, or one with a file part named like
+a field whisper reads, goes as it came.)*
+
 The row gains `audio_s`, the length in seconds, and `audio_est: true` when it is an estimate. A
 transcription row with no `audio_s` (rows from before this, and the cases above) is estimated when
 read, from its upload's size at 16,000 bytes a second (a 128 kbit/s file) *(my call)*, marked `~` as

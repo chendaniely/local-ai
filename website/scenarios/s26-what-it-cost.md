@@ -96,7 +96,9 @@ could keep: as a model name (the front answers 404, and the name must not reach 
 reasoning effort. Doctor looks for that one only in this month's usage and ledger files: the gate's
 refusal history keeps the name a client asked for, in the front's words, so it would always be found
 there. The canary reports only where a string was found or that neither was, never what the row
-holds.
+holds. *(2026-11-12, built on the `meter-every-model` branch, not yet deployed: `--full`'s 170 MB upload also checks
+that its row has the recording's length, within 1 % of the file's own, which the front learns by asking Whisper for
+`verbose_json`; it prints only that verdict.)*
 
 **How to override.** Nothing to override: counting has no switch, and a failure to count is shown,
 never fixed by dropping the request. If a folder fails, **On the Spark:** run `make bootstrap`, which

@@ -56,9 +56,11 @@ docs.voyageai.com/docs/pricing), each line from 2026-09-01:
 | the four `qwen3-asr` models | OpenAI `gpt-4o-mini-transcribe` | $1.25 per million tokens in, $5.00 out |
 | `qwen3-embedding-0.6b` | Voyage `voyage-4-lite` | $0.02 per million tokens |
 
-Embeddings and the Qwen3-ASR models are priced by the token, and they report no cache count, which
-doesn't matter: their proxy's cached rate is its fresh rate. Whisper is priced by the audio minute,
-from the length the front reports for each recording (once the front does, a later change). Until
+Embeddings and the Qwen3-ASR models are priced by the token. Embeddings report no cache count, and
+Qwen3-ASR's is read when its answer gives one; neither matters, since their proxy's cached rate is
+its fresh rate. Whisper is priced by the audio minute, from the length the front reports for each
+recording *(2026-11-12, built on the `meter-every-model` branch, not yet deployed: the front asks
+Whisper for `verbose_json` to learn it, and answers in the format the client asked for)*. Before
 then, or whenever a row has none, the length is estimated from the upload's size at 16,000 bytes a
 second and marked estimated; a row shows as unpriced (`no_audio_length`) only when neither is known
 ([the design](../design/usage-meter-every-model.md)). `make speech`'s requests are not counted until its Stage 2 puts it behind the
