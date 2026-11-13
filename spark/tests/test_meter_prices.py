@@ -11,7 +11,7 @@ from spark import paths
 from spark.apply import RestartPlan, plan_restarts
 from spark.front import FRONT_MODULES
 from spark.meter import prices
-from spark.meter.prices import PriceError, by_hand, cache_reported, line_at, load
+from spark.meter.prices import PriceError, by_hand, cache_reported, line_at, load, table
 from spark.registry import load_registry
 
 SHIPPED = Path(prices.__file__).parent
@@ -29,7 +29,7 @@ def test_the_shipped_files_load():
     assert second.start == epoch("2026-10-07")
     assert second.base.cache_read == Decimal("0.10")
     assert second.label == "sonnet@2026-10-07"
-    assert book.mapping["qwen3.8-27b"].tier == "opus" and book.mapping["qwen3.8-27b"].factor == 1
+    assert book.mapping["qwen3.8-27b"].tier == "sonnet" and book.mapping["qwen3.8-27b"].factor == 1
     assert book.mapping["whisper-large-v3"].tier == "none"
     assert book.lines["haiku"][1].above_over == 100000
     assert book.lines["haiku"][1].above.input == Decimal("0.50")
@@ -43,6 +43,37 @@ def test_the_default_folder_is_read_when_called(tmp_path, monkeypatch):
     (tmp_path / "m" / "prices.yaml").write_text("v: 2\ntiers: {}\n")
     with pytest.raises(PriceError, match="prices.yaml"):
         load()
+
+
+# Dan's decision, 2026-11-12 (website/design/usage-meter-qa.md): the chat models priced by size.
+BY_SIZE = {"qwen3.8-27b": "sonnet", "qwen3.8-27b-sglang": "sonnet", "qwen3.8-flash-next": "sonnet",
+           "qwen3.8-flash-next-mtp": "sonnet", "qwen3.6-35b-a3b": "haiku", "gemma-4-26b-a4b": "haiku"}
+DOCS = REPO / "website" / "reference" / "model-prices.md"
+TABLE_START, TABLE_END = "<!-- the table: spark.meter.prices.table -->", "<!-- end of the table -->"
+
+
+def test_chat_models_priced_by_size():
+    book = load()
+    assert {name: book.mapping[name].tier for name in BY_SIZE} == BY_SIZE
+
+
+def test_the_sites_table_is_the_price_files():
+    text = DOCS.read_text()
+    assert text.count(TABLE_START) == 1 and text.count(TABLE_END) == 1
+    block = text.split(TABLE_START, 1)[1].split(TABLE_END, 1)[0].strip("\n")
+    assert block == table(load())
+
+
+def test_the_table_has_every_model_once_with_its_newest_line():
+    book = load()
+    rows = table(book).splitlines()
+    assert rows[0] == "| Model | Priced as | Since | Fresh input | Cached input | Output |"
+    assert [r.split("|")[1].strip().strip("`") for r in rows[2:]] == list(book.mapping)
+    by_model = {r.split("|")[1].strip().strip("`"): r for r in rows[2:]}
+    assert by_model["qwen3.8-27b"] == "| `qwen3.8-27b` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |"
+    assert by_model["qwen3.6-35b-a3b"] == ("| `qwen3.6-35b-a3b` | Haiku 5.5 | 2026-10-07 | $0.10; $0.50 above 100,000 "
+                                           "| $0.01; $0.05 above 100,000 | $0.50; $2.50 above 100,000 |")
+    assert by_model["whisper-large-v3"] == "| `whisper-large-v3` | not priced yet | — | — | — | — |"
 
 
 def test_every_registry_model_has_a_line():

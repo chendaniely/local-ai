@@ -142,7 +142,8 @@ that command, the new service has no key. Seen 2026-11-12 with opencode 2.2.7: O
 plugin ran `opencode api get` about every 1.5 s and kept replacing the service with one that had no
 `SPARK_API_KEY`, once only 2½ minutes after a restart, while the same key worked from a terminal. So
 the restart holds only once nothing like that is running: the plugin was uninstalled, and the
-restart after that held.
+restart after that held. *(Later the same day the usage meter's deploy gave OpenCode a key of its
+own: its variable is now `SPARK_OPENCODE_KEY`, and the same goes for it.)*
 
 **On the Mac**, in a terminal opened after the key went into `~/.secrets`:
 

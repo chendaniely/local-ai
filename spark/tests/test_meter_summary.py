@@ -17,7 +17,10 @@ from spark import cli, paths
 from spark.meter import prices, summary
 from spark.meter.store import Row, Store
 
-BOOK = prices.load()
+# The models these rows use pinned at Opus, so Dan's remaps of the shipped mapping never move these sums.
+_SHIPPED = prices.load()
+BOOK = dataclasses.replace(_SHIPPED, mapping={**_SHIPPED.mapping, **{
+    name: prices.Mapping("opus", Decimal(1)) for name in ("qwen3.8-27b", "gemma-4-26b-a4b")}})
 NY = "America/New_York"
 LA = "America/Los_Angeles"  # its fall-back is on 2026-11-01
 CONTRACT_KEYS = {"v", "made_at", "zone", "zone_from", "counter_start", "last_row_at", "periods", "by_model", "flags",
