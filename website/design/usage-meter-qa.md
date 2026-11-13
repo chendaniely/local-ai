@@ -445,3 +445,9 @@ entry. **Dan: enforced, with a suggestion.** "1, but you can suggest/recommend b
 automatic". So a model with no line still fails, and the failure suggests the line by-size would give
 it (its capability, and for a chat model its size), for Dan to accept or change; nothing is priced by
 a guess.
+
+**Q: How does it get built?** Offered: the by-size remap now, on its own branch, tested, merged and
+deployed by the Spark, so the chat numbers are right at once, and the rest (speech priced by the audio
+minute, embeddings, the suggestion, a printed table) in a short design and plan, built a subagent per
+task (recommended); all of it in one plan and one deploy; or the remap now and the rest after the soak.
+**Dan: the remap now, the rest planned.** He picked the recommended option, with no words of his own.
