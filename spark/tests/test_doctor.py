@@ -2307,6 +2307,7 @@ def test_a_registry_model_with_no_mapping_line_fails_meter_prices_naming_it(monk
     monkeypatch.setattr(prices, "load", lambda folder=None: dataclasses.replace(book, mapping=mapping))
     ok, said = detail(FakeProbe(), "meter prices")
     assert not ok and "coder" in said and "mapping.yaml" in said
+    assert "coder: {tier: sonnet}" in said or "no suggestion" in said
 
 
 def test_a_summary_that_raises_fails_meter_prices_naming_the_class_only(monkeypatch):

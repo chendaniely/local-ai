@@ -78,9 +78,71 @@ def test_the_table_has_every_model_once_with_its_newest_line():
 
 def test_every_registry_model_has_a_line():
     registry = load_registry(REPO / "stack" / "models.yaml")
+    missing = prices.missing_lines(registry.models, load())
+    assert missing == [], "mapping.yaml needs a line for: " + "; ".join(missing)
+
+
+def _stand_in(name, capability="chat", engine="llama.cpp", file="m.gguf", repo="org/m"):
+    from spark.registry import Model, Source
+    return Model(name=name, capability=capability, engine=engine, source=Source(repo=repo, revision="r", file=file),
+                 resident=False, footprint_gib=1.0, footprint_measured=False, ctx=1, parallel=1, cache_ram_mib=0,
+                 args=(), roles=(), label=name)
+
+
+def test_the_suggestion_reproduces_every_registry_models_line():
+    registry = load_registry(REPO / "stack" / "models.yaml")
     book = load()
-    missing = [name for name in registry.models if name not in book.mapping]
-    assert missing == []
+    for name, model in registry.models.items():
+        assert prices.suggest(name, model) == f"{name}: {{tier: {book.mapping[name].tier}}}"
+
+
+@pytest.mark.parametrize("name,size", [("x-27b", 27), ("x-35b-a3b", 3), ("x-26B-A4B", 4), ("x-0.6b", "0.6"),
+                                       ("qwen3-x", None), ("x-a3b-q4", 3)])
+def test_parameters_used(name, size):
+    found = prices.parameters_used(_stand_in(name))
+    assert found == (None if size is None else Decimal(str(size)))
+
+
+def test_suggest_by_size_with_the_file_and_repo_as_fallbacks():
+    assert prices.suggest("m", _stand_in("m", file="Foo-27B-Q4.gguf")) == "m: {tier: sonnet}"
+    assert prices.suggest("m", _stand_in("m", repo="org/Foo-4B")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m-6b")) == "m: {tier: sonnet}"
+    assert prices.suggest("m", _stand_in("m-0.6b")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m")) is None
+
+
+def test_suggest_by_capability_and_engine():
+    assert prices.suggest("e", _stand_in("e", "embeddings")) == "e: {tier: voyage-4-lite}"
+    assert prices.suggest("w", _stand_in("w", "transcription", "whisper.cpp")) == "w: {tier: whisper-1}"
+    assert prices.suggest("a", _stand_in("a", "transcription", "llama.cpp")) == "a: {tier: gpt-4o-mini-transcribe}"
+    assert prices.suggest("a", _stand_in("a", "transcription", "other")) is None
+    assert prices.suggest("i", _stand_in("i-27b", "image")) is None
+
+
+def test_missing_lines_name_each_model_and_its_suggestion():
+    book = load()
+    registry = load_registry(REPO / "stack" / "models.yaml")
+    models = dict(registry.models)
+    models["new-27b"] = _stand_in("new-27b")
+    models["mystery"] = _stand_in("mystery")
+    assert prices.missing_lines(models, book) == ["mystery (no suggestion: pick its proxy)",
+                                                  "new-27b (new-27b: {tier: sonnet})"]
+
+
+def test_the_prices_verb_prints_the_table(capsys):
+    from spark import cli
+    assert cli.main(["usage", "prices"]) == 0
+    assert capsys.readouterr().out.strip() == table(load())
+
+
+def test_the_prices_verb_prints_a_price_error_and_exits_1(monkeypatch, capsys):
+    from spark import cli
+
+    def bad(folder=None):
+        raise PriceError("prices.yaml: broken")
+    monkeypatch.setattr(prices, "load", bad)
+    assert cli.main(["usage", "prices"]) == 1
+    assert "prices.yaml: broken" in capsys.readouterr().err
 
 
 def test_line_at_picks_the_line_in_effect():

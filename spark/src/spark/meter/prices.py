@@ -12,11 +12,14 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from spark import paths
+
+if TYPE_CHECKING:
+    from spark.registry import Model
 
 TIERS = ("opus", "sonnet", "haiku", "fable")
 PROXY_NAME = re.compile(r"[a-z0-9][a-z0-9.-]*")
@@ -292,3 +295,40 @@ def _rate(line: PriceLine, field: str) -> str:
     if line.above is not None and line.above_over is not None:
         text += f"; ${getattr(line.above, field):.2f} above {line.above_over:,}"
     return text
+
+
+_ACTIVE = re.compile(r"(?<![a-z0-9])a(\d+(?:\.\d+)?)b(?![a-z0-9])", re.IGNORECASE)
+_SIZE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])", re.IGNORECASE)
+BIG_MODEL_B = 6  # parameters used per token, in billions: at or above it a chat model is priced as sonnet
+
+
+def parameters_used(model: Model) -> Decimal | None:
+    """The billions of parameters a chat model uses per token, read from its name, else its source file's, else its
+    repo's: `A<n>B` (active) wins over `<n>B`. None when none says."""
+    for text in (model.name, model.source.file, model.source.repo):
+        for pattern in (_ACTIVE, _SIZE):
+            found = pattern.search(text)
+            if found:
+                return Decimal(found.group(1))
+    return None
+
+
+def suggest(name: str, model: Model) -> str | None:
+    """The mapping line a new model would get by the design's rule, as it would sit under `models:` (without its
+    indent), or None when the rule can't say: Dan accepts or changes it, and nothing is priced by a guess."""
+    proxy: str | None = None
+    if model.capability == "embeddings":
+        proxy = "voyage-4-lite"
+    elif model.capability == "transcription":
+        proxy = {"whisper.cpp": "whisper-1", "llama.cpp": "gpt-4o-mini-transcribe"}.get(model.engine)
+    elif model.capability == "chat":
+        used = parameters_used(model)
+        if used is not None:
+            proxy = "sonnet" if used >= BIG_MODEL_B else "haiku"
+    return None if proxy is None else f"{name}: {{tier: {proxy}}}"
+
+
+def missing_lines(models: dict[str, Model], book: PriceBook) -> list[str]:
+    """One line per registry model with no mapping line: its name and the line suggested for it."""
+    return [f"{name} ({suggest(name, model) or 'no suggestion: pick its proxy'})"
+            for name, model in sorted(models.items()) if name not in book.mapping]

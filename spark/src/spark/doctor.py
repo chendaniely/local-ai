@@ -1427,10 +1427,11 @@ def meter_prices(registry: Registry | None, problem: str | None) -> Check:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     try:
         book = prices.load()
-        missing = sorted(m for m in registry.models if m not in book.mapping)
+        missing = prices.missing_lines(registry.models, book)
         if missing:
-            return Check(name, False, f"mapping.yaml has no line for {_and(missing)}: add each (`none` if it is "
-                                      "unpriced on purpose), or its tokens go unpriced and flagged")
+            return Check(name, False, f"mapping.yaml has no line for {'; '.join(missing)}: add each, the suggested "
+                                      "line or another (`none` if it is unpriced on purpose), or its tokens go "
+                                      "unpriced and flagged; `make prices` shows the table")
         summary.summarize(store.read(book), book, summary.read_private(), time.time())
     except Exception as err:  # a verdict only: the class, never the message, which may quote a row or a value
         return Check(name, False, f"the price files or the summary failed ({type(err).__name__}): "

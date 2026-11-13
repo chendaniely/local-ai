@@ -283,7 +283,7 @@ def words(summary: dict[str, Any]) -> str:
     """The summary in plain words, as `spark usage summary` (`make usage`) prints it without --json: a line a period,
     then this month's flags on one line in the menu's words when any is set, then a line for each span with counting off
     that ends this month or is still open, with its date (the final review's I4, 2026-11-12)."""
-    lines = [f"At Claude's prices; days and months in {summary['zone']}"]
+    lines = [f"At hosted prices; days and months in {summary['zone']}"]
     for name, key in (("This month", "this_month"), ("Today", "today"), ("Last month", "last_month"),
                       ("All time", "all_time")):
         period = summary["periods"][key]

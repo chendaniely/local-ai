@@ -73,15 +73,20 @@ on the Spark `make doctor`'s `meter prices` check, so a model can't go in unpric
 it its line in the same change, `tier: none` if it stays unpriced on purpose. A model run by hand,
 outside the registry, needs its line too, for the rows read from the Mac.
 
+The failure names each missing model with a suggested line, by the design's rule: an embedding model
+as Voyage `voyage-4-lite`; a transcription model as OpenAI `whisper-1` on whisper.cpp and
+`gpt-4o-mini-transcribe` on llama.cpp; a chat model by the parameters it uses per token, read from
+its name, else its weights file's name, else its repo's (`A3B` means 3 billion active, else `27B`
+means 27), as Sonnet at 6 billion or more and Haiku under. When no size is found the failure says
+"no suggestion: pick its proxy". Dan accepts the suggested line or changes it; nothing is priced by
+a guess.
+
 Then put the table above back in step: `make test` fails until it matches. **On the Mac or the
 Spark,** in the clone, this prints the table to paste between its two markers in this page:
 
 ```bash
-uv run --frozen --project spark python -c 'from spark.meter.prices import load, table; print(table(load()))'
+make prices
 ```
-
-Planned with the speech and embedding prices: the failure suggests the line by size, which Dan
-accepts or changes, and a `make` target prints the table.
 
 ## Changing a proxy or a price
 
