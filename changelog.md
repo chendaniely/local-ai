@@ -40,8 +40,9 @@ are priced the same way. No figure from the meter is recorded here (CLAUDE.md).
   - `make usage` runs and shows the audio minutes.
   - Qwen3-ASR rows without counts, by a count-only `jq` check: none. No Qwen3-ASR row had been written before the
     deploy, so none is left unpriced for want of counts.
-- **Not yet:** the notices to the projects that rely on the stack (a comment on #55 for spark-menu, and notices under
-  `notice/vid2sub`, `notice/skills` and `notice/recordings`), with Dan's OK; and ~~spark-menu's `spark-menu-by-model`
+- **Not yet:** ~~the notices to the projects that rely on the stack (a comment on #55 for spark-menu, and notices under
+  `notice/vid2sub`, `notice/skills` and `notice/recordings`), with Dan's OK~~ (posted the same morning with Dan's OK:
+  a comment on #55, and #56, #57 and #58 under those labels); and ~~spark-menu's `spark-menu-by-model`
   branch, merged and reloaded on the Mac~~ (done the same morning: Dan merged spark-menu's `spark-menu-by-model`
   branch into his dotfiles' main and reloaded it on the Mac).
 
