@@ -29,13 +29,13 @@ day that price began; the meter prices each request at the price of its own day.
 | `qwen3.8-27b-sglang` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
 | `qwen3.8-flash-next` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
 | `qwen3.8-flash-next-mtp` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |
-| `qwen3-embedding-0.6b` | not priced yet | — | — | — | — |
-| `whisper-large-v3-turbo` | not priced yet | — | — | — | — |
-| `whisper-large-v3` | not priced yet | — | — | — | — |
-| `qwen3-asr-1.7b-32k` | not priced yet | — | — | — | — |
-| `qwen3-asr-1.7b-64k` | not priced yet | — | — | — | — |
-| `qwen3-asr-0.6b-32k` | not priced yet | — | — | — | — |
-| `qwen3-asr-0.6b-64k` | not priced yet | — | — | — | — |
+| `qwen3-embedding-0.6b` | Voyage voyage-4-lite | 2026-09-01 | $0.02 | $0.02 | $0.00 |
+| `whisper-large-v3-turbo` | OpenAI whisper-1 | 2026-09-01 | $0.006 per audio minute | — | — |
+| `whisper-large-v3` | OpenAI whisper-1 | 2026-09-01 | $0.006 per audio minute | — | — |
+| `qwen3-asr-1.7b-32k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-1.7b-64k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-0.6b-32k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
+| `qwen3-asr-0.6b-64k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 | $1.25 | $1.25 | $5.00 |
 <!-- end of the table -->
 
 The fast coder (`qwen3.8-27b-sglang`) and Flash-Next (`qwen3.8-flash-next`, and `-mtp` with its
@@ -46,16 +46,28 @@ marks that share `~` ([the first numbers' design](../design/usage-meter-now.md))
 ## Speech and embeddings
 
 Anthropic sells neither, so their proxies come from other vendors (Dan's decision, 2026-11-12:
-"we're just looking for a reasonable proxy for pricing"). They are chosen, not priced yet:
+"we're just looking for a reasonable proxy for pricing"). They are priced now, from each vendor's
+own page, read on 2026-11-12 (developers.openai.com/api/docs/pricing and
+docs.voyageai.com/docs/pricing), each line from 2026-09-01:
 
-| Models | Proxy | Priced by |
+| Models | Proxy | Price |
 |---|---|---|
-| `whisper-large-v3`, `whisper-large-v3-turbo` and the four `qwen3-asr` models | OpenAI's `whisper-1`, for transcription and translation alike | the audio minute |
-| `qwen3-embedding-0.6b` | Voyage's lite embeddings model | the million tokens |
+| `whisper-large-v3`, `whisper-large-v3-turbo` | OpenAI `whisper-1` | $0.006 per audio minute |
+| the four `qwen3-asr` models | OpenAI `gpt-4o-mini-transcribe` | $1.25 per million tokens in, $5.00 out |
+| `qwen3-embedding-0.6b` | Voyage `voyage-4-lite` | $0.02 per million tokens |
 
-Speech waits on the front, whose rows keep each upload's size but not its length in minutes. The
-plan for both comes next, with their prices read from each vendor's own page; until it lands, the
-table above says *not priced yet* for them.
+Embeddings and the Qwen3-ASR models are priced by the token. Embeddings report no cache count, and
+Qwen3-ASR's is read when its answer gives one; neither matters, since their proxy's cached rate is
+its fresh rate. Whisper is priced by the audio minute, from the length the front reports for each
+recording *(2026-11-12, built on the `meter-every-model` branch, not yet deployed: the front asks
+Whisper for `verbose_json` to learn it, and answers in the format the client asked for)*. Before
+then, or whenever a row has none, the length is estimated from the upload's size at 16,000 bytes a
+second and marked estimated; a row shows as unpriced (`no_audio_length`) only when neither is known
+([the design](../design/usage-meter-every-model.md)). *(2026-11-13, built on the `meter-every-model` branch, not yet
+deployed: the same holds for Qwen3-ASR's rows, which are priced by the token. A row written before the front counted
+audio, or an answer with no usage block, has no counts and no audio length to estimate from, so it shows as unpriced
+(`no_counts`); nothing is left to price it by.)* `make speech`'s requests are not counted until its Stage 2 puts it behind the
+front.
 
 ## Adding a model
 
@@ -64,15 +76,20 @@ on the Spark `make doctor`'s `meter prices` check, so a model can't go in unpric
 it its line in the same change, `tier: none` if it stays unpriced on purpose. A model run by hand,
 outside the registry, needs its line too, for the rows read from the Mac.
 
+The failure names each missing model with a suggested line, by the design's rule: an embedding model
+as Voyage `voyage-4-lite`; a transcription model as OpenAI `whisper-1` on whisper.cpp and
+`gpt-4o-mini-transcribe` on llama.cpp; a chat model by the parameters it uses per token, read from
+its name, else its weights file's name, else its repo's (`A3B` means 3 billion active, else `27B`
+means 27), as Sonnet at 6 billion or more and Haiku under. When no size is found the failure says
+"no suggestion: pick its proxy". Dan accepts the suggested line or changes it; nothing is priced by
+a guess.
+
 Then put the table above back in step: `make test` fails until it matches. **On the Mac or the
 Spark,** in the clone, this prints the table to paste between its two markers in this page:
 
 ```bash
-uv run --frozen --project spark python -c 'from spark.meter.prices import load, table; print(table(load()))'
+make prices
 ```
-
-Planned with the speech and embedding prices: the failure suggests the line by size, which Dan
-accepts or changes, and a `make` target prints the table.
 
 ## Changing a proxy or a price
 

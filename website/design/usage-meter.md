@@ -102,7 +102,7 @@ Dan's decisions, each with its reason in [the questions and answers](usage-meter
 
 | Question | Decision |
 |---|---|
-| Priced at | Claude's prices |
+| Priced at | Claude's prices *(2026-11-13: hosted prices — Claude's for chat; OpenAI's and Voyage's for speech and embeddings; see [Model prices](../reference/model-prices.md))* |
 | Which Claude model | a mapping Dan edits, local model → Claude model; tokens are stored, never dollars |
 | When the mapping or a price changes | a remap reprices the past; prices are dated |
 | Which harnesses | any: Pi, OpenCode, Posit Assistant (`pa`), Hermes Agent, more later |
@@ -170,7 +170,10 @@ routes** *(my call, from the skeptic)*: every client here sends chat completions
 `/v1/responses` and `/v1/audio/transcriptions` get a row with no counts, flagged, never $0, and
 their parsing comes when a client uses them: `/v1/messages` puts P less C and C on its *first*
 event, `/v1/responses`' last event repeats the whole answer, and whisper gives the audio's length
-only in `verbose_json`. Non-streamed `n > 1` reports only the first choice, so such a row is flagged.
+only in `verbose_json`. *(2026-11-12, [every model priced](usage-meter-every-model.md), built on its branch, not yet
+deployed: `/v1/audio/transcriptions` is read too: Qwen3-ASR's token counts from its usage, and Whisper's length from
+the `verbose_json` the front asks it for.)* Non-streamed `n > 1` reports only the first choice, so such a row is
+flagged.
 The front **never adds `stream_options.include_usage`** to a request: that adds a chunk the client
 didn't ask for, and the stack injects nothing.
 

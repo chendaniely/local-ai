@@ -21,6 +21,9 @@ What a row holds, by the plan's *The row and the ledger row*; a field whose valu
   (`usage`, `timings` or `none`; always written), `ev_think`, `ev_text`, `prompt_ms`, `gen_ms` and `resp_id`.
 - **Shape**: `stream`, whether its body asked to stream; `attempts`, its sends to llama-swap; `n`, above 1 only;
   `images`; `bytes_in`; `effort`, from EFFORTS only.
+- **A recording's length** (Task E3), on a transcription by whisper.cpp, from its answer (usage.hear): `audio_s`, in
+  seconds to 3 places; `audio_est`, true only when that length is an estimate (an srt or vtt answer's last cue), and
+  left out otherwise.
 - `dropped`, the rows lost before this one, is the row file's to add, and `refused_n`, the refused rows its key's limit
   folded into this one (rowfile.RefusedLimit), the app's.
 
@@ -83,6 +86,8 @@ def usage_row(request: _Request, ended: float, monotonic_ended: float, roles: fr
         "bytes_in": request.bytes_in,
         "effort": request.effort if isinstance(request.effort, str) and request.effort in EFFORTS else None,
         "resp_id": safe_text(counts.resp_id),
+        "audio_s": None if request.audio_s is None else round(request.audio_s, 3),
+        "audio_est": True if request.audio_est and request.audio_s is not None else None,
     }
     return {name: value for name, value in row.items() if value is not None}
 

@@ -103,6 +103,16 @@ def test_each_ending(fields, end):
     assert row(served(**fields))["end"] == end
 
 
+def test_a_recordings_length_is_kept_in_seconds_and_marked_only_when_estimated():
+    transcription = {"route": ("POST", "/v1/audio/transcriptions"), "stream": None}
+    got = row(served(**transcription, audio_s=885.416625))
+    assert got["audio_s"] == 885.417 and "audio_est" not in got  # rounded to 3 places; read, so not an estimate
+    got = row(served(**transcription, audio_s=62.345, audio_est=True))
+    assert (got["audio_s"], got["audio_est"]) == (62.345, True)
+    assert "audio_s" not in row(served(**transcription)) and "audio_est" not in row(served(**transcription))
+    assert "audio_est" not in row(served(**transcription, audio_est=True))  # an estimate of nothing isn't kept
+
+
 def test_the_counts_come_from_its_scan_and_none_is_ever_written():
     scan = UsageScan("/v1/chat/completions", streamed=True)
     scan.feed(b'data: {"choices":[{"delta":{"content":"hi"}}],"id":"chatcmpl-standin3","object":"x"}\n\n'

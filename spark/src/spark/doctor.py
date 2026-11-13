@@ -27,7 +27,7 @@ refuse it), through no proxy and never on to where a redirect points.
 Each line reads `ok`, `FAIL` or `WARN`. A `WARN` (only ntfy's, while it isn't set up: Task 2, in Phase 5) passes, fails
 nothing, and isn't counted in *N of M checks pass*; the summary says how many warned. One check per Phase 2a scenario
 (S01, S02, S03, S05, S14, S17). `spark doctor --full` adds the two heavy ones: a 170 MB upload to speech-to-text
-through the front, and the privacy canary.
+through the front, whose row must have the recording's length (Task E3), and the privacy canary.
 The usage meter's three (Task 44g): `usage records` and `gate ledger` (each folder's owner, group, mode and files) and
 `counting` (a fresh row, the ledger's file, the gate's health); the canary also looks in the meter's two folders. Each
 prints a verdict only, never a file's content, a row or a key name.
@@ -162,6 +162,11 @@ GATE_STEP = ("`make logs s=gate` shows why, and the stack units and sockets line
              "sockets are up")
 # --full: the upload, a WAV of silence, 48 kHz stereo, about 15 minutes; within the front's 200 MiB for a body.
 UPLOAD_BYTES = 170_000_000
+UPLOAD_RATE, UPLOAD_CHANNELS = 48000, 2
+# The upload's row has whisper's length for it, read by the front (Task E3), within this share of the WAV's own: whisper
+# resamples it to 16 kHz with ffmpeg, which can add or drop a few samples.
+LENGTH_WITHIN = 0.01
+AUDIO_MAX_S = 10**9  # a row's length past this is no length doctor compares (Probe.audio_length)
 UPLOAD_TIMEOUT_S = 900.0
 CANARY_PLACES = {"refusals": "the gate's refusal history", "state": "the gate's state", "launch": "launch's records"}
 JOURNAL_SETTLE_S = 2.0  # the front writes a request's journal line as the request ends: a moment for journald
@@ -344,6 +349,29 @@ class Probe:
             if isinstance(t0, (int, float)) and not isinstance(t0, bool) and (newest is None or t0 > newest):
                 newest = float(t0)
         return newest
+
+    def audio_length(self, path: Path, since: float, model: str, bytes_in: int) -> tuple[bool, float | None]:
+        """Whether a row file's last bytes hold a transcription row of `model`, its upload `bytes_in` bytes, that the
+        front received after `since`, and the newest one's `audio_s` (a number of seconds, else None): a number doctor
+        compares and never prints, not a row's content. (False, None) for a file that isn't there. A length outside 0
+        to AUDIO_MAX_S (a huge number, NaN or an infinity included) is None."""
+        newest: tuple[int | float, float | None] | None = None
+        for line in (self._tail(path) or b"").splitlines():
+            try:
+                row = json.loads(line)
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(row, dict) or row.get("route") != "transcriptions" or row.get("model") != model \
+                    or row.get("bytes_in") != bytes_in or isinstance(row.get("bytes_in"), bool):
+                continue
+            t0, length = row.get("t0"), row.get("audio_s")
+            if isinstance(t0, bool) or not isinstance(t0, (int, float)) or not t0 > since:
+                continue
+            if isinstance(length, bool) or not isinstance(length, (int, float)) or not 0 <= length <= AUDIO_MAX_S:
+                length = None
+            if newest is None or t0 >= newest[0]:
+                newest = (t0, None if length is None else float(length))
+        return (False, None) if newest is None else (True, newest[1])
 
     def exists(self, path: Path) -> bool | None:
         """Whether a path exists, a link included, dangling or not; None when this account can't tell, as when a
@@ -1399,10 +1427,11 @@ def meter_prices(registry: Registry | None, problem: str | None) -> Check:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
     try:
         book = prices.load()
-        missing = sorted(m for m in registry.models if m not in book.mapping)
+        missing = prices.missing_lines(registry.models, book)
         if missing:
-            return Check(name, False, f"mapping.yaml has no line for {_and(missing)}: add each (`none` if it is "
-                                      "unpriced on purpose), or its tokens go unpriced and flagged")
+            return Check(name, False, f"mapping.yaml has no line for {'; '.join(missing)}: add each, the suggested "
+                                      "line or another (`none` if it is unpriced on purpose), or its tokens go "
+                                      "unpriced and flagged; `make prices` shows the table")
         summary.summarize(store.read(book), book, summary.read_private(), time.time())
     except Exception as err:  # a verdict only: the class, never the message, which may quote a row or a value
         return Check(name, False, f"the price files or the summary failed ({type(err).__name__}): "
@@ -1616,13 +1645,44 @@ def _ready_one(view: dict | None, models: list) -> tuple[Any, str | None]:
     return ordered[0], _not_ready(view, ordered[0])
 
 
+def _upload_row(probe: Probe, since: float, model: str, megabytes: int, label: str) -> str | None:
+    """Why the upload's row, in this month's usage file, doesn't have the recording's length within LENGTH_WITHIN of the
+    WAV's own, or None when it does: a verdict only, never the length (Task E3). Its row is the newest transcription of
+    `model` since `since` whose upload is UPLOAD_BYTES, so the canary's or anyone's other upload isn't taken for it. A
+    row not there yet is waited for a moment, as `counting` waits for its own: the front puts it as the request ends,
+    from a thread."""
+    usage = _month_file(paths.USAGE_DIR, USAGE_PREFIX, probe.now())
+    try:
+        found, length = probe.audio_length(usage, since, model, UPLOAD_BYTES)
+        for _ in range(COUNTING_TRIES - 1):
+            if found:
+                break
+            probe.pause(COUNTING_STEP_S)
+            found, length = probe.audio_length(usage, since, model, UPLOAD_BYTES)
+    except PermissionError:
+        return f"your account can't read {usage}: log in again, so spark-admin's group applies"
+    uploaded = f"{label} took the {megabytes} MB upload through the front and answered, but"
+    if not found:
+        return (f"{uploaded} {usage.name} holds no row for it: the counting line says whether counting is on — "
+                "`make logs s=front`")
+    if length is None:
+        return f"{uploaded} its row has no recording length: the front didn't read whisper's answer for it — " \
+               "`make logs s=front`"
+    seconds = (UPLOAD_BYTES - 44) / (UPLOAD_RATE * UPLOAD_CHANNELS * 2)
+    if abs(length - seconds) > LENGTH_WITHIN * seconds:
+        return f"{uploaded} its row's recording length is more than 1 % from the file's: `make logs s=front`"
+    return None
+
+
 def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict | None, problem: str | None = None,
            key_env: str = KEY_ENV, *, not_front: str | None) -> Check:
     """A 170 MB upload to speech-to-text through the front, once 9100 has answered as the front (`not_front` None,
     front_identity) and the gate shows the model loaded. The front spools it and sends it on as a chunked form, which
     v257 passes on still chunked (Task 21): this is the check that whisper-server takes a chunked body (Task 21's
     note). llama-swap reads a POST body whole into memory, so with memory under the warn line, or unreadable, it isn't
-    sent (Task 33's review, I1)."""
+    sent (Task 33's review, I1). Answered, its row in this month's usage file must have the recording's length, within
+    1 % of the WAV's own (_upload_row): the front asks whisper for verbose_json to learn it, whatever the upload's
+    size, and answers in the format asked for, json here (Task E3)."""
     name = "a 170 MB upload"
     if registry is None:
         return Check(name, False, f"can't load the deployed registry: {problem} — `make apply`")
@@ -1643,7 +1703,8 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
     if (low := _low_memory(probe, registry)) is not None:
         return Check(name, False, f"not sent: {low}, and llama-swap holds a whole upload in memory — run `spark doctor "
                                   "--full` again once `make status` shows memory back above the warn line")
-    size, chunks = wav(UPLOAD_BYTES)
+    size, chunks = wav(UPLOAD_BYTES, rate=UPLOAD_RATE, channels=UPLOAD_CHANNELS)
+    since = probe.now() - 1
     code, body = probe.upload(f"{paths.FRONT_URL}/v1/audio/transcriptions", key=key,
                               fields={"model": stt.name, "response_format": "json"}, file_name="doctor.wav",
                               size=size, chunks=chunks, timeout=UPLOAD_TIMEOUT_S)
@@ -1653,8 +1714,11 @@ def upload(probe: Probe, key: str | None, registry: Registry | None, view: dict 
         text = None
     megabytes = UPLOAD_BYTES // 1_000_000
     if code == 200 and isinstance(text, str):
+        if (short := _upload_row(probe, since, stt.name, megabytes, stt.label)) is not None:
+            return Check(name, False, short)
         return Check(name, True, f"{stt.label} took a {megabytes} MB upload through the front, which sends a form on "
-                                 "chunked, and answered")
+                                 "chunked, and answered; its row has the recording's length, within 1 % of the "
+                                 "file's")
     if _redirect(code):
         return Check(name, False, f"{stt.label} answered {_redirected(code, 'the front', 'front')}")
     if code == 401:

@@ -1,4 +1,4 @@
-"""`spark usage summary` (website/design/usage-meter-now.md, *The summary's JSON*): the spend at Claude's prices today,
+"""`spark usage summary` (website/design/usage-meter-now.md, *The summary's JSON*): the spend at hosted prices today,
 this month, last month and all time, by model, with what couldn't be priced and what isn't counted. spark-menu prints
 this JSON and adds no two numbers, so every figure it shows is made here.
 
@@ -26,7 +26,7 @@ from spark.meter.store import Row, Store
 SUMMARY_VERSION = 1
 # The whys that leave a row unpriced by a gap someone can close. not_done rows are counted in the flags instead, and
 # `none` is unpriced on purpose.
-UNPRICED = ("no_counts", "unmapped", "no_line", "cache_unknown")
+UNPRICED = ("no_counts", "unmapped", "no_line", "cache_unknown", "no_audio_length")
 NOT_COUNTED = ("by-hand engines: counted from heartsbane's OpenCode only",)
 NO_MODEL = "(no model)"  # a row with none, in by_model and flags.unmapped alike, where null would print as null
 LOCALTIME = Path("/etc/localtime")
@@ -121,8 +121,8 @@ def _money(amount: Decimal) -> float:
 
 @dataclass
 class _Sum:
-    """One total: the priced dollars (with the part resting on an estimated cache), every row, and the tokens of the
-    rows that have them."""
+    """One total: the priced dollars (with the part resting on an estimated cache or length), every row, the tokens
+    of the rows that have them, and the audio seconds of the rows that have a length."""
     usd: Decimal = Decimal(0)
     usd_estimated: Decimal = Decimal(0)
     requests: int = 0
@@ -130,22 +130,25 @@ class _Sum:
     c: int = 0
     o: int = 0
     unpriced: int = 0
+    audio_s: float = 0.0
 
     def add(self, row: Row, priced: Priced) -> None:
         self.requests += 1
         self.p += row.p or 0
         self.c += row.c or 0
         self.o += row.o or 0
+        if row.end == "done" and row.audio_s is not None:
+            self.audio_s += row.audio_s
         if priced.usd is not None:
             self.usd += priced.usd
-            if row.c_estimated:
+            if row.c_estimated or (row.audio_est and priced.by_audio):
                 self.usd_estimated += priced.usd
         if priced.why in UNPRICED:
             self.unpriced += 1
 
     def figures(self) -> dict[str, Any]:
         return {"usd": _money(self.usd), "usd_estimated": _money(self.usd_estimated), "requests": self.requests,
-                "p": self.p, "c": self.c, "o": self.o}
+                "p": self.p, "c": self.c, "o": self.o, "audio_s": round(self.audio_s, 3)}
 
 
 Item = tuple[Row, Priced]
@@ -280,15 +283,17 @@ def words(summary: dict[str, Any]) -> str:
     """The summary in plain words, as `spark usage summary` (`make usage`) prints it without --json: a line a period,
     then this month's flags on one line in the menu's words when any is set, then a line for each span with counting off
     that ends this month or is still open, with its date (the final review's I4, 2026-11-12)."""
-    lines = [f"At Claude's prices; days and months in {summary['zone']}"]
+    lines = [f"At hosted prices; days and months in {summary['zone']}"]
     for name, key in (("This month", "this_month"), ("Today", "today"), ("Last month", "last_month"),
                       ("All time", "all_time")):
         period = summary["periods"][key]
         label = "" if key == "all_time" else period["label"]
         dollars = f"${period['usd']:,.2f}"
         line = f"{name:<10}  {label:<10}  {dollars:>11}  {_tokens(period['p'])} in · {_tokens(period['o'])} out"
+        if period["audio_s"] > 0:
+            line += f" · {period['audio_s'] / 60:.1f} min audio"
         if period["usd_estimated"]:
-            line += f" · ~${period['usd_estimated']:,.2f} of it on an estimated cache"
+            line += f" · ~${period['usd_estimated']:,.2f} of it estimated"
         if period["unpriced"]:
             line += f" · {period['unpriced']} unpriced"
         if key == "all_time":

@@ -181,6 +181,10 @@ class FakeProbe:
         self.asked = []  # (url, body) for each request made
         self.uploads = []  # (url, fields, file name, size) for each upload made
         self.upload_answer = (200, json.dumps({"text": ""}))
+        # The 170 MB upload's row in this month's usage file: whether there is one, and the recording's length on it,
+        # whisper's for the file (invented); or the error reading the file raises. Each ask is kept in `audio_asks`.
+        self.audio = (True, 885.416)
+        self.audio_asks = []
         # The gate's control socket: each route's answer, or the GateError it raises.
         self.gate = {"/v1/status": status_view(),
                      "/v1/quiet": {"quiet_for_s": 75.0, "last_label": "the coder", "inflight": [],
@@ -251,6 +255,12 @@ class FakeProbe:
         if isinstance(self.newest, Exception):
             raise self.newest
         return self.newest
+
+    def audio_length(self, path, since, model, bytes_in):
+        self.audio_asks.append((Path(path), since, model, bytes_in))
+        if isinstance(self.audio, Exception):
+            raise self.audio
+        return self.audio
 
     def uid(self, name):
         return {"agent": AGENT_UID}.get(name)
@@ -488,6 +498,81 @@ def test_the_real_probe_searches_and_dates_rows_without_returning_them(tmp_path)
     assert probe.newest_t0(rows) == 9.0 and probe.newest_t0(tmp_path / "missing.jsonl") is None
     (tmp_path / "link.jsonl").symlink_to(rows)
     assert probe.holds(tmp_path / "link.jsonl", "needle-xyz") is False  # never follows a link
+
+
+def test_the_real_probe_reads_a_transcription_rows_length_without_returning_the_row(tmp_path):
+    rows = tmp_path / "usage-2026-10.jsonl"
+    size = doctor.UPLOAD_BYTES
+    lines = [{"t0": 5.0, "route": "transcriptions", "model": "stt", "audio_s": 1.0, "bytes_in": size},  # too early
+             {"t0": 20.0, "route": "transcriptions", "model": "stt", "audio_s": 885.416, "key": "k", "bytes_in": size},
+             {"t0": 21.0, "route": "chat", "model": "stt", "audio_s": 3.0, "bytes_in": size},  # another route
+             {"t0": 22.0, "route": "transcriptions", "model": "other", "audio_s": 4.0, "bytes_in": size},  # model
+             {"t0": 23.0, "route": "transcriptions", "model": "stt", "audio_s": 5.0, "bytes_in": 48044},  # its size
+             {"t0": 24.0, "route": "transcriptions", "model": "stt", "audio_s": 6.0}]  # no size
+    rows.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n[]\n")
+    probe = Probe(ROOT)
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, 885.416)
+    assert probe.audio_length(rows, 30.0, "stt", size) == (False, None)
+    assert probe.audio_length(tmp_path / "missing.jsonl", 0.0, "stt", size) == (False, None)
+    # The newest such row decides, and a length that isn't a number of seconds is none.
+    for newest in ({}, {"audio_s": True}, {"audio_s": "885"}, {"audio_s": -1.0}, {"audio_s": 10**400}):
+        with rows.open("a") as file:
+            file.write(json.dumps({"t0": 40.0, "route": "transcriptions", "model": "stt", "bytes_in": size, **newest})
+                       + "\n")
+        assert probe.audio_length(rows, 10.0, "stt", size) == (True, None), newest
+    # What Python's reader takes and JSON doesn't write, and a huge t0: never a crash.
+    with rows.open("a") as file:
+        file.write('{"t0": 41.0, "route": "transcriptions", "model": "stt", "audio_s": NaN, "bytes_in": %d}\n' % size)
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, None)
+    with rows.open("a") as file:
+        file.write('{"t0": 1' + "0" * 400 + ', "route": "transcriptions", "model": "stt", "audio_s": 1.5, '
+                   f'"bytes_in": {size}}}\n')
+    assert probe.audio_length(rows, 10.0, "stt", size) == (True, 1.5)
+    (tmp_path / "link.jsonl").symlink_to(rows)
+    assert probe.audio_length(tmp_path / "link.jsonl", 10.0, "stt", size) == (False, None)  # never follows a link
+
+
+def test_the_uploads_row_must_have_the_recordings_length():
+    uploaded = "whisper took the 170 MB upload through the front and answered, but"
+    probe = FakeProbe()
+    assert detail(probe, "a 170 MB upload", full=True)[0]
+    [(path, since, model, size)] = probe.audio_asks
+    assert (path, since, model, size) == (doctor.paths.USAGE_DIR / "usage-2026-10.jsonl", NOW - 1, "stt",
+                                          doctor.UPLOAD_BYTES)
+    # No row for it yet: it waits a moment for the front's thread, then fails.
+    probe = FakeProbe()
+    probe.audio = (False, None)
+    assert detail(probe, "a 170 MB upload", full=True) == (
+        False, f"{uploaded} usage-2026-10.jsonl holds no row for it: the counting line says whether counting is on — "
+               "`make logs s=front`")
+    assert len(probe.audio_asks) == doctor.COUNTING_TRIES and probe.paused
+    probe = FakeProbe()
+    probe.audio = (True, None)
+    assert detail(probe, "a 170 MB upload", full=True) == (
+        False, f"{uploaded} its row has no recording length: the front didn't read whisper's answer for it — "
+               "`make logs s=front`")
+    # Off by more than 1 % of the file's own length (885.4 s of 48 kHz stereo): the figure is never printed.
+    for length in (600.0, 876.5, 894.4):
+        probe = FakeProbe()
+        probe.audio = (True, length)
+        ok, said = detail(probe, "a 170 MB upload", full=True)
+        assert (ok, said) == (False, f"{uploaded} its row's recording length is more than 1 % from the file's: "
+                                     "`make logs s=front`")
+        assert str(length) not in said and "885" not in said
+    for length in (876.7, 894.2):
+        probe = FakeProbe()
+        probe.audio = (True, length)
+        assert detail(probe, "a 170 MB upload", full=True)[0], length
+    probe = FakeProbe()
+    probe.audio = PermissionError(13, "denied")
+    assert detail(probe, "a 170 MB upload", full=True) == (
+        False, "your account can't read /var/lib/local-ai/usage/usage-2026-10.jsonl: log in again, so spark-admin's "
+               "group applies")
+    # An upload whisper refused leaves no row to look for.
+    probe = FakeProbe()
+    probe.upload_answer = (413, refusal("body_too_large"))
+    checks(probe, KEY, REG, full=True)
+    assert probe.audio_asks == []
 
 
 def test_counting_needs_a_fresh_row():
@@ -1504,7 +1589,8 @@ def test_full_runs_the_upload_and_the_canary():
     probe = FakeProbe()
     results = {c.name: (c.ok, c.detail) for c in checks(probe, KEY, REG, full=True)}
     assert results["a 170 MB upload"] == (True, "whisper took a 170 MB upload through the front, which sends a form "
-                                                "on chunked, and answered")
+                                                "on chunked, and answered; its row has the recording's length, within "
+                                                "1 % of the file's")
     assert results["privacy canary"] == (True, "a string sent through chat as a message and through speech-to-text "
                                                "is in none of the journal, the gate's state, its refusal history, "
                                                "launch's records, the usage records or the gate's ledger, and one sent "
@@ -2221,6 +2307,7 @@ def test_a_registry_model_with_no_mapping_line_fails_meter_prices_naming_it(monk
     monkeypatch.setattr(prices, "load", lambda folder=None: dataclasses.replace(book, mapping=mapping))
     ok, said = detail(FakeProbe(), "meter prices")
     assert not ok and "coder" in said and "mapping.yaml" in said
+    assert "coder (no suggestion: pick its proxy)" in said
 
 
 def test_a_summary_that_raises_fails_meter_prices_naming_the_class_only(monkeypatch):

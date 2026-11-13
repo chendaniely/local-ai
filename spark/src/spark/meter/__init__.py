@@ -1,5 +1,5 @@
-"""The usage meter's first numbers (website/design/usage-meter-now.md): `spark usage`, a cost summary at Claude's
-prices. This package holds the price files (mapping.yaml, prices.yaml, providers.yaml) and what reads them.
+"""The usage meter's first numbers (website/design/usage-meter-now.md): `spark usage`, a cost summary at hosted
+prices (Claude's, OpenAI's and Voyage's). This package holds the price files (mapping.yaml, prices.yaml, providers.yaml) and what reads them.
 
 The front never imports it, so a change to these files restarts only the gate and the brake. At module level it
 imports only the standard library, `yaml` and `spark.paths`, since `build_parser` imports every command's module."""
@@ -71,6 +71,13 @@ def _import(args: argparse.Namespace) -> int:
     return REFUSED_EXIT if verdict.refused else 0
 
 
+def _prices(args: argparse.Namespace) -> int:
+    from spark.meter import prices
+
+    print(prices.table(prices.load()))
+    return 0
+
+
 def _harvest(args: argparse.Namespace) -> int:
     import json
     import sys
@@ -90,18 +97,21 @@ def _harvest(args: argparse.Namespace) -> int:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    usage = subparsers.add_parser("usage", help="the usage meter: what the models would have cost at Claude's prices")
+    usage = subparsers.add_parser("usage", help="the usage meter: what the models would have cost at hosted prices")
     verbs = usage.add_subparsers(dest="usage_command", required=True)
     rows = verbs.add_parser("rows", help="every counted row, priced, as one JSON line each, in time order")
     rows.add_argument("--since", type=_since, default=None, metavar="DATE|EPOCH",
                       help="only rows from this ISO date (00:00 UTC) or epoch second on")
     rows.set_defaults(func=_rows)
-    summary = verbs.add_parser("summary", help="today, this month, last month and all time at Claude's prices, in "
+    summary = verbs.add_parser("summary", help="today, this month, last month and all time at hosted prices, in "
                                                "Dan's zone")
     summary.add_argument("--json", action="store_true", help="the summary spark-menu reads (its contract, v1), as one "
                                                              "JSON object")
     summary.add_argument("--hours", action="store_true", help="with --json, add the totals per UTC hour, key and model")
     summary.set_defaults(func=lambda args: _summary(args, summary))
+    prices_verb = verbs.add_parser("prices", help="every model's pricing proxy and price, as the table the model "
+                                                  "prices page holds")
+    prices_verb.set_defaults(func=_prices)
     imp = verbs.add_parser("import", help="merge the Mac's per-message rows for the by-hand engines, read from stdin")
     imp.add_argument("--source", required=True, choices=["opencode"], help="whose rows are on stdin")
     imp.set_defaults(func=_import)

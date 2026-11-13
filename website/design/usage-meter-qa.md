@@ -451,3 +451,18 @@ deployed by the Spark, so the chat numbers are right at once, and the rest (spee
 minute, embeddings, the suggestion, a printed table) in a short design and plan, built a subagent per
 task (recommended); all of it in one plan and one deploy; or the remap now and the rest after the soak.
 **Dan: the remap now, the rest planned.** He picked the recommended option, with no words of his own.
+
+## Speech and embeddings priced (2026-11-12)
+
+**Q: Open WebUI sends a 3-minute voice note asking for a plain transcript, whose answer carries no
+length, and vid2sub a 40-minute lecture asking for the detailed one, which does. What does the meter
+price?** Offered: the length read when an answer carries it, the voice note counted but unpriced and
+flagged (recommended); the front always asking the engine for the detailed answer and handing back
+the format the client asked for, so both are priced; or every upload estimated from its size.
+**Dan: everything priced.** "any token should be priced." So the front always gets the length, by
+the second option, and a request whose answer still has none is estimated from its size and marked
+`~`, as the fast coder's cache is *(the fallback is my call)*. A refused request used no tokens; a
+cancelled one never reported its counts, so it stays unpriced, as the meter's design has it.
+
+The post-deploy items were done the same night with Dan's OK: the comments on notices #43, #45 and
+#48 that 44l is live, and #55, the `notice/spark-menu` issue recording the menu's contract.

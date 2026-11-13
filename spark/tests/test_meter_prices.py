@@ -30,7 +30,7 @@ def test_the_shipped_files_load():
     assert second.base.cache_read == Decimal("0.10")
     assert second.label == "sonnet@2026-10-07"
     assert book.mapping["qwen3.8-27b"].tier == "sonnet" and book.mapping["qwen3.8-27b"].factor == 1
-    assert book.mapping["whisper-large-v3"].tier == "none"
+    assert book.mapping["whisper-large-v3"].tier == "whisper-1"
     assert book.lines["haiku"][1].above_over == 100000
     assert book.lines["haiku"][1].above.input == Decimal("0.50")
     assert book.lines["opus"][0].above is None and book.lines["opus"][0].above_over is None
@@ -73,14 +73,78 @@ def test_the_table_has_every_model_once_with_its_newest_line():
     assert by_model["qwen3.8-27b"] == "| `qwen3.8-27b` | Sonnet 5.5 | 2026-10-07 | $2.00 | $0.10 | $10.00 |"
     assert by_model["qwen3.6-35b-a3b"] == ("| `qwen3.6-35b-a3b` | Haiku 5.5 | 2026-10-07 | $0.10; $0.50 above 100,000 "
                                            "| $0.01; $0.05 above 100,000 | $0.50; $2.50 above 100,000 |")
-    assert by_model["whisper-large-v3"] == "| `whisper-large-v3` | not priced yet | — | — | — | — |"
+    assert by_model["whisper-large-v3"].startswith("| `whisper-large-v3` | OpenAI whisper-1 |")
 
 
 def test_every_registry_model_has_a_line():
     registry = load_registry(REPO / "stack" / "models.yaml")
+    missing = prices.missing_lines(registry.models, load())
+    assert missing == [], "mapping.yaml needs a line for: " + "; ".join(missing)
+
+
+def _stand_in(name, capability="chat", engine="llama.cpp", file="m.gguf", repo="org/m"):
+    from spark.registry import Model, Source
+    return Model(name=name, capability=capability, engine=engine, source=Source(repo=repo, revision="r", file=file),
+                 resident=False, footprint_gib=1.0, footprint_measured=False, ctx=1, parallel=1, cache_ram_mib=0,
+                 args=(), roles=(), label=name)
+
+
+def test_the_suggestion_reproduces_every_registry_models_line():
+    registry = load_registry(REPO / "stack" / "models.yaml")
     book = load()
-    missing = [name for name in registry.models if name not in book.mapping]
-    assert missing == []
+    for name, model in registry.models.items():
+        assert prices.suggest(name, model) == f"{name}: {{tier: {book.mapping[name].tier}}}"
+
+
+@pytest.mark.parametrize("name,size", [("x-27b", 27), ("x-35b-a3b", 3), ("x-26B-A4B", 4), ("x-0.6b", "0.6"),
+                                       ("qwen3-x", None), ("x-a3b-q4", 3),
+                                       ("qwen3b-x", None), ("x-q3b", None), ("x-a3bx", None)])
+def test_parameters_used(name, size):
+    found = prices.parameters_used(_stand_in(name))
+    assert found == (None if size is None else Decimal(str(size)))
+
+
+def test_suggest_by_size_with_the_file_and_repo_as_fallbacks():
+    assert prices.suggest("m", _stand_in("m", file="Foo-27B-Q4.gguf")) == "m: {tier: sonnet}"
+    assert prices.suggest("m", _stand_in("m", repo="org/Foo-4B")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m-6b")) == "m: {tier: sonnet}"
+    assert prices.suggest("m", _stand_in("m-0.6b")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m-5.5b")) == "m: {tier: haiku}"
+    assert prices.suggest("m", _stand_in("m")) is None
+
+
+def test_suggest_by_capability_and_engine():
+    assert prices.suggest("e", _stand_in("e", "embeddings")) == "e: {tier: voyage-4-lite}"
+    assert prices.suggest("w", _stand_in("w", "transcription", "whisper.cpp")) == "w: {tier: whisper-1}"
+    assert prices.suggest("a", _stand_in("a", "transcription", "llama.cpp")) == "a: {tier: gpt-4o-mini-transcribe}"
+    assert prices.suggest("a", _stand_in("a", "transcription", "other")) is None
+    assert prices.suggest("i", _stand_in("i-27b", "image")) is None
+
+
+def test_missing_lines_name_each_model_and_its_suggestion():
+    book = load()
+    registry = load_registry(REPO / "stack" / "models.yaml")
+    models = dict(registry.models)
+    models["new-27b"] = _stand_in("new-27b")
+    models["mystery"] = _stand_in("mystery")
+    assert prices.missing_lines(models, book) == ["mystery (no suggestion: pick its proxy)",
+                                                  "new-27b (new-27b: {tier: sonnet})"]
+
+
+def test_the_prices_verb_prints_the_table(capsys):
+    from spark import cli
+    assert cli.main(["usage", "prices"]) == 0
+    assert capsys.readouterr().out.strip() == table(load())
+
+
+def test_the_prices_verb_prints_a_price_error_and_exits_1(monkeypatch, capsys):
+    from spark import cli
+
+    def bad(folder=None):
+        raise PriceError("prices.yaml: broken")
+    monkeypatch.setattr(prices, "load", bad)
+    assert cli.main(["usage", "prices"]) == 1
+    assert "prices.yaml: broken" in capsys.readouterr().err
 
 
 def test_line_at_picks_the_line_in_effect():
@@ -119,8 +183,11 @@ def opus(data):
 
 
 FAULTS = {
-    "unknown tier in prices": ("prices.yaml", lambda d: d["tiers"].update(gold=d["tiers"]["opus"])),
+    "bad proxy name in prices": ("prices.yaml", lambda d: d["tiers"].update({"Gold Tier": d["tiers"]["opus"]})),
     "unknown tier in mapping": ("mapping.yaml", lambda d: d["models"].update(x={"tier": "gold"})),
+    "tier missing from prices": ("mapping.yaml", lambda d: d["models"].update(x={"tier": "whisper-2"})),
+    "per-minute line with a rate": ("prices.yaml", lambda d: d["tiers"]["whisper-1"][0].update(input=1)),
+    "per-token line with per_minute": ("prices.yaml", lambda d: opus(d)[0].update(per_minute=0.006)),
     "negative rate": ("prices.yaml", lambda d: opus(d)[0].update(input=-1)),
     "non-numeric rate": ("prices.yaml", lambda d: opus(d)[0].update(output="lots")),
     "boolean rate": ("prices.yaml", lambda d: opus(d)[0].update(output=True)),
@@ -164,3 +231,33 @@ def test_a_price_edit_restarts_only_the_gate_and_the_brake():
     plan = plan_restarts([], ["src/spark/meter/prices.yaml"], registry, registry, [], restart_front=False,
                          active=lambda unit: True)
     assert plan == RestartPlan(now=["local-ai-brake.service", "local-ai-gate.service"], after_quiet=[])
+
+
+def test_the_shipped_files_hold_the_proxies_beyond_claude():
+    book = load()
+    whisper = book.lines["whisper-1"]
+    assert len(whisper) == 1 and whisper[0].start == epoch("2026-09-01") and whisper[0].name == "OpenAI whisper-1"
+    assert whisper[0].per_minute == Decimal("0.006") and whisper[0].base is None and whisper[0].above is None
+    mini = book.lines["gpt-4o-mini-transcribe"][0]
+    assert mini.per_minute is None and mini.name == "OpenAI gpt-4o-mini-transcribe"
+    assert (mini.base.input, mini.base.output, mini.base.cache_read, mini.base.write_5m, mini.base.write_1h) == (
+        Decimal("1.25"), Decimal("5.00"), Decimal("1.25"), 0, 0)
+    voyage = book.lines["voyage-4-lite"][0]
+    assert voyage.name == "Voyage voyage-4-lite" and voyage.start == epoch("2026-09-01")
+    assert (voyage.base.input, voyage.base.output, voyage.base.cache_read) == (Decimal("0.02"), 0, Decimal("0.02"))
+    for model in ("whisper-large-v3", "whisper-large-v3-turbo"):
+        assert book.mapping[model].tier == "whisper-1"
+    for model in ("qwen3-asr-1.7b-32k", "qwen3-asr-1.7b-64k", "qwen3-asr-0.6b-32k", "qwen3-asr-0.6b-64k"):
+        assert book.mapping[model].tier == "gpt-4o-mini-transcribe"
+    assert book.mapping["qwen3-embedding-0.6b"].tier == "voyage-4-lite"
+    assert book.uncached_as_writes["opus"] is False
+
+
+def test_the_table_has_the_speech_and_embedding_rows():
+    by_model = {r.split("|")[1].strip().strip("`"): r for r in table(load()).splitlines()[2:]}
+    assert by_model["whisper-large-v3"] == ("| `whisper-large-v3` | OpenAI whisper-1 | 2026-09-01 "
+                                            "| $0.006 per audio minute | — | — |")
+    assert by_model["qwen3-asr-0.6b-64k"] == ("| `qwen3-asr-0.6b-64k` | OpenAI gpt-4o-mini-transcribe | 2026-09-01 "
+                                              "| $1.25 | $1.25 | $5.00 |")
+    assert by_model["qwen3-embedding-0.6b"] == ("| `qwen3-embedding-0.6b` | Voyage voyage-4-lite | 2026-09-01 "
+                                                "| $0.02 | $0.02 | $0.00 |")

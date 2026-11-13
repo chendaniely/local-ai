@@ -84,7 +84,7 @@ def test_a_none_row_with_no_counts_is_none():
     # A transcription row has no token counts; `none` means unpriced on purpose, so it must never read as no_counts,
     # which the summary counts as unpriced (the final review's I1).
     for r in (row("nil", p=None, c=None, o=None), row("nil", o=None), row("nil", p=100, c=101, o=1),
-              row("whisper-large-v3-turbo", p=None, c=None, o=None)):
+              row("nil", p=None, c=None, o=None)):
         priced = pricing.price(BOOK, r)
         assert (priced.why, priced.tier, priced.usd) == ("none", "none", None)
     assert pricing.price(BOOK, row("nil", end="error")).why == "not_done"  # not_done still comes first
@@ -138,3 +138,54 @@ def test_since_parsing():
     for bad in ("nan", "inf", "-inf", "yesterday"):
         with pytest.raises(argparse.ArgumentTypeError):
             _since(bad)
+
+
+def test_embeddings_and_asr_rows_price_without_a_cache_count():
+    emb = pricing.price(BASE, row("qwen3-embedding-0.6b", p=1_000_000, c=None, o=0))
+    assert emb.usd == Decimal("0.02") and emb.why is None and emb.tier == "voyage-4-lite"
+    asr = pricing.price(BASE, row("qwen3-asr-1.7b-32k", p=1_000_000, c=0, o=1_000_000))
+    assert asr.usd == Decimal("6.25")
+    asr_no_cache = pricing.price(BASE, row("qwen3-asr-1.7b-32k", p=1_000_000, c=None, o=1_000_000))
+    assert asr_no_cache.usd == Decimal("6.25")
+
+
+def test_a_per_minute_row_waits_for_its_length():
+    for r in (row("whisper-large-v3", p=None, c=None, o=None), row("whisper-large-v3-turbo")):
+        priced = pricing.price(BASE, r)
+        assert (priced.usd, priced.tier, priced.line, priced.why) == (None, "whisper-1", "whisper-1@2026-09-01",
+                                                                      "no_audio_length")
+    assert "no_audio_length" in pricing.WHYS and pricing.WHYS[-1] == "no_audio_length"
+    assert pricing.price(BASE, row("whisper-large-v3", end="error")).why == "not_done"
+
+
+WHISPER = dataclasses.replace(BOOK, mapping={**BOOK.mapping, "speech": Mapping("whisper-1", Decimal(1)),
+                                             "speech2": Mapping("whisper-1", Decimal(2))})
+
+
+def speech(audio_s, model="speech", end="done", **more) -> Row:
+    return Row("front", "0" * 16, at("2026-11-01T00:00:00Z"), None, model, None, None, None, end,
+               audio_s=audio_s, **more)
+
+
+def test_a_per_minute_row_is_priced_by_its_audio():
+    priced = pricing.price(WHISPER, speech(90.0))
+    assert priced.usd == Decimal("0.009") and priced.why is None
+    assert (priced.tier, priced.line) == ("whisper-1", "whisper-1@2026-09-01")
+    assert pricing.price(WHISPER, speech(90.5)).usd == Decimal("90.5") / 60 * Decimal("0.006")
+    assert pricing.price(WHISPER, speech(90.0, "speech2")).usd == Decimal("0.018")
+
+
+def test_a_per_minute_row_with_no_length_says_so_and_a_refused_one_is_not_done():
+    assert pricing.price(WHISPER, speech(None)).why == "no_audio_length"
+    assert pricing.price(WHISPER, speech(None, end="refused")).why == "not_done"
+
+
+def test_row_json_carries_the_audio_fields():
+    out = pricing.row_json(speech(90.0, audio_est=True), pricing.price(WHISPER, speech(90.0)))
+    assert out["audio_s"] == 90.0 and out["a_est"] is True and "audio_est" not in out
+    plain = pricing.row_json(speech(None), pricing.price(WHISPER, speech(None)))
+    assert "audio_s" not in plain and "a_est" not in plain and "bytes_in" not in plain
+
+
+def test_row_json_may_carry_bytes_in():
+    assert pricing.row_json(speech(None, bytes_in=5), pricing.price(WHISPER, speech(None)))["bytes_in"] == 5

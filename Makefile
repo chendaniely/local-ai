@@ -18,7 +18,7 @@ TEST_PYTEST  = uv run --frozen --project spark pytest $(if $(ARGS),$(ARGS),spark
 TEST_SCOPE   = systemd-run --user --scope --quiet -p MemoryMax=$(TEST_CAP_GIB)G -p MemorySwapMax=0 --
 TEST_MANAGER = systemctl --user show --property=Version --value >/dev/null 2>&1 || { echo "make test: your systemd user manager isn't answering, and on the Spark the tests run only under its $(TEST_CAP_GIB) GiB cap. Log in again, so the user manager starts, then run make test again." >&2; exit 1; }
 .DEFAULT_GOAL := help
-.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients clients-pi clients-opencode clients-hermes clients-posit doctor usage usage-push fast-coder flash-next speech
+.PHONY: help test hooks lint docs bootstrap bootstrap-dry-run hold-gpu hold-gpu-dry-run upgrade-gpu upgrade-gpu-dry-run apply apply-dry-run apply-now restart-front install-units install-units-dry-run pull status brake-release logs tunnel clients clients-pi clients-opencode clients-hermes clients-posit doctor usage usage-push prices fast-coder flash-next speech
 
 help: ## List the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -116,8 +116,11 @@ clients-posit: ## Add the Spark provider to Posit Assistant only
 doctor: ## On the Spark: Phase 0's guardrails and the stack, checked in one pass
 	$(SPARK) doctor
 
-usage: ## On the Spark: what the models would have cost at Claude's prices (today, this month, last month, all time)
+usage: ## On the Spark: what the models would have cost at hosted prices (today, this month, last month, all time)
 	$(SPARK) usage summary
+
+prices: ## On the Mac or the Spark: every model's pricing proxy and price
+	$(SPARK) usage prices
 
 usage-push: ## On the Mac: push OpenCode's rows for the by-hand engines to the Spark, by hand (read here, merged there)
 	f=$$(mktemp) || exit 1; $(SPARK) usage harvest --source opencode >"$$f"; s=$$?; if [ $$s -eq 0 ]; then $(USAGE_IMPORT) <"$$f"; s=$$?; fi; rm -f "$$f"; exit $$s

@@ -120,6 +120,12 @@ def test_help_says_what_tunnel_and_brake_release_reach():
     assert "through the gate" in lines["brake-release"] and "directly" in lines["brake-release"]
 
 
+def test_make_prices_runs_the_prices_verb():
+    assert make("-n", "prices").stdout.splitlines() == ["uv run --frozen --quiet --project spark spark usage prices"]
+    help_text = make("help").stdout
+    assert "On the Mac or the Spark: every model's pricing proxy and price" in help_text
+
+
 def test_make_usage_and_usage_push_run_the_summary_and_the_harvest_sent_to_the_spark():
     assert make("-n", "usage").stdout.splitlines() == ["uv run --frozen --quiet --project spark spark usage summary"]
     push = make("-n", "usage-push").stdout

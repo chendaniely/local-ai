@@ -1,7 +1,8 @@
 """The front's ASGI app (website/design/phase-2a.md, Task 20): only the inference routes reach llama-swap; client keys
 held as digests and checked before any of a body is read; bodies parsed within their caps, uploads spooled to disk,
 and every request rebuilt; per-key caps; the front's own refusals in the asking key's words; one journal line a
-request, naming the key, the model, the status and the duration only.
+request, naming the key, the model, the status and the duration only; and (Task E3) a whisper.cpp transcription's
+answer held, read for the recording's length and sent as the client asked, while every other answer goes as it comes.
 
 The app is called as uvicorn calls it, with a recording stand-in for llama-swap (Task 21's Upstream, as the app calls
 it) and one for the gate (Task 22's GateLink); two tests serve it on a real uvicorn with Task 9's protocol, on
@@ -18,12 +19,12 @@ import re
 import anyio
 import pytest
 
-from front_helpers import (BOUNDARY, DIGESTS, GROUPS, KEYS, KEYS_TEXT, MIB, MODELS, field, file_part,
-                           form_body)
+from front_helpers import (BOUNDARY, DIGESTS, GROUPS, KEYS, KEYS_TEXT, MIB, MODELS, SRT, VERBOSE, VTT, field,
+                           file_part, form_body)
 from spark import messages
 from spark.credentials import CredentialError
 from spark.front import app as front_app
-from spark.front import gatelink, parse
+from spark.front import gatelink, parse, upstream, usage
 from spark.protocols import make_protocol
 from spark.registry import RegistryError
 from uvicorn_helpers import (HEADER_TIMEOUT_S, connect, read_response, response, serving, tcp_listener,
@@ -52,9 +53,10 @@ class Forwarded:
 class Response:
     """What Task 21's Upstream.forward returns: the status, the headers and the body's chunks."""
 
-    def __init__(self, status: int = 200, chunks: tuple[bytes, ...] = (b'{"ok":true}',)):
+    def __init__(self, status: int = 200, chunks: tuple[bytes, ...] = (b'{"ok":true}',),
+                 headers: list[tuple[bytes, bytes]] | None = None):
         self.status = status
-        self.headers = [(b"content-type", b"application/json")]
+        self.headers = [(b"content-type", b"application/json")] if headers is None else list(headers)
         self._chunks = chunks
         self.closed = False
 
@@ -67,12 +69,14 @@ class Response:
 
 
 class Upstream:
-    """llama-swap's stand-in: it records each request, its body read whole, and answers 200. `during` is called with
-    each request once its body is read, before the answer; `hold`, when set, holds every answer until it is."""
+    """llama-swap's stand-in: it records each request, its body read whole, and answers 200, or with the next of `next`
+    while it has one. `during` is called with each request once its body is read, before the answer; `hold`, when set,
+    holds every answer until it is."""
 
     def __init__(self):
         self.seen: list[Forwarded] = []
         self.responses: list[Response] = []
+        self.next: list[Response] = []
         self.during = None
         self.hold: asyncio.Event | None = None
         self.raises: Exception | None = None
@@ -88,7 +92,7 @@ class Upstream:
             raise self.raises
         if self.hold is not None:
             await self.hold.wait()
-        response = Response()
+        response = self.next.pop(0) if self.next else Response()
         self.responses.append(response)
         return response
 
@@ -127,6 +131,16 @@ class Gate:
         return frozenset(self.ready)
 
 
+class Rows:
+    """The row file's stand-in, as the app calls rowfile.RowFile: each row put kept in `rows`."""
+
+    def __init__(self):
+        self.rows: list[dict] = []
+
+    def put(self, row, at):
+        self.rows.append(row)
+
+
 @dataclasses.dataclass
 class Front:
     app: front_app.FrontApp
@@ -135,16 +149,18 @@ class Front:
     lines: list[str]
     spool: object
     now: list[float]
+    rows: Rows | None = None
 
 
-def make_front(tmp_path, *, ready=NAMES, keys=KEYS, digests=DIGESTS, budget: int | None = None) -> Front:
+def make_front(tmp_path, *, ready=NAMES, keys=KEYS, digests=DIGESTS, budget: int | None = None, models=MODELS,
+               rows: Rows | None = None) -> Front:
     spool = tmp_path / "spool"
     spool.mkdir(exist_ok=True)
     upstream, gate, lines, now = Upstream(), Gate(ready), [], [1000.0]
-    app = front_app.FrontApp(parse.ModelList(MODELS), keys, GROUPS, digests, upstream=upstream, gate=gate,
+    app = front_app.FrontApp(parse.ModelList(models), keys, GROUPS, digests, upstream=upstream, gate=gate,
                              caps=parse.KeyCaps(keys, GROUPS), log=lines.append, clock=lambda: now[0],
-                             spool_dir=spool, budget=None if budget is None else parse.BodyBudget(budget))
-    return Front(app, upstream, gate, lines, spool, now)
+                             spool_dir=spool, budget=None if budget is None else parse.BodyBudget(budget), rows=rows)
+    return Front(app, upstream, gate, lines, spool, now, rows)
 
 
 @pytest.fixture
@@ -175,10 +191,12 @@ def _with_more(chunks):
 
 async def call(app, method: str, path: str, *, key: str | None = "k1", body: bytes | None = None, chunks=None,
                content_type: bytes | None = b"application/json", length: int | bool | None = None,
-               headers: list[tuple[bytes, bytes]] = (), query: bytes = b"") -> Answer:
+               headers: list[tuple[bytes, bytes]] = (), query: bytes = b"", sent_to: list | None = None,
+               leave: asyncio.Event | None = None) -> Answer:
     """One request, as uvicorn's h11 protocol makes it: the key as a bearer key, the body in one message or in
     `chunks`, its Content-Length counted unless `length` gives one or is False (a chunked body); then nothing until
-    the answer ends, when the client goes."""
+    the answer ends, when the client goes. With `sent_to`, each message the app sends is put there as it is sent; with
+    `leave`, the client goes when it is set instead."""
     if chunks is None:
         chunks = [] if body is None else [body]
     raw = [(b"host", b"spark")]
@@ -198,7 +216,7 @@ async def call(app, method: str, path: str, *, key: str | None = "k1", body: byt
     pending = _with_more(chunks)
     done = asyncio.Event()
     calls = 0
-    sent: list[dict] = []
+    sent: list[dict] = [] if sent_to is None else sent_to
     received = False
 
     async def receive():
@@ -209,7 +227,7 @@ async def call(app, method: str, path: str, *, key: str | None = "k1", body: byt
             return {"type": "http.request", "body": step[0], "more_body": step[1]}
         if calls == 1:
             return {"type": "http.request", "body": b"", "more_body": False}
-        await done.wait()
+        await (done if leave is None else leave).wait()
         return {"type": "http.disconnect"}
 
     async def send(message):
@@ -873,6 +891,404 @@ async def test_a_client_gone_while_its_body_comes_is_logged_gone(front):
     assert sent == [] and front.upstream.seen == []
     assert front.lines == ["front: agent - gone 0.0s"]
     assert front.app.caps.open("agent") == 0
+
+
+# Whisper's recording length, and Qwen3-ASR's tokens (Task E3; website/design/usage-meter-every-model.md, *The front
+# learns each Whisper recording's length*). The model list names each model's engine, as the gate's does; whisper's
+# answers are front_helpers.py's, with whisper.cpp v1.9.4's shape. Every text and number here is invented.
+
+ASR = "qwen3-asr-1.7b"
+ENGINES = {GEMMA: "llama.cpp", EMBED: "llama.cpp", WHISPER: "whisper.cpp", CODER: "llama.cpp"}
+ENGINE_MODELS = [{**entry, "engine": ENGINES[entry["name"]]} for entry in MODELS] + [
+    {"name": ASR, "roles": ["asr"], "label": "Qwen3-ASR", "resident": False, "engine": "llama.cpp"}]
+TRANSCRIBE = "/v1/audio/transcriptions"
+DATE = (b"date", b"Thu, 12 Nov 2026 09:00:00 GMT")
+JSON_TYPE = (b"content-type", b"application/json")
+CONVERTED = {"json": b'{"text":" Hello there.\\n \xc3\x87a va? \xe4\xbd\xa0\xe5\xa5\xbd \xf0\x9f\x98\x80\\n"}',
+             "text": " Hello there.\n Ça va? 你好 😀\n".encode()}
+CONVERTED_TYPE = {"json": "application/json", "text": "text/html; charset=utf-8"}
+
+
+def whisper_front(tmp_path, **options) -> Front:
+    return make_front(tmp_path, ready=[*NAMES, ASR], models=ENGINE_MODELS, rows=Rows(), **options)
+
+
+def upload(*fields: tuple[str, str], model: str = "stt") -> bytes:
+    return form_body([field("model", model), *(field(name, value) for name, value in fields),
+                      file_part(b"RIFF-standin-audio")])
+
+
+def answered(body: bytes, status: int = 200, content_type: bytes = b"application/json", pieces: int = 3) -> Response:
+    """Whisper's answer, as llama-swap passes it on: its type, its length and a date, its body in `pieces`."""
+    size = -(-len(body) // pieces) or 1
+    return Response(status, tuple(body[i:i + size] for i in range(0, len(body), size)) or (b"",),
+                    [(b"content-type", content_type), (b"content-length", str(len(body)).encode()), DATE])
+
+
+def fields_sent(seen: Forwarded) -> list[tuple[str, str]]:
+    """The fields of the form the front sent on (parse.encode_form's), the file's left out."""
+    return [(name.decode(), value.decode()) for name, value in
+            re.findall(rb'name="([^"]+)"\r\n\r\n(.*?)\r\n--spark-', seen.body, re.DOTALL)]
+
+
+async def transcribe(front: Front, *fields: tuple[str, str], model: str = "stt") -> Answer:
+    return await call(front.app, "POST", TRANSCRIBE, body=upload(*fields, model=model), content_type=FORM_TYPE)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("fields", "asked"), [
+    ((), "json"), ((("response_format", "json"),), "json"), ((("response_format", "text"),), "text")])
+async def test_whisper_is_asked_for_verbose_json_and_answers_as_it_would_have(tmp_path, fields, asked):
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(VERBOSE)]
+    answer = await transcribe(front, ("language", "en"), ("no_language_probabilities", "false"), *fields)
+    # Whisper's own json or text for it, byte for byte, with its own type, a length of its own, and the rest as it came.
+    assert (answer.status, answer.body) == (200, CONVERTED[asked])
+    assert answer.headers == {"content-type": CONVERTED_TYPE[asked], "content-length": str(len(CONVERTED[asked])),
+                              "date": DATE[1].decode()}
+    # The form went on asking for verbose_json once, with the token timestamps whisper gives the client's format, and
+    # for no language probabilities, whatever the client's form said: json and text never carry them.
+    [seen] = front.upstream.seen
+    assert fields_sent(seen) == [("model", "stt"), ("language", "en"), ("response_format", "verbose_json"),
+                                 ("token_timestamps", "false"), ("no_language_probabilities", "true")]
+    [row] = front.rows.rows
+    assert (row["route"], row["end"], row["status"], row["audio_s"]) == ("transcriptions", "done", 200, 12.345)
+    assert "audio_est" not in row
+    assert front.lines == [f"front: dan-mac {WHISPER} 200 0.0s"]
+    assert front.app.budget.held == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("asked", "body", "content_type", "audio_s", "estimated"), [
+    ("verbose_json", VERBOSE, b"application/json", 12.345, False),
+    ("srt", SRT, b"application/x-subrip", 62.345, True),
+    ("vtt", VTT, b"text/vtt", 3602.345, True),
+], ids=["verbose_json", "srt", "vtt"])
+async def test_verbose_json_srt_and_vtt_go_unchanged_and_leave_their_length(tmp_path, asked, body, content_type,
+                                                                          audio_s, estimated):
+    front = whisper_front(tmp_path)
+    upstream_answer = answered(body, content_type=content_type)
+    front.upstream.next = [upstream_answer]
+    answer = await transcribe(front, ("response_format", asked))
+    assert (answer.status, answer.body) == (200, body)
+    assert answer.headers == {"content-type": content_type.decode(), "content-length": str(len(body)),
+                              "date": DATE[1].decode()}
+    assert fields_sent(front.upstream.seen[0]) == [("model", "stt"), ("response_format", asked)]
+    [row] = front.rows.rows
+    assert (row["end"], row["audio_s"], row.get("audio_est", False)) == ("done", audio_s, estimated)
+    assert upstream_answer.closed
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("fields", "status", "body", "goes_as"), [
+    # detect_language: json's answer gains `language`, so json goes as asked, and its answer as it came.
+    ((("detect_language", "true"),), 200, b'{"text":" Hi.\\n","language":"english"}', "json"),
+    ((("response_format", "JSON"),), 200, b'{"text":" Hi.\\n"}', "JSON"),  # not one of whisper's formats
+    # Whisper's error, to a converted request: as it came, never converted.
+    ((("response_format", "text"),), 400, b'{"error":"failed to read audio data"}', "verbose_json"),
+    ((), 500, b'{"error":"failed to process audio"}', "verbose_json"),
+    # A verbose_json answer the front can't read the length of: as it came.
+    ((("response_format", "verbose_json"),), 200, b'{"text":" Hi.\\n","duration":null}', "verbose_json"),
+], ids=["detect_language", "JSON", "text, 400", "json, 500", "verbose_json unread"])
+async def test_anything_else_goes_as_it_came_and_its_row_has_no_length(tmp_path, fields, status, body, goes_as):
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(body, status)]
+    answer = await transcribe(front, *fields)
+    assert (answer.status, answer.body) == (status, body)
+    assert answer.headers == {"content-type": "application/json", "content-length": str(len(body)),
+                              "date": DATE[1].decode()}
+    assert dict(fields_sent(front.upstream.seen[0])).get("response_format", "json") == goes_as
+    [row] = front.rows.rows
+    assert "audio_s" not in row and "audio_est" not in row
+    assert row["end"] == ("done" if status == 200 else "error")
+
+
+BROKE_ANSWER = {"error": {"message": front_app.BROKE["dan"], "code": "front_error"}}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("body", [b'{"error":"failed"}', b"not json", VERBOSE.replace(b'"duration":12.345000267028809,',
+                                                                                      b"")],
+                         ids=["an error", "not json", "no duration"])
+async def test_a_converted_answer_without_a_readable_length_is_the_fronts_own_502(tmp_path, body):
+    # Never whisper's verbose_json in place of the json or text the client asked for.
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(body)]
+    answer = await transcribe(front, ("response_format", "text"))
+    assert (answer.status, answer.json()) == (502, BROKE_ANSWER)
+    assert answer.headers["x-should-retry"] == "false" and answer.headers["content-type"] == "application/json"
+    [row] = front.rows.rows
+    assert (row["end"], row["status"]) == ("error", 502) and "code" not in row and "audio_s" not in row
+    assert front.lines == [f"front: dan-mac {WHISPER} 502 0.0s ({front_app.HELD_UNREAD})"]
+
+
+@pytest.mark.anyio
+async def test_a_converted_answer_past_the_cap_ends_as_an_error_saying_why(tmp_path, monkeypatch):
+    monkeypatch.setattr(usage, "HELD_MAX", MIB)  # 16 MiB in the stack (test_front_usage.py pins it)
+    front = whisper_front(tmp_path)
+    big = answered(b"x" * (MIB + 1), pieces=4)
+    front.upstream.next = [big]
+    answer = await transcribe(front, ("response_format", "json"))
+    assert (answer.status, answer.json()) == (502, BROKE_ANSWER)
+    assert front.lines == [f"front: dan-mac {WHISPER} 502 0.0s (whisper's answer passed 1 MiB, the most the front "
+                           "holds to read it)"]
+    assert front.rows.rows[0]["end"] == "error" and big.closed and front.app.budget.held == 0
+    # At the cap itself, it is held and goes on.
+    front.upstream.next = [answered(b"x" * MIB, content_type=b"application/x-subrip", pieces=4)]
+    answer = await transcribe(front, ("response_format", "srt"))
+    assert (answer.status, len(answer.body)) == (200, MIB)
+
+
+class Watched(Response):
+    """An answer whose body comes a piece at a time, `watch` called between its pieces."""
+
+    def __init__(self, body: bytes, watch, pieces: int = 4, content_type: bytes = b"application/json"):
+        size = -(-len(body) // pieces)
+        super().__init__(200, tuple(body[i:i + size] for i in range(0, len(body), size)),
+                         [(b"content-type", content_type), (b"content-length", str(len(body)).encode())])
+        self.watch = watch
+
+    async def aiter_raw(self):
+        for piece in self._chunks:
+            yield piece
+            self.watch()
+
+
+@pytest.mark.anyio
+async def test_a_held_answer_is_charged_to_the_body_budget_and_given_back(tmp_path):
+    front = whisper_front(tmp_path)
+    seen: list[int] = []
+    front.upstream.next = [Watched(VERBOSE, lambda: seen.append(front.app.budget.held))]
+    assert (await transcribe(front)).status == 200
+    size = -(-len(VERBOSE) // 4)
+    assert seen == [parse.FORM_IN_MEMORY + min(size * n, len(VERBOSE)) for n in range(1, 5)]
+    assert front.app.budget.held == 0
+    # A budget with no room for a converted answer: the front's own 502, saying why, the answer never sent on.
+    front = whisper_front(tmp_path, budget=parse.FORM_IN_MEMORY + 10)  # less than VERBOSE's bytes
+    front.upstream.next = [answered(VERBOSE)]
+    answer = await transcribe(front, ("response_format", "text"))
+    assert (answer.status, answer.json()) == (502, BROKE_ANSWER)
+    assert front.lines == [f"front: dan-mac {WHISPER} 502 0.0s ({front_app.HELD_NO_ROOM})"]
+    assert front.app.budget.held == 0
+    # One that goes as it came goes on unheld, with no length.
+    front = whisper_front(tmp_path, budget=parse.FORM_IN_MEMORY + 10)  # less than SRT's bytes
+    front.upstream.next = [answered(SRT, content_type=b"application/x-subrip")]
+    answer = await transcribe(front, ("response_format", "srt"))
+    assert (answer.status, answer.body, answer.headers["content-length"]) == (200, SRT, str(len(SRT)))
+    [row] = front.rows.rows
+    assert row["end"] == "done" and "audio_s" not in row and front.lines == [f"front: dan-mac {WHISPER} 200 0.0s"]
+    assert front.app.budget.held == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("asked", ["verbose_json", "srt", "vtt"])
+async def test_an_unconverted_answer_past_the_cap_goes_on_unheld_with_no_length(tmp_path, monkeypatch, asked):
+    # What was held, and the piece that passed the cap, go at once; the rest as it comes, never charged; the client
+    # gets the answer as it came, and the row no length (the meter estimates it from the upload's size).
+    monkeypatch.setattr(usage, "HELD_MAX", 100)
+    front = whisper_front(tmp_path)
+    body = {"verbose_json": VERBOSE, "srt": SRT * 5, "vtt": VTT * 5}[asked][:400]
+    seen: list[int] = []
+    front.upstream.next = [Watched(body, lambda: seen.append(front.app.budget.held), pieces=8,
+                                   content_type=b"application/x-subrip")]
+    sent: list[dict] = []
+    answer = await call(front.app, "POST", TRANSCRIBE, body=upload(("response_format", asked)),
+                        content_type=FORM_TYPE, sent_to=sent)
+    assert (answer.status, answer.body, answer.headers["content-length"]) == (200, body, "400")
+    held = parse.FORM_IN_MEMORY
+    assert seen == [held + 50, held + 100] + [held] * 6  # two pieces held, then given back once sent
+    assert [len(message.get("body", b"")) for message in sent[1:]] == [50] * 8 + [0]
+    [row] = front.rows.rows
+    assert row["end"] == "done" and "audio_s" not in row and "audio_est" not in row
+    assert front.app.budget.held == 0
+
+
+@pytest.mark.anyio
+async def test_a_large_upload_asking_json_is_converted_and_its_row_has_its_length(tmp_path):
+    # Whatever the upload's size, as doctor --full's 170 MB WAV asked as json: its answer, verbose_json, is small, and
+    # only a converted answer past the held cap (a recording many hours long) is the front's own 502.
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(VERBOSE)]
+    audio = b"RIFF" + bytes(17 * MIB)
+    answer = await call(front.app, "POST", TRANSCRIBE, content_type=FORM_TYPE,
+                        body=form_body([field("model", "stt"), field("response_format", "json"), file_part(audio)]))
+    assert (answer.status, answer.body) == (200, CONVERTED["json"])
+    assert dict(fields_sent(front.upstream.seen[0]))["response_format"] == "verbose_json"
+    [row] = front.rows.rows
+    assert (row["bytes_in"], row["audio_s"]) == (len(audio), 12.345)
+
+
+@pytest.mark.anyio
+async def test_a_text_transcript_that_goes_as_it_came_is_never_scanned(tmp_path):
+    # With detect_language, text goes as it came, unheld; its transcript is never scanned for counts: it is the model's
+    # own text, which may hold anything, a usage object among it.
+    front = whisper_front(tmp_path)
+    transcript = b' He said "usage":{"input_tokens":9,"output_tokens":9} twice.\n'
+    paused = Paused((transcript[:20], transcript[20:]), b"text/html; charset=utf-8")
+    front.upstream.next = [paused]
+    sent: list[dict] = []
+    fields = (("response_format", "text"), ("detect_language", "true"))
+    task = asyncio.create_task(call(front.app, "POST", TRANSCRIBE, body=upload(*fields), content_type=FORM_TYPE,
+                                    sent_to=sent))
+    with anyio.fail_after(BOUND_S):
+        await paused.paused.wait()
+    assert any(message.get("body") == transcript[:20] for message in sent)  # unheld
+    paused.go.set()
+    answer = await task
+    assert (answer.status, answer.body) == (200, transcript)
+    assert fields_sent(front.upstream.seen[0]) == [("model", "stt"), *fields]
+    [row] = front.rows.rows
+    assert row["from"] == "none" and not {"p", "c", "o", "audio_s"} & set(row)
+
+
+class PastTheCap(Response):
+    """An answer of 50-byte pieces that passes a 100-byte cap at its third, then, once the front asks for its fourth,
+    sets `paused` and either waits for ever (`breaks` false) or breaks off."""
+
+    def __init__(self, breaks: bool):
+        super().__init__(200, tuple(bytes([65 + n]) * 50 for n in range(4)),
+                         [(b"content-type", b"application/x-subrip"), (b"content-length", b"400")])
+        self.breaks, self.paused = breaks, asyncio.Event()
+
+    async def aiter_raw(self):
+        for piece in self._chunks[:3]:
+            yield piece
+        self.paused.set()
+        if self.breaks:
+            raise upstream.Broken("llama-swap's answer broke off before its end")
+        await asyncio.Event().wait()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("way", ["client gone", "cut upstream"])
+async def test_an_answer_going_on_unheld_that_ends_early_sends_nothing_more_and_gives_its_charge_back(tmp_path,
+                                                                                                       monkeypatch,
+                                                                                                       way):
+    monkeypatch.setattr(usage, "HELD_MAX", 100)
+    front = whisper_front(tmp_path)
+    answer_upstream = PastTheCap(breaks=way == "cut upstream")
+    front.upstream.next = [answer_upstream]
+    sent: list[dict] = []
+    leave = asyncio.Event()
+    task = asyncio.create_task(call(front.app, "POST", TRANSCRIBE, body=upload(("response_format", "srt")),
+                                    content_type=FORM_TYPE, sent_to=sent, leave=leave))
+    with anyio.fail_after(BOUND_S):
+        await answer_upstream.paused.wait()
+        await until(lambda: len(sent) == 4)  # its head and the three pieces
+        assert front.app.budget.held == parse.FORM_IN_MEMORY  # the pieces' charge given back once they were sent
+        leave.set()
+        await task
+    assert [message.get("body") for message in sent[1:]] == [bytes([65 + n]) * 50 for n in range(3)]
+    assert all(message.get("more_body") for message in sent[1:])  # never its last chunk
+    assert answer_upstream.closed and front.app.budget.held == 0
+    [row] = front.rows.rows
+    assert row["end"] == {"client gone": "gone", "cut upstream": "cut"}[way] and "audio_s" not in row
+
+
+@pytest.mark.anyio
+async def test_a_whisper_answer_is_never_scanned_for_counts(tmp_path):
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(b'{"text":"x","usage":{"input_tokens":5,"output_tokens":3}}')]
+    assert (await transcribe(front, ("response_format", "lrc"))).status == 200  # a format whisper answers as json
+    [row] = front.rows.rows
+    assert row["from"] == "none" and not {"p", "c", "o"} & set(row)
+
+
+class BreaksOff(Response):
+    """An answer whose body breaks off after its first piece, as upstream.UpstreamResponse raises it."""
+
+    async def aiter_raw(self):
+        yield self._chunks[0]
+        raise upstream.Broken("llama-swap's answer broke off before its end")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("asked", "first", "content_type"), [
+    ("json", VERBOSE[:40], "application/json"), ("text", VERBOSE[:40], "text/html; charset=utf-8"),
+    ("srt", SRT[:20], "application/x-subrip")], ids=["json", "text", "srt"])
+async def test_a_held_answer_that_breaks_off_is_a_cut(tmp_path, asked, first, content_type):
+    front = whisper_front(tmp_path)
+    upstream_type = b"application/x-subrip" if asked == "srt" else b"application/json"
+    front.upstream.next = [BreaksOff(200, (first, b"never"), [(b"content-type", upstream_type),
+                                                               (b"content-length", b"9999"), DATE])]
+    sent: list[dict] = []
+    answer = await call(front.app, "POST", TRANSCRIBE, body=upload(("response_format", asked)),
+                        content_type=FORM_TYPE, sent_to=sent)
+    # Its head, with no length, so the cut shows in the client's framing; what came of srt as it came, and nothing of
+    # a verbose_json the client didn't ask for; then no last chunk.
+    assert answer.status == 200 and answer.headers == {"content-type": content_type, "date": DATE[1].decode()}
+    assert answer.body == (first if asked == "srt" else b"")
+    assert all(message.get("more_body") for message in sent[1:])
+    [row] = front.rows.rows
+    assert row["end"] == "cut" and "audio_s" not in row
+    await until(lambda: front.lines == [f"front: dan-mac {WHISPER} cut 0.0s"])
+
+
+ASR_ANSWER = ('{"type":"transcript.text.done","text":"Hello there.","usage":{"type":"tokens","input_tokens":412,'
+              '"output_tokens":9,"total_tokens":421,"input_tokens_details":{"cached_tokens":12}}}').encode()
+
+
+@pytest.mark.anyio
+async def test_qwen3_asr_goes_as_it_came_and_is_counted_from_its_usage(tmp_path):
+    front = whisper_front(tmp_path)
+    front.upstream.next = [answered(ASR_ANSWER)]
+    answer = await transcribe(front, ("language", "zh"), model=ASR)
+    assert (answer.status, answer.body) == (200, ASR_ANSWER)
+    assert fields_sent(front.upstream.seen[0]) == [("model", ASR), ("language", "zh")]
+    [row] = front.rows.rows
+    assert {name: row.get(name) for name in ("model", "engine", "route", "p", "c", "o", "from")} == {
+        "model": ASR, "engine": "llama.cpp", "route": "transcriptions", "p": 412, "c": 12, "o": 9, "from": "usage"}
+    assert "audio_s" not in row
+
+
+class Paused(Response):
+    """An answer whose first piece comes at once and the rest only once `go` is set; `paused` is set when the front
+    asks for the rest."""
+
+    def __init__(self, chunks: tuple[bytes, ...], content_type: bytes):
+        super().__init__(200, chunks, [(b"content-type", content_type)])
+        self.paused, self.go = asyncio.Event(), asyncio.Event()
+
+    async def aiter_raw(self):
+        yield self._chunks[0]
+        self.paused.set()
+        await self.go.wait()
+        for piece in self._chunks[1:]:
+            yield piece
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("what", "held"), [
+    ("chat stream", False), ("embeddings", False), ("qwen3-asr", False), ("whisper, another format", False),
+    ("whisper, srt", True)])
+async def test_only_whisper_transcriptions_are_held(tmp_path, what, held):
+    # Each answer but whisper's transcriptions goes to the client a piece at a time, as it comes, as before: its first
+    # piece is the client's before llama-swap sends the rest.
+    front = whisper_front(tmp_path)
+    request = {
+        "chat stream": ("/v1/chat/completions", chat("coder", stream=True), b"application/json",
+                        (b'data: {"choices":[]}\n\n', b"data: [DONE]\n\n"), b"text/event-stream"),
+        "embeddings": ("/v1/embeddings", json.dumps({"model": "embed", "input": "hi"}).encode(), b"application/json",
+                       (b'{"data":[', b'],"usage":{"prompt_tokens":2,"total_tokens":2}}'), b"application/json"),
+        "qwen3-asr": (TRANSCRIBE, upload(model=ASR), FORM_TYPE, (ASR_ANSWER[:30], ASR_ANSWER[30:]),
+                      b"application/json"),
+        "whisper, another format": (TRANSCRIBE, upload(("response_format", "lrc")), FORM_TYPE,
+                                    (b'{"text":', b'" Hi.\\n"}'), b"application/json"),
+        "whisper, srt": (TRANSCRIBE, upload(("response_format", "srt")), FORM_TYPE, (SRT[:20], SRT[20:]),
+                         b"application/x-subrip"),
+    }[what]
+    path, body, content_type, chunks, answer_type = request
+    paused = Paused(chunks, answer_type)
+    front.upstream.next = [paused]
+    sent: list[dict] = []
+    task = asyncio.create_task(call(front.app, "POST", path, body=body, content_type=content_type, sent_to=sent))
+    with anyio.fail_after(BOUND_S):
+        await paused.paused.wait()
+    first_is_the_clients = any(message.get("body") == chunks[0] for message in sent)
+    paused.go.set()
+    answer = await task
+    assert first_is_the_clients is not held
+    assert (answer.status, answer.body) == (200, b"".join(chunks))
 
 
 # On a real uvicorn.

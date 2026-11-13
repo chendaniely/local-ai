@@ -1,5 +1,5 @@
-"""The meter's price files (the design's part 1): which Claude tier each model is priced at (mapping.yaml), the dated
-price lines of each tier (prices.yaml) and the providers that reached brightroar (providers.yaml).
+"""The meter's price files (the design's part 1): which proxy each model is priced as (mapping.yaml), the dated
+price lines of each proxy (prices.yaml) and the providers that reached brightroar (providers.yaml).
 
 Nothing stored holds a dollar: prices are applied when a summary is read, so a remap or a corrected line reprices the
 past. Every refusal is a PriceError naming the file and the reason, which `cli.main` prints. At module level this
@@ -8,16 +8,21 @@ imports only the standard library, `yaml` and `spark.paths`, and the front never
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from spark import paths
 
+if TYPE_CHECKING:
+    from spark.registry import Model
+
 TIERS = ("opus", "sonnet", "haiku", "fable")
+PROXY_NAME = re.compile(r"[a-z0-9][a-z0-9.-]*")
 RATE_FIELDS = ("input", "output", "cache_read", "write_5m", "write_1h")
 
 
@@ -40,10 +45,11 @@ class PriceLine:
     tier: str
     start: float  # UTC epoch of 00:00 on its `from` day
     name: str
-    base: Rates
+    base: Rates | None  # None for a per-minute line
     above: Rates | None
     above_over: int | None
     day: str = ""  # its `from` day, ISO
+    per_minute: Decimal | None = None  # US dollars per audio minute; set only on a per-minute line
 
     @property
     def label(self) -> str:
@@ -52,7 +58,7 @@ class PriceLine:
 
 @dataclass(frozen=True)
 class Mapping:
-    tier: str  # one of TIERS, or "none"
+    tier: str  # a key of prices.yaml's tiers, or "none"
     factor: Decimal
 
 
@@ -140,6 +146,12 @@ def _line(file: str, tier: str, index: int, raw: Any) -> PriceLine:
     name = raw.get("name")
     if not isinstance(name, str) or not name:
         raise PriceError(f"{where}: name should be a string")
+    if "per_minute" in raw:
+        extra = sorted(set(raw) - {"from", "name", "per_minute"})
+        if extra:
+            raise PriceError(f"{where}: a per-minute line holds only from, name and per_minute, not {extra[0]}")
+        rate = _decimal(where, "per_minute", raw["per_minute"], positive=True)
+        return PriceLine(tier, start, name, None, None, None, day, rate)
     base = _rates(where, raw)
     above = above_over = None
     if "above" in raw:
@@ -156,8 +168,8 @@ def _prices(folder: Path) -> dict[str, list[PriceLine]]:
     tiers = _mapping_of("prices.yaml", data.get("tiers"), "tiers")
     lines: dict[str, list[PriceLine]] = {}
     for tier, raw_lines in tiers.items():
-        if tier not in TIERS:
-            raise PriceError(f"prices.yaml: {tier!r} isn't a tier (one of {', '.join(TIERS)})")
+        if not isinstance(tier, str) or not PROXY_NAME.fullmatch(tier):
+            raise PriceError(f"prices.yaml: {tier!r} isn't a proxy name (lowercase letters, digits, . and -)")
         if not isinstance(raw_lines, list) or not raw_lines:
             raise PriceError(f"prices.yaml: {tier} should be a list of lines")
         parsed = [_line("prices.yaml", tier, i, raw) for i, raw in enumerate(raw_lines)]
@@ -186,8 +198,8 @@ def _mappings(folder: Path) -> tuple[dict[str, Mapping], dict[str, bool]]:
         where = f"mapping.yaml: model {model}"
         raw = _mapping_of(where, raw, "its entry")
         tier = raw.get("tier")
-        if tier not in (*TIERS, "none"):
-            raise PriceError(f"{where}: tier should be one of {', '.join(TIERS)} or none, not {tier!r}")
+        if tier != "none" and not isinstance(tier, str):
+            raise PriceError(f"{where}: tier should be a key of prices.yaml or none, not {tier!r}")
         factor = _decimal(where, "factor", raw.get("factor", 1), positive=True)
         models[str(model)] = Mapping(tier, factor)
     return models, switches
@@ -222,7 +234,12 @@ def load(folder: Path | None = None) -> PriceBook:
     """The three files of `folder` (paths.METER_DIR, read when called), or a PriceError naming the one at fault."""
     folder = paths.METER_DIR if folder is None else folder
     models, switches = _mappings(folder)
-    return PriceBook(models, _prices(folder), switches, _providers(folder))
+    lines = _prices(folder)
+    for model, mapped in models.items():
+        if mapped.tier != "none" and mapped.tier not in lines:
+            raise PriceError(f"mapping.yaml: model {model}: tier {mapped.tier!r} is neither none nor a key of "
+                             f"prices.yaml ({', '.join(lines)})")
+    return PriceBook(models, lines, switches, _providers(folder))
 
 
 def line_at(book: PriceBook, tier: str, t: float) -> PriceLine | None:
@@ -250,9 +267,10 @@ TABLE_HEAD = ("| Model | Priced as | Since | Fresh input | Cached input | Output
 
 
 def table(book: PriceBook) -> str:
-    """Every model of the mapping, in its order, with the proxy it's priced as: its tier's newest line, in US dollars per
-    million tokens. A long prompt's rates follow `;`, since a request whose prompt is over that many tokens is priced at
-    them throughout. website/reference/model-prices.md holds this table, and a test keeps the two the same."""
+    """Every model of the mapping, in its order, with the proxy it's priced as: its tier's newest line, in US dollars
+    per million tokens or per audio minute. A long prompt's rates follow `;`, since a request whose prompt is over that
+    many tokens is priced at them throughout. website/reference/model-prices.md holds this table, and a test keeps the
+    two the same."""
     rows = list(TABLE_HEAD)
     for model, mapped in book.mapping.items():
         if mapped.tier == "none":
@@ -263,13 +281,54 @@ def table(book: PriceBook) -> str:
             continue
         line = book.lines[mapped.tier][-1]
         factor = "" if mapped.factor == 1 else f" × {mapped.factor}"
-        cells = " | ".join(_rate(line, field) for field in ("input", "cache_read", "output"))
+        if line.per_minute is not None:
+            cells = f"${line.per_minute} per audio minute | — | —"
+        else:
+            cells = " | ".join(_rate(line, field) for field in ("input", "cache_read", "output"))
         rows.append(f"| `{model}` | {line.name}{factor} | {line.day} | {cells} |")
     return "\n".join(rows)
 
 
 def _rate(line: PriceLine, field: str) -> str:
+    assert line.base is not None
     text = f"${getattr(line.base, field):.2f}"
     if line.above is not None and line.above_over is not None:
         text += f"; ${getattr(line.above, field):.2f} above {line.above_over:,}"
     return text
+
+
+_ACTIVE = re.compile(r"(?<![a-z0-9])a(\d+(?:\.\d+)?)b(?![a-z0-9])", re.IGNORECASE)
+_SIZE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])", re.IGNORECASE)
+BIG_MODEL_B = 6  # parameters used per token, in billions: at or above it a chat model is priced as sonnet
+
+
+def parameters_used(model: Model) -> Decimal | None:
+    """The billions of parameters a chat model uses per token, read from its name, else its source file's, else its
+    repo's: `A<n>B` (active) wins over `<n>B`. None when none says."""
+    for text in (model.name, model.source.file, model.source.repo):
+        for pattern in (_ACTIVE, _SIZE):
+            found = pattern.search(text)
+            if found:
+                return Decimal(found.group(1))
+    return None
+
+
+def suggest(name: str, model: Model) -> str | None:
+    """The mapping line a new model would get by the design's rule, as it would sit under `models:` (without its
+    indent), or None when the rule can't say: Dan accepts or changes it, and nothing is priced by a guess."""
+    proxy: str | None = None
+    if model.capability == "embeddings":
+        proxy = "voyage-4-lite"
+    elif model.capability == "transcription":
+        proxy = {"whisper.cpp": "whisper-1", "llama.cpp": "gpt-4o-mini-transcribe"}.get(model.engine)
+    elif model.capability == "chat":
+        used = parameters_used(model)
+        if used is not None:
+            proxy = "sonnet" if used >= BIG_MODEL_B else "haiku"
+    return None if proxy is None else f"{name}: {{tier: {proxy}}}"
+
+
+def missing_lines(models: dict[str, Model], book: PriceBook) -> list[str]:
+    """One line per registry model with no mapping line: its name and the line suggested for it."""
+    return [f"{name} ({suggest(name, model) or 'no suggestion: pick its proxy'})"
+            for name, model in sorted(models.items()) if name not in book.mapping]

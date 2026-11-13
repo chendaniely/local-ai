@@ -1,4 +1,4 @@
-"""spark.meter.summary and `spark usage summary`: the spend at Claude's prices by day, month and all time, in Dan's
+"""spark.meter.summary and `spark usage summary`: the spend at hosted prices by day, month and all time, in Dan's
 zone. Every row, price and file here is invented."""
 
 from __future__ import annotations
@@ -14,13 +14,16 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from spark import cli, paths
-from spark.meter import prices, summary
+from spark.meter import prices, pricing, summary
 from spark.meter.store import Row, Store
 
 # The models these rows use pinned at Opus, so Dan's remaps of the shipped mapping never move these sums.
 _SHIPPED = prices.load()
 BOOK = dataclasses.replace(_SHIPPED, mapping={**_SHIPPED.mapping, **{
-    name: prices.Mapping("opus", Decimal(1)) for name in ("qwen3.8-27b", "gemma-4-26b-a4b")}})
+    name: prices.Mapping("opus", Decimal(1)) for name in ("qwen3.8-27b", "gemma-4-26b-a4b")},
+    # unpriced on purpose here, so the shipped speech and embedding proxies never move these counts
+    **{name: prices.Mapping("none", Decimal(1)) for name in (
+        "qwen3-embedding-0.6b", "whisper-large-v3-turbo", "qwen3-asr-0.6b-32k")}})
 NY = "America/New_York"
 LA = "America/Los_Angeles"  # its fall-back is on 2026-11-01
 CONTRACT_KEYS = {"v", "made_at", "zone", "zone_from", "counter_start", "last_row_at", "periods", "by_model", "flags",
@@ -111,14 +114,26 @@ def test_unpriced_and_flags():
     assert (alone["requests"], alone["p"], alone["c"], alone["o"]) == (5, 5_000_000, 3_600_000, 50_000)
 
 
-def test_a_transcription_is_not_unpriced():
-    # Speech rows carry no token counts, and their models are `none`: unpriced on purpose, never "N unpriced"; a chat
-    # row with no counts (a route the front doesn't scan) is unpriced (the final review's I1).
+def test_a_model_mapped_to_none_is_not_unpriced():
+    # A model mapped to `none` is unpriced on purpose, never "N unpriced", with or without counts; a chat row with no
+    # counts (a route the front doesn't scan) is unpriced (the final review's I1). The name is a test book's: the
+    # shipped book maps no model to `none`, and the test below pins what it does with a Qwen3-ASR row.
     t = local("2026-11-05T10:00")
     rows = [row(t, "whisper-large-v3-turbo", p=None, c=None, o=None),
             row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None), row(t, p=None, c=None, o=None)]
     this = make(rows, local("2026-11-06T10:00"))["periods"]["this_month"]
     assert (this["requests"], this["unpriced"], this["usd"]) == (3, 1, 0.0)
+
+
+def test_a_shipped_qwen3_asr_row_without_counts_is_unpriced():
+    # Rows written before the front counted audio (and any answer with no usage block) have nothing to price by: the
+    # shipped book prices Qwen3-ASR per minute, so `no_counts`, which the summary counts as unpriced (final review, I1).
+    t = local("2026-11-05T10:00")
+    out = summary.summarize(Store([row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None)]), _SHIPPED,
+                            summary.Private(None, NY), local("2026-11-06T10:00"))
+    this = out["periods"]["this_month"]
+    assert (this["requests"], this["unpriced"], this["usd"]) == (1, 1, 0.0)
+    assert pricing.price(_SHIPPED, row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None)).why == "no_counts"
 
 
 def test_share_of_price(tmp_path):
@@ -218,7 +233,8 @@ def test_by_model_sorted():
     month = [m for m in by_model if m["period"] == "this_month"]
     assert [m["model"] for m in month] == ["qwen3.8-27b", "gemma-4-26b-a4b"]
     assert month[0]["usd"] > month[1]["usd"] and month[1]["requests"] == 2 and month[1]["tier"] == "opus"
-    assert set(month[0]) == {"model", "tier", "period", "usd", "usd_estimated", "requests", "p", "c", "o"}
+    assert set(month[0]) == {"model", "tier", "period", "usd", "usd_estimated", "requests", "p", "c", "o",
+                           "audio_s"}
     assert [m["model"] for m in by_model if m["period"] == "all_time"] == ["gemma-4-26b-a4b", "qwen3.8-27b"]
     assert by_model[:2] == month
     unmapped = make([row(t, "made-up-model")], local("2026-11-06T10:00"))["by_model"][0]
@@ -370,3 +386,62 @@ def test_summary_verb(tmp_path, monkeypatch, capsys):
     assert cli.main(["usage", "summary", "--json"]) == 1
     captured = capsys.readouterr()
     assert captured.out == "" and "price_usd" in captured.err and "31415" not in captured.err
+
+
+WHISPER = dataclasses.replace(BOOK, mapping={**BOOK.mapping, "whisper-large-v3-turbo": prices.Mapping(
+    "whisper-1", Decimal(1))})
+
+
+def speech_rows():
+    t = local("2026-11-05T10:00")
+    return [Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "done",
+                key="demo", **more) for more in ({"audio_s": 90.0}, {"audio_s": 100.0, "audio_est": True},
+                                                  {}, {"audio_s": 30.0}) ] + [row(t)]
+
+
+def test_audio_is_summed_priced_or_not_and_estimates_are_counted():
+    out = summary.summarize(Store(speech_rows()), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    month = out["periods"]["this_month"]
+    assert month["audio_s"] == 220.0 and out["periods"]["last_month"]["audio_s"] == 0.0
+    # 90 s + 100 s + 30 s = 220 s at 0.006 a minute is 0.022; the 100 s row is the estimated one
+    assert month["usd"] == pytest.approx(0.78 + 0.022, abs=1e-4)
+    assert month["usd_estimated"] == pytest.approx(0.01, abs=1e-4)
+    assert month["unpriced"] == 1  # the row with no length
+    assert out["flags"]["unmapped"] == {}
+
+
+def test_a_row_with_both_estimates_counts_once():
+    t = local("2026-11-05T10:00")
+    both = row(t, c=900_000, c_estimated=True, audio_s=60.0, audio_est=True)
+    assert make([both], local("2026-11-06T10:00"))["periods"]["this_month"]["usd_estimated"] == 0.78
+
+
+def test_words_show_audio_minutes_and_name_both_estimates():
+    out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
+    assert "1.5 min audio" in lines["This month"] and "min audio" not in lines["Today"]
+    est = summary.summarize(Store(speech_rows()[1:2]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    assert "of it estimated" in summary.words(est) and "estimated cache" not in summary.words(est)
+    assert "audio" not in summary.words(make([row(local("2026-11-05T10:00"))], local("2026-11-06T10:00")))
+
+
+def test_an_unlengthed_speech_row_counts_as_unpriced_and_an_error_row_adds_no_audio():
+    t = local("2026-11-05T10:00")
+    rows = [Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "done"),
+            Row("front", f"{next(_ids):016x}", t, t + 5, "whisper-large-v3-turbo", None, None, None, "error",
+                audio_s=600.0)]
+    month = summary.summarize(Store(rows), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))[
+        "periods"]["this_month"]
+    assert month["unpriced"] == 1 and month["audio_s"] == 0.0
+
+
+def test_an_estimated_length_on_a_per_token_line_is_not_an_estimated_dollar():
+    t = local("2026-11-05T10:00")
+    odd = row(t, audio_s=60.0, audio_est=True)  # Opus's per-token line, a length that prices nothing
+    assert make([odd], local("2026-11-06T10:00"))["periods"]["this_month"]["usd_estimated"] == 0.0
+
+
+def test_words_leave_audio_out_of_a_period_with_none():
+    out = summary.summarize(Store(speech_rows()[:1]), WHISPER, summary.Private(None, NY), local("2026-11-06T10:00"))
+    lines = {line.split("  ")[0]: line for line in summary.words(out).splitlines()}
+    assert "min audio" in lines["This month"] and "min audio" not in lines["Last month"]
