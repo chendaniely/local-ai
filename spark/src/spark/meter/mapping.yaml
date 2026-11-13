@@ -1,4 +1,4 @@
-# Which Claude tier each model of the registry is priced at, and how the meter treats it (the design's part 1).
+# Which proxy each model is priced as (a key of prices.yaml, or none), and how the meter treats it (the design's part 1).
 # A model with no line here is unpriced and flagged; `none` is unpriced on purpose.
 v: 1
 tiers:               # per tier: charge uncached prompt tokens at the 5-minute cache-write rate (§3's switch)

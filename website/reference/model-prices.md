@@ -58,8 +58,8 @@ docs.voyageai.com/docs/pricing), each line from 2026-09-01:
 
 Embeddings and the Qwen3-ASR models are priced by the token, and they report no cache count, which
 doesn't matter: their proxy's cached rate is its fresh rate. Whisper is priced by the audio minute,
-and a request's length in minutes comes with Task E3 of
-[the every-model plan](../design/usage-meter-every-model.md); until then its rows show as unpriced
+and a request's length in minutes comes with the front learning each recording's length
+([the design](../design/usage-meter-every-model.md)); until then its rows show as unpriced
 (`no_audio_length`). `make speech`'s requests are not counted until its Stage 2 puts it behind the
 front.
 

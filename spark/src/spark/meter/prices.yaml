@@ -1,4 +1,5 @@
-# prices.yaml: US dollars per million tokens; checked against Anthropic's pricing page and release notes 2026-11-12.
+# prices.yaml: US dollars per million tokens, or per audio minute where a line has per_minute. Claude's tiers checked
+# against Anthropic's pricing page and release notes 2026-11-12; the other proxies as their comment below says.
 # A line applies from 00:00 UTC on its `from` day, until the next line of its tier. `above`, where a line has one,
 # holds the rates for a prompt over `over` tokens.
 v: 1

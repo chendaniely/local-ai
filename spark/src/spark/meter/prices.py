@@ -1,5 +1,5 @@
-"""The meter's price files (the design's part 1): which Claude tier each model is priced at (mapping.yaml), the dated
-price lines of each tier (prices.yaml) and the providers that reached brightroar (providers.yaml).
+"""The meter's price files (the design's part 1): which proxy each model is priced as (mapping.yaml), the dated
+price lines of each proxy (prices.yaml) and the providers that reached brightroar (providers.yaml).
 
 Nothing stored holds a dollar: prices are applied when a summary is read, so a remap or a corrected line reprices the
 past. Every refusal is a PriceError naming the file and the reason, which `cli.main` prints. At module level this
