@@ -192,3 +192,23 @@ plan; a Backlog line: `make speech`'s requests counted when its Stage 2 puts it 
   runs. Timing the same file before and after shows the `verbose_json` cost; noted in the changelog.
 - [ ] **Step 5 [Spark]:** `changelog.md` and README §Current state; the before-push scan; push `phase-2a` with Dan's
   OK. Commit `docs(machine): 🤖 every model priced, deployed`.
+
+*(2026-11-13, at the final whole-branch review: Task E6's steps above stand; these are added to them.)*
+
+- **Before Step 1 [Mac]:** the before-push denylist scan, as *Before every push* in
+  [the leak guards](../how-to/leak-guards.md) gives it, then push `meter-every-model` with Dan's OK, so the Spark can
+  fetch it.
+- **Step 4 also [Spark]:** `spark doctor --full`, from the clone's root, next to `make doctor`: it is the only real
+  test of the converted path and its 1 % length check.
+- **During that `--full` run [Spark]:** read the front unit's peak memory with
+  `systemctl show -p MemoryPeak local-ai-front.service` and record it in the changelog, since the app's step 6 says the
+  held-answer bound isn't measured on the Spark.
+- **Step 5 also flips** every "built on the `meter-every-model` branch, not yet deployed" marker to deployed with the
+  date: `grep -rn "meter-every-model" website README.md CLAUDE.md`, leaving `website/_site` alone.
+- **A count-only check [Spark]:** whether any Qwen3-ASR rows without counts exist, with `jq` over the usage files
+  printing a number and never a figure of spend, to say in the changelog how many rows stay unpriced.
+- **With Dan's OK, the notices:** a comment on #55 (spark-menu: the summary's `audio_s`, `usd_estimated`'s wider
+  meaning, and the header rename on `spark-menu-by-model`); notices under `notice/vid2sub`, `notice/skills` and
+  `notice/recordings` naming the front's transcription exceptions (the 502 `front_error` for a converted answer past
+  the cap, U+FFFD in `text`, and whisper's 500 for an unknown language on a converted request); and `spark-menu-by-model`
+  merged and reloaded on the Mac.

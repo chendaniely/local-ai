@@ -1,6 +1,6 @@
-"""Pricing one row at Claude's rates (the design's §3), when it is read: nothing stored holds a dollar. A row that
-can't be priced says why and has no `usd`; it is never 0. At module level this imports only the standard library and
-`spark.meter` modules."""
+"""Pricing one row at its hosted proxy's rates (Claude, OpenAI or Voyage; the design's §3), when it is read: nothing
+stored holds a dollar. A row that can't be priced says why and has no `usd`; it is never 0. At module level this
+imports only the standard library and `spark.meter` modules."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ class Priced:
 
 def price(book: PriceBook, row: Row) -> Priced:
     """The row's price at the line in effect at its t0, or why it has none. WHYS names the reasons; they are checked
-    in its order but for `none`, which comes before the counts: a model unpriced on purpose (speech, whose rows carry
-    no counts) is `none`, never `no_counts`, which the summary counts as unpriced (the final review's I1, 2026-11-12).
+    in its order but for `none`, which comes before the counts: a model unpriced on purpose (mapped to `none`) is `none`, never `no_counts`, which the summary counts as
+    unpriced (the final review's I1, 2026-11-12).
     An unmapped model with no counts stays `no_counts`, so it raises no ⚠map: a mapping line wouldn't price it."""
     if row.end != "done":
         return Priced(why="not_done")

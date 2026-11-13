@@ -262,6 +262,12 @@ electricity estimate lands. `usd` includes `usd_estimated`. *(2026-11-12, at the
 imported rows of a provider that isn't a by-hand one. `coverage.counting_off` holds only the front's usage rows'
 spans, not the gate ledger's own.)*
 
+*(2026-11-13, built on the `meter-every-model` branch, not yet deployed: `periods` and `by_model` gain `audio_s`, in
+seconds; `usd_estimated` now also covers a cost resting on an estimated audio length, where it covered only an
+estimated cache; and `tier` may name a non-Claude proxy (`whisper-1`, `gpt-4o-mini-transcribe`, `voyage-4-lite`).
+`v` stays 1: no field was renamed or removed, and the one whose meaning widened, `usd_estimated`, is shown by
+spark-menu as an estimate either way, so nothing in its `MENU_READS` changes.)*
+
 ## Where the work runs, and its order
 
 1. **[Mac]**, on this branch, as the counter's Tasks 44a–44j were *(my call: `spark usage` reads files

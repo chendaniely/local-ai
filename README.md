@@ -305,8 +305,8 @@ when that file was retired on 2026-09-23.
   writes a row per decision into `/var/lib/local-ai/gate-ledger`, `spark:spark-admin 2750`. The rows the Mac imports
   for the by-hand engines go into `/var/lib/local-ai/usage-sessions`, Dan's, group `spark-admin`, `2750`, which has
   none yet. `make usage` prints the summary at hosted prices (Claude's for chat, OpenAI's and Voyage's for speech and embeddings); the Spark's price and Dan's time zone are in a private
-  file in his home. Each model is priced as the Claude model [Model prices](website/reference/model-prices.md) names:
-  since a second deploy the same evening, the chat models by size, the coder, the fast coder and Flash-Next as Sonnet
+  file in his home. Each model is priced as the proxy [Model prices](website/reference/model-prices.md) names (a Claude model for chat, OpenAI's or Voyage's for speech and embeddings): for chat, since a second deploy
+  the same evening, the models by size, the coder, the fast coder and Flash-Next as Sonnet
   and Qwen3.6 and Gemma as Haiku, where at first they were all Opus. OpenCode and Hermes Agent have their own client keys, so the front's key list holds five.
   Snapshots of Open WebUI's database and `agent`'s Pi sessions are kept for Phase 2b's baseline, under *My environment*
   below. They were taken just after counting began, not before; the changelog says why that matters for Hermes.

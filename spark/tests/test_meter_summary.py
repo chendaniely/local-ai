@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from spark import cli, paths
-from spark.meter import prices, summary
+from spark.meter import prices, pricing, summary
 from spark.meter.store import Row, Store
 
 # The models these rows use pinned at Opus, so Dan's remaps of the shipped mapping never move these sums.
@@ -114,14 +114,26 @@ def test_unpriced_and_flags():
     assert (alone["requests"], alone["p"], alone["c"], alone["o"]) == (5, 5_000_000, 3_600_000, 50_000)
 
 
-def test_a_transcription_is_not_unpriced():
-    # Speech rows carry no token counts, and their models are `none`: unpriced on purpose, never "N unpriced"; a chat
-    # row with no counts (a route the front doesn't scan) is unpriced (the final review's I1).
+def test_a_model_mapped_to_none_is_not_unpriced():
+    # A model mapped to `none` is unpriced on purpose, never "N unpriced", with or without counts; a chat row with no
+    # counts (a route the front doesn't scan) is unpriced (the final review's I1). The name is a test book's: the
+    # shipped book maps no model to `none`, and the test below pins what it does with a Qwen3-ASR row.
     t = local("2026-11-05T10:00")
     rows = [row(t, "whisper-large-v3-turbo", p=None, c=None, o=None),
             row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None), row(t, p=None, c=None, o=None)]
     this = make(rows, local("2026-11-06T10:00"))["periods"]["this_month"]
     assert (this["requests"], this["unpriced"], this["usd"]) == (3, 1, 0.0)
+
+
+def test_a_shipped_qwen3_asr_row_without_counts_is_unpriced():
+    # Rows written before the front counted audio (and any answer with no usage block) have nothing to price by: the
+    # shipped book prices Qwen3-ASR per minute, so `no_counts`, which the summary counts as unpriced (final review, I1).
+    t = local("2026-11-05T10:00")
+    out = summary.summarize(Store([row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None)]), _SHIPPED,
+                            summary.Private(None, NY), local("2026-11-06T10:00"))
+    this = out["periods"]["this_month"]
+    assert (this["requests"], this["unpriced"], this["usd"]) == (1, 1, 0.0)
+    assert pricing.price(_SHIPPED, row(t, "qwen3-asr-0.6b-32k", p=None, c=None, o=None)).why == "no_counts"
 
 
 def test_share_of_price(tmp_path):

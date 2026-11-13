@@ -230,7 +230,7 @@ def with_estimates(rows: list[Row]) -> list[Row]:
     return out
 
 
-AUDIO_BYTES_PER_SECOND = 16_000  # the length estimate: 16 kHz, 16-bit mono, the size of a plain WAV a second
+AUDIO_BYTES_PER_SECOND = 16_000  # the length estimate: a 128 kbit/s compressed file, as the design says
 
 
 def with_audio_estimates(rows: list[Row], book: PriceBook) -> list[Row]:

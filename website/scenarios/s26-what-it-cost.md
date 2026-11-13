@@ -55,7 +55,7 @@ Task 44l, and passing)*:
   other two folders, with Dan as its owner.
 - `meter prices` passes when the price files load, every model of the deployed registry has a line in the mapping, and
   a summary over the live folders runs. It fails naming the models with no line (add one, or `none` for a model left
-  unpriced on purpose), or only the error's class when a file or the summary fails; it never prints a figure, a row
+  unpriced on purpose; the line also suggests the proxy a model's size points to, and `make prices` lists every model's proxy and price *(2026-11-13, built on the `meter-every-model` branch, not yet deployed)*), or only the error's class when a file or the summary fails; it never prints a figure, a row
   or a private value. An absent private file passes (the share shows as a dash); a malformed or unreadable one fails the check, naming the error's class and never the file's contents.
 
 On the Spark, `make usage` prints the summary: a line each for this month, today, last month and all time, with what
@@ -77,13 +77,13 @@ The fast coder's cache is estimated when the summary reads, since its engine rep
 much of each total rests on that estimate. *(Built 2026-11-12, ~~not yet deployed~~ deployed the same day.)*
 *(2026-11-12: speech is priced by the audio minute (Whisper) or by the token (Qwen3-ASR), and embeddings by the token,
 each at a hosted proxy's price; a period's line adds its audio minutes, and an estimated length or cache is marked `~`
-in the share that rests on it.)*
+in the share that rests on it. Built on the `meter-every-model` branch, not yet deployed. A Qwen3-ASR row with no counts, written before the front counted audio or answered without a usage block, has nothing to price it by and is among the unpriced rows.)*
 
-In spark-menu's dropdown on the Mac, a section, *Spark usage at hosted prices* (*at Claude prices* until 2026-11-13), shows the same numbers a minute or so
+In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
 behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
 flags, and a by-model list. It prints the summary's figures as given and prices nothing; when the summary is more than
 3 minutes old it greys and says how old, and it is never blanked. The menu bar's title stays the dot. *(Built next, in
-Dan's dotfiles, 2026-11-12; not yet deployed: Task U14, on the Mac. spark-menu never contacts the Spark while it is off.)*
+Dan's dotfiles, 2026-11-12; not yet deployed: Task U14, on the Mac. spark-menu never contacts the Spark while it is off.)* *(2026-11-13: spark-menu's change, on its unmerged `spark-menu-by-model` branch in the dotfiles and not yet deployed, renames the section *Spark usage at hosted prices* and lists the models, since the summary now prices speech and embeddings at other vendors' prices.)*
 
 On the Spark, `make status` adds a line under *health* for each side that has stopped, *counting off
 since 08:52 (the front's usage rows)*, or *(the gate's ledger)*, on the control socket's view only.

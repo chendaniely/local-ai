@@ -63,7 +63,10 @@ recording *(2026-11-12, built on the `meter-every-model` branch, not yet deploye
 Whisper for `verbose_json` to learn it, and answers in the format the client asked for)*. Before
 then, or whenever a row has none, the length is estimated from the upload's size at 16,000 bytes a
 second and marked estimated; a row shows as unpriced (`no_audio_length`) only when neither is known
-([the design](../design/usage-meter-every-model.md)). `make speech`'s requests are not counted until its Stage 2 puts it behind the
+([the design](../design/usage-meter-every-model.md)). *(2026-11-13, built on the `meter-every-model` branch, not yet
+deployed: the same holds for Qwen3-ASR's rows, which are priced by the token. A row written before the front counted
+audio, or an answer with no usage block, has no counts and no audio length to estimate from, so it shows as unpriced
+(`no_counts`); nothing is left to price it by.)* `make speech`'s requests are not counted until its Stage 2 puts it behind the
 front.
 
 ## Adding a model
