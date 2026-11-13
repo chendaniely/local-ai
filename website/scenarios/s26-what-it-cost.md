@@ -102,7 +102,9 @@ makes both with their owners, groups and modes. If a listing is refused, log in 
 `make status` for since when, and `make logs s=front` for why (below 20 GiB free on the disk,
 counting turns itself off rather than take the room the weights need). If `meter prices` fails naming a
 model, **On the Spark:** add its line to `spark/src/spark/meter/mapping.yaml` and deploy; a price changes by a new dated
-line in `prices.yaml`, and no deploy of either restarts the front or llama-swap. If `usage sessions` fails, run `make
+line in `prices.yaml`, and no deploy of either restarts the front or llama-swap. *(2026-11-12: either change also
+updates the table on [Model prices](../reference/model-prices.md), which lists every model's proxy; `make test` fails
+until the two match.)* If `usage sessions` fails, run `make
 bootstrap`. The private file, `meter.yaml` in `~/.config/local-ai/` on the Spark, holds the Spark's price and my time
 zone; without it the summary uses the Spark's own zone and shows no share. If the canary finds either
 string in either folder, stop: something is writing what a client sent, and nothing private goes
