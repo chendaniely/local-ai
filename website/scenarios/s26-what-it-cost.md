@@ -79,7 +79,7 @@ much of each total rests on that estimate. *(Built 2026-11-12, ~~not yet deploye
 each at a hosted proxy's price; a period's line adds its audio minutes, and an estimated length or cache is marked `~`
 in the share that rests on it.)*
 
-In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
+In spark-menu's dropdown on the Mac, a section, *Spark usage at hosted prices* (*at Claude prices* until 2026-11-13), shows the same numbers a minute or so
 behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
 flags, and a by-model list. It prints the summary's figures as given and prices nothing; when the summary is more than
 3 minutes old it greys and says how old, and it is never blanked. The menu bar's title stays the dot. *(Built next, in

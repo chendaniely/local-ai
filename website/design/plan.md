@@ -2656,6 +2656,9 @@ Each item gets its own design pass when its turn comes.
   polls it. It needs a measured trigger: its run time on the Spark checked as the rows grow, and
   work on it (a cache, or a month's totals kept once the month has closed) before it nears
   spark-menu's 20-second bound.
+- **`make speech`'s requests in the meter** (2026-11-13, from [every model priced](usage-meter-every-model.md)):
+  the by-hand speech service doesn't pass the front, so its requests have no rows and aren't priced. They
+  are counted once its planned Stage 2 puts it behind the front; until then the meter leaves them out.
 - **The fast coder's history after a rebuild of the Spark** (2026-11-12, at the first numbers'
   final review): the Mac's `harvest.since` stays when the Spark is rebuilt, so spark-menu's first
   pushes send only the last hour or so. On the Mac, `make usage-push` once sends the fast coder's
@@ -4796,6 +4799,15 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   environment, and `CLAUDE.md`'s private material record it. Not yet done: the contract test the open item *44l
   changes what projects rely on* put before the deploy, and 44l's comments on the projects' notices, which wait for
   Dan's OK.
+- **2026-11-13** — Every model priced ([the design](usage-meter-every-model.md) and [its plan](usage-meter-every-model-plan.md),
+  from Dan's decisions of 2026-11-12 in [the meter's decisions](usage-meter-qa.md): "any token should be priced", with
+  "a reasonable proxy" where Anthropic sells none). Speech and embeddings get proxies: OpenAI's `whisper-1` by the audio
+  minute for Whisper, `gpt-4o-mini-transcribe` by the token for Qwen3-ASR, Voyage's `voyage-4-lite` for the embeddings.
+  The front learns each Whisper recording's length by asking whisper for `verbose_json` and answering in the client's
+  format; a new model's missing mapping line fails with a by-size suggestion; `make prices` prints every model's proxy.
+  Built on the Mac on `meter-every-model`, Tasks E1–E5; it deploys with Task E6, from the `phase-2a` clone. The entry
+  above's "not yet done": 44l's comments on the notices were posted with Dan's OK the same night (#43, #45, #48), with
+  #55 opened for spark-menu's contract; the contract test is still to do. Backlog gains `make speech`'s requests.
 
 ## Sources
 
