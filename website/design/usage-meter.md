@@ -398,8 +398,9 @@ opencode-hermes, secret-files, updates and speed-tests runbooks) change where a 
 ### 7. The sync, and the lifetime baseline **[Mac]** **[Spark]** **[Dan]**
 
 *(2026-11-12: one slice of the sync is built ahead of Phase 2b, [the first numbers' design](usage-meter-now.md), part 3:
-`spark usage harvest --source opencode` reads OpenCode's rows for the by-hand engines on the Mac, spark-menu pipes
-them every 5 minutes to `spark usage import`, and they land in `/var/lib/local-ai/usage-sessions`. It stops reading
+`spark usage harvest --source opencode` reads OpenCode's rows for the by-hand engines on the Mac, spark-menu ~~pipes~~
+sends them every 5 minutes to `spark usage import` *(2026-11-12, at the final review: through a temp file, sent only
+when the harvest exited 0, never a pipe)*, and they land in `/var/lib/local-ai/usage-sessions`. It stops reading
 the fast coder when that moves behind the front. Not yet deployed: Task 44l.)*
 
 **The sync** (Dan's decision). The front sees each request, but only a harness knows the session it
