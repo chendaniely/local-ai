@@ -500,11 +500,17 @@ the front; Task 50's `cut` and refusal rows with their codes; both done-when lis
 Box work, for the Spark session and Dan, after Task 44k, and finished before Task 45 begins. Each command is run once
 before it is relied on (the Phase 0 lesson); the box facts marked are checked first.
 
-- [ ] **Step 1 [Dan]:** the two keys, by Task 44h's runbook, through `make clients` on the Mac; the key names into the
-  denylist on both machines.
-- [ ] **Step 2 [Dan], on the Mac:** a fresh read-only copy of Hermes's `state.db` into a new dated folder beside the
-  2026-10-23 snapshot, for its sessions since then.
-- [ ] **Step 3 [Dan], on the Spark, interactively:** the snapshots, before counting starts. Open WebUI's database as a
+- [x] **Step 1 [Dan]:** the two keys, by Task 44h's runbook, through `make clients` on the Mac; the key names into the
+  denylist on both machines. *(Done 2026-11-12, but after Steps 4 and 5, so after counting had begun: the digests, the
+  key list's lines and `make restart-front`, after which doctor's key list loaded 5 keys, then `make clients` on the
+  Mac. The denylist lines are Dan's, and the session's record doesn't say whether they went in. A gap found here:
+  `spark clients hermes` left Hermes's own model block on `SPARK_API_KEY`, so its default model sent Pi's key until Dan
+  fixed it by hand on the Mac. The plan's Revisions line of this date has what the late steps mean for Phase 2b.)*
+- [x] **Step 2 [Dan], on the Mac:** a fresh read-only copy of Hermes's `state.db` into a new dated folder beside the
+  2026-10-23 snapshot, for its sessions since then. *(Done 2026-11-12, after the deploy, into `usage-snapshots/2026-11-13/`,
+  dated by UTC. Taken after counting began, so a Hermes session that ran across the seam has its later growth in this
+  copy: the plan's Revisions line of this date.)*
+- [x] **Step 3 [Dan], on the Spark, interactively:** the snapshots, before counting starts. Open WebUI's database as a
   root-only copy outside every home, since it holds password hashes and users' keys as well as every chat (box facts to
   check: the database's path in the container, `python3` in the image):
 
@@ -525,14 +531,20 @@ cd / && sudo -u agent env -i HOME=/home/agent PATH=/usr/bin:/bin tar -C /home/ag
 tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
 ```
 
-- [ ] **Step 4 [Dan], on the Spark:** `make bootstrap-dry-run`, read for the two `install -d` lines; then, with a
+  *(Done 2026-11-12, after the deploy, so after counting began: Open WebUI's copy, `0600`, in
+  `/var/backups/local-ai-usage`, `root:root 0700`, and `agent`'s archive in Dan's
+  `usage-snapshots/2026-11-13/`, both dated by UTC. Both are priced per message in Phase 2b, so the seam splits
+  them as it would have.)*
+
+- [x] **Step 4 [Dan], on the Spark:** `make bootstrap-dry-run`, read for the two `install -d` lines; then, with a
   second SSH session open, `make bootstrap`; then
   `stat -c '%U:%G %a %n' /var/lib/local-ai/usage /var/lib/local-ai/gate-ledger` shows `spark-front:spark-admin 2750`
   and `spark:spark-admin 2750`. Any apt change goes in `changelog.md`. *(Added 2026-11-12, from [the first
   numbers' plan](usage-meter-now-plan.md), Task U13:)* bootstrap also makes `/var/lib/local-ai/usage-sessions`, so the
   dry run shows three `install -d` lines, and `stat -c '%U:%G %a' /var/lib/local-ai/usage-sessions` shows
-  `<Dan's login>:spark-admin 2750`.
-- [ ] **Step 5 [Dan], on the Spark, in tmux:** `make apply`, which stages the three units and stops; `git status
+  `<Dan's login>:spark-admin 2750`. *(Done 2026-11-12: the three folders read as written, checked again by the Spark
+  session. bootstrap's apt step upgraded git, git-man and tmux; the changelog has the versions.)*
+- [x] **Step 5 [Dan], on the Spark, in tmux:** `make apply`, which stages the three units and stops; `git status
   --short -- Makefile stack/host` is empty; `make install-units`, reading the `ReadWritePaths`, `UMask` and
   `InaccessiblePaths` diffs; `make apply` again: llama-swap's unit changed, so every model stops and the residents
   reload. Then `make status` and `make doctor`, which passes the three new checks.
@@ -541,19 +553,26 @@ tar -tf "$d/agent-pi-sessions.tar" | wc -l; sudo -k
   all. `make pull` comes after the second `make apply`, or Qwen3-ASR and Whisper large-v3 refuse `not_downloaded`. If
   Qwen3.6 fails to load at two slots with MTP drafting, in `stack/models.yaml` set its `parallel: 1`, drop its
   `--slot-prompt-similarity`, set its `--ctx-checkpoints 8`, and, **on the Spark, in tmux**, `make apply`.
-- [ ] **Step 6 [Spark], on the Spark:** after one request from Pi on the Mac, the newest row's field names only:
+  *(Done 2026-11-12, from `cfc0c7d`: `make apply`, `make install-units`, `make apply`, `make pull`, `make status`.
+  `make doctor`: 34 of 34, with one WARN, ntfy not set up. Qwen3.6 loaded at two slots with MTP drafting, so the
+  fallback wasn't needed.)*
+- [x] **Step 6 [Spark], on the Spark:** after one request from Pi on the Mac, the newest row's field names only:
   `tail -n 1 /var/lib/local-ai/usage/usage-$(date -u +%Y-%m).jsonl | jq -c keys`, showing `p`, `o` and `from`.
-- [ ] **Step 7 [Spark]:** `changelog.md`, README §Current state, the Architecture page's two stores solid, S26's `status:
+  *(Done 2026-11-12, by field names only: rows from Pi, OpenCode and Hermes Agent, each under its own key.)*
+- [x] **Step 7 [Spark]:** `changelog.md`, README §Current state, the Architecture page's two stores solid, S26's `status:
   built`, `CLAUDE.md`'s private-material paragraph and README §My environment (the two folders, the Spark's
   snapshots in `/var/backups/local-ai-usage` and Dan's `usage-snapshots`), and the vault's note (Dan): commit
-  `docs(machine): 🤖 the usage meter's counter is running`.
-- [ ] **Step 8 [Dan] [Spark]: the first numbers** *(added 2026-11-12, from [their plan](usage-meter-now-plan.md),
+  `docs(machine): 🤖 the usage meter's counter is running`. *(Done 2026-11-12, with Step 8's and U13's Step 4 in one
+  commit, `docs(machine): 🤖 the usage meter's counter and first numbers are running`. The vault's note is Dan's.)*
+- [x] **Step 8 [Dan] [Spark]: the first numbers** *(added 2026-11-12, from [their plan](usage-meter-now-plan.md),
   Task U13, which deploys with this task)*. **[Dan], on the Spark:** the private file, its values typed by Dan, never
   pasted into a session, as U13's Step 2 gives it; `stat -c '%a' ~/.config/local-ai/meter.yaml` shows `600`, and its
   line goes in the vault's entry note. **[Spark], on the Spark:** `make doctor` passes `usage sessions` and `meter
   prices`, and `make usage` prints the four periods, read by Dan and never copied into the repo. Then U13's Step 4:
   `changelog.md`, README §Current state, the Architecture page's new paths solid and S26's `status: built`, in the
-  commit `docs(machine): 🤖 the meter's first numbers are running`.
+  commit `docs(machine): 🤖 the meter's first numbers are running`. *(Done 2026-11-12: the private file `600`, its zone
+  checked against tzdata by Dan; doctor passed both checks; `make usage` printed the four periods, and its prices
+  matched Dan's check by hand. Its record went into Step 7's commit.)*
 
 **If counting misbehaves:** revert Tasks 44a–44e on `phase-2a` and `make apply`, which restarts only the front and the
 gate; the units' `-` paths are inert and stay. For a disk problem alone nothing is needed: the front serves with
@@ -595,3 +614,4 @@ fresh reviewer, then a whole-branch review and one fix wave. Nothing is pushed o
 5. **[Spark] [Dan] Task 44l, the deploy,** as written above. Until its keys exist, `make clients` on the Mac gives
    OpenCode and Hermes 401s: their runbook's rollback commands point them back at `SPARK_API_KEY`. Each
    `make doctor --full` run may send one "no model by that name" notification, for the canary's own made-up model name.
+   *(Done 2026-11-12, with its Steps 1–3 after the deploy: Task 44l above.)*

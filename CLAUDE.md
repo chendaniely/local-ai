@@ -94,11 +94,23 @@ private but not secret, and never in this repo. The usage meter adds a snapshot 
 harness session stores (2026-10-23), `~/.local/state/local-ai/usage-snapshots/2026-10-23/` on the
 Mac, `0700`: where the meter's lifetime baseline reads everything from before its counter started
 (the design's §7). It holds full chat text, so nothing from it enters this repo but numbers.
-The meter's first numbers add two more, on the Spark (2026-11-12, built; it deploys with Task 44l (not yet deployed)):
+The meter's first numbers add two more, on the Spark (2026-11-12, ~~built; it deploys with Task 44l (not yet deployed)~~
+deployed with Task 44l the same day):
 the private file `~/.config/local-ai/meter.yaml`, `0600`, holding the Spark's all-in price and Dan's time
 zone, never in this repo and checked by presence only; and `/var/lib/local-ai/usage-sessions`, Dan's,
 group `spark-admin`, `2750`, the rows imported from the Mac's OpenCode. Nothing from either enters this
-repo but a verdict.
+repo but a verdict. The counter's own two folders are on the Spark since the same deploy:
+`/var/lib/local-ai/usage`, the front's rows, `spark-front:spark-admin 2750`, and `/var/lib/local-ai/gate-ledger`, the
+gate's, `spark:spark-admin 2750`. Their rows hold numbers, times, model names and, in the front's, the key's name, so
+they are Dan's to read and nothing from them enters this repo but a verdict. Task 44l's snapshots, taken just after counting began (2026-11-12; their folders are dated
+2026-11-13, by UTC), add three more, each holding full chat text:
+- Open WebUI's database, a root-only copy, `0600`, in `/var/backups/local-ai-usage` on the Spark, `root:root 0700`.
+  It also holds password hashes and users' keys.
+- `agent`'s Pi sessions, as an archive, in Dan's `~/.local/state/local-ai/usage-snapshots/2026-11-13/` on the Spark,
+  `0700`.
+- A fresh copy of Hermes's `state.db` in the Mac's `~/.local/state/local-ai/usage-snapshots/2026-11-13/`.
+
+Nothing from them enters this repo but numbers.
 
 ⚠️ **Somewhere else is not permission to write values down.** Credentials stay by reference in the
 vault too, exactly as in *Non-negotiable constraints* above — which secret exists, where its value
@@ -165,7 +177,7 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
 - **~121 GiB unified memory total**, ~105–110 GiB usable for weights + KV cache. Models over ~110 GB
   do not fit at all. 128 GB is soldered — it is a permanent ceiling, not an upgrade path. The plan
   budgets against the CUDA-allocatable ceiling instead (reported near 102 GiB; to be measured) and
-  keeps ~~≥24 GiB~~ ≥17 GiB (from the next deploy; the last note below) free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day:
+  keeps ~~≥24 GiB~~ ≥17 GiB (~~from the next deploy~~ since 2026-11-12's deploy; the last note below) free on admission. *(Phase 2a's design, 2026-10-07, approved by Dan the same day:
   the plan's rule 9. Render's half is built on the `phase-2a` branch (2026-10-07): `spark render`
   refuses always-loaded models that don't fit idle `MemAvailable` less the reserve and, since Task
   5's review, the ceiling too, and an on-demand model that doesn't fit beside them (one marked
@@ -196,6 +208,8 @@ only when something was actually done or measured, same as `[adapted]` → `[ver
   been stable so far. let's drop down the reserve RAM to 15GB"; the registry refuses a reserve at or
   under the brake's line, so he chose 17, 14 and 21 from three options, because every Qwen3-ASR
   model then fits beside SGLang. These lines are unmeasured until Tasks 45 and 47.)*
+  *(Deployed 2026-11-12, with the usage meter's counter, Task 44l: `make status` reads the brake's line as 14 and
+  the reserve as 17.)*
 - **Only 1 TB of NVMe**, and weights, the HF cache and NGC container images all share it. That is
   single-digit large models on disk. Don't plan a model zoo; the plan keeps weights local and puts
   cold storage on the Synology in its backlog.

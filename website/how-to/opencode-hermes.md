@@ -15,7 +15,8 @@ meter can tell them apart from Pi, which keeps `SPARK_API_KEY`. OpenCode's is `S
 and Hermes's `SPARK_HERMES_KEY`. Make them (next section) before `make clients`, or the two
 clients send an empty key. The Spark accepts the two new keys only after the usage meter's deploy (Task 44l), so
 until then `make clients` with the new defaults makes OpenCode and Hermes get 401s; point them back with
-`--key-env SPARK_API_KEY` ([rolling back](#rolling-back-to-phase-1) shows the commands).
+`--key-env SPARK_API_KEY` ([rolling back](#rolling-back-to-phase-1) shows the commands). *(Since 2026-11-12 the Spark
+accepts both: Task 44l's Step 1, run just after its deploy.)*
 
 ## 0. Make their keys
 
@@ -90,7 +91,13 @@ previous file beside it as a `.bak` with the same permissions, and says which.
   from what `uv run --frozen --project spark spark clients opencode` prints.
 - **Hermes:** `~/.hermes/config.yaml`, under `providers.spark`, with `key_env: SPARK_HERMES_KEY`.
   Hermes keeps the default model it had. The file is rewritten from its settings, so comments in it
-  don't survive; the `.bak` keeps them.
+  don't survive; the `.bak` keeps them. If Hermes's own `model` block reaches the Spark too, its
+  `base_url` the front's tunnel URL with a `key_env` of its own, that `key_env` becomes
+  `SPARK_HERMES_KEY` as well, and `make clients` says so, naming the variable it replaced. A
+  `base_url` elsewhere, the by-hand coder's port among them, keeps its key. *(Added 2026-11-12, after
+  the usage meter's deploy: until then the command left that block alone. Dan's had `provider:
+  custom`, the tunnel URL and `key_env: SPARK_API_KEY`, so Hermes's default model went on sending
+  Pi's key, and its usage counted under Pi's, until he fixed it by hand.)*
 
 ## 2. Pick a model
 
@@ -170,7 +177,8 @@ that one line in your editor. The file holds your other keys, so don't print it.
 
 Phase 1's llama-swap doesn't know the new keys. After [the rollback](deploy.md), **on the Mac**,
 put both clients back on `SPARK_API_KEY`. These are also the commands to run before Task 44l's deploy, while the box
-knows only that one key:
+knows only that one key *(deployed 2026-11-12, so now they are the rollback's alone)*. The second also puts Hermes's
+own `model` block back on `SPARK_API_KEY`, if it reaches the Spark:
 
 ```bash
 uv run --frozen --project spark spark clients opencode --write --key-env SPARK_API_KEY

@@ -1391,7 +1391,8 @@ the deadline it was given, so a drill's shorter one reads true.
   whisper.cpp, in the registry from the next deploy, with no role, so `stt` stays on the turbo model
   and the web UI and doctor are unchanged. It's vid2sub's first choice for Japanese and Korean. Its
   file isn't downloaded yet, `make pull` at the deploy fetches it, and it hasn't run on this box; its
-  5 GiB footprint is an estimate scaled from the turbo model's.
+  5 GiB footprint is an estimate scaled from the turbo model's. *(Deployed 2026-11-12, with the usage meter's counter,
+  and `make pull` ran after it. It hadn't run on this box by then, and its footprint is still the estimate.)*
 - `verbose_json` word timestamps, language detection, and ~170 MB uploads allowed through every hop.
 - Speaker labels come from the diarization service in OpenAI's `diarized_json` shape; whether it also
   returns speaker embeddings (for speaker identification in Dan's pipeline) gets confirmed against
@@ -1988,7 +1989,9 @@ council, with Dan's fourteen decisions (Revisions).*
   Agent get keys of their own; Pi keeps `SPARK_API_KEY`; nothing is retired in 2a, and the caps stay
   as they are, a cap per group waiting for 2b. The by-hand SGLang gains `--enable-cache-report`;
   `spark doctor` gains three checks, with S26 as the scenario. The soak and the drills then cover
-  it: Tasks 45, 49 and 50 of [the implementation plan](phase-2a.md).
+  it: Tasks 45, 49 and 50 of [the implementation plan](phase-2a.md). *(Deployed 2026-11-12, from `cfc0c7d`, with
+  OpenCode's and Hermes Agent's keys and the Spark's snapshots made just after it, so after counting began:
+  Revisions.)*
 - *Added 2026-11-12; Dan's decision, in [the first numbers' design](usage-meter-now.md):* [Mac]
   [Spark] [Dan] **the usage meter's first numbers**, Tasks U1–U14 of [a plan of their
   own](usage-meter-now-plan.md), between Task 44k and Task 44l, and deployed with the counter by
@@ -2003,7 +2006,8 @@ council, with Dan's fourteen decisions (Revisions).*
   estimated while that engine reports none. spark-menu, still in Dan's dotfiles, shows the summary
   in a usage section of its dropdown and works out no figure itself. A price edit restarts only the
   gate and the brake, never the front or llama-swap, and waits for the soak's end. `spark doctor`
-  gains `usage sessions` and `meter prices`, under S26.
+  gains `usage sessions` and `meter prices`, under S26. *(Deployed with the counter, 2026-11-12; spark-menu's section
+  waits for Task U14 on the Mac.)*
 - *Closing 2a (added 2026-10-14, Dan's decision):* `main` holds work this branch doesn't: the
   coder's early swap and render's corrected check (2026-10-08), the Phase 6 plan, and anything
   merged there since. Merging the two conflicts in about a dozen files, `plan.md` most. At 2a's
@@ -2137,6 +2141,11 @@ moved.
   Spark's runbooks; then the lines for Posit Assistant (`pa`) and Hermes Agent when their turn comes.
   *(2026-11-09, Dan's requirements: the sync also carries each session's project, and the by-hand SGLang's tokens are
   backfilled from the Mac's session files: the design's* Open for later*.)*
+  *(2026-11-12, at the counter's deploy: the Spark's snapshots and a fresh copy of Hermes's `state.db` were taken just
+  after counting began, not before, so the baseline allows for two things, as that day's Revisions line says. A Hermes
+  session that ran across the seam has its later growth in the fresh copy, and the front counted that growth too. And
+  the first rows' split by key isn't yet a split by harness: until Hermes's own model block was fixed by hand, its
+  default model sent Pi's key. The reconciliation window starts after that fix.)*
   `agent`'s line waits for a view of its own numbers, and the metering plug is a task of its own,
   whenever Dan buys one. With them, a **cap per key group** on waiting requests: today's caps are per
   key, so more of Dan's keys could queue more, and each key's cap stays where it is in 2a rather than
@@ -3071,6 +3080,9 @@ Each item gets its own design pass when its turn comes.
   hosts, `make clients`' key defaults and `STATUS_SCHEMA` — and fails with "update Projects that
   use the stack and open its notices" when one changes. Whether it also writes a fixtures file the
   projects test against is the Spark session's call when it writes the task.
+  *(2026-11-12: 44l is deployed, and both halves of this item are still to do. The contract test wasn't written
+  before the deploy, so it comes after it. 44l's comments on the notices, saying its change is live, wait for Dan's OK,
+  since the repo is public.)*
 - **The projects' base URL, decided once** (added 2026-11-10, Dan's decision, from the direction
   review). Three changes would each move every project's base URL or the way its refusals arrive:
   `main`'s plan moves the front from 9100 to 59100 "in one change"; Phase 3 was to decide whether
@@ -4759,6 +4771,31 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   44l gains U13's steps. The box fact the design left unverified, checked on the Spark by counts
   only: the running SGLang, started 2026-10-26, has no `--enable-cache-report` on its command line,
   so `spark-sglang`'s `cache_from` stays null and its cache stays estimated.
+- **2026-11-12** — The usage meter's counter and first numbers are deployed: Tasks 44l and U13, by Dan, from
+  `cfc0c7d`. It was the first deploy since 2026-10-16's, so it also put on the box the registry decided on 2026-11-09
+  and 2026-11-10: Qwen3.6 always loaded on two slots, Gemma on demand, Whisper large-v3, Qwen3-ASR, whisper-server's
+  `--max-context 0`, and the reserve at 17. Every page's "from the next deploy" note about those decisions means this
+  deploy. `make doctor` passed 34 of 34, with ntfy's one WARN. **Out of order:** Task 44l's Steps 1–3 ran after the
+  deploy, so after counting had begun. Those steps gave OpenCode and Hermes Agent their own keys, and took the
+  snapshots, each dated 2026-11-13 by UTC: Open WebUI's database in `/var/backups/local-ai-usage`, `agent`'s Pi
+  sessions in Dan's `usage-snapshots` on the Spark, and a fresh copy of Hermes's `state.db` on the Mac. What that
+  means for Phase 2b's baseline, whose item is annotated:
+  - **Hermes.** Its totals grow in place, so its spend before the seam can't simply be read from the fresh copy, as
+    the design's §7 has it. A session that ran across the seam has its later growth in that copy, growth the front
+    counted too. The baseline finds those sessions, the ones active after the seam, and doesn't count their whole
+    totals as spend before it. How it splits them is 2b's to settle; the 2026-10-23 copy gives a floor for each
+    session that existed then.
+  - **The first rows' keys.** A request carried whichever key its harness was set to. Hermes's own model block kept
+    `SPARK_API_KEY` after `spark clients hermes` moved its `spark` provider, so until Dan fixed it by hand on the Mac
+    its default model sent Pi's key, and those rows count under Pi's. So the reconciliation window starts after that
+    fix, not at the seam. `spark clients hermes` now moves that block's key too, and says so.
+  - **Open WebUI and `agent`'s Pi** are read per message, so the seam splits them as designed, and their snapshots
+    taken after it change nothing.
+
+  [The design](usage-meter.md)'s §7, the counter's plan's Task 44l, `changelog.md`, README's Current state and My
+  environment, and `CLAUDE.md`'s private material record it. Not yet done: the contract test the open item *44l
+  changes what projects rely on* put before the deploy, and 44l's comments on the projects' notices, which wait for
+  Dan's OK.
 
 ## Sources
 

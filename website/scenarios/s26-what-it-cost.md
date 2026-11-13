@@ -2,7 +2,7 @@
 title: "S26 · What it cost"
 scenario-id: S26
 phase: 2
-status: planned
+status: built
 ---
 
 **Situation.** I have used the Spark for a week from my harnesses, Open WebUI and `agent`, and I
@@ -26,15 +26,16 @@ front says counting is off, from when. Totals may lag by minutes. (The design is
 [the usage meter](../design/usage-meter.md), and [its first numbers](../design/usage-meter-now.md);
 this page is what I see of it.)
 
-*(2026-11-12: the summary of what it would have cost at Claude's prices is built on the `swiftbar-costs` branch, not
-yet deployed: it deploys with Task 44l. The fast coder and Flash-Next, which the front can't see, are counted from the
+*(2026-11-12: the summary of what it would have cost at Claude's prices is built on the `swiftbar-costs` branch, ~~not
+yet deployed: it deploys with Task 44l~~ deployed with Task 44l the same day. The fast coder and Flash-Next, which the front can't see, are counted from the
 Mac's OpenCode: `spark usage harvest` reads their rows there, and `spark usage import` merges them into
 `/var/lib/local-ai/usage-sessions`, a folder of Dan's, group `spark-admin`, mode `2750`, whose only writer is that
 import. No row holds a dollar: prices are applied when the summary reads, from the price files in the `spark` project,
 so a corrected price or a remapped model reprices the past.)*
 
 **What I see.** On the Spark, `make doctor` has three lines for the counter. *(Built 2026-10-23, Task 44g of
-the meter's counter; not yet deployed, so these lines first run at its deploy. Two more are built 2026-11-12, below.)*
+the meter's counter; ~~not yet deployed, so these lines first run at its deploy~~ deployed 2026-11-12, Task 44l, when they
+first ran and passed. Two more are built 2026-11-12, below.)*
 
 - `usage records` and `gate ledger` pass when each folder is as bootstrap makes it: the right owner
   and group, mode `2750` with the setgid bit, no file in it readable by others, and no link. They
@@ -47,7 +48,8 @@ the meter's counter; not yet deployed, so these lines first run at its deploy. T
   than the meter says nothing of counting, which doctor reports as *unknown*, a failure: nothing says
   it is on.
 
-Two more doctor lines come with the first numbers *(built 2026-11-12, not yet deployed)*:
+Two more doctor lines come with the first numbers *(built 2026-11-12, ~~not yet deployed~~ deployed the same day with
+Task 44l, and passing)*:
 
 - `usage sessions` passes when `/var/lib/local-ai/usage-sessions` is as bootstrap makes it, by the same checks as the
   other two folders, with Dan as its owner.
@@ -72,13 +74,13 @@ paths, `$.model.providerID`, `$.time.completed` or `$.tokens.input`, the harvest
 send nothing without a word; a message with a token count missing, or a row the importer's own check would refuse, is
 left out and counted in the harvest's `skipped` figure instead *(both 2026-11-12, at the final review)*.
 The fast coder's cache is estimated when the summary reads, since its engine reports none, and the summary shows how
-much of each total rests on that estimate. *(Built 2026-11-12, not yet deployed.)*
+much of each total rests on that estimate. *(Built 2026-11-12, ~~not yet deployed~~ deployed the same day.)*
 
 In spark-menu's dropdown on the Mac, a section, *Spark usage at Claude prices*, shows the same numbers a minute or so
 behind: this month with its tokens, today, last month, all time as a share of the Spark's price before electricity, the
 flags, and a by-model list. It prints the summary's figures as given and prices nothing; when the summary is more than
 3 minutes old it greys and says how old, and it is never blanked. The menu bar's title stays the dot. *(Built next, in
-Dan's dotfiles, 2026-11-12; not yet deployed. spark-menu never contacts the Spark while it is off.)*
+Dan's dotfiles, 2026-11-12; not yet deployed: Task U14, on the Mac. spark-menu never contacts the Spark while it is off.)*
 
 On the Spark, `make status` adds a line under *health* for each side that has stopped, *counting off
 since 08:52 (the front's usage rows)*, or *(the gate's ledger)*, on the control socket's view only.

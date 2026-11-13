@@ -711,17 +711,20 @@ scan, *Before every push*):
 
 ### Task U13 [Spark] [Dan]: deploy with Task 44l, and the private file
 
-- [ ] **Step 1 [Dan], on the Spark:** Task 44l's steps, as written; its `make bootstrap` (Step 4) now also makes
+- [x] **Step 1 [Dan], on the Spark:** Task 44l's steps, as written; its `make bootstrap` (Step 4) now also makes
   `/var/lib/local-ai/usage-sessions`, and `stat -c '%U:%G %a' /var/lib/local-ai/usage-sessions` shows `<Dan's
-  login>:spark-admin 2750`.
-- [ ] **Step 2 [Dan], on the Spark:** the private file, its values typed by Dan, never pasted into a session:
+  login>:spark-admin 2750`. *(Done 2026-11-12, with Task 44l's Steps 1–3 run after its deploy: Task 44l has it.)*
+- [x] **Step 2 [Dan], on the Spark:** the private file, its values typed by Dan, never pasted into a session:
   `umask 077 && mkdir -p ~/.config/local-ai && nano ~/.config/local-ai/meter.yaml`, holding two lines, `price_usd:`
   the Spark's all-in price in US dollars and `zone:` an IANA zone name; then `stat -c '%a' ~/.config/local-ai/meter.yaml`
-  shows `600`. Its line goes in the vault's entry note.
-- [ ] **Step 3 [Spark]:** `make doctor` passes `usage sessions` and `meter prices`; `make usage` prints the four
-  periods (read by Dan, never copied into the repo).
-- [ ] **Step 4 [Spark]:** `changelog.md` and README §Current state; the Architecture page's new paths solid; S26's
-  `status: built`; commit `docs(machine): 🤖 the meter's first numbers are running`.
+  shows `600`. Its line goes in the vault's entry note. *(Done 2026-11-12: `600`, its zone checked against tzdata by
+  Dan. The vault's line is Dan's.)*
+- [x] **Step 3 [Spark]:** `make doctor` passes `usage sessions` and `meter prices`; `make usage` prints the four
+  periods (read by Dan, never copied into the repo). *(Done 2026-11-12: doctor 34 of 34, with one WARN, ntfy not set
+  up; the four periods printed, and their prices matched Dan's check by hand.)*
+- [x] **Step 4 [Spark]:** `changelog.md` and README §Current state; the Architecture page's new paths solid; S26's
+  `status: built`; commit `docs(machine): 🤖 the meter's first numbers are running`. *(Done 2026-11-12, in one commit
+  with Task 44l's Step 7: `docs(machine): 🤖 the usage meter's counter and first numbers are running`.)*
 
 ### Task U14 [Mac]: the menu shows numbers
 

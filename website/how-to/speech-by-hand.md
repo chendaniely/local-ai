@@ -11,10 +11,11 @@ It stays outside the front and the gate until its Stage 2, after the soak, so `s
 it as *other processes* and the brake can't unload it.
 
 - **It needs Qwen3.6 unloaded,** which frees about 30 GiB. Nothing keeps it out while the service
-  runs: a request for it loads it again if it fits. With the by-hand SGLang coder up, it doesn't fit
+  runs: a request for it loads it again if it fits. With the by-hand SGLang coder up, it ~~doesn't fit
   at today's reserve, and the request is refused with the reason. From the next deploy, at the lower
-  reserve, it may fit, and the web UI's background tasks ask for it then. So don't use it during a
-  run. The by-hand SGLang coder can keep running.
+  reserve, it~~ may fit, and the web UI's background tasks ask for it. *(Since 2026-11-12's deploy, at the
+  17 GiB reserve; until then, at 24, it didn't fit, and the request was refused with the reason.)* So don't use it
+  during a run. The by-hand SGLang coder can keep running.
 - **Stop it for Phase 2a's drills and measurements:** Tasks 41, 43, 44, 45 and 47 to 50.
 - **It ignores vid2sub's `prompt`,** so a glossary's vocabulary hints don't reach the model. As context, the prompt can
   make the model loop.
@@ -116,7 +117,9 @@ vid2sub run "Episode.mkv" --config ~/speech-spark.toml --model spark-qwen --from
 | 503 | `no_fit` | too little memory for the chunk, or CUDA ran out; vid2sub waits and tries again |
 
 If memory falls under 15 GiB available at any point, the service ends itself, and vid2sub pauses
-with a connection error. Until the next deploy the brake's line is 20, above that 15, so the brake acts first.
+with a connection error. ~~Until the next deploy the brake's line is 20, above that 15, so the brake acts first.~~
+*(Since 2026-11-12's deploy the brake's line is 14, under the service's 15, so the service ends itself before the
+brake acts; until then the line was 20, and the brake acted first.)*
 `make speech` starts the service again.
 
 ## Stop it

@@ -272,7 +272,8 @@ in them is private, so `git log` is the history of every remap:
   first lines were right for 2026-10-06, but Sonnet 5.5's cache reads fell to $0.10 on 2026-10-07, when Haiku 5.5
   arrived (Haiku 4.5 before it), and Fable 5.2 replaced 5.1 on 2026-11-09 at $8/$40. The dated table is in
   [the first numbers' design](usage-meter-now.md#the-price-files-spark). The mapping is `mapping.yaml` beside it, and
-  the providers' list `providers.yaml`. Built on the `swiftbar-costs` branch, not yet deployed: Task 44l.)*
+  the providers' list `providers.yaml`. Built on the `swiftbar-costs` branch, ~~not yet deployed: Task 44l~~ deployed
+  with Task 44l the same day.)*
 
 **The price of a row:** ((*P* − *C*) × input + *C* × cache read + *O* × output) × factor, at the
 line in effect at the row's start; Haiku's band tested on the whole prompt, switching every rate for
@@ -401,7 +402,8 @@ opencode-hermes, secret-files, updates and speed-tests runbooks) change where a 
 `spark usage harvest --source opencode` reads OpenCode's rows for the by-hand engines on the Mac, spark-menu ~~pipes~~
 sends them every 5 minutes to `spark usage import` *(2026-11-12, at the final review: through a temp file, sent only
 when the harvest exited 0, never a pipe)*, and they land in `/var/lib/local-ai/usage-sessions`. It stops reading
-the fast coder when that moves behind the front. Not yet deployed: Task 44l.)*
+the fast coder when that moves behind the front. ~~Not yet deployed: Task 44l.~~ The Spark's half is deployed with Task 44l,
+the same day; spark-menu's sending waits for Task U14 on the Mac.)*
 
 **The sync** (Dan's decision). The front sees each request, but only a harness knows the session it
 belonged to, its subagents, and what the by-hand engines served. So the readers below run every
@@ -422,7 +424,10 @@ copies. **The Mac's were taken on 2026-10-23** (Dan's decision), in
 `~/.local/state/local-ai/usage-snapshots/2026-10-23/`: Hermes's and OpenCode's databases and Pi's
 and Posit Assistant's session folders, without Hermes's request dumps (they hold an Authorization
 header) or Posit Assistant's developer logs. The Spark's sources are copied in the Phase 2a task
-that starts the counter.
+that starts the counter. *(2026-11-12: copied in that task, Task 44l, but just after counting began, not before. Open
+WebUI's database went into `/var/backups/local-ai-usage`, root's alone, and `agent`'s Pi sessions into Dan's
+`usage-snapshots` on the Spark. A fresh copy of Hermes's `state.db` went into the Mac's `usage-snapshots`, each in a
+folder dated 2026-11-13 by UTC. The seam's note below says what that changes.)*
 
 **The rows.** One per past message, in the row's schema with its source (harness), the format read,
 and an id from the message itself (source, message id, its time, and the engine's response id where
@@ -437,7 +442,11 @@ row changes nothing.
 one after it carries only what the front's row lacks, so a session that runs across the seam is
 priced once, per message. Hermes keeps only session totals that grow in place, so its spend before
 the seam is read from the snapshot taken before the counter started, and its sync afterwards adds
-sessions only. **The by-hand engines** (`make fast-coder`, `make flash-next`) don't pass through the
+sessions only. *(2026-11-12: no Hermes copy was taken just before the counter started. The 2026-10-23 one is three
+weeks older, and the fresh one came just after counting began. So a session that ran across the seam has its later
+growth in the fresh copy, growth the front counted too. The baseline finds those sessions, the ones active after the
+seam, and splits them rather than count their whole totals as spend before it, with the 2026-10-23 copy as a floor
+for each that existed then. [The plan](plan.md)'s Revisions line of that date has it.)* **The by-hand engines** (`make fast-coder`, `make flash-next`) don't pass through the
 front, so their synced rows stay the spend until Phase 4a puts them behind it, which ends their
 window.
 
