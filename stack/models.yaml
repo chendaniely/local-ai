@@ -158,7 +158,7 @@ models:
     engine: llama.cpp
     source:
       repo: unsloth/Qwen3.8-27B-GGUF
-      revision: "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+      revision: "acb953b129cc8c4f412388eef58489503e5eabe8"
       file: Qwen3.8-27B-UD-Q4_K_XL.gguf
     # The early swap (Dan's decision, 2026-10-08), at its full 262,144 tokens since render's corrected budget check
     # reached main the same day (Dan's decision): the residents' 43 GiB and its 41 come to 84, within the ceiling, and
@@ -172,6 +172,10 @@ models:
     # and 4 for its MTP layer; and ~7.5 for the rest: the compute and long-input buffers, its 2 GiB prompt cache and 8
     # context checkpoints of ~150 MiB (its 48 recurrent layers' state). ~41 in all, until a soak measures it. A cold
     # load at 163,840 tokens took 30.6 GiB (2026-10-08); none at 262,144 is measured yet.
+    # The revision is acb953b since 2026-11-16 (Dan's decision): Unsloth's Dynamic v3.1 re-upload of the same file,
+    # committed 2026-11-11, 16.45 GiB to 4ca7207's 16.35. Its header differs only in 53 tensors' quantization types and
+    # the imatrix's entry count; the context, the architecture, the layers and the MTP layer are the same, so the
+    # estimate above stands, its weights still ~16.4. (The 2026-10-08 load was of 4ca7207.)
     ctx: 262144
     parallel: 1
     cache_ram_mib: 2048

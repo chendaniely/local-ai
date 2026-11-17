@@ -8,6 +8,15 @@ records the *current* state; this records how it got there.
 
 ---
 
+## 2026-11-16 — The coder's new revision, committed, not yet on the box
+
+`stack/models.yaml` pins the coder, Qwen3.8-27B, at `acb953b`: Unsloth's Dynamic v3.1 re-upload of
+`Qwen3.8-27B-UD-Q4_K_XL.gguf`, committed 2026-11-11, 16.45 GiB to `4ca7207`'s 16.35. Its header, read by a range request,
+has the same context (262,144), architecture and MTP layer ([the plan's Revisions](website/design/plan.md#revisions)).
+Nothing on the box has changed yet: `make pull` and `make apply` wait for the seven-day rule, until 2026-11-18.
+
+---
+
 ## 2026-11-13 — Every model priced
 
 **Deployed** by Dan, **on the Spark**, in tmux, with `make apply` from the `phase-2a` clone at `88dc874`, the merge of

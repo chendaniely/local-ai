@@ -1873,6 +1873,10 @@ council, with Dan's fourteen decisions (Revisions).*
   blocks (64 and one MTP layer; `nextn_predict_layers = 1`, so `--spec-type draft-mtp`, as the
   coder has today), `full_attention_interval` 4 (16 attention layers, 4 KV heads × 256), and a
   native context of 262,144. Every model stays at its full context with an f16 KV cache (Dan).
+  *(2026-11-16, Dan's decision: the pin moves to `acb953b129cc8c4f412388eef58489503e5eabe8`, Unsloth's Dynamic
+  v3.1 re-upload of the same file, committed 2026-11-11 and so deployable from 2026-11-18; 17.7 GB. Its header
+  is the same but for 53 tensors' quantization types, so what this paragraph and the footprint below say still
+  holds: Revisions.)*
   - **Its footprint is estimated at ~41 GiB** until a soak measures it (raised after the council
     from ~38): weights ~16.4; the KV cache ~17.0 at 68 KiB a token, 64 for the 16 attention layers
     and 4 for the MTP layer; and about 7.5 for the rest, the compute and long-input buffers, a
@@ -4823,6 +4827,13 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   says so. Built on the Mac after the every-model deploy, not before 44l as first planned. Writing it found the
   projects page saying every 409 carries a wait, when four codes carry none, and naming none of the front's own
   refusals; corrected the same day. Pushed on `phase-2a` at `9ae3eac`, and the Spark's `make test` passed it.
+- **2026-11-16** — Dan's decision: the coder's pin moves from `4ca7207` to `acb953b`, Unsloth's Dynamic v3.1
+  re-upload of `Qwen3.8-27B-UD-Q4_K_XL.gguf` (committed 2026-11-11; 16.45 GiB, from 16.35). Its header, read that day
+  by a range request on the resolve URL, keeps the native context of 262,144, the `qwen35` architecture, 65 blocks with
+  `nextn_predict_layers = 1`, the tensor shapes, the tokenizer and the chat template; 53 tensors changed quantization
+  type, a net 96 MiB more. So `--spec-type draft-mtp` still has its layer, and the ~41 GiB estimate stands.
+  `NATIVE_CTX` gains the new entry and keeps `4ca7207`'s for the way back. Committed on `phase-2a`; `make pull` and
+  `make apply` wait for the seven-day rule, until 2026-11-18.
 
 ## Sources
 

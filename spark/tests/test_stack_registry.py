@@ -25,6 +25,11 @@ NATIVE_CTX = {
      "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"): 262144,
     ("unsloth/Qwen3.8-27B-GGUF", "4ca720788d1e01f1bff70c033e0d0028fd02e502",
      "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
+    # Unsloth's Dynamic v3.1 re-upload of the same file (committed 2026-11-11), the coder's revision since 2026-11-16
+    # (Dan's decision): read from its header that day by a range request on the resolve URL and the gguf package
+    # (architecture qwen35, nextn_predict_layers 1). The 4ca7207 entry above stays for the way back.
+    ("unsloth/Qwen3.8-27B-GGUF", "acb953b129cc8c4f412388eef58489503e5eabe8",
+     "Qwen3.8-27B-UD-Q4_K_XL.gguf"): 262144,
     # Qwen3-ASR's two, read from their headers on 2026-10-23 (architecture qwen3vl).
     ("ggml-org/Qwen3-ASR-1.7B-GGUF", "36a678687ba7d07a74ca70ccb0e36902e005fb80", "Qwen3-ASR-1.7B-Q8_0.gguf"): 65536,
     ("ggml-org/Qwen3-ASR-0.6B-GGUF", "928ab958557df9aa2ef1c93e0e83c7ad0933fae2", "Qwen3-ASR-0.6B-Q8_0.gguf"): 65536,
