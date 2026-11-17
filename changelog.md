@@ -8,12 +8,15 @@ records the *current* state; this records how it got there.
 
 ---
 
-## 2026-11-16 — The coder's new revision, committed, not yet on the box
+## 2026-11-16 — New files for the coder and Flash-Next, committed, not yet on the box
 
 `stack/models.yaml` pins the coder, Qwen3.8-27B, at `acb953b`: Unsloth's Dynamic v3.1 re-upload of
 `Qwen3.8-27B-UD-Q4_K_XL.gguf`, committed 2026-11-11, 16.45 GiB to `4ca7207`'s 16.35. Its header, read by a range request,
 has the same context (262,144), architecture and MTP layer ([the plan's Revisions](website/design/plan.md#revisions)).
 Nothing on the box has changed yet: `make pull` and `make apply` wait for the seven-day rule, until 2026-11-18.
+- **Flash-Next**, run by hand, moves to Unsloth's re-upload of `UD-IQ3_XXS` (2026-11-04), pinned at `084c631`: four
+  shards, 77.9 GiB. Its start script names the new first shard, so it won't start until Dan has downloaded them, as
+  [its runbook](website/how-to/qwen3.8-flash-next.md)'s step 1 does; the old three stay until the new ones have run.
 
 ---
 

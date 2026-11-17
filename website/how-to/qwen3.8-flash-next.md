@@ -1,6 +1,6 @@
 ---
 title: "Qwen3.8-Flash-Next, by hand"
-description: "The box's biggest model, served by hand with the stack's models stopped: a 76 GiB 3-bit file, an optional MTP speed-up, what to measure, and the restore."
+description: "The box's biggest model, served by hand with the stack's models stopped: a 78 GiB 3-bit file, an optional MTP speed-up, what to measure, and the restore."
 ---
 
 *(Added 2026-10-13. Revised 2026-10-14 after its council review, Dan's decisions that day: the
@@ -19,6 +19,18 @@ The notes below, dated the same day, correct what the run showed.)*
 *(2026-10-16: Phase 2a's cutover is done, its Task 38, so the box runs Phase 2a's stack. Where
 this page says *today's* stack or box, it means Phase 1's, before that day; its *from Phase 2a's
 cutover* notes are how it runs now.)*
+
+*(2026-11-16, Dan's decision: new files. Unsloth re-uploaded `UD-IQ3_XXS` on 2026-11-04, its Dynamic
+v3.1 quants, and they replace the ones the 2026-10-15 run used. The download is pinned now, at
+revision `084c631ac221016019d6e0a863afe92d90edd3b0` (2026-11-07); the old files were `766911a`, by
+the download's own metadata. The new files are four shards, `…-00001-of-00004.gguf` first, 77.9 GiB
+to the old three's 76.3. Their headers, read by range requests, have the same metadata,
+architecture and 1,224 tensors as the old ones; 49 tensors changed quantization type, and three
+expert tensors (`ffn_down_exps` in blocks 8, 10 and 13) use `Q2_0`, a type both llama.cpp builds
+here have CUDA kernels for, by their libraries: not yet run. The vision projector and the MTP head
+are the same files. So the memory figures below are the old files', and each run should leave about
+1.5 GiB less available. The commands below name the new files; [Speed
+tests](../reference/speed-tests.md#flash-next-by-hand-with-and-without-mtp) keeps them as run.)*
 
 Qwen3.8-Flash-Next is 125B parameters with 6B active per token, plus 51B of n-gram embeddings and
 a 4B MTP head. It is a vision model (image-text-to-text) with hybrid thinking. This is **not the
@@ -68,7 +80,7 @@ line, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says.
 
   ```bash
   choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
-    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf \
     --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
     --alias qwen3.8-flash-next \
     --host 127.0.0.1 --port 8080 \
@@ -86,7 +98,7 @@ line, as [Deploy the stack](deploy.md#keeping-llama-swap-stopped) says.
 
   ```bash
   choom -n 1000 -- ~/scratch/llama.cpp-b11330/build/bin/llama-server \
-    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+    -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf \
     --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
     --alias qwen3.8-flash-next-mtp \
     --host 127.0.0.1 --port 8080 \
@@ -187,6 +199,9 @@ and the file is only part of it ([The budget](#the-budget)).
 | UD-IQ4_XS, UD-Q4_K_XL | 87.3 / 103.7 GiB | no |
 | Q8_0, BF16 | 175 / 330 GiB | never |
 
+*(2026-11-16: `UD-IQ3_XXS` is 77.9 GiB since Unsloth's re-upload of 2026-11-04; the other rows are
+still the 2026-10-14 sizes.)*
+
 Unsloth's own measurements put `UD-IQ3_XXS` clearly ahead of `UD-Q2_K_XL` for 2.9 GiB more: mean
 KL divergence 0.165 against 0.225, and the same top token 85.4% of the time against 82.7%.
 
@@ -215,6 +230,10 @@ controller's ruling the same day)*. Each further 32K of context costs about
 tokens, 34 once loaded, about 83: the bigger context cost about 3 GiB, not 2.4. With MTP at
 131,072, 28 once loaded and 27 after the runs, about 90.)*
 
+*(2026-11-16: those are the old files'. The new ones' weights are 77.9 GiB, about 1.5 more, so
+expect about 1.5 GiB less available in each case, by arithmetic until a run measures it: still above
+the warn line of 21.)*
+
 ## 1. Check the disk, then download
 
 The stack keeps running while this downloads. **On the Spark:**
@@ -228,6 +247,7 @@ It needs about 90 GB free. Then, **on the Spark:**
 ```bash
 mkdir -p ~/scratch/models/qwen3.8-flash-next
 uvx --from huggingface_hub hf download unsloth/Qwen3.8-Flash-Next-GGUF \
+  --revision 084c631ac221016019d6e0a863afe92d90edd3b0 \
   --local-dir ~/scratch/models/qwen3.8-flash-next \
   --include "UD-IQ3_XXS/*" \
   --include "mmproj-F16.gguf" \
@@ -236,7 +256,15 @@ uvx --from huggingface_hub hf download unsloth/Qwen3.8-Flash-Next-GGUF \
 
 That is the model in three shards under `UD-IQ3_XXS/`, its vision projector, and the MTP head for
 [step 5](#mtp-optional): 5 files, 87.0 GB (checked with `--dry-run`, `hf` 2.2.0, 2026-10-14). The
-repository isn't gated, so no token is needed.
+repository isn't gated, so no token is needed. *(2026-11-16: at the pinned revision, four shards and
+6 files, 88.7 GB, by the repository's sizes. Over an earlier download the vision projector and the
+MTP head are the same files, which `hf` skips when their checksums match, so only the new shards
+should come down, 83.6 GB, beside the old three. Keep the old ones until the new ones have run; then,
+**on the Spark**, this removes them, 82 GB:)*
+
+```bash
+rm ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-0000?-of-00003.gguf
+```
 
 ## 2. Stop the stack
 
@@ -280,7 +308,7 @@ kills `llama-server` first.
 
 ```bash
 choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
-  -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+  -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf \
   --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
   --alias qwen3.8-flash-next \
   --host 127.0.0.1 --port 8080 \

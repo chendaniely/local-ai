@@ -28,7 +28,7 @@ history every turn to fit.
 | | Flash-Next | Flash-Next with MTP |
 |---|---|---|
 | Engine | llama.cpp b11146, the stack's pinned build in `/opt/local-ai/bin/llama.cpp/b11146`, run by hand | llama.cpp b11330, built in `~/scratch/llama.cpp-b11330` and not installed: the first release with MTP for this model |
-| Weights | `unsloth/Qwen3.8-Flash-Next-GGUF`, `UD-IQ3_XXS`, in three shards (76.3 GiB by the repository); its revision wasn't recorded | the same |
+| Weights | `unsloth/Qwen3.8-Flash-Next-GGUF`, `UD-IQ3_XXS`, in three shards (76.3 GiB by the repository); its revision wasn't recorded *(2026-11-16: the download's own metadata records `766911a`. Unsloth replaced these files on 2026-11-04, so a later run is of other files: [the runbook](../how-to/qwen3.8-flash-next.md)'s note of that day)* | the same |
 | Vision projector | `mmproj-F16.gguf`, loaded | the same |
 | Drafting | none | MTP, from `mtp-Qwen3.8-Flash-Next-Q8_0.gguf` (3.9 GiB), up to 3 tokens a step |
 | Context | 32,768 tokens, then 131,072 for opencode, in llama.cpp's default KV cache | 131,072 tokens |

@@ -113,7 +113,7 @@ start() {
   # shellcheck disable=SC2046
   if [ "${MTP:-}" = 1 ]; then
     choom -n 1000 -- ~/scratch/llama.cpp-b11330/build/bin/llama-server \
-      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf \
       --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
       --alias qwen3.8-flash-next-mtp \
       --host 127.0.0.1 --port 8080 \
@@ -124,7 +124,7 @@ start() {
       --spec-type draft-mtp --spec-draft-n-max 3 2>&1 | tee -i ~/scratch/flash-next-mtp-$(date +%F-%H%M).log
   else
     choom -n 1000 -- /opt/local-ai/bin/llama.cpp/b11146/llama-server \
-      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+      -m ~/scratch/models/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf \
       --mmproj ~/scratch/models/qwen3.8-flash-next/mmproj-F16.gguf \
       --alias qwen3.8-flash-next \
       --host 127.0.0.1 --port 8080 \

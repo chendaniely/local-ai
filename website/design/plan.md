@@ -2423,6 +2423,8 @@ the run; [Qwen3.8-Flash-Next, by hand](../how-to/qwen3.8-flash-next.md) gains it
   other is loaded is refused with the reason, as for any model (S24). Neither evicts the other.
 - **Flash-Next** is a registry model marked `needs_room`, on llama.cpp, at `UD-IQ3_XXS` (76.3 GiB;
   Dan's pick on 2026-10-13, which the council's reviews backed with unsloth's quality figures).
+  *(2026-11-16: 77.9 GiB, Unsloth's re-upload of 2026-11-04, which the by-hand runs use from that
+  day, at revision `084c631`: Revisions.)*
   Render checks it against idle `MemAvailable` less the reserve, and the ceiling: 93 GiB (rule 9).
   It loads after `spark make-room` frees room for it, `--all` or its size, which only Dan can run,
   and his keys load it into the hold while `agent`'s can't (rule 4). Idle for 60 minutes, it
@@ -4834,6 +4836,15 @@ vid2sub's `phase-2` the same day, at `cb29cf8`, not yet on its `main`*) and in t
   type, a net 96 MiB more. So `--spec-type draft-mtp` still has its layer, and the ~41 GiB estimate stands.
   `NATIVE_CTX` gains the new entry and keeps `4ca7207`'s for the way back. Committed on `phase-2a`; `make pull` and
   `make apply` wait for the seven-day rule, until 2026-11-18.
+- **2026-11-16** — Dan's decision: Flash-Next, run by hand, moves to Unsloth's Dynamic v3.1 re-upload of `UD-IQ3_XXS`
+  (2026-11-04), pinned for the first time, at `084c631ac221016019d6e0a863afe92d90edd3b0` (2026-11-07, the newest
+  revision past the seven-day rule; the old download was `766911a`, by its own metadata). Four shards, 77.9 GiB, to the
+  old three's 76.3. Their headers, read by range requests: the same metadata and 1,224 tensors with the same shapes; 49
+  changed quantization type, three experts' `ffn_down_exps` to `Q2_0`, which both builds here, b11146 and b11330,
+  have CUDA kernels for by their libraries, not yet run. The vision projector and the MTP head are unchanged.
+  `make flash-next` and the runbook's commands name the new first shard; Phase 4a's budget gains about 1.5 GiB. Every
+  other model's pinned files, the registry's and the by-hand ones', are what their repositories hold today (the fast
+  coder's NVFP4 repo has newer commits, but only its README differs).
 
 ## Sources
 
